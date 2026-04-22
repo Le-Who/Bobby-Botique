@@ -76,6 +76,8 @@ class TestWebSocketEvents:
                 assert hist["event"] == "history_sync"
                 assert len(hist["items"]) == 1
                 assert hist["items"][0]["guess"] == "кот"
+                assert "seq" in state
+                assert "seq" in hist
 
     async def test_hint_messaging(self, test_client, mock_bot_token):
         """WS-03: Hint request loop."""
@@ -133,8 +135,51 @@ class TestWebSocketEvents:
                 assert resp["event"] == "cold"
                 assert resp["hint"] == "No."
                 assert resp["pending_id"] == "pid-1"
+                assert "seq" in resp
 
                 game.process_guess.assert_awaited_once_with("кот")
+
+    async def test_duplicate_pending_id_reuses_cached_result(self, test_client, mock_bot_token):
+        init_data = make_valid_init_data(mock_bot_token, user_id=222)
+        url = f"/webapp/game/ws?initData={urllib.parse.quote(init_data)}&game_id=game-dedupe"
+        game = make_crocodile_game(game_id="game-dedupe", creator_id=111, guesser_id=222)
+        game.process_guess = AsyncMock(return_value={"event": "cold", "hint": "No."})
+
+        with (
+            patch("app.games.crocodile.load_game", new_callable=AsyncMock, return_value=game),
+            patch("app.games.crocodile.get_game_history", return_value=[]),
+        ):
+            async with test_client.websocket(url) as ws:
+                await ws.receive()
+
+                await ws.send(json.dumps({"type": "guess", "word": "кот", "pending_id": "pid-dup"}))
+                first = json.loads(await ws.receive())
+                await ws.send(json.dumps({"type": "guess", "word": "кот", "pending_id": "pid-dup"}))
+                second = json.loads(await ws.receive())
+
+        assert first["pending_id"] == "pid-dup"
+        assert second["pending_id"] == "pid-dup"
+        game.process_guess.assert_awaited_once_with("кот")
+
+    async def test_reconnect_with_last_seen_seq_uses_history_replay(self, test_client, mock_bot_token):
+        init_data = make_valid_init_data(mock_bot_token, user_id=222)
+        url = f"/webapp/game/ws?initData={urllib.parse.quote(init_data)}&game_id=game-replay&last_seen_seq=4"
+        game = make_crocodile_game(game_id="game-replay", creator_id=111, guesser_id=222)
+        replay_items = [
+            {"word": "кот", "status": "cold", "hint": "Мимо", "score": 0.1, "seq": 5, "server_time_ms": 123}
+        ]
+
+        with (
+            patch("app.games.crocodile.load_game", new_callable=AsyncMock, return_value=game),
+            patch("app.games.crocodile_runtime.get_runtime_history", new_callable=AsyncMock, return_value=replay_items),
+        ):
+            async with test_client.websocket(url) as ws:
+                await ws.receive()
+                replay_raw = await ws.receive()
+                replay = json.loads(replay_raw)
+
+        assert replay["event"] == "history_replay"
+        assert replay["items"][0]["seq"] == 5
 
     async def test_creator_guard(self, test_client, mock_bot_token):
         """WS-05: Creator cannot guess."""

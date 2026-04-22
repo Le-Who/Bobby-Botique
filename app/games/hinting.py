@@ -6,6 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from app.games.ai_budget import HintGenerationMode, has_any_ai_studio_cooldown, should_pause_background_prefetch
+from app.games.crocodile_flags import is_hint_prewarm_enabled
 from app.utils.background_tasks import start_background_task
 
 logger = logging.getLogger(__name__)
@@ -42,12 +43,17 @@ async def get_or_generate_cached_hints(
     if cached:
         return cached
 
+    if mode == "background" and should_pause_background_prefetch():
+        return None
+
     key = _hint_key(word, category, topic_id)
     inflight = _HINTS_INFLIGHT.get(key)
     if inflight is not None:
         return await asyncio.shield(inflight)
 
     async def _do_generate() -> list[str] | None:
+        if mode == "background" and should_pause_background_prefetch():
+            return None
         hints = await generate_hints(word, category, mode=mode)
         if hints:
             await cache_hints(word, category, hints, topic_id=topic_id)
@@ -62,8 +68,12 @@ async def get_or_generate_cached_hints(
             _HINTS_INFLIGHT.pop(key, None)
 
 
-def enqueue_bank_hint_prewarm(words: list[str], category: str, *, topic_id: str = "") -> bool:
+async def enqueue_bank_hint_prewarm(words: list[str], category: str, *, topic_id: str = "") -> bool:
     global _BANK_PREFETCH_WORKER
+
+    if not await is_hint_prewarm_enabled():
+        logger.info("Skipping bank hint prewarm for category=%r because runtime switch is off", category)
+        return False
 
     if has_any_ai_studio_cooldown():
         logger.info("Skipping bank hint prewarm for category=%r because Gemini cooldown is active", category)
@@ -87,6 +97,16 @@ def enqueue_bank_hint_prewarm(words: list[str], category: str, *, topic_id: str 
         "croc_bank_hint_prefetch",
     )
     return True
+
+
+async def get_hint_prewarm_health() -> dict[str, int | bool]:
+    return {
+        "enabled": await is_hint_prewarm_enabled(),
+        "queue_depth": len(_BANK_PREFETCH_QUEUE),
+        "pending_topics": len(_BANK_PREFETCH_PENDING_TOPICS),
+        "inflight_hints": len(_HINTS_INFLIGHT),
+        "worker_running": _BANK_PREFETCH_WORKER is not None and not _BANK_PREFETCH_WORKER.done(),
+    }
 
 
 async def _run_bank_prefetch_worker() -> None:

@@ -798,16 +798,54 @@ async def set_dailycroc_delivery_command(update: Update, context: ContextTypes.D
 @admin_only
 async def dailycroc_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show a snapshot of today's Daily Crocodile delivery pipeline."""
+    from app.games.crocodile_flags import get_crocodile_runtime_switches
+    from app.games.crocodile_runtime import get_runtime_health_snapshot
+    from app.games.hinting import get_hint_prewarm_health
+    from app.providers.gemini import get_vertex_client
+    from app.web_miniapp import _get_live_model_cooldown_seconds
+
     today = daily_croc_repo.today_puzzle_date()
     stats = await daily_croc_repo.get_delivery_status(today)
+    puzzles = await daily_croc_repo.get_puzzles_for_date(today)
     delivery_on = await get_global_setting(daily_croc_repo.DAILY_DELIVERY_SETTING_KEY, "on")
     placeholder = await get_global_setting("daily_croc_placeholder_file_id", "")
+    switches = await get_crocodile_runtime_switches()
+    hint_health = await get_hint_prewarm_health()
+    runtime_health = get_runtime_health_snapshot()
+    vertex_ready = get_vertex_client() is not None
+    live_cooldown = _get_live_model_cooldown_seconds()
+
+    prepared_lines = []
+    for difficulty in daily_croc_repo.DAILY_DIFFICULTIES:
+        puzzle = puzzles.get(difficulty)
+        if not puzzle:
+            prepared_lines.append(f"  {difficulty}: <code>missing</code>")
+            continue
+        prepared_lines.append(
+            f"  {difficulty}: <code>{'ready' if daily_croc_repo.is_puzzle_fully_prepared(puzzle) else 'warming'}</code>"
+        )
 
     lines = [
         f"🐊 <b>Daily Crocodile — {today.isoformat()}</b>",
         "",
         f"📨 <b>Рассылка:</b> {'включена ✅' if delivery_on == 'on' else 'выключена ❌'}",
         f"🖼 <b>Placeholder:</b> {'установлен ✅' if placeholder else 'не задан ⚠️'}",
+        "",
+        "<b>Runtime switches:</b>",
+        f"  live_audio_enabled: <code>{'on' if switches.get('live_audio_enabled') else 'off'}</code>",
+        f"  crocodile_hint_prewarm_enabled: <code>{'on' if switches.get('crocodile_hint_prewarm_enabled') else 'off'}</code>",
+        f"  daily_dual_track_enabled: <code>{'on' if switches.get('daily_dual_track_enabled') else 'off'}</code>",
+        "",
+        "<b>Health:</b>",
+        f"  Vertex Live ready: <code>{'yes' if vertex_ready else 'no'}</code>",
+        f"  Live cooldown: <code>{live_cooldown}s</code>",
+        f"  Hint queue depth: <code>{hint_health.get('queue_depth', 0)}</code>",
+        f"  Hint worker running: <code>{'yes' if hint_health.get('worker_running') else 'no'}</code>",
+        f"  Replay buffers: <code>{runtime_health.get('history_buffers', 0)}</code>",
+        f"  Pending dedupe buckets: <code>{runtime_health.get('pending_result_buckets', 0)}</code>",
+        "",
+        "<b>Daily prep:</b>",
+        *prepared_lines,
         "",
         "<b>Подписки:</b>",
         f"  Всего подписано:      <code>{stats.get('total_subscribed', 0)}</code>",
@@ -856,4 +894,3 @@ async def set_dailycroc_placeholder_command(update: Update, context: ContextType
         f"✅ Placeholder сохранён.\n<code>file_id: {file_id[:60]}…</code>",
         parse_mode="HTML",
     )
-

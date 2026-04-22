@@ -117,6 +117,37 @@ async def _send_live_fatal(
         pass
 
 
+def _build_live_connect_config(*, system_instruction: str, resumption_handle: str | None):
+    from google.genai import types
+
+    return types.LiveConnectConfig(
+        response_modalities=[types.Modality.AUDIO],
+        input_audio_transcription=types.AudioTranscriptionConfig(),
+        output_audio_transcription=types.AudioTranscriptionConfig(),
+        session_resumption=types.SessionResumptionConfig(
+            handle=resumption_handle or None,
+            transparent=True,
+        ),
+        context_window_compression=types.ContextWindowCompressionConfig(
+            sliding_window=types.SlidingWindow(),
+        ),
+        realtime_input_config=types.RealtimeInputConfig(
+            automatic_activity_detection=types.AutomaticActivityDetection(
+                start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
+                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
+                prefix_padding_ms=150,
+                silence_duration_ms=700,
+            ),
+            activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+            turn_coverage=types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
+        ),
+        tools=[types.Tool(google_search=types.GoogleSearch())],
+        system_instruction=types.Content(parts=[types.Part(text=system_instruction)]),
+        proactivity=types.ProactivityConfig(proactive_audio=False),
+        enable_affective_dialog=False,
+    )
+
+
 # ── Telegram initData Validation ─────────────────────────────────────────────
 
 
@@ -755,13 +786,24 @@ async def daily_game_ws():
     from quart import websocket
 
     from app.games.crocodile_daily import (
+        build_daily_completion_summary,
         get_daily_hints,
-        get_daily_state,
+        get_daily_overview,
         history_items,
         process_daily_guess,
     )
-    from app.games.crocodile_runtime import game_mutation_lock
-    from app.repos.crocodile_daily import DAILY_MAX_ATTEMPTS, increment_hint_count, update_timezone_if_known
+    from app.games.crocodile_runtime import (
+        cache_pending_action_result,
+        game_mutation_lock,
+        get_cached_pending_action_result,
+        stamp_runtime_payload,
+    )
+    from app.repos.crocodile_daily import (
+        DAILY_MAX_ATTEMPTS,
+        increment_hint_count,
+        normalize_daily_difficulty,
+        update_timezone_if_known,
+    )
 
     raw_init_data = websocket.args.get("initData", "")
     if not raw_init_data:
@@ -786,35 +828,78 @@ async def daily_game_ws():
         except Exception as exc:
             logger.debug("daily_game_ws: timezone update failed user=%s: %s", user_id, exc)
 
-    puzzle, result = await get_daily_state(user_id)
+    difficulty = normalize_daily_difficulty(websocket.args.get("difficulty", "easy"))
+    try:
+        last_seen_seq = max(0, int(websocket.args.get("last_seen_seq", "0") or 0))
+    except ValueError:
+        last_seen_seq = 0
+
+    puzzle_date, puzzles, results = await get_daily_overview(user_id)
+    if difficulty not in puzzles:
+        difficulty = "easy"
+    puzzle = puzzles[difficulty]
+    result = results[difficulty]
+    runtime_id = f"daily:{puzzle_date}:{difficulty}:{user_id}"
     await websocket.send_json(
-        {
-            "event": "game_state",
-            "category": f"Крокодил дня · {puzzle.puzzle_date.isoformat()}",
-            "lang": puzzle.lang,
-            "attempts": len(result.attempts),
-            "max_attempts": DAILY_MAX_ATTEMPTS,
-            "is_creator": False,
-            "target_word": None,
-            "daily": True,
-        }
-    )
-    history = history_items(result)
-    if history:
-        await websocket.send_json({"event": "history_sync", "items": history})
-    if result.status != "active":
-        await websocket.send_json(
+        await stamp_runtime_payload(
+            runtime_id,
             {
-                "event": "daily_completed",
-                "status": result.status,
-                "word": puzzle.target_word,
+                "event": "game_state",
+                "category": f"Крокодил дня · {puzzle.puzzle_date.isoformat()}",
+                "lang": puzzle.lang,
                 "attempts": len(result.attempts),
                 "max_attempts": DAILY_MAX_ATTEMPTS,
-                "points": result.points,
-                "streak": result.streak_after,
-                "share_grid": result.share_grid,
-                "won": result.status == "won",
-            }
+                "is_creator": False,
+                "target_word": None,
+                "daily": True,
+                "difficulty": difficulty,
+                "daily_modes": [
+                    {
+                        "difficulty": item_difficulty,
+                        "label": item_difficulty.title(),
+                        "status": results[item_difficulty].status,
+                        "completed": results[item_difficulty].status != "active",
+                    }
+                    for item_difficulty in puzzles
+                ],
+            },
+        )
+    )
+    history = history_items(result, after_seq=last_seen_seq)
+    if history:
+        await websocket.send_json(
+            await stamp_runtime_payload(
+                runtime_id,
+                {
+                    "event": "history_replay" if last_seen_seq > 0 else "history_sync",
+                    "items": history,
+                    "from_seq": last_seen_seq if last_seen_seq > 0 else None,
+                },
+            )
+        )
+    if result.status != "active":
+        summary = await build_daily_completion_summary(user_id, puzzle.puzzle_date, focus_difficulty=difficulty)
+        await websocket.send_json(
+            await stamp_runtime_payload(
+                runtime_id,
+                {
+                    "event": "daily_completed",
+                    "status": result.status,
+                    "difficulty": difficulty,
+                    "word": puzzle.target_word,
+                    "attempts": len(result.attempts),
+                    "max_attempts": DAILY_MAX_ATTEMPTS,
+                    "points": result.points,
+                    "streak": result.streak_after,
+                    "share_grid": result.share_grid,
+                    "won": result.status == "won",
+                    "rank": summary["modes"].get(difficulty, {}).get("rank"),
+                    "leaderboard": summary["modes"].get(difficulty, {}).get("leaderboard", []),
+                    "modes": list(summary["modes"].values()),
+                    "next_difficulty": summary.get("next_difficulty"),
+                    "focus_difficulty": summary.get("focus_difficulty"),
+                },
+            )
         )
         return
 
@@ -839,23 +924,31 @@ async def daily_game_ws():
                 hint_idx = int(msg.get("hint_index", 0))
                 hints = await get_daily_hints(puzzle)
                 if 0 <= hint_idx < len(hints):
-                    used = await increment_hint_count(user_id, puzzle.puzzle_date)
+                    used = await increment_hint_count(user_id, puzzle.puzzle_date, difficulty=difficulty)
                     await websocket.send_json(
-                        {
-                            "event": "hint",
-                            "text": hints[hint_idx],
-                            "hint_index": hint_idx,
-                            "used_hints_count": used,
-                            "available": True,
-                        }
+                        await stamp_runtime_payload(
+                            runtime_id,
+                            {
+                                "event": "hint",
+                                "difficulty": difficulty,
+                                "text": hints[hint_idx],
+                                "hint_index": hint_idx,
+                                "used_hints_count": used,
+                                "available": True,
+                            },
+                        )
                     )
                 else:
                     await websocket.send_json(
-                        {
-                            "event": "hint",
-                            "text": "⏳ Подсказки ещё готовятся или закончились...",
-                            "available": False,
-                        }
+                        await stamp_runtime_payload(
+                            runtime_id,
+                            {
+                                "event": "hint",
+                                "difficulty": difficulty,
+                                "text": "⏳ Подсказки ещё готовятся или закончились...",
+                                "available": False,
+                            },
+                        )
                     )
                 continue
 
@@ -864,16 +957,28 @@ async def daily_game_ws():
 
             word = str(msg.get("word", "")).strip()
             if not word:
-                await websocket.send_json({"event": "error", "message": "Empty guess"})
+                await websocket.send_json(
+                    await stamp_runtime_payload(runtime_id, {"event": "error", "message": "Empty guess"})
+                )
                 continue
 
-            async with game_mutation_lock(f"daily:{puzzle.puzzle_date}:{user_id}"):
-                _, before = await get_daily_state(user_id)
-                was_active = before.status == "active"
-                event = await process_daily_guess(user_id, word)
+            if pending_id:
+                cached_event = await get_cached_pending_action_result(runtime_id, pending_id)
+                if cached_event is not None:
+                    await websocket.send_json(cached_event)
+                    continue
 
+            async with game_mutation_lock(f"daily:{puzzle.puzzle_date}:{difficulty}:{user_id}"):
+                _, current_puzzles, current_results = await get_daily_overview(user_id)
+                puzzle = current_puzzles.get(difficulty, puzzle)
+                before = current_results.get(difficulty, result)
+                was_active = before.status == "active"
+                event = await process_daily_guess(user_id, word, difficulty=difficulty)
+
+            event = await stamp_runtime_payload(runtime_id, event)
             if pending_id:
                 event["pending_id"] = pending_id
+                await cache_pending_action_result(runtime_id, pending_id, event)
             await websocket.send_json(event)
 
             if was_active and event.get("daily_completed"):
@@ -886,7 +991,12 @@ async def daily_game_ws():
 
                     bot = get_bot()
                     if bot:
-                        await send_daily_completion_bundle(bot, user_id, puzzle.puzzle_date)
+                        await send_daily_completion_bundle(
+                            bot,
+                            user_id,
+                            puzzle.puzzle_date,
+                            focus_difficulty=difficulty,
+                        )
                         queue_daily_result_refresh(bot, puzzle.puzzle_date)
                 except Exception as exc:
                     logger.warning("daily_game_ws: result message failed user=%s: %s", user_id, exc)
@@ -913,11 +1023,15 @@ async def game_ws():
 
     from app.games.crocodile import get_game_hints, get_game_history, load_game
     from app.games.crocodile_runtime import (
+        cache_pending_action_result,
         game_mutation_lock,
+        get_cached_pending_action_result,
         get_runtime_hints,
         get_runtime_history,
+        get_runtime_replay,
         open_game_event_subscription,
         publish_runtime_event,
+        stamp_runtime_payload,
     )
 
     raw_init_data = websocket.args.get("initData", "")
@@ -945,6 +1059,11 @@ async def game_ws():
         await websocket.close(4400, "Missing game_id")
         return
 
+    try:
+        last_seen_seq = max(0, int(websocket.args.get("last_seen_seq", "0") or 0))
+    except ValueError:
+        last_seen_seq = 0
+
     game = await load_game(game_id)
     if game is None:
         await websocket.close(4008, "Game expired or not found")
@@ -968,15 +1087,18 @@ async def game_ws():
     # Send initial game state
     is_creator = user_id == game.creator_id
     await websocket.send_json(
-        {
-            "event": "game_state",
-            "category": game.category,
-            "lang": game.lang,
-            "attempts": len(game.attempts),
-            "max_attempts": game.max_attempts,
-            "is_creator": is_creator,
-            "target_word": game.target_word if is_creator else None,
-        }
+        await stamp_runtime_payload(
+            game_id,
+            {
+                "event": "game_state",
+                "category": game.category,
+                "lang": game.lang,
+                "attempts": len(game.attempts),
+                "max_attempts": game.max_attempts,
+                "is_creator": is_creator,
+                "target_word": game.target_word if is_creator else None,
+            },
+        )
     )
 
     # Restore chat history so reconnecting players keep their progress visible
@@ -984,7 +1106,19 @@ async def game_ws():
     if not history:
         history = get_game_history(game_id)
     if history:
-        await websocket.send_json({"event": "history_sync", "items": history})
+        replay_items = await get_runtime_replay(game_id, after_seq=last_seen_seq) if last_seen_seq > 0 else history
+        if replay_items:
+            history_event = "history_replay" if last_seen_seq > 0 else "history_sync"
+            await websocket.send_json(
+                await stamp_runtime_payload(
+                    game_id,
+                    {
+                        "event": history_event,
+                        "items": replay_items,
+                        "from_seq": last_seen_seq if last_seen_seq > 0 else None,
+                    },
+                )
+            )
 
     # Subscribe this socket to the game's PubSub broadcast queue
     subscriber_id = uuid.uuid4().hex
@@ -1021,7 +1155,9 @@ async def game_ws():
             try:
                 msg = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
-                await websocket.send_json({"event": "error", "message": "Invalid JSON"})
+                await websocket.send_json(
+                    await stamp_runtime_payload(game_id, {"event": "error", "message": "Invalid JSON"})
+                )
                 continue
 
             msg_type = msg.get("type")
@@ -1035,20 +1171,26 @@ async def game_ws():
                     hints = get_game_hints(game_id)
                 if hint_idx < len(hints):
                     await websocket.send_json(
-                        {
-                            "event": "hint",
-                            "text": hints[hint_idx],
-                            "hint_index": hint_idx,
-                            "available": True,
-                        }
+                        await stamp_runtime_payload(
+                            game_id,
+                            {
+                                "event": "hint",
+                                "text": hints[hint_idx],
+                                "hint_index": hint_idx,
+                                "available": True,
+                            },
+                        )
                     )
                 else:
                     await websocket.send_json(
-                        {
-                            "event": "hint",
-                            "text": "⏳ Подсказки ещё готовятся или закончились...",
-                            "available": False,
-                        }
+                        await stamp_runtime_payload(
+                            game_id,
+                            {
+                                "event": "hint",
+                                "text": "⏳ Подсказки ещё готовятся или закончились...",
+                                "available": False,
+                            },
+                        )
                     )
                 continue
 
@@ -1098,14 +1240,25 @@ async def game_ws():
 
             word = str(msg.get("word", "")).strip()
             if not word:
-                await websocket.send_json({"event": "error", "message": "Empty guess"})
+                await websocket.send_json(
+                    await stamp_runtime_payload(game_id, {"event": "error", "message": "Empty guess"})
+                )
                 continue
 
             if is_creator:
                 await websocket.send_json(
-                    {"event": "error", "message": "Создатель игры не может отгадывать свои слова."}
+                    await stamp_runtime_payload(
+                        game_id,
+                        {"event": "error", "message": "Создатель игры не может отгадывать свои слова."},
+                    )
                 )
                 continue
+
+            if pending_id:
+                cached_event = await get_cached_pending_action_result(game_id, pending_id)
+                if cached_event is not None:
+                    await websocket.send_json(cached_event)
+                    continue
 
             try:
                 from app.repos.crocodile_daily import record_player_activity
@@ -1125,6 +1278,9 @@ async def game_ws():
             # Echo pending_id back so the client can resolve its optimistic bubble
             if pending_id:
                 event["pending_id"] = pending_id
+            event = await stamp_runtime_payload(game_id, event)
+            if pending_id:
+                await cache_pending_action_result(game_id, pending_id, event)
 
             await websocket.send_json(event)
 
@@ -1135,6 +1291,8 @@ async def game_ws():
                 "status": event.get("status"),
                 "score": event.get("score"),
                 "hint": event.get("hint"),
+                "seq": event.get("seq"),
+                "server_time_ms": event.get("server_time_ms"),
             }
             if event.get("event") in ("game_over",):
                 broadcast_payload["event"] = "spectator_game_over"
@@ -1247,12 +1405,29 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
     from google.genai import types
 
     from app.config import GEMINI_LIVE_MODEL
-    from app.handlers.ai_core import _resolve_ai_request
-    from app.providers.gemini import get_cached_genai_client
+    from app.games.crocodile_flags import is_live_audio_enabled
+    from app.providers.gemini import get_vertex_client
     from app.repos.chats import get_user_chat
 
     session_resumption_token: str | None = None
     chat_state = await get_user_chat(user_id)
+
+    if not await is_live_audio_enabled():
+        await _send_live_fatal(
+            websocket,
+            reason="disabled",
+            message="Голосовой режим временно отключён администратором. Продолжите текстом.",
+        )
+        return
+
+    client = get_vertex_client()
+    if client is None:
+        await _send_live_fatal(
+            websocket,
+            reason="misconfigured",
+            message="Голосовой режим временно недоступен: Vertex AI Express не настроен.",
+        )
+        return
 
     cooldown_seconds = _get_live_model_cooldown_seconds()
     if cooldown_seconds > 0:
@@ -1294,280 +1469,195 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
             "Всегда отвечай на том же языке, на котором говорит пользователь."
         )
 
-    # ── Config factory ────────────────────────────────────────────────────
-    # Called fresh on every retry attempt to inject the latest resumption
-    # token. Building once outside the loop would freeze the handle and cause
-    # Gemini to start a new session on key-rotation reconnects, discarding all
-    # prior context.
-    # NOTE: transparent=True is a Vertex AI-only feature and is NOT supported
-    # by the AI Studio API key endpoint (ai.google.dev). It is intentionally
-    # omitted here. Standard handle-based resumption works for both backends.
-    def _build_live_config(handle: str | None) -> types.LiveConnectConfig:
-        _kw: dict = {
-            "response_modalities": [types.Modality.AUDIO],
-            "input_audio_transcription": types.AudioTranscriptionConfig(),
-            "output_audio_transcription": types.AudioTranscriptionConfig(),
-            "session_resumption": types.SessionResumptionConfig(
-                handle=handle or None,
-                # transparent=True is Vertex AI only — not used here (AI Studio key).
-            ),
-            "context_window_compression": types.ContextWindowCompressionConfig(
-                sliding_window=types.SlidingWindow(),
-            ),
-            "tools": [types.Tool(google_search=types.GoogleSearch())],
-            "system_instruction": types.Content(parts=[types.Part(text=" ".join(_sys_parts))]),
-        }
-        if chat_state and chat_state.thinking_level:
-            # AI Studio Live API (gemini-3.1-flash-live-preview) expects lowercase
-            # thinking_level values: 'low', 'medium', 'high', 'minimal'.
-            # Do NOT uppercase — it causes an INVALID_ARGUMENT error.
-            _kw["thinking_config"] = types.ThinkingConfig(
-                thinking_level=chat_state.thinking_level.lower()
-            )
-        return types.LiveConnectConfig(**_kw)  # type: ignore[arg-type]
+    logger.info(
+        "live_audio_ws: connecting user=%d model=%s resumption_token=%s via=vertex",
+        user_id,
+        GEMINI_LIVE_MODEL,
+        bool(session_resumption_token or resumption_token),
+    )
+    live_config = _build_live_connect_config(
+        system_instruction=" ".join(_sys_parts),
+        resumption_handle=session_resumption_token or resumption_token,
+    )
+    try:
+        async with client.aio.live.connect(model=GEMINI_LIVE_MODEL, config=live_config) as session:
+            await websocket.send_json({"type": "connected"})
 
-    MAX_RETRIES = 3
-    for attempt in range(MAX_RETRIES):
-        key_data, _, _ = await _resolve_ai_request(
-            GEMINI_LIVE_MODEL,
-            use_openrouter=False,
-        )
-        if not key_data:
-            await websocket.close(4500, "No API keys configured or available")
-            return
-        api_key = key_data["api_key"]
+            # ── Producer: browser → Gemini ────────────────────────────────
+            async def _producer() -> None:
+                start_time = time.monotonic()
+                try:
+                    while True:
+                        if time.monotonic() - start_time > 1800:
+                            await websocket.close(1008, "Session duration limit reached (30m)")
+                            return
+                        try:
+                            raw = await asyncio.wait_for(websocket.receive(), timeout=600.0)
+                        except TimeoutError:
+                            logger.info("live_audio_ws: websocket idle timeout user=%d", user_id)
+                            await websocket.close(1000, "Idle timeout")
+                            return
 
-        client = get_cached_genai_client(api_key)
+                        try:
+                            msg = json.loads(raw)
+                        except (json.JSONDecodeError, TypeError):
+                            continue
 
-        # Signal the frontend that we are (re)connecting so it can render a
-        # reconnecting indicator instead of leaving the UI in an ambiguous state.
-        if attempt > 0:
-            try:
-                await websocket.send_json({"type": "ui_event", "state": "reconnecting"})
-            except Exception:
-                pass
+                        msg_type = msg.get("type")
 
-        logger.info(
-            "live_audio_ws: connecting user=%d model=%s resumption_token=%s attempt=%d",
-            user_id,
-            GEMINI_LIVE_MODEL,
-            bool(session_resumption_token or resumption_token),
-            attempt + 1,
-        )
-        # Build a fresh config injecting the most recent resumption handle.
-        # On attempt 0 this is the caller-supplied token (or None for a new
-        # session). On retries this picks up the dynamically-received handle
-        # so that context is preserved across key-rotation reconnects.
-        live_config = _build_live_config(session_resumption_token or resumption_token)
-        try:
-            async with client.aio.live.connect(model=GEMINI_LIVE_MODEL, config=live_config) as session:
-                await websocket.send_json({"type": "connected"})
-
-                # ── Producer: browser → Gemini ────────────────────────────────
-                async def _producer() -> None:
-                    start_time = time.monotonic()
-                    _mic_ended = False  # True after audio_stream_end; resets on new audio
-                    try:
-                        while True:
-                            if time.monotonic() - start_time > 1800:
-                                await websocket.close(1008, "Session duration limit reached (30m)")
-                                return
-                            try:
-                                raw = await asyncio.wait_for(websocket.receive(), timeout=600.0)
-                            except TimeoutError:
-                                logger.info("live_audio_ws: websocket idle timeout user=%d", user_id)
-                                await websocket.close(1000, "Idle timeout")
-                                return
-
-                            try:
-                                msg = json.loads(raw)
-                            except (json.JSONDecodeError, TypeError):
-                                continue
-
-                            msg_type = msg.get("type")
-
-                            if msg_type == "realtime_input":
-                                audio_b64 = msg.get("data", "")
-                                mime_type = msg.get("mime_type", "audio/pcm;rate=16000")
-                                if audio_b64:
-                                    audio_bytes = base64.b64decode(audio_b64)
-                                    await session.send_realtime_input(
-                                        audio=types.Blob(data=audio_bytes, mime_type=mime_type)
-                                    )
-                                _mic_ended = False  # New audio — mic is active again
-
-                            elif msg_type == "audio_stream_end":
-                                await session.send_realtime_input(audio_stream_end=True)
-                                _mic_ended = True  # Start idle countdown
-
-                            elif msg_type == "text":
-                                text = msg.get("text", "")
-                                if text:
-                                    await session.send_realtime_input(text=text)
-
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception as exc:
-                        logger.warning(
-                            "live_audio_ws producer error user=%d: %s",
-                            user_id,
-                            exc,
-                        )
-
-                # ── Consumer: Gemini → browser ────────────────────────────────
-                async def _consumer() -> None:
-                    nonlocal session_resumption_token
-                    try:
-                        async for response in session.receive():
-                            content = response.server_content
-                            if content:
-                                # Audio chunks
-                                if content.model_turn and content.model_turn.parts:
-                                    for part in content.model_turn.parts:
-                                        if part.inline_data and part.inline_data.data:
-                                            audio_b64 = base64.b64encode(part.inline_data.data).decode("ascii")
-                                            await websocket.send_json(
-                                                {
-                                                    "type": "audio",
-                                                    "data": audio_b64,
-                                                }
-                                            )
-
-                                # Transcriptions
-                                if content.input_transcription:
-                                    await websocket.send_json(
-                                        {
-                                            "type": "input_transcript",
-                                            "text": content.input_transcription.text,
-                                        }
-                                    )
-                                if content.output_transcription:
-                                    await websocket.send_json(
-                                        {
-                                            "type": "output_transcript",
-                                            "text": content.output_transcription.text,
-                                        }
-                                    )
-
-                                # Interruption
-                                if content.interrupted is True:
-                                    await websocket.send_json({"type": "interrupt"})
-
-                            # Session resumption update
-                            if hasattr(response, "session_resumption_update"):
-                                sru = response.session_resumption_update
-                                if sru and hasattr(sru, "new_handle") and sru.new_handle:
-                                    session_resumption_token = sru.new_handle
-                                    await websocket.send_json(
-                                        {
-                                            "type": "resumption_token",
-                                            "token": sru.new_handle,
-                                        }
-                                    )
-
-                            # GoAway signal — server will terminate connection soon.
-                            # Relay to client so it can proactively reconnect.
-                            if hasattr(response, "go_away") and response.go_away is not None:
-                                time_left = response.go_away.time_left
-                                seconds_left = 60.0
-                                if time_left is not None:
-                                    seconds_left = (
-                                        time_left.total_seconds()
-                                        if hasattr(time_left, "total_seconds")
-                                        else float(time_left)
-                                    )
-                                logger.info(
-                                    "live_audio_ws: GoAway received user=%d time_left=%.1fs",
-                                    user_id,
-                                    seconds_left,
+                        if msg_type == "realtime_input":
+                            audio_b64 = msg.get("data", "")
+                            mime_type = msg.get("mime_type", "audio/pcm;rate=16000")
+                            if audio_b64:
+                                audio_bytes = base64.b64decode(audio_b64)
+                                await session.send_realtime_input(
+                                    audio=types.Blob(data=audio_bytes, mime_type=mime_type)
                                 )
+                        elif msg_type == "audio_stream_end":
+                            await session.send_realtime_input(audio_stream_end=True)
+                        elif msg_type == "text":
+                            text = msg.get("text", "")
+                            if text:
+                                await session.send_realtime_input(text=text)
+
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    logger.warning("live_audio_ws producer error user=%d: %s", user_id, exc)
+
+            # ── Consumer: Gemini → browser ────────────────────────────────
+            async def _consumer() -> None:
+                nonlocal session_resumption_token
+                try:
+                    async for response in session.receive():
+                        content = response.server_content
+                        if content:
+                            if content.model_turn and content.model_turn.parts:
+                                for part in content.model_turn.parts:
+                                    if part.inline_data and part.inline_data.data:
+                                        audio_b64 = base64.b64encode(part.inline_data.data).decode("ascii")
+                                        await websocket.send_json(
+                                            {
+                                                "type": "audio",
+                                                "data": audio_b64,
+                                            }
+                                        )
+
+                            if content.input_transcription:
                                 await websocket.send_json(
                                     {
-                                        "type": "go_away",
-                                        "time_left_seconds": seconds_left,
+                                        "type": "input_transcript",
+                                        "text": content.input_transcription.text,
+                                    }
+                                )
+                            if content.output_transcription:
+                                await websocket.send_json(
+                                    {
+                                        "type": "output_transcript",
+                                        "text": content.output_transcription.text,
                                     }
                                 )
 
-                        logger.info("live_audio_ws: consumer receive loop ended normally user=%d", user_id)
-                    except asyncio.CancelledError:
-                        logger.debug("live_audio_ws: consumer cancelled user=%d", user_id)
-                    except Exception as exc:
-                        logger.warning(
-                            "live_audio_ws consumer error user=%d: %s: %s",
-                            user_id,
-                            type(exc).__name__,
-                            exc,
-                        )
-                        try:
-                            await websocket.send_json({"type": "error", "message": str(exc)})
-                        except Exception:
-                            pass
+                            if content.interrupted is True:
+                                await websocket.send_json({"type": "interrupt"})
 
-                # ── Run both loops concurrently ───────────────────────────────
-                producer_task = asyncio.create_task(_producer())
-                consumer_task = asyncio.create_task(_consumer())
+                        if hasattr(response, "session_resumption_update"):
+                            sru = response.session_resumption_update
+                            if sru and hasattr(sru, "new_handle") and sru.new_handle:
+                                session_resumption_token = sru.new_handle
+                                await websocket.send_json(
+                                    {
+                                        "type": "resumption_token",
+                                        "token": sru.new_handle,
+                                    }
+                                )
 
-                try:
-                    _done, _pending = await asyncio.wait(
-                        {producer_task, consumer_task},
-                        return_when=asyncio.FIRST_COMPLETED,
+                        if hasattr(response, "go_away") and response.go_away is not None:
+                            time_left = response.go_away.time_left
+                            seconds_left = 60.0
+                            if time_left is not None:
+                                seconds_left = (
+                                    time_left.total_seconds()
+                                    if hasattr(time_left, "total_seconds")
+                                    else float(time_left)
+                                )
+                            logger.info(
+                                "live_audio_ws: GoAway received user=%d time_left=%.1fs",
+                                user_id,
+                                seconds_left,
+                            )
+                            await websocket.send_json(
+                                {
+                                    "type": "go_away",
+                                    "time_left_seconds": seconds_left,
+                                }
+                            )
+
+                    logger.info("live_audio_ws: consumer receive loop ended normally user=%d", user_id)
+                except asyncio.CancelledError:
+                    logger.debug("live_audio_ws: consumer cancelled user=%d", user_id)
+                except Exception as exc:
+                    logger.warning(
+                        "live_audio_ws consumer error user=%d: %s: %s",
+                        user_id,
+                        type(exc).__name__,
+                        exc,
                     )
-                    # Grace period only applies to the clean producer-exit path
-                    # (e.g. client navigated away or idle-mic watchdog fired).
-                    # We give the consumer up to 5 s to drain the final
-                    # SessionResumptionUpdate from Gemini before cancelling.
-                    # On error paths (key rotation) we skip the grace and cancel
-                    # immediately to minimise reconnection latency.
-                    if producer_task in _done and not consumer_task.done():
+                    try:
+                        await websocket.send_json({"type": "error", "message": str(exc)})
+                    except Exception:
+                        pass
+
+            producer_task = asyncio.create_task(_producer())
+            consumer_task = asyncio.create_task(_consumer())
+
+            try:
+                done, _ = await asyncio.wait(
+                    {producer_task, consumer_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if producer_task in done and not consumer_task.done():
+                    try:
+                        await asyncio.wait_for(asyncio.shield(consumer_task), timeout=5.0)
+                    except (TimeoutError, asyncio.CancelledError):
+                        pass
+            finally:
+                for task in (producer_task, consumer_task):
+                    if not task.done():
+                        task.cancel()
                         try:
-                            await asyncio.wait_for(asyncio.shield(consumer_task), timeout=5.0)
-                        except (TimeoutError, asyncio.CancelledError):
+                            await asyncio.wait_for(task, timeout=0.25)
+                        except (asyncio.CancelledError, TimeoutError):
                             pass
-                finally:
-                    for task in (producer_task, consumer_task):
-                        if not task.done():
-                            task.cancel()
-                            try:
-                                await asyncio.wait_for(task, timeout=0.25)
-                            except (asyncio.CancelledError, TimeoutError):
-                                pass
 
-            break  # Clean session end — exit the retry loop
-
-        except Exception as exc:
-            err_str = str(exc)
-            if _is_live_resource_exhausted(err_str):
-                # Gemini API rate limits are applied per project, not per API key.
-                # Rotating/suspending keys from the same AI Studio project only
-                # amplifies reconnect storms and incorrectly marks healthy keys dead.
-                retry_after_seconds = _mark_live_model_cooldown(
-                    _extract_live_retry_after_seconds(err_str) or 60,
-                    err_str,
-                )
-                logger.warning(
-                    "live_audio_ws: resource exhausted user=%d attempt=%d model=%s retry_after=%ds: %s",
-                    user_id,
-                    attempt + 1,
-                    GEMINI_LIVE_MODEL,
-                    retry_after_seconds,
-                    err_str,
-                )
-                await _send_live_fatal(
-                    websocket,
-                    reason="server_capacity",
-                    message=(
-                        "Голосовой режим временно недоступен со стороны Gemini Live API. "
-                        "Попробуйте ещё раз чуть позже или продолжите текстом."
-                    ),
-                    retry_after_seconds=retry_after_seconds,
-                )
-                break
-
+    except Exception as exc:
+        err_str = str(exc)
+        if _is_live_resource_exhausted(err_str):
+            retry_after_seconds = _mark_live_model_cooldown(
+                _extract_live_retry_after_seconds(err_str) or 60,
+                err_str,
+            )
+            logger.warning(
+                "live_audio_ws: resource exhausted user=%d model=%s retry_after=%ds: %s",
+                user_id,
+                GEMINI_LIVE_MODEL,
+                retry_after_seconds,
+                err_str,
+            )
+            await _send_live_fatal(
+                websocket,
+                reason="server_capacity",
+                message=(
+                    "Голосовой режим временно недоступен со стороны Gemini Live API. "
+                    "Попробуйте ещё раз чуть позже или продолжите текстом."
+                ),
+                retry_after_seconds=retry_after_seconds,
+            )
+        else:
             logger.error("live_audio_ws: session fatal error user=%d: %s", user_id, err_str)
             try:
                 await websocket.send_json({"type": "error", "message": f"Live session failed: {err_str}"})
             except Exception:
                 pass
-            break
 
     logger.info("live_audio_ws: disconnected user=%d", user_id)

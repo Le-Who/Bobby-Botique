@@ -29,9 +29,8 @@ IMAGEN_MODEL_ULTRA: str = "imagen-4.0-ultra-generate-001"
 IMAGEN_MODELS_ORDERED: list[str] = [IMAGEN_MODEL_FAST, IMAGEN_MODEL_BASE, IMAGEN_MODEL_ULTRA]
 
 # --- Gemini Live API (real-time bidirectional audio) ---
-# gemini-3.1-flash-live-preview: Recommended model for Live API.
-# Uses thinking_level instead of thinking_budget.
-GEMINI_LIVE_MODEL: str = "gemini-3.1-flash-live-preview"
+# Stable Vertex-native Live Audio path.
+GEMINI_LIVE_MODEL: str = "gemini-live-2.5-flash-native-audio"
 
 # --- Pollinations.ai image models ---
 # Overridable via env: IMAGE_MODELS="flux,zimage,gptimage,..."

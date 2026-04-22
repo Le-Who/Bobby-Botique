@@ -969,6 +969,69 @@ def _normalise_word_pick_key(word: str) -> str:
     return re.sub(r"\s+", " ", word.strip().lower())
 
 
+def _normalise_word_diversity_key(word: str) -> str:
+    base = _normalise_word_pick_key(word)
+    base = unicodedata.normalize("NFKD", base)
+    base = "".join(ch for ch in base if not unicodedata.combining(ch))
+    base = re.sub(r"[^a-zа-яё0-9 -]", "", base)
+    base = base.replace("ё", "е")
+    base = re.sub(r"(ами|ями|ями|ого|ему|ому|ыми|ими|ыми|ий|ый|ой|ая|яя|ое|ее|ые|ие|ов|ев|ом|ем|ам|ям|ах|ях|у|ю|а|я|е|и|ы|о)$", "", base)
+    return re.sub(r"\s+", " ", base).strip(" -")
+
+
+def _word_difficulty_band(word: str) -> str:
+    score = len(word.replace(" ", ""))
+    if " " in word or "-" in word:
+        score += 2
+    if any(ch in word for ch in ("щ", "ъ", "ё", "q", "x", "z")):
+        score += 1
+    if score >= 14:
+        return "hard"
+    if score >= 9:
+        return "medium"
+    return "easy"
+
+
+def _word_rarity_band(word: str) -> str:
+    score = len(set(word.replace(" ", "")))
+    if " " in word or "-" in word:
+        score += 1
+    return "rare" if score >= 9 else "common"
+
+
+def describe_word_bank_entry(word: str, *, topic_id: str = "") -> dict[str, str]:
+    return {
+        "word": word,
+        "normalized_lemma": _normalise_word_diversity_key(word) or _normalise_word_pick_key(word),
+        "difficulty_band": _word_difficulty_band(word),
+        "rarity_band": _word_rarity_band(word),
+        "source_topic_id": topic_id,
+    }
+
+
+def _filter_words_by_difficulty(words: list[str], *, topic_id: str, preferred_difficulty: str | None) -> list[str]:
+    if preferred_difficulty not in {"easy", "hard"}:
+        return list(words)
+
+    scored = [(word, describe_word_bank_entry(word, topic_id=topic_id)) for word in words]
+    if preferred_difficulty == "easy":
+        filtered = [
+            word for word, meta in scored
+            if meta["difficulty_band"] == "easy" and meta["rarity_band"] == "common"
+        ]
+        if filtered:
+            return filtered
+        return sorted(words, key=lambda item: (len(item.replace(" ", "")), item))[: max(1, len(words) // 2)]
+
+    filtered = [
+        word for word, meta in scored
+        if meta["difficulty_band"] == "hard" or meta["rarity_band"] == "rare"
+    ]
+    if filtered:
+        return filtered
+    return sorted(words, key=lambda item: (len(item.replace(" ", "")), item), reverse=True)[: max(1, len(words) // 2)]
+
+
 def _pick_rotating_word(topic_id: str, words: list[str], used: set[str] | None = None) -> str:
     """Pick next word from a shuffled per-topic cycle to avoid repeats."""
     if not words:
@@ -984,19 +1047,30 @@ def _pick_rotating_word(topic_id: str, words: list[str], used: set[str] | None =
 
     _, order, cursor = existing
     order_len = len(order)
-    available_keys = {_normalise_word_pick_key(word) for word in words}
+    available_keys = {
+        describe_word_bank_entry(word, topic_id=topic_id)["normalized_lemma"] or _normalise_word_pick_key(word)
+        for word in words
+    }
     if used:
-        available_keys -= {_normalise_word_pick_key(word) for word in used}
+        available_keys -= {
+            describe_word_bank_entry(word, topic_id=topic_id)["normalized_lemma"] or _normalise_word_pick_key(word)
+            for word in used
+        }
 
     # If all words are currently "used", continue regular cycle.
     if not available_keys:
-        available_keys = {_normalise_word_pick_key(word) for word in words}
+        available_keys = {
+            describe_word_bank_entry(word, topic_id=topic_id)["normalized_lemma"] or _normalise_word_pick_key(word)
+            for word in words
+        }
 
     chosen = order[cursor % order_len]
-    if _normalise_word_pick_key(chosen) not in available_keys:
+    chosen_key = describe_word_bank_entry(chosen, topic_id=topic_id)["normalized_lemma"] or _normalise_word_pick_key(chosen)
+    if chosen_key not in available_keys:
         for step in range(order_len):
             candidate = order[(cursor + step) % order_len]
-            if _normalise_word_pick_key(candidate) in available_keys:
+            candidate_key = describe_word_bank_entry(candidate, topic_id=topic_id)["normalized_lemma"] or _normalise_word_pick_key(candidate)
+            if candidate_key in available_keys:
                 chosen = candidate
                 cursor += step
                 break
@@ -1013,9 +1087,11 @@ def _normalise_generated_words(words: list[object]) -> list[str]:
         if not isinstance(raw_word, str):
             continue
         word = re.sub(r"\s+", " ", raw_word.strip().lower())
-        if not (2 <= len(word) <= 60) or word in seen:
+        meta = describe_word_bank_entry(word)
+        diversity_key = meta["normalized_lemma"] or word
+        if not (2 <= len(word) <= 60) or diversity_key in seen:
             continue
-        seen.add(word)
+        seen.add(diversity_key)
         clean.append(word)
     return clean
 
@@ -1126,7 +1202,7 @@ async def generate_words_for_category(
                 else:
                     await cache_generated_words(lang, category, clean)
                 logger.info("Generated %d words for custom category %r (%s)", len(clean), category, model)
-                enqueue_bank_hint_prewarm(clean, category, topic_id=topic_id_norm)
+                await enqueue_bank_hint_prewarm(clean, category, topic_id=topic_id_norm)
                 return clean
 
             except (TimeoutError, json.JSONDecodeError) as exc:
@@ -1292,6 +1368,7 @@ async def pick_random_word_for_topic(
     *,
     redis_used_key: str | None = None,
     used_words: set[str] | None = None,
+    preferred_difficulty: str | None = None,
 ) -> tuple[str, str, str, bool]:
     """Pick a random word for an already-resolved topic."""
     is_generated = False
@@ -1375,7 +1452,15 @@ async def pick_random_word_for_topic(
         used = set()
         logger.info("Used-words set reset for key=%s topic=%s", redis_used_key, topic.topic_id)
 
-    chosen = _pick_rotating_word(topic.topic_id, words, used=used)
+    candidate_words = _filter_words_by_difficulty(
+        words,
+        topic_id=topic.topic_id or topic.category,
+        preferred_difficulty=preferred_difficulty,
+    )
+    if not candidate_words:
+        candidate_words = list(words)
+
+    chosen = _pick_rotating_word(topic.topic_id, candidate_words, used=used)
 
     if redis_used_key:
         try:

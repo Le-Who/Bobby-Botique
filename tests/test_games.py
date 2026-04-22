@@ -334,7 +334,12 @@ class TestPickRandomWord:
         reset_hint_runtime_state_for_tests()
 
         await record_result("ai_studio", "gemini-3.1-flash-lite-preview", "rate_limit", retry_after_seconds=60)
-        assert enqueue_bank_hint_prewarm(["шериф", "доктор"], "персонаж сериала Извне", topic_id="custom:1") is False
+        with patch("app.games.hinting.is_hint_prewarm_enabled", new_callable=AsyncMock, return_value=True):
+            assert await enqueue_bank_hint_prewarm(
+                ["шериф", "доктор"],
+                "персонаж сериала Извне",
+                topic_id="custom:1",
+            ) is False
 
 
 # ── judge — Damerau-Levenshtein algorithm ─────────────────────────────────────

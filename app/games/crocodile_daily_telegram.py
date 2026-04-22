@@ -34,7 +34,7 @@ def _attempt_count(row_or_result: Any) -> int:
 def _share_line(result: repo.DailyResult) -> str:
     outcome = f"{len(result.attempts)}/{repo.DAILY_MAX_ATTEMPTS}" if result.status == "won" else "X/6"
     return (
-        f"🐊 Крокодил дня {result.puzzle_date.isoformat()}\n"
+        f"🐊 Крокодил дня {result.puzzle_date.isoformat()} · {repo.daily_difficulty_label(result.difficulty)}\n"
         f"{result.share_grid or '⬛'} {outcome}\n"
         f"Очки: {result.points} · Серия: {result.streak_after}"
     )
@@ -43,13 +43,15 @@ def _share_line(result: repo.DailyResult) -> str:
 def _daily_art_caption(puzzle: repo.DailyPuzzle) -> str:
     return (
         "🎨 <b>Иллюстрация слова дня</b>\n"
+        f"<b>Режим:</b> {html.escape(repo.daily_difficulty_label(puzzle.difficulty))}\n"
         f"<b>Слово:</b> {html.escape(puzzle.target_word)}\n"
         f"<b>Тема:</b> {html.escape(puzzle.topic)}"
     )
 
 
-async def _send_daily_completion_art(bot, user_id: int, puzzle_date: date) -> bool:
-    puzzle = await repo.get_puzzle(puzzle_date)
+async def _send_daily_completion_art(bot, user_id: int, puzzle_date: date, *, difficulty: str = "easy") -> bool:
+    difficulty = repo.normalize_daily_difficulty(difficulty)
+    puzzle = await repo.get_puzzle(puzzle_date, difficulty=difficulty)
     if not puzzle or not puzzle.image_file_id:
         return False
 
@@ -75,8 +77,14 @@ async def _send_daily_completion_art(bot, user_id: int, puzzle_date: date) -> bo
     try:
         from app.games.crocodile_daily import prepare_daily_puzzle
 
-        await repo.clear_puzzle_image_asset(puzzle_date)
-        refreshed = await prepare_daily_puzzle(puzzle_date, bot=bot, include_image=True, force_image=True)
+        await repo.clear_puzzle_image_asset(puzzle_date, difficulty=difficulty)
+        refreshed = await prepare_daily_puzzle(
+            puzzle_date,
+            bot=bot,
+            difficulty=difficulty,
+            include_image=True,
+            force_image=True,
+        )
         if not refreshed.image_file_id:
             return False
         await bot.send_photo(
@@ -91,29 +99,49 @@ async def _send_daily_completion_art(bot, user_id: int, puzzle_date: date) -> bo
         return False
 
 
-async def render_daily_result_body(user_id: int, puzzle_date: date) -> tuple[str, InlineKeyboardMarkup | None]:
-    result = await repo.get_result(user_id, puzzle_date)
-    if not result:
+async def render_daily_result_body(
+    user_id: int,
+    puzzle_date: date,
+    *,
+    focus_difficulty: str | None = None,
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    from app.games.crocodile_daily import build_daily_completion_summary
+    from app.handlers.daily_crocodile import _play_button
+
+    summary = await build_daily_completion_summary(
+        user_id,
+        puzzle_date,
+        focus_difficulty=focus_difficulty or "easy",
+    )
+    modes = summary.get("modes", {})
+    if not modes:
         text = "🐊 <b>Крокодил дня</b>\n\nРезультат пока не найден."
         return text, None
 
-    rank = await repo.get_rank(user_id, puzzle_date)
-    leaderboard = await repo.get_leaderboard(puzzle_date, limit=5)
+    focus = repo.normalize_daily_difficulty(summary.get("focus_difficulty"))
+    focus_mode = modes.get(focus) or next(iter(modes.values()))
+    results = await repo.get_results_for_user(user_id, puzzle_date)
     preference = await repo.get_preference(user_id)
     is_subscribed = bool(preference and preference.get("is_subscribed"))
 
-    status_icon = "🎉" if result.status == "won" else "😔"
-    attempts_label = f"{len(result.attempts)}/{repo.DAILY_MAX_ATTEMPTS}" if result.status == "won" else "X/6"
+    status_icon = "🎉" if focus_mode.get("status") == "won" else "😔" if focus_mode.get("status") == "lost" else "⏳"
+    attempts_label = (
+        f"{int(focus_mode.get('attempts') or 0)}/{repo.DAILY_MAX_ATTEMPTS}"
+        if focus_mode.get("status") == "won"
+        else "X/6" if focus_mode.get("status") == "lost"
+        else f"{int(focus_mode.get('attempts') or 0)}/{repo.DAILY_MAX_ATTEMPTS}"
+    )
     lines = [
-        f"🐊 <b>Крокодил дня</b> · <code>{result.puzzle_date.isoformat()}</code>",
+        f"🐊 <b>Крокодил дня</b> · <code>{puzzle_date.isoformat()}</code>",
         "",
-        f"{status_icon} <b>Ваш результат:</b> {html.escape(attempts_label)} · <b>{result.points}</b> очков",
-        f"🔥 <b>Серия:</b> {result.streak_after}",
+        f"{status_icon} <b>{html.escape(repo.daily_difficulty_label(focus_mode.get('difficulty')))}:</b> {html.escape(attempts_label)} · <b>{int(focus_mode.get('points') or 0)}</b> очков",
+        f"🔥 <b>Серия:</b> {int(focus_mode.get('streak') or 0)}",
     ]
-    if rank:
-        lines.append(f"🏁 <b>Место сейчас:</b> #{rank}")
+    if focus_mode.get("rank"):
+        lines.append(f"🏁 <b>Место сейчас:</b> #{int(focus_mode['rank'])}")
 
-    lines.extend(["", "🏆 <b>Топ сегодня</b>"])
+    lines.extend(["", "🏆 <b>Лидерборд</b>"])
+    leaderboard = focus_mode.get("leaderboard") or []
     if leaderboard:
         for idx, row in enumerate(leaderboard, start=1):
             row_attempts = _attempt_count(row)
@@ -124,22 +152,48 @@ async def render_daily_result_body(user_id: int, puzzle_date: date) -> tuple[str
     else:
         lines.append("Пока нет завершённых результатов.")
 
-    lines.extend(["", "<b>Поделиться:</b>", f"<code>{html.escape(_share_line(result))}</code>"])
+    lines.extend(["", "<b>Статусы режимов</b>"])
+    for difficulty, mode in modes.items():
+        mode_icon = "✅" if mode.get("completed") else "🕹"
+        if mode.get("status") == "won":
+            mode_suffix = f"{int(mode.get('attempts') or 0)}/{repo.DAILY_MAX_ATTEMPTS}"
+        elif mode.get("status") == "lost":
+            mode_suffix = "X/6"
+        else:
+            mode_suffix = "ещё доступен"
+        lines.append(
+            f"{mode_icon} {html.escape(repo.daily_difficulty_label(difficulty))} — {html.escape(mode_suffix)}"
+        )
+
+    share_lines = [
+        f"<code>{html.escape(_share_line(result))}</code>"
+        for result in results.values()
+        if result.status in {"won", "lost"}
+    ]
+    if share_lines:
+        lines.extend(["", "<b>Поделиться:</b>", *share_lines])
+
+    next_difficulty = summary.get("next_difficulty")
+    if next_difficulty:
+        lines.extend(
+            [
+                "",
+                f"➡️ <b>Ещё доступно:</b> {html.escape(repo.daily_difficulty_label(next_difficulty))}",
+            ]
+        )
 
     keyboard: InlineKeyboardMarkup | None
+    rows = [[_play_button("Открыть daily")]]
     if is_subscribed:
-        keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Передумали? Отписаться", callback_data="dailycroc:unsubscribe")]]
-        )
+        rows.append([InlineKeyboardButton("Передумали? Отписаться", callback_data="dailycroc:unsubscribe")])
     else:
-        keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe")]]
-        )
+        rows.append([InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe")])
+    keyboard = InlineKeyboardMarkup(rows)
     return "\n".join(lines), keyboard
 
 
-async def send_daily_result_message(bot, user_id: int, puzzle_date: date) -> None:
-    text, keyboard = await render_daily_result_body(user_id, puzzle_date)
+async def send_daily_result_message(bot, user_id: int, puzzle_date: date, *, focus_difficulty: str | None = None) -> None:
+    text, keyboard = await render_daily_result_body(user_id, puzzle_date, focus_difficulty=focus_difficulty)
     msg = await bot.send_message(
         chat_id=user_id,
         text=text,
@@ -156,25 +210,37 @@ async def send_daily_result_message(bot, user_id: int, puzzle_date: date) -> Non
     )
 
 
-async def send_daily_completion_bundle(bot, user_id: int, puzzle_date: date) -> None:
+async def send_daily_completion_bundle(
+    bot,
+    user_id: int,
+    puzzle_date: date,
+    *,
+    focus_difficulty: str = "easy",
+) -> None:
     """Send the game-over bundle: swap placeholder photo → real art, or fall back."""
     pref = await repo.get_preference(user_id)
 
     # Mark as sent so the scheduler won't send a duplicate today.
     try:
-        today = repo.today_puzzle_date()
-        if puzzle_date == today:
-            last_sent = pref.get("last_sent_puzzle_date") if pref else None
-            if not last_sent or last_sent < today:
-                await repo.mark_daily_sent(user_id, today)
+        from datetime import UTC, datetime
+
+        now = datetime.now(tz=UTC)
+        today = repo.today_puzzle_date(now)
+        if puzzle_date == today and not repo.was_daily_delivered_today(pref, puzzle_date=today, now=now):
+            await repo.mark_daily_sent(
+                user_id,
+                today,
+                now=now,
+                timezone=(pref or {}).get("timezone"),
+            )
     except Exception as exc:
         logger.debug("daily: mark_daily_sent failed user=%s: %s", user_id, exc)
 
-    text, keyboard = await render_daily_result_body(user_id, puzzle_date)
+    text, keyboard = await render_daily_result_body(user_id, puzzle_date, focus_difficulty=focus_difficulty)
 
     # Try to edit the prompt photo message (placeholder → real art + result caption).
     prompt_msg = await repo.get_active_prompt_message(user_id, puzzle_date)
-    puzzle = await repo.get_puzzle(puzzle_date)
+    puzzle = await repo.get_puzzle(puzzle_date, difficulty=focus_difficulty)
     if prompt_msg and puzzle and puzzle.image_file_id:
         caption = text[:1024]  # Telegram photo caption hard limit
         try:
@@ -202,8 +268,8 @@ async def send_daily_completion_bundle(bot, user_id: int, puzzle_date: date) -> 
             logger.warning("daily: swap prompt→art failed user=%s: %s — sending separately", user_id, exc)
 
     # Fallback: send art as a new photo, then a separate text result message.
-    await _send_daily_completion_art(bot, user_id, puzzle_date)
-    await send_daily_result_message(bot, user_id, puzzle_date)
+    await _send_daily_completion_art(bot, user_id, puzzle_date, difficulty=focus_difficulty)
+    await send_daily_result_message(bot, user_id, puzzle_date, focus_difficulty=focus_difficulty)
 
 
 def queue_daily_result_refresh(bot, puzzle_date: date) -> None:

@@ -20,6 +20,11 @@ DAILY_PREP_DAYS_AHEAD = 7
 DAILY_IMAGE_PREP_DAYS_AHEAD = 2
 DAILY_IMAGE_MODEL = "qwen-image"
 DAILY_DELIVERY_SETTING_KEY = "daily_crocodile_delivery_enabled"
+DAILY_DIFFICULTIES = ("easy", "hard")
+DAILY_DIFFICULTY_LABELS = {
+    "easy": "Easy",
+    "hard": "Hard",
+}
 
 
 @dataclass(slots=True)
@@ -28,6 +33,7 @@ class DailyPuzzle:
     target_word: str
     topic: str
     lang: str
+    difficulty: str = "easy"
     hints: list[str] = field(default_factory=list)
     image_prompt: str = ""
     image_file_id: str = ""
@@ -48,6 +54,7 @@ class DailyResult:
     points: int
     share_grid: str
     streak_after: int
+    difficulty: str = "easy"
 
 
 def today_puzzle_date(now: datetime | None = None) -> date:
@@ -71,6 +78,38 @@ def normalize_timezone(timezone: str | None) -> str:
     except ZoneInfoNotFoundError:
         return DEFAULT_TIMEZONE
     return tz
+
+
+def local_now(timezone: str | None, now: datetime | None = None) -> datetime:
+    current = now or datetime.now(tz=UTC)
+    return current.astimezone(_safe_zoneinfo(timezone))
+
+
+def local_date_for_timezone(timezone: str | None, now: datetime | None = None) -> date:
+    return local_now(timezone, now).date()
+
+
+def was_daily_delivered_today(
+    preference: dict[str, Any] | None,
+    *,
+    puzzle_date: date,
+    now: datetime | None = None,
+) -> bool:
+    if not preference:
+        return False
+    local_today = local_date_for_timezone(preference.get("timezone"), now)
+    last_local = preference.get("last_sent_local_date")
+    last_puzzle = preference.get("last_sent_puzzle_date")
+    return bool((last_local and last_local >= local_today) or (last_puzzle and last_puzzle >= puzzle_date))
+
+
+def normalize_daily_difficulty(value: str | None) -> str:
+    difficulty = (value or "easy").strip().lower()
+    return difficulty if difficulty in DAILY_DIFFICULTIES else "easy"
+
+
+def daily_difficulty_label(value: str | None) -> str:
+    return DAILY_DIFFICULTY_LABELS.get(normalize_daily_difficulty(value), "Easy")
 
 
 def compute_points(*, won: bool, attempt_count: int, used_hints_count: int) -> int:
@@ -111,6 +150,7 @@ def _json_list(value: Any) -> list:
 def _row_to_puzzle(row: dict[str, Any]) -> DailyPuzzle:
     return DailyPuzzle(
         puzzle_date=row["puzzle_date"],
+        difficulty=normalize_daily_difficulty(row.get("difficulty")),
         target_word=row["target_word"],
         topic=row["topic"],
         lang=row["lang"],
@@ -126,6 +166,7 @@ def _row_to_result(row: dict[str, Any]) -> DailyResult:
     return DailyResult(
         user_id=int(row["user_id"]),
         puzzle_date=row["puzzle_date"],
+        difficulty=normalize_daily_difficulty(row.get("difficulty")),
         status=str(row["status"]),
         attempts=[item for item in _json_list(row.get("attempts")) if isinstance(item, dict)],
         best_score=float(row.get("best_score") or 0),
@@ -166,18 +207,49 @@ async def record_player_activity(user_id: int, *, event: str) -> None:
     )
 
 
-async def get_puzzle(puzzle_date: date, *, conn=None) -> DailyPuzzle | None:
-    rows = await db.db_query(
+async def ensure_puzzle_day(puzzle_date: date, *, conn=None) -> None:
+    await db.db_query(
         """
-        SELECT puzzle_date, target_word, topic, lang, hints,
-               image_prompt, image_file_id, image_model, prepared_at
-        FROM public.crocodile_daily_puzzles
-        WHERE puzzle_date = $1
+        INSERT INTO public.crocodile_daily_days (puzzle_date)
+        VALUES ($1)
+        ON CONFLICT (puzzle_date) DO NOTHING
         """,
         (puzzle_date,),
         conn=conn,
     )
+
+
+async def get_puzzle(puzzle_date: date, *, difficulty: str = "easy", conn=None) -> DailyPuzzle | None:
+    difficulty = normalize_daily_difficulty(difficulty)
+    rows = await db.db_query(
+        """
+        SELECT puzzle_date, difficulty, target_word, topic, lang, hints,
+               image_prompt, image_file_id, image_model, prepared_at
+        FROM public.crocodile_daily_puzzles
+        WHERE puzzle_date = $1 AND difficulty = $2
+        """,
+        (puzzle_date, difficulty),
+        conn=conn,
+    )
     return _row_to_puzzle(rows[0]) if rows else None
+
+
+async def get_puzzles_for_date(puzzle_date: date, *, conn=None) -> dict[str, DailyPuzzle]:
+    rows = await db.db_query(
+        """
+        SELECT puzzle_date, difficulty, target_word, topic, lang, hints,
+               image_prompt, image_file_id, image_model, prepared_at
+        FROM public.crocodile_daily_puzzles
+        WHERE puzzle_date = $1
+        ORDER BY difficulty ASC
+        """,
+        (puzzle_date,),
+        conn=conn,
+    )
+    return {
+        normalize_daily_difficulty(row.get("difficulty")): _row_to_puzzle(row)
+        for row in rows
+    }
 
 
 def normalize_daily_word(word: str | None) -> str:
@@ -200,165 +272,219 @@ async def get_used_daily_words(*, conn=None) -> set[str]:
     return {normalize_daily_word(row.get("target_word")) for row in rows if normalize_daily_word(row.get("target_word"))}
 
 
-async def _create_puzzle_if_missing_with_conn(puzzle_date: date, *, conn=None) -> DailyPuzzle:
-    existing = await get_puzzle(puzzle_date, conn=conn)
+async def _create_puzzle_if_missing_with_conn(
+    puzzle_date: date,
+    *,
+    difficulty: str = "easy",
+    conn=None,
+) -> DailyPuzzle:
+    difficulty = normalize_daily_difficulty(difficulty)
+    existing = await get_puzzle(puzzle_date, difficulty=difficulty, conn=conn)
     if existing:
         return existing
 
     from app.games.word_bank import pick_random_word_for_topic, resolve_topic
 
+    await ensure_puzzle_day(puzzle_date, conn=conn)
     topic = resolve_topic("разное")
     used_words = await get_used_daily_words(conn=conn)
+    easy_puzzle = None
+    if difficulty == "hard":
+        easy_puzzle = await get_puzzle(puzzle_date, difficulty="easy", conn=conn)
+        if easy_puzzle:
+            used_words.add(normalize_daily_word(easy_puzzle.target_word))
     word, lang, category, _ = await pick_random_word_for_topic(
         topic,
         used_words=used_words,
+        preferred_difficulty=difficulty,
     )
     rows = await db.db_query(
         """
         INSERT INTO public.crocodile_daily_puzzles (
-            puzzle_date, target_word, topic, lang, image_model
+            puzzle_date, difficulty, target_word, topic, lang, image_model
         )
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (puzzle_date) DO NOTHING
-        RETURNING puzzle_date, target_word, topic, lang, hints,
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (puzzle_date, difficulty) DO NOTHING
+        RETURNING puzzle_date, difficulty, target_word, topic, lang, hints,
                   image_prompt, image_file_id, image_model, prepared_at
         """,
-        (puzzle_date, word, category, lang, DAILY_IMAGE_MODEL),
+        (puzzle_date, difficulty, word, category, lang, DAILY_IMAGE_MODEL),
         conn=conn,
     )
     if rows:
         return _row_to_puzzle(rows[0])
 
     # Another worker won the race.
-    puzzle = await get_puzzle(puzzle_date, conn=conn)
+    puzzle = await get_puzzle(puzzle_date, difficulty=difficulty, conn=conn)
     if not puzzle:
-        raise RuntimeError(f"daily puzzle was not created for {puzzle_date}")
+        raise RuntimeError(f"daily puzzle was not created for {puzzle_date} difficulty={difficulty}")
     return puzzle
 
 
-async def create_puzzle_if_missing(puzzle_date: date) -> DailyPuzzle:
+async def create_puzzle_if_missing(puzzle_date: date, *, difficulty: str = "easy") -> DailyPuzzle:
     pool = getattr(db.db_manager, "pool", None)
     if not pool or getattr(pool, "_closed", False):
-        return await _create_puzzle_if_missing_with_conn(puzzle_date)
+        return await _create_puzzle_if_missing_with_conn(puzzle_date, difficulty=difficulty)
 
     async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("LOCK TABLE public.crocodile_daily_days IN SHARE ROW EXCLUSIVE MODE")
         await conn.execute("LOCK TABLE public.crocodile_daily_puzzles IN SHARE ROW EXCLUSIVE MODE")
-        return await _create_puzzle_if_missing_with_conn(puzzle_date, conn=conn)
+        return await _create_puzzle_if_missing_with_conn(puzzle_date, difficulty=difficulty, conn=conn)
 
 
-async def set_puzzle_hints(puzzle_date: date, hints: list[str]) -> None:
+async def set_puzzle_hints(puzzle_date: date, hints: list[str], *, difficulty: str = "easy") -> None:
+    difficulty = normalize_daily_difficulty(difficulty)
     await db.db_query(
         """
         UPDATE public.crocodile_daily_puzzles
-        SET hints = $2::jsonb,
+        SET hints = $3::jsonb,
             prepared_at = NULL
-        WHERE puzzle_date = $1
+        WHERE puzzle_date = $1 AND difficulty = $2
         """,
-        (puzzle_date, json.dumps(hints, ensure_ascii=False)),
+        (puzzle_date, difficulty, json.dumps(hints, ensure_ascii=False)),
     )
 
 
-async def set_puzzle_image_prompt(puzzle_date: date, image_prompt: str, *, image_model: str = DAILY_IMAGE_MODEL) -> None:
+async def set_puzzle_image_prompt(
+    puzzle_date: date,
+    image_prompt: str,
+    *,
+    difficulty: str = "easy",
+    image_model: str = DAILY_IMAGE_MODEL,
+) -> None:
+    difficulty = normalize_daily_difficulty(difficulty)
     await db.db_query(
         """
         UPDATE public.crocodile_daily_puzzles
-        SET image_prompt = $2,
-            image_model = $3,
+        SET image_prompt = $3,
+            image_model = $4,
             prepared_at = NULL
-        WHERE puzzle_date = $1
+        WHERE puzzle_date = $1 AND difficulty = $2
         """,
-        (puzzle_date, image_prompt, image_model),
+        (puzzle_date, difficulty, image_prompt, image_model),
     )
 
 
-async def set_puzzle_image_asset(puzzle_date: date, image_file_id: str, *, image_model: str = DAILY_IMAGE_MODEL) -> None:
+async def set_puzzle_image_asset(
+    puzzle_date: date,
+    image_file_id: str,
+    *,
+    difficulty: str = "easy",
+    image_model: str = DAILY_IMAGE_MODEL,
+) -> None:
+    difficulty = normalize_daily_difficulty(difficulty)
     await db.db_query(
         """
         UPDATE public.crocodile_daily_puzzles
-        SET image_file_id = $2,
-            image_model = $3,
+        SET image_file_id = $3,
+            image_model = $4,
             prepared_at = NULL
-        WHERE puzzle_date = $1
+        WHERE puzzle_date = $1 AND difficulty = $2
         """,
-        (puzzle_date, image_file_id, image_model),
+        (puzzle_date, difficulty, image_file_id, image_model),
     )
 
 
-async def clear_puzzle_image_asset(puzzle_date: date) -> None:
+async def clear_puzzle_image_asset(puzzle_date: date, *, difficulty: str = "easy") -> None:
+    difficulty = normalize_daily_difficulty(difficulty)
     await db.db_query(
         """
         UPDATE public.crocodile_daily_puzzles
         SET image_file_id = '',
             prepared_at = NULL
-        WHERE puzzle_date = $1
+        WHERE puzzle_date = $1 AND difficulty = $2
         """,
-        (puzzle_date,),
+        (puzzle_date, difficulty),
     )
 
 
-async def mark_puzzle_prepared(puzzle_date: date) -> None:
+async def mark_puzzle_prepared(puzzle_date: date, *, difficulty: str = "easy") -> None:
+    difficulty = normalize_daily_difficulty(difficulty)
     await db.db_query(
         """
         UPDATE public.crocodile_daily_puzzles
         SET prepared_at = NOW()
-        WHERE puzzle_date = $1
+        WHERE puzzle_date = $1 AND difficulty = $2
         """,
-        (puzzle_date,),
+        (puzzle_date, difficulty),
     )
 
 
-async def get_or_create_result(user_id: int, puzzle_date: date) -> DailyResult:
+async def get_or_create_result(user_id: int, puzzle_date: date, *, difficulty: str = "easy") -> DailyResult:
+    difficulty = normalize_daily_difficulty(difficulty)
     await ensure_user(user_id)
     rows = await db.db_query(
         """
-        INSERT INTO public.crocodile_daily_results (user_id, puzzle_date)
-        VALUES ($1, $2)
-        ON CONFLICT (user_id, puzzle_date) DO UPDATE SET updated_at = public.crocodile_daily_results.updated_at
-        RETURNING user_id, puzzle_date, status, attempts, best_score, used_hints_count,
+        INSERT INTO public.crocodile_daily_results (user_id, puzzle_date, difficulty)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_id, puzzle_date, difficulty) DO UPDATE
+            SET updated_at = public.crocodile_daily_results.updated_at
+        RETURNING user_id, puzzle_date, difficulty, status, attempts, best_score, used_hints_count,
                   won_at, finished_at, points, share_grid, streak_after
         """,
-        (user_id, puzzle_date),
+        (user_id, puzzle_date, difficulty),
     )
     return _row_to_result(rows[0])
 
 
-async def get_result(user_id: int, puzzle_date: date) -> DailyResult | None:
+async def get_result(user_id: int, puzzle_date: date, *, difficulty: str = "easy") -> DailyResult | None:
+    difficulty = normalize_daily_difficulty(difficulty)
     rows = await db.db_query(
         """
-        SELECT user_id, puzzle_date, status, attempts, best_score, used_hints_count,
+        SELECT user_id, puzzle_date, difficulty, status, attempts, best_score, used_hints_count,
                won_at, finished_at, points, share_grid, streak_after
         FROM public.crocodile_daily_results
-        WHERE user_id = $1 AND puzzle_date = $2
+        WHERE user_id = $1 AND puzzle_date = $2 AND difficulty = $3
         """,
-        (user_id, puzzle_date),
+        (user_id, puzzle_date, difficulty),
     )
     return _row_to_result(rows[0]) if rows else None
 
 
-async def increment_hint_count(user_id: int, puzzle_date: date) -> int:
+async def get_results_for_user(user_id: int, puzzle_date: date) -> dict[str, DailyResult]:
+    rows = await db.db_query(
+        """
+        SELECT user_id, puzzle_date, difficulty, status, attempts, best_score, used_hints_count,
+               won_at, finished_at, points, share_grid, streak_after
+        FROM public.crocodile_daily_results
+        WHERE user_id = $1 AND puzzle_date = $2
+        ORDER BY difficulty ASC
+        """,
+        (user_id, puzzle_date),
+    )
+    return {
+        normalize_daily_difficulty(row.get("difficulty")): _row_to_result(row)
+        for row in rows
+    }
+
+
+async def increment_hint_count(user_id: int, puzzle_date: date, *, difficulty: str = "easy") -> int:
+    difficulty = normalize_daily_difficulty(difficulty)
     rows = await db.db_query(
         """
         UPDATE public.crocodile_daily_results
         SET used_hints_count = used_hints_count + 1,
             updated_at = NOW()
-        WHERE user_id = $1 AND puzzle_date = $2 AND status = 'active'
+        WHERE user_id = $1 AND puzzle_date = $2 AND difficulty = $3 AND status = 'active'
         RETURNING used_hints_count
         """,
-        (user_id, puzzle_date),
+        (user_id, puzzle_date, difficulty),
     )
     return int(rows[0]["used_hints_count"]) if rows else 0
 
 
-async def previous_daily_streak(user_id: int, puzzle_date: date) -> int:
+async def previous_daily_streak(user_id: int, puzzle_date: date, *, difficulty: str = "easy") -> int:
+    difficulty = normalize_daily_difficulty(difficulty)
     rows = await db.db_query(
         """
         SELECT streak_after
         FROM public.crocodile_daily_results
         WHERE user_id = $1
           AND puzzle_date = ($2::date - 1)
+          AND difficulty = $3
           AND status = 'won'
         """,
-        (user_id, puzzle_date),
+        (user_id, puzzle_date, difficulty),
     )
     return int(rows[0]["streak_after"]) if rows else 0
 
@@ -367,10 +493,12 @@ async def append_attempt_and_maybe_finish(
     *,
     user_id: int,
     puzzle_date: date,
+    difficulty: str = "easy",
     attempt: dict[str, Any],
     max_attempts: int = DAILY_MAX_ATTEMPTS,
 ) -> DailyResult:
-    result = await get_or_create_result(user_id, puzzle_date)
+    difficulty = normalize_daily_difficulty(difficulty)
+    result = await get_or_create_result(user_id, puzzle_date, difficulty=difficulty)
     if result.status != "active":
         return result
 
@@ -382,27 +510,28 @@ async def append_attempt_and_maybe_finish(
     finished = won or lost
     points = compute_points(won=won, attempt_count=len(attempts), used_hints_count=result.used_hints_count)
     share_grid = build_share_grid(attempts, won=won) if finished else ""
-    streak = (await previous_daily_streak(user_id, puzzle_date)) + 1 if won else 0
+    streak = (await previous_daily_streak(user_id, puzzle_date, difficulty=difficulty)) + 1 if won else 0
 
     rows = await db.db_query(
         """
         UPDATE public.crocodile_daily_results
-        SET status = $3,
-            attempts = $4::jsonb,
-            best_score = $5,
-            won_at = CASE WHEN $6 THEN NOW() ELSE won_at END,
-            finished_at = CASE WHEN $7 THEN NOW() ELSE finished_at END,
-            points = CASE WHEN $7 THEN $8 ELSE points END,
-            share_grid = CASE WHEN $7 THEN $9 ELSE share_grid END,
-            streak_after = CASE WHEN $7 THEN $10 ELSE streak_after END,
+        SET status = $4,
+            attempts = $5::jsonb,
+            best_score = $6,
+            won_at = CASE WHEN $7 THEN NOW() ELSE won_at END,
+            finished_at = CASE WHEN $8 THEN NOW() ELSE finished_at END,
+            points = CASE WHEN $8 THEN $9 ELSE points END,
+            share_grid = CASE WHEN $8 THEN $10 ELSE share_grid END,
+            streak_after = CASE WHEN $8 THEN $11 ELSE streak_after END,
             updated_at = NOW()
-        WHERE user_id = $1 AND puzzle_date = $2 AND status = 'active'
-        RETURNING user_id, puzzle_date, status, attempts, best_score, used_hints_count,
+        WHERE user_id = $1 AND puzzle_date = $2 AND difficulty = $3 AND status = 'active'
+        RETURNING user_id, puzzle_date, difficulty, status, attempts, best_score, used_hints_count,
                   won_at, finished_at, points, share_grid, streak_after
         """,
         (
             user_id,
             puzzle_date,
+            difficulty,
             status,
             json.dumps(attempts, ensure_ascii=False),
             best_score,
@@ -415,7 +544,7 @@ async def append_attempt_and_maybe_finish(
     )
     if rows:
         return _row_to_result(rows[0])
-    return await get_or_create_result(user_id, puzzle_date)
+    return await get_or_create_result(user_id, puzzle_date, difficulty=difficulty)
 
 
 async def upsert_preference(
@@ -441,7 +570,7 @@ async def upsert_preference(
             discovery_snoozed_until = CASE WHEN COALESCE($2, FALSE) THEN NULL ELSE public.crocodile_daily_preferences.discovery_snoozed_until END,
             updated_at = NOW()
         RETURNING user_id, is_subscribed, timezone, preferred_local_hour, last_sent_puzzle_date,
-                  discovery_last_sent_at, discovery_snoozed_until
+                  last_sent_local_date, discovery_last_sent_at, discovery_snoozed_until
         """,
         (
             user_id,
@@ -466,6 +595,7 @@ async def get_preference(user_id: int) -> dict[str, Any] | None:
     rows = await db.db_query(
         """
         SELECT user_id, is_subscribed, timezone, preferred_local_hour, last_sent_puzzle_date,
+               last_sent_local_date,
                discovery_last_sent_at, discovery_snoozed_until
         FROM public.crocodile_daily_preferences
         WHERE user_id = $1
@@ -542,7 +672,7 @@ async def get_due_deliveries(*, puzzle_date: date, now: datetime | None = None, 
     current = now or datetime.now(tz=UTC)
     rows = await db.db_query(
         """
-        SELECT user_id, timezone, preferred_local_hour, last_sent_puzzle_date
+        SELECT user_id, timezone, preferred_local_hour, last_sent_puzzle_date, last_sent_local_date
         FROM public.crocodile_daily_preferences
         WHERE is_subscribed = TRUE
           AND (last_sent_puzzle_date IS NULL OR last_sent_puzzle_date < $1)
@@ -553,44 +683,59 @@ async def get_due_deliveries(*, puzzle_date: date, now: datetime | None = None, 
     )
     due: list[dict[str, Any]] = []
     for row in rows:
-        local = current.astimezone(_safe_zoneinfo(row.get("timezone")))
-        if local.hour == int(row.get("preferred_local_hour") or 13):
+        local = local_now(row.get("timezone"), current)
+        local_today = local.date()
+        preferred_hour = int(row.get("preferred_local_hour") or 13)
+        last_local = row.get("last_sent_local_date")
+        if last_local and last_local >= local_today:
+            continue
+        if local.hour >= preferred_hour:
             due.append(row)
     return due
 
 
-async def mark_daily_sent(user_id: int, puzzle_date: date) -> None:
+async def mark_daily_sent(
+    user_id: int,
+    puzzle_date: date,
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+) -> None:
+    local_date = local_date_for_timezone(timezone, now)
     await db.db_query(
         """
         UPDATE public.crocodile_daily_preferences
         SET last_sent_puzzle_date = $2,
+            last_sent_local_date = $3,
             updated_at = NOW()
         WHERE user_id = $1
         """,
-        (user_id, puzzle_date),
+        (user_id, puzzle_date, local_date),
     )
 
 
-async def get_leaderboard(puzzle_date: date, *, limit: int = 10) -> list[dict[str, Any]]:
+async def get_leaderboard(puzzle_date: date, *, difficulty: str = "easy", limit: int = 10) -> list[dict[str, Any]]:
+    difficulty = normalize_daily_difficulty(difficulty)
     return await db.db_query(
         """
-        SELECT user_id, points, status,
+        SELECT user_id, difficulty, points, status,
                CASE WHEN jsonb_typeof(attempts) = 'array'
                     THEN jsonb_array_length(attempts) ELSE 0 END AS attempt_count,
                used_hints_count, won_at, streak_after
         FROM public.crocodile_daily_results
-        WHERE puzzle_date = $1 AND status IN ('won', 'lost')
+        WHERE puzzle_date = $1 AND difficulty = $2 AND status IN ('won', 'lost')
         ORDER BY points DESC,
                  CASE WHEN jsonb_typeof(attempts) = 'array'
                       THEN jsonb_array_length(attempts) ELSE 0 END ASC,
                  won_at ASC NULLS LAST
-        LIMIT $2
+        LIMIT $3
         """,
-        (puzzle_date, limit),
+        (puzzle_date, difficulty, limit),
     )
 
 
-async def get_rank(user_id: int, puzzle_date: date) -> int | None:
+async def get_rank(user_id: int, puzzle_date: date, *, difficulty: str = "easy") -> int | None:
+    difficulty = normalize_daily_difficulty(difficulty)
     rows = await db.db_query(
         """
         WITH ranked AS (
@@ -602,11 +747,11 @@ async def get_rank(user_id: int, puzzle_date: date) -> int | None:
                                 won_at ASC NULLS LAST
                    ) AS rank
             FROM public.crocodile_daily_results
-            WHERE puzzle_date = $1 AND status IN ('won', 'lost')
+            WHERE puzzle_date = $1 AND difficulty = $2 AND status IN ('won', 'lost')
         )
-        SELECT rank FROM ranked WHERE user_id = $2
+        SELECT rank FROM ranked WHERE user_id = $3
         """,
-        (puzzle_date, user_id),
+        (puzzle_date, difficulty, user_id),
     )
     return int(rows[0]["rank"]) if rows else None
 
@@ -775,4 +920,3 @@ async def get_delivery_status(puzzle_date: date) -> dict[str, Any]:
         base.update(result_rows[0])
 
     return base
-

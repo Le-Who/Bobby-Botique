@@ -83,7 +83,7 @@ def _play_button(label: str = "Играть") -> InlineKeyboardButton:
 def daily_intro_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [_play_button("Играть")],
+            [_play_button("Открыть daily")],
             [InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe")],
             [InlineKeyboardButton("Не напоминать 2 недели", callback_data="dailycroc:snooze")],
         ]
@@ -91,7 +91,7 @@ def daily_intro_keyboard() -> InlineKeyboardMarkup:
 
 
 def daily_play_keyboard(*, include_subscribe: bool = True) -> InlineKeyboardMarkup:
-    rows = [[_play_button("Играть")]]
+    rows = [[_play_button("Открыть daily")]]
     if include_subscribe:
         rows.append([InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe")])
     return InlineKeyboardMarkup(rows)
@@ -114,8 +114,8 @@ async def is_daily_delivery_enabled() -> bool:
 async def send_discovery_intro(bot, user_id: int) -> bool:
     text = (
         "🐊 <b>Крокодил дня</b>\n\n"
-        "Каждый день одно слово для всех: угадываешь за 6 попыток, получаешь очки, "
-        "поднимаешься в лидерборде и держишь серию побед.\n\n"
+        "Каждый день два независимых режима: <b>Easy</b> и <b>Hard</b>. "
+        "У каждого свои очки, лидерборд и completion state.\n\n"
         "Можно сыграть сейчас или включить ежедневное напоминание."
     )
     await bot.send_message(
@@ -131,7 +131,7 @@ async def send_discovery_intro(bot, user_id: int) -> bool:
 async def send_daily_prompt(bot, user_id: int, puzzle_date) -> bool:
     caption = (
         f"🐊 <b>Крокодил дня</b> · <code>{puzzle_date.isoformat()}</code>\n\n"
-        "Сегодняшнее слово уже ждёт. У тебя 6 попыток."
+        "Сегодня уже готовы <b>Easy</b> и <b>Hard</b>. Оба режима можно пройти отдельно."
     )
     keyboard = daily_play_keyboard(include_subscribe=False)
     placeholder_file_id = (await _get_placeholder_file_id()).strip()
@@ -165,7 +165,12 @@ async def send_daily_prompt(bot, user_id: int, puzzle_date) -> bool:
             parse_mode=ParseMode.HTML,
             reply_markup=keyboard,
         )
-    await repo.mark_daily_sent(user_id, puzzle_date)
+    pref = await repo.get_preference(user_id)
+    await repo.mark_daily_sent(
+        user_id,
+        puzzle_date,
+        timezone=(pref or {}).get("timezone"),
+    )
     return True
 
 
@@ -180,13 +185,19 @@ async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     is_subscribed = bool(pref and pref.get("is_subscribed"))
     # Mark delivery so the scheduler doesn't send a duplicate today.
     if is_subscribed:
-        today = repo.today_puzzle_date()
-        last_sent = pref.get("last_sent_puzzle_date") if pref else None
-        if not last_sent or last_sent < today:
-            await repo.mark_daily_sent(user_id, today)
+        now = datetime.now(tz=UTC)
+        today = repo.today_puzzle_date(now)
+        if not repo.was_daily_delivered_today(pref, puzzle_date=today, now=now):
+            await repo.mark_daily_sent(
+                user_id,
+                today,
+                now=now,
+                timezone=(pref or {}).get("timezone"),
+            )
     text = (
         "🐊 <b>Крокодил дня</b>\n\n"
-        "Одно слово для всех на сегодня. 6 попыток, очки, серия и живой лидерборд."
+        "На сегодня доступны <b>Easy</b> и <b>Hard</b>. "
+        "У каждого режима свои очки, completion и лидерборд."
     )
     await update.message.reply_text(
         text,
@@ -258,28 +269,31 @@ async def daily_unsubscribe_callback(update: Update, context: ContextTypes.DEFAU
 
 
 async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
-    from app.games.crocodile_daily import ensure_prepared_puzzles
+    from app.games.crocodile_daily import active_daily_difficulties, ensure_prepared_puzzles
 
     now = datetime.now(tz=UTC)
     prepared = await ensure_prepared_puzzles(context.bot, now=now)
     today = repo.today_puzzle_date(now)
-    puzzle = next((item for item in prepared if item.puzzle_date == today), None)
-    if puzzle is None:
-        puzzle = await repo.get_puzzle(today)
-    if puzzle is None:
-        logger.warning("daily Crocodile scheduler: puzzle missing for %s after pre-generation", today)
+    required = await active_daily_difficulties()
+    today_puzzles = {item.difficulty: item for item in prepared if item.puzzle_date == today}
+    if not today_puzzles:
+        today_puzzles = await repo.get_puzzles_for_date(today)
+    missing = [difficulty for difficulty in required if difficulty not in today_puzzles]
+    if missing:
+        logger.warning("daily Crocodile scheduler: puzzle missing for %s difficulties=%s", today, ",".join(missing))
         return
-    if not repo.is_puzzle_fully_prepared(puzzle):
-        logger.warning("daily Crocodile scheduler: puzzle %s not fully prepared yet; skipping sends", puzzle.puzzle_date)
+    not_ready = [difficulty for difficulty in required if not repo.is_puzzle_fully_prepared(today_puzzles[difficulty])]
+    if not_ready:
+        logger.warning("daily Crocodile scheduler: puzzle %s not fully prepared for difficulties=%s; skipping sends", today, ",".join(not_ready))
         return
     if not await is_daily_delivery_enabled():
         logger.info("daily Crocodile delivery disabled by admin switch; pre-generation kept running")
         return
 
-    due_delivery = await repo.get_due_deliveries(puzzle_date=puzzle.puzzle_date, now=now)
+    due_delivery = await repo.get_due_deliveries(puzzle_date=today, now=now)
     for item in due_delivery:
         try:
-            await send_daily_prompt(context.bot, int(item["user_id"]), puzzle.puzzle_date)
+            await send_daily_prompt(context.bot, int(item["user_id"]), today)
         except Exception as exc:
             logger.warning("daily Crocodile delivery failed user=%s: %s", item.get("user_id"), exc)
 

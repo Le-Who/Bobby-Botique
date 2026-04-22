@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import app.config as config
+from app.games.ai_budget import reset_budget_state_for_tests
 from app.games.hinting import get_or_generate_cached_hints, reset_hint_runtime_state_for_tests
 from app.games.judge import generate_hints
 
@@ -39,6 +40,7 @@ def hint_settings(monkeypatch) -> SimpleNamespace:
         VERTEX_AI_PROJECT=None,
     )
     monkeypatch.setattr(config, "settings", settings)
+    reset_budget_state_for_tests()
     reset_hint_runtime_state_for_tests()
     return settings
 

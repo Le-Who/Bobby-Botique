@@ -119,39 +119,6 @@
       border-color: rgba(255,189,89,0.35);
       background: rgba(255,189,89,0.08);
     }
-    #hint-btn.pulsing {
-      animation: hint-pulse 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-      color: #ffd700;
-      border-color: rgba(255, 215, 0, 0.6);
-      background: rgba(255, 215, 0, 0.15);
-    }
-    @keyframes hint-pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0); }
-      50% { box-shadow: 0 0 14px 2px rgba(255, 215, 0, 0.4); }
-    }
-    #hint-tooltip {
-      position: absolute;
-      top: 56px;
-      right: 64px;
-      background: linear-gradient(135deg, rgba(255,215,0,0.95), rgba(255,165,0,0.95));
-      color: #000;
-      font-size: 11px;
-      font-weight: 700;
-      padding: 5px 10px;
-      border-radius: 12px;
-      border-top-right-radius: 3px;
-      box-shadow: 0 4px 12px rgba(255,165,0,0.3);
-      opacity: 0;
-      transform: translateY(-8px);
-      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-      pointer-events: none;
-      z-index: 50;
-    }
-    #hint-tooltip.visible {
-      opacity: 1;
-      transform: translateY(0);
-    }
-
     #hint-btn:not(:disabled):active, #live-audio-btn:active { transform: scale(.93); }
     #hint-btn:disabled { opacity: .35; cursor: not-allowed; }
 
@@ -170,6 +137,31 @@
       color: var(--accent-warm);
       background: rgba(255,107,107,0.15);
       border-color: rgba(255,107,107,0.3);
+    }
+    #daily-modes {
+      display: flex;
+      gap: 8px;
+      padding: 10px 14px 0;
+      flex-wrap: wrap;
+    }
+    #daily-modes.hidden { display: none; }
+    .daily-mode-chip {
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.06);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .daily-mode-chip.active {
+      border-color: rgba(0,224,150,0.45);
+      background: rgba(0,224,150,0.12);
+      color: #bfffe6;
+    }
+    .daily-mode-chip.completed {
+      box-shadow: inset 0 0 0 1px rgba(0,224,150,0.15);
     }
 
     /* ── Category pill ───────────────────────────────────────────────────── */
@@ -351,6 +343,45 @@
     #overlay-title.loss { background: linear-gradient(90deg, var(--accent-warm), #ff9f43); }
     #overlay-word { font-size: 32px; font-weight: 800; letter-spacing: -1px; }
     #overlay-sub  { font-size: 14px; color: var(--text-dim); line-height: 1.6; }
+    #overlay-meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.5;
+      max-width: 320px;
+    }
+    #overlay-list {
+      width: 100%;
+      max-width: 360px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .overlay-list-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.05);
+      text-align: left;
+      font-size: 13px;
+    }
+    .overlay-list-row strong {
+      font-size: 14px;
+      color: var(--text);
+    }
+    #overlay-action {
+      border: 0;
+      border-radius: 14px;
+      padding: 12px 18px;
+      font-weight: 700;
+      color: #04130f;
+      background: linear-gradient(135deg, #00e096, #5ce1e6);
+      cursor: pointer;
+    }
+    #overlay-action.hidden { display: none; }
 
     /* ── Connecting splash ───────────────────────────────────────────────── */
     #connecting {
@@ -503,7 +534,7 @@
     <button id="hint-btn" disabled title="Подсказка">💡</button>
     <span id="attempts-badge">0 / 10</span>
   </header>
-  <div id="hint-tooltip">💡 Нужна помощь?</div>
+  <div id="daily-modes" class="hidden"></div>
 
   <!-- God Mode: target word banner (creator only) -->
   <div id="word-banner">
@@ -558,6 +589,9 @@
   <div id="overlay-title">Угадано!</div>
   <div id="overlay-word"></div>
   <div id="overlay-sub"></div>
+  <div id="overlay-meta"></div>
+  <div id="overlay-list"></div>
+  <button id="overlay-action" class="hidden" type="button">Продолжить</button>
 </div>
 
 <div id="error-bar"></div>
@@ -575,17 +609,24 @@ const haptic = tg?.HapticFeedback;
 
 /* ── Config ─────────────────────────────────────────────────────────────── */
 const params    = new URLSearchParams(location.search);
+const START_PARAM = tg?.initDataUnsafe?.start_param
+                 || params.get('tgWebAppStartParam')
+                 || '{{ game_id }}';
 const GAME_ID   = params.get('game_id')
-               || (tg?.initDataUnsafe?.start_param)
-               || params.get('tgWebAppStartParam')
+               || START_PARAM
                || '{{ game_id }}';
 const INIT_DATA = tg?.initData || '';
-const MODE      = params.get('mode') || ('{{ mode }}' || (GAME_ID === 'daily' ? 'daily' : 'classic'));
-const IS_DAILY  = MODE === 'daily' || GAME_ID === 'daily';
+const DAILY_START_MATCH = /^daily(?:[-_:](easy|hard))?$/i.exec(String(START_PARAM || ''));
+const MODE      = params.get('mode') || ('{{ mode }}' || (/^daily/i.test(GAME_ID) ? 'daily' : 'classic'));
+const IS_DAILY  = MODE === 'daily' || /^daily/i.test(GAME_ID);
 const TIMEZONE  = Intl.DateTimeFormat?.().resolvedOptions?.().timeZone || '';
+let currentDailyDifficulty = String(params.get('difficulty') || DAILY_START_MATCH?.[1] || 'easy').toLowerCase();
+if (!['easy', 'hard'].includes(currentDailyDifficulty)) currentDailyDifficulty = 'easy';
 
 const STATUS_ICON  = { cold:'❄️', warm:'🌡️', hot:'🔥', exact_match:'✅' };
 const HINTS_TOTAL  = 3;
+let lastSeenSeq    = 0;
+let dailyModesState = [];
 
 /* ── DOM helpers ────────────────────────────────────────────────────────── */
 const $ = id => document.getElementById(id);
@@ -598,6 +639,30 @@ function escHtml(s) {
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function updateLastSeenSeq(msg) {
+  if (Number.isInteger(msg?.seq)) {
+    lastSeenSeq = Math.max(lastSeenSeq, msg.seq);
+  }
+  if (Array.isArray(msg?.items)) {
+    msg.items.forEach(item => {
+      if (Number.isInteger(item?.seq)) {
+        lastSeenSeq = Math.max(lastSeenSeq, item.seq);
+      }
+    });
+  }
+}
+
+function dailyLabel(difficulty) {
+  return difficulty === 'hard' ? 'Hard' : 'Easy';
+}
+
+function dailyModeSuffix(mode) {
+  if (!mode) return 'ещё не начат';
+  if (mode.status === 'won') return `${mode.attempts || 0} / ${mode.max_attempts || 6}`;
+  if (mode.status === 'lost') return 'X / 6';
+  return 'ещё доступен';
 }
 
 /* ── Attempts badge ─────────────────────────────────────────────────────── */
@@ -616,7 +681,51 @@ function showError(msg, autoDismiss = true) {
 }
 
 /* ── Win/Loss overlay ───────────────────────────────────────────────────── */
-function showOverlay({ win, word, attempts, maxAttempts, customTitle, isSpectator }) {
+function renderDailyModes(modes = [], activeDifficulty = currentDailyDifficulty) {
+  const container = $('daily-modes');
+  if (!container) return;
+  if (!IS_DAILY || !Array.isArray(modes) || modes.length === 0) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+  dailyModesState = modes;
+  container.classList.remove('hidden');
+  container.innerHTML = modes.map(mode => {
+    const classes = ['daily-mode-chip'];
+    if (mode.difficulty === activeDifficulty) classes.push('active');
+    if (mode.completed) classes.push('completed');
+    const suffix = dailyModeSuffix(mode);
+    return `<button class="${classes.join(' ')}" type="button" data-difficulty="${escHtml(mode.difficulty)}">${escHtml(dailyLabel(mode.difficulty))} · ${escHtml(suffix)}</button>`;
+  }).join('');
+  container.querySelectorAll('[data-difficulty]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const difficulty = btn.getAttribute('data-difficulty') || 'easy';
+      if (difficulty === currentDailyDifficulty) return;
+      const next = new URLSearchParams(location.search);
+      next.set('mode', 'daily');
+      next.set('difficulty', difficulty);
+      location.search = next.toString();
+    });
+  });
+}
+
+function renderOverlayLeaderboard(leaderboard = []) {
+  const list = $('overlay-list');
+  if (!list) return;
+  if (!Array.isArray(leaderboard) || leaderboard.length === 0) {
+    list.innerHTML = '';
+    return;
+  }
+  list.innerHTML = leaderboard.map((row, index) => {
+    const status = row?.status === 'won'
+      ? `${row?.attempt_count || 0} / ${row?.max_attempts || 6}`
+      : 'X / 6';
+    return `<div class="overlay-list-row"><strong>#${index + 1}</strong><span>${escHtml(String(row?.points ?? 0))} очков · ${escHtml(status)}</span></div>`;
+  }).join('');
+}
+
+function showOverlay({ win, word, attempts, maxAttempts, customTitle, isSpectator, leaderboard = [], modes = [], nextDifficulty = '', focusDifficulty = currentDailyDifficulty, metaText = '' }) {
   $('overlay-icon').textContent = win ? '🎉' : '😔';
   const title = $('overlay-title');
   title.textContent = customTitle || (win ? 'Угадано!' : 'Не угадали.');
@@ -627,6 +736,23 @@ function showOverlay({ win, word, attempts, maxAttempts, customTitle, isSpectato
     : win
       ? `За ${attempts} из ${maxAttempts} попыток`
       : `Исчерпано ${maxAttempts} попыток`;
+  $('overlay-meta').textContent = metaText || '';
+  renderOverlayLeaderboard(leaderboard);
+  renderDailyModes(modes, focusDifficulty || currentDailyDifficulty);
+  const action = $('overlay-action');
+  if (IS_DAILY && nextDifficulty) {
+    action.classList.remove('hidden');
+    action.textContent = `Открыть ${dailyLabel(nextDifficulty)}`;
+    action.onclick = () => {
+      const next = new URLSearchParams(location.search);
+      next.set('mode', 'daily');
+      next.set('difficulty', nextDifficulty);
+      location.search = next.toString();
+    };
+  } else {
+    action.classList.add('hidden');
+    action.onclick = null;
+  }
   $('overlay').classList.add('visible');
 }
 
@@ -757,25 +883,6 @@ function activateGodMode(targetWord) {
 let hintIndex          = 0;
 let hintCooldownActive = true;
 let gameOver           = false;
-let hintIdleTimer      = null;
-
-function resetHintIdleTimer() {
-  clearTimeout(hintIdleTimer);
-  const btn = $('hint-btn');
-  btn.classList.remove('pulsing');
-  $('hint-tooltip').classList.remove('visible');
-
-  // If game is over or cooldown is active or no hints left, do nothing
-  if (gameOver || hintCooldownActive || (HINTS_TOTAL - hintIndex) <= 0) return;
-
-  // After 20 seconds of idle (no message sent), glow the hint button
-  hintIdleTimer = setTimeout(() => {
-    if (!gameOver && !hintCooldownActive && (HINTS_TOTAL - hintIndex) > 0) {
-      btn.classList.add('pulsing');
-      $('hint-tooltip').classList.add('visible');
-    }
-  }, 20000);
-}
 
 function updateHintBtn() {
   const btn       = $('hint-btn');
@@ -783,22 +890,19 @@ function updateHintBtn() {
   
   if (gameOver || remaining <= 0) {
     btn.disabled = true;
-    btn.classList.remove('ready', 'pulsing');
-    $('hint-tooltip').classList.remove('visible');
+    btn.classList.remove('ready');
     btn.textContent = '💡';
     return;
   }
   if (hintCooldownActive) {
     btn.disabled = true;
-    btn.classList.remove('ready', 'pulsing');
-    $('hint-tooltip').classList.remove('visible');
+    btn.classList.remove('ready');
     btn.textContent = `⏳`;
     return;
   }
   btn.disabled = false;
   btn.classList.add('ready');
   btn.textContent = `💡 ${remaining}`;
-  resetHintIdleTimer(); // Start the idle timer once button becomes available
 }
 
 function startHintCooldown(ms) {
@@ -812,11 +916,6 @@ $('hint-btn').addEventListener('click', () => {
   haptic?.impactOccurred('soft');
   ws.send(JSON.stringify({ type: 'hint', hint_index: hintIndex }));
   hintIndex++;
-  
-  // Clear pulsing state immediately
-  $('hint-btn').classList.remove('pulsing');
-  $('hint-tooltip').classList.remove('visible');
-  
   startHintCooldown(9000); // per-hint cooldown between requests
 });
 
@@ -830,9 +929,9 @@ function wsUrl() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const enc   = encodeURIComponent(INIT_DATA);
   if (IS_DAILY) {
-    return `${proto}://${location.host}/webapp/game/daily/ws?initData=${enc}&tz=${encodeURIComponent(TIMEZONE)}`;
+    return `${proto}://${location.host}/webapp/game/daily/ws?initData=${enc}&tz=${encodeURIComponent(TIMEZONE)}&difficulty=${encodeURIComponent(currentDailyDifficulty)}&last_seen_seq=${encodeURIComponent(String(lastSeenSeq))}`;
   }
-  return `${proto}://${location.host}/webapp/game/ws?game_id=${GAME_ID}&initData=${enc}`;
+  return `${proto}://${location.host}/webapp/game/ws?game_id=${GAME_ID}&initData=${enc}&last_seen_seq=${encodeURIComponent(String(lastSeenSeq))}`;
 }
 
 function connect() {
@@ -870,6 +969,7 @@ function connect() {
 
 /* ── Server message dispatcher ──────────────────────────────────────────── */
 function handleMessage(msg) {
+  updateLastSeenSeq(msg);
   switch (msg.event) {
 
     case 'game_state': {
@@ -878,6 +978,8 @@ function handleMessage(msg) {
       setAttempts(attemptsUsed, maxAttempts);
       if (msg.category) $('category-pill').textContent = `📂 ${msg.category}`;
       if (msg.daily) $('header-title').textContent = '🐊 Крокодил дня';
+      if (msg.daily && msg.difficulty) currentDailyDifficulty = msg.difficulty;
+      if (msg.daily) renderDailyModes(msg.daily_modes || dailyModesState, currentDailyDifficulty);
       if (msg.is_creator) {
         activateGodMode(msg.target_word || '');
         gameOver = false; // Creator stays active to observe
@@ -898,11 +1000,18 @@ function handleMessage(msg) {
         attempts: attemptsUsed,
         maxAttempts,
         customTitle: msg.won ? `Очки: ${msg.points || 0}` : 'Попытки закончились',
+        leaderboard: msg.leaderboard || [],
+        modes: msg.modes || [],
+        nextDifficulty: msg.next_difficulty || '',
+        focusDifficulty: msg.focus_difficulty || currentDailyDifficulty,
+        metaText: msg.rank ? `Место сейчас: #${msg.rank}` : '',
       });
       break;
     }
 
+    case 'history_replay':
     case 'history_sync': {
+      let rendered = 0;
       (msg.items || []).forEach(item => {
         const fn = isCreatorMode ? appendSpectatorBubble : appendCompletedBubble;
         fn(item.word, {
@@ -910,8 +1019,9 @@ function handleMessage(msg) {
           hint:   item.hint,
           score:  item.score,
         });
-        attemptsUsed++;
+        rendered += 1;
       });
+      attemptsUsed = Math.max(attemptsUsed, rendered);
       setAttempts(attemptsUsed, maxAttempts);
       break;
     }
@@ -932,6 +1042,11 @@ function handleMessage(msg) {
         updateHintBtn();
         setTimeout(() => showOverlay({
           win: true, word: msg.word, attempts: attemptsUsed, maxAttempts,
+          leaderboard: msg.leaderboard || [],
+          modes: msg.modes || [],
+          nextDifficulty: msg.next_difficulty || '',
+          focusDifficulty: msg.focus_difficulty || currentDailyDifficulty,
+          metaText: msg.rank ? `Место сейчас: #${msg.rank}` : '',
         }), 600);
       } else if (msg.status === 'hot') {
         haptic?.notificationOccurred('success');
@@ -960,6 +1075,11 @@ function handleMessage(msg) {
       haptic?.notificationOccurred('error');
       setTimeout(() => showOverlay({
         win: false, word: msg.word, attempts: attemptsUsed, maxAttempts,
+        leaderboard: msg.leaderboard || [],
+        modes: msg.modes || [],
+        nextDifficulty: msg.next_difficulty || '',
+        focusDifficulty: msg.focus_difficulty || currentDailyDifficulty,
+        metaText: msg.rank ? `Место сейчас: #${msg.rank}` : '',
       }), 200);
       break;
     }
@@ -1059,7 +1179,6 @@ function sendGuess() {
   ws.send(JSON.stringify({ type: 'typing', active: false }));
   appendPendingBubble(word, pid);
   haptic?.impactOccurred('medium');
-  resetHintIdleTimer(); // Reset idle timer since user just made a guess
 }
 
 $('send-btn').addEventListener('click', sendGuess);

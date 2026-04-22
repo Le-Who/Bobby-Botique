@@ -42,12 +42,14 @@ async def test_due_delivery_respects_user_timezone(monkeypatch) -> None:
                 "timezone": "Europe/Kyiv",
                 "preferred_local_hour": 13,
                 "last_sent_puzzle_date": None,
+                "last_sent_local_date": None,
             },
             {
                 "user_id": 2,
                 "timezone": "America/New_York",
                 "preferred_local_hour": 13,
                 "last_sent_puzzle_date": None,
+                "last_sent_local_date": None,
             },
         ]
 
@@ -58,6 +60,35 @@ async def test_due_delivery_respects_user_timezone(monkeypatch) -> None:
     )
 
     assert [row["user_id"] for row in due] == [1]
+
+
+@pytest.mark.asyncio
+async def test_due_delivery_allows_late_scheduler_but_skips_same_local_day(monkeypatch) -> None:
+    async def fake_db_query(query, params=(), retries=3, conn=None):
+        return [
+            {
+                "user_id": 1,
+                "timezone": "Europe/Kyiv",
+                "preferred_local_hour": 13,
+                "last_sent_puzzle_date": None,
+                "last_sent_local_date": date(2026, 4, 21),
+            },
+            {
+                "user_id": 2,
+                "timezone": "Europe/Kyiv",
+                "preferred_local_hour": 13,
+                "last_sent_puzzle_date": None,
+                "last_sent_local_date": None,
+            },
+        ]
+
+    monkeypatch.setattr(repo.db, "db_query", fake_db_query)
+    due = await repo.get_due_deliveries(
+        puzzle_date=date(2026, 4, 21),
+        now=datetime(2026, 4, 21, 12, 45, tzinfo=UTC),
+    )
+
+    assert [row["user_id"] for row in due] == [2]
 
 
 @pytest.mark.asyncio
@@ -84,7 +115,7 @@ def test_intro_keyboard_labels() -> None:
     markup = daily_crocodile.daily_intro_keyboard()
     labels = [button.text for row in markup.inline_keyboard for button in row]
 
-    assert labels == ["Играть", "Получать каждый день", "Не напоминать 2 недели"]
+    assert labels == ["Открыть daily", "Получать каждый день", "Не напоминать 2 недели"]
 
 
 @pytest.mark.asyncio
@@ -157,8 +188,14 @@ async def test_prepare_daily_puzzle_prefills_hints_and_image(monkeypatch) -> Non
     bot.send_photo.assert_awaited_once()
     temp_msg.delete.assert_awaited_once()
     prompt_mock.assert_awaited_once()
-    asset_mock.assert_awaited_once_with(puzzle_date, "file-123", image_model=repo.DAILY_IMAGE_MODEL)
-    prepared_mock.assert_awaited_once_with(puzzle_date)
+    assert prompt_mock.await_args.kwargs["difficulty"] == "easy"
+    asset_mock.assert_awaited_once_with(
+        puzzle_date,
+        "file-123",
+        difficulty="easy",
+        image_model=repo.DAILY_IMAGE_MODEL,
+    )
+    prepared_mock.assert_awaited_once_with(puzzle_date, difficulty="easy")
 
 
 @pytest.mark.asyncio
@@ -178,6 +215,7 @@ async def test_daily_scheduler_skips_sends_when_delivery_disabled() -> None:
 
     with (
         patch("app.games.crocodile_daily.ensure_prepared_puzzles", new_callable=AsyncMock, return_value=[prepared_puzzle]) as prep_mock,
+        patch("app.games.crocodile_daily.active_daily_difficulties", new_callable=AsyncMock, return_value=["easy"]),
         patch("app.handlers.daily_crocodile.is_daily_delivery_enabled", new_callable=AsyncMock, return_value=False),
         patch("app.handlers.daily_crocodile.send_daily_prompt", new_callable=AsyncMock) as prompt_mock,
         patch("app.handlers.daily_crocodile.send_discovery_intro", new_callable=AsyncMock) as intro_mock,
@@ -209,6 +247,7 @@ async def test_daily_scheduler_waits_until_puzzle_is_fully_prepared() -> None:
 
     with (
         patch("app.games.crocodile_daily.ensure_prepared_puzzles", new_callable=AsyncMock, return_value=[incomplete_puzzle]),
+        patch("app.games.crocodile_daily.active_daily_difficulties", new_callable=AsyncMock, return_value=["easy"]),
         patch("app.handlers.daily_crocodile.is_daily_delivery_enabled", new_callable=AsyncMock, return_value=True),
         patch("app.handlers.daily_crocodile.send_daily_prompt", new_callable=AsyncMock) as prompt_mock,
         patch("app.handlers.daily_crocodile.send_discovery_intro", new_callable=AsyncMock) as intro_mock,
@@ -263,6 +302,14 @@ async def test_daily_websocket_uses_daily_mode_and_timezone(monkeypatch) -> None
         lang="ru",
         hints=[],
     )
+    hard_puzzle = repo.DailyPuzzle(
+        puzzle_date=date(2026, 4, 21),
+        target_word="аллигатор",
+        topic="Разное",
+        lang="ru",
+        difficulty="hard",
+        hints=[],
+    )
     result = repo.DailyResult(
         user_id=777,
         puzzle_date=date(2026, 4, 21),
@@ -276,21 +323,47 @@ async def test_daily_websocket_uses_daily_mode_and_timezone(monkeypatch) -> None
         share_grid="",
         streak_after=0,
     )
+    hard_result = repo.DailyResult(
+        user_id=777,
+        puzzle_date=date(2026, 4, 21),
+        difficulty="hard",
+        status="active",
+        attempts=[],
+        best_score=0.0,
+        used_hints_count=0,
+        won_at=None,
+        finished_at=None,
+        points=0,
+        share_grid="",
+        streak_after=0,
+    )
 
     with (
-        patch("app.games.crocodile_daily.get_daily_state", new_callable=AsyncMock) as state_mock,
+        patch("app.games.crocodile_daily.get_daily_overview", new_callable=AsyncMock) as overview_mock,
         patch("app.games.crocodile_daily.process_daily_guess", new_callable=AsyncMock) as guess_mock,
         patch("app.repos.crocodile_daily.update_timezone_if_known", new_callable=AsyncMock) as timezone_mock,
         patch("app.bot_instance.get_bot", return_value=None),
     ):
-        state_mock.return_value = (puzzle, result)
+        overview_mock.return_value = (
+            puzzle.puzzle_date,
+            {"easy": puzzle, "hard": hard_puzzle},
+            {"easy": result, "hard": hard_result},
+        )
         guess_mock.return_value = {
             "event": "result",
             "status": "exact_match",
             "attempts": 1,
             "max_attempts": 6,
             "word": "крокодил",
+            "difficulty": "easy",
             "daily_completed": True,
+            "leaderboard": [],
+            "modes": [
+                {"difficulty": "easy", "completed": True, "status": "won"},
+                {"difficulty": "hard", "completed": False, "status": "active"},
+            ],
+            "next_difficulty": "hard",
+            "focus_difficulty": "easy",
         }
 
         async with quart_app.test_client().websocket(url) as ws:
@@ -298,10 +371,13 @@ async def test_daily_websocket_uses_daily_mode_and_timezone(monkeypatch) -> None
             assert state["event"] == "game_state"
             assert state["daily"] is True
             assert state["max_attempts"] == 6
+            assert state["difficulty"] == "easy"
+            assert {item["difficulty"] for item in state["daily_modes"]} == {"easy", "hard"}
 
             await ws.send(json.dumps({"type": "guess", "word": "крокодил", "pending_id": "p1"}))
             event = json.loads(await ws.receive())
             assert event["daily_completed"] is True
             assert event["pending_id"] == "p1"
+            assert event["next_difficulty"] == "hard"
 
     timezone_mock.assert_awaited_once_with(777, "Europe/Kyiv")

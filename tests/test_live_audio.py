@@ -33,12 +33,15 @@ def live_settings(monkeypatch) -> SimpleNamespace:
         ADMIN_ID=1,
         TELEGRAM_BOT_TOKEN="test-token",
         GEMINI_API_KEYS=["fake-api-key-123"],
-        AVAILABLE_MODELS=["gemini-3.1-flash-live-preview"],
+        AVAILABLE_MODELS=["gemini-live-2.5-flash-native-audio"],
         DAILY_LIMITS={},
         LIMIT_THRESHOLD_PERCENT=0.7,
-        RESEARCH_MODEL="gemini-3.1-flash-live-preview",
+        RESEARCH_MODEL="gemini-live-2.5-flash-native-audio",
         TAVILY_LIMIT_THRESHOLD_PERCENT=0.8,
         TAVILY_MONTHLY_CREDIT_LIMIT=1000.0,
+        VERTEX_AI_KEY="vertex-key",
+        VERTEX_AI_PROJECT=None,
+        VERTEX_AI_LOCATION="us-central1",
     )
     monkeypatch.setattr("app.config.settings", settings, raising=False)
     monkeypatch.setattr("app.web_miniapp.settings", settings, raising=False)
@@ -165,16 +168,19 @@ class TestLiveAudioProxy:
         mock_client.aio.live.connect.return_value = mock_session
 
         with (
-            patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
-            patch("app.handlers.ai_core._resolve_ai_request",
-                  new_callable=AsyncMock,
-                  return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct")),
+            patch("app.providers.gemini.get_vertex_client", return_value=mock_client),
+            patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
             async with test_client.websocket(url) as ws:
                 raw = await ws.receive()
                 msg = json.loads(raw)
                 assert msg["type"] == "connected"
+                connect_kwargs = mock_client.aio.live.connect.call_args.kwargs
+                config = connect_kwargs["config"]
+                assert connect_kwargs["model"] == "gemini-live-2.5-flash-native-audio"
+                assert config.thinking_config is None
+                assert config.session_resumption.transparent is True
 
     async def test_audio_forwarding(self, test_client, mock_bot_token, mock_api_keys):
         """LA-03: realtime_input message should trigger session.send_realtime_input."""
@@ -200,10 +206,8 @@ class TestLiveAudioProxy:
         mock_client.aio.live.connect.return_value = mock_session
 
         with (
-            patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
-            patch("app.handlers.ai_core._resolve_ai_request",
-                  new_callable=AsyncMock,
-                  return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct")),
+            patch("app.providers.gemini.get_vertex_client", return_value=mock_client),
+            patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
             async with test_client.websocket(url) as ws:
@@ -251,10 +255,8 @@ class TestLiveAudioProxy:
         mock_client.aio.live.connect.return_value = mock_session
 
         with (
-            patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
-            patch("app.handlers.ai_core._resolve_ai_request",
-                  new_callable=AsyncMock,
-                  return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct")),
+            patch("app.providers.gemini.get_vertex_client", return_value=mock_client),
+            patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
             async with test_client.websocket(url) as ws:
@@ -290,10 +292,8 @@ class TestLiveAudioProxy:
         mock_client.aio.live.connect.return_value = mock_session
 
         with (
-            patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
-            patch("app.handlers.ai_core._resolve_ai_request",
-                  new_callable=AsyncMock,
-                  return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct")),
+            patch("app.providers.gemini.get_vertex_client", return_value=mock_client),
+            patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
             async with test_client.websocket(url) as ws:
@@ -331,12 +331,8 @@ class TestLiveAudioProxy:
         monkeypatch.setattr("app.web_miniapp._LIVE_MODEL_COOLDOWN_REASON", "")
 
         with (
-            patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
-            patch(
-                "app.handlers.ai_core._resolve_ai_request",
-                new_callable=AsyncMock,
-                return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct"),
-            ),
+            patch("app.providers.gemini.get_vertex_client", return_value=mock_client),
+            patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
             async with test_client.websocket(url) as ws:
@@ -347,3 +343,18 @@ class TestLiveAudioProxy:
                 assert fatal_msg["retry_after_seconds"] >= 15
 
         assert failing_connect.calls == 1
+
+    async def test_misconfigured_vertex_returns_controlled_fatal(self, test_client, mock_bot_token):
+        init_data = make_valid_init_data(mock_bot_token, user_id=560)
+        url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
+
+        with (
+            patch("app.providers.gemini.get_vertex_client", return_value=None),
+            patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
+            patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
+        ):
+            async with test_client.websocket(url) as ws:
+                fatal_raw = await ws.receive()
+                fatal_msg = json.loads(fatal_raw)
+                assert fatal_msg["type"] == "fatal"
+                assert fatal_msg["reason"] == "misconfigured"

@@ -252,7 +252,16 @@ class CrocodileGame:
         try:
             from app.games.crocodile_runtime import append_runtime_history
 
-            await append_runtime_history(self.game_id, history_item)
+            stamped_history = await append_runtime_history(self.game_id, history_item)
+            if isinstance(stamped_history, dict):
+                event["seq"] = stamped_history.get("seq")
+                event["server_time_ms"] = stamped_history.get("server_time_ms")
+                history_item.update(
+                    {
+                        "seq": stamped_history.get("seq"),
+                        "server_time_ms": stamped_history.get("server_time_ms"),
+                    }
+                )
         except Exception as exc:
             logger.debug("Runtime history append failed game=%s: %s", self.game_id, exc)
 
@@ -358,10 +367,15 @@ async def _prefetch_hints(game_id: str, word: str, category: str, *, topic_id: s
     Checks hints_cache first so repeat sessions with the same word pay 0 LLM
     tokens. Results are keyed by game_id so they vanish when the game ends.
     """
+    from app.games.crocodile_flags import is_hint_prewarm_enabled
     from app.games.crocodile_runtime import set_runtime_hints
     from app.games.hinting import get_or_generate_cached_hints
 
-    hints = await get_or_generate_cached_hints(word, category, topic_id=topic_id, mode="foreground")
+    if not await is_hint_prewarm_enabled():
+        logger.debug("Hint prewarm skipped for game=%s because runtime switch is off", game_id)
+        return
+
+    hints = await get_or_generate_cached_hints(word, category, topic_id=topic_id, mode="background")
     if hints:
         _mem_hints[game_id] = hints
         await set_runtime_hints(game_id, hints)

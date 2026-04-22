@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 
@@ -14,13 +15,19 @@ _RUNTIME_TTL_S = 2 * 24 * 60 * 60
 _EVENTS_CHANNEL_PREFIX = "croc:runtime:events:"
 _HINTS_KEY_PREFIX = "croc:runtime:hints:"
 _HISTORY_KEY_PREFIX = "croc:runtime:history:"
+_SEQ_KEY_PREFIX = "croc:runtime:seq:"
+_PENDING_KEY_PREFIX = "croc:runtime:pending:"
 _LOCK_KEY_PREFIX = "croc:lock:"
 _GAME_LOCKS_MAX = 512
+_HISTORY_LIMIT = 32
+_PENDING_RESULTS_LIMIT = 32
 
 _local_hints: dict[str, list[str]] = {}
 _local_history: dict[str, list[dict]] = {}
 _local_subscribers: dict[str, dict[str, asyncio.Queue]] = defaultdict(dict)  # type: ignore[type-arg]
 _local_locks: dict[str, asyncio.Lock] = {}
+_local_event_seq: dict[str, int] = {}
+_local_pending_results: dict[str, dict[str, dict]] = defaultdict(dict)
 _game_locks = _local_locks
 
 
@@ -42,6 +49,14 @@ def _history_key(game_id: str) -> str:
 
 def _events_channel(game_id: str) -> str:
     return f"{_EVENTS_CHANNEL_PREFIX}{game_id}"
+
+
+def _seq_key(game_id: str) -> str:
+    return f"{_SEQ_KEY_PREFIX}{game_id}"
+
+
+def _pending_key(game_id: str) -> str:
+    return f"{_PENDING_KEY_PREFIX}{game_id}"
 
 
 def _lock_key(game_id: str) -> str:
@@ -118,26 +133,122 @@ async def get_runtime_history(game_id: str) -> list[dict]:
     return [dict(item) for item in _local_history.get(game_id, [])]
 
 
-async def append_runtime_history(game_id: str, item: dict) -> None:
-    _local_history.setdefault(game_id, []).append(dict(item))
+async def get_runtime_replay(game_id: str, *, after_seq: int = 0) -> list[dict]:
+    history = await get_runtime_history(game_id)
+    if after_seq <= 0:
+        return history
+    replay: list[dict] = []
+    for item in history:
+        seq = item.get("seq")
+        if isinstance(seq, int) and seq > after_seq:
+            replay.append(dict(item))
+    return replay
+
+
+async def _next_event_seq(game_id: str) -> int:
+    current = _local_event_seq.get(game_id, 0)
+    if redis_client:
+        try:
+            next_seq = int(await redis_client.incr(_seq_key(game_id)))  # type: ignore[misc]
+            await redis_client.expire(_seq_key(game_id), _RUNTIME_TTL_S)  # type: ignore[misc]
+            _local_event_seq[game_id] = max(current, next_seq)
+            return next_seq
+        except Exception as exc:
+            logger.debug("Runtime seq increment failed game=%s: %s", game_id, exc)
+    next_seq = current + 1
+    _local_event_seq[game_id] = next_seq
+    return next_seq
+
+
+async def stamp_runtime_payload(game_id: str, payload: dict) -> dict:
+    stamped = dict(payload)
+    seq = stamped.get("seq")
+    server_time_ms = stamped.get("server_time_ms")
+    if isinstance(seq, int) and isinstance(server_time_ms, int):
+        _local_event_seq[game_id] = max(_local_event_seq.get(game_id, 0), seq)
+        return stamped
+    stamped["seq"] = await _next_event_seq(game_id)
+    stamped["server_time_ms"] = int(time.time() * 1000)
+    return stamped
+
+
+async def append_runtime_history(game_id: str, item: dict) -> dict:
+    stamped = await stamp_runtime_payload(game_id, item)
+    _local_history.setdefault(game_id, []).append(dict(stamped))
+    if len(_local_history[game_id]) > _HISTORY_LIMIT:
+        _local_history[game_id] = _local_history[game_id][-_HISTORY_LIMIT:]
     if not redis_client:
-        return
+        return stamped
     try:
         pipe = redis_client.pipeline()
-        pipe.rpush(_history_key(game_id), json.dumps(item, ensure_ascii=False))
-        pipe.ltrim(_history_key(game_id), -32, -1)
+        pipe.rpush(_history_key(game_id), json.dumps(stamped, ensure_ascii=False))
+        pipe.ltrim(_history_key(game_id), -_HISTORY_LIMIT, -1)
         pipe.expire(_history_key(game_id), _RUNTIME_TTL_S)
         await pipe.execute()
     except Exception as exc:
         logger.debug("Runtime history append failed game=%s: %s", game_id, exc)
+    return stamped
+
+
+async def get_cached_pending_action_result(game_id: str, pending_id: str) -> dict | None:
+    if not pending_id:
+        return None
+
+    local = _local_pending_results.get(game_id, {})
+    cached = local.get(pending_id)
+    if isinstance(cached, dict):
+        return dict(cached)
+
+    if redis_client:
+        try:
+            raw = await redis_client.hget(_pending_key(game_id), pending_id)  # type: ignore[misc]
+            text = _decode_text(raw)
+            if text:
+                payload = json.loads(text)
+                if isinstance(payload, dict):
+                    _local_pending_results[game_id][pending_id] = dict(payload)
+                    return dict(payload)
+        except Exception as exc:
+            logger.debug("Runtime pending result read failed game=%s pending_id=%s: %s", game_id, pending_id, exc)
+
+    return None
+
+
+async def cache_pending_action_result(game_id: str, pending_id: str, payload: dict) -> None:
+    if not pending_id:
+        return
+
+    stamped = dict(payload)
+    bucket = _local_pending_results.setdefault(game_id, {})
+    bucket[pending_id] = stamped
+    if len(bucket) > _PENDING_RESULTS_LIMIT:
+        oldest = next(iter(bucket))
+        bucket.pop(oldest, None)
+
+    if not redis_client:
+        return
+    try:
+        pipe = redis_client.pipeline()
+        pipe.hset(_pending_key(game_id), pending_id, json.dumps(stamped, ensure_ascii=False))
+        pipe.expire(_pending_key(game_id), _RUNTIME_TTL_S)
+        await pipe.execute()
+    except Exception as exc:
+        logger.debug("Runtime pending result write failed game=%s pending_id=%s: %s", game_id, pending_id, exc)
 
 
 async def clear_runtime_state(game_id: str) -> None:
     _local_hints.pop(game_id, None)
     _local_history.pop(game_id, None)
+    _local_event_seq.pop(game_id, None)
+    _local_pending_results.pop(game_id, None)
     if redis_client:
         try:
-            await redis_client.delete(_hints_key(game_id), _history_key(game_id))  # type: ignore[misc]
+            await redis_client.delete(
+                _hints_key(game_id),
+                _history_key(game_id),
+                _seq_key(game_id),
+                _pending_key(game_id),
+            )  # type: ignore[misc]
         except Exception as exc:
             logger.debug("Runtime state clear failed game=%s: %s", game_id, exc)
 
@@ -220,12 +331,13 @@ async def open_game_event_subscription(game_id: str, subscriber_id: str) -> Game
     return GameEventSubscription(game_id=game_id, subscriber_id=subscriber_id, queue=queue)
 
 
-async def publish_runtime_event(game_id: str, payload: dict, *, exclude_subscriber_id: str | None = None) -> None:
+async def publish_runtime_event(game_id: str, payload: dict, *, exclude_subscriber_id: str | None = None) -> dict:
+    stamped = await stamp_runtime_payload(game_id, payload)
     if redis_client:
         try:
-            envelope = {"sender_id": exclude_subscriber_id or "", "payload": payload}
+            envelope = {"sender_id": exclude_subscriber_id or "", "payload": stamped}
             await redis_client.publish(_events_channel(game_id), json.dumps(envelope, ensure_ascii=False))  # type: ignore[misc]
-            return
+            return stamped
         except Exception as exc:
             logger.warning("Runtime pubsub publish failed game=%s: %s", game_id, exc)
 
@@ -234,9 +346,19 @@ async def publish_runtime_event(game_id: str, payload: dict, *, exclude_subscrib
         if subscriber_id == exclude_subscriber_id:
             continue
         try:
-            queue.put_nowait(payload)
+            queue.put_nowait(stamped)
         except asyncio.QueueFull:
             logger.warning("Runtime local queue full game=%s subscriber=%s", game_id, subscriber_id)
+    return stamped
+
+
+def get_runtime_health_snapshot() -> dict[str, int]:
+    return {
+        "tracked_games": len(_local_event_seq),
+        "history_buffers": len(_local_history),
+        "pending_result_buckets": len(_local_pending_results),
+        "subscribers": sum(len(items) for items in _local_subscribers.values()),
+    }
 
 
 @asynccontextmanager
@@ -273,3 +395,5 @@ def reset_runtime_state_for_tests() -> None:
     _local_hints.clear()
     _local_history.clear()
     _local_locks.clear()
+    _local_event_seq.clear()
+    _local_pending_results.clear()

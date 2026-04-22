@@ -22,6 +22,7 @@ EXPECTED_TABLES = frozenset(
         "api_keys",
         "key_usage",
         "metrics",
+        "crocodile_daily_days",
         "crocodile_daily_puzzles",
         "crocodile_daily_preferences",
         "crocodile_daily_results",
