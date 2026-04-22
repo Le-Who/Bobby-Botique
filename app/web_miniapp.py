@@ -116,7 +116,7 @@ def _build_live_connect_config(*, system_instruction: str, resumption_handle: st
     from google.genai import types
 
     return types.LiveConnectConfig(
-        response_modalities=[types.Modality.AUDIO, types.Modality.TEXT],
+        response_modalities=[types.Modality.AUDIO],
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
         session_resumption=types.SessionResumptionConfig(
@@ -124,7 +124,18 @@ def _build_live_connect_config(*, system_instruction: str, resumption_handle: st
             transparent=True,
         ),
         context_window_compression=types.ContextWindowCompressionConfig(
-            sliding_window=types.SlidingWindow(),
+            trigger_tokens=10_000,
+            sliding_window=types.SlidingWindow(target_tokens=512),
+        ),
+        realtime_input_config=types.RealtimeInputConfig(
+            automatic_activity_detection=types.AutomaticActivityDetection(
+                start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
+                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
+                prefix_padding_ms=150,
+                silence_duration_ms=700,
+            ),
+            activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+            turn_coverage=types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
         ),
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
@@ -133,7 +144,10 @@ def _build_live_connect_config(*, system_instruction: str, resumption_handle: st
                 )
             )
         ),
+        tools=[types.Tool(google_search=types.GoogleSearch())],
         system_instruction=types.Content(parts=[types.Part(text=system_instruction)]),
+        proactivity=types.ProactivityConfig(proactive_audio=False),
+        enable_affective_dialog=False,
     )
 
 
