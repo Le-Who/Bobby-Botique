@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections import OrderedDict
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -41,6 +42,16 @@ _CACHE_PATH = _DATA_DIR / "judgement_cache.json"
 _HINTS_CACHE_PATH = _DATA_DIR / "hints_cache.json"
 _CAT_CACHE_PATH = _DATA_DIR / "category_cache.json"
 _GEN_WORDS_CACHE_PATH = _DATA_DIR / "generated_words_cache.json"
+
+# ── Per-file threading locks ──────────────────────────────────────────────────
+# asyncio.to_thread() dispatches blocking I/O to a real OS thread-pool.
+# Without these locks, concurrent flushes from parallel coroutines race:
+# two threads open the same .tmp file, last writer wins (or both corrupt it).
+# One threading.Lock per file serializes writes without blocking the event loop.
+_PERSIST_LOCK = threading.Lock()
+_PERSIST_HINTS_LOCK = threading.Lock()
+_PERSIST_CAT_LOCK = threading.Lock()
+_PERSIST_GEN_WORDS_LOCK = threading.Lock()
 _MAX_ENTRIES = 50_000
 _MAX_HINTS = 5_000
 _MAX_CAT = 10_000
@@ -147,13 +158,14 @@ def _load_from_disk() -> None:
 
 def _persist_sync() -> None:
     """Write the current _store to disk. Runs inside to_thread — never call from async directly."""
-    try:
-        _DATA_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = _CACHE_PATH.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(dict(_store), ensure_ascii=False), encoding="utf-8")
-        tmp.replace(_CACHE_PATH)
-    except Exception as exc:
-        logger.debug("Judgement cache persist failed: %s", exc)
+    with _PERSIST_LOCK:
+        try:
+            _DATA_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = _CACHE_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(dict(_store), ensure_ascii=False), encoding="utf-8")
+            tmp.replace(_CACHE_PATH)
+        except Exception as exc:
+            logger.debug("Judgement cache persist failed: %s", exc)
 
 
 async def _persist() -> None:
@@ -278,13 +290,14 @@ def _load_hints_from_disk() -> None:
 
 def _persist_hints_sync() -> None:
     """Write _hints_store to disk. Runs inside to_thread."""
-    try:
-        _DATA_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = _HINTS_CACHE_PATH.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(dict(_hints_store), ensure_ascii=False), encoding="utf-8")
-        tmp.replace(_HINTS_CACHE_PATH)
-    except Exception as exc:
-        logger.debug("Hints cache persist failed: %s", exc)
+    with _PERSIST_HINTS_LOCK:
+        try:
+            _DATA_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = _HINTS_CACHE_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(dict(_hints_store), ensure_ascii=False), encoding="utf-8")
+            tmp.replace(_HINTS_CACHE_PATH)
+        except Exception as exc:
+            logger.debug("Hints cache persist failed: %s", exc)
 
 
 async def _persist_hints() -> None:
@@ -357,13 +370,14 @@ def _load_cat_from_disk() -> None:
 
 def _persist_cat_sync() -> None:
     """Write _cat_store to disk. Runs inside to_thread."""
-    try:
-        _DATA_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = _CAT_CACHE_PATH.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(dict(_cat_store), ensure_ascii=False), encoding="utf-8")
-        tmp.replace(_CAT_CACHE_PATH)
-    except Exception as exc:
-        logger.debug("Category cache persist failed: %s", exc)
+    with _PERSIST_CAT_LOCK:
+        try:
+            _DATA_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = _CAT_CACHE_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(dict(_cat_store), ensure_ascii=False), encoding="utf-8")
+            tmp.replace(_CAT_CACHE_PATH)
+        except Exception as exc:
+            logger.debug("Category cache persist failed: %s", exc)
 
 
 async def _persist_cat() -> None:
@@ -428,13 +442,14 @@ def _load_generated_words_from_disk() -> None:
 
 def _persist_generated_words_sync() -> None:
     """Write _generated_words_store to disk. Runs inside to_thread."""
-    try:
-        _DATA_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = _GEN_WORDS_CACHE_PATH.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(dict(_generated_words_store), ensure_ascii=False), encoding="utf-8")
-        tmp.replace(_GEN_WORDS_CACHE_PATH)
-    except Exception as exc:
-        logger.debug("Generated word-bank cache persist failed: %s", exc)
+    with _PERSIST_GEN_WORDS_LOCK:
+        try:
+            _DATA_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = _GEN_WORDS_CACHE_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(dict(_generated_words_store), ensure_ascii=False), encoding="utf-8")
+            tmp.replace(_GEN_WORDS_CACHE_PATH)
+        except Exception as exc:
+            logger.debug("Generated word-bank cache persist failed: %s", exc)
 
 
 async def _persist_generated_words() -> None:

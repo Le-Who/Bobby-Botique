@@ -3,7 +3,40 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [Unreleased] - 2026-04-22 - Gemini Live 1007 Fix & Voice Engine 5.0 (Parallel TTS)
+## [Unreleased] - 2026-04-22 - Multi-Worker Hardening: Distributed Locks, Cache Integrity & Creator God-Mode
+
+### 🔒 Concurrency & Data Integrity
+
+- **`game_mutation_lock` contention now raises `TimeoutError` (`app/games/crocodile_runtime.py`):** The Redis distributed lock timeout (contention from another worker) previously fell through to a local `asyncio.Lock` silently, allowing two workers to mutate the same game concurrently. Now `TimeoutError` propagates directly — the request fails fast. Only genuine Redis connection errors (`ConnectionError`, `OSError`) trigger the local-lock fallback.
+
+- **Thread-safe JSON cache writes (`app/games/judgement_cache.py`):** All four `_persist_sync` helpers (`judgement`, `hints`, `categories`, `generated_words`) now each hold a dedicated `threading.Lock` (`_PERSIST_LOCK`, `_PERSIST_HINTS_LOCK`, `_PERSIST_CAT_LOCK`, `_PERSIST_GEN_WORDS_LOCK`). `asyncio.to_thread` dispatches no longer race against each other on the `.json.tmp` → rename path, eliminating the Windows file-corruption race.
+
+- **Distributed Redis lock for puzzle prep (`app/games/crocodile_daily.py`):** `prepare_daily_puzzle()` now acquires a Redis distributed lock keyed `daily:prep:{date}:{difficulty}` (60 s TTL, 30 s blocking) under a per-process `asyncio.Lock` fast-path guard. If the Redis lock times out (another worker is already preparing), the function falls back to loading the existing puzzle from the database — preventing duplicated LLM calls, Pollinations image generation, and DB writes across clustered workers.
+
+- **Capped in-process prep-lock registry (`app/games/crocodile_daily.py`):** `_PREP_LOCKS` is now bounded to 64 entries with FIFO eviction (25% evicted at cap). `_get_local_prep_lock()` replaces the old unbounded `_prep_lock()` to prevent memory growth during long-running uptime.
+
+### 👑 Creator God-Mode — Reconnect to Finished Game (`app/web_miniapp.py`)
+
+- Previously, `if game.status != "active": websocket.close(4009)` kicked **everyone** out, including the creator who closed and reopened the Mini App after the game ended.
+- Now: non-creators still receive `4009 Game already finished` immediately. The **creator** receives:
+  1. A full `game_state` snapshot with `target_word`, `finished: True`, and `status` (e.g. `"won"`/`"lost"`).
+  2. A `history_sync` event with the complete guess history (from Redis or in-memory cache).
+  3. A graceful `1000` close — allowing the Mini App JS to render the post-game overlay without additional server interaction.
+
+### 🧹 Lint & Test Fixes
+
+- **`tests/test_live_audio.py`:** Updated `live_settings` fixture and `test_connect_sends_connected_event` assertion to reference `gemini-3.1-flash-live-preview` (the current live model). Removed stale `config.session_resumption.transparent is True` assertion — the `transparent` parameter was removed from `_build_live_connect_config` in a prior session due to Gemini 1007 errors.
+- **`tests/test_voice_engine.py`:** Renamed unused `original_pregenerate` variable to `_` (F841).
+- **`app/utils/audio_processor.py`:** Fixed import sort order (I001 auto-fix).
+- **`scratch_test_live.py`:** Fixed import ordering (I001 auto-fix).
+- **`pyproject.toml`:** Added `scripts/check_encoding.py` to `per-file-ignores` T201 — it is a CLI pre-commit script that prints user-facing error messages by design.
+
+### ✅ Verification
+
+- `python -m ruff check .` → **All checks passed**
+- `python -m pytest tests/ -q --timeout=60 -n auto` → **1837 passed, 96 skipped**
+
+
 
 ### 🔊 Voice Engine 5.0 — Future-Based Pre-Generation
 - **Parallel chunk generation (`app/voice_engine.py`):** `_run_gemini_pipeline` now generates up to `_MAX_PARALLEL_CHUNKS = 4` chunks concurrently via `asyncio.gather` instead of a sequential for-loop. Each chunk uses independent key-racing, eliminating the serial bottleneck that caused 504 DEADLINE_EXCEEDED on long texts.

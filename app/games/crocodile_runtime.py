@@ -364,11 +364,15 @@ def get_runtime_health_snapshot() -> dict[str, int]:
 @asynccontextmanager
 async def game_mutation_lock(game_id: str):
     if redis_client:
+        _redis_conn_error = False
         try:
             lock = redis_client.lock(_lock_key(game_id), timeout=15, blocking_timeout=5)
             acquired = await lock.acquire()
             if not acquired:
-                raise TimeoutError("lock acquire returned False")
+                # Lock is held by another worker — this is contention, NOT a Redis outage.
+                # Falling through to a local asyncio.Lock would allow both workers to
+                # mutate the game concurrently. Raise so the caller can surface an error.
+                raise TimeoutError(f"game_mutation_lock: timed out waiting for game={game_id}")
             try:
                 yield
                 return
@@ -377,8 +381,22 @@ async def game_mutation_lock(game_id: str):
                     await lock.release()
                 except Exception as exc:
                     logger.debug("Runtime lock release failed game=%s: %s", game_id, exc)
+        except TimeoutError:
+            # Re-raise contention errors — do NOT fall back to local lock.
+            raise
         except Exception as exc:
-            logger.warning("Runtime lock fallback to local game=%s: %s", game_id, exc)
+            # Only genuine Redis connectivity failures reach here (e.g. ConnectionError,
+            # OSError, socket timeouts). In single-process/test mode, falling back to a
+            # local asyncio.Lock is safe.
+            logger.warning("Runtime Redis lock unavailable, falling back to local lock game=%s: %s", game_id, exc)
+            _redis_conn_error = True
+
+        if _redis_conn_error:
+            _sweep_game_locks()
+            local_lock = _local_locks.setdefault(game_id, asyncio.Lock())
+            async with local_lock:
+                yield
+            return
 
     _sweep_game_locks()
     lock = _local_locks.setdefault(game_id, asyncio.Lock())

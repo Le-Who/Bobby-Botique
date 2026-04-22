@@ -16,17 +16,31 @@ from app.repos import crocodile_daily as repo
 from app.utils.background_tasks import submit_task
 
 logger = logging.getLogger(__name__)
+
+# -- In-process prep guards (per-worker fast-path) -------------------------
+# Capped at 64 entries to avoid memory leaks from old dates accumulating.
 _PREP_LOCKS: dict[str, asyncio.Lock] = {}
+_PREP_LOCKS_MAX = 64
+
+
+def _prep_lock_key(puzzle_date: date, difficulty: str) -> str:
+    return f"{puzzle_date.isoformat()}:{difficulty}"
+
+
+def _get_local_prep_lock(puzzle_date: date, difficulty: str) -> asyncio.Lock:
+    """Return the in-process asyncio.Lock for this slot, evicting oldest entries at cap."""
+    key = _prep_lock_key(puzzle_date, difficulty)
+    if key not in _PREP_LOCKS and len(_PREP_LOCKS) >= _PREP_LOCKS_MAX:
+        evict_n = _PREP_LOCKS_MAX // 4
+        for old_key in list(_PREP_LOCKS)[:evict_n]:
+            _PREP_LOCKS.pop(old_key, None)
+    return _PREP_LOCKS.setdefault(key, asyncio.Lock())
 
 
 async def active_daily_difficulties() -> tuple[str, ...]:
     if await is_daily_dual_track_enabled():
         return repo.DAILY_DIFFICULTIES
     return ("easy",)
-
-
-def _prep_lock(puzzle_date: date, difficulty: str) -> asyncio.Lock:
-    return _PREP_LOCKS.setdefault(f"{puzzle_date.isoformat()}:{difficulty}", asyncio.Lock())
 
 
 def _daily_topic_id(puzzle: repo.DailyPuzzle) -> str:
@@ -185,54 +199,85 @@ async def prepare_daily_puzzle(
     force_image: bool = False,
 ) -> repo.DailyPuzzle:
     difficulty = repo.normalize_daily_difficulty(difficulty)
-    async with _prep_lock(puzzle_date, difficulty):
-        puzzle = await repo.create_puzzle_if_missing(puzzle_date, difficulty=difficulty)
+    local_lock = _get_local_prep_lock(puzzle_date, difficulty)
 
-        if not puzzle.hints:
-            hints = await get_daily_hints(puzzle)
-            puzzle = replace(puzzle, hints=hints, prepared_at=None)
+    # Fast-path: if this process is already preparing the same slot, wait locally.
+    # If not, acquire the distributed Redis lock so other workers don't duplicate work.
+    async with local_lock:
+        from app.cache import redis_client
 
-        if not puzzle.image_prompt:
-            image_prompt = _build_daily_image_prompt(puzzle.target_word, puzzle.topic, difficulty=puzzle.difficulty)
-            await repo.set_puzzle_image_prompt(
-                puzzle.puzzle_date,
-                image_prompt,
-                difficulty=puzzle.difficulty,
-                image_model=repo.DAILY_IMAGE_MODEL,
-            )
-            puzzle = replace(
-                puzzle,
-                image_prompt=image_prompt,
-                image_model=repo.DAILY_IMAGE_MODEL,
-                prepared_at=None,
-            )
+        _redis_lock_key = f"daily:prep:{puzzle_date.isoformat()}:{difficulty}"
+        _redis_lock_ctx = None
+        if redis_client:
+            try:
+                _redis_lock_ctx = redis_client.lock(_redis_lock_key, timeout=60, blocking_timeout=30)
+                acquired = await _redis_lock_ctx.acquire()
+                if not acquired:
+                    # Another worker is already preparing — load whatever it wrote
+                    logger.info(
+                        "daily prep lock: another worker is preparing date=%s/%s, loading existing",
+                        puzzle_date,
+                        difficulty,
+                    )
+                    return await repo.create_puzzle_if_missing(puzzle_date, difficulty=difficulty)
+            except Exception as exc:
+                logger.warning("daily prep: Redis lock unavailable, proceeding without dist-lock date=%s/%s: %s", puzzle_date, difficulty, exc)
+                _redis_lock_ctx = None
 
-        if include_image and bot and (force_image or not puzzle.image_file_id):
-            image_file_id = await _generate_daily_image_file_id(
-                bot,
-                prompt=puzzle.image_prompt,
-                puzzle_date=puzzle.puzzle_date,
-                difficulty=puzzle.difficulty,
-            )
-            if image_file_id:
-                await repo.set_puzzle_image_asset(
+        try:
+            puzzle = await repo.create_puzzle_if_missing(puzzle_date, difficulty=difficulty)
+
+            if not puzzle.hints:
+                hints = await get_daily_hints(puzzle)
+                puzzle = replace(puzzle, hints=hints, prepared_at=None)
+
+            if not puzzle.image_prompt:
+                image_prompt = _build_daily_image_prompt(puzzle.target_word, puzzle.topic, difficulty=puzzle.difficulty)
+                await repo.set_puzzle_image_prompt(
                     puzzle.puzzle_date,
-                    image_file_id,
+                    image_prompt,
                     difficulty=puzzle.difficulty,
                     image_model=repo.DAILY_IMAGE_MODEL,
                 )
                 puzzle = replace(
                     puzzle,
-                    image_file_id=image_file_id,
+                    image_prompt=image_prompt,
                     image_model=repo.DAILY_IMAGE_MODEL,
                     prepared_at=None,
                 )
 
-        if repo.is_puzzle_fully_prepared(puzzle) and not puzzle.prepared_at:
-            await repo.mark_puzzle_prepared(puzzle.puzzle_date, difficulty=puzzle.difficulty)
-            puzzle = replace(puzzle, prepared_at=datetime.now(tz=UTC))
+            if include_image and bot and (force_image or not puzzle.image_file_id):
+                image_file_id = await _generate_daily_image_file_id(
+                    bot,
+                    prompt=puzzle.image_prompt,
+                    puzzle_date=puzzle.puzzle_date,
+                    difficulty=puzzle.difficulty,
+                )
+                if image_file_id:
+                    await repo.set_puzzle_image_asset(
+                        puzzle.puzzle_date,
+                        image_file_id,
+                        difficulty=puzzle.difficulty,
+                        image_model=repo.DAILY_IMAGE_MODEL,
+                    )
+                    puzzle = replace(
+                        puzzle,
+                        image_file_id=image_file_id,
+                        image_model=repo.DAILY_IMAGE_MODEL,
+                        prepared_at=None,
+                    )
 
-        return puzzle
+            if repo.is_puzzle_fully_prepared(puzzle) and not puzzle.prepared_at:
+                await repo.mark_puzzle_prepared(puzzle.puzzle_date, difficulty=puzzle.difficulty)
+                puzzle = replace(puzzle, prepared_at=datetime.now(tz=UTC))
+
+            return puzzle
+        finally:
+            if _redis_lock_ctx is not None:
+                try:
+                    await _redis_lock_ctx.release()
+                except Exception as exc:
+                    logger.debug("daily prep: Redis lock release failed date=%s/%s: %s", puzzle_date, difficulty, exc)
 
 
 async def ensure_prepared_puzzles(bot=None, *, now: datetime | None = None) -> list[repo.DailyPuzzle]:
@@ -267,7 +312,10 @@ async def ensure_prepared_puzzles(bot=None, *, now: datetime | None = None) -> l
 def _queue_daily_puzzle_preparation_if_needed(puzzle: repo.DailyPuzzle) -> None:
     if repo.is_puzzle_fully_prepared(puzzle):
         return
-    if _prep_lock(puzzle.puzzle_date, puzzle.difficulty).locked():
+    # Guard: if this worker's local lock is already held for this slot, skip queuing
+    # to avoid stacking duplicate background tasks within the same process.
+    local_lock = _get_local_prep_lock(puzzle.puzzle_date, puzzle.difficulty)
+    if local_lock.locked():
         return
     try:
         from app.bot_instance import get_bot

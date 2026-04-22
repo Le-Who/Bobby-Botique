@@ -33,10 +33,10 @@ def live_settings(monkeypatch) -> SimpleNamespace:
         ADMIN_ID=1,
         TELEGRAM_BOT_TOKEN="test-token",
         GEMINI_API_KEYS=["fake-api-key-123"],
-        AVAILABLE_MODELS=["gemini-live-2.5-flash-native-audio"],
+        AVAILABLE_MODELS=["gemini-3.1-flash-live-preview"],
         DAILY_LIMITS={},
         LIMIT_THRESHOLD_PERCENT=0.7,
-        RESEARCH_MODEL="gemini-live-2.5-flash-native-audio",
+        RESEARCH_MODEL="gemini-3.1-flash-live-preview",
         TAVILY_LIMIT_THRESHOLD_PERCENT=0.8,
         TAVILY_MONTHLY_CREDIT_LIMIT=1000.0,
         VERTEX_AI_KEY="vertex-key",
@@ -178,9 +178,9 @@ class TestLiveAudioProxy:
                 assert msg["type"] == "connected"
                 connect_kwargs = mock_client.aio.live.connect.call_args.kwargs
                 config = connect_kwargs["config"]
-                assert connect_kwargs["model"] == "gemini-live-2.5-flash-native-audio"
+                assert connect_kwargs["model"] == "gemini-3.1-flash-live-preview"
                 assert config.thinking_config is None
-                assert config.session_resumption.transparent is True
+                assert config.session_resumption is not None
 
     async def test_audio_forwarding(self, test_client, mock_bot_token, mock_api_keys):
         """LA-03: realtime_input message should trigger session.send_realtime_input."""

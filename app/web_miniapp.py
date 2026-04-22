@@ -1081,7 +1081,40 @@ async def game_ws():
         return
 
     if game.status != "active":
-        await websocket.close(4009, "Game already finished")
+        # The creator (word-giver) may reopen the miniapp after the game ends and
+        # still needs to see the result / chat history. Everyone else gets a clean
+        # 4009 close so they cannot interact with a dead game.
+        if user_id != game.creator_id:
+            await websocket.close(4009, "Game already finished")
+            return
+        # Creator reconnect: send final state + history then close gracefully.
+        await websocket.send_json(
+            await stamp_runtime_payload(
+                game_id,
+                {
+                    "event": "game_state",
+                    "category": game.category,
+                    "lang": game.lang,
+                    "attempts": len(game.attempts),
+                    "max_attempts": game.max_attempts,
+                    "is_creator": True,
+                    "target_word": game.target_word,
+                    "finished": True,
+                    "status": str(game.status),
+                },
+            )
+        )
+        _creator_history = await get_runtime_history(game_id)
+        if not _creator_history:
+            _creator_history = get_game_history(game_id)
+        if _creator_history:
+            await websocket.send_json(
+                await stamp_runtime_payload(
+                    game_id,
+                    {"event": "history_sync", "items": _creator_history, "from_seq": None},
+                )
+            )
+        await websocket.close(1000, "Game over")
         return
 
     # Register guesser on first connect (not the creator)

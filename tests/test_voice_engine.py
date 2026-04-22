@@ -31,7 +31,7 @@ async def test_voice_queue_serializes_jobs_per_user():
     started: list[str] = []
 
     # We patch _pregenerate_audio so the future blocks until we release it.
-    original_pregenerate = manager._pregenerate_audio
+    _ = manager._pregenerate_audio
 
     async def fake_pregenerate(job):
         started.append(job.source_key)
