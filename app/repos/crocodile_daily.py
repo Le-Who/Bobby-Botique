@@ -574,11 +574,16 @@ async def mark_daily_sent(user_id: int, puzzle_date: date) -> None:
 async def get_leaderboard(puzzle_date: date, *, limit: int = 10) -> list[dict[str, Any]]:
     return await db.db_query(
         """
-        SELECT user_id, points, status, jsonb_array_length(attempts) AS attempt_count,
+        SELECT user_id, points, status,
+               CASE WHEN jsonb_typeof(attempts) = 'array'
+                    THEN jsonb_array_length(attempts) ELSE 0 END AS attempt_count,
                used_hints_count, won_at, streak_after
         FROM public.crocodile_daily_results
         WHERE puzzle_date = $1 AND status IN ('won', 'lost')
-        ORDER BY points DESC, jsonb_array_length(attempts) ASC, won_at ASC NULLS LAST
+        ORDER BY points DESC,
+                 CASE WHEN jsonb_typeof(attempts) = 'array'
+                      THEN jsonb_array_length(attempts) ELSE 0 END ASC,
+                 won_at ASC NULLS LAST
         LIMIT $2
         """,
         (puzzle_date, limit),
@@ -591,7 +596,10 @@ async def get_rank(user_id: int, puzzle_date: date) -> int | None:
         WITH ranked AS (
             SELECT user_id,
                    ROW_NUMBER() OVER (
-                       ORDER BY points DESC, jsonb_array_length(attempts) ASC, won_at ASC NULLS LAST
+                       ORDER BY points DESC,
+                                CASE WHEN jsonb_typeof(attempts) = 'array'
+                                     THEN jsonb_array_length(attempts) ELSE 0 END ASC,
+                                won_at ASC NULLS LAST
                    ) AS rank
             FROM public.crocodile_daily_results
             WHERE puzzle_date = $1 AND status IN ('won', 'lost')
