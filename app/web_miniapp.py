@@ -126,7 +126,6 @@ def _build_live_connect_config(*, system_instruction: str, resumption_handle: st
         output_audio_transcription=types.AudioTranscriptionConfig(),
         session_resumption=types.SessionResumptionConfig(
             handle=resumption_handle or None,
-            transparent=True,
         ),
         context_window_compression=types.ContextWindowCompressionConfig(
             sliding_window=types.SlidingWindow(),
@@ -139,7 +138,6 @@ def _build_live_connect_config(*, system_instruction: str, resumption_handle: st
                 silence_duration_ms=700,
             ),
             activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
-            turn_coverage=types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
         ),
         tools=[types.Tool(google_search=types.GoogleSearch())],
         system_instruction=types.Content(parts=[types.Part(text=system_instruction)]),
