@@ -961,12 +961,22 @@ async def daily_game_ws():
                     await websocket.send_json(cached_event)
                     continue
 
-            async with game_mutation_lock(f"daily:{puzzle.puzzle_date}:{difficulty}:{user_id}"):
-                _, current_puzzles, current_results = await get_daily_overview(user_id)
-                puzzle = current_puzzles.get(difficulty, puzzle)
-                before = current_results.get(difficulty, result)
-                was_active = before.status == "active"
-                event = await process_daily_guess(user_id, word, difficulty=difficulty)
+            try:
+                async with game_mutation_lock(f"daily:{puzzle.puzzle_date}:{difficulty}:{user_id}"):
+                    _, current_puzzles, current_results = await get_daily_overview(user_id)
+                    puzzle = current_puzzles.get(difficulty, puzzle)
+                    before = current_results.get(difficulty, result)
+                    was_active = before.status == "active"
+                    event = await process_daily_guess(user_id, word, difficulty=difficulty)
+            except TimeoutError:
+                logger.warning("daily_game_ws: mutation lock timeout user=%s", user_id)
+                await websocket.send_json(
+                    await stamp_runtime_payload(runtime_id, {
+                        "event": "error",
+                        "message": "Сервер загружен, попробуйте через секунду.",
+                    })
+                )
+                continue
 
             event = await stamp_runtime_payload(runtime_id, event)
             if pending_id:
@@ -1293,13 +1303,23 @@ async def game_ws():
             except Exception as exc:
                 logger.debug("game_ws: guess activity record failed user=%s: %s", user_id, exc)
 
-            async with game_mutation_lock(game_id):
-                # Reload game state from Redis (another tab may have mutated it)
-                game = await load_game(game_id) or game
-                if game.status != "active":
-                    break
+            try:
+                async with game_mutation_lock(game_id):
+                    # Reload game state from Redis (another tab may have mutated it)
+                    game = await load_game(game_id) or game
+                    if game.status != "active":
+                        break
 
-                event = await game.process_guess(word)
+                    event = await game.process_guess(word)
+            except TimeoutError:
+                logger.warning("game_ws: mutation lock timeout game=%s", game_id)
+                await websocket.send_json(
+                    await stamp_runtime_payload(game_id, {
+                        "event": "error",
+                        "message": "Сервер загружен, попробуйте через секунду.",
+                    })
+                )
+                continue
 
             # Echo pending_id back so the client can resolve its optimistic bubble
             if pending_id:

@@ -18,9 +18,10 @@ from app.utils.background_tasks import submit_task
 logger = logging.getLogger(__name__)
 
 # -- In-process prep guards (per-worker fast-path) -------------------------
-# Capped at 64 entries to avoid memory leaks from old dates accumulating.
+# No eviction cap: ~100 bytes/lock × 730 entries/year = negligible memory.
+# Eviction was the root cause of a race condition where actively-held locks
+# could be removed, allowing concurrent entry into the critical section.
 _PREP_LOCKS: dict[str, asyncio.Lock] = {}
-_PREP_LOCKS_MAX = 64
 
 
 def _prep_lock_key(puzzle_date: date, difficulty: str) -> str:
@@ -28,12 +29,8 @@ def _prep_lock_key(puzzle_date: date, difficulty: str) -> str:
 
 
 def _get_local_prep_lock(puzzle_date: date, difficulty: str) -> asyncio.Lock:
-    """Return the in-process asyncio.Lock for this slot, evicting oldest entries at cap."""
+    """Return the in-process asyncio.Lock for this slot."""
     key = _prep_lock_key(puzzle_date, difficulty)
-    if key not in _PREP_LOCKS and len(_PREP_LOCKS) >= _PREP_LOCKS_MAX:
-        evict_n = _PREP_LOCKS_MAX // 4
-        for old_key in list(_PREP_LOCKS)[:evict_n]:
-            _PREP_LOCKS.pop(old_key, None)
     return _PREP_LOCKS.setdefault(key, asyncio.Lock())
 
 
@@ -161,6 +158,14 @@ async def _generate_daily_image_file_id(
         seed=_daily_image_seed(puzzle_date, difficulty),
         enhance=True,
     )
+
+    # Alert admin if model was silently substituted (e.g. pollen exhausted → flux)
+    if result.warning:
+        logger.warning(
+            "daily puzzle image warning date=%s difficulty=%s: %s",
+            puzzle_date, difficulty, result.warning,
+        )
+
     if not result.success or not result.images:
         logger.warning(
             "daily puzzle image generation failed date=%s difficulty=%s model=%s error=%s",

@@ -22,13 +22,15 @@ from app.utils.background_tasks import submit_task
 logger = logging.getLogger(__name__)
 
 ELEVENLABS_TTS_CONCURRENCY = 2
-# High concurrency: each chunk uses key-racing (2 keys), so 10 concurrent jobs
-# can utilise up to 20 API keys simultaneously — fine when the pool is large.
-GEMINI_TTS_CONCURRENCY = 10
+# Budget math (AI Studio free tier = 15 RPD per key):
+# Each chunk uses key-racing (2 keys), so 1 job = chunks × 2 RPD.
+# At CONCURRENCY=3, MAX_CHUNKS=2: worst case = 3 × 2 × 2 = 12 RPD ≈ 1 key.
+# With 10-12 keys in pool, this leaves ample headroom for chat/inline/judge.
+GEMINI_TTS_CONCURRENCY = 3
 _HEARTBEAT_INTERVAL_S = 4.0
 # Maximum chunks to generate in parallel within a single TTS job.
-# Prevents flooding the API with too many concurrent requests from one job.
-_MAX_PARALLEL_CHUNKS = 4
+# Lower = fewer RPD consumed per job (2 × 2 key-racing = 4 RPD vs. old 8).
+_MAX_PARALLEL_CHUNKS = 2
 
 
 @dataclass
@@ -428,7 +430,16 @@ class VoiceReplyManager:
             ogg_bytes: bytes | None = None
             if job.audio_future is not None:
                 await self._set_status(job, status="synthesizing", detail="Генерирую аудио…")
-                ogg_bytes = await job.audio_future
+                try:
+                    ogg_bytes = await job.audio_future
+                except (Exception, asyncio.CancelledError) as exc:
+                    # CancelledError is BaseException in Python 3.14 — not caught by
+                    # bare `except Exception`.  Log and fall through to sync retry.
+                    logger.warning(
+                        "TTS future failed for job_id=%s: %s",
+                        job.job_id, exc,
+                    )
+                    ogg_bytes = None  # triggers synchronous retry below
 
             if ogg_bytes is not None:
                 # Pre-generation succeeded — just send.

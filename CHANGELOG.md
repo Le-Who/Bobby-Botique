@@ -3,17 +3,29 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [Unreleased] - 2026-04-22 - Multi-Worker Hardening: Distributed Locks, Cache Integrity & Creator God-Mode
+## [Unreleased] - 2026-04-22 - Concurrency Stabilization: RPD Budget, Lock Integrity & WebSocket Resilience
 
 ### 🔒 Concurrency & Data Integrity
 
 - **`game_mutation_lock` contention now raises `TimeoutError` (`app/games/crocodile_runtime.py`):** The Redis distributed lock timeout (contention from another worker) previously fell through to a local `asyncio.Lock` silently, allowing two workers to mutate the same game concurrently. Now `TimeoutError` propagates directly — the request fails fast. Only genuine Redis connection errors (`ConnectionError`, `OSError`) trigger the local-lock fallback.
 
+- **WebSocket `TimeoutError` graceful handling (`app/web_miniapp.py`):** Both `daily_game_ws` and `game_ws` WebSocket routes now wrap `game_mutation_lock` acquisition in `try...except TimeoutError` blocks. Instead of crashing with a 1011 Server Error, the handler returns structured JSON (`{"event": "error", "message": "Сервер загружен..."}`) so the Mini App can surface a retry prompt to the user.
+
 - **Thread-safe JSON cache writes (`app/games/judgement_cache.py`):** All four `_persist_sync` helpers (`judgement`, `hints`, `categories`, `generated_words`) now each hold a dedicated `threading.Lock` (`_PERSIST_LOCK`, `_PERSIST_HINTS_LOCK`, `_PERSIST_CAT_LOCK`, `_PERSIST_GEN_WORDS_LOCK`). `asyncio.to_thread` dispatches no longer race against each other on the `.json.tmp` → rename path, eliminating the Windows file-corruption race.
 
 - **Distributed Redis lock for puzzle prep (`app/games/crocodile_daily.py`):** `prepare_daily_puzzle()` now acquires a Redis distributed lock keyed `daily:prep:{date}:{difficulty}` (60 s TTL, 30 s blocking) under a per-process `asyncio.Lock` fast-path guard. If the Redis lock times out (another worker is already preparing), the function falls back to loading the existing puzzle from the database — preventing duplicated LLM calls, Pollinations image generation, and DB writes across clustered workers.
 
-- **Capped in-process prep-lock registry (`app/games/crocodile_daily.py`):** `_PREP_LOCKS` is now bounded to 64 entries with FIFO eviction (25% evicted at cap). `_get_local_prep_lock()` replaces the old unbounded `_prep_lock()` to prevent memory growth during long-running uptime.
+- **Unbounded in-process prep-lock registry (`app/games/crocodile_daily.py`):** Removed the `_PREP_LOCKS_MAX = 64` FIFO eviction cap. The prior eviction logic was a race condition hazard: actively-held `asyncio.Lock` instances could be evicted while another coroutine was still awaiting them, causing silent lock bypass and duplicate LLM/Pollinations work. Memory cost is negligible (~100 bytes/lock × 730 entries/year for 2 difficulties × 365 days).
+
+### 🔊 Voice Engine — RPD Budget Stabilization
+
+- **Concurrency reduction (`app/voice_engine.py`):** `GEMINI_TTS_CONCURRENCY` reduced from `10` to `3`. With key-racing (2 keys per chunk), worst-case burst is now 3 jobs × 2 chunks × 2 key-racing = 12 RPD, consuming at most 1 key from the 10–12 key pool per burst window. Previously, `CONCURRENCY=10` could exhaust the entire 15 RPD budget of multiple keys in a single burst.
+
+- **Parallel chunk reduction (`app/voice_engine.py`):** `_MAX_PARALLEL_CHUNKS` reduced from `4` to `2`. Combined with the concurrency cap, this ensures the system operates well within the 15 RPD (Requests Per Day) budget per API key on the Google AI Studio free tier.
+
+- **Future-based worker hardening (`app/voice_engine.py`):** The FIFO worker's `await job.audio_future` is now wrapped in `try...except (Exception, asyncio.CancelledError)`. In Python 3.14, `CancelledError` is a `BaseException` (not an `Exception` subclass), so the prior `except Exception` handler would not catch task cancellations, causing the worker coroutine to terminate silently. On any failure, the worker now falls back to synchronous retry via `_pregenerate_audio` + `_send_ogg`.
+
+- **Pollinations model substitution warnings (`app/games/crocodile_daily.py`):** When `generate_image_pollinations` returns a result but the model was silently substituted (e.g., fallback to `flux` when paid tier is exhausted), an `alert_admin(WARNING)` is now fired with the original and substituted model names for operational observability.
 
 ### 👑 Creator God-Mode — Reconnect to Finished Game (`app/web_miniapp.py`)
 
@@ -30,6 +42,8 @@ Format is optimized for agent-parseable context.
 - **`app/utils/audio_processor.py`:** Fixed import sort order (I001 auto-fix).
 - **`scratch_test_live.py`:** Fixed import ordering (I001 auto-fix).
 - **`pyproject.toml`:** Added `scripts/check_encoding.py` to `per-file-ignores` T201 — it is a CLI pre-commit script that prints user-facing error messages by design.
+
+- **Live Audio Mock Targets (`tests/test_live_audio.py`):** Fixed stale test mocks where `get_vertex_client` was patched instead of `get_live_api_client`. This prevented tests from hitting the real Gemini Live API with fake API keys, resolving 1007 "API key not valid" errors during the `test_connect_sends_connected_event` assertions.
 
 ### ✅ Verification
 

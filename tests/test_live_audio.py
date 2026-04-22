@@ -168,7 +168,7 @@ class TestLiveAudioProxy:
         mock_client.aio.live.connect.return_value = mock_session
 
         with (
-            patch("app.providers.gemini.get_vertex_client", return_value=mock_client),
+            patch("app.providers.gemini.get_live_api_client", return_value=mock_client),
             patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
@@ -180,7 +180,8 @@ class TestLiveAudioProxy:
                 config = connect_kwargs["config"]
                 assert connect_kwargs["model"] == "gemini-3.1-flash-live-preview"
                 assert config.thinking_config is None
-                assert config.session_resumption is not None
+                # session_resumption was removed to avoid 1007 errors
+                # with gemini-3.1-flash-live-preview
 
     async def test_audio_forwarding(self, test_client, mock_bot_token, mock_api_keys):
         """LA-03: realtime_input message should trigger session.send_realtime_input."""
@@ -206,7 +207,7 @@ class TestLiveAudioProxy:
         mock_client.aio.live.connect.return_value = mock_session
 
         with (
-            patch("app.providers.gemini.get_vertex_client", return_value=mock_client),
+            patch("app.providers.gemini.get_live_api_client", return_value=mock_client),
             patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
@@ -255,7 +256,7 @@ class TestLiveAudioProxy:
         mock_client.aio.live.connect.return_value = mock_session
 
         with (
-            patch("app.providers.gemini.get_vertex_client", return_value=mock_client),
+            patch("app.providers.gemini.get_live_api_client", return_value=mock_client),
             patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
@@ -292,7 +293,7 @@ class TestLiveAudioProxy:
         mock_client.aio.live.connect.return_value = mock_session
 
         with (
-            patch("app.providers.gemini.get_vertex_client", return_value=mock_client),
+            patch("app.providers.gemini.get_live_api_client", return_value=mock_client),
             patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
@@ -331,7 +332,7 @@ class TestLiveAudioProxy:
         monkeypatch.setattr("app.web_miniapp._LIVE_MODEL_COOLDOWN_REASON", "")
 
         with (
-            patch("app.providers.gemini.get_vertex_client", return_value=mock_client),
+            patch("app.providers.gemini.get_live_api_client", return_value=mock_client),
             patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
@@ -349,7 +350,7 @@ class TestLiveAudioProxy:
         url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
 
         with (
-            patch("app.providers.gemini.get_vertex_client", return_value=None),
+            patch("app.providers.gemini.get_live_api_client", return_value=None),
             patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
