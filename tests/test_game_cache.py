@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+import app.games.judgement_cache as judgement_cache_module
 from app.games.judge import GuessJudgement
 from app.games.judgement_cache import (
     _cat_store,
@@ -207,6 +208,13 @@ class TestHintsCacheRoundTrip:
         assert same == hints
         assert other is None
 
+    async def test_same_topic_id_shares_hints_across_category_variants(self):
+        hints = ["A", "B", "C"]
+        with _no_persist_hints:
+            await cache_hints("райден", "Персонаж Genshin Impact", hints, topic_id="custom:ru:abc")
+            same = await get_cached_hints("райден", "Персонаж   genshin impact!!!", topic_id="custom:ru:abc")
+        assert same == hints
+
 
 @pytest.mark.asyncio
 class TestCategoryCacheRoundTrip:
@@ -252,5 +260,28 @@ class TestGeneratedWordsCacheRoundTrip:
             await cache_generated_words("ru", "персонаж genshin impact", words, topic_id="topic:a")
             same = await get_cached_generated_words("ru", "персонаж genshin impact", topic_id="topic:a")
             other = await get_cached_generated_words("ru", "персонаж genshin impact", topic_id="topic:b")
+        assert same == words
+        assert other is None
+
+    async def test_same_topic_id_shares_generated_words_across_category_variants(self):
+        words = ["венти", "чжун ли", "нахида"]
+        with _no_persist_generated_words:
+            await cache_generated_words("ru", "Персонаж Genshin Impact", words, topic_id="custom:ru:abc")
+            same = await get_cached_generated_words("ru", "Персонаж   genshin impact!!!", topic_id="custom:ru:abc")
+        assert same == words
+
+    async def test_topic_scoped_generated_words_survive_restart_and_ignore_other_topic(self, tmp_path, monkeypatch):
+        cache_path = tmp_path / "generated_words_cache.json"
+        monkeypatch.setattr(judgement_cache_module, "_GEN_WORDS_CACHE_PATH", cache_path)
+        _generated_words_store.clear()
+        words = ["венти", "чжун ли", "нахида"]
+
+        await cache_generated_words("ru", "Персонаж Genshin Impact", words, topic_id="custom:ru:abc")
+        _generated_words_store.clear()
+        judgement_cache_module._load_generated_words_from_disk()
+
+        same = await get_cached_generated_words("ru", "Персонаж   genshin impact!!!", topic_id="custom:ru:abc")
+        other = await get_cached_generated_words("ru", "персонаж honkai star rail", topic_id="custom:ru:def")
+
         assert same == words
         assert other is None

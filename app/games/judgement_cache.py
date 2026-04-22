@@ -257,6 +257,8 @@ _hints_store: OrderedDict[str, str] = OrderedDict()
 
 def _hints_key(word: str, category: str, topic_id: str | None = "") -> str:
     topic_part = (topic_id or "").lower().strip()
+    if topic_part:
+        return f"{topic_part}\x00{word.lower().strip()}"
     return f"{topic_part}\x00{word.lower().strip()}\x00{category.lower().strip()}"
 
 
@@ -297,19 +299,10 @@ async def get_cached_hints(word: str, category: str, *, topic_id: str | None = "
     """Return cached hints for this word/category pair, or None on miss."""
     key = _hints_key(word, category, topic_id)
     value = _hints_store.get(key)
-    # Migration fallback for old key shape without topic_id.
     key_used = key
-    if value is None and topic_id:
-        legacy_key = _hints_key(word, category, "")
-        value = _hints_store.get(legacy_key)
-        key_used = legacy_key
     if value is None:
         value = await _redis_hash_get("hints", key)
         key_used = key
-    if value is None and topic_id:
-        legacy_key = _hints_key(word, category, "")
-        value = await _redis_hash_get("hints", legacy_key)
-        key_used = legacy_key
     if value is None:
         return None
     _hints_store[key_used] = value
@@ -415,6 +408,8 @@ _generated_words_store: OrderedDict[str, str] = OrderedDict()
 
 def _generated_words_key(lang: str, category: str, topic_id: str | None = "") -> str:
     topic_part = (topic_id or "").lower().strip()
+    if topic_part:
+        return f"{topic_part}\x00{lang.lower().strip()}"
     return f"{topic_part}\x00{lang.lower().strip()}\x00{category.lower().strip()}"
 
 
@@ -459,18 +454,9 @@ async def get_cached_generated_words(
     key = _generated_words_key(lang, category, topic_id)
     value = _generated_words_store.get(key)
     key_used = key
-    # Migration fallback for entries created before topic-aware keying.
-    if value is None and topic_id:
-        legacy_key = _generated_words_key(lang, category, "")
-        value = _generated_words_store.get(legacy_key)
-        key_used = legacy_key
     if value is None:
         value = await _redis_hash_get("generated_words", key)
         key_used = key
-    if value is None and topic_id:
-        legacy_key = _generated_words_key(lang, category, "")
-        value = await _redis_hash_get("generated_words", legacy_key)
-        key_used = legacy_key
     if value is None:
         return None
     _generated_words_store[key_used] = value

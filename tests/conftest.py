@@ -173,6 +173,8 @@ def _clear_word_bank_caches():
             task.cancel()
     _word_bank._GENERATED_CACHE.clear()
     _word_bank._GENERATED_INFLIGHT.clear()
+    _word_bank._PROVISIONAL_GENERATED.clear()
+    _word_bank._TOPIC_ROTATION.clear()
     _game_cache._generated_words_store.clear()
     _game_cache._cat_store.clear()
     yield
@@ -181,6 +183,8 @@ def _clear_word_bank_caches():
             task.cancel()
     _word_bank._GENERATED_CACHE.clear()
     _word_bank._GENERATED_INFLIGHT.clear()
+    _word_bank._PROVISIONAL_GENERATED.clear()
+    _word_bank._TOPIC_ROTATION.clear()
     _game_cache._generated_words_store.clear()
     _game_cache._cat_store.clear()
 

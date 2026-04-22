@@ -26,6 +26,7 @@ from app.games.judge import (
 )
 from app.games.word_bank import (
     _GENERATED_CACHE,
+    _PROVISIONAL_GENERATED,
     _detect_lang,
     _generate_single_word_fast,
     _generated_cache_key,
@@ -275,10 +276,10 @@ class TestPickRandomWord:
         assert cat == "Animals"
         assert not is_gen
 
-    async def test_generate_words_ignores_singleton_fast_seed(self):
+    async def test_generate_words_ignores_provisional_fast_seed(self):
         topic = resolve_topic("персонаж валорант")
         cache_key = _generated_cache_key(topic.lang, topic.category, topic_id=topic.topic_id)
-        _GENERATED_CACHE[cache_key] = ["джетт"]
+        _PROVISIONAL_GENERATED[cache_key] = "джетт"
 
         router = AsyncMock()
         router.get_response = AsyncMock(return_value=('["джетт", "сова", "рейна", "вайпер", "сейдж"]', None))
@@ -291,13 +292,14 @@ class TestPickRandomWord:
             generated = await generate_words_for_category(topic.category, lang=topic.lang, topic_id=topic.topic_id)
 
         assert generated == ["джетт", "сова", "рейна", "вайпер", "сейдж"]
+        assert _PROVISIONAL_GENERATED.get(cache_key) is None
         assert router.get_response.await_count == 1
         cache_mock.assert_awaited_once()
 
     async def test_provisional_fast_seed_is_upgraded_before_reuse(self):
         topic = resolve_topic("персонаж валорант")
         cache_key = _generated_cache_key(topic.lang, topic.category, topic_id=topic.topic_id)
-        _GENERATED_CACHE[cache_key] = ["джетт"]
+        _PROVISIONAL_GENERATED[cache_key] = "джетт"
         full_bank = ["джетт", "сова", "рейна", "вайпер", "сейдж"]
 
         with (
@@ -312,6 +314,76 @@ class TestPickRandomWord:
         assert cat == "персонаж валорант"
         assert is_gen
         gen_mock.assert_awaited_once_with(topic.category, lang=topic.lang, topic_id=topic.topic_id)
+        pick_mock.assert_called_once_with(topic.topic_id, full_bank, used=set())
+
+    async def test_similar_custom_topic_variants_share_persisted_bank(self):
+        from app.games.judgement_cache import cache_generated_words
+
+        first_topic = resolve_topic("Персонаж   genshin impact!!!")
+        second_topic = resolve_topic("персонаж genshin impact")
+        full_bank = ["венти", "чжун ли", "нахида", "райден", "тарталья"]
+
+        with (
+            patch("app.games.judgement_cache._persist_generated_words", return_value=None),
+            patch("app.games.word_bank.generate_words_for_category", new_callable=AsyncMock) as gen_mock,
+            patch("app.games.word_bank._pick_rotating_word", return_value="нахида") as pick_mock,
+        ):
+            await cache_generated_words(first_topic.lang, first_topic.category, full_bank, topic_id=first_topic.topic_id)
+            word, lang, cat, is_gen = await pick_random_word_for_topic(second_topic)
+
+        assert first_topic.topic_id == second_topic.topic_id
+        assert word == "нахида"
+        assert lang == "ru"
+        assert cat == second_topic.category
+        assert is_gen
+        gen_mock.assert_not_awaited()
+        pick_mock.assert_called_once_with(second_topic.topic_id, full_bank, used=set())
+
+    async def test_different_custom_topics_do_not_share_generated_bank(self):
+        from app.games.judgement_cache import cache_generated_words
+
+        first_topic = resolve_topic("персонаж genshin impact")
+        second_topic = resolve_topic("персонаж honkai star rail")
+        first_bank = ["венти", "чжун ли", "нахида", "райден", "тарталья"]
+        second_bank = ["кафка", "зеле", "серебряный волк", "блэйд", "дань хэн"]
+
+        with (
+            patch("app.games.judgement_cache._persist_generated_words", return_value=None),
+            patch("app.games.word_bank.generate_words_for_category", new_callable=AsyncMock, return_value=second_bank) as gen_mock,
+            patch("app.games.word_bank._pick_rotating_word", return_value="кафка") as pick_mock,
+        ):
+            await cache_generated_words(first_topic.lang, first_topic.category, first_bank, topic_id=first_topic.topic_id)
+            word, _, _, is_gen = await pick_random_word_for_topic(second_topic)
+
+        assert first_topic.topic_id != second_topic.topic_id
+        assert word == "кафка"
+        assert is_gen
+        gen_mock.assert_awaited_once_with(second_topic.category, lang=second_topic.lang, topic_id=second_topic.topic_id)
+        pick_mock.assert_called_once_with(second_topic.topic_id, second_bank, used=set())
+
+    async def test_full_bank_reuse_drops_stale_provisional_word(self):
+        topic = resolve_topic("персонаж валорант")
+        cache_key = _generated_cache_key(topic.lang, topic.category, topic_id=topic.topic_id)
+        _PROVISIONAL_GENERATED[cache_key] = "джетт"
+        full_bank = ["джетт", "сова", "рейна", "вайпер", "сейдж"]
+
+        router = AsyncMock()
+        router.get_response = AsyncMock(return_value=(json.dumps(full_bank), None))
+
+        with (
+            patch("app.providers.router.get_provider_router", return_value=router),
+            patch("app.games.judgement_cache.get_cached_generated_words", new_callable=AsyncMock, return_value=None),
+            patch("app.games.judgement_cache.cache_generated_words", new_callable=AsyncMock),
+            patch("app.games.word_bank._pick_rotating_word", return_value="сова") as pick_mock,
+        ):
+            generated = await generate_words_for_category(topic.category, lang=topic.lang, topic_id=topic.topic_id)
+            word, _, _, is_gen = await pick_random_word_for_topic(topic)
+
+        assert generated == full_bank
+        assert _PROVISIONAL_GENERATED.get(cache_key) is None
+        assert word == "сова"
+        assert is_gen
+        assert router.get_response.await_count == 1
         pick_mock.assert_called_once_with(topic.topic_id, full_bank, used=set())
 
     async def test_background_generation_submit_marks_background_flag(self):

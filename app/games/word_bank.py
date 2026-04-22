@@ -932,6 +932,7 @@ async def resolve_custom_word_category(word: str) -> str:
 # Avoids re-generating the same custom category within a process lifetime.
 _GENERATED_CACHE: dict[str, list[str]] = {}
 _GENERATED_INFLIGHT: dict[str, asyncio.Task[list[str] | None]] = {}
+_PROVISIONAL_GENERATED: dict[str, str] = {}
 # In-process rotation state: topic_id -> (bank_hash, order, cursor)
 _TOPIC_ROTATION: dict[str, tuple[str, list[str], int]] = {}
 
@@ -949,9 +950,10 @@ _GEN_PROMPT = (
 
 
 def _generated_cache_key(lang: str, category: str, *, topic_id: str | None = None) -> str:
+    topic_norm = (topic_id or "").strip().lower()
+    if topic_norm:
+        return f"topic:{topic_norm}"
     normalized = f"{lang.lower().strip()}:{category.lower().strip()}"
-    if topic_id:
-        return f"{topic_id}|{normalized}"
     return normalized
 
 
@@ -1122,11 +1124,9 @@ async def generate_words_for_category(
         cached = await get_cached_generated_words(lang, category, topic_id=topic_id_norm)
     else:
         cached = await get_cached_generated_words(lang, category)
-    # Migration fallback: old cache entries were keyed without topic_id.
-    if not cached and topic_id_norm:
-        cached = await get_cached_generated_words(lang, category)
     if cached:
         _GENERATED_CACHE[cache_key] = cached
+        _PROVISIONAL_GENERATED.pop(cache_key, None)
         logger.info("Hydrated AI-generated words for category %r (%s) from persistent cache", category, lang)
         if topic_id_norm:
             # Write-through into topic-aware key so next lookup stays isolated.
@@ -1197,6 +1197,7 @@ async def generate_words_for_category(
 
                 await record_result(provider_name, model, "success")
                 _GENERATED_CACHE[cache_key] = clean
+                _PROVISIONAL_GENERATED.pop(cache_key, None)
                 if topic_id_norm:
                     await cache_generated_words(lang, category, clean, topic_id=topic_id_norm)
                 else:
@@ -1384,23 +1385,22 @@ async def pick_random_word_for_topic(
         category = topic.category
         cache_key = _generated_cache_key(lang, category, topic_id=topic.topic_id)
         cached_words = _GENERATED_CACHE.get(cache_key)
+        provisional_word = _PROVISIONAL_GENERATED.get(cache_key)
 
         if _has_full_generated_bank(cached_words):
             words = cached_words
             is_generated = True
         else:
             persisted_words = await get_cached_generated_words(lang, category, topic_id=topic.topic_id)
-            if not persisted_words:
-                # Migration fallback for entries created before topic_id support.
-                persisted_words = await get_cached_generated_words(lang, category)
             if persisted_words:
                 _GENERATED_CACHE[cache_key] = persisted_words
+                _PROVISIONAL_GENERATED.pop(cache_key, None)
                 words = persisted_words
                 is_generated = True
                 logger.info("Using persisted AI-generated words for category %r (%s)", category, lang)
-            elif cached_words:
+            elif provisional_word:
                 generated = await generate_words_for_category(category, lang=lang, topic_id=topic.topic_id)
-                words = generated or cached_words
+                words = generated or [provisional_word]
                 is_generated = True
                 if _has_full_generated_bank(generated):
                     logger.info("Upgraded provisional word bank for category %r (%s)", category, lang)
@@ -1419,7 +1419,7 @@ async def pick_random_word_for_topic(
                         )
                     words = generated
                 else:
-                    _GENERATED_CACHE.setdefault(cache_key, [fast_word])
+                    _PROVISIONAL_GENERATED[cache_key] = fast_word
                     submit_task(generate_words_for_category(category, lang=lang, topic_id=topic.topic_id, background=True))
                     return fast_word, lang, category, True
 

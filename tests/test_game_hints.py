@@ -8,7 +8,7 @@ import pytest
 
 import app.config as config
 from app.games.ai_budget import reset_budget_state_for_tests
-from app.games.hinting import get_or_generate_cached_hints, reset_hint_runtime_state_for_tests
+from app.games.hinting import _prewarm_topic_hints, get_or_generate_cached_hints, reset_hint_runtime_state_for_tests
 from app.games.judge import generate_hints
 
 
@@ -165,3 +165,45 @@ async def test_get_or_generate_cached_hints_uses_singleflight(hint_settings):
     assert first == ["hint 1", "hint 2", "hint 3"]
     assert second == first
     assert generate_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_prewarm_rejects_invalid_entries_and_falls_back_per_word(hint_settings):
+    router = _RouterStub(
+        {
+            "opencode-go/glm-5.1": (
+                0.0,
+                '{"items":['
+                '{"word":"райден","hints":["электроархонт","связана с Инадзумой","имя начинается на Р"]},'
+                '{"word":"лишнее слово","hints":["чужая 1","чужая 2","чужая 3"]},'
+                '{"word":"венти","hints":["дубликат","дубликат","дубликат"]}'
+                "]}",
+            )
+        }
+    )
+    hint_settings.OPENCODE_AVAILABLE_MODELS = ["opencode-go/glm-5.1"]
+    hint_settings.OPENCODE_QNA_MODEL = "opencode-go/glm-5.1"
+    hint_settings.OPENCODE_DEFAULT_MODEL = "opencode-go/glm-5.1"
+
+    fallback_hints = ["анемо герой", "любит свободу", "имя начинается на В"]
+
+    with (
+        patch("app.providers.get_provider_router", return_value=router),
+        patch("app.games.judgement_cache.get_cached_hints", new_callable=AsyncMock, return_value=None),
+        patch("app.games.judgement_cache.cache_hints", new_callable=AsyncMock) as cache_mock,
+        patch("app.games.judge.generate_hints", new_callable=AsyncMock, return_value=fallback_hints) as generate_mock,
+    ):
+        await _prewarm_topic_hints(("райден", "венти"), "персонаж genshin impact", topic_id="custom:1")
+
+    assert cache_mock.await_count == 2
+    first_call = cache_mock.await_args_list[0]
+    second_call = cache_mock.await_args_list[1]
+    assert first_call.args == (
+        "райден",
+        "персонаж genshin impact",
+        ["электроархонт", "связана с Инадзумой", "имя начинается на Р"],
+    )
+    assert first_call.kwargs == {"topic_id": "custom:1"}
+    assert second_call.args == ("венти", "персонаж genshin impact", fallback_hints)
+    assert second_call.kwargs == {"topic_id": "custom:1"}
+    generate_mock.assert_awaited_once_with("венти", "персонаж genshin impact", mode="background")
