@@ -22,8 +22,13 @@ from app.utils.background_tasks import submit_task
 logger = logging.getLogger(__name__)
 
 ELEVENLABS_TTS_CONCURRENCY = 2
-GEMINI_TTS_CONCURRENCY = 2
+# High concurrency: each chunk uses key-racing (2 keys), so 10 concurrent jobs
+# can utilise up to 20 API keys simultaneously — fine when the pool is large.
+GEMINI_TTS_CONCURRENCY = 10
 _HEARTBEAT_INTERVAL_S = 4.0
+# Maximum chunks to generate in parallel within a single TTS job.
+# Prevents flooding the API with too many concurrent requests from one job.
+_MAX_PARALLEL_CHUNKS = 4
 
 
 @dataclass
@@ -53,6 +58,9 @@ class VoiceJob:
     response_hash: str = ""
     enqueued_at: float = field(default_factory=time.monotonic)
     state: VoiceJobState = field(default_factory=VoiceJobState)
+    # Future-based pre-generation: TTS starts immediately on enqueue,
+    # worker just awaits this future and sends the result in order.
+    audio_future: asyncio.Task[bytes | None] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -159,32 +167,51 @@ async def _run_gemini_pipeline(
     language_code: str | None = None,
     on_chunk_complete: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> list[bytes] | None:
-    """Run the full Gemini TTS pipeline across all chunks."""
+    """Run the full Gemini TTS pipeline across all chunks.
+
+    Generates up to _MAX_PARALLEL_CHUNKS chunks concurrently via asyncio.gather
+    to reduce total latency.  Each chunk still uses internal key-racing.
+    """
     from app.utils.audio import trim_trailing_silence
 
-    failed_keys: set[str] = set()
+    total = len(chunks)
     pcm_parts: list[bytes] = []
+    completed_count = 0
 
-    for index, chunk in enumerate(chunks):
-        pcm = await _generate_single_chunk_gemini(
-            chunk,
-            voice,
-            failed_keys,
-            timeout=adaptive_timeout,
-            tts_temperature=tts_temperature,
-            model_name=model_name,
-            language_code=language_code,
-        )
-        if not pcm:
-            if index == 0:
-                logger.warning("Gemini TTS: first chunk failed, aborting")
-            else:
-                logger.warning("Gemini TTS: chunk %d/%d failed, sending partial audio", index + 1, len(chunks))
-            break
+    for batch_start in range(0, total, _MAX_PARALLEL_CHUNKS):
+        batch = chunks[batch_start : batch_start + _MAX_PARALLEL_CHUNKS]
+        # Each task gets its own failed_keys set so key-racing is independent.
+        coros = [
+            _generate_single_chunk_gemini(
+                chunk,
+                voice,
+                set(),  # independent failed_keys per chunk
+                timeout=adaptive_timeout,
+                tts_temperature=tts_temperature,
+                model_name=model_name,
+                language_code=language_code,
+            )
+            for chunk in batch
+        ]
+        results = await asyncio.gather(*coros, return_exceptions=True)
 
-        pcm_parts.append(trim_trailing_silence(pcm))
-        if on_chunk_complete:
-            await on_chunk_complete(index + 1, len(chunks))
+        for i, result in enumerate(results):
+            global_idx = batch_start + i
+            if isinstance(result, BaseException) or result is None:
+                if global_idx == 0:
+                    logger.warning("Gemini TTS: first chunk failed, aborting")
+                else:
+                    logger.warning(
+                        "Gemini TTS: chunk %d/%d failed, sending partial audio",
+                        global_idx + 1, total,
+                    )
+                # Stop collecting — return what we have so far
+                return pcm_parts if pcm_parts else None
+
+            pcm_parts.append(trim_trailing_silence(result))
+            completed_count += 1
+            if on_chunk_complete:
+                await on_chunk_complete(completed_count, total)
 
     return pcm_parts if pcm_parts else None
 
@@ -250,6 +277,13 @@ class VoiceReplyManager:
             start_worker = existing_worker is None or existing_worker.done()
 
         assert queued_job is not None
+
+        # Start TTS generation immediately (Future-based pre-generation).
+        # The worker will just await the result and send in chronological order.
+        queued_job.audio_future = asyncio.create_task(
+            self._pregenerate_audio(queued_job),
+        )
+
         await self._set_status(
             queued_job,
             status="queued",
@@ -311,6 +345,76 @@ class VoiceReplyManager:
                 if worker_task and worker_task.done():
                     self._worker_tasks.pop(user_id, None)
 
+    async def _pregenerate_audio(self, job: VoiceJob) -> bytes | None:
+        """Run TTS generation in the background immediately after enqueue.
+
+        The result (OGG bytes or None) is stored via the asyncio.Task so the
+        per-user worker can ``await job.audio_future`` later and just send.
+        This decouples generation latency from queue wait time.
+        """
+        try:
+            from app.config import settings
+            from app.i18n import detect_language
+            from app.providers.elevenlabs_tts import (
+                ELEVENLABS_CHUNK_MAX_BYTES,
+                generate_speech_with_key_rotation,
+            )
+            from app.providers.tts import _chunk_text_by_sentences, _clean_text_for_speech
+            from app.utils.audio import crossfade_pcm_chunks, pcm_to_ogg_opus
+
+            clean_text = _clean_text_for_speech(job.response_text)
+            if not clean_text:
+                return None
+
+            language = detect_language(clean_text)
+            language_code = "ru-RU" if language == "ru" else "en-US" if language == "en" else None
+
+            el_keys = settings.ELEVENLABS_API_KEYS
+            el_voice_id = job.voice if job.voice and len(job.voice) > 10 else settings.ELEVENLABS_VOICE_ID
+
+            pcm_parts: list[bytes] | None = None
+
+            if el_keys:
+                el_chunks = _chunk_text_by_sentences(clean_text, max_bytes=ELEVENLABS_CHUNK_MAX_BYTES)
+                el_timeout = min(90.0, max(30.0, len(clean_text) / 50.0 + 15.0))
+                async with self._elevenlabs_sem:
+                    pcm_parts = await generate_speech_with_key_rotation(
+                        el_chunks, el_keys, voice_id=el_voice_id, timeout=el_timeout,
+                    )
+
+            if pcm_parts is None:
+                gemini_chunks = _chunk_text_by_sentences(clean_text, max_bytes=800)
+                gemini_voice = job.voice if job.voice and len(job.voice) <= 10 else "Aoede"
+                gemini_timeout = min(120.0, max(40.0, len(clean_text) / 40.0 + 40.0))
+
+                async with self._gemini_sem:
+                    pcm_parts = await _run_gemini_pipeline(
+                        gemini_chunks, gemini_voice, gemini_timeout,
+                        tts_temperature=job.tts_temperature,
+                        model_name="gemini-3.1-flash-tts-preview",
+                        language_code=language_code,
+                    )
+                    if not pcm_parts:
+                        pcm_parts = await _run_gemini_pipeline(
+                            gemini_chunks, gemini_voice, gemini_timeout,
+                            tts_temperature=job.tts_temperature,
+                            model_name="gemini-2.5-flash-preview-tts",
+                            language_code=language_code,
+                        )
+
+            if not pcm_parts:
+                return None
+
+            pcm_audio = crossfade_pcm_chunks(pcm_parts)
+            ogg_bytes = await pcm_to_ogg_opus(pcm_audio)
+            return ogg_bytes
+        except Exception as exc:
+            logger.warning(
+                "TTS pregenerate failed: job_id=%s user_id=%s error=%s",
+                job.job_id, job.user_id, exc,
+            )
+            return None
+
     async def _process_job(self, job: VoiceJob) -> None:
         wait_ms = max(0.0, (time.monotonic() - job.enqueued_at) * 1000.0)
         heartbeat_stop = asyncio.Event()
@@ -319,7 +423,25 @@ class VoiceReplyManager:
             job.state.started_at = time.monotonic()
             await role_conv_metrics.record_tts_job_started(wait_ms)
             logger.info("TTS job started: job_id=%s user_id=%s queue_wait_ms=%.1f", job.job_id, job.user_id, wait_ms)
-            await self._generate_and_send_voice(job)
+
+            # Try to use pre-generated audio (Future-based pipeline).
+            ogg_bytes: bytes | None = None
+            if job.audio_future is not None:
+                await self._set_status(job, status="synthesizing", detail="Генерирую аудио…")
+                ogg_bytes = await job.audio_future
+
+            if ogg_bytes is not None:
+                # Pre-generation succeeded — just send.
+                await self._send_ogg(job, ogg_bytes)
+            else:
+                # Fallback: pregenerate task returned None, retry synchronously.
+                logger.info("TTS pregenerate miss, retrying inline: job_id=%s", job.job_id)
+                await self._set_status(job, status="synthesizing", detail="Генерирую аудио (повтор)…")
+                ogg_bytes = await self._pregenerate_audio(job)
+                if ogg_bytes is None:
+                    raise RuntimeError("no_audio_generated")
+                await self._send_ogg(job, ogg_bytes)
+
             await role_conv_metrics.record_tts_job_completed()
         except Exception as exc:
             logger.error("TTS job failed: job_id=%s user_id=%s error=%s", job.job_id, job.user_id, exc, exc_info=True)
@@ -335,136 +457,9 @@ class VoiceReplyManager:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await heartbeat_task
 
-    async def _generate_and_send_voice(self, job: VoiceJob) -> None:
-        """Generate TTS audio and send it as Telegram voice."""
-        from app.config import settings
-        from app.i18n import detect_language
-        from app.providers.elevenlabs_tts import ELEVENLABS_CHUNK_MAX_BYTES, generate_speech_with_key_rotation
-        from app.providers.tts import _chunk_text_by_sentences, _clean_text_for_speech
-        from app.utils.audio import crossfade_pcm_chunks, make_voice_file, pcm_to_ogg_opus
-
-        clean_text = _clean_text_for_speech(job.response_text)
-        if not clean_text:
-            raise ValueError("empty_clean_text")
-
-        language = detect_language(clean_text)
-        language_code = "ru-RU" if language == "ru" else "en-US" if language == "en" else None
-
-        await self._set_status(job, status="preparing_text", detail="Подготавливаю текст")
-        await self._set_status(job, status="chunking", detail="Разбиваю текст на фрагменты")
-
-        el_keys = settings.ELEVENLABS_API_KEYS
-        el_voice_id = job.voice if job.voice and len(job.voice) > 10 else settings.ELEVENLABS_VOICE_ID
-
-        pcm_parts: list[bytes] | None = None
-
-        if el_keys:
-            el_chunks = _chunk_text_by_sentences(clean_text, max_bytes=ELEVENLABS_CHUNK_MAX_BYTES)
-            await self._set_status(
-                job,
-                status="synthesizing",
-                provider="elevenlabs",
-                total_chunks=len(el_chunks),
-                completed_chunks=0,
-                detail=f"Синтезирую: ElevenLabs, чанк 0/{len(el_chunks)}",
-            )
-            el_timeout = min(90.0, max(30.0, len(clean_text) / 50.0 + 15.0))
-            async with self._elevenlabs_sem:
-                pcm_parts = await generate_speech_with_key_rotation(
-                    el_chunks,
-                    el_keys,
-                    voice_id=el_voice_id,
-                    timeout=el_timeout,
-                    on_chunk_complete=lambda completed, total: self._set_status(
-                        job,
-                        status="synthesizing",
-                        provider="elevenlabs",
-                        total_chunks=total,
-                        completed_chunks=completed,
-                        detail=f"Синтезирую: ElevenLabs, чанк {completed}/{total}",
-                    ),
-                )
-
-        if pcm_parts is None:
-            if el_keys:
-                job.state.fallback_used = True
-                await role_conv_metrics.record_tts_fallback()
-                await self._set_status(
-                    job,
-                    status="synthesizing",
-                    provider="gemini",
-                    fallback_used=True,
-                    detail="Переключаю провайдер: Gemini",
-                )
-
-            gemini_chunks = _chunk_text_by_sentences(clean_text, max_bytes=1800)
-            gemini_voice = job.voice if job.voice and len(job.voice) <= 10 else "Aoede"
-            gemini_timeout = min(120.0, max(40.0, len(clean_text) / 40.0 + 40.0))
-
-            async with self._gemini_sem:
-                await self._set_status(
-                    job,
-                    status="synthesizing",
-                    provider="gemini-3.1",
-                    total_chunks=len(gemini_chunks),
-                    completed_chunks=0,
-                    fallback_used=job.state.fallback_used,
-                    detail=f"Синтезирую: Gemini 3.1, чанк 0/{len(gemini_chunks)}",
-                )
-                pcm_parts = await _run_gemini_pipeline(
-                    gemini_chunks,
-                    gemini_voice,
-                    gemini_timeout,
-                    tts_temperature=job.tts_temperature,
-                    model_name="gemini-3.1-flash-tts-preview",
-                    language_code=language_code,
-                    on_chunk_complete=lambda completed, total: self._set_status(
-                        job,
-                        status="synthesizing",
-                        provider="gemini-3.1",
-                        total_chunks=total,
-                        completed_chunks=completed,
-                        fallback_used=job.state.fallback_used,
-                        detail=f"Синтезирую: Gemini 3.1, чанк {completed}/{total}",
-                    ),
-                )
-
-                if not pcm_parts:
-                    await self._set_status(
-                        job,
-                        status="synthesizing",
-                        provider="gemini-2.5",
-                        total_chunks=len(gemini_chunks),
-                        completed_chunks=0,
-                        fallback_used=True,
-                        detail=f"Синтезирую: Gemini 2.5, чанк 0/{len(gemini_chunks)}",
-                    )
-                    pcm_parts = await _run_gemini_pipeline(
-                        gemini_chunks,
-                        gemini_voice,
-                        gemini_timeout,
-                        tts_temperature=job.tts_temperature,
-                        model_name="gemini-2.5-flash-preview-tts",
-                        language_code=language_code,
-                        on_chunk_complete=lambda completed, total: self._set_status(
-                            job,
-                            status="synthesizing",
-                            provider="gemini-2.5",
-                            total_chunks=total,
-                            completed_chunks=completed,
-                            fallback_used=True,
-                            detail=f"Синтезирую: Gemini 2.5, чанк {completed}/{total}",
-                        ),
-                    )
-
-        if not pcm_parts:
-            raise RuntimeError("no_audio_generated")
-
-        await self._set_status(job, status="encoding", detail="Упаковываю аудио")
-        pcm_audio = crossfade_pcm_chunks(pcm_parts)
-        ogg_bytes = await pcm_to_ogg_opus(pcm_audio)
-        if ogg_bytes is None:
-            raise RuntimeError("pcm_to_ogg_failed")
+    async def _send_ogg(self, job: VoiceJob, ogg_bytes: bytes) -> None:
+        """Send pre-generated OGG audio as a Telegram voice message."""
+        from app.utils.audio import make_voice_file
 
         await self._set_status(job, status="sending", detail="Отправляю голосовое сообщение")
         voice_file = make_voice_file(ogg_bytes)

@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-04-22 - Gemini Live 1007 Fix & Voice Engine 5.0 (Parallel TTS)
+
+### 🔊 Voice Engine 5.0 — Future-Based Pre-Generation
+- **Parallel chunk generation (`app/voice_engine.py`):** `_run_gemini_pipeline` now generates up to `_MAX_PARALLEL_CHUNKS = 4` chunks concurrently via `asyncio.gather` instead of a sequential for-loop. Each chunk uses independent key-racing, eliminating the serial bottleneck that caused 504 DEADLINE_EXCEEDED on long texts.
+- **Reduced chunk size (`app/voice_engine.py`):** Gemini TTS chunk size reduced from 1800 to 800 bytes. Smaller chunks complete faster on the API side, preventing server-side timeouts that were the primary trigger for 504 errors.
+- **Future-based pre-generation (`app/voice_engine.py`):** TTS audio generation now starts **immediately** when a job is enqueued via `asyncio.create_task(_pregenerate_audio(job))`, rather than waiting for the per-user FIFO worker to reach it. The worker simply awaits the pre-computed `audio_future` and sends the result. This decouples generation latency from queue wait time -- when a user sends 5 messages, all 5 generate TTS simultaneously while delivery order is strictly preserved.
+- **Increased concurrency (`app/voice_engine.py`):** `GEMINI_TTS_CONCURRENCY` raised from 2 to 10 to allow full utilisation of the API key pool across concurrent users and messages.
+- **Inline fallback (`app/voice_engine.py`):** If a pre-generation task fails, `_process_job` retries via a synchronous call to `_pregenerate_audio` + `_send_ogg`, ensuring no silent audio loss.
+
+### 🛰️ Gemini Live API — Model Migration & Config Fix
+- **Model upgrade (`app/config.py`):** `GEMINI_LIVE_MODEL` updated from the deprecated `gemini-live-2.5-flash-native-audio` to the recommended `gemini-3.1-flash-live-preview`. The old model was causing immediate Vertex AI 1007 "Invalid resource field value" WebSocket disconnections.
+- **Unsupported config removal (`app/web_miniapp.py`):** Removed `proactivity=ProactivityConfig(proactive_audio=False)` and `enable_affective_dialog=False` from `_build_live_connect_config`. These parameters are not supported by `gemini-3.1-flash-live-preview` and were the direct cause of the 1007 errors.
+
+### 🧪 Test Updates
+- **`tests/test_voice_engine.py`:** Updated all 3 tests to mock `_pregenerate_audio` + `_send_ogg` instead of the removed `_generate_and_send_voice`. The serialization test now correctly asserts that both pre-generation tasks start immediately (validating the Future-based architecture) while delivery remains ordered.
+
+### ✍️ Documentation
+- **README.md:** Updated Voice Engine description from 4.1 to 5.0, replaced "Adaptive Sequential Chunking (1800 max bytes)" with "Parallel Batch Chunking (800 max bytes, 4 concurrent)", and documented the Future-Based Pre-Generation architecture. Updated all `gemini-live-2.5-flash-native-audio` references to `gemini-3.1-flash-live-preview`.
+
+### ✅ Verification
+- `python -m ruff check app/voice_engine.py app/config.py app/web_miniapp.py` -> **All checks passed**
+- `python -m pytest tests/test_voice_engine.py -v` -> **3 passed**
+
 ## [Unreleased] - 2026-04-22 - Daily Crocodile Pipeline: Resilience, Display Names & UI Fix
 
 ### 🐊 Daily Crocodile — System Resilience

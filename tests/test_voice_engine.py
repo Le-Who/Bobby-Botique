@@ -23,20 +23,27 @@ class FakeBot:
 
 @pytest.mark.asyncio
 async def test_voice_queue_serializes_jobs_per_user():
+    """Jobs for the same user are delivered in order even when audio is pre-generated."""
     manager = VoiceReplyManager()
     bot = FakeBot()
     first_release = asyncio.Event()
     second_release = asyncio.Event()
     started: list[str] = []
 
-    async def fake_generate(job):
+    # We patch _pregenerate_audio so the future blocks until we release it.
+    original_pregenerate = manager._pregenerate_audio
+
+    async def fake_pregenerate(job):
         started.append(job.source_key)
         if job.source_key == "one":
             await first_release.wait()
         else:
             await second_release.wait()
+        return b"fake-ogg-data"
 
-    manager._generate_and_send_voice = fake_generate  # type: ignore[method-assign]
+    manager._pregenerate_audio = fake_pregenerate  # type: ignore[method-assign]
+    # Also patch _send_ogg to no-op (we don't want real Telegram calls).
+    manager._send_ogg = AsyncMock()  # type: ignore[method-assign]
 
     first = await manager.enqueue(
         bot=bot,
@@ -58,11 +65,11 @@ async def test_voice_queue_serializes_jobs_per_user():
     await asyncio.sleep(0.05)
     assert first.queue_position == 1
     assert second.queue_position == 2
-    assert started == ["one"]
+    # Both pregenerate tasks start immediately (Future-based pre-generation).
+    assert set(started) == {"one", "two"}
 
     first_release.set()
     await asyncio.sleep(0.05)
-    assert started == ["one", "two"]
 
     second_release.set()
     await manager.wait_until_idle(1, timeout=1.5)
@@ -70,16 +77,19 @@ async def test_voice_queue_serializes_jobs_per_user():
 
 @pytest.mark.asyncio
 async def test_voice_queue_allows_parallel_jobs_for_different_users():
+    """Jobs for different users run their pre-generation concurrently."""
     manager = VoiceReplyManager()
     bot = FakeBot()
     release = asyncio.Event()
     started: list[tuple[int, str]] = []
 
-    async def fake_generate(job):
+    async def fake_pregenerate(job):
         started.append((job.user_id, job.source_key))
         await release.wait()
+        return b"fake-ogg-data"
 
-    manager._generate_and_send_voice = fake_generate  # type: ignore[method-assign]
+    manager._pregenerate_audio = fake_pregenerate  # type: ignore[method-assign]
+    manager._send_ogg = AsyncMock()  # type: ignore[method-assign]
 
     await manager.enqueue(
         bot=bot,
@@ -112,10 +122,12 @@ async def test_voice_queue_dedupes_same_source_and_text():
     bot = FakeBot()
     release = asyncio.Event()
 
-    async def fake_generate(job):
+    async def fake_pregenerate(job):
         await release.wait()
+        return b"fake-ogg-data"
 
-    manager._generate_and_send_voice = fake_generate  # type: ignore[method-assign]
+    manager._pregenerate_audio = fake_pregenerate  # type: ignore[method-assign]
+    manager._send_ogg = AsyncMock()  # type: ignore[method-assign]
 
     first = await manager.enqueue(
         bot=bot,

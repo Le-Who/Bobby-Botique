@@ -143,8 +143,8 @@ def _build_live_connect_config(*, system_instruction: str, resumption_handle: st
         ),
         tools=[types.Tool(google_search=types.GoogleSearch())],
         system_instruction=types.Content(parts=[types.Part(text=system_instruction)]),
-        proactivity=types.ProactivityConfig(proactive_audio=False),
-        enable_affective_dialog=False,
+        # NOTE: proactivity and enable_affective_dialog are not supported
+        # by gemini-3.1-flash-live-preview and must NOT be set (cause 1007 errors).
     )
 
 
