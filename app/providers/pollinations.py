@@ -164,6 +164,11 @@ class PollinationsProvider:
         # Log the POST failure but attempt GET fallback transparently
         logger.info("Pollinations: POST failed (%s), trying GET fallback", result.error_message)
 
+        # If the failure is auth/payment related (e.g. key exhausted), we should omit
+        # the key in the GET fallback so that free models (like qwen-image or flux)
+        # can still succeed anonymously, rather than getting blocked again.
+        omit_key = result.error_message in ("paid_tier_required", "unauthorized")
+
         get_result = await self._try_get(
             prompt=prompt,
             model=model,
@@ -173,10 +178,18 @@ class PollinationsProvider:
             enhance=enhance,
             negative_prompt=negative_prompt,
             timeout=timeout,
+            omit_key=omit_key,
         )
 
         if get_result.success:
-            get_result.warning = "used GET fallback"
+            get_result.warning = "used GET fallback (key omitted)" if omit_key else "used GET fallback"
+            return get_result
+
+        # If the keyless fallback ALSO failed, and the original POST error was auth/payment related,
+        # return the ORIGINAL result so the user sees the helpful "budget exhausted" or "auth error" message
+        # instead of a generic "get_http_401".
+        if omit_key:
+            return result
 
         return get_result
 
@@ -318,6 +331,7 @@ class PollinationsProvider:
         enhance: bool,
         negative_prompt: str,
         timeout: float,
+        omit_key: bool = False,
     ) -> PollinationsResult:
         encoded_prompt = urllib.parse.quote(prompt, safe="")
         params: dict = {
@@ -332,9 +346,10 @@ class PollinationsProvider:
         if negative_prompt:
             params["negative_prompt"] = negative_prompt
 
-        api_key = settings.POLLINATIONS_API_KEY
-        if api_key:
-            params["key"] = api_key
+        if not omit_key:
+            api_key = settings.POLLINATIONS_API_KEY
+            if api_key:
+                params["key"] = api_key
 
         url = f"{POLLINATIONS_BASE_URL}/image/{encoded_prompt}"
 
