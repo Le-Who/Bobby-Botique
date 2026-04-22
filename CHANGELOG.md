@@ -25,6 +25,17 @@ Format is optimized for agent-parseable context.
 - `python -m ruff check app/providers/opencode.py app/games/word_bank.py tests/test_opencode_routing.py tests/test_games.py` -> **All checks passed**
 - `python -m ruff check app/games/ai_budget.py app/games/hinting.py app/games/judge.py app/games/word_bank.py app/games/crocodile.py app/games/crocodile_daily.py app/errors.py app/providers/gemini.py tests/test_ai_budget.py tests/test_game_hints.py tests/test_games.py` -> **All checks passed**
 
+### 🐊 Daily Crocodile — Button Auth Fix
+- **Critical auth regression fixed (`app/handlers/daily_crocodile.py`):** The previous session's `Button_type_invalid` fix (switching from `web_app=WebAppInfo(...)` to a plain `url=`) inadvertently broke authentication for all scheduled daily deliveries. A plain `url=` button opens a regular browser tab where `window.Telegram.WebApp.initData` is an empty string — the WebSocket handler closes the connection with `4003 initData required` and users see ❌ Ошибка авторизации.
+- **Root cause:** `web_app=WebAppInfo(...)` was removed to satisfy Telegram's constraint that this button type is rejected when editing messages with `inline_message_id`. However, the replacement `url=` skips the Telegram Mini App viewer entirely, voiding `initData` injection.
+- **Fix:** `_play_button()` now constructs a `t.me/<bot>/<miniapp>?startapp=daily` deep link (matching the pattern already used by the classic Crocodile game in `inline.py`). Telegram recognises this as a Mini App URL, opens it inside the WebApp viewer, and injects `initData` correctly. `url=` is still used (not `web_app=`), satisfying both constraints simultaneously. Falls back to the direct WEBAPP_BASE_URL if `MINIAPP_SHORT_NAME` is not configured.
+- **Multi-user isolation confirmed:** Per-user game state isolation is architecturally guaranteed — `_validate_init_data()` HMAC-SHA256 verification + `_extract_user_id()` ensure each session is bound to the authenticated user's ID; cross-user state leakage is not possible.
+
+### ✅ Verification
+- `python -m pytest -o addopts='' tests/test_daily_crocodile.py -q` -> **11 passed**
+- `python -m pytest -o addopts='' tests/test_game_websocket.py tests/test_game_auth.py tests/test_games.py tests/test_game_inline.py -q` -> **120 passed**
+
+
 ## [2.15.16] - 2026-04-21 - Inline Primary Driver: Vertex AI Express + Race Hardening
 
 ### 🚀 Inline Generation Architecture

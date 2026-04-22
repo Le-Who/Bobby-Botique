@@ -4,7 +4,7 @@ import logging
 import os
 from datetime import UTC, datetime
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
@@ -33,10 +33,31 @@ def daily_game_url() -> str:
 
 
 def _play_button(label: str = "Играть") -> InlineKeyboardButton:
-    url = daily_game_url()
-    if url.startswith("https://"):
-        return InlineKeyboardButton(label, web_app=WebAppInfo(url=url))
-    return InlineKeyboardButton(label, url=url or "https://t.me")
+    """Build the "Play" button for the daily Crocodile prompt.
+
+    Uses a ``t.me`` deep link (``https://t.me/BOT/APP?startapp=daily``)
+    so Telegram opens the page inside its Mini App viewer and injects
+    ``initData`` — required by the WS auth layer.
+
+    A plain ``url=`` would open a regular browser tab where
+    ``tg.initData`` is empty → WS close 4003 "initData required".
+
+    NOTE: ``web_app=WebAppInfo(...)`` is NOT used because Telegram
+    rejects that button type when the message is later edited via a
+    CallbackQuery that carries ``inline_message_id``
+    (error ``Button_type_invalid``).
+    """
+    from app.bot_instance import get_bot
+    from app.config import settings
+
+    miniapp_short = getattr(settings, "MINIAPP_SHORT_NAME", "").strip()
+    bot = get_bot()
+    bot_username = getattr(bot, "username", "") if bot else ""
+    if miniapp_short and bot_username:
+        url = f"https://t.me/{bot_username}/{miniapp_short}?startapp=daily"
+    else:
+        url = daily_game_url() or "https://t.me"
+    return InlineKeyboardButton(label, url=url)
 
 
 def daily_intro_keyboard() -> InlineKeyboardMarkup:
