@@ -165,6 +165,16 @@ async def _generate_daily_image_file_id(
             "daily puzzle image warning date=%s difficulty=%s: %s",
             puzzle_date, difficulty, result.warning,
         )
+        # Propagate to admin alerting — callers check this field.
+        try:
+            from app.admin_alerts import AlertSeverity, alert_admin_raw
+
+            await alert_admin_raw(
+                f"⚠️ Daily image model substitution {puzzle_date}/{difficulty}: {result.warning}",
+                severity=AlertSeverity.WARNING,
+            )
+        except Exception:
+            pass  # best-effort; logging above is the primary record
 
     if not result.success or not result.images:
         logger.warning(
@@ -215,7 +225,7 @@ async def prepare_daily_puzzle(
         _redis_lock_ctx = None
         if redis_client:
             try:
-                _redis_lock_ctx = redis_client.lock(_redis_lock_key, timeout=60, blocking_timeout=30)
+                _redis_lock_ctx = redis_client.lock(_redis_lock_key, timeout=180, blocking_timeout=30)
                 acquired = await _redis_lock_ctx.acquire()
                 if not acquired:
                     # Another worker is already preparing — load whatever it wrote

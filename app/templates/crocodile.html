@@ -970,6 +970,7 @@ function connect() {
   ws.onclose = ev => {
     if (gameOver) return;
     setInputEnabled(false);
+    if (ev.code === 1000) return; // Graceful server close — do not auto-reconnect
     if (ev.code === 4003) { showError('❌ Ошибка авторизации', false); return; }
     if (ev.code === 4008) { showError('⌛ Игра истекла', false); return; }
     if (ev.code === 4009) { showOverlay({ win:false, word:'', attempts:maxAttempts, maxAttempts }); return; }
@@ -996,7 +997,10 @@ function handleMessage(msg) {
       if (msg.daily) renderDailyModes(msg.daily_modes || dailyModesState, currentDailyDifficulty);
       if (msg.is_creator) {
         activateGodMode(msg.target_word || '');
-        gameOver = false; // Creator stays active to observe
+        // If the server signals the game is already finished (creator reconnect
+        // after game ended), mark gameOver so the ws.onclose guard prevents
+        // an infinite reconnect loop.
+        gameOver = !!msg.finished;
         updateHintBtn();
       }
       break;

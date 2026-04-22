@@ -2,13 +2,18 @@
 """Unit tests for WebSocket authentication helpers in app/web_miniapp.py.
 
 Tests are fully offline — no Quart app, no WebSocket, no Telegram API calls.
-All functions under test are pure (no I/O): _validate_init_data,
-_extract_user_id, and _sweep_game_locks.
+All functions under test are pure (no I/O): _validate_init_data and
+_extract_user_id.
+
+Note: The former _sweep_game_locks function and its tests were removed because
+FIFO lock eviction was identified as a critical concurrency defect — evicting
+an actively-held asyncio.Lock breaks mutual exclusion when Redis is unavailable.
+The _local_locks dict is now unbounded (same fix as _PREP_LOCKS).
 """
 
 from __future__ import annotations
 
-from app.web_miniapp import _extract_user_id, _sweep_game_locks, _validate_init_data
+from app.web_miniapp import _extract_user_id, _validate_init_data
 from tests.factories import make_valid_init_data
 
 # A deterministic fake bot token used throughout this module.
@@ -81,53 +86,3 @@ class TestExtractUserId:
 
     def test_user_dict_without_id_returns_none(self):
         assert _extract_user_id({"user": {"username": "alice"}}) is None
-
-
-# ── _sweep_game_locks ─────────────────────────────────────────────────────────
-
-
-class TestSweepGameLocks:
-    """_sweep_game_locks() — evicts oldest half when dict ≥ _GAME_LOCKS_MAX."""
-
-    def setup_method(self):
-        """Ensure _game_locks is empty before each test."""
-        import app.web_miniapp as _wm
-
-        _wm._game_locks.clear()
-
-    def teardown_method(self):
-        import app.web_miniapp as _wm
-
-        _wm._game_locks.clear()
-
-    def test_no_op_below_capacity(self):
-        import asyncio
-
-        import app.web_miniapp as _wm
-
-        # Add 5 entries (well below _GAME_LOCKS_MAX = 512)
-        for i in range(5):
-            _wm._game_locks[f"game-{i}"] = asyncio.Lock()
-
-        _sweep_game_locks()
-        assert len(_wm._game_locks) == 5  # unchanged
-
-    def test_evicts_oldest_half_at_capacity(self):
-        import asyncio
-
-        import app.web_miniapp as _wm
-
-        cap = _wm._GAME_LOCKS_MAX
-        for i in range(cap):
-            _wm._game_locks[f"game-{i:05d}"] = asyncio.Lock()
-
-        assert len(_wm._game_locks) == cap
-
-        _sweep_game_locks()
-
-        # Should have evicted the oldest half (cap // 2 entries)
-        assert len(_wm._game_locks) == cap - cap // 2
-        # The first entry (oldest) must be gone
-        assert "game-00000" not in _wm._game_locks
-        # The last entry (newest) must remain
-        assert f"game-{cap - 1:05d}" in _wm._game_locks

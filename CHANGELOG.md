@@ -3,7 +3,34 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [Unreleased] - 2026-04-22 - Concurrency Stabilization: RPD Budget, Lock Integrity & WebSocket Resilience
+## [Unreleased] - 2026-04-23 - 48-Hour Production Audit: Lock Eviction P0, Voice Engine Hardening
+
+### 🔒 Critical Concurrency Fix
+
+- **Removed `_sweep_game_locks` FIFO eviction — P0 race condition (`app/games/crocodile_runtime.py`):** `_local_locks` (the asyncio.Lock fallback when Redis is unavailable) had a 512-entry cap with oldest-half FIFO eviction via `_sweep_game_locks()`. This was the *exact same defect class* as the `_PREP_LOCKS` eviction bug fixed previously: evicting an actively-held `asyncio.Lock` without checking `.locked()` breaks mutual exclusion. When Redis goes down and 513+ concurrent games use local locks, the sweep could evict a lock that is currently held — a second coroutine then creates a new, independent lock for the same `game_id`, allowing concurrent mutations. **Fix:** Removed `_GAME_LOCKS_MAX`, `_sweep_game_locks()`, and all call sites. The `_local_locks` dict is now unbounded (~100 bytes/lock × realistic game count = negligible memory). Mirrored the same approach used for `_PREP_LOCKS`. Also removed the re-export wrapper and constant alias from `app/web_miniapp.py`, and the `TestSweepGameLocks` test class from `tests/test_game_auth.py`.
+
+### 🔊 Voice Engine Hardening
+
+- **Narrowed `_pregenerate_audio` exception catch (`app/voice_engine.py`):** Changed `except Exception` to `except (OSError, TimeoutError, ValueError, RuntimeError)`. The broad catch was silently converting programmer errors (`TypeError`, `AttributeError`, `KeyError`) into `None` results, masking bugs and causing unnecessary synchronous retry fallbacks that doubled latency.
+
+- **Fixed `CancelledError` propagation in worker (`app/voice_engine.py`):** Split the `except (Exception, asyncio.CancelledError)` handler into two distinct branches: `except asyncio.CancelledError: raise` (propagates cancellation to honor task/shutdown semantics) and `except Exception: ogg_bytes = None` (falls through to synchronous retry). In Python 3.11+, `CancelledError` is a `BaseException`, so the prior combined handler was incorrect — it would swallow cancellation signals and retry instead of honoring the cancellation.
+
+### 🛡️ Resilience Improvements
+
+- **Admin alerting on Pollinations model substitution (`app/games/crocodile_daily.py`):** When `generate_image_pollinations` returns a result with a `warning` (e.g., paid model fell back to free `flux`), `alert_admin_raw(WARNING)` is now fired in addition to the existing `logger.warning`. Best-effort: failures in the alerting path are silently ignored.
+
+- **Redis prep lock TTL increased to 180s (`app/games/crocodile_daily.py`):** The distributed Redis lock for `prepare_daily_puzzle()` was raised from 60s to 180s, providing 3× headroom for Pollinations timeouts and slow LLM calls during daily puzzle preparation.
+
+- **Creator god-mode reconnect loop fix (`app/templates/crocodile.html`):** Added a dual-guard to prevent infinite WebSocket reconnect when the creator reopens the Mini App after the game ended: (1) `gameOver = !!msg.finished` in the `game_state` handler marks the game as over when the server signals `finished: true`; (2) `if (ev.code === 1000) return` in `ws.onclose` prevents reconnection on graceful server close. Either guard independently prevents the loop.
+
+### ✅ Verification
+
+- `python -m ruff check .` → **All checks passed**
+- `python -m pytest tests/ -q -n auto` → **1835 passed, 96 skipped, 0 failures**
+
+---
+
+## [2026-04-22] - Concurrency Stabilization: RPD Budget, Lock Integrity & WebSocket Resilience
 
 ### 🔒 Concurrency & Data Integrity
 

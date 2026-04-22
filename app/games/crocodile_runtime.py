@@ -18,7 +18,6 @@ _HISTORY_KEY_PREFIX = "croc:runtime:history:"
 _SEQ_KEY_PREFIX = "croc:runtime:seq:"
 _PENDING_KEY_PREFIX = "croc:runtime:pending:"
 _LOCK_KEY_PREFIX = "croc:lock:"
-_GAME_LOCKS_MAX = 512
 _HISTORY_LIMIT = 32
 _PENDING_RESULTS_LIMIT = 32
 
@@ -63,16 +62,6 @@ def _lock_key(game_id: str) -> str:
     return f"{_LOCK_KEY_PREFIX}{game_id}"
 
 
-def _sweep_game_locks() -> None:
-    """Bound local fallback lock growth when Redis locking is unavailable."""
-    if len(_local_locks) < _GAME_LOCKS_MAX:
-        return
-
-    keys = list(_local_locks.keys())
-    removed = len(keys) // 2
-    for key in keys[:removed]:
-        _local_locks.pop(key, None)
-    logger.debug("Runtime local locks swept: %d entries removed", removed)
 
 
 async def get_runtime_hints(game_id: str) -> list[str]:
@@ -392,13 +381,11 @@ async def game_mutation_lock(game_id: str):
             _redis_conn_error = True
 
         if _redis_conn_error:
-            _sweep_game_locks()
             local_lock = _local_locks.setdefault(game_id, asyncio.Lock())
             async with local_lock:
                 yield
             return
 
-    _sweep_game_locks()
     lock = _local_locks.setdefault(game_id, asyncio.Lock())
     async with lock:
         yield

@@ -410,7 +410,7 @@ class VoiceReplyManager:
             pcm_audio = crossfade_pcm_chunks(pcm_parts)
             ogg_bytes = await pcm_to_ogg_opus(pcm_audio)
             return ogg_bytes
-        except Exception as exc:
+        except (OSError, TimeoutError, ValueError, RuntimeError) as exc:
             logger.warning(
                 "TTS pregenerate failed: job_id=%s user_id=%s error=%s",
                 job.job_id, job.user_id, exc,
@@ -432,9 +432,11 @@ class VoiceReplyManager:
                 await self._set_status(job, status="synthesizing", detail="Генерирую аудио…")
                 try:
                     ogg_bytes = await job.audio_future
-                except (Exception, asyncio.CancelledError) as exc:
-                    # CancelledError is BaseException in Python 3.14 — not caught by
-                    # bare `except Exception`.  Log and fall through to sync retry.
+                except asyncio.CancelledError:
+                    # CancelledError is BaseException in Python 3.11+ — must
+                    # propagate to honor task/worker cancellation (e.g. shutdown).
+                    raise
+                except Exception as exc:
                     logger.warning(
                         "TTS future failed for job_id=%s: %s",
                         job.job_id, exc,
