@@ -846,9 +846,8 @@ async def set_dailycroc_placeholder_command(update: Update, context: ContextType
     await set_global_setting("daily_croc_placeholder_file_id", file_id)
 
     # Invalidate the in-process cache in the handler module.
-    from app.handlers.daily_crocodile import _PLACEHOLDER_KEY  # noqa: PLC0415
-
     import app.handlers.daily_crocodile as _dc_mod  # noqa: PLC0415
+    from app.handlers.daily_crocodile import _PLACEHOLDER_KEY  # noqa: PLC0415
 
     _dc_mod._placeholder_cache = ""
     _dc_mod._placeholder_cache_ts = 0.0

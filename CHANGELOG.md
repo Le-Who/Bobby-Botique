@@ -3,7 +3,17 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [Unreleased] - 2026-04-22 - Crocodile Load-Shedding, Hint Backpressure & OpenCode Go MiniMax Transport
+## [Unreleased] - 2026-04-22 - Crocodile UI Overhaul & Pollinations Fallback
+
+### 🎨 UI/UX: Crocodile Mini App Design Overhaul
+- **Midnight Glass Design (`app/templates/crocodile.html`):** Transformed the Mini App UI with a "Glassmorphism" design language. Added a volumetric ambient mesh gradient background, elevating the visual airiness and depth of the app.
+- **Floating Components:** The game category is now a floating, blurred glass pill (`#category-pill`) independent of the chat flow. The user input area (`#input-zone`) is now a floating island with 3D tactile feedback on the send button.
+- **Dynamic Hints & Temperature Auras:** The hint button now features a pulsing golden glow and a tooltip that activates proactively if the player is idle for 20 seconds. Chat bubbles now feature subtle 3D inner shadows and color-coded temperature auras (🧊/🤔/🔥/🎯) corresponding to the guess proximity.
+
+### 🖼️ Pollinations Keyless Fallback
+- **Robust Budget Exhaustion Fallback (`app/providers/pollinations.py`):** The Pollinations provider now transparently recovers from 402 Payment Required and 401 Unauthorized API key errors (budget exhaustion). When the primary POST request fails for these reasons, it falls back to a keyless GET request stream, allowing users to continue generating images with free-tier models (like `✨ Flux` and `⚡ Z-Image`) without interruption.
+- **Rate Limit Transparency (`app/handlers/cmd_image.py`):** Added a user-friendly error message specifically for 429 Too Many Requests to handle rate limit scenarios gracefully.
+- **Daily Placeholder Persistence (`app/handlers/cmd_admin.py`):** Verified that `Daily Crocodile` placeholder images set via `/set_dailycroc_placeholder` are stored persistently in the `global_settings` table and survive container restarts.
 
 ### 🐊 Crocodile Runtime Reliability
 - **Foreground/background AI budgeting (`app/games/ai_budget.py`, `app/games/judge.py`, `app/games/word_bank.py`):** Added a Crocodile-only scheduler with sliding-window local counters, provider concurrency caps, and model-level cooldown awareness. Foreground paths (game start, judge, live hints) now reserve capacity ahead of background warmup, while background requests are denied or paused when Gemini AI Studio enters retry-after cooldown.

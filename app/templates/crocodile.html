@@ -62,6 +62,17 @@
       user-select: none;
     }
 
+    body::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: 
+        radial-gradient(circle at 15% 15%, rgba(0, 224, 255, 0.12), transparent 45%),
+        radial-gradient(circle at 85% 85%, rgba(167, 139, 250, 0.12), transparent 45%);
+      z-index: -1;
+      pointer-events: none;
+    }
+
     /* ── App shell ───────────────────────────────────────────────────────── */
     #app {
       display: flex;
@@ -108,6 +119,39 @@
       border-color: rgba(255,189,89,0.35);
       background: rgba(255,189,89,0.08);
     }
+    #hint-btn.pulsing {
+      animation: hint-pulse 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      color: #ffd700;
+      border-color: rgba(255, 215, 0, 0.6);
+      background: rgba(255, 215, 0, 0.15);
+    }
+    @keyframes hint-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0); }
+      50% { box-shadow: 0 0 14px 2px rgba(255, 215, 0, 0.4); }
+    }
+    #hint-tooltip {
+      position: absolute;
+      top: 56px;
+      right: 64px;
+      background: linear-gradient(135deg, rgba(255,215,0,0.95), rgba(255,165,0,0.95));
+      color: #000;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 5px 10px;
+      border-radius: 12px;
+      border-top-right-radius: 3px;
+      box-shadow: 0 4px 12px rgba(255,165,0,0.3);
+      opacity: 0;
+      transform: translateY(-8px);
+      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      pointer-events: none;
+      z-index: 50;
+    }
+    #hint-tooltip.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
     #hint-btn:not(:disabled):active, #live-audio-btn:active { transform: scale(.93); }
     #hint-btn:disabled { opacity: .35; cursor: not-allowed; }
 
@@ -130,23 +174,33 @@
 
     /* ── Category pill ───────────────────────────────────────────────────── */
     #category-pill {
+      position: absolute;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
       font-size: 11px;
-      font-weight: 500;
-      color: var(--text-dim);
+      font-weight: 600;
+      color: rgba(255,255,255,0.9);
       letter-spacing: .5px;
       text-transform: uppercase;
       text-align: center;
-      padding: 5px 16px;
-      border-bottom: 1px solid rgba(255,255,255,0.04);
-      flex-shrink: 0;
-      min-height: 26px;
+      padding: 6px 16px;
+      background: rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2), inset 0 1px 1px rgba(255,255,255,0.1);
+      border-radius: 20px;
+      z-index: 10;
+      pointer-events: none;
+      white-space: nowrap;
+      transition: opacity 0.3s;
     }
 
     /* ── Chat area ───────────────────────────────────────────────────────── */
     #chat-area {
       flex: 1;
       overflow-y: auto;
-      padding: 10px 12px 6px;
+      padding: 40px 12px 6px; /* 40px top padding to clear floating category pill */
       display: flex;
       flex-direction: column;
       gap: 5px;
@@ -175,14 +229,16 @@
       background: var(--surface);
       word-break: break-word;
       line-height: 1.35;
+      box-shadow: inset 0 1px 1px rgba(255,255,255,0.08), 0 2px 4px rgba(0,0,0,0.1);
+      backdrop-filter: blur(8px);
     }
 
     /* User bubbles by state */
     .bubble.user            { background:var(--b-user);  border-color:var(--b-user-bdr);  border-bottom-right-radius:4px; }
-    .bubble.user.cold       { background:var(--b-cold);  border-color:var(--b-cold-bdr);  }
-    .bubble.user.warm       { background:var(--b-warm);  border-color:var(--b-warm-bdr);  }
-    .bubble.user.hot        { background:var(--b-hot);   border-color:var(--b-hot-bdr);   }
-    .bubble.user.exact_match{ background:var(--b-exact); border-color:var(--b-exact-bdr); box-shadow:0 0 18px rgba(0,224,150,.18); }
+    .bubble.user.cold       { background:var(--b-cold);  border-color:var(--b-cold-bdr);  box-shadow: inset 0 1px 1px rgba(255,255,255,0.1), 0 0 12px rgba(100,149,237,0.12); }
+    .bubble.user.warm       { background:var(--b-warm);  border-color:var(--b-warm-bdr);  box-shadow: inset 0 1px 1px rgba(255,255,255,0.1), 0 0 12px rgba(255,189,89,0.12); }
+    .bubble.user.hot        { background:var(--b-hot);   border-color:var(--b-hot-bdr);   box-shadow: inset 0 1px 1px rgba(255,255,255,0.1), 0 0 12px rgba(0,224,150,0.12); }
+    .bubble.user.exact_match{ background:var(--b-exact); border-color:var(--b-exact-bdr); box-shadow: inset 0 1px 1px rgba(255,255,255,0.2), 0 0 18px rgba(0,224,150,.25); }
 
     /* Pending animation */
     .bubble.pending { animation: b-in .22s cubic-bezier(.34,1.56,.64,1) both, pulse 1.3s ease-in-out infinite; }
@@ -229,29 +285,29 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 10px 14px;
-      padding-bottom: max(14px, env(safe-area-inset-bottom, 14px));
-      background: rgba(10,13,20,0.92);
+      margin: 0 12px 12px;
+      margin-bottom: max(12px, env(safe-area-inset-bottom, 12px));
+      padding: 6px 6px 6px 16px;
+      border-radius: 28px;
+      background: rgba(10,13,20,0.7);
       backdrop-filter: var(--blur);
-      border-top: 1px solid var(--border);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4), inset 0 1px 1px rgba(255,255,255,0.08);
+      border: 1px solid var(--border);
       flex-shrink: 0;
     }
 
     #guess-input {
       flex: 1;
-      background: var(--surface-alt);
-      border: 1.5px solid var(--border);
-      border-radius: var(--radius-sm);
-      padding: 11px 15px;
+      background: transparent;
+      border: none;
+      padding: 10px 0;
       font-size: 16px;
       font-family: var(--font);
       color: var(--text);
       outline: none;
-      transition: border-color .2s, background .2s;
       -webkit-appearance: none;
     }
     #guess-input::placeholder { color: var(--text-dim); }
-    #guess-input:focus { border-color: rgba(0,224,255,.5); background: rgba(255,255,255,.12); }
     #guess-input:disabled { opacity: .35; cursor: not-allowed; }
 
     #send-btn {
@@ -263,13 +319,13 @@
       font-size: 18px;
       cursor: pointer;
       display: flex; align-items: center; justify-content: center;
-      transition: transform .15s, opacity .15s;
-      box-shadow: 0 4px 14px rgba(0,224,255,.28);
+      transition: transform .15s, opacity .15s, box-shadow .15s;
+      box-shadow: inset 0 2px 2px rgba(255,255,255,0.4), 0 4px 10px rgba(0,224,255,0.25);
       flex-shrink: 0;
     }
-    #send-btn:hover   { transform: scale(1.08); }
-    #send-btn:active  { transform: scale(.92); }
-    #send-btn:disabled { opacity: .3; cursor: not-allowed; transform: none; }
+    #send-btn:hover   { transform: scale(1.05); }
+    #send-btn:active  { transform: scale(0.92) translateY(2px); box-shadow: inset 0 1px 1px rgba(255,255,255,0.2), 0 2px 4px rgba(0,224,255,0.1); }
+    #send-btn:disabled { opacity: .3; cursor: not-allowed; transform: none; box-shadow: none; }
 
     /* ── Win / Loss overlay ──────────────────────────────────────────────── */
     #overlay {
@@ -447,6 +503,7 @@
     <button id="hint-btn" disabled title="Подсказка">💡</button>
     <span id="attempts-badge">0 / 10</span>
   </header>
+  <div id="hint-tooltip">💡 Нужна помощь?</div>
 
   <!-- God Mode: target word banner (creator only) -->
   <div id="word-banner">
@@ -700,25 +757,48 @@ function activateGodMode(targetWord) {
 let hintIndex          = 0;
 let hintCooldownActive = true;
 let gameOver           = false;
+let hintIdleTimer      = null;
+
+function resetHintIdleTimer() {
+  clearTimeout(hintIdleTimer);
+  const btn = $('hint-btn');
+  btn.classList.remove('pulsing');
+  $('hint-tooltip').classList.remove('visible');
+
+  // If game is over or cooldown is active or no hints left, do nothing
+  if (gameOver || hintCooldownActive || (HINTS_TOTAL - hintIndex) <= 0) return;
+
+  // After 20 seconds of idle (no message sent), glow the hint button
+  hintIdleTimer = setTimeout(() => {
+    if (!gameOver && !hintCooldownActive && (HINTS_TOTAL - hintIndex) > 0) {
+      btn.classList.add('pulsing');
+      $('hint-tooltip').classList.add('visible');
+    }
+  }, 20000);
+}
 
 function updateHintBtn() {
   const btn       = $('hint-btn');
   const remaining = HINTS_TOTAL - hintIndex;
+  
   if (gameOver || remaining <= 0) {
     btn.disabled = true;
-    btn.classList.remove('ready');
+    btn.classList.remove('ready', 'pulsing');
+    $('hint-tooltip').classList.remove('visible');
     btn.textContent = '💡';
     return;
   }
   if (hintCooldownActive) {
     btn.disabled = true;
-    btn.classList.remove('ready');
+    btn.classList.remove('ready', 'pulsing');
+    $('hint-tooltip').classList.remove('visible');
     btn.textContent = `⏳`;
     return;
   }
   btn.disabled = false;
   btn.classList.add('ready');
   btn.textContent = `💡 ${remaining}`;
+  resetHintIdleTimer(); // Start the idle timer once button becomes available
 }
 
 function startHintCooldown(ms) {
@@ -732,6 +812,11 @@ $('hint-btn').addEventListener('click', () => {
   haptic?.impactOccurred('soft');
   ws.send(JSON.stringify({ type: 'hint', hint_index: hintIndex }));
   hintIndex++;
+  
+  // Clear pulsing state immediately
+  $('hint-btn').classList.remove('pulsing');
+  $('hint-tooltip').classList.remove('visible');
+  
   startHintCooldown(9000); // per-hint cooldown between requests
 });
 
@@ -974,6 +1059,7 @@ function sendGuess() {
   ws.send(JSON.stringify({ type: 'typing', active: false }));
   appendPendingBubble(word, pid);
   haptic?.impactOccurred('medium');
+  resetHintIdleTimer(); // Reset idle timer since user just made a guess
 }
 
 $('send-btn').addEventListener('click', sendGuess);

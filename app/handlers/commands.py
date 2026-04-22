@@ -606,6 +606,7 @@ def register(application: Application) -> None:
         clear_cache_command,
         clear_old_documents_command,
         clear_old_metrics_command,
+        dailycroc_status_command,
         del_user_command,
         document_stats_command,
         group_stats_command,
@@ -617,12 +618,11 @@ def register(application: Application) -> None:
         reload_config_command,
         role_conv_metrics_command,
         set_dailycroc_delivery_command,
+        set_dailycroc_placeholder_command,
         set_inline_tabs_command,
         set_inline_thinking_command,
         set_provider_command,
         update_tavily_keys_command,
-        dailycroc_status_command,
-        set_dailycroc_placeholder_command,
     )
 
     application.add_handler(CommandHandler("listmodels", list_models_command))

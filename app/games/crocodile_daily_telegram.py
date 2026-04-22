@@ -159,7 +159,6 @@ async def send_daily_result_message(bot, user_id: int, puzzle_date: date) -> Non
 async def send_daily_completion_bundle(bot, user_id: int, puzzle_date: date) -> None:
     """Send the game-over bundle: swap placeholder photo → real art, or fall back."""
     pref = await repo.get_preference(user_id)
-    is_subscribed = bool(pref and pref.get("is_subscribed"))
 
     # Mark as sent so the scheduler won't send a duplicate today.
     try:
