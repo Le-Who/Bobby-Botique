@@ -220,6 +220,7 @@ let resumptionToken = sessionStorage.getItem('liveResumptionToken') || '';
 let sessionEndedIntentionally = false;
 let reconnectTimer = null;
 let liveFatalState = null;
+let plannedReconnect = false;
 
 /* ── Reconnect: exponential backoff ────────────────────────────────── */
 const BACKOFF_BASE_MS = 500;
@@ -356,6 +357,7 @@ function connectWS() {
   }
 
   clearTimeout(reconnectTimer);
+  plannedReconnect = false;
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const enc = encodeURIComponent(INIT_DATA);
@@ -370,16 +372,19 @@ function connectWS() {
   
   vizWrap.classList.add('connecting');
 
-  ws = new WebSocket(url);
+  const socket = new WebSocket(url);
+  ws = socket;
 
-  ws.onopen = () => {
+  socket.onopen = () => {
+    if (ws !== socket) return;
     reconnectAttempt = 0;       // reset backoff on success
     vizWrap.classList.remove('connecting');
     setStatus('Подключено к AI. Говорите!', 'active');
     endBtn.disabled = false;
   };
 
-  ws.onmessage = (ev) => {
+  socket.onmessage = (ev) => {
+    if (ws !== socket) return;
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
 
@@ -414,10 +419,9 @@ function connectWS() {
         console.log(`[live] GoAway: reconnecting proactively in ${leadMs}ms`);
         clearTimeout(reconnectTimer);
         reconnectTimer = setTimeout(() => {
-          if (!sessionEndedIntentionally && ws) {
-            ws.close(1000, 'proactive-goaway');
-            ws = null;
-            connectWS();
+          if (!sessionEndedIntentionally && ws === socket) {
+            plannedReconnect = true;
+            socket.close(1000, 'proactive-goaway');
           }
         }, leadMs);
         break;
@@ -436,8 +440,8 @@ function connectWS() {
         endBtn.disabled = true;
         setStatus(msg.message || 'Голосовой режим временно недоступен', 'error');
         showError(msg.message || 'Голосовой режим временно недоступен');
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.close(1000, 'fatal');
+        if (ws === socket && socket.readyState === WebSocket.OPEN) {
+          socket.close(1000, 'fatal');
         }
         break;
 
@@ -447,13 +451,27 @@ function connectWS() {
     }
   };
 
-  ws.onclose = (ev) => {
-  if (sessionEndedIntentionally) {
+  socket.onclose = () => {
+    if (ws === socket) {
+      ws = null;
+    } else {
+      return;
+    }
+
+    if (sessionEndedIntentionally) {
       if (liveFatalState) {
         setStatus('Голосовой режим временно недоступен', 'error');
       } else {
         setStatus('Сессия завершена', 'error');
       }
+      return;
+    }
+
+    if (plannedReconnect) {
+      plannedReconnect = false;
+      setStatus('Восстанавливаю сессию…', '');
+      vizWrap.classList.add('connecting');
+      connectWS();
       return;
     }
     
@@ -475,7 +493,7 @@ function connectWS() {
     }, delay);
   };
 
-  ws.onerror = () => {};
+  socket.onerror = () => {};
 }
 
 /* ── Transcript ─────────────────────────────────────────────────────── */
@@ -572,6 +590,7 @@ function stopRecording({ preserveStatus = false } = {}) {
 function endSession() {
   sessionEndedIntentionally = true;
   clearTimeout(reconnectTimer);
+  plannedReconnect = false;
   resumptionToken = '';
   sessionStorage.removeItem('liveResumptionToken');
   reconnectAttempt = 0;

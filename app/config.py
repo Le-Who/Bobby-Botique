@@ -29,10 +29,11 @@ IMAGEN_MODEL_ULTRA: str = "imagen-4.0-ultra-generate-001"
 IMAGEN_MODELS_ORDERED: list[str] = [IMAGEN_MODEL_FAST, IMAGEN_MODEL_BASE, IMAGEN_MODEL_ULTRA]
 
 # --- Gemini Live API (real-time bidirectional audio) ---
-# gemini-3.1-flash-live-preview is the current recommended model (April 2026).
-# The old gemini-live-2.5-flash-native-audio model was shut down and causes
-# Vertex AI 1007 "Invalid resource field value" errors.
-GEMINI_LIVE_MODEL: str = "gemini-3.1-flash-live-preview"
+# Vertex AI Live Audio uses its own model family; keep this pinned to the
+# current Vertex-native production model instead of Gemini Developer API live
+# previews.
+GEMINI_LIVE_MODEL: str = "gemini-live-2.5-flash-native-audio"
+GEMINI_LIVE_VOICE_NAME: str = os.getenv("GEMINI_LIVE_VOICE_NAME", "Aoede").strip() or "Aoede"
 
 # --- Pollinations.ai image models ---
 # Overridable via env: IMAGE_MODELS="flux,zimage,gptimage,..."

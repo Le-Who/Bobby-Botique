@@ -457,7 +457,7 @@ async def test_render_daily_result_body_omits_attempt_suffix_in_leaderboard() ->
                     {
                         "user_id": 77,
                         "display_name": "amogus balls",
-                        "points": 660,
+                        "points": 1320,
                         "status": "won",
                         "attempt_count": 0,
                     }
@@ -483,8 +483,82 @@ async def test_render_daily_result_body_omits_attempt_suffix_in_leaderboard() ->
     ):
         text, _ = await crocodile_daily_telegram.render_daily_result_body(77, puzzle_date, focus_difficulty="easy")
 
-    assert "amogus balls — <b>660</b>" in text
+    assert "amogus balls — <b>1320</b>" in text
     assert "0/6" not in text
+
+
+@pytest.mark.asyncio
+async def test_build_daily_completion_summary_uses_aggregate_daily_leaderboard() -> None:
+    from app.games import crocodile_daily
+
+    puzzle_date = date(2026, 4, 21)
+    easy_puzzle = repo.DailyPuzzle(
+        puzzle_date=puzzle_date,
+        target_word="телескоп",
+        topic="Разное",
+        lang="ru",
+        difficulty="easy",
+    )
+    hard_puzzle = repo.DailyPuzzle(
+        puzzle_date=puzzle_date,
+        target_word="обсерватория",
+        topic="Разное",
+        lang="ru",
+        difficulty="hard",
+    )
+    easy_result = repo.DailyResult(
+        user_id=77,
+        puzzle_date=puzzle_date,
+        difficulty="easy",
+        status="won",
+        attempts=[{"word": "a"}],
+        best_score=1.0,
+        used_hints_count=0,
+        won_at=None,
+        finished_at=None,
+        points=660,
+        share_grid="🟩",
+        streak_after=1,
+    )
+    hard_result = repo.DailyResult(
+        user_id=77,
+        puzzle_date=puzzle_date,
+        difficulty="hard",
+        status="won",
+        attempts=[{"word": "b"}],
+        best_score=1.0,
+        used_hints_count=0,
+        won_at=None,
+        finished_at=None,
+        points=660,
+        share_grid="🟩",
+        streak_after=1,
+    )
+    aggregate_board = [{"user_id": 77, "display_name": "amogus balls", "points": 1320}]
+
+    with (
+        patch("app.games.crocodile_daily.active_daily_difficulties", new_callable=AsyncMock, return_value=("easy", "hard")),
+        patch(
+            "app.games.crocodile_daily.repo.get_puzzles_for_date",
+            new_callable=AsyncMock,
+            return_value={"easy": easy_puzzle, "hard": hard_puzzle},
+        ),
+        patch(
+            "app.games.crocodile_daily.repo.get_results_for_user",
+            new_callable=AsyncMock,
+            return_value={"easy": easy_result, "hard": hard_result},
+        ),
+        patch("app.games.crocodile_daily.repo.get_leaderboard", new_callable=AsyncMock, return_value=aggregate_board) as board_mock,
+        patch("app.games.crocodile_daily.repo.get_rank", new_callable=AsyncMock, return_value=1) as rank_mock,
+    ):
+        summary = await crocodile_daily.build_daily_completion_summary(77, puzzle_date, focus_difficulty="easy")
+
+    board_mock.assert_awaited_once_with(puzzle_date, limit=5)
+    rank_mock.assert_awaited_once_with(77, puzzle_date)
+    assert summary["modes"]["easy"]["leaderboard"] == aggregate_board
+    assert summary["modes"]["hard"]["leaderboard"] == aggregate_board
+    assert summary["modes"]["easy"]["rank"] == 1
+    assert summary["modes"]["hard"]["rank"] == 1
 
 
 

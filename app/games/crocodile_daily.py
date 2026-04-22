@@ -384,14 +384,16 @@ async def build_daily_completion_summary(
     difficulties = await active_daily_difficulties()
     puzzles = await repo.get_puzzles_for_date(puzzle_date)
     results = await repo.get_results_for_user(user_id, puzzle_date)
+    aggregate_leaderboard = await repo.get_leaderboard(puzzle_date, limit=5)
+    aggregate_rank = await repo.get_rank(user_id, puzzle_date) if any(
+        item.status != "active" for item in results.values()
+    ) else None
 
     modes: dict[str, dict[str, Any]] = {}
     next_difficulty: str | None = None
     for difficulty in difficulties:
         puzzle = puzzles.get(difficulty) or await repo.create_puzzle_if_missing(puzzle_date, difficulty=difficulty)
         result = results.get(difficulty) or await repo.get_or_create_result(user_id, puzzle_date, difficulty=difficulty)
-        leaderboard = await repo.get_leaderboard(puzzle_date, difficulty=difficulty, limit=5)
-        rank = await repo.get_rank(user_id, puzzle_date, difficulty=difficulty) if result.status != "active" else None
         modes[difficulty] = {
             "difficulty": difficulty,
             "label": repo.daily_difficulty_label(difficulty),
@@ -401,8 +403,8 @@ async def build_daily_completion_summary(
             "max_attempts": repo.DAILY_MAX_ATTEMPTS,
             "points": result.points,
             "streak": result.streak_after,
-            "rank": rank,
-            "leaderboard": leaderboard,
+            "rank": aggregate_rank if result.status != "active" else None,
+            "leaderboard": aggregate_leaderboard,
             "share_grid": result.share_grid,
             "word": puzzle.target_word if result.status != "active" else "",
         }
