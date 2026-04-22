@@ -239,11 +239,13 @@ def register(application: Application) -> None:
         daily_snooze_callback,
         daily_subscribe_callback,
         daily_time_callback,
+        daily_unsubscribe_callback,
     )
 
     _add_fast_callback(application, daily_subscribe_callback, "^dailycroc:subscribe$")
     _add_fast_callback(application, daily_time_callback, "^dailycroc:time:")
     _add_fast_callback(application, daily_snooze_callback, "^dailycroc:snooze$")
+    _add_fast_callback(application, daily_unsubscribe_callback, "^dailycroc:unsubscribe$")
 
     # Cancel generation button (shown during high API load)
     _add_fast_callback(application, _cancel_generation_callback, "^cancel_generation$")

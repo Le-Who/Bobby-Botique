@@ -238,10 +238,17 @@ async def test_daily_completion_bundle_sends_art_before_result() -> None:
     with (
         patch("app.games.crocodile_daily_telegram._send_daily_completion_art", new_callable=AsyncMock, side_effect=fake_art),
         patch("app.games.crocodile_daily_telegram.send_daily_result_message", new_callable=AsyncMock, side_effect=fake_result),
+        patch("app.games.crocodile_daily_telegram.render_daily_result_body", new_callable=AsyncMock, return_value=("text", None)),
+        patch("app.games.crocodile_daily_telegram.repo.get_preference", new_callable=AsyncMock, return_value={"is_subscribed": False, "last_sent_puzzle_date": None}),
+        patch("app.games.crocodile_daily_telegram.repo.get_active_prompt_message", new_callable=AsyncMock, return_value=None),
+        patch("app.games.crocodile_daily_telegram.repo.mark_daily_sent", new_callable=AsyncMock),
+        patch("app.games.crocodile_daily_telegram.repo.get_puzzle", new_callable=AsyncMock, return_value=None),
     ):
         await crocodile_daily_telegram.send_daily_completion_bundle(bot, 77, date(2026, 4, 21))
 
     assert calls == ["art", "result"]
+
+
 
 
 @pytest.mark.asyncio

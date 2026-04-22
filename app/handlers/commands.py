@@ -621,6 +621,8 @@ def register(application: Application) -> None:
         set_inline_thinking_command,
         set_provider_command,
         update_tavily_keys_command,
+        dailycroc_status_command,
+        set_dailycroc_placeholder_command,
     )
 
     application.add_handler(CommandHandler("listmodels", list_models_command))
@@ -640,6 +642,8 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("registergroup", register_group_command))
     application.add_handler(CommandHandler("groupstats", group_stats_command))
     application.add_handler(CommandHandler("set_dailycroc_delivery", set_dailycroc_delivery_command))
+    application.add_handler(CommandHandler("dailycroc_status", dailycroc_status_command))
+    application.add_handler(CommandHandler("set_dailycroc_placeholder", set_dailycroc_placeholder_command))
     application.add_handler(CommandHandler("rolemetrics", role_conv_metrics_command))
     application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CommandHandler("reloadconfig", reload_config_command))

@@ -618,28 +618,31 @@ async def register_result_message(
     chat_id: int,
     message_id: int,
     rendered_hash_value: str,
+    message_type: str = "text",
 ) -> None:
     await db.db_query(
         """
         INSERT INTO public.crocodile_daily_result_messages (
-            user_id, puzzle_date, chat_id, message_id, rendered_hash
+            user_id, puzzle_date, chat_id, message_id, rendered_hash, message_type
         )
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (chat_id, message_id) DO UPDATE SET
             user_id = EXCLUDED.user_id,
             puzzle_date = EXCLUDED.puzzle_date,
             rendered_hash = EXCLUDED.rendered_hash,
+            message_type = EXCLUDED.message_type,
             is_active = TRUE,
             updated_at = NOW()
         """,
-        (user_id, puzzle_date, chat_id, message_id, rendered_hash_value),
+        (user_id, puzzle_date, chat_id, message_id, rendered_hash_value, message_type),
     )
 
 
 async def get_active_result_messages(puzzle_date: date, *, limit: int = 200) -> list[dict[str, Any]]:
     return await db.db_query(
         """
-        SELECT id, user_id, puzzle_date, chat_id, message_id, rendered_hash, last_edit_at
+        SELECT id, user_id, puzzle_date, chat_id, message_id, rendered_hash, last_edit_at,
+               COALESCE(message_type, 'text') AS message_type
         FROM public.crocodile_daily_result_messages
         WHERE puzzle_date = $1 AND is_active = TRUE
         ORDER BY updated_at DESC
@@ -672,3 +675,104 @@ async def deactivate_result_message(message_id_pk: int) -> None:
         """,
         (message_id_pk,),
     )
+
+
+# ── Prompt message tracking (placeholder → art swap) ─────────────────────────
+
+
+async def register_prompt_message(
+    *,
+    user_id: int,
+    puzzle_date: date,
+    chat_id: int,
+    message_id: int,
+) -> None:
+    """Store the scheduled delivery photo message so we can swap it later."""
+    await db.db_query(
+        """
+        INSERT INTO public.crocodile_daily_prompt_messages (user_id, puzzle_date, chat_id, message_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (user_id, puzzle_date) DO UPDATE SET
+            chat_id    = EXCLUDED.chat_id,
+            message_id = EXCLUDED.message_id,
+            is_active  = TRUE
+        """,
+        (user_id, puzzle_date, chat_id, message_id),
+    )
+
+
+async def get_active_prompt_message(user_id: int, puzzle_date: date) -> dict[str, Any] | None:
+    rows = await db.db_query(
+        """
+        SELECT id, user_id, puzzle_date, chat_id, message_id
+        FROM public.crocodile_daily_prompt_messages
+        WHERE user_id = $1 AND puzzle_date = $2 AND is_active = TRUE
+        """,
+        (user_id, puzzle_date),
+    )
+    return rows[0] if rows else None
+
+
+async def deactivate_prompt_message(user_id: int, puzzle_date: date) -> None:
+    await db.db_query(
+        """
+        UPDATE public.crocodile_daily_prompt_messages
+        SET is_active = FALSE
+        WHERE user_id = $1 AND puzzle_date = $2
+        """,
+        (user_id, puzzle_date),
+    )
+
+
+# ── Subscription management ───────────────────────────────────────────────────
+
+
+async def unsubscribe(user_id: int) -> None:
+    """Opt a user out of scheduled daily delivery."""
+    await db.db_query(
+        """
+        UPDATE public.crocodile_daily_preferences
+        SET is_subscribed = FALSE,
+            updated_at    = NOW()
+        WHERE user_id = $1
+        """,
+        (user_id,),
+    )
+
+
+# ── Admin status queries ──────────────────────────────────────────────────────
+
+
+async def get_delivery_status(puzzle_date: date) -> dict[str, Any]:
+    """Return a snapshot of today's delivery pipeline for the admin command."""
+    rows = await db.db_query(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE is_subscribed = TRUE)                          AS total_subscribed,
+            COUNT(*) FILTER (WHERE is_subscribed = TRUE
+                               AND last_sent_puzzle_date = $1)                    AS sent_today,
+            COUNT(*) FILTER (WHERE is_subscribed = TRUE
+                               AND (last_sent_puzzle_date IS NULL
+                                    OR last_sent_puzzle_date < $1))               AS pending_today
+        FROM public.crocodile_daily_preferences
+        """,
+        (puzzle_date,),
+    )
+    base = dict(rows[0]) if rows else {"total_subscribed": 0, "sent_today": 0, "pending_today": 0}
+
+    result_rows = await db.db_query(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE status IN ('won', 'lost'))  AS finished,
+            COUNT(*) FILTER (WHERE status = 'won')             AS won,
+            COUNT(*) FILTER (WHERE status = 'active')          AS active
+        FROM public.crocodile_daily_results
+        WHERE puzzle_date = $1
+        """,
+        (puzzle_date,),
+    )
+    if result_rows:
+        base.update(result_rows[0])
+
+    return base
+

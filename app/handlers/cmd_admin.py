@@ -561,7 +561,9 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "• `/clearolddocs` — очистить старые документы 3\\+ дня\n"
             "• `/listmodels` — список доступных моделей\n\n"
             "*🐊 Daily Crocodile:*\n"
-            "• `/set_dailycroc_delivery on|off` — включить/выключить исходящую daily-рассылку\n\n"
+            "• `/set_dailycroc_delivery on|off` — включить/выключить исходящую daily-рассылку\n"
+            "• `/dailycroc_status` — снимок подписок и игры на сегодня\n"
+            "• `/set_dailycroc_placeholder` — реплайни на фото, чтобы задать баннер рассылки\n\n"
             "*🌐 API ключи:*\n"
             "• `/checkgeminikeys` — проверить статус ключей Gemini\n"
             "• `/updatetavilykeys` — обновить ключи Tavily API\n"
@@ -791,3 +793,68 @@ async def set_dailycroc_delivery_command(update: Update, context: ContextTypes.D
         "Pre-generation пазлов, подсказок и изображений продолжает работать.",
         parse_mode="HTML",
     )
+
+
+@admin_only
+async def dailycroc_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show a snapshot of today's Daily Crocodile delivery pipeline."""
+    today = daily_croc_repo.today_puzzle_date()
+    stats = await daily_croc_repo.get_delivery_status(today)
+    delivery_on = await get_global_setting(daily_croc_repo.DAILY_DELIVERY_SETTING_KEY, "on")
+    placeholder = await get_global_setting("daily_croc_placeholder_file_id", "")
+
+    lines = [
+        f"🐊 <b>Daily Crocodile — {today.isoformat()}</b>",
+        "",
+        f"📨 <b>Рассылка:</b> {'включена ✅' if delivery_on == 'on' else 'выключена ❌'}",
+        f"🖼 <b>Placeholder:</b> {'установлен ✅' if placeholder else 'не задан ⚠️'}",
+        "",
+        "<b>Подписки:</b>",
+        f"  Всего подписано:      <code>{stats.get('total_subscribed', 0)}</code>",
+        f"  Отправлено сегодня:   <code>{stats.get('sent_today', 0)}</code>",
+        f"  Осталось отправить:   <code>{stats.get('pending_today', 0)}</code>",
+        "",
+        "<b>Игра сегодня:</b>",
+        f"  Завершили:  <code>{stats.get('finished', 0)}</code>",
+        f"  Выиграли:   <code>{stats.get('won', 0)}</code>",
+        f"  В процессе: <code>{stats.get('active', 0)}</code>",
+    ]
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+@admin_only
+async def set_dailycroc_placeholder_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Save a placeholder image file_id for Daily Crocodile delivery.
+
+    Usage: reply to a photo with /set_dailycroc_placeholder
+    """
+    msg = update.message
+    # Accept both a direct photo and a photo replied-to
+    photo_msg = msg.reply_to_message if (msg.reply_to_message and msg.reply_to_message.photo) else msg
+    if not photo_msg or not photo_msg.photo:
+        current = await get_global_setting("daily_croc_placeholder_file_id", "")
+        status = f"<code>{current[:40]}…</code>" if current else "<i>не задан</i>"
+        await msg.reply_text(
+            f"🖼 Текущий placeholder: {status}\n\n"
+            "Реплайни на фото командой <code>/set_dailycroc_placeholder</code>, "
+            "чтобы сохранить его как баннер ежедневной рассылки.",
+            parse_mode="HTML",
+        )
+        return
+
+    file_id = photo_msg.photo[-1].file_id  # largest size
+    await set_global_setting("daily_croc_placeholder_file_id", file_id)
+
+    # Invalidate the in-process cache in the handler module.
+    from app.handlers.daily_crocodile import _PLACEHOLDER_KEY  # noqa: PLC0415
+
+    import app.handlers.daily_crocodile as _dc_mod  # noqa: PLC0415
+
+    _dc_mod._placeholder_cache = ""
+    _dc_mod._placeholder_cache_ts = 0.0
+
+    await msg.reply_text(
+        f"✅ Placeholder сохранён.\n<code>file_id: {file_id[:60]}…</code>",
+        parse_mode="HTML",
+    )
+

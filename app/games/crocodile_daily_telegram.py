@@ -6,7 +6,7 @@ import logging
 from datetime import date
 from typing import Any
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError
 
@@ -126,8 +126,12 @@ async def render_daily_result_body(user_id: int, puzzle_date: date) -> tuple[str
 
     lines.extend(["", "<b>Поделиться:</b>", f"<code>{html.escape(_share_line(result))}</code>"])
 
-    keyboard = None
-    if not is_subscribed:
+    keyboard: InlineKeyboardMarkup | None
+    if is_subscribed:
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Передумали? Отписаться", callback_data="dailycroc:unsubscribe")]]
+        )
+    else:
         keyboard = InlineKeyboardMarkup(
             [[InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe")]]
         )
@@ -153,6 +157,52 @@ async def send_daily_result_message(bot, user_id: int, puzzle_date: date) -> Non
 
 
 async def send_daily_completion_bundle(bot, user_id: int, puzzle_date: date) -> None:
+    """Send the game-over bundle: swap placeholder photo → real art, or fall back."""
+    pref = await repo.get_preference(user_id)
+    is_subscribed = bool(pref and pref.get("is_subscribed"))
+
+    # Mark as sent so the scheduler won't send a duplicate today.
+    try:
+        today = repo.today_puzzle_date()
+        if puzzle_date == today:
+            last_sent = pref.get("last_sent_puzzle_date") if pref else None
+            if not last_sent or last_sent < today:
+                await repo.mark_daily_sent(user_id, today)
+    except Exception as exc:
+        logger.debug("daily: mark_daily_sent failed user=%s: %s", user_id, exc)
+
+    text, keyboard = await render_daily_result_body(user_id, puzzle_date)
+
+    # Try to edit the prompt photo message (placeholder → real art + result caption).
+    prompt_msg = await repo.get_active_prompt_message(user_id, puzzle_date)
+    puzzle = await repo.get_puzzle(puzzle_date)
+    if prompt_msg and puzzle and puzzle.image_file_id:
+        caption = text[:1024]  # Telegram photo caption hard limit
+        try:
+            await bot.edit_message_media(
+                chat_id=prompt_msg["chat_id"],
+                message_id=prompt_msg["message_id"],
+                media=InputMediaPhoto(
+                    media=puzzle.image_file_id,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                ),
+                reply_markup=keyboard,
+            )
+            await repo.deactivate_prompt_message(user_id, puzzle_date)
+            await repo.register_result_message(
+                user_id=user_id,
+                puzzle_date=puzzle_date,
+                chat_id=prompt_msg["chat_id"],
+                message_id=prompt_msg["message_id"],
+                rendered_hash_value=repo.render_hash(caption),
+                message_type="photo",
+            )
+            return
+        except Exception as exc:
+            logger.warning("daily: swap prompt→art failed user=%s: %s — sending separately", user_id, exc)
+
+    # Fallback: send art as a new photo, then a separate text result message.
     await _send_daily_completion_art(bot, user_id, puzzle_date)
     await send_daily_result_message(bot, user_id, puzzle_date)
 
@@ -178,17 +228,28 @@ async def _flush_daily_result_refresh(puzzle_date: date) -> None:
         for item in messages:
             try:
                 text, keyboard = await render_daily_result_body(int(item["user_id"]), puzzle_date)
-                text_hash = repo.render_hash(text)
+                msg_type = item.get("message_type", "text")
+                content = text[:1024] if msg_type == "photo" else text
+                text_hash = repo.render_hash(content)
                 if text_hash == item.get("rendered_hash"):
                     continue
-                await bot.edit_message_text(
-                    chat_id=item["chat_id"],
-                    message_id=item["message_id"],
-                    text=text,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=keyboard,
-                    disable_web_page_preview=True,
-                )
+                if msg_type == "photo":
+                    await bot.edit_message_caption(
+                        chat_id=item["chat_id"],
+                        message_id=item["message_id"],
+                        caption=content,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=keyboard,
+                    )
+                else:
+                    await bot.edit_message_text(
+                        chat_id=item["chat_id"],
+                        message_id=item["message_id"],
+                        text=content,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=keyboard,
+                        disable_web_page_preview=True,
+                    )
                 await repo.update_result_message_hash(int(item["id"]), text_hash)
                 await asyncio.sleep(0.05)
             except RetryAfter as exc:

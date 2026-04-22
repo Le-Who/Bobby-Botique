@@ -15,6 +15,26 @@ from app.utils.decorators import authorized_only, safe_handler
 logger = logging.getLogger(__name__)
 
 _TIME_CHOICES = (9, 13, 19, 21)
+_PLACEHOLDER_KEY = "daily_croc_placeholder_file_id"
+
+# Simple in-process cache so we don't hit the DB on every single delivery.
+_placeholder_cache: str = ""
+_placeholder_cache_ts: float = 0.0
+_PLACEHOLDER_TTL = 60.0  # seconds
+
+
+async def _get_placeholder_file_id() -> str:
+    import time
+
+    global _placeholder_cache, _placeholder_cache_ts  # noqa: PLW0603
+    now = time.monotonic()
+    if now - _placeholder_cache_ts < _PLACEHOLDER_TTL:
+        return _placeholder_cache
+    val = await get_global_setting(_PLACEHOLDER_KEY, "")
+    _placeholder_cache = str(val or "")
+    _placeholder_cache_ts = now
+    return _placeholder_cache
+
 
 
 def _webapp_base() -> str:
@@ -109,16 +129,42 @@ async def send_discovery_intro(bot, user_id: int) -> bool:
 
 
 async def send_daily_prompt(bot, user_id: int, puzzle_date) -> bool:
-    text = (
+    caption = (
         f"🐊 <b>Крокодил дня</b> · <code>{puzzle_date.isoformat()}</code>\n\n"
         "Сегодняшнее слово уже ждёт. У тебя 6 попыток."
     )
-    await bot.send_message(
-        chat_id=user_id,
-        text=text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=daily_play_keyboard(include_subscribe=False),
-    )
+    keyboard = daily_play_keyboard(include_subscribe=False)
+    placeholder_file_id = (await _get_placeholder_file_id()).strip()
+    if placeholder_file_id:
+        try:
+            msg = await bot.send_photo(
+                chat_id=user_id,
+                photo=placeholder_file_id,
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+            await repo.register_prompt_message(
+                user_id=user_id,
+                puzzle_date=puzzle_date,
+                chat_id=msg.chat_id,
+                message_id=msg.message_id,
+            )
+        except Exception as exc:
+            logger.warning("daily prompt photo failed user=%s: %s — falling back to text", user_id, exc)
+            await bot.send_message(
+                chat_id=user_id,
+                text=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+    else:
+        await bot.send_message(
+            chat_id=user_id,
+            text=caption,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
     await repo.mark_daily_sent(user_id, puzzle_date)
     return True
 
@@ -131,7 +177,13 @@ async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user_id = update.effective_user.id
     await repo.record_player_activity(user_id, event="daily_played")
     pref = await repo.get_preference(user_id)
-    include_subscribe = not bool(pref and pref.get("is_subscribed"))
+    is_subscribed = bool(pref and pref.get("is_subscribed"))
+    # Mark delivery so the scheduler doesn't send a duplicate today.
+    if is_subscribed:
+        today = repo.today_puzzle_date()
+        last_sent = pref.get("last_sent_puzzle_date") if pref else None
+        if not last_sent or last_sent < today:
+            await repo.mark_daily_sent(user_id, today)
     text = (
         "🐊 <b>Крокодил дня</b>\n\n"
         "Одно слово для всех на сегодня. 6 попыток, очки, серия и живой лидерборд."
@@ -139,7 +191,7 @@ async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.HTML,
-        reply_markup=daily_play_keyboard(include_subscribe=include_subscribe),
+        reply_markup=daily_play_keyboard(include_subscribe=not is_subscribed),
     )
 
 
@@ -189,6 +241,20 @@ async def daily_snooze_callback(update: Update, context: ContextTypes.DEFAULT_TY
         "Если захочешь сыграть раньше, команда /dailycroc всегда доступна.",
         reply_markup=daily_play_keyboard(include_subscribe=False),
     )
+
+
+async def daily_unsubscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await repo.unsubscribe(update.effective_user.id)
+    await query.answer("Подписка отменена")
+    try:
+        await query.edit_message_reply_markup(
+            reply_markup=daily_play_keyboard(include_subscribe=True)
+        )
+    except Exception:
+        pass
 
 
 async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
