@@ -211,7 +211,8 @@ async def test_daily_scheduler_skips_sends_when_delivery_disabled() -> None:
         image_file_id="file-123",
         prepared_at=datetime.now(tz=UTC),
     )
-    context = SimpleNamespace(bot=object())
+    _bot = object()
+    context = SimpleNamespace(bot=_bot, application=SimpleNamespace(bot=_bot))
 
     with (
         patch("app.games.crocodile_daily.ensure_prepared_puzzles", new_callable=AsyncMock, return_value=[prepared_puzzle]) as prep_mock,
@@ -234,16 +235,18 @@ async def test_daily_scheduler_skips_sends_when_delivery_disabled() -> None:
 @pytest.mark.asyncio
 async def test_daily_scheduler_waits_until_puzzle_is_fully_prepared() -> None:
     puzzle_date = repo.today_puzzle_date()
+    # A puzzle is "not ready" when hints are absent (image is now optional).
     incomplete_puzzle = repo.DailyPuzzle(
         puzzle_date=puzzle_date,
         target_word="крокодил",
         topic="Разное",
         lang="ru",
-        hints=["h1", "h2", "h3"],
+        hints=[],           # no hints → not fully prepared
         image_prompt="prompt",
-        image_file_id="",
+        image_file_id="",   # no image either (irrelevant to readiness now)
     )
-    context = SimpleNamespace(bot=object())
+    _bot = object()
+    context = SimpleNamespace(bot=_bot, application=SimpleNamespace(bot=_bot))
 
     with (
         patch("app.games.crocodile_daily.ensure_prepared_puzzles", new_callable=AsyncMock, return_value=[incomplete_puzzle]),

@@ -146,8 +146,11 @@ async def render_daily_result_body(
         for idx, row in enumerate(leaderboard, start=1):
             row_attempts = _attempt_count(row)
             suffix = f"{row_attempts}/{repo.DAILY_MAX_ATTEMPTS}" if row.get("status") == "won" else "X/6"
+            # Prefer display_name stored from Telegram initData; fall back to masked ID.
+            stored_name = (row.get("display_name") or "").strip()
+            player = html.escape(stored_name) if stored_name else _user_label(int(row["user_id"]))
             lines.append(
-                f"{idx}. {_user_label(int(row['user_id']))} — <b>{int(row['points'])}</b> · {html.escape(suffix)}"
+                f"{idx}. {player} — <b>{int(row['points'])}</b> · {html.escape(suffix)}"
             )
     else:
         lines.append("Пока нет завершённых результатов.")

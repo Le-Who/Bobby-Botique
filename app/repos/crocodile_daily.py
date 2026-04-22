@@ -186,6 +186,31 @@ async def ensure_user(user_id: int) -> None:
     )
 
 
+async def update_user_display_name(user_id: int, display_name: str) -> None:
+    """Upsert a human-readable display name for the user.
+
+    Called lazily from the WebApp WebSocket handshake so the leaderboard
+    can show real names instead of numeric IDs.
+    The column is added by migration 044; the call is a no-op when the
+    name hasn't changed or when the column doesn't exist yet.
+    """
+    name = (display_name or "").strip()[:128]  # guard against absurdly long names
+    if not name:
+        return
+    try:
+        await db.db_query(
+            """
+            INSERT INTO public.users (user_id, is_authorized, display_name)
+            VALUES ($1, 0, $2)
+            ON CONFLICT (user_id) DO UPDATE
+                SET display_name = EXCLUDED.display_name
+            """,
+            (user_id, name),
+        )
+    except Exception as exc:  # column may not exist in older schema
+        logger.debug("update_user_display_name failed user=%s: %s", user_id, exc)
+
+
 async def record_player_activity(user_id: int, *, event: str) -> None:
     await ensure_user(user_id)
     started_inc = 1 if event == "classic_started" else 0
@@ -257,7 +282,10 @@ def normalize_daily_word(word: str | None) -> str:
 
 
 def is_puzzle_fully_prepared(puzzle: DailyPuzzle) -> bool:
-    return bool(puzzle.hints) and bool(puzzle.image_file_id)
+    # Image is generated best-effort and retried hourly via the scheduler.
+    # A puzzle is considered ready as soon as hints are available so that
+    # deliveries are never blocked by a transient image-generation failure.
+    return bool(puzzle.hints)
 
 
 async def get_used_daily_words(*, conn=None) -> set[str]:
@@ -716,22 +744,33 @@ async def mark_daily_sent(
 
 async def get_leaderboard(puzzle_date: date, *, difficulty: str = "easy", limit: int = 10) -> list[dict[str, Any]]:
     difficulty = normalize_daily_difficulty(difficulty)
-    return await db.db_query(
+    rows = await db.db_query(
         """
-        SELECT user_id, difficulty, points, status,
-               CASE WHEN jsonb_typeof(attempts) = 'array'
-                    THEN jsonb_array_length(attempts) ELSE 0 END AS attempt_count,
-               used_hints_count, won_at, streak_after
-        FROM public.crocodile_daily_results
-        WHERE puzzle_date = $1 AND difficulty = $2 AND status IN ('won', 'lost')
-        ORDER BY points DESC,
-                 CASE WHEN jsonb_typeof(attempts) = 'array'
-                      THEN jsonb_array_length(attempts) ELSE 0 END ASC,
-                 won_at ASC NULLS LAST
+        SELECT r.user_id, r.difficulty, r.points, r.status,
+               CASE WHEN jsonb_typeof(r.attempts) = 'array'
+                    THEN jsonb_array_length(r.attempts) ELSE 0 END AS attempt_count,
+               r.used_hints_count, r.won_at, r.streak_after,
+               u.display_name
+        FROM public.crocodile_daily_results r
+        LEFT JOIN public.users u ON u.user_id = r.user_id
+        WHERE r.puzzle_date = $1 AND r.difficulty = $2 AND r.status IN ('won', 'lost')
+        ORDER BY r.points DESC,
+                 CASE WHEN jsonb_typeof(r.attempts) = 'array'
+                      THEN jsonb_array_length(r.attempts) ELSE 0 END ASC,
+                 r.won_at ASC NULLS LAST
         LIMIT $3
         """,
         (puzzle_date, difficulty, limit),
     )
+    # Resolve display_name: prefer stored name, fall back to masked ID.
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        d = dict(row)
+        uid = int(d.get("user_id") or 0)
+        stored_name = (d.get("display_name") or "").strip()
+        d["display_name"] = stored_name if stored_name else f"игрок {str(uid)[-4:]}"
+        result.append(d)
+    return result
 
 
 async def get_rank(user_id: int, puzzle_date: date, *, difficulty: str = "easy") -> int | None:

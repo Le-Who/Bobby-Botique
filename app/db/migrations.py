@@ -191,6 +191,9 @@ async def _run_legacy_migrations(db_query):
         if "deep_dive_thread_id" not in user_col_names:
             await db_query("ALTER TABLE users ADD COLUMN deep_dive_thread_id TEXT;")
 
+        if "display_name" not in user_col_names:
+            await db_query("ALTER TABLE public.users ADD COLUMN IF NOT EXISTS display_name TEXT;")
+
         # Ensure chats table has ltm_enabled column
         chats_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='chats'")
         chats_col_names = {c["column_name"] for c in chats_columns}

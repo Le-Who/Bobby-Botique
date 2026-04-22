@@ -3,7 +3,33 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [Unreleased] - 2026-04-22 - Crocodile Reliability, Dual-Track Daily & Live Audio Vertex
+## [Unreleased] - 2026-04-22 - Daily Crocodile Pipeline: Resilience, Display Names & UI Fix
+
+### 🐊 Daily Crocodile — System Resilience
+- **Image generation no longer blocks delivery (`app/repos/crocodile_daily.py`):** `is_puzzle_fully_prepared` now only requires hints to be present. Image assets are generated best-effort and retried each hour; a transient Pollinations failure no longer prevents the daily puzzle from being delivered to subscribers.
+- **Admin alerts on scheduler failure (`app/handlers/daily_crocodile.py`):** `check_daily_crocodile_jobs` now wraps `ensure_prepared_puzzles` in a try/except and fires `alert_admin(CRITICAL)` on any unhandled exception. Missing puzzles also trigger a `WARNING` alert. Delivery and discovery loops keep their own per-user isolation so one bad user cannot abort the batch.
+- **SQL migration 044 (`scripts/migrations/044_add_users_display_name.sql`):** Adds `display_name TEXT` column to `public.users` with `ADD COLUMN IF NOT EXISTS` (safe on repeat runs).
+- **Legacy migration guard (`app/db/migrations.py`):** Adds `display_name` to the idempotent inline column check so environments without SQL files pick up the column automatically on next restart.
+
+### 🏆 Leaderboard Display Names
+- **Display name persistence (`app/repos/crocodile_daily.py`):** New `update_user_display_name()` function upserts the user's Telegram `first_name [+ last_name]` into `public.users.display_name` via an atomic INSERT … ON CONFLICT DO UPDATE.
+- **Lazy name capture (`app/web_miniapp.py`):** The daily WebSocket handshake now extracts `first_name`/`last_name` from the validated Telegram `initData` and calls `update_user_display_name()` before game state is sent. The call is fire-and-forget silent — it never fails the connection.
+- **Name-aware leaderboard query (`app/repos/crocodile_daily.py`):** `get_leaderboard()` now does a `LEFT JOIN public.users` to fetch `display_name`. Rows without a stored name fall back to `игрок <last 4 of user_id>`.
+- **Leaderboard in Telegram messages (`app/games/crocodile_daily_telegram.py`):** Completion result messages now show the player's Telegram display name instead of the masked-ID helper.
+
+### 🎨 Mini App UI Fixes
+- **Category pill in-flow (`app/templates/crocodile.html`):** Changed `#category-pill` from `position: absolute; top: 60px` (which overlapped the daily-modes chips row) to an in-flow flex child with `align-self: center`. The pill is hidden via `display: none` until JS sets its `textContent`, then shown via `:not(:empty)`. The chat area top-padding is reduced from 40px to 6px since the pill no longer floats over it.
+- **Leaderboard player name column (`app/templates/crocodile.html`):** Win/loss overlay leaderboard rows now render a 3-column layout: rank · player name · score+status. The name cell uses `flex: 1; overflow: hidden; text-overflow: ellipsis` and prefers `display_name` from the server payload.
+- **`.overlay-player-name` CSS:** New class provides truncation-safe name display inside the compact overlay list.
+
+### 🧪 Test Updates
+- **`tests/test_daily_crocodile.py`:** Updated `test_daily_scheduler_waits_until_puzzle_is_fully_prepared` to model "not ready" as a puzzle with empty hints (image is now optional). Both scheduler tests have `application` added to `context` `SimpleNamespace` so the new `alert_admin` call path does not raise `AttributeError`.
+
+### ✅ Verification
+- `python -m ruff check app/repos/crocodile_daily.py app/handlers/daily_crocodile.py app/games/crocodile_daily_telegram.py app/db/migrations.py app/web_miniapp.py` → **All checks passed**
+- `python -m pytest tests/ -q --tb=short -n auto` → **1837 passed, 96 skipped**
+
+
 
 ### 🐊 Vertex Live Audio + Daily Dual Track
 - **Vertex-only Live Audio runtime (`app/web_miniapp.py`, `app/config.py`):** Migrated the Live Audio Mini App off AI Studio key rotation and onto Vertex AI Express with `gemini-live-2.5-flash-native-audio`. The websocket session now builds a stable Vertex-native config (audio modality, input/output transcription, Google Search tool, context compression, transparent session resumption, speech VAD) and returns controlled `fatal` events for disabled/misconfigured capacity instead of silently falling back to AI Studio.

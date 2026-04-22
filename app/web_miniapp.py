@@ -828,6 +828,19 @@ async def daily_game_ws():
         except Exception as exc:
             logger.debug("daily_game_ws: timezone update failed user=%s: %s", user_id, exc)
 
+    # Persist display_name from Telegram initData so the leaderboard can show real names.
+    try:
+        from app.repos.crocodile_daily import update_user_display_name
+
+        tg_user = validated.get("user") or {}
+        first = str(tg_user.get("first_name") or "").strip()
+        last = str(tg_user.get("last_name") or "").strip()
+        display_name = f"{first} {last}".strip() if last else first
+        if display_name:
+            await update_user_display_name(user_id, display_name)
+    except Exception as exc:
+        logger.debug("daily_game_ws: display_name update failed user=%s: %s", user_id, exc)
+
     difficulty = normalize_daily_difficulty(websocket.args.get("difficulty", "easy"))
     try:
         last_seen_seq = max(0, int(websocket.args.get("last_seen_seq", "0") or 0))

@@ -269,10 +269,22 @@ async def daily_unsubscribe_callback(update: Update, context: ContextTypes.DEFAU
 
 
 async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.admin_alerts import AlertSeverity, alert_admin
     from app.games.crocodile_daily import active_daily_difficulties, ensure_prepared_puzzles
 
     now = datetime.now(tz=UTC)
-    prepared = await ensure_prepared_puzzles(context.bot, now=now)
+    try:
+        prepared = await ensure_prepared_puzzles(context.bot, now=now)
+    except Exception as exc:
+        logger.error("daily Crocodile: ensure_prepared_puzzles failed: %s", exc, exc_info=True)
+        await alert_admin(
+            context.application,
+            f"🐊 *Daily Croc* — `ensure_prepared_puzzles` завершился с ошибкой:\n`{type(exc).__name__}: {exc}`",
+            severity=AlertSeverity.CRITICAL,
+            exc=exc,
+        )
+        return
+
     today = repo.today_puzzle_date(now)
     required = await active_daily_difficulties()
     today_puzzles = {item.difficulty: item for item in prepared if item.puzzle_date == today}
@@ -281,10 +293,19 @@ async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None
     missing = [difficulty for difficulty in required if difficulty not in today_puzzles]
     if missing:
         logger.warning("daily Crocodile scheduler: puzzle missing for %s difficulties=%s", today, ",".join(missing))
+        await alert_admin(
+            context.application,
+            f"🐊 *Daily Croc* — пазл отсутствует для `{today}` difficulties=`{','.join(missing)}`",
+            severity=AlertSeverity.WARNING,
+        )
         return
     not_ready = [difficulty for difficulty in required if not repo.is_puzzle_fully_prepared(today_puzzles[difficulty])]
     if not_ready:
-        logger.warning("daily Crocodile scheduler: puzzle %s not fully prepared for difficulties=%s; skipping sends", today, ",".join(not_ready))
+        logger.warning(
+            "daily Crocodile scheduler: puzzle %s not fully prepared for difficulties=%s; skipping sends",
+            today,
+            ",".join(not_ready),
+        )
         return
     if not await is_daily_delivery_enabled():
         logger.info("daily Crocodile delivery disabled by admin switch; pre-generation kept running")
