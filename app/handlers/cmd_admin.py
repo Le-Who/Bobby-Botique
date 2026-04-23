@@ -44,6 +44,10 @@ _EXPECTED_DAILY_HINTS = 3
 _DAILYCROC_PLACEHOLDER_TEST_KEY = "daily_croc_placeholder_test_status"
 
 
+def _is_message_not_modified_error(exc: Exception) -> bool:
+    return "message is not modified" in str(exc).lower()
+
+
 def _dailycroc_status_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
@@ -983,7 +987,7 @@ async def refresh_dailycroc_status_callback(update: Update, context: ContextType
         await _refresh_dailycroc_status_message(query)
         await query.answer("🔄 Статус обновлён")
     except BadRequest as exc:
-        if "message is not modified" in str(exc):
+        if _is_message_not_modified_error(exc):
             await query.answer("✅ Данные актуальны", show_alert=False)
             return
         logging.error("Error refreshing dailycroc status: %s", exc)
@@ -1007,7 +1011,7 @@ async def run_dailycroc_prep_check_callback(update: Update, context: ContextType
         await ensure_prepared_puzzles(context.bot, now=datetime.now(tz=UTC))
         await _refresh_dailycroc_status_message(query)
     except BadRequest as exc:
-        if "message is not modified" in str(exc):
+        if _is_message_not_modified_error(exc):
             return
         logging.error("Error updating dailycroc status after prep check: %s", exc)
     except Exception as exc:

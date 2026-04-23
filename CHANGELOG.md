@@ -7,6 +7,10 @@ Format is optimized for agent-parseable context.
 
 ### 🐊 Daily Crocodile Operator Visibility & Admin Smoke Tests
 
+- **`/dailycroc_status` no-op refreshes no longer log false failures (`app/handlers/cmd_admin.py`, `tests/test_daily_crocodile.py`):** `Refresh` and `Prep check` now normalize Telegram's `Message is not modified` error text case-insensitively. When the rendered operator card is unchanged, the callback is treated as a successful no-op instead of surfacing `❌ Ошибка обновления` and emitting misleading error logs.
+
+- **Single-message Daily completion fallback (`app/games/crocodile_daily_telegram.py`, `tests/test_daily_crocodile.py`):** If the original prompt photo can no longer be edited into the completion card, the fallback path now sends one result message with the prepared art attached as Telegram photo media and the score/rank/leaderboard in the caption. This removes the older fallback split of `completion art` plus a second plain-text result message.
+
 - **Interactive `/dailycroc_status` operator card (`app/handlers/cmd_admin.py`, `app/handlers/callbacks.py`, `tests/test_daily_crocodile.py`):** The daily admin snapshot now exposes inline `Refresh`, `Prep check`, and `Send test to admin` buttons instead of forcing chat spam with repeated commands. The status body also breaks prep down per difficulty into `puzzle / hints / art / prepared_at`, so operators can distinguish "ready for delivery" from "image still pending" without reading logs.
 
 - **Placeholder smoke-test persistence (`app/handlers/cmd_admin.py`, `app/repos/settings_repo.py`, `tests/test_daily_crocodile.py`):** The admin test-send path now stores the last placeholder verification result in `global_settings` as a compact JSON snapshot (`status`, `mode`, `timestamp`, `error`). `/dailycroc_status` renders that back as `Placeholder test`, giving ops a durable signal that the configured banner still survives the real Telegram `send_photo` path.
@@ -22,6 +26,10 @@ Format is optimized for agent-parseable context.
 - **Pinned Live voice and reduced reconnect churn (`app/config.py`, `app/web_miniapp.py`, `app/templates/live_audio.html`):** Live sessions now keep an explicit voice name (`GEMINI_LIVE_VOICE_NAME`, default `Aoede`), retain compression + resumption handles, and use a safer reconnect state machine so `go_away` / planned reconnects do not spawn duplicate reconnect attempts.
 
 - **Fixed turn-stream handling so one answer no longer closes the whole voice call (`app/web_miniapp.py`, `tests/test_live_audio.py`):** The WebSocket proxy no longer treats the end of a single `session.receive()` turn as the end of the whole Live session. Consumer handling is now turn-based and is only armed after `audio_stream_end` or explicit text input. This removes the normal-response disconnect loop that kept forcing reconnect/resume cycles, which in turn was polluting context and causing repeated or stale turn behavior in the Mini App transcript.
+
+### 🧹 Python 3.14 Deprecation Cleanup
+
+- **Swapped deprecated coroutine-function checks to `inspect` (`app/config.py`, `app/handlers/ai_core.py`):** The remaining runtime helper paths that inspect callback awaitability no longer call deprecated `asyncio.iscoroutinefunction()`. They now use `inspect.iscoroutinefunction()`, matching Python 3.14 guidance and reducing forward-compatibility risk ahead of Python 3.16.
 
 ### 🔒 Critical Concurrency Fix
 

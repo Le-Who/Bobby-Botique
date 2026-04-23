@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from telegram.error import BadRequest
 
 from app.games import crocodile_daily_telegram
 from app.handlers import cmd_admin, daily_crocodile
@@ -280,6 +281,53 @@ async def test_dailycroc_prep_check_callback_runs_preparation_and_refreshes_stat
 
 
 @pytest.mark.asyncio
+async def test_refresh_dailycroc_status_callback_treats_capitalized_not_modified_as_fresh() -> None:
+    query = SimpleNamespace(answer=AsyncMock())
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=1),
+    )
+    context = SimpleNamespace(bot=object())
+    original = cmd_admin.refresh_dailycroc_status_callback.__wrapped__
+
+    with patch(
+        "app.handlers.cmd_admin._refresh_dailycroc_status_message",
+        new_callable=AsyncMock,
+        side_effect=BadRequest(
+            "Message is not modified: specified new message content and reply markup are exactly the same"
+        ),
+    ):
+        await original(update, context)
+
+    query.answer.assert_awaited_once_with("✅ Данные актуальны", show_alert=False)
+
+
+@pytest.mark.asyncio
+async def test_dailycroc_prep_check_callback_ignores_capitalized_not_modified() -> None:
+    query = SimpleNamespace(answer=AsyncMock())
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=1),
+    )
+    context = SimpleNamespace(bot=object())
+    original = cmd_admin.run_dailycroc_prep_check_callback.__wrapped__
+
+    with (
+        patch("app.games.crocodile_daily.ensure_prepared_puzzles", new_callable=AsyncMock),
+        patch(
+            "app.handlers.cmd_admin._refresh_dailycroc_status_message",
+            new_callable=AsyncMock,
+            side_effect=BadRequest(
+                "Message is not modified: specified new message content and reply markup are exactly the same"
+            ),
+        ),
+    ):
+        await original(update, context)
+
+    query.answer.assert_awaited_once_with("🧪 Проверяю daily prep…", show_alert=False)
+
+
+@pytest.mark.asyncio
 async def test_send_dailycroc_test_callback_uses_daily_prompt_without_marking_delivery() -> None:
     query = SimpleNamespace(answer=AsyncMock())
     update = SimpleNamespace(
@@ -465,31 +513,71 @@ async def test_daily_scheduler_waits_until_puzzle_is_fully_prepared() -> None:
 
 
 @pytest.mark.asyncio
-async def test_daily_completion_bundle_sends_art_before_result() -> None:
+async def test_daily_completion_bundle_passes_art_into_single_result_message_when_no_prompt() -> None:
     bot = SimpleNamespace()
-    calls: list[str] = []
-
-    async def fake_art(*args, **kwargs):
-        calls.append("art")
-        return True
-
-    async def fake_result(*args, **kwargs):
-        calls.append("result")
+    puzzle = repo.DailyPuzzle(
+        puzzle_date=date(2026, 4, 21),
+        target_word="телескоп",
+        topic="Разное",
+        lang="ru",
+        difficulty="easy",
+        image_file_id="easy-file-id",
+    )
 
     with (
-        patch("app.games.crocodile_daily_telegram._send_daily_completion_art", new_callable=AsyncMock, side_effect=fake_art),
-        patch("app.games.crocodile_daily_telegram.send_daily_result_message", new_callable=AsyncMock, side_effect=fake_result),
+        patch("app.games.crocodile_daily_telegram.send_daily_result_message", new_callable=AsyncMock) as result_mock,
         patch("app.games.crocodile_daily_telegram.render_daily_result_body", new_callable=AsyncMock, return_value=("text", None)),
         patch("app.games.crocodile_daily_telegram.repo.get_preference", new_callable=AsyncMock, return_value={"is_subscribed": False, "last_sent_puzzle_date": None}),
         patch("app.games.crocodile_daily_telegram.repo.get_active_result_message_for_user", new_callable=AsyncMock, return_value=None),
         patch("app.games.crocodile_daily_telegram.repo.get_active_prompt_message", new_callable=AsyncMock, return_value=None),
         patch("app.games.crocodile_daily_telegram.repo.deactivate_other_result_messages", new_callable=AsyncMock),
         patch("app.games.crocodile_daily_telegram.repo.mark_daily_sent", new_callable=AsyncMock),
-        patch("app.games.crocodile_daily_telegram.repo.get_puzzle", new_callable=AsyncMock, return_value=None),
+        patch("app.games.crocodile_daily_telegram.repo.get_puzzle", new_callable=AsyncMock, return_value=puzzle),
     ):
         await crocodile_daily_telegram.send_daily_completion_bundle(bot, 77, date(2026, 4, 21))
 
-    assert calls == ["art", "result"]
+    result_mock.assert_awaited_once_with(bot, 77, date(2026, 4, 21), focus_difficulty="easy")
+
+
+@pytest.mark.asyncio
+async def test_send_daily_result_message_uses_photo_caption_when_art_available() -> None:
+    bot = SimpleNamespace(
+        send_photo=AsyncMock(return_value=SimpleNamespace(chat_id=77, message_id=501)),
+        send_message=AsyncMock(),
+    )
+    puzzle = repo.DailyPuzzle(
+        puzzle_date=date(2026, 4, 21),
+        target_word="телескоп",
+        topic="Разное",
+        lang="ru",
+        difficulty="hard",
+        image_file_id="hard-file-id",
+    )
+
+    with (
+        patch("app.games.crocodile_daily_telegram.render_daily_result_body", new_callable=AsyncMock, return_value=("hard text", None)),
+        patch("app.games.crocodile_daily_telegram.repo.get_puzzle", new_callable=AsyncMock, return_value=puzzle),
+        patch("app.games.crocodile_daily_telegram.repo.register_result_message", new_callable=AsyncMock) as register_mock,
+    ):
+        await crocodile_daily_telegram.send_daily_result_message(
+            bot,
+            77,
+            date(2026, 4, 21),
+            focus_difficulty="hard",
+        )
+
+    bot.send_photo.assert_awaited_once()
+    bot.send_message.assert_not_awaited()
+    assert bot.send_photo.await_args.kwargs["photo"] == "hard-file-id"
+    assert bot.send_photo.await_args.kwargs["caption"] == "hard text"
+    register_mock.assert_awaited_once_with(
+        user_id=77,
+        puzzle_date=date(2026, 4, 21),
+        chat_id=77,
+        message_id=501,
+        rendered_hash_value=repo.render_hash("hard text"),
+        message_type="photo",
+    )
 
 
 @pytest.mark.asyncio

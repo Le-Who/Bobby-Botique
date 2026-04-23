@@ -236,19 +236,47 @@ async def render_daily_result_body(
 
 async def send_daily_result_message(bot, user_id: int, puzzle_date: date, *, focus_difficulty: str | None = None) -> None:
     text, keyboard = await render_daily_result_body(user_id, puzzle_date, focus_difficulty=focus_difficulty)
-    msg = await bot.send_message(
-        chat_id=user_id,
-        text=text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=keyboard,
-        disable_web_page_preview=True,
-    )
+    difficulty = repo.normalize_daily_difficulty(focus_difficulty or "easy")
+    puzzle = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty=difficulty)
+    message_type = "text"
+    rendered = text
+
+    if puzzle and puzzle.image_file_id:
+        rendered = _rendered_content_for_message_type(text, "photo")
+        try:
+            msg = await bot.send_photo(
+                chat_id=user_id,
+                photo=puzzle.image_file_id,
+                caption=rendered,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+            message_type = "photo"
+        except (BadRequest, TelegramError) as exc:
+            logger.warning("daily result photo send failed user=%s date=%s: %s", user_id, puzzle_date, exc)
+            rendered = text
+            msg = await bot.send_message(
+                chat_id=user_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+                disable_web_page_preview=True,
+            )
+    else:
+        msg = await bot.send_message(
+            chat_id=user_id,
+            text=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+            disable_web_page_preview=True,
+        )
     await repo.register_result_message(
         user_id=user_id,
         puzzle_date=puzzle_date,
         chat_id=msg.chat_id,
         message_id=msg.message_id,
-        rendered_hash_value=repo.render_hash(text),
+        rendered_hash_value=repo.render_hash(rendered),
+        message_type=message_type,
     )
 
 
@@ -377,8 +405,7 @@ async def send_daily_completion_bundle(
         except Exception as exc:
             logger.warning("daily: swap prompt→art failed user=%s: %s — sending separately", user_id, exc)
 
-    # Fallback: send art as a new photo, then a separate text result message.
-    await _send_daily_completion_art(bot, user_id, puzzle_date, difficulty=focus_difficulty)
+    # Fallback: send a single result message, preferably as photo+caption.
     await send_daily_result_message(bot, user_id, puzzle_date, focus_difficulty=focus_difficulty)
 
 

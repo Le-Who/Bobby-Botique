@@ -7,6 +7,7 @@ used by all domain-specific handler modules.
 
 import asyncio
 import contextlib
+import inspect
 import logging
 
 from telegram import Message, Update
@@ -51,7 +52,7 @@ async def handle_ai_response_error(response_text: str, placeholder_message: Mess
     # Execute дополнительные действия before обработкой ошибки (наonмер, очистка истории)
     if on_error_callback:
         try:
-            if asyncio.iscoroutinefunction(on_error_callback):
+            if inspect.iscoroutinefunction(on_error_callback):
                 await on_error_callback()
             else:
                 on_error_callback()

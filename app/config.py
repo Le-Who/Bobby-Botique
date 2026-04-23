@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import inspect
 import logging
 import os
 import time
@@ -597,7 +598,7 @@ class ConfigManager:
         """Notifies all watchers of configuration changes."""
         for watcher in self._watchers:
             try:
-                if asyncio.iscoroutinefunction(watcher):
+                if inspect.iscoroutinefunction(watcher):
                     await watcher(old_settings, new_settings)
                 else:
                     watcher(old_settings, new_settings)
