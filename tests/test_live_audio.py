@@ -157,8 +157,11 @@ class TestLiveAudioPage:
         assert "api('/live-settings')" in body
         assert "controlledReconnectState?.needsFreshFallback" in body
         assert "settings-updated" in body
+        assert "live-connection-modes" in body
         assert "Женские" in body
         assert "Мужские" in body
+        assert "/webapp/live-vertex/ws" in body
+        assert "Переключаю на стандартный Live" in body
 
 
 @pytest.mark.asyncio
@@ -171,6 +174,8 @@ class TestLiveAudioSettingsApi:
         payload = await resp.get_json()
         assert payload["live_settings"]["live_voice_name"] == "Aoede"
         assert payload["live_settings"]["live_thinking_level"] == "low"
+        assert payload["live_settings"]["live_connection_mode"] == "standard"
+        assert [item["id"] for item in payload["connection_modes"]] == ["standard", "vertex_internet"]
         assert any(item["id"] == "Aoede" for item in payload["voices"])
         assert any(item["gender"] == "female" for item in payload["voices"])
         assert any(item["gender"] == "male" for item in payload["voices"])
@@ -193,12 +198,17 @@ class TestLiveAudioSettingsApi:
             resp = await test_client.patch(
                 "/webapp/api/live-settings",
                 headers=auth_headers,
-                json={"live_voice_name": "Kore", "live_thinking_level": "medium"},
+                json={
+                    "live_connection_mode": "vertex_internet",
+                    "live_voice_name": "Kore",
+                    "live_thinking_level": "medium",
+                },
             )
 
         assert resp.status_code == 200
         payload = await resp.get_json()
         assert payload["ok"] is True
+        assert chat_state.live_connection_mode == "vertex_internet"
         assert chat_state.live_voice_name == "Kore"
         assert chat_state.live_thinking_level == "medium"
         update_chat.assert_awaited_once()
@@ -220,7 +230,11 @@ class TestLiveAudioSettingsApi:
             resp = await test_client.patch(
                 "/webapp/api/live-settings",
                 headers=auth_headers,
-                json={"live_voice_name": "Unknown", "live_thinking_level": "high"},
+                json={
+                    "live_connection_mode": "broken_mode",
+                    "live_voice_name": "Unknown",
+                    "live_thinking_level": "high",
+                },
             )
 
         assert resp.status_code == 200
@@ -228,6 +242,7 @@ class TestLiveAudioSettingsApi:
         assert payload["note"] == "no_changes"
         assert payload["live_settings"]["live_voice_name"] == "Aoede"
         assert payload["live_settings"]["live_thinking_level"] == "low"
+        assert payload["live_settings"]["live_connection_mode"] == "standard"
         update_chat.assert_not_awaited()
 
 
@@ -284,6 +299,55 @@ class TestLiveAudioProxy:
                 assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
                 assert config.thinking_config is not None
                 assert str(config.thinking_config.thinking_level).lower().endswith("medium")
+
+    async def test_vertex_connect_sends_connected_event(self, test_client, mock_bot_token, mock_api_keys):
+        init_data = make_valid_init_data(mock_bot_token, user_id=561)
+        url = f"/webapp/live-vertex/ws?initData={urllib.parse.quote(init_data)}"
+        chat_state = ChatState(
+            history=[],
+            model="gemini-3.1-flash-lite-preview",
+            token_count=0,
+            search_enabled=False,
+            system_prompt=None,
+            live_voice_name="Kore",
+            live_thinking_level="medium",
+            live_connection_mode="vertex_internet",
+        )
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.send_realtime_input = AsyncMock()
+
+        async def _empty_gen():
+            return
+            yield
+
+        mock_session.receive = _empty_gen
+
+        mock_client = MagicMock()
+        mock_client.aio.live.connect.return_value = mock_session
+
+        with (
+            patch("app.providers.gemini.get_vertex_client", return_value=mock_client),
+            patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
+            patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=chat_state),
+        ):
+            async with test_client.websocket(url) as ws:
+                raw = await ws.receive()
+                msg = json.loads(raw)
+                assert msg["type"] == "connected"
+                connect_kwargs = mock_client.aio.live.connect.call_args.kwargs
+                config = connect_kwargs["config"]
+                assert connect_kwargs["model"] == "gemini-live-2.5-flash-native-audio"
+                assert config.session_resumption is not None
+                assert config.session_resumption.handle is None
+                assert config.session_resumption.transparent is True
+                assert config.context_window_compression is not None
+                assert config.speech_config is not None
+                assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
+                assert config.tools is not None
+                assert config.tools[0].google_search is not None
 
     async def test_audio_forwarding(self, test_client, mock_bot_token, mock_api_keys):
         """LA-03: realtime_input message should trigger session.send_realtime_input."""
@@ -450,12 +514,27 @@ class TestLiveAudioProxy:
 
         assert failing_connect.calls == 1
 
-    async def test_misconfigured_vertex_returns_controlled_fatal(self, test_client, mock_bot_token):
+    async def test_misconfigured_standard_route_returns_controlled_fatal(self, test_client, mock_bot_token):
         init_data = make_valid_init_data(mock_bot_token, user_id=560)
         url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
 
         with (
             patch("app.providers.gemini.get_live_api_client", return_value=None),
+            patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
+            patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
+        ):
+            async with test_client.websocket(url) as ws:
+                fatal_raw = await ws.receive()
+                fatal_msg = json.loads(fatal_raw)
+                assert fatal_msg["type"] == "fatal"
+                assert fatal_msg["reason"] == "misconfigured"
+
+    async def test_misconfigured_vertex_route_returns_controlled_fatal(self, test_client, mock_bot_token):
+        init_data = make_valid_init_data(mock_bot_token, user_id=562)
+        url = f"/webapp/live-vertex/ws?initData={urllib.parse.quote(init_data)}"
+
+        with (
+            patch("app.providers.gemini.get_vertex_client", return_value=None),
             patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):

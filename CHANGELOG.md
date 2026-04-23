@@ -5,6 +5,14 @@ Format is optimized for agent-parseable context.
 
 ## [Unreleased] - 2026-04-23 - 48-Hour Production Audit: Lock Eviction P0, Voice Engine Hardening
 
+### 🎙️ Experimental Vertex Internet Live Route
+
+- **Added an opt-in Vertex AI Express live transport without changing the default route (`app/web_miniapp.py`, `app/templates/live_audio.html`, `app/database.py`, `app/repos/chats.py`, `tests/test_live_audio.py`, `scripts/migrations/046_add_live_connection_mode.sql`):** Live Audio now persists a per-user `live_connection_mode` preset. `standard` keeps the existing Gemini GenAI Live API path (`/webapp/live/ws`), while `vertex_internet` enables an experimental `/webapp/live-vertex/ws` transport on `gemini-live-2.5-flash-native-audio`.
+
+- **Mini App settings now expose a connection-mode selector with internet labeling (`app/web_miniapp.py`, `app/templates/live_audio.html`):** The Live settings sheet now includes `Стандартный Live` and `Vertex AI Express · с доступом в интернет` above the existing voice/thinking controls, and the summary pill reflects the active mode alongside voice and thinking preset.
+
+- **Vertex Live v1 is grounded-search only with controlled fallback (`app/web_miniapp.py`, `app/templates/live_audio.html`, `tests/test_live_audio.py`):** The experimental Vertex route enables Google Search grounding in the live config but does not add a generic function-calling bridge yet. If Vertex fails during connect/setup because of misconfiguration, capacity, or connection failure, the Mini App retries once against the standard route for that session only and keeps the stored preference unchanged.
+
 ### 🎙️ Live Audio Personalization
 
 - **Separate Live Audio voice/thinking settings with gender-grouped voices (`app/web_miniapp.py`, `app/templates/live_audio.html`, `app/database.py`, `app/repos/chats.py`, `tests/test_live_audio.py`):** Live Audio now keeps its own per-user `live_voice_name` and `live_thinking_level` instead of reusing reply-TTS settings. The Mini App exposes a dedicated Live settings sheet with 3 live-thinking presets (`Быстрый`, `Сбалансированный`, `Умный`), curated Gemini voice selection, and explicit **женские / мужские** grouping for the live voices. Changing these settings mid-call triggers a controlled reconnect so the active session reopens with the new Gemini Live config while the transcript/history UI stays in place.

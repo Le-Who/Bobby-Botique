@@ -404,7 +404,7 @@
 
 <div id="app">
   <div id="top-bar">
-    <div id="settings-summary">Live: Aoede · Сбалансированный</div>
+    <div id="settings-summary">Live: Standard · Aoede · Сбалансированный</div>
     <button id="settings-btn" type="button" title="Настройки live">⚙️</button>
   </div>
 
@@ -431,6 +431,9 @@
       Эти параметры относятся только к live-диалогу. Обычный TTS-голос не меняется.
       Изменения применяются через короткое переподключение.
     </div>
+
+    <div class="sheet-section-title">Подключение</div>
+    <div id="live-connection-modes" class="settings-list"></div>
 
     <div class="sheet-section-title">Голос</div>
     <div id="live-voice-options" class="settings-list"></div>
@@ -470,6 +473,7 @@ const settingsBtn = $('settings-btn');
 const settingsSummaryEl = $('settings-summary');
 const sheetOverlay = $('sheet-overlay');
 const liveSettingsSheet = $('live-settings-sheet');
+const liveConnectionModesEl = $('live-connection-modes');
 const liveVoiceOptionsEl = $('live-voice-options');
 const liveThinkingOptionsEl = $('live-thinking-options');
 const liveSettingsCancelBtn = $('live-settings-cancel');
@@ -490,11 +494,18 @@ let sessionEndedIntentionally = false;
 let reconnectTimer = null;
 let liveFatalState = null;
 let plannedReconnect = false;
-let liveSettings = { live_voice_name: 'Aoede', live_thinking_level: 'low' };
+let liveSettings = { live_connection_mode: 'standard', live_voice_name: 'Aoede', live_thinking_level: 'low' };
 let draftLiveSettings = { ...liveSettings };
+let liveConnectionModes = [];
 let liveVoiceOptions = [];
 let liveThinkingOptions = [];
 let controlledReconnectState = null;
+let activeConnectionMode = 'standard';
+let sessionConnectionModeOverride = null;
+let pendingModeFallback = null;
+let pendingModeFallbackMessage = '';
+let modeFallbackUsed = false;
+let liveSessionEstablished = false;
 
 /* ── Reconnect: exponential backoff ────────────────────────────────── */
 const BACKOFF_BASE_MS = 500;
@@ -504,6 +515,10 @@ const LIVE_THINKING_LABELS = {
   off: 'Быстрый',
   low: 'Сбалансированный',
   medium: 'Умный'
+};
+const LIVE_MODE_LABELS = {
+  standard: 'Standard',
+  vertex_internet: 'Internet'
 };
 
 function _backoffDelay() {
@@ -540,12 +555,26 @@ async function api(path, options = {}) {
 }
 
 function renderSettingsSummary() {
+  const connectionMode = LIVE_MODE_LABELS[liveSettings.live_connection_mode] || 'Standard';
   const voice = liveSettings.live_voice_name || 'Aoede';
   const thinking = LIVE_THINKING_LABELS[liveSettings.live_thinking_level] || 'Сбалансированный';
-  settingsSummaryEl.textContent = `Live: ${voice} · ${thinking}`;
+  settingsSummaryEl.textContent = `Live: ${connectionMode} · ${voice} · ${thinking}`;
 }
 
 function renderLiveSettingOptions() {
+  liveConnectionModesEl.innerHTML = liveConnectionModes.map((mode) => {
+    const active = draftLiveSettings.live_connection_mode === mode.id;
+    return `
+      <button type="button" class="sheet-option ${active ? 'active' : ''}" data-live-connection-mode="${esc(mode.id)}">
+        <div class="sheet-option-title">
+          <span>${esc(mode.label)}</span>
+          <span>${active ? '✓' : ''}</span>
+        </div>
+        <div class="sheet-option-hint">${esc(mode.summary || '')}</div>
+      </button>
+    `;
+  }).join('');
+
   const voiceGroups = [
     { id: 'female', label: 'Женские' },
     { id: 'male', label: 'Мужские' }
@@ -602,10 +631,12 @@ function closeLiveSettingsSheet() {
 async function loadLiveSettings() {
   const payload = await api('/live-settings');
   liveSettings = {
+    live_connection_mode: payload.live_settings?.live_connection_mode || 'standard',
     live_voice_name: payload.live_settings?.live_voice_name || 'Aoede',
     live_thinking_level: payload.live_settings?.live_thinking_level || 'low'
   };
   draftLiveSettings = { ...liveSettings };
+  liveConnectionModes = payload.connection_modes || [];
   liveVoiceOptions = payload.voices || [];
   liveThinkingOptions = payload.thinking_presets || [];
   renderSettingsSummary();
@@ -646,6 +677,7 @@ function requestSettingsReconnect() {
 
 async function saveLiveSettings() {
   const changed =
+    draftLiveSettings.live_connection_mode !== liveSettings.live_connection_mode ||
     draftLiveSettings.live_voice_name !== liveSettings.live_voice_name ||
     draftLiveSettings.live_thinking_level !== liveSettings.live_thinking_level;
   if (!changed) {
@@ -660,10 +692,18 @@ async function saveLiveSettings() {
       body: JSON.stringify(draftLiveSettings)
     });
     liveSettings = {
+      live_connection_mode: payload.live_settings?.live_connection_mode || draftLiveSettings.live_connection_mode,
       live_voice_name: payload.live_settings?.live_voice_name || draftLiveSettings.live_voice_name,
       live_thinking_level: payload.live_settings?.live_thinking_level || draftLiveSettings.live_thinking_level
     };
     draftLiveSettings = { ...liveSettings };
+    sessionConnectionModeOverride = null;
+    pendingModeFallback = null;
+    pendingModeFallbackMessage = '';
+    modeFallbackUsed = false;
+    liveSessionEstablished = false;
+    resumptionToken = '';
+    sessionStorage.removeItem('liveResumptionToken');
     renderSettingsSummary();
     renderLiveSettingOptions();
     closeLiveSettingsSheet();
@@ -794,17 +834,37 @@ function flushPlayback() {
 }
 
 /* ── WebSocket to Quart proxy ───────────────────────────────────────── */
-function connectWS() {
+function resolveSocketPath(mode) {
+  return mode === 'vertex_internet' ? '/webapp/live-vertex/ws' : '/webapp/live/ws';
+}
+
+function maybeQueueStandardFallback(reason, message) {
+  if (activeConnectionMode !== 'vertex_internet' || liveSessionEstablished || modeFallbackUsed) {
+    return false;
+  }
+  modeFallbackUsed = true;
+  sessionConnectionModeOverride = 'standard';
+  pendingModeFallback = 'standard';
+  pendingModeFallbackMessage = message || reason || 'Internet-режим недоступен, переключаю на стандартный Live.';
+  liveFatalState = null;
+  sessionEndedIntentionally = false;
+  return true;
+}
+
+function connectWS(options = {}) {
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
     return;
   }
 
   clearTimeout(reconnectTimer);
   plannedReconnect = false;
+  liveSessionEstablished = false;
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const enc = encodeURIComponent(INIT_DATA);
-  let url = `${proto}://${location.host}/webapp/live/ws?initData=${enc}`;
+  const connectionMode = options.mode || sessionConnectionModeOverride || liveSettings.live_connection_mode || 'standard';
+  activeConnectionMode = connectionMode;
+  let url = `${proto}://${location.host}${resolveSocketPath(connectionMode)}?initData=${enc}`;
   if (resumptionToken) {
     url += `&resumptionToken=${encodeURIComponent(resumptionToken)}`;
   }
@@ -833,6 +893,8 @@ function connectWS() {
 
     switch (msg.type) {
       case 'connected':
+        liveSessionEstablished = true;
+        pendingModeFallback = null;
         if (controlledReconnectState?.restoreRecording && !recording) {
           controlledReconnectState = null;
           setStatus('Настройки применены. Возвращаю микрофон…', '');
@@ -840,6 +902,8 @@ function connectWS() {
         } else if (controlledReconnectState) {
           controlledReconnectState = null;
           setStatus('Настройки применены.', 'active');
+        } else if (sessionConnectionModeOverride === 'standard' && activeConnectionMode === 'standard') {
+          setStatus('Подключено к стандартному Live после fallback.', 'active');
         }
         break;
 
@@ -885,6 +949,18 @@ function connectWS() {
         break;
 
       case 'fatal':
+        if (
+          (msg.reason === 'misconfigured' || msg.reason === 'server_capacity') &&
+          maybeQueueStandardFallback(msg.reason, 'Internet-режим недоступен. Переключаю на стандартный Live.')
+        ) {
+          if (recording) {
+            stopRecording({ preserveStatus: true });
+          }
+          if (ws === socket && socket.readyState === WebSocket.OPEN) {
+            socket.close(1000, 'vertex-fallback');
+          }
+          break;
+        }
         liveFatalState = msg.reason || 'fatal';
         clearTimeout(reconnectTimer);
         if (recording) {
@@ -900,6 +976,15 @@ function connectWS() {
         break;
 
       case 'error':
+        if (
+          msg.reason === 'connect_failed' &&
+          maybeQueueStandardFallback(msg.reason, 'Не удалось запустить internet-live. Переключаю на стандартный Live.')
+        ) {
+          if (ws === socket && socket.readyState === WebSocket.OPEN) {
+            socket.close(1000, 'vertex-connect-failed');
+          }
+          break;
+        }
         if (
           controlledReconnectState &&
           !controlledReconnectState.triedFreshFallback &&
@@ -938,6 +1023,21 @@ function connectWS() {
       setStatus('Обновляю сессию без старого контекста…', '');
       vizWrap.classList.add('connecting');
       connectWS();
+      return;
+    }
+
+    if (pendingModeFallback) {
+      const fallbackMode = pendingModeFallback;
+      pendingModeFallback = null;
+      const fallbackMessage = pendingModeFallbackMessage;
+      pendingModeFallbackMessage = '';
+      resumptionToken = '';
+      sessionStorage.removeItem('liveResumptionToken');
+      plannedReconnect = false;
+      showError(fallbackMessage || 'Internet-режим недоступен. Переключаю на стандартный Live.');
+      setStatus('Переключаю на стандартный Live…', '');
+      vizWrap.classList.add('connecting');
+      connectWS({ mode: fallbackMode });
       return;
     }
 
@@ -1066,6 +1166,12 @@ function endSession() {
   clearTimeout(reconnectTimer);
   plannedReconnect = false;
   controlledReconnectState = null;
+  sessionConnectionModeOverride = null;
+  pendingModeFallback = null;
+  pendingModeFallbackMessage = '';
+  modeFallbackUsed = false;
+  liveSessionEstablished = false;
+  activeConnectionMode = liveSettings.live_connection_mode || 'standard';
   resumptionToken = '';
   sessionStorage.removeItem('liveResumptionToken');
   reconnectAttempt = 0;
@@ -1103,6 +1209,12 @@ settingsBtn.addEventListener('click', openLiveSettingsSheet);
 sheetOverlay.addEventListener('click', closeLiveSettingsSheet);
 liveSettingsCancelBtn.addEventListener('click', closeLiveSettingsSheet);
 liveSettingsSaveBtn.addEventListener('click', saveLiveSettings);
+liveConnectionModesEl.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-live-connection-mode]');
+  if (!button) return;
+  draftLiveSettings.live_connection_mode = button.dataset.liveConnectionMode;
+  renderLiveSettingOptions();
+});
 liveVoiceOptionsEl.addEventListener('click', (event) => {
   const button = event.target.closest('[data-live-voice]');
   if (!button) return;

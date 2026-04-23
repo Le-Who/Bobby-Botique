@@ -36,6 +36,7 @@ class ChatState:
     tts_temperature: float | None = None  # TTS creativity, None = model default
     live_voice_name: str | None = None  # Gemini Live voice override, None = live default
     live_thinking_level: str | None = None  # Live reasoning preset: off, low, medium
+    live_connection_mode: str | None = None  # Live transport preset: standard, vertex_internet
     _original_length: int = 0
 
 

@@ -58,6 +58,21 @@ _LIVE_THINKING_PRESETS: list[dict[str, str]] = [
     {"id": "low", "label": "Сбалансированный", "hint": "Лучший режим по умолчанию для live-диалога."},
     {"id": "medium", "label": "Умный", "hint": "Больше размышления, но выше задержка."},
 ]
+_LIVE_DEFAULT_CONNECTION_MODE = "standard"
+_LIVE_VERTEX_CONNECTION_MODE = "vertex_internet"
+_VERTEX_LIVE_MODEL = "gemini-live-2.5-flash-native-audio"
+_LIVE_CONNECTION_MODES: list[dict[str, str]] = [
+    {
+        "id": _LIVE_DEFAULT_CONNECTION_MODE,
+        "label": "Стандартный Live",
+        "summary": "Текущий live-режим без интернет-grounding.",
+    },
+    {
+        "id": _LIVE_VERTEX_CONNECTION_MODE,
+        "label": "Vertex AI Express · с доступом в интернет",
+        "summary": "Экспериментальный путь с Google Search grounding через Vertex AI Express.",
+    },
+]
 
 # Backward-compatible test hooks for the classic game lock fallback registry.
 _game_locks = _croc_runtime._game_locks
@@ -166,10 +181,19 @@ def _resolve_live_thinking_level(chat_state) -> str:
     return _LIVE_DEFAULT_THINKING_LEVEL
 
 
+def _resolve_live_connection_mode(chat_state) -> str:
+    mode = getattr(chat_state, "live_connection_mode", None) if chat_state else None
+    valid_mode_ids = {mode_item["id"] for mode_item in _LIVE_CONNECTION_MODES}
+    if isinstance(mode, str) and mode in valid_mode_ids:
+        return mode
+    return _LIVE_DEFAULT_CONNECTION_MODE
+
+
 def _serialize_live_settings(chat_state) -> dict[str, str]:
     return {
         "live_voice_name": _resolve_live_voice_name(chat_state),
         "live_thinking_level": _resolve_live_thinking_level(chat_state),
+        "live_connection_mode": _resolve_live_connection_mode(chat_state),
     }
 
 
@@ -200,6 +224,35 @@ def _build_live_connect_config(
         ),
         thinking_config=thinking_config,
         system_instruction=types.Content(parts=[types.Part(text=system_instruction)]),
+    )
+
+
+def _build_vertex_live_connect_config(
+    *,
+    system_instruction: str,
+    resumption_handle: str | None,
+    voice_name: str,
+):
+    from google.genai import types
+
+    return types.LiveConnectConfig(
+        response_modalities=[types.Modality.AUDIO],
+        session_resumption=types.SessionResumptionConfig(
+            handle=resumption_handle or None,
+            transparent=True,
+        ),
+        context_window_compression=types.ContextWindowCompressionConfig(
+            sliding_window=types.SlidingWindow(),
+        ),
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=voice_name,
+                )
+            )
+        ),
+        system_instruction=types.Content(parts=[types.Part(text=system_instruction)]),
+        tools=[types.Tool(google_search=types.GoogleSearch())],
     )
 
 
@@ -587,6 +640,7 @@ async def api_get_live_settings(user_id: int):
         return jsonify(
             {
                 "live_settings": _serialize_live_settings(chat_state),
+                "connection_modes": _LIVE_CONNECTION_MODES,
                 "voices": _LIVE_VOICE_OPTIONS,
                 "thinking_presets": _LIVE_THINKING_PRESETS,
                 "reconnect_note": "Изменения применяются через короткое переподключение live-сессии.",
@@ -619,6 +673,13 @@ async def api_update_live_settings(user_id: int):
             thinking_level = body["live_thinking_level"]
             if thinking_level in _LIVE_THINKING_CONFIG_MAP:
                 chat_state.live_thinking_level = thinking_level
+                changed = True
+
+        if "live_connection_mode" in body:
+            connection_mode = body["live_connection_mode"]
+            valid_mode_ids = {mode["id"] for mode in _LIVE_CONNECTION_MODES}
+            if connection_mode in valid_mode_ids:
+                chat_state.live_connection_mode = connection_mode
                 changed = True
 
         if changed:
@@ -1529,25 +1590,9 @@ async def live_audio_page():
     return await render_template("live_audio.html")
 
 
-@miniapp_blueprint.websocket("/live/ws")
-async def live_audio_ws() -> None:
-    """WebSocket proxy: browser ↔ Gemini Live API bidirectional audio stream.
-
-    Auth: initData passed as query param ``initData`` (HMAC-SHA256).
-    Protocol:
-      Client → {"type": "realtime_input", "mime_type": "audio/pcm;rate=16000", "data": "<base64>"}
-               {"type": "audio_stream_end"}
-      Server → {"type": "audio", "data": "<base64 PCM 24kHz>"}
-               {"type": "input_transcript", "text": "..."}
-               {"type": "output_transcript", "text": "..."}
-               {"type": "interrupt"}
-               {"type": "session_resumed"}
-               {"type": "error", "message": "..."}
-    """
-
+async def _open_authenticated_live_socket(route_mode: str) -> None:
     from quart import websocket
 
-    # ── Auth ──────────────────────────────────────────────────────────────
     raw_init_data = websocket.args.get("initData", "")
     if not raw_init_data:
         await websocket.close(4003, "initData required")
@@ -1566,19 +1611,120 @@ async def live_audio_ws() -> None:
         await websocket.close(4003, "No user in initData")
         return
 
-    # Check for active session to prevent overlapping websocket abuse
     if user_id in ACTIVE_LIVE_SESSIONS:
         await websocket.close(4009, "User already has an active session")
         return
 
     ACTIVE_LIVE_SESSIONS.add(user_id)
     try:
-        await _handle_live_session(websocket, user_id, validated, resumption_token)
+        await _handle_live_session(websocket, user_id, validated, resumption_token, transport_mode=route_mode)
     finally:
         ACTIVE_LIVE_SESSIONS.discard(user_id)
 
 
-async def _handle_live_session(websocket, user_id: int, validated: dict, resumption_token: str):
+@miniapp_blueprint.websocket("/live/ws")
+async def live_audio_ws() -> None:
+    """WebSocket proxy: browser ↔ Gemini Live API bidirectional audio stream.
+
+    Auth: initData passed as query param ``initData`` (HMAC-SHA256).
+    Protocol:
+      Client → {"type": "realtime_input", "mime_type": "audio/pcm;rate=16000", "data": "<base64>"}
+               {"type": "audio_stream_end"}
+      Server → {"type": "audio", "data": "<base64 PCM 24kHz>"}
+               {"type": "input_transcript", "text": "..."}
+               {"type": "output_transcript", "text": "..."}
+               {"type": "interrupt"}
+               {"type": "session_resumed"}
+               {"type": "error", "message": "..."}
+    """
+    await _open_authenticated_live_socket(_LIVE_DEFAULT_CONNECTION_MODE)
+
+
+@miniapp_blueprint.websocket("/live-vertex/ws")
+async def live_vertex_audio_ws() -> None:
+    """Experimental WebSocket proxy: browser ↔ Vertex Live API with Search grounding."""
+    await _open_authenticated_live_socket(_LIVE_VERTEX_CONNECTION_MODE)
+
+
+def _build_live_system_instruction(chat_state, *, user_first_name: str, user_language: str) -> str:
+    sys_parts = []
+    if chat_state and chat_state.system_prompt:
+        sys_parts.append(chat_state.system_prompt)
+    else:
+        sys_parts.extend(
+            [
+                "Ты — дружелюбный AI-ассистент в Telegram боте.",
+                "Отвечай кратко и по делу. Если не уверен — скажи об этом.",
+            ]
+        )
+
+    if user_first_name:
+        sys_parts.append(f"Имя пользователя: {user_first_name}.")
+    if user_language:
+        sys_parts.append(
+            f"Предпочтительный язык пользователя: {user_language}. "
+            "Всегда отвечай на том же языке, на котором говорит пользователь."
+        )
+    return " ".join(sys_parts)
+
+
+async def _resolve_live_transport(
+    *,
+    transport_mode: str,
+    system_instruction: str,
+    resumption_handle: str | None,
+    voice_name: str,
+    thinking_level: str,
+):
+    from app.config import GEMINI_LIVE_MODEL
+    from app.providers.gemini import get_live_api_client, get_vertex_client
+
+    if transport_mode == _LIVE_VERTEX_CONNECTION_MODE:
+        client = get_vertex_client()
+        if client is None:
+            return None, _VERTEX_LIVE_MODEL, None, "misconfigured", "Vertex AI Express не настроен для Live Audio."
+        return (
+            client,
+            _VERTEX_LIVE_MODEL,
+            _build_vertex_live_connect_config(
+                system_instruction=system_instruction,
+                resumption_handle=resumption_handle,
+                voice_name=voice_name,
+            ),
+            None,
+            None,
+        )
+
+    client = get_live_api_client()
+    if client is None:
+        return None, GEMINI_LIVE_MODEL, None, "misconfigured", "Голосовой режим временно недоступен: API ключи Gemini не настроены."
+
+    cooldown_seconds = _get_live_model_cooldown_seconds()
+    if cooldown_seconds > 0:
+        return None, GEMINI_LIVE_MODEL, None, "server_capacity", str(cooldown_seconds)
+
+    return (
+        client,
+        GEMINI_LIVE_MODEL,
+        _build_live_connect_config(
+            system_instruction=system_instruction,
+            resumption_handle=resumption_handle,
+            voice_name=voice_name,
+            thinking_level=thinking_level,
+        ),
+        None,
+        None,
+    )
+
+
+async def _handle_live_session(
+    websocket,
+    user_id: int,
+    validated: dict,
+    resumption_token: str,
+    *,
+    transport_mode: str,
+):
 
     # Extract display metadata from the already-validated initData user object.
     # These fields are populated from Telegram's initData, no extra DB call needed.
@@ -1589,15 +1735,18 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
     # ── Connect to Gemini Live API ────────────────────────────────────────
     from google.genai import types
 
-    from app.config import GEMINI_LIVE_MODEL
     from app.games.crocodile_flags import is_live_audio_enabled
-    from app.providers.gemini import get_live_api_client
     from app.repos.chats import get_user_chat
 
     session_resumption_token: str | None = None
     chat_state = await get_user_chat(user_id)
     live_voice_name = _resolve_live_voice_name(chat_state)
     live_thinking_level = _resolve_live_thinking_level(chat_state)
+    system_instruction = _build_live_system_instruction(
+        chat_state,
+        user_first_name=user_first_name,
+        user_language=user_language,
+    )
 
     if not await is_live_audio_enabled():
         await _send_live_fatal(
@@ -1607,71 +1756,51 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
         )
         return
 
-    client = get_live_api_client()
-    if client is None:
-        await _send_live_fatal(
-            websocket,
-            reason="misconfigured",
-            message="Голосовой режим временно недоступен: API ключи Gemini не настроены.",
-        )
-        return
-
-    cooldown_seconds = _get_live_model_cooldown_seconds()
-    if cooldown_seconds > 0:
-        logger.warning(
-            "live_audio_ws: model cooldown active user=%d model=%s retry_after=%ds reason=%s",
-            user_id,
-            GEMINI_LIVE_MODEL,
-            cooldown_seconds,
-            _LIVE_MODEL_COOLDOWN_REASON[:160],
-        )
-        await _send_live_fatal(
-            websocket,
-            reason="server_capacity",
-            message=(
-                "Голосовой режим временно недоступен со стороны Gemini Live API. "
-                "Попробуйте ещё раз чуть позже или продолжите текстом."
-            ),
-            retry_after_seconds=cooldown_seconds,
-        )
-        return
-
-    # Build personalised system instruction from initData user metadata.
-    _sys_parts = []
-    if chat_state and chat_state.system_prompt:
-        _sys_parts.append(chat_state.system_prompt)
-    else:
-        _sys_parts.extend(
-            [
-                "Ты — дружелюбный AI-ассистент в Telegram боте.",
-                "Отвечай кратко и по делу. Если не уверен — скажи об этом.",
-            ]
-        )
-
-    if user_first_name:
-        _sys_parts.append(f"Имя пользователя: {user_first_name}.")
-    if user_language:
-        _sys_parts.append(
-            f"Предпочтительный язык пользователя: {user_language}. "
-            "Всегда отвечай на том же языке, на котором говорит пользователь."
-        )
-
-    logger.info(
-        "live_audio_ws: connecting user=%d model=%s resumption_token=%s voice=%s thinking=%s via=genai",
-        user_id,
-        GEMINI_LIVE_MODEL,
-        bool(session_resumption_token or resumption_token),
-        live_voice_name,
-        live_thinking_level,
-    )
-    live_config = _build_live_connect_config(
-        system_instruction=" ".join(_sys_parts),
+    client, model_name, live_config, failure_reason, failure_detail = await _resolve_live_transport(
+        transport_mode=transport_mode,
+        system_instruction=system_instruction,
         resumption_handle=session_resumption_token or resumption_token,
         voice_name=live_voice_name,
         thinking_level=live_thinking_level,
     )
+    if client is None or live_config is None:
+        if failure_reason == "server_capacity":
+            cooldown_seconds = int(failure_detail or "60")
+            logger.warning(
+                "live_audio_ws: model cooldown active user=%d model=%s retry_after=%ds reason=%s",
+                user_id,
+                model_name,
+                cooldown_seconds,
+                _LIVE_MODEL_COOLDOWN_REASON[:160],
+            )
+            await _send_live_fatal(
+                websocket,
+                reason="server_capacity",
+                message=(
+                    "Голосовой режим временно недоступен со стороны Gemini Live API. "
+                    "Попробуйте ещё раз чуть позже или продолжите текстом."
+                ),
+                retry_after_seconds=cooldown_seconds,
+            )
+            return
+        await _send_live_fatal(
+            websocket,
+            reason=failure_reason or "misconfigured",
+            message=failure_detail or "Голосовой режим временно недоступен.",
+        )
+        return
+
+    logger.info(
+        "live_audio_ws: connecting user=%d mode=%s model=%s resumption_token=%s voice=%s thinking=%s via=genai",
+        user_id,
+        transport_mode,
+        model_name,
+        bool(session_resumption_token or resumption_token),
+        live_voice_name,
+        live_thinking_level,
+    )
     try:
-        async with client.aio.live.connect(model=GEMINI_LIVE_MODEL, config=live_config) as session:
+        async with client.aio.live.connect(model=model_name, config=live_config) as session:
             await websocket.send_json({"type": "connected"})
             if resumption_token:
                 await websocket.send_json({"type": "session_resumed"})
@@ -1849,28 +1978,32 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
     except Exception as exc:
         err_str = str(exc)
         if _is_live_resource_exhausted(err_str):
-            retry_after_seconds = _mark_live_model_cooldown(
-                _extract_live_retry_after_seconds(err_str) or 60,
-                err_str,
+            retry_after_seconds = _extract_live_retry_after_seconds(err_str) or 60
+            if transport_mode == _LIVE_DEFAULT_CONNECTION_MODE:
+                retry_after_seconds = _mark_live_model_cooldown(retry_after_seconds, err_str)
+            capacity_message = (
+                "Экспериментальный internet-live временно недоступен. "
+                "Попробуйте ещё раз чуть позже или продолжите в стандартном режиме."
+                if transport_mode == _LIVE_VERTEX_CONNECTION_MODE
+                else "Голосовой режим временно недоступен со стороны Gemini Live API. "
+                "Попробуйте ещё раз чуть позже или продолжите текстом."
             )
             logger.warning(
-                "live_audio_ws: resource exhausted user=%d model=%s retry_after=%ds: %s",
+                "live_audio_ws: resource exhausted user=%d mode=%s model=%s retry_after=%ds: %s",
                 user_id,
-                GEMINI_LIVE_MODEL,
+                transport_mode,
+                model_name,
                 retry_after_seconds,
                 err_str,
             )
             await _send_live_fatal(
                 websocket,
                 reason="server_capacity",
-                message=(
-                    "Голосовой режим временно недоступен со стороны Gemini Live API. "
-                    "Попробуйте ещё раз чуть позже или продолжите текстом."
-                ),
+                message=capacity_message,
                 retry_after_seconds=retry_after_seconds,
             )
         else:
-            logger.error("live_audio_ws: session fatal error user=%d: %s", user_id, err_str)
+            logger.error("live_audio_ws: session fatal error user=%d mode=%s: %s", user_id, transport_mode, err_str)
             try:
                 await websocket.send_json(
                     {
@@ -1882,4 +2015,4 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
             except Exception:
                 pass
 
-    logger.info("live_audio_ws: disconnected user=%d", user_id)
+    logger.info("live_audio_ws: disconnected user=%d mode=%s", user_id, transport_mode)
