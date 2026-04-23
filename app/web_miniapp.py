@@ -69,8 +69,8 @@ _LIVE_CONNECTION_MODES: list[dict[str, str]] = [
     },
     {
         "id": _LIVE_VERTEX_CONNECTION_MODE,
-        "label": "Vertex AI Express · с доступом в интернет",
-        "summary": "Экспериментальный путь с Google Search grounding через Vertex AI Express.",
+        "label": "Vertex Live · с доступом в интернет",
+        "summary": "Экспериментальный путь с Google Search grounding. Требует полноценный Vertex regional client.",
     },
 ]
 
@@ -1677,12 +1677,23 @@ async def _resolve_live_transport(
     thinking_level: str,
 ):
     from app.config import GEMINI_LIVE_MODEL
-    from app.providers.gemini import get_live_api_client, get_vertex_client
+    from app.providers.gemini import get_live_api_client, get_vertex_live_client
 
     if transport_mode == _LIVE_VERTEX_CONNECTION_MODE:
-        client = get_vertex_client()
+        client = get_vertex_live_client()
         if client is None:
-            return None, _VERTEX_LIVE_MODEL, None, "misconfigured", "Vertex AI Express не настроен для Live Audio."
+            return (
+                None,
+                _VERTEX_LIVE_MODEL,
+                None,
+                "misconfigured",
+                (
+                    "Vertex internet-live сейчас требует полноценный Vertex AI regional client "
+                    "(project/location + ADC или service account, например через "
+                    "GOOGLE_APPLICATION_CREDENTIALS / secret VERTEX_LIVE_SERVICE_ACCOUNT_JSON). "
+                    "Путь через Express API key для Live API websocket-сессий не поддерживается."
+                ),
+            )
         return (
             client,
             _VERTEX_LIVE_MODEL,

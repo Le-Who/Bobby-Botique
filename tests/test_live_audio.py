@@ -329,7 +329,7 @@ class TestLiveAudioProxy:
         mock_client.aio.live.connect.return_value = mock_session
 
         with (
-            patch("app.providers.gemini.get_vertex_client", return_value=mock_client),
+            patch("app.providers.gemini.get_vertex_live_client", return_value=mock_client),
             patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=chat_state),
         ):
@@ -534,7 +534,7 @@ class TestLiveAudioProxy:
         url = f"/webapp/live-vertex/ws?initData={urllib.parse.quote(init_data)}"
 
         with (
-            patch("app.providers.gemini.get_vertex_client", return_value=None),
+            patch("app.providers.gemini.get_vertex_live_client", return_value=None),
             patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
@@ -543,3 +543,4 @@ class TestLiveAudioProxy:
                 fatal_msg = json.loads(fatal_raw)
                 assert fatal_msg["type"] == "fatal"
                 assert fatal_msg["reason"] == "misconfigured"
+                assert "Express API key" in fatal_msg["message"]

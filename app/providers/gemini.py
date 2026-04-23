@@ -66,6 +66,8 @@ def get_live_api_client() -> "genai.Client | None":
 # Vertex AI Express singleton — None if not configured or init failed.
 _vertex_client: "genai.Client | None" = None
 _vertex_client_initialized: bool = False
+_vertex_live_client: "genai.Client | None" = None
+_vertex_live_client_initialized: bool = False
 
 
 def get_vertex_client() -> "genai.Client | None":
@@ -120,6 +122,48 @@ def get_vertex_client() -> "genai.Client | None":
         log.warning("Vertex AI client init failed — Vertex AI pathway disabled: %s", exc)
         _vertex_client = None
     return _vertex_client
+
+
+def get_vertex_live_client() -> "genai.Client | None":
+    """Return a cached Vertex AI client for Live API sessions, or None if unavailable.
+
+    Live API websocket sessions on Vertex are routed through the regional Vertex
+    runtime and require a standard Vertex client configuration (project/location
+    with ADC or service-account credentials). The Express API-key pathway used by
+    non-live GenerateContent traffic is intentionally not reused here because it
+    repeatedly fails with websocket 1007 "Invalid resource field value".
+    """
+    global _vertex_live_client, _vertex_live_client_initialized
+    if _vertex_live_client_initialized:
+        return _vertex_live_client
+    _vertex_live_client_initialized = True
+
+    project = settings.VERTEX_AI_PROJECT
+    location = settings.VERTEX_AI_LOCATION or "us-central1"
+    api_key = settings.VERTEX_AI_KEY
+    log = logging.getLogger(__name__)
+
+    if not project:
+        if api_key:
+            log.warning(
+                "Vertex Live client disabled: Express API key is configured, "
+                "but Live API requires a regional Vertex client with project/location credentials."
+            )
+        return None
+
+    try:
+        http_opts: dict[str, Any] = {"timeout": 90_000, "api_version": "v1"}
+        _vertex_live_client = genai.Client(
+            vertexai=True,
+            project=project,
+            location=location,
+            http_options=types.HttpOptions(**http_opts),  # type: ignore[arg-type]
+        )
+        log.info("Vertex Live client initialized (project=%s location=%s api_version=v1)", project, location)
+    except Exception as exc:
+        log.warning("Vertex Live client init failed — Live pathway disabled: %s", exc)
+        _vertex_live_client = None
+    return _vertex_live_client
 
 
 class GeminiProvider(BaseAIProvider):
