@@ -5,14 +5,16 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.config import settings
 from app.games import crocodile_telegram
 
 
 @pytest.mark.asyncio
 async def test_send_thermometer_update_keeps_play_button(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "MINIAPP_SHORT_NAME", "miniapp", raising=False)
-    monkeypatch.setattr(settings, "WEBAPP_BASE_URL", "https://example.com", raising=False)
+    monkeypatch.setattr(
+        "app.config.settings",
+        SimpleNamespace(MINIAPP_SHORT_NAME="miniapp", WEBAPP_BASE_URL="https://example.com"),
+        raising=False,
+    )
     bot = SimpleNamespace(username="testbot", edit_message_text=AsyncMock())
     game = SimpleNamespace(
         game_id="game-123",
@@ -30,8 +32,11 @@ async def test_send_thermometer_update_keeps_play_button(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_flush_thermometer_update_keeps_play_button(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "MINIAPP_SHORT_NAME", "miniapp", raising=False)
-    monkeypatch.setattr(settings, "WEBAPP_BASE_URL", "https://example.com", raising=False)
+    monkeypatch.setattr(
+        "app.config.settings",
+        SimpleNamespace(MINIAPP_SHORT_NAME="miniapp", WEBAPP_BASE_URL="https://example.com"),
+        raising=False,
+    )
     bot = SimpleNamespace(username="testbot", edit_message_text=AsyncMock())
     crocodile_telegram._pending_thermometer_updates["inline-456"] = {
         "bot": bot,

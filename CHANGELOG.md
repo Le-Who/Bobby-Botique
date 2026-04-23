@@ -5,6 +5,10 @@ Format is optimized for agent-parseable context.
 
 ## [Unreleased] - 2026-04-23 - 48-Hour Production Audit: Lock Eviction P0, Voice Engine Hardening
 
+### 🎙️ Live Audio Personalization
+
+- **Separate Live Audio voice/thinking settings with gender-grouped voices (`app/web_miniapp.py`, `app/templates/live_audio.html`, `app/database.py`, `app/repos/chats.py`, `tests/test_live_audio.py`):** Live Audio now keeps its own per-user `live_voice_name` and `live_thinking_level` instead of reusing reply-TTS settings. The Mini App exposes a dedicated Live settings sheet with 3 live-thinking presets (`Быстрый`, `Сбалансированный`, `Умный`), curated Gemini voice selection, and explicit **женские / мужские** grouping for the live voices. Changing these settings mid-call triggers a controlled reconnect so the active session reopens with the new Gemini Live config while the transcript/history UI stays in place.
+
 ### 🐊 Daily Crocodile Operator Visibility & Admin Smoke Tests
 
 - **`/dailycroc_status` no-op refreshes no longer log false failures (`app/handlers/cmd_admin.py`, `tests/test_daily_crocodile.py`):** `Refresh` and `Prep check` now normalize Telegram's `Message is not modified` error text case-insensitively. When the rendered operator card is unchanged, the callback is treated as a successful no-op instead of surfacing `❌ Ошибка обновления` and emitting misleading error logs.
@@ -52,7 +56,7 @@ Format is optimized for agent-parseable context.
 ### ✅ Verification
 
 - `python -m ruff check .` → **All checks passed**
-- `python -m pytest tests/ -q -n auto` → **1846 passed, 96 skipped, 0 failures**
+- `python -m pytest -n auto` → **1855 passed, 96 skipped, 0 failures**
 
 ---
 

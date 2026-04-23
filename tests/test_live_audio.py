@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.database import ChatState
 from app.web import quart_app
 from tests.factories import make_valid_init_data
 
@@ -42,6 +43,7 @@ def live_settings(monkeypatch) -> SimpleNamespace:
         VERTEX_AI_KEY="vertex-key",
         VERTEX_AI_PROJECT=None,
         VERTEX_AI_LOCATION="us-central1",
+        DEFAULT_MODEL="gemini-3.1-flash-lite-preview",
     )
     monkeypatch.setattr("app.config.settings", settings, raising=False)
     monkeypatch.setattr("app.web_miniapp.settings", settings, raising=False)
@@ -56,6 +58,12 @@ def mock_bot_token(live_settings):
 @pytest.fixture
 def mock_api_keys(live_settings):
     return live_settings.GEMINI_API_KEYS
+
+
+@pytest.fixture
+def auth_headers(mock_bot_token):
+    init_data = make_valid_init_data(mock_bot_token, user_id=777)
+    return {"Authorization": f"tma {init_data}"}
 
 
 def _make_response_with_audio(pcm_data: bytes):
@@ -141,6 +149,87 @@ class TestLiveAudioPage:
         body = (await resp.get_data()).decode()
         assert "Live AI" in body or "visualizer" in body
 
+    async def test_live_page_contains_settings_and_reconnect_wiring(self, test_client):
+        resp = await test_client.get("/webapp/live")
+        assert resp.status_code == 200
+        body = (await resp.get_data()).decode()
+        assert "settings-btn" in body
+        assert "api('/live-settings')" in body
+        assert "controlledReconnectState?.needsFreshFallback" in body
+        assert "settings-updated" in body
+        assert "Женские" in body
+        assert "Мужские" in body
+
+
+@pytest.mark.asyncio
+class TestLiveAudioSettingsApi:
+    async def test_get_live_settings_returns_defaults(self, test_client, auth_headers):
+        with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None):
+            resp = await test_client.get("/webapp/api/live-settings", headers=auth_headers)
+
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+        assert payload["live_settings"]["live_voice_name"] == "Aoede"
+        assert payload["live_settings"]["live_thinking_level"] == "low"
+        assert any(item["id"] == "Aoede" for item in payload["voices"])
+        assert any(item["gender"] == "female" for item in payload["voices"])
+        assert any(item["gender"] == "male" for item in payload["voices"])
+        assert [item["id"] for item in payload["thinking_presets"]] == ["off", "low", "medium"]
+
+    async def test_patch_live_settings_persists_selected_values(self, test_client, auth_headers):
+        chat_state = ChatState(
+            history=[],
+            model="gemini-3.1-flash-lite-preview",
+            token_count=0,
+            search_enabled=False,
+            system_prompt=None,
+        )
+        update_chat = AsyncMock()
+
+        with (
+            patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=chat_state),
+            patch("app.repos.chats.update_user_chat", update_chat),
+        ):
+            resp = await test_client.patch(
+                "/webapp/api/live-settings",
+                headers=auth_headers,
+                json={"live_voice_name": "Kore", "live_thinking_level": "medium"},
+            )
+
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+        assert payload["ok"] is True
+        assert chat_state.live_voice_name == "Kore"
+        assert chat_state.live_thinking_level == "medium"
+        update_chat.assert_awaited_once()
+
+    async def test_patch_live_settings_ignores_invalid_values(self, test_client, auth_headers):
+        chat_state = ChatState(
+            history=[],
+            model="gemini-3.1-flash-lite-preview",
+            token_count=0,
+            search_enabled=False,
+            system_prompt=None,
+        )
+        update_chat = AsyncMock()
+
+        with (
+            patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=chat_state),
+            patch("app.repos.chats.update_user_chat", update_chat),
+        ):
+            resp = await test_client.patch(
+                "/webapp/api/live-settings",
+                headers=auth_headers,
+                json={"live_voice_name": "Unknown", "live_thinking_level": "high"},
+            )
+
+        assert resp.status_code == 200
+        payload = await resp.get_json()
+        assert payload["note"] == "no_changes"
+        assert payload["live_settings"]["live_voice_name"] == "Aoede"
+        assert payload["live_settings"]["live_thinking_level"] == "low"
+        update_chat.assert_not_awaited()
+
 
 @pytest.mark.asyncio
 class TestLiveAudioProxy:
@@ -150,6 +239,15 @@ class TestLiveAudioProxy:
         """LA-02: After auth, server should send {"type": "connected"}."""
         init_data = make_valid_init_data(mock_bot_token, user_id=555)
         url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
+        chat_state = ChatState(
+            history=[],
+            model="gemini-3.1-flash-lite-preview",
+            token_count=0,
+            search_enabled=False,
+            system_prompt=None,
+            live_voice_name="Kore",
+            live_thinking_level="medium",
+        )
 
         # Mock the Gemini Live session
         mock_session = AsyncMock()
@@ -170,7 +268,7 @@ class TestLiveAudioProxy:
         with (
             patch("app.providers.gemini.get_live_api_client", return_value=mock_client),
             patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
-            patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
+            patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=chat_state),
         ):
             async with test_client.websocket(url) as ws:
                 raw = await ws.receive()
@@ -183,6 +281,9 @@ class TestLiveAudioProxy:
                 assert config.session_resumption.handle is None
                 assert config.context_window_compression is not None
                 assert config.speech_config is not None
+                assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
+                assert config.thinking_config is not None
+                assert str(config.thinking_config.thinking_level).lower().endswith("medium")
 
     async def test_audio_forwarding(self, test_client, mock_bot_token, mock_api_keys):
         """LA-03: realtime_input message should trigger session.send_realtime_input."""

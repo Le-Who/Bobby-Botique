@@ -203,5 +203,11 @@ async def _run_legacy_migrations(db_query):
         if "tts_temperature" not in chats_col_names:
             await db_query("ALTER TABLE chats ADD COLUMN tts_temperature FLOAT;")
 
+        if "live_voice_name" not in chats_col_names:
+            await db_query("ALTER TABLE chats ADD COLUMN live_voice_name TEXT;")
+
+        if "live_thinking_level" not in chats_col_names:
+            await db_query("ALTER TABLE chats ADD COLUMN live_thinking_level TEXT;")
+
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Legacy migration warning: %s", e)

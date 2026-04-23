@@ -34,6 +34,8 @@ class ChatState:
     temperature: float | None = None  # LLM creativity 0.0–1.0, None = model default
     voice_id: str | None = None  # ElevenLabs voice override, None = global default
     tts_temperature: float | None = None  # TTS creativity, None = model default
+    live_voice_name: str | None = None  # Gemini Live voice override, None = live default
+    live_thinking_level: str | None = None  # Live reasoning preset: off, low, medium
     _original_length: int = 0
 
 

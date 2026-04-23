@@ -45,6 +45,41 @@
       padding: 32px 24px;
     }
 
+    #top-bar {
+      width: 100%;
+      max-width: 420px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    #settings-summary {
+      flex: 1;
+      min-width: 0;
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      font-size: 12px;
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #settings-btn {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 18px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
     /* ── Status section ─────────────────────────────────────────────── */
     #status-label {
       font-size: 14px;
@@ -163,11 +198,148 @@
       z-index: 30;
     }
     #error-bar.show { transform: translateY(0); }
+
+    #sheet-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(7, 10, 18, 0.66);
+      backdrop-filter: blur(8px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease;
+      z-index: 40;
+    }
+    #sheet-overlay.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    #live-settings-sheet {
+      position: fixed;
+      left: 16px;
+      right: 16px;
+      bottom: 16px;
+      max-width: 440px;
+      margin: 0 auto;
+      padding: 18px;
+      border-radius: 24px;
+      border: 1px solid var(--border);
+      background: rgba(14, 19, 31, 0.96);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.38);
+      transform: translateY(110%);
+      transition: transform .22s ease;
+      z-index: 45;
+    }
+    #live-settings-sheet.show { transform: translateY(0); }
+
+    .sheet-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .sheet-subtitle {
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.45;
+      margin-bottom: 18px;
+    }
+
+    .sheet-section-title {
+      font-size: 12px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+    }
+
+    .settings-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .settings-group {
+      margin-bottom: 14px;
+    }
+
+    .settings-group:last-child {
+      margin-bottom: 0;
+    }
+
+    .settings-group-label {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+
+    .sheet-option {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+    .sheet-option.active {
+      border-color: rgba(0, 224, 255, 0.52);
+      background: rgba(0, 224, 255, 0.12);
+      box-shadow: inset 0 0 0 1px rgba(0, 224, 255, 0.16);
+    }
+
+    .sheet-option-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .sheet-option-hint {
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.45;
+    }
+
+    .sheet-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .sheet-action-btn {
+      flex: 1;
+      min-height: 46px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    #live-settings-cancel {
+      background: transparent;
+      color: var(--text-dim);
+    }
+
+    #live-settings-save {
+      background: linear-gradient(135deg, var(--accent), #6d72ff);
+      color: #061018;
+      border: none;
+    }
   </style>
 </head>
 <body>
 
 <div id="app">
+  <div id="top-bar">
+    <div id="settings-summary">Live: Aoede · Сбалансированный</div>
+    <button id="settings-btn" type="button" title="Настройки live">⚙️</button>
+  </div>
+
   <div id="status-label">Нажмите 🎙️ чтобы начать</div>
 
   <div id="visualizer-wrap">
@@ -183,6 +355,25 @@
 </div>
 
 <div id="error-bar"></div>
+<div id="sheet-overlay"></div>
+<div id="live-settings-sheet">
+  <div class="sheet-title">Настройки Live Audio</div>
+  <div class="sheet-subtitle">
+    Эти параметры относятся только к live-диалогу. Обычный TTS-голос не меняется.
+    Изменения применяются через короткое переподключение.
+  </div>
+
+  <div class="sheet-section-title">Голос</div>
+  <div id="live-voice-options" class="settings-list"></div>
+
+  <div class="sheet-section-title">Режим мышления</div>
+  <div id="live-thinking-options" class="settings-list"></div>
+
+  <div class="sheet-actions">
+    <button id="live-settings-cancel" class="sheet-action-btn" type="button">Отмена</button>
+    <button id="live-settings-save" class="sheet-action-btn" type="button">Сохранить</button>
+  </div>
+</div>
 
 <script>
 /* ── Telegram WebApp ────────────────────────────────────────────────── */
@@ -205,6 +396,14 @@ const vizWrap     = $('visualizer-wrap');
 const canvas      = $('visualizer');
 const ctx         = canvas.getContext('2d');
 const transcriptEl = $('transcript-area');
+const settingsBtn = $('settings-btn');
+const settingsSummaryEl = $('settings-summary');
+const sheetOverlay = $('sheet-overlay');
+const liveSettingsSheet = $('live-settings-sheet');
+const liveVoiceOptionsEl = $('live-voice-options');
+const liveThinkingOptionsEl = $('live-thinking-options');
+const liveSettingsCancelBtn = $('live-settings-cancel');
+const liveSettingsSaveBtn = $('live-settings-save');
 const errorBar    = $('error-bar');
 
 /* ── State ──────────────────────────────────────────────────────────── */
@@ -221,15 +420,189 @@ let sessionEndedIntentionally = false;
 let reconnectTimer = null;
 let liveFatalState = null;
 let plannedReconnect = false;
+let liveSettings = { live_voice_name: 'Aoede', live_thinking_level: 'low' };
+let draftLiveSettings = { ...liveSettings };
+let liveVoiceOptions = [];
+let liveThinkingOptions = [];
+let controlledReconnectState = null;
 
 /* ── Reconnect: exponential backoff ────────────────────────────────── */
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS  = 8000;
 let reconnectAttempt = 0;
+const LIVE_THINKING_LABELS = {
+  off: 'Быстрый',
+  low: 'Сбалансированный',
+  medium: 'Умный'
+};
 
 function _backoffDelay() {
   const base = Math.min(BACKOFF_BASE_MS * Math.pow(2, reconnectAttempt), BACKOFF_MAX_MS);
   return base + Math.random() * 500;  // jitter
+}
+
+function esc(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+async function api(path, options = {}) {
+  const headers = {
+    Authorization: `tma ${INIT_DATA}`,
+    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(options.headers || {})
+  };
+  const response = await fetch(`/webapp/api${path}`, {
+    method: options.method || 'GET',
+    headers,
+    body: options.body,
+    keepalive: options.keepalive ?? false
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+function renderSettingsSummary() {
+  const voice = liveSettings.live_voice_name || 'Aoede';
+  const thinking = LIVE_THINKING_LABELS[liveSettings.live_thinking_level] || 'Сбалансированный';
+  settingsSummaryEl.textContent = `Live: ${voice} · ${thinking}`;
+}
+
+function renderLiveSettingOptions() {
+  const voiceGroups = [
+    { id: 'female', label: 'Женские' },
+    { id: 'male', label: 'Мужские' }
+  ];
+  liveVoiceOptionsEl.innerHTML = voiceGroups.map((group) => {
+    const groupVoices = liveVoiceOptions.filter((voice) => voice.gender === group.id);
+    if (!groupVoices.length) return '';
+    const optionsHtml = groupVoices.map((voice) => {
+      const active = draftLiveSettings.live_voice_name === voice.id;
+      return `
+        <button type="button" class="sheet-option ${active ? 'active' : ''}" data-live-voice="${esc(voice.id)}">
+          <div class="sheet-option-title">
+            <span>${esc(voice.name)}</span>
+            <span>${active ? '✓' : ''}</span>
+          </div>
+          <div class="sheet-option-hint">${esc(voice.description || '')}</div>
+        </button>
+      `;
+    }).join('');
+    return `
+      <div class="settings-group" data-voice-group="${esc(group.id)}">
+        <div class="settings-group-label">${esc(group.label)}</div>
+        <div class="settings-list">${optionsHtml}</div>
+      </div>
+    `;
+  }).join('');
+
+  liveThinkingOptionsEl.innerHTML = liveThinkingOptions.map((preset) => {
+    const active = draftLiveSettings.live_thinking_level === preset.id;
+    return `
+      <button type="button" class="sheet-option ${active ? 'active' : ''}" data-live-thinking="${esc(preset.id)}">
+        <div class="sheet-option-title">
+          <span>${esc(preset.label)}</span>
+          <span>${active ? '✓' : ''}</span>
+        </div>
+        <div class="sheet-option-hint">${esc(preset.hint || '')}</div>
+      </button>
+    `;
+  }).join('');
+}
+
+function openLiveSettingsSheet() {
+  draftLiveSettings = { ...liveSettings };
+  renderLiveSettingOptions();
+  sheetOverlay.classList.add('show');
+  liveSettingsSheet.classList.add('show');
+}
+
+function closeLiveSettingsSheet() {
+  sheetOverlay.classList.remove('show');
+  liveSettingsSheet.classList.remove('show');
+}
+
+async function loadLiveSettings() {
+  const payload = await api('/live-settings');
+  liveSettings = {
+    live_voice_name: payload.live_settings?.live_voice_name || 'Aoede',
+    live_thinking_level: payload.live_settings?.live_thinking_level || 'low'
+  };
+  draftLiveSettings = { ...liveSettings };
+  liveVoiceOptions = payload.voices || [];
+  liveThinkingOptions = payload.thinking_presets || [];
+  renderSettingsSummary();
+  renderLiveSettingOptions();
+}
+
+function requestSettingsReconnect() {
+  const hasLiveSession = Boolean(ws) || recording || !endBtn.disabled;
+  if (!hasLiveSession) {
+    setStatus('Настройки сохранены. Они применятся при следующем подключении.', '');
+    return;
+  }
+
+  controlledReconnectState = {
+    source: 'live_settings',
+    restoreRecording: recording,
+    triedFreshFallback: false,
+    needsFreshFallback: false
+  };
+  clearTimeout(reconnectTimer);
+  reconnectAttempt = 0;
+  sessionEndedIntentionally = false;
+  liveFatalState = null;
+  flushPlayback();
+  if (recording) {
+    stopRecording({ preserveStatus: true });
+  }
+  setStatus('Применяю новые настройки…', '');
+  vizWrap.classList.add('connecting');
+
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    plannedReconnect = true;
+    ws.close(1000, 'settings-updated');
+    return;
+  }
+  connectWS();
+}
+
+async function saveLiveSettings() {
+  const changed =
+    draftLiveSettings.live_voice_name !== liveSettings.live_voice_name ||
+    draftLiveSettings.live_thinking_level !== liveSettings.live_thinking_level;
+  if (!changed) {
+    closeLiveSettingsSheet();
+    return;
+  }
+
+  liveSettingsSaveBtn.disabled = true;
+  try {
+    const payload = await api('/live-settings', {
+      method: 'PATCH',
+      body: JSON.stringify(draftLiveSettings)
+    });
+    liveSettings = {
+      live_voice_name: payload.live_settings?.live_voice_name || draftLiveSettings.live_voice_name,
+      live_thinking_level: payload.live_settings?.live_thinking_level || draftLiveSettings.live_thinking_level
+    };
+    draftLiveSettings = { ...liveSettings };
+    renderSettingsSummary();
+    renderLiveSettingOptions();
+    closeLiveSettingsSheet();
+    requestSettingsReconnect();
+  } catch (err) {
+    showError('Не удалось сохранить настройки live');
+  } finally {
+    liveSettingsSaveBtn.disabled = false;
+  }
 }
 
 
@@ -389,6 +762,17 @@ function connectWS() {
     try { msg = JSON.parse(ev.data); } catch { return; }
 
     switch (msg.type) {
+      case 'connected':
+        if (controlledReconnectState?.restoreRecording && !recording) {
+          controlledReconnectState = null;
+          setStatus('Настройки применены. Возвращаю микрофон…', '');
+          startRecording();
+        } else if (controlledReconnectState) {
+          controlledReconnectState = null;
+          setStatus('Настройки применены.', 'active');
+        }
+        break;
+
       case 'audio':
         initPlayback();
         enqueueAudio(msg.data);
@@ -446,6 +830,14 @@ function connectWS() {
         break;
 
       case 'error':
+        if (
+          controlledReconnectState &&
+          !controlledReconnectState.triedFreshFallback &&
+          resumptionToken &&
+          msg.reason === 'connect_failed'
+        ) {
+          controlledReconnectState.needsFreshFallback = true;
+        }
         showError(msg.message || 'Ошибка сервера');
         break;
     }
@@ -464,6 +856,18 @@ function connectWS() {
       } else {
         setStatus('Сессия завершена', 'error');
       }
+      return;
+    }
+
+    if (controlledReconnectState?.needsFreshFallback && !controlledReconnectState.triedFreshFallback) {
+      controlledReconnectState.triedFreshFallback = true;
+      controlledReconnectState.needsFreshFallback = false;
+      resumptionToken = '';
+      sessionStorage.removeItem('liveResumptionToken');
+      plannedReconnect = false;
+      setStatus('Обновляю сессию без старого контекста…', '');
+      vizWrap.classList.add('connecting');
+      connectWS();
       return;
     }
 
@@ -591,6 +995,7 @@ function endSession() {
   sessionEndedIntentionally = true;
   clearTimeout(reconnectTimer);
   plannedReconnect = false;
+  controlledReconnectState = null;
   resumptionToken = '';
   sessionStorage.removeItem('liveResumptionToken');
   reconnectAttempt = 0;
@@ -624,6 +1029,27 @@ micBtn.addEventListener('click', () => {
 });
 
 endBtn.addEventListener('click', endSession);
+settingsBtn.addEventListener('click', openLiveSettingsSheet);
+sheetOverlay.addEventListener('click', closeLiveSettingsSheet);
+liveSettingsCancelBtn.addEventListener('click', closeLiveSettingsSheet);
+liveSettingsSaveBtn.addEventListener('click', saveLiveSettings);
+liveVoiceOptionsEl.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-live-voice]');
+  if (!button) return;
+  draftLiveSettings.live_voice_name = button.dataset.liveVoice;
+  renderLiveSettingOptions();
+});
+liveThinkingOptionsEl.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-live-thinking]');
+  if (!button) return;
+  draftLiveSettings.live_thinking_level = button.dataset.liveThinking;
+  renderLiveSettingOptions();
+});
+
+loadLiveSettings().catch(() => {
+  renderSettingsSummary();
+  showError('Не удалось загрузить live-настройки');
+});
 </script>
 </body>
 </html>

@@ -39,6 +39,25 @@ _KEY_ROTATION_INDEX: int = 0
 _LIVE_CONNECT_RETRY_AFTER_RE = re.compile(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE)
 _LIVE_MODEL_COOLDOWN_UNTIL: float = 0.0
 _LIVE_MODEL_COOLDOWN_REASON: str = ""
+_LIVE_DEFAULT_THINKING_LEVEL = "low"
+_LIVE_THINKING_CONFIG_MAP: dict[str, str] = {
+    "off": "minimal",
+    "low": "low",
+    "medium": "medium",
+}
+_LIVE_VOICE_OPTIONS: list[dict[str, str]] = [
+    {"id": "Aoede", "name": "Aoede", "gender": "female", "description": "Нейтральный и естественный"},
+    {"id": "Kore", "name": "Kore", "gender": "female", "description": "Более энергичный и уверенный"},
+    {"id": "Leda", "name": "Leda", "gender": "female", "description": "Лёгкий и молодой"},
+    {"id": "Zephyr", "name": "Zephyr", "gender": "male", "description": "Чёткий и бодрый"},
+    {"id": "Charon", "name": "Charon", "gender": "male", "description": "Сдержанный и профессиональный"},
+    {"id": "Orus", "name": "Orus", "gender": "male", "description": "Более глубокий и авторитетный"},
+]
+_LIVE_THINKING_PRESETS: list[dict[str, str]] = [
+    {"id": "off", "label": "Быстрый", "hint": "Минимальная задержка, короткие ответы."},
+    {"id": "low", "label": "Сбалансированный", "hint": "Лучший режим по умолчанию для live-диалога."},
+    {"id": "medium", "label": "Умный", "hint": "Больше размышления, но выше задержка."},
+]
 
 # Backward-compatible test hooks for the classic game lock fallback registry.
 _game_locks = _croc_runtime._game_locks
@@ -112,9 +131,58 @@ async def _send_live_fatal(
         pass
 
 
-def _build_live_connect_config(*, system_instruction: str, resumption_handle: str | None):
+def _default_model_name() -> str:
+    return settings.DEFAULT_MODEL if settings else "gemini-3.1-flash-lite-preview"
+
+
+def _default_chat_state():
+    from app.database import ChatState
+
+    return ChatState(
+        history=[],
+        model=_default_model_name(),
+        token_count=0,
+        search_enabled=False,
+        system_prompt=None,
+    )
+
+
+def _default_live_voice_name() -> str:
+    return GEMINI_LIVE_VOICE_NAME or "Aoede"
+
+
+def _resolve_live_voice_name(chat_state) -> str:
+    voice_name = getattr(chat_state, "live_voice_name", None) if chat_state else None
+    valid_voice_ids = {voice["id"] for voice in _LIVE_VOICE_OPTIONS}
+    if isinstance(voice_name, str) and voice_name in valid_voice_ids:
+        return voice_name
+    return _default_live_voice_name()
+
+
+def _resolve_live_thinking_level(chat_state) -> str:
+    thinking_level = getattr(chat_state, "live_thinking_level", None) if chat_state else None
+    if isinstance(thinking_level, str) and thinking_level in _LIVE_THINKING_CONFIG_MAP:
+        return thinking_level
+    return _LIVE_DEFAULT_THINKING_LEVEL
+
+
+def _serialize_live_settings(chat_state) -> dict[str, str]:
+    return {
+        "live_voice_name": _resolve_live_voice_name(chat_state),
+        "live_thinking_level": _resolve_live_thinking_level(chat_state),
+    }
+
+
+def _build_live_connect_config(
+    *,
+    system_instruction: str,
+    resumption_handle: str | None,
+    voice_name: str,
+    thinking_level: str,
+):
     from google.genai import types
 
+    thinking_config = types.ThinkingConfig(thinking_level=_LIVE_THINKING_CONFIG_MAP[thinking_level])  # type: ignore[arg-type]
     return types.LiveConnectConfig(
         response_modalities=[types.Modality.AUDIO],
         session_resumption=types.SessionResumptionConfig(
@@ -126,10 +194,11 @@ def _build_live_connect_config(*, system_instruction: str, resumption_handle: st
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=GEMINI_LIVE_VOICE_NAME,
+                    voice_name=voice_name,
                 )
             )
         ),
+        thinking_config=thinking_config,
         system_instruction=types.Content(parts=[types.Part(text=system_instruction)]),
     )
 
@@ -505,6 +574,61 @@ async def api_get_voices(user_id: int):
             {"id": "Rasalgethi", "name": "Rasalgethi (Informative)"},
         ]
     return jsonify({"voices": voices})
+
+
+@miniapp_blueprint.route("/api/live-settings", methods=["GET"])
+@require_webapp_auth
+async def api_get_live_settings(user_id: int):
+    """Return per-user Gemini Live Audio settings and available presets."""
+    try:
+        from app.repos.chats import get_user_chat
+
+        chat_state = await get_user_chat(user_id)
+        return jsonify(
+            {
+                "live_settings": _serialize_live_settings(chat_state),
+                "voices": _LIVE_VOICE_OPTIONS,
+                "thinking_presets": _LIVE_THINKING_PRESETS,
+                "reconnect_note": "Изменения применяются через короткое переподключение live-сессии.",
+            }
+        )
+    except Exception as e:
+        logger.error("Mini App get live settings error: %s", e, exc_info=True)
+        return jsonify({"error": "internal_error"}), 500
+
+
+@miniapp_blueprint.route("/api/live-settings", methods=["PATCH"])
+@require_webapp_auth
+async def api_update_live_settings(user_id: int):
+    """Update per-user Gemini Live Audio settings without affecting reply TTS."""
+    try:
+        from app.repos.chats import get_user_chat, update_user_chat
+
+        chat_state = await get_user_chat(user_id) or _default_chat_state()
+        body = await request.get_json(silent=True) or {}
+        changed = False
+
+        if "live_voice_name" in body:
+            voice_name = body["live_voice_name"]
+            valid_voice_ids = {voice["id"] for voice in _LIVE_VOICE_OPTIONS}
+            if voice_name in valid_voice_ids:
+                chat_state.live_voice_name = voice_name
+                changed = True
+
+        if "live_thinking_level" in body:
+            thinking_level = body["live_thinking_level"]
+            if thinking_level in _LIVE_THINKING_CONFIG_MAP:
+                chat_state.live_thinking_level = thinking_level
+                changed = True
+
+        if changed:
+            await update_user_chat(user_id, chat_state)
+            return jsonify({"ok": True, "live_settings": _serialize_live_settings(chat_state)})
+
+        return jsonify({"ok": True, "note": "no_changes", "live_settings": _serialize_live_settings(chat_state)})
+    except Exception as e:
+        logger.error("Mini App update live settings error: %s", e, exc_info=True)
+        return jsonify({"error": "internal_error"}), 500
 
 
 # ── Long Read Reader ──────────────────────────────────────────────────────────
@@ -1472,6 +1596,8 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
 
     session_resumption_token: str | None = None
     chat_state = await get_user_chat(user_id)
+    live_voice_name = _resolve_live_voice_name(chat_state)
+    live_thinking_level = _resolve_live_thinking_level(chat_state)
 
     if not await is_live_audio_enabled():
         await _send_live_fatal(
@@ -1531,14 +1657,18 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
         )
 
     logger.info(
-        "live_audio_ws: connecting user=%d model=%s resumption_token=%s via=genai",
+        "live_audio_ws: connecting user=%d model=%s resumption_token=%s voice=%s thinking=%s via=genai",
         user_id,
         GEMINI_LIVE_MODEL,
         bool(session_resumption_token or resumption_token),
+        live_voice_name,
+        live_thinking_level,
     )
     live_config = _build_live_connect_config(
         system_instruction=" ".join(_sys_parts),
         resumption_handle=session_resumption_token or resumption_token,
+        voice_name=live_voice_name,
+        thinking_level=live_thinking_level,
     )
     try:
         async with client.aio.live.connect(model=GEMINI_LIVE_MODEL, config=live_config) as session:
@@ -1742,7 +1872,13 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
         else:
             logger.error("live_audio_ws: session fatal error user=%d: %s", user_id, err_str)
             try:
-                await websocket.send_json({"type": "error", "message": f"Live session failed: {err_str}"})
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "reason": "connect_failed",
+                        "message": f"Live session failed: {err_str}",
+                    }
+                )
             except Exception:
                 pass
 
