@@ -1660,7 +1660,13 @@ async def live_vertex_audio_ws() -> None:
     await _open_authenticated_live_socket(_LIVE_VERTEX_CONNECTION_MODE)
 
 
-def _build_live_system_instruction(chat_state, *, user_first_name: str, user_language: str) -> str:
+def _build_live_system_instruction(
+    chat_state,
+    *,
+    user_first_name: str,
+    user_language: str,
+    transport_mode: str,
+) -> str:
     sys_parts = []
     if chat_state and chat_state.system_prompt:
         sys_parts.append(chat_state.system_prompt)
@@ -1669,6 +1675,8 @@ def _build_live_system_instruction(chat_state, *, user_first_name: str, user_lan
             [
                 "Ты — дружелюбный AI-ассистент в Telegram боте.",
                 "Отвечай кратко и по делу. Если не уверен — скажи об этом.",
+                "По умолчанию отвечай по-русски, если пользователь явно не просит другой язык.",
+                "Если пользователь пишет или говорит на другом языке, либо прямо просит сменить язык, сразу переключайся на этот язык.",
             ]
         )
 
@@ -1676,8 +1684,18 @@ def _build_live_system_instruction(chat_state, *, user_first_name: str, user_lan
         sys_parts.append(f"Имя пользователя: {user_first_name}.")
     if user_language:
         sys_parts.append(
-            f"Предпочтительный язык пользователя: {user_language}. "
-            "Всегда отвечай на том же языке, на котором говорит пользователь."
+            f"Код языка интерфейса Telegram пользователя: {user_language}. "
+            "Используй это только как вспомогательный сигнал; язык ответа определяй по последней реплике пользователя, а по умолчанию используй русский."
+        )
+    if transport_mode == _LIVE_VERTEX_CONNECTION_MODE:
+        sys_parts.extend(
+            [
+                "В этой live-сессии у тебя есть доступ к Google Search.",
+                "Для погоды, новостей, курсов, времени, расписаний, текущих событий и любых других меняющихся данных обязательно сначала используй поиск.",
+                "Не говори, что у тебя нет доступа к интернету или к свежим данным, пока инструмент поиска доступен.",
+                "Если свежие данные найти не удалось, честно скажи, что не удалось получить результат поиска, а не что у тебя нет доступа к интернету.",
+                "Если географическое название неоднозначно, коротко уточни страну или регион, прежде чем давать ответ по текущим данным.",
+            ]
         )
     return " ".join(sys_parts)
 
@@ -1772,6 +1790,7 @@ async def _handle_live_session(
         chat_state,
         user_first_name=user_first_name,
         user_language=user_language,
+        transport_mode=transport_mode,
     )
 
     if not await is_live_audio_enabled():
@@ -1906,6 +1925,8 @@ async def _handle_live_session(
                             break
 
                         saw_message = False
+                        turn_input_transcript: str | None = None
+                        input_transcript_sent = False
                         async for response in session.receive():
                             saw_message = True
                             content = response.server_content
@@ -1921,14 +1942,17 @@ async def _handle_live_session(
                                                 }
                                             )
 
-                                if content.input_transcription:
-                                    await websocket.send_json(
-                                        {
-                                            "type": "input_transcript",
-                                            "text": content.input_transcription.text,
-                                        }
-                                    )
+                                if content.input_transcription and content.input_transcription.text:
+                                    turn_input_transcript = content.input_transcription.text
                                 if content.output_transcription:
+                                    if turn_input_transcript and not input_transcript_sent:
+                                        await websocket.send_json(
+                                            {
+                                                "type": "input_transcript",
+                                                "text": turn_input_transcript,
+                                            }
+                                        )
+                                        input_transcript_sent = True
                                     await websocket.send_json(
                                         {
                                             "type": "output_transcript",
@@ -1940,6 +1964,14 @@ async def _handle_live_session(
                                     await websocket.send_json({"type": "interrupt"})
 
                                 if content.turn_complete or content.waiting_for_input:
+                                    if turn_input_transcript and not input_transcript_sent:
+                                        await websocket.send_json(
+                                            {
+                                                "type": "input_transcript",
+                                                "text": turn_input_transcript,
+                                            }
+                                        )
+                                    await websocket.send_json({"type": "turn_complete"})
                                     break
 
                             if hasattr(response, "session_resumption_update"):

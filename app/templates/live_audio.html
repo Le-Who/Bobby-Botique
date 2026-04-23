@@ -508,6 +508,7 @@ let pendingModeFallbackMessage = '';
 let modeFallbackUsed = false;
 let liveSessionEstablished = false;
 let pendingRecordingStart = false;
+let activeTranscriptDraft = null;
 
 /* ── Reconnect: exponential backoff ────────────────────────────────── */
 const BACKOFF_BASE_MS = 500;
@@ -939,6 +940,7 @@ function connectWS(options = {}) {
 
       case 'interrupt':
         flushPlayback();
+        finalizeTranscriptDraft();
         break;
 
       case 'input_transcript':
@@ -947,6 +949,10 @@ function connectWS(options = {}) {
 
       case 'output_transcript':
         appendTranscript('AI', msg.text, 't-ai');
+        break;
+
+      case 'turn_complete':
+        finalizeTranscriptDraft();
         break;
 
       case 'resumption_token':
@@ -1098,16 +1104,21 @@ function connectWS(options = {}) {
 /* ── Transcript ─────────────────────────────────────────────────────── */
 function appendTranscript(who, text, cls) {
   if (!text) return;
-  const lastP = transcriptEl.lastElementChild;
-  if (lastP && lastP.className === cls) {
-    lastP.textContent += ` ${text}`;
-  } else {
-    const p = document.createElement('p');
-    p.className = cls;
-    p.textContent = `${who}: ${text}`;
-    transcriptEl.appendChild(p);
+  if (!activeTranscriptDraft || activeTranscriptDraft.cls !== cls) {
+    activeTranscriptDraft = {
+      cls,
+      who,
+      el: document.createElement('p')
+    };
+    activeTranscriptDraft.el.className = cls;
+    transcriptEl.appendChild(activeTranscriptDraft.el);
   }
+  activeTranscriptDraft.el.textContent = `${who}: ${text}`;
   transcriptEl.scrollTop = transcriptEl.scrollHeight;
+}
+
+function finalizeTranscriptDraft() {
+  activeTranscriptDraft = null;
 }
 
 /* ── Mic capture via AudioWorklet ───────────────────────────────────── */

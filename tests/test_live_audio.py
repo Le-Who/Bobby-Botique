@@ -109,6 +109,18 @@ def _make_response_with_transcript(who: str, text: str):
     return SimpleNamespace(server_content=content, session_resumption_update=None)
 
 
+def _make_response_with_input_partial(text: str):
+    content = SimpleNamespace(
+        model_turn=None,
+        input_transcription=SimpleNamespace(text=text),
+        output_transcription=None,
+        interrupted=None,
+        turn_complete=False,
+        waiting_for_input=None,
+    )
+    return SimpleNamespace(server_content=content, session_resumption_update=None)
+
+
 class _RaisingLiveConnect:
     """Async context manager that fails during Gemini Live connect()."""
 
@@ -311,6 +323,7 @@ class TestLiveAudioProxy:
                 assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
                 assert config.thinking_config is not None
                 assert str(config.thinking_config.thinking_level).lower().endswith("medium")
+                assert "По умолчанию отвечай по-русски" in config.system_instruction.parts[0].text
 
     async def test_vertex_connect_sends_connected_event(self, test_client, mock_bot_token, mock_api_keys):
         init_data = make_valid_init_data(mock_bot_token, user_id=561)
@@ -365,6 +378,7 @@ class TestLiveAudioProxy:
                 assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
                 assert config.tools is not None
                 assert config.tools[0].google_search is not None
+                assert "доступ к Google Search" in config.system_instruction.parts[0].text
 
     async def test_audio_forwarding(self, test_client, mock_bot_token, mock_api_keys):
         """LA-03: realtime_input message should trigger session.send_realtime_input."""
@@ -503,6 +517,51 @@ class TestLiveAudioProxy:
                 out_msg = json.loads(out_raw)
                 assert out_msg["type"] == "output_transcript"
                 assert out_msg["text"] == "Здравствуйте!"
+
+    async def test_input_transcript_is_sent_once_using_latest_partial(self, test_client, mock_bot_token, mock_api_keys):
+        init_data = make_valid_init_data(mock_bot_token, user_id=563)
+        url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.send_realtime_input = AsyncMock()
+
+        responses = [
+            _make_response_with_input_partial("{BG}"),
+            _make_response_with_input_partial("Привет, какая погода в Одессе?"),
+            _make_response_with_transcript("output", "Сейчас посмотрю."),
+        ]
+
+        async def _gen():
+            for r in responses:
+                yield r
+
+        mock_session.receive = _gen
+
+        mock_client = MagicMock()
+        mock_client.aio.live.connect.return_value = mock_session
+
+        with (
+            patch("app.providers.gemini.get_live_api_client", return_value=mock_client),
+            patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
+            patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
+        ):
+            async with test_client.websocket(url) as ws:
+                connected_raw = await ws.receive()
+                assert json.loads(connected_raw)["type"] == "connected"
+
+                await ws.send(json.dumps({"type": "text", "text": "go"}))
+
+                in_raw = await ws.receive()
+                in_msg = json.loads(in_raw)
+                assert in_msg["type"] == "input_transcript"
+                assert in_msg["text"] == "Привет, какая погода в Одессе?"
+
+                out_raw = await ws.receive()
+                out_msg = json.loads(out_raw)
+                assert out_msg["type"] == "output_transcript"
+                assert out_msg["text"] == "Сейчас посмотрю."
 
     async def test_resource_exhausted_sends_single_fatal_without_retry_storm(
         self,
