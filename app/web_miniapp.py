@@ -1537,8 +1537,14 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
             if resumption_token:
                 await websocket.send_json({"type": "session_resumed"})
 
+            turn_ready = asyncio.Event()
+            producer_alive = True
+            if resumption_token:
+                turn_ready.set()
+
             # ── Producer: browser → Gemini ────────────────────────────────
             async def _producer() -> None:
+                nonlocal producer_alive
                 start_time = time.monotonic()
                 try:
                     while True:
@@ -1569,83 +1575,100 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
                                 )
                         elif msg_type == "audio_stream_end":
                             await session.send_realtime_input(audio_stream_end=True)
+                            turn_ready.set()
                         elif msg_type == "text":
                             text = msg.get("text", "")
                             if text:
                                 await session.send_realtime_input(text=text)
+                                turn_ready.set()
 
                 except asyncio.CancelledError:
                     pass
                 except Exception as exc:
                     logger.warning("live_audio_ws producer error user=%d: %s", user_id, exc)
+                finally:
+                    producer_alive = False
+                    turn_ready.set()
 
             # ── Consumer: Gemini → browser ────────────────────────────────
             async def _consumer() -> None:
                 nonlocal session_resumption_token
                 try:
-                    async for response in session.receive():
-                        content = response.server_content
-                        if content:
-                            if content.model_turn and content.model_turn.parts:
-                                for part in content.model_turn.parts:
-                                    if part.inline_data and part.inline_data.data:
-                                        audio_b64 = base64.b64encode(part.inline_data.data).decode("ascii")
-                                        await websocket.send_json(
-                                            {
-                                                "type": "audio",
-                                                "data": audio_b64,
-                                            }
-                                        )
+                    while True:
+                        await turn_ready.wait()
+                        turn_ready.clear()
+                        if not producer_alive:
+                            break
 
-                            if content.input_transcription:
+                        saw_message = False
+                        async for response in session.receive():
+                            saw_message = True
+                            content = response.server_content
+                            if content:
+                                if content.model_turn and content.model_turn.parts:
+                                    for part in content.model_turn.parts:
+                                        if part.inline_data and part.inline_data.data:
+                                            audio_b64 = base64.b64encode(part.inline_data.data).decode("ascii")
+                                            await websocket.send_json(
+                                                {
+                                                    "type": "audio",
+                                                    "data": audio_b64,
+                                                }
+                                            )
+
+                                if content.input_transcription:
+                                    await websocket.send_json(
+                                        {
+                                            "type": "input_transcript",
+                                            "text": content.input_transcription.text,
+                                        }
+                                    )
+                                if content.output_transcription:
+                                    await websocket.send_json(
+                                        {
+                                            "type": "output_transcript",
+                                            "text": content.output_transcription.text,
+                                        }
+                                    )
+
+                                if content.interrupted is True:
+                                    await websocket.send_json({"type": "interrupt"})
+
+                            if hasattr(response, "session_resumption_update"):
+                                sru = response.session_resumption_update
+                                if sru and hasattr(sru, "new_handle") and sru.new_handle:
+                                    session_resumption_token = sru.new_handle
+                                    await websocket.send_json(
+                                        {
+                                            "type": "resumption_token",
+                                            "token": sru.new_handle,
+                                        }
+                                    )
+
+                            if hasattr(response, "go_away") and response.go_away is not None:
+                                time_left = response.go_away.time_left
+                                seconds_left = 60.0
+                                if time_left is not None:
+                                    seconds_left = (
+                                        time_left.total_seconds()
+                                        if hasattr(time_left, "total_seconds")
+                                        else float(time_left)
+                                    )
+                                logger.info(
+                                    "live_audio_ws: GoAway received user=%d time_left=%.1fs",
+                                    user_id,
+                                    seconds_left,
+                                )
                                 await websocket.send_json(
                                     {
-                                        "type": "input_transcript",
-                                        "text": content.input_transcription.text,
-                                    }
-                                )
-                            if content.output_transcription:
-                                await websocket.send_json(
-                                    {
-                                        "type": "output_transcript",
-                                        "text": content.output_transcription.text,
+                                        "type": "go_away",
+                                        "time_left_seconds": seconds_left,
                                     }
                                 )
 
-                            if content.interrupted is True:
-                                await websocket.send_json({"type": "interrupt"})
-
-                        if hasattr(response, "session_resumption_update"):
-                            sru = response.session_resumption_update
-                            if sru and hasattr(sru, "new_handle") and sru.new_handle:
-                                session_resumption_token = sru.new_handle
-                                await websocket.send_json(
-                                    {
-                                        "type": "resumption_token",
-                                        "token": sru.new_handle,
-                                    }
-                                )
-
-                        if hasattr(response, "go_away") and response.go_away is not None:
-                            time_left = response.go_away.time_left
-                            seconds_left = 60.0
-                            if time_left is not None:
-                                seconds_left = (
-                                    time_left.total_seconds()
-                                    if hasattr(time_left, "total_seconds")
-                                    else float(time_left)
-                                )
-                            logger.info(
-                                "live_audio_ws: GoAway received user=%d time_left=%.1fs",
-                                user_id,
-                                seconds_left,
-                            )
-                            await websocket.send_json(
-                                {
-                                    "type": "go_away",
-                                    "time_left_seconds": seconds_left,
-                                }
-                            )
+                        if not saw_message:
+                            logger.info("live_audio_ws: receive stream ended without messages user=%d", user_id)
+                            break
 
                     logger.info("live_audio_ws: consumer receive loop ended normally user=%d", user_id)
                 except asyncio.CancelledError:

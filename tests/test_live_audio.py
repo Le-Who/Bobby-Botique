@@ -228,6 +228,7 @@ class TestLiveAudioProxy:
                         }
                     )
                 )
+                await ws.send(json.dumps({"type": "audio_stream_end"}))
 
                 # 3. Receive audio output from Gemini
                 audio_raw = await ws.receive()
@@ -265,6 +266,7 @@ class TestLiveAudioProxy:
                 connected_raw = await ws.receive()
                 assert json.loads(connected_raw)["type"] == "connected"
 
+                await ws.send(json.dumps({"type": "text", "text": "go"}))
                 interrupt_raw = await ws.receive()
                 interrupt_msg = json.loads(interrupt_raw)
                 assert interrupt_msg["type"] == "interrupt"
@@ -302,6 +304,7 @@ class TestLiveAudioProxy:
                 connected_raw = await ws.receive()
                 assert json.loads(connected_raw)["type"] == "connected"
 
+                await ws.send(json.dumps({"type": "text", "text": "go"}))
                 in_raw = await ws.receive()
                 in_msg = json.loads(in_raw)
                 assert in_msg["type"] == "input_transcript"

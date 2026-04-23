@@ -5,6 +5,16 @@ Format is optimized for agent-parseable context.
 
 ## [Unreleased] - 2026-04-23 - 48-Hour Production Audit: Lock Eviction P0, Voice Engine Hardening
 
+### 🎙️ Live Audio Stability & Context Repair
+
+- **Restored the correct Live provider boundary (`app/config.py`, `app/web_miniapp.py`, `tests/test_live_audio.py`):** Live Audio now runs again on the Gemini GenAI Live API path with `gemini-3.1-flash-live-preview`. The failed Vertex-only migration attempts were removed from the runtime contract and from the regression scaffolding.
+
+- **Removed unsupported GenAI resumption flags (`app/web_miniapp.py`, `tests/test_live_audio.py`):** `SessionResumptionConfig.transparent=True` is no longer sent on the GenAI path, fixing repeated fatal errors (`transparent parameter is not supported in Gemini API`) while keeping resumable session handles enabled.
+
+- **Pinned Live voice and reduced reconnect churn (`app/config.py`, `app/web_miniapp.py`, `app/templates/live_audio.html`):** Live sessions now keep an explicit voice name (`GEMINI_LIVE_VOICE_NAME`, default `Aoede`), retain compression + resumption handles, and use a safer reconnect state machine so `go_away` / planned reconnects do not spawn duplicate reconnect attempts.
+
+- **Fixed turn-stream handling so one answer no longer closes the whole voice call (`app/web_miniapp.py`, `tests/test_live_audio.py`):** The WebSocket proxy no longer treats the end of a single `session.receive()` turn as the end of the whole Live session. Consumer handling is now turn-based and is only armed after `audio_stream_end` or explicit text input. This removes the normal-response disconnect loop that kept forcing reconnect/resume cycles, which in turn was polluting context and causing repeated or stale turn behavior in the Mini App transcript.
+
 ### 🔒 Critical Concurrency Fix
 
 - **Removed `_sweep_game_locks` FIFO eviction — P0 race condition (`app/games/crocodile_runtime.py`):** `_local_locks` (the asyncio.Lock fallback when Redis is unavailable) had a 512-entry cap with oldest-half FIFO eviction via `_sweep_game_locks()`. This was the *exact same defect class* as the `_PREP_LOCKS` eviction bug fixed previously: evicting an actively-held `asyncio.Lock` without checking `.locked()` breaks mutual exclusion. When Redis goes down and 513+ concurrent games use local locks, the sweep could evict a lock that is currently held — a second coroutine then creates a new, independent lock for the same `game_id`, allowing concurrent mutations. **Fix:** Removed `_GAME_LOCKS_MAX`, `_sweep_game_locks()`, and all call sites. The `_local_locks` dict is now unbounded (~100 bytes/lock × realistic game count = negligible memory). Mirrored the same approach used for `_PREP_LOCKS`. Also removed the re-export wrapper and constant alias from `app/web_miniapp.py`, and the `TestSweepGameLocks` test class from `tests/test_game_auth.py`.
