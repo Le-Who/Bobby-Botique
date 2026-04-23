@@ -486,6 +486,7 @@ let recording = false;
 let audioCtx = null;
 let workletNode = null;
 let micStream = null;
+let micSinkGain = null;
 let playbackCtx = null;
 let scheduledSources = [];
 let nextPlaybackTime = 0;
@@ -521,6 +522,8 @@ const LIVE_MODE_LABELS = {
   standard: 'Standard',
   vertex_internet: 'Internet'
 };
+const PLAYBACK_FADE_MS = 4;
+const PLAYBACK_MIN_LEAD_SEC = 0.012;
 
 function _backoffDelay() {
   const base = Math.min(BACKOFF_BASE_MS * Math.pow(2, reconnectAttempt), BACKOFF_MAX_MS);
@@ -808,13 +811,21 @@ function enqueueAudio(base64Pcm) {
   }
 
   const now = playbackCtx.currentTime;
-  if (nextPlaybackTime < now) {
-    nextPlaybackTime = now;
+  if (nextPlaybackTime < now + PLAYBACK_MIN_LEAD_SEC) {
+    nextPlaybackTime = now + PLAYBACK_MIN_LEAD_SEC;
   }
 
   const src = playbackCtx.createBufferSource();
+  const gain = playbackCtx.createGain();
   src.buffer = buf;
-  src.connect(playbackCtx.destination);
+  src.connect(gain);
+  gain.connect(playbackCtx.destination);
+
+  const fadeSeconds = Math.min(PLAYBACK_FADE_MS / 1000, buf.duration / 2);
+  gain.gain.setValueAtTime(0, nextPlaybackTime);
+  gain.gain.linearRampToValueAtTime(1, nextPlaybackTime + fadeSeconds);
+  gain.gain.setValueAtTime(1, Math.max(nextPlaybackTime + fadeSeconds, nextPlaybackTime + buf.duration - fadeSeconds));
+  gain.gain.linearRampToValueAtTime(0, nextPlaybackTime + buf.duration);
   src.start(nextPlaybackTime);
   
   nextPlaybackTime += buf.duration;
@@ -1122,6 +1133,8 @@ async function startMicCapture() {
   try {
     await audioCtx.audioWorklet.addModule('/static/js/audio-processor.js');
     workletNode = new AudioWorkletNode(audioCtx, 'mic-processor');
+    micSinkGain = audioCtx.createGain();
+    micSinkGain.gain.value = 0;
     workletNode.port.onmessage = (ev) => {
       if (!recording || !ws || ws.readyState !== WebSocket.OPEN) return;
       const b64 = arrayBufferToBase64(ev.data);
@@ -1132,7 +1145,8 @@ async function startMicCapture() {
       }));
     };
     source.connect(workletNode);
-    workletNode.connect(audioCtx.destination);
+    workletNode.connect(micSinkGain);
+    micSinkGain.connect(audioCtx.destination);
   } catch (err) {
     showError('AudioWorklet не поддерживается в этом браузере');
     return;
@@ -1188,6 +1202,7 @@ function stopRecording({ preserveStatus = false } = {}) {
 
   // Cleanup mic only
   if (workletNode) { workletNode.disconnect(); workletNode = null; }
+  if (micSinkGain) { micSinkGain.disconnect(); micSinkGain = null; }
   if (audioCtx) { audioCtx.close(); audioCtx = null; }
   if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
 
