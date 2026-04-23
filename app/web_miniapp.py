@@ -212,6 +212,13 @@ def _build_live_connect_config(
         session_resumption=types.SessionResumptionConfig(
             handle=resumption_handle or None,
         ),
+        input_audio_transcription=types.AudioTranscriptionConfig(),
+        output_audio_transcription=types.AudioTranscriptionConfig(),
+        realtime_input_config=types.RealtimeInputConfig(
+            automatic_activity_detection=types.AutomaticActivityDetection(
+                disabled=True,
+            ),
+        ),
         context_window_compression=types.ContextWindowCompressionConfig(
             sliding_window=types.SlidingWindow(),
         ),
@@ -240,6 +247,13 @@ def _build_vertex_live_connect_config(
         session_resumption=types.SessionResumptionConfig(
             handle=resumption_handle or None,
             transparent=True,
+        ),
+        input_audio_transcription=types.AudioTranscriptionConfig(),
+        output_audio_transcription=types.AudioTranscriptionConfig(),
+        realtime_input_config=types.RealtimeInputConfig(
+            automatic_activity_detection=types.AutomaticActivityDetection(
+                disabled=True,
+            ),
         ),
         context_window_compression=types.ContextWindowCompressionConfig(
             sliding_window=types.SlidingWindow(),
@@ -1802,14 +1816,16 @@ async def _handle_live_session(
         )
         return
 
+    transport_backend = "vertex_live" if transport_mode == _LIVE_VERTEX_CONNECTION_MODE else "gemini_live"
     logger.info(
-        "live_audio_ws: connecting user=%d mode=%s model=%s resumption_token=%s voice=%s thinking=%s via=genai",
+        "live_audio_ws: connecting user=%d mode=%s model=%s resumption_token=%s voice=%s thinking=%s via=%s",
         user_id,
         transport_mode,
         model_name,
         bool(session_resumption_token or resumption_token),
         live_voice_name,
         live_thinking_level,
+        transport_backend,
     )
     try:
         async with client.aio.live.connect(model=model_name, config=live_config) as session:
@@ -1853,6 +1869,15 @@ async def _handle_live_session(
                                 await session.send_realtime_input(
                                     audio=types.Blob(data=audio_bytes, mime_type=mime_type)
                                 )
+                        elif msg_type == "activity_start":
+                            await session.send_realtime_input(
+                                activity_start=types.ActivityStart(),
+                            )
+                        elif msg_type == "activity_end":
+                            await session.send_realtime_input(
+                                activity_end=types.ActivityEnd(),
+                            )
+                            turn_ready.set()
                         elif msg_type == "audio_stream_end":
                             await session.send_realtime_input(audio_stream_end=True)
                             turn_ready.set()
@@ -1913,6 +1938,9 @@ async def _handle_live_session(
 
                                 if content.interrupted is True:
                                     await websocket.send_json({"type": "interrupt"})
+
+                                if content.turn_complete or content.waiting_for_input:
+                                    break
 
                             if hasattr(response, "session_resumption_update"):
                                 sru = response.session_resumption_update

@@ -506,6 +506,7 @@ let pendingModeFallback = null;
 let pendingModeFallbackMessage = '';
 let modeFallbackUsed = false;
 let liveSessionEstablished = false;
+let pendingRecordingStart = false;
 
 /* ── Reconnect: exponential backoff ────────────────────────────────── */
 const BACKOFF_BASE_MS = 500;
@@ -882,7 +883,11 @@ function connectWS(options = {}) {
     if (ws !== socket) return;
     reconnectAttempt = 0;       // reset backoff on success
     vizWrap.classList.remove('connecting');
-    setStatus('Подключено к AI. Говорите!', 'active');
+    if (recording || pendingRecordingStart) {
+      setStatus('Подключено к AI. Запускаю микрофон…', '');
+    } else {
+      setStatus('Подключение активно. Нажмите 🎙️ чтобы говорить.', '');
+    }
     endBtn.disabled = false;
   };
 
@@ -895,15 +900,24 @@ function connectWS(options = {}) {
       case 'connected':
         liveSessionEstablished = true;
         pendingModeFallback = null;
-        if (controlledReconnectState?.restoreRecording && !recording) {
+        if (pendingRecordingStart && !recording) {
+          pendingRecordingStart = false;
+          setStatus('Микрофон готовится…', '');
+          void startMicCapture();
+        } else if (controlledReconnectState?.restoreRecording && !recording) {
           controlledReconnectState = null;
           setStatus('Настройки применены. Возвращаю микрофон…', '');
-          startRecording();
+          void startMicCapture();
+        } else if (recording && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'activity_start' }));
+          setStatus('Соединение восстановлено. Продолжайте говорить.', 'active');
         } else if (controlledReconnectState) {
           controlledReconnectState = null;
           setStatus('Настройки применены.', 'active');
         } else if (sessionConnectionModeOverride === 'standard' && activeConnectionMode === 'standard') {
           setStatus('Подключено к стандартному Live после fallback.', 'active');
+        } else if (!recording) {
+          setStatus('Подключение активно. Нажмите 🎙️ чтобы говорить.', '');
         }
         break;
 
@@ -1052,7 +1066,7 @@ function connectWS(options = {}) {
     setStatus('Потеряно соединение. Восстанавливаем...', 'error');
     vizWrap.classList.add('connecting');
     if (recording) {
-      // Visualizer off, but mic stays active — audio buffers locally.
+      // Mic stays active, but outbound chunks pause until the session reconnects.
       stopViz();
     }
     
@@ -1075,7 +1089,7 @@ function appendTranscript(who, text, cls) {
   if (!text) return;
   const lastP = transcriptEl.lastElementChild;
   if (lastP && lastP.className === cls) {
-    lastP.textContent += text;
+    lastP.textContent += ` ${text}`;
   } else {
     const p = document.createElement('p');
     p.className = cls;
@@ -1086,10 +1100,7 @@ function appendTranscript(who, text, cls) {
 }
 
 /* ── Mic capture via AudioWorklet ───────────────────────────────────── */
-async function startRecording() {
-  sessionEndedIntentionally = false;
-  liveFatalState = null;
-
+async function startMicCapture() {
   try {
     micStream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, sampleRate: 16000 }
@@ -1112,7 +1123,7 @@ async function startRecording() {
     await audioCtx.audioWorklet.addModule('/static/js/audio-processor.js');
     workletNode = new AudioWorkletNode(audioCtx, 'mic-processor');
     workletNode.port.onmessage = (ev) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!recording || !ws || ws.readyState !== WebSocket.OPEN) return;
       const b64 = arrayBufferToBase64(ev.data);
       ws.send(JSON.stringify({
         type: 'realtime_input',
@@ -1127,6 +1138,10 @@ async function startRecording() {
     return;
   }
 
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'activity_start' }));
+  }
+
   recording = true;
   micBtn.classList.add('recording');
   micBtn.textContent = '⏸️';
@@ -1135,10 +1150,30 @@ async function startRecording() {
   setStatus('Слушаю…', 'active');
   haptic?.impactOccurred('medium');
 
+}
+
+function startRecording() {
+  sessionEndedIntentionally = false;
+  liveFatalState = null;
+  pendingRecordingStart = false;
+
+  if (liveSessionEstablished && ws && ws.readyState === WebSocket.OPEN) {
+    void startMicCapture();
+    return;
+  }
+
+  pendingRecordingStart = true;
   connectWS();
+  setStatus('Подключаю микрофон…', '');
+  vizWrap.classList.add('connecting');
 }
 
 function stopRecording({ preserveStatus = false } = {}) {
+  const cancelPendingStart = pendingRecordingStart && !recording;
+  pendingRecordingStart = false;
+  if (!recording && !cancelPendingStart) {
+    return;
+  }
   recording = false;
   micBtn.classList.remove('recording');
   micBtn.textContent = '🎙️';
@@ -1146,9 +1181,9 @@ function stopRecording({ preserveStatus = false } = {}) {
   vizWrap.classList.remove('connecting');
   stopViz();
 
-  // Signal end of audio stream, but KEEP websocket open!
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'audio_stream_end' }));
+  // Explicit push-to-talk boundary while keeping the websocket session alive.
+  if (!cancelPendingStart && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'activity_end' }));
   }
 
   // Cleanup mic only
@@ -1156,8 +1191,13 @@ function stopRecording({ preserveStatus = false } = {}) {
   if (audioCtx) { audioCtx.close(); audioCtx = null; }
   if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
 
+  if (cancelPendingStart && ws && !liveSessionEstablished && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+    plannedReconnect = false;
+    ws.close(1000, 'cancel-pending-start');
+  }
+
   if (!preserveStatus) {
-    setStatus('Микрофон на паузе. Подключение активно.', 'active');
+    setStatus('Микрофон на паузе. Нажмите 🎙️ чтобы говорить.', '');
   }
 }
 
@@ -1171,6 +1211,7 @@ function endSession() {
   pendingModeFallbackMessage = '';
   modeFallbackUsed = false;
   liveSessionEstablished = false;
+  pendingRecordingStart = false;
   activeConnectionMode = liveSettings.live_connection_mode || 'standard';
   resumptionToken = '';
   sessionStorage.removeItem('liveResumptionToken');
@@ -1197,7 +1238,7 @@ function arrayBufferToBase64(buffer) {
 
 /* ── Event Listeners ────────────────────────────────────────────────── */
 micBtn.addEventListener('click', () => {
-  if (!recording) {
+  if (!recording && !pendingRecordingStart) {
     startRecording();
   } else {
     stopRecording();

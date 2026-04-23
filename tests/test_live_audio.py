@@ -77,6 +77,8 @@ def _make_response_with_audio(pcm_data: bytes):
         input_transcription=None,
         output_transcription=None,
         interrupted=None,
+        turn_complete=True,
+        waiting_for_input=None,
     )
     return SimpleNamespace(server_content=content, session_resumption_update=None)
 
@@ -88,6 +90,8 @@ def _make_response_with_interrupt():
         input_transcription=None,
         output_transcription=None,
         interrupted=True,
+        turn_complete=True,
+        waiting_for_input=None,
     )
     return SimpleNamespace(server_content=content, session_resumption_update=None)
 
@@ -99,6 +103,8 @@ def _make_response_with_transcript(who: str, text: str):
         input_transcription=SimpleNamespace(text=text) if who == "input" else None,
         output_transcription=SimpleNamespace(text=text) if who == "output" else None,
         interrupted=None,
+        turn_complete=(who == "output"),
+        waiting_for_input=None,
     )
     return SimpleNamespace(server_content=content, session_resumption_update=None)
 
@@ -295,6 +301,11 @@ class TestLiveAudioProxy:
                 assert connect_kwargs["model"] == "gemini-3.1-flash-live-preview"
                 assert config.session_resumption is not None
                 assert config.session_resumption.handle is None
+                assert config.input_audio_transcription is not None
+                assert config.output_audio_transcription is not None
+                assert config.realtime_input_config is not None
+                assert config.realtime_input_config.automatic_activity_detection is not None
+                assert config.realtime_input_config.automatic_activity_detection.disabled is True
                 assert config.context_window_compression is not None
                 assert config.speech_config is not None
                 assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
@@ -344,6 +355,11 @@ class TestLiveAudioProxy:
                 assert config.session_resumption is not None
                 assert config.session_resumption.handle is None
                 assert config.session_resumption.transparent is True
+                assert config.input_audio_transcription is not None
+                assert config.output_audio_transcription is not None
+                assert config.realtime_input_config is not None
+                assert config.realtime_input_config.automatic_activity_detection is not None
+                assert config.realtime_input_config.automatic_activity_detection.disabled is True
                 assert config.context_window_compression is not None
                 assert config.speech_config is not None
                 assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
@@ -388,13 +404,20 @@ class TestLiveAudioProxy:
                 await ws.send(
                     json.dumps(
                         {
+                            "type": "activity_start",
+                        }
+                    )
+                )
+                await ws.send(
+                    json.dumps(
+                        {
                             "type": "realtime_input",
                             "mime_type": "audio/pcm;rate=16000",
                             "data": test_audio,
                         }
                     )
                 )
-                await ws.send(json.dumps({"type": "audio_stream_end"}))
+                await ws.send(json.dumps({"type": "activity_end"}))
 
                 # 3. Receive audio output from Gemini
                 audio_raw = await ws.receive()
