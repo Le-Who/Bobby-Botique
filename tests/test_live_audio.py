@@ -11,6 +11,7 @@ Covers:
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import urllib.parse
 from types import SimpleNamespace
@@ -544,3 +545,24 @@ class TestLiveAudioProxy:
                 assert fatal_msg["type"] == "fatal"
                 assert fatal_msg["reason"] == "misconfigured"
                 assert "Express API key" in fatal_msg["message"]
+
+
+@pytest.mark.asyncio
+class TestVertexLiveClientBootstrap:
+    async def test_vertex_live_client_returns_none_when_credentials_file_is_unreadable(self, live_settings, monkeypatch):
+        live_settings.VERTEX_AI_PROJECT = "vertex-project"
+        monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/run/secrets/vertex-live-sa.json")
+        import app.providers.gemini as gemini_provider
+
+        gemini_provider = importlib.reload(gemini_provider)
+        monkeypatch.setattr(gemini_provider.settings, "VERTEX_AI_PROJECT", "vertex-project", raising=False)
+        monkeypatch.setattr(gemini_provider.settings, "VERTEX_AI_LOCATION", "us-central1", raising=False)
+        monkeypatch.setattr(gemini_provider.settings, "VERTEX_AI_KEY", "vertex-key", raising=False)
+        monkeypatch.setattr(gemini_provider.os.path, "exists", lambda _path: True)
+        monkeypatch.setattr(gemini_provider.os, "access", lambda _path, _mode: False)
+
+        try:
+            assert gemini_provider.get_vertex_live_client() is None
+        finally:
+            gemini_provider._vertex_live_client = None
+            gemini_provider._vertex_live_client_initialized = False

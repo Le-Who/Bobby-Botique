@@ -210,7 +210,9 @@ jobs:
             if [ -n "${VERTEX_LIVE_SERVICE_ACCOUNT_JSON:-}" ]; then
               mkdir -p "$VERTEX_LIVE_SECRET_DIR"
               printf '%s' "$VERTEX_LIVE_SERVICE_ACCOUNT_JSON" > "$VERTEX_LIVE_SA_HOST_PATH"
-              chmod 600 "$VERTEX_LIVE_SA_HOST_PATH"
+              # The bot container runs as non-root user "app". A bind-mounted ADC file
+              # with 0600 is not readable unless numeric UIDs happen to match.
+              chmod 644 "$VERTEX_LIVE_SA_HOST_PATH"
               VERTEX_LIVE_DOCKER_MOUNT="-v $VERTEX_LIVE_SA_HOST_PATH:/run/secrets/vertex-live-sa.json:ro"
               VERTEX_LIVE_DOCKER_ENV="-e GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/vertex-live-sa.json"
               echo ">>> Vertex Live ADC secret prepared."

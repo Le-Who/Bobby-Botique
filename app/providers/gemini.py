@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -142,6 +143,7 @@ def get_vertex_live_client() -> "genai.Client | None":
     location = settings.VERTEX_AI_LOCATION or "us-central1"
     api_key = settings.VERTEX_AI_KEY
     log = logging.getLogger(__name__)
+    credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
     if not project:
         if api_key:
@@ -150,6 +152,20 @@ def get_vertex_live_client() -> "genai.Client | None":
                 "but Live API requires a regional Vertex client with project/location credentials."
             )
         return None
+
+    if credentials_path:
+        if not os.path.exists(credentials_path):
+            log.warning(
+                "Vertex Live client disabled: GOOGLE_APPLICATION_CREDENTIALS path does not exist: %s",
+                credentials_path,
+            )
+            return None
+        if not os.access(credentials_path, os.R_OK):
+            log.warning(
+                "Vertex Live client disabled: GOOGLE_APPLICATION_CREDENTIALS path is not readable: %s",
+                credentials_path,
+            )
+            return None
 
     try:
         http_opts: dict[str, Any] = {"timeout": 90_000, "api_version": "v1"}

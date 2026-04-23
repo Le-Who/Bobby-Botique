@@ -8,6 +8,7 @@ patched to no-ops to avoid touching disk.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -270,9 +271,20 @@ class TestGeneratedWordsCacheRoundTrip:
             same = await get_cached_generated_words("ru", "Персонаж   genshin impact!!!", topic_id="custom:ru:abc")
         assert same == words
 
-    async def test_topic_scoped_generated_words_survive_restart_and_ignore_other_topic(self, tmp_path, monkeypatch):
-        cache_path = tmp_path / "generated_words_cache.json"
-        monkeypatch.setattr(judgement_cache_module, "_GEN_WORDS_CACHE_PATH", cache_path)
+    async def test_topic_scoped_generated_words_survive_restart_and_ignore_other_topic(self, monkeypatch):
+        persisted_payload: str | None = None
+
+        async def _persist_generated_words_for_test() -> None:
+            nonlocal persisted_payload
+            persisted_payload = json.dumps(dict(_generated_words_store), ensure_ascii=False)
+
+        def _load_generated_words_from_disk_for_test() -> None:
+            if not persisted_payload:
+                return
+            _generated_words_store.update(json.loads(persisted_payload))
+
+        monkeypatch.setattr(judgement_cache_module, "_persist_generated_words", _persist_generated_words_for_test)
+        monkeypatch.setattr(judgement_cache_module, "_load_generated_words_from_disk", _load_generated_words_from_disk_for_test)
         _generated_words_store.clear()
         words = ["венти", "чжун ли", "нахида"]
 

@@ -1690,7 +1690,8 @@ async def _resolve_live_transport(
                 (
                     "Vertex internet-live сейчас требует полноценный Vertex AI regional client "
                     "(project/location + ADC или service account, например через "
-                    "GOOGLE_APPLICATION_CREDENTIALS / secret VERTEX_LIVE_SERVICE_ACCOUNT_JSON). "
+                    "GOOGLE_APPLICATION_CREDENTIALS / secret VERTEX_LIVE_SERVICE_ACCOUNT_JSON; "
+                    "если используется файл credentials, он должен существовать и читаться из контейнера). "
                     "Путь через Express API key для Live API websocket-сессий не поддерживается."
                 ),
             )

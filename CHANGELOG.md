@@ -7,11 +7,13 @@ Format is optimized for agent-parseable context.
 
 ### 🎙️ Experimental Vertex Internet Live Route
 
-- **Added an opt-in Vertex AI Express live transport without changing the default route (`app/web_miniapp.py`, `app/templates/live_audio.html`, `app/database.py`, `app/repos/chats.py`, `tests/test_live_audio.py`, `scripts/migrations/046_add_live_connection_mode.sql`):** Live Audio now persists a per-user `live_connection_mode` preset. `standard` keeps the existing Gemini GenAI Live API path (`/webapp/live/ws`), while `vertex_internet` enables an experimental `/webapp/live-vertex/ws` transport on `gemini-live-2.5-flash-native-audio`.
+- **Added an opt-in Vertex Live transport without changing the default route (`app/web_miniapp.py`, `app/templates/live_audio.html`, `app/database.py`, `app/repos/chats.py`, `tests/test_live_audio.py`, `scripts/migrations/046_add_live_connection_mode.sql`):** Live Audio now persists a per-user `live_connection_mode` preset. `standard` keeps the existing Gemini GenAI Live API path (`/webapp/live/ws`), while `vertex_internet` enables an experimental `/webapp/live-vertex/ws` transport on `gemini-live-2.5-flash-native-audio`.
 
-- **Mini App settings now expose a connection-mode selector with internet labeling (`app/web_miniapp.py`, `app/templates/live_audio.html`):** The Live settings sheet now includes `Стандартный Live` and `Vertex AI Express · с доступом в интернет` above the existing voice/thinking controls, and the summary pill reflects the active mode alongside voice and thinking preset.
+- **Mini App settings now expose a connection-mode selector with internet labeling (`app/web_miniapp.py`, `app/templates/live_audio.html`):** The Live settings sheet now includes `Стандартный Live` and `Vertex Live · с доступом в интернет` above the existing voice/thinking controls, and the summary pill reflects the active mode alongside voice and thinking preset.
 
 - **Vertex Live v1 is grounded-search only with controlled fallback (`app/web_miniapp.py`, `app/templates/live_audio.html`, `tests/test_live_audio.py`):** The experimental Vertex route enables Google Search grounding in the live config but does not add a generic function-calling bridge yet. If Vertex fails during connect/setup because of misconfiguration, capacity, or connection failure, the Mini App retries once against the standard route for that session only and keeps the stored preference unchanged.
+
+- **Hardened Vertex Live bootstrap and deploy secret readability (`app/providers/gemini.py`, `app/web_miniapp.py`, `.github/workflows/deploy.yml`, `tests/test_live_audio.py`):** Vertex Live now validates that `GOOGLE_APPLICATION_CREDENTIALS` points to an existing readable file before the session starts, returning a controlled `misconfigured` fatal instead of surfacing a raw permission crash from the SDK. The deploy workflow now mounts `VERTEX_LIVE_SERVICE_ACCOUNT_JSON` with permissions readable by the non-root `tg-bot` container process, fixing `[Errno 13] Permission denied: '/run/secrets/vertex-live-sa.json'` during Live session startup.
 
 ### 🎙️ Live Audio Personalization
 
