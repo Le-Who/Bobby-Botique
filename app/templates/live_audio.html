@@ -220,6 +220,7 @@
       right: 16px;
       bottom: 16px;
       max-width: 440px;
+      max-height: min(78dvh, 720px);
       margin: 0 auto;
       padding: 18px;
       border-radius: 24px;
@@ -229,8 +230,22 @@
       transform: translateY(110%);
       transition: transform .22s ease;
       z-index: 45;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
     #live-settings-sheet.show { transform: translateY(0); }
+
+    .sheet-scroll {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      padding-right: 4px;
+      margin-right: -4px;
+      touch-action: pan-y;
+    }
 
     .sheet-title {
       font-size: 18px;
@@ -357,17 +372,19 @@
 <div id="error-bar"></div>
 <div id="sheet-overlay"></div>
 <div id="live-settings-sheet">
-  <div class="sheet-title">Настройки Live Audio</div>
-  <div class="sheet-subtitle">
-    Эти параметры относятся только к live-диалогу. Обычный TTS-голос не меняется.
-    Изменения применяются через короткое переподключение.
+  <div class="sheet-scroll">
+    <div class="sheet-title">Настройки Live Audio</div>
+    <div class="sheet-subtitle">
+      Эти параметры относятся только к live-диалогу. Обычный TTS-голос не меняется.
+      Изменения применяются через короткое переподключение.
+    </div>
+
+    <div class="sheet-section-title">Голос</div>
+    <div id="live-voice-options" class="settings-list"></div>
+
+    <div class="sheet-section-title">Режим мышления</div>
+    <div id="live-thinking-options" class="settings-list"></div>
   </div>
-
-  <div class="sheet-section-title">Голос</div>
-  <div id="live-voice-options" class="settings-list"></div>
-
-  <div class="sheet-section-title">Режим мышления</div>
-  <div id="live-thinking-options" class="settings-list"></div>
 
   <div class="sheet-actions">
     <button id="live-settings-cancel" class="sheet-action-btn" type="button">Отмена</button>
