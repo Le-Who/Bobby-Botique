@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -26,6 +27,24 @@ def _score_emoji(score: float) -> str:
     if score >= 0.3:
         return "🟡"
     return "🧊"
+
+
+def _build_play_keyboard(bot, game_id: str) -> InlineKeyboardMarkup | None:
+    from app.config import settings
+
+    miniapp_short = (getattr(settings, "MINIAPP_SHORT_NAME", "") or "").strip()
+    bot_username = (getattr(bot, "username", "") or "").strip()
+    if miniapp_short and bot_username:
+        url = f"https://t.me/{bot_username}/{miniapp_short}?startapp={game_id}"
+    else:
+        webapp_base = (getattr(settings, "WEBAPP_BASE_URL", "") or "").strip().rstrip("/")
+        if not webapp_base:
+            webhook_url = os.environ.get("WEBHOOK_URL", "") or ""
+            webapp_base = webhook_url.split("/webhook")[0].rstrip("/")
+        if not webapp_base:
+            return None
+        url = f"{webapp_base}/webapp/game?game_id={game_id}"
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🎮 Играть", url=url)]])
 
 
 class CrocodileTelegramService:
@@ -59,10 +78,12 @@ class CrocodileTelegramService:
         bar = _score_bar(game.best_score)
         pct = int(game.best_score * 100)
         text = f"🎯 <b>Крокодил</b> — идёт игра\n{emoji} Лучшая попытка: <code>{bar}</code> {pct}%"
+        keyboard = _build_play_keyboard(bot, game.game_id)
         await bot.edit_message_text(
             inline_message_id=game.inline_message_id,
             text=text,
             parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
         )
 
     @classmethod
@@ -87,15 +108,18 @@ class CrocodileTelegramService:
             if not snapshot:
                 return
             bot = snapshot["bot"]
+            game_id = str(snapshot.get("game_id") or "")
             best_score = float(snapshot["best_score"])
             emoji = _score_emoji(best_score)
             bar = _score_bar(best_score)
             pct = int(best_score * 100)
             text = f"🎯 <b>Крокодил</b> — идёт игра\n{emoji} Лучшая попытка: <code>{bar}</code> {pct}%"
+            keyboard = _build_play_keyboard(bot, game_id)
             await bot.edit_message_text(
                 inline_message_id=inline_message_id,
                 text=text,
                 parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
             )
         except asyncio.CancelledError:
             raise

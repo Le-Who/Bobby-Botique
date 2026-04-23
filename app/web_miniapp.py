@@ -766,6 +766,13 @@ async def game_page():
     return await render_template("crocodile.html", game_id=game_id, mode=mode)
 
 
+def _build_daily_word_mask(word: str) -> str:
+    letters = [ch for ch in (word or "").strip() if ch.isalnum()]
+    if not letters:
+        return ""
+    return " ".join("_" for _ in letters)
+
+
 @miniapp_blueprint.websocket("/game/daily/ws")
 async def daily_game_ws():
     """WebSocket endpoint for Daily Crocodile."""
@@ -848,6 +855,8 @@ async def daily_game_ws():
                 "lang": puzzle.lang,
                 "attempts": len(result.attempts),
                 "max_attempts": DAILY_MAX_ATTEMPTS,
+                "daily_topic": puzzle.topic,
+                "daily_word_mask": _build_daily_word_mask(puzzle.target_word) if difficulty == "easy" else "",
                 "is_creator": False,
                 "target_word": None,
                 "daily": True,

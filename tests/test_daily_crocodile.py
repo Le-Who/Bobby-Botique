@@ -932,6 +932,8 @@ async def test_daily_websocket_uses_daily_mode_and_timezone(monkeypatch) -> None
             assert state["daily"] is True
             assert state["max_attempts"] == 6
             assert state["difficulty"] == "easy"
+            assert state["daily_topic"] == "Разное"
+            assert state["daily_word_mask"] == "_ _ _ _ _ _ _ _"
             assert {item["difficulty"] for item in state["daily_modes"]} == {"easy", "hard"}
 
             await ws.send(json.dumps({"type": "guess", "word": "крокодил", "pending_id": "p1"}))

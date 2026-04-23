@@ -173,8 +173,7 @@
       font-size: 11px;
       font-weight: 600;
       color: rgba(255,255,255,0.9);
-      letter-spacing: .5px;
-      text-transform: uppercase;
+      letter-spacing: .2px;
       text-align: center;
       padding: 5px 14px;
       margin: 6px 0 2px;
@@ -184,9 +183,15 @@
       box-shadow: 0 4px 12px rgba(0,0,0,0.2), inset 0 1px 1px rgba(255,255,255,0.1);
       border-radius: 20px;
       pointer-events: none;
-      white-space: nowrap;
+      white-space: normal;
+      line-height: 1.3;
       transition: opacity 0.3s;
       flex-shrink: 0;
+    }
+    #category-pill .word-mask {
+      margin-top: 2px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      letter-spacing: 1.4px;
     }
     #category-pill:not(:empty) { display: block; }
 
@@ -692,6 +697,25 @@ function showError(msg, autoDismiss = true) {
   if (autoDismiss) setTimeout(() => bar.classList.remove('show'), 3500);
 }
 
+function renderCategoryPill(msg) {
+  const pill = $('category-pill');
+  if (!pill) return;
+  const category = String(msg?.category || '').trim();
+  if (!msg?.daily) {
+    pill.textContent = category ? `📂 ${category}` : '';
+    return;
+  }
+  const topic = String(msg?.daily_topic || '').trim();
+  const mask = String(msg?.daily_word_mask || '').trim();
+  if (!topic) {
+    pill.textContent = category ? `📂 ${category}` : '';
+    return;
+  }
+  let html = `<div>📂 Тема: ${escHtml(topic)}</div>`;
+  if (mask) html += `<div class="word-mask">${escHtml(mask)}</div>`;
+  pill.innerHTML = html;
+}
+
 /* ── Win/Loss overlay ───────────────────────────────────────────────────── */
 function renderDailyModes(modes = [], activeDifficulty = currentDailyDifficulty) {
   const container = $('daily-modes');
@@ -991,7 +1015,7 @@ function handleMessage(msg) {
       maxAttempts  = msg.max_attempts || 10;
       attemptsUsed = msg.attempts     || 0;
       setAttempts(attemptsUsed, maxAttempts);
-      if (msg.category) $('category-pill').textContent = `📂 ${msg.category}`;
+      renderCategoryPill(msg);
       if (msg.daily) $('header-title').textContent = '🐊 Крокодил дня';
       if (msg.daily && msg.difficulty) currentDailyDifficulty = msg.difficulty;
       if (msg.daily) renderDailyModes(msg.daily_modes || dailyModesState, currentDailyDifficulty);
