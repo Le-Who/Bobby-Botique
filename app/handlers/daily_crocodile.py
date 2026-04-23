@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 
 from app.repos import crocodile_daily as repo
 from app.repos.settings_repo import get_global_setting
-from app.utils.decorators import authorized_only, safe_handler
+from app.utils.decorators import safe_handler
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +217,8 @@ async def send_daily_prompt(
     return sent_as_photo
 
 
-@authorized_only
+# Daily Crocodile is intentionally public to any Telegram-authenticated user.
+# Whitelist still gates the rest of the bot via command/message handlers.
 @safe_handler("Не удалось открыть Крокодил дня")
 async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.message:

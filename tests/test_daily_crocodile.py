@@ -180,7 +180,6 @@ async def test_dailycroc_command_reuses_placeholder_sender_for_manual_entry() ->
         message=SimpleNamespace(message_id=900),
     )
     context = SimpleNamespace(bot=SimpleNamespace())
-    original = daily_crocodile.dailycroc_command.__wrapped__.__wrapped__
 
     with (
         patch("app.handlers.daily_crocodile.repo.record_player_activity", new_callable=AsyncMock) as activity_mock,
@@ -189,7 +188,7 @@ async def test_dailycroc_command_reuses_placeholder_sender_for_manual_entry() ->
         patch("app.handlers.daily_crocodile._send_daily_entry_message", new_callable=AsyncMock) as sender_mock,
         patch("app.handlers.daily_crocodile.repo.mark_daily_sent", new_callable=AsyncMock) as mark_mock,
     ):
-        await original(update, context)
+        await daily_crocodile.dailycroc_command(update, context)
 
     activity_mock.assert_awaited_once_with(77, event="daily_played")
     sender_mock.assert_awaited_once()
