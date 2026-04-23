@@ -121,6 +121,11 @@ def register(application: Application) -> None:
         role_view_prompt_callback,
         start_menu_callback,
     )
+    from app.handlers.cmd_admin import (
+        refresh_dailycroc_status_callback,
+        run_dailycroc_prep_check_callback,
+        send_dailycroc_test_callback,
+    )
 
     # ── Fast (non-blocking) callbacks ────────────────────────────────────
     _add_fast_callback(application, toggle_search_callback, "^toggle_search$")
@@ -200,6 +205,9 @@ def register(application: Application) -> None:
 
     # Refresh metrics
     application.add_handler(CallbackQueryHandler(refresh_metrics_callback, pattern="^refresh_metrics$"))
+    _add_fast_callback(application, refresh_dailycroc_status_callback, "^dailycroc_status:refresh$")
+    application.add_handler(CallbackQueryHandler(run_dailycroc_prep_check_callback, pattern="^dailycroc_status:check$"))
+    application.add_handler(CallbackQueryHandler(send_dailycroc_test_callback, pattern="^dailycroc_status:send_test$"))
 
     # Conversation branching
     from app.handlers.cb_branches import branch_create_callback, branch_return_callback

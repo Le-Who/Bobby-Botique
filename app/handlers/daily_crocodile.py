@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -128,50 +128,93 @@ async def send_discovery_intro(bot, user_id: int) -> bool:
     return True
 
 
-async def send_daily_prompt(bot, user_id: int, puzzle_date) -> bool:
-    caption = (
+def _scheduled_daily_prompt_caption(puzzle_date: date) -> str:
+    return (
         f"🐊 <b>Крокодил дня</b> · <code>{puzzle_date.isoformat()}</code>\n\n"
         "Сегодня уже готовы <b>Easy</b> и <b>Hard</b>. Оба режима можно пройти отдельно."
     )
-    keyboard = daily_play_keyboard(include_subscribe=False)
+
+
+def _manual_daily_prompt_caption() -> str:
+    return (
+        "🐊 <b>Крокодил дня</b>\n\n"
+        "На сегодня доступны <b>Easy</b> и <b>Hard</b>. "
+        "У каждого режима свои очки, completion и лидерборд."
+    )
+
+
+async def _send_daily_entry_message(
+    bot,
+    *,
+    chat_id: int,
+    user_id: int,
+    puzzle_date: date,
+    caption: str,
+    include_subscribe: bool,
+    reply_to_message_id: int | None = None,
+    track_prompt_message: bool = True,
+) -> bool:
+    keyboard = daily_play_keyboard(include_subscribe=include_subscribe)
     placeholder_file_id = (await _get_placeholder_file_id()).strip()
+    send_kwargs = {
+        "chat_id": chat_id,
+        "parse_mode": ParseMode.HTML,
+        "reply_markup": keyboard,
+    }
+    if reply_to_message_id is not None:
+        send_kwargs["reply_to_message_id"] = reply_to_message_id
     if placeholder_file_id:
         try:
             msg = await bot.send_photo(
-                chat_id=user_id,
                 photo=placeholder_file_id,
                 caption=caption,
-                parse_mode=ParseMode.HTML,
-                reply_markup=keyboard,
+                **send_kwargs,
             )
-            await repo.register_prompt_message(
-                user_id=user_id,
-                puzzle_date=puzzle_date,
-                chat_id=msg.chat_id,
-                message_id=msg.message_id,
-            )
+            if track_prompt_message:
+                await repo.register_prompt_message(
+                    user_id=user_id,
+                    puzzle_date=puzzle_date,
+                    chat_id=msg.chat_id,
+                    message_id=msg.message_id,
+                )
+            return True
         except Exception as exc:
             logger.warning("daily prompt photo failed user=%s: %s — falling back to text", user_id, exc)
-            await bot.send_message(
-                chat_id=user_id,
-                text=caption,
-                parse_mode=ParseMode.HTML,
-                reply_markup=keyboard,
-            )
-    else:
-        await bot.send_message(
-            chat_id=user_id,
-            text=caption,
-            parse_mode=ParseMode.HTML,
-            reply_markup=keyboard,
-        )
-    pref = await repo.get_preference(user_id)
-    await repo.mark_daily_sent(
-        user_id,
-        puzzle_date,
-        timezone=(pref or {}).get("timezone"),
+    await bot.send_message(
+        text=caption,
+        **send_kwargs,
     )
-    return True
+    return False
+
+
+async def send_daily_prompt(
+    bot,
+    user_id: int,
+    puzzle_date: date,
+    *,
+    include_subscribe: bool = False,
+    reply_to_message_id: int | None = None,
+    mark_delivered: bool = True,
+    track_prompt_message: bool = True,
+) -> bool:
+    sent_as_photo = await _send_daily_entry_message(
+        bot,
+        chat_id=user_id,
+        user_id=user_id,
+        puzzle_date=puzzle_date,
+        caption=_scheduled_daily_prompt_caption(puzzle_date),
+        include_subscribe=include_subscribe,
+        reply_to_message_id=reply_to_message_id,
+        track_prompt_message=track_prompt_message,
+    )
+    pref = await repo.get_preference(user_id)
+    if mark_delivered:
+        await repo.mark_daily_sent(
+            user_id,
+            puzzle_date,
+            timezone=(pref or {}).get("timezone"),
+        )
+    return sent_as_photo
 
 
 @authorized_only
@@ -183,26 +226,24 @@ async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await repo.record_player_activity(user_id, event="daily_played")
     pref = await repo.get_preference(user_id)
     is_subscribed = bool(pref and pref.get("is_subscribed"))
+    now = datetime.now(tz=UTC)
+    today = repo.today_puzzle_date(now)
     # Mark delivery so the scheduler doesn't send a duplicate today.
-    if is_subscribed:
-        now = datetime.now(tz=UTC)
-        today = repo.today_puzzle_date(now)
-        if not repo.was_daily_delivered_today(pref, puzzle_date=today, now=now):
-            await repo.mark_daily_sent(
-                user_id,
-                today,
-                now=now,
-                timezone=(pref or {}).get("timezone"),
-            )
-    text = (
-        "🐊 <b>Крокодил дня</b>\n\n"
-        "На сегодня доступны <b>Easy</b> и <b>Hard</b>. "
-        "У каждого режима свои очки, completion и лидерборд."
-    )
-    await update.message.reply_text(
-        text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=daily_play_keyboard(include_subscribe=not is_subscribed),
+    if is_subscribed and not repo.was_daily_delivered_today(pref, puzzle_date=today, now=now):
+        await repo.mark_daily_sent(
+            user_id,
+            today,
+            now=now,
+            timezone=(pref or {}).get("timezone"),
+        )
+    await _send_daily_entry_message(
+        context.bot,
+        chat_id=update.effective_chat.id,
+        user_id=user_id,
+        puzzle_date=today,
+        caption=_manual_daily_prompt_caption(),
+        include_subscribe=not is_subscribed,
+        reply_to_message_id=update.message.message_id,
     )
 
 

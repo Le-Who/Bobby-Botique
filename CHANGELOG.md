@@ -5,6 +5,14 @@ Format is optimized for agent-parseable context.
 
 ## [Unreleased] - 2026-04-23 - 48-Hour Production Audit: Lock Eviction P0, Voice Engine Hardening
 
+### 🐊 Daily Crocodile Operator Visibility & Admin Smoke Tests
+
+- **Interactive `/dailycroc_status` operator card (`app/handlers/cmd_admin.py`, `app/handlers/callbacks.py`, `tests/test_daily_crocodile.py`):** The daily admin snapshot now exposes inline `Refresh`, `Prep check`, and `Send test to admin` buttons instead of forcing chat spam with repeated commands. The status body also breaks prep down per difficulty into `puzzle / hints / art / prepared_at`, so operators can distinguish "ready for delivery" from "image still pending" without reading logs.
+
+- **Placeholder smoke-test persistence (`app/handlers/cmd_admin.py`, `app/repos/settings_repo.py`, `tests/test_daily_crocodile.py`):** The admin test-send path now stores the last placeholder verification result in `global_settings` as a compact JSON snapshot (`status`, `mode`, `timestamp`, `error`). `/dailycroc_status` renders that back as `Placeholder test`, giving ops a durable signal that the configured banner still survives the real Telegram `send_photo` path.
+
+- **Test-send no longer pollutes prompt tracking (`app/handlers/daily_crocodile.py`, `app/handlers/cmd_admin.py`, `tests/test_daily_crocodile.py`):** Added `track_prompt_message=False` support to the shared daily invite sender and use it from the admin smoke test together with `mark_delivered=False`. This fixes the regression where an admin-only dry run could create a fake `prompt_message` row and later become an unintended target for prompt→art completion swaps.
+
 ### 🎙️ Live Audio Stability & Context Repair
 
 - **Restored the correct Live provider boundary (`app/config.py`, `app/web_miniapp.py`, `tests/test_live_audio.py`):** Live Audio now runs again on the Gemini GenAI Live API path with `gemini-3.1-flash-live-preview`. The failed Vertex-only migration attempts were removed from the runtime contract and from the regression scaffolding.
@@ -36,7 +44,7 @@ Format is optimized for agent-parseable context.
 ### ✅ Verification
 
 - `python -m ruff check .` → **All checks passed**
-- `python -m pytest tests/ -q -n auto` → **1835 passed, 96 skipped, 0 failures**
+- `python -m pytest tests/ -q -n auto` → **1846 passed, 96 skipped, 0 failures**
 
 ---
 

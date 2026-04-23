@@ -2,15 +2,19 @@
 """Admin-only commands: user management, metrics, cache, queue, config, tavily, cleanup."""
 
 import asyncio
+import html
+import json
 import logging
+from datetime import UTC, datetime
 
 import httpx
 from google import genai
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
 from app.cache import get_cache_stats
-from app.config import settings
+from app.config import KYIV_TZ, settings
 from app.group_chat import group_chat_manager
 from app.handlers import menus
 from app.metrics import role_conv_metrics
@@ -32,6 +36,172 @@ from app.repos.users import invalidate_user_auth_cache
 from app.utils import time as time_utils
 from app.utils.decorators import admin_only, authorized_only
 from app.utils.formatting import TelegramFormatter
+
+_DAILYCROC_STATUS_REFRESH = "dailycroc_status:refresh"
+_DAILYCROC_STATUS_CHECK = "dailycroc_status:check"
+_DAILYCROC_STATUS_SEND_TEST = "dailycroc_status:send_test"
+_EXPECTED_DAILY_HINTS = 3
+_DAILYCROC_PLACEHOLDER_TEST_KEY = "daily_croc_placeholder_test_status"
+
+
+def _dailycroc_status_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("🔄 Refresh", callback_data=_DAILYCROC_STATUS_REFRESH),
+                InlineKeyboardButton("🧪 Prep check", callback_data=_DAILYCROC_STATUS_CHECK),
+            ],
+            [InlineKeyboardButton("📬 Send test to admin", callback_data=_DAILYCROC_STATUS_SEND_TEST)],
+        ]
+    )
+
+
+def _format_daily_prepared_at(value: datetime | None) -> str:
+    if value is None:
+        return "no"
+    localized = value.astimezone(KYIV_TZ) if value.tzinfo else value.replace(tzinfo=UTC).astimezone(KYIV_TZ)
+    return localized.strftime("%d.%m %H:%M Kyiv")
+
+
+def _format_dailycroc_test_timestamp(value: str) -> str:
+    if not value:
+        return "unknown"
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return "unknown"
+    localized = parsed.astimezone(KYIV_TZ) if parsed.tzinfo else parsed.replace(tzinfo=UTC).astimezone(KYIV_TZ)
+    return localized.strftime("%d.%m %H:%M Kyiv")
+
+
+def _render_placeholder_test_status(raw: str) -> str:
+    if not raw:
+        return "<code>not run</code>"
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return "<code>invalid</code>"
+
+    if not isinstance(payload, dict):
+        return "<code>invalid</code>"
+
+    status = str(payload.get("status") or "").strip().lower()
+    mode = str(payload.get("mode") or "").strip().lower()
+    timestamp = _format_dailycroc_test_timestamp(str(payload.get("timestamp") or ""))
+    error = str(payload.get("error") or "").strip()
+
+    if status == "ok":
+        mode_label = "photo" if mode == "photo" else "text"
+        return f"<code>ok/{mode_label} @ {timestamp}</code>"
+    if status == "error":
+        suffix = f": {html.escape(error[:48])}" if error else ""
+        return f"<code>error @ {timestamp}{suffix}</code>"
+    return "<code>unknown</code>"
+
+
+async def _write_placeholder_test_status(*, status: str, mode: str = "", error: str = "") -> None:
+    payload = {
+        "status": status,
+        "mode": mode,
+        "timestamp": datetime.now(tz=UTC).isoformat(),
+        "error": error[:200],
+    }
+    await set_global_setting(_DAILYCROC_PLACEHOLDER_TEST_KEY, json.dumps(payload, ensure_ascii=False))
+
+
+def _daily_prep_component_line(difficulty: str, puzzle) -> str:
+    if not puzzle:
+        return (
+            f"  {difficulty}: <code>missing</code> · "
+            f"puzzle=<code>no</code> · hints=<code>0/{_EXPECTED_DAILY_HINTS}</code> · art=<code>no</code> · "
+            "prepared=<code>no</code>"
+        )
+
+    puzzle_ready = bool(str(getattr(puzzle, "target_word", "") or "").strip()) and bool(
+        str(getattr(puzzle, "topic", "") or "").strip()
+    )
+    hints_count = sum(1 for item in (getattr(puzzle, "hints", None) or []) if str(item).strip())
+    art_ready = bool(str(getattr(puzzle, "image_file_id", "") or "").strip())
+    prepared_at = _format_daily_prepared_at(getattr(puzzle, "prepared_at", None))
+    state = "ready" if daily_croc_repo.is_puzzle_fully_prepared(puzzle) else "warming"
+    return (
+        f"  {difficulty}: <code>{state}</code> · "
+        f"puzzle=<code>{'yes' if puzzle_ready else 'no'}</code> · "
+        f"hints=<code>{hints_count}/{_EXPECTED_DAILY_HINTS}</code> · "
+        f"art=<code>{'yes' if art_ready else 'no'}</code> · "
+        f"prepared=<code>{prepared_at}</code>"
+    )
+
+
+async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tuple[str, InlineKeyboardMarkup]:
+    """Render the Daily Crocodile admin snapshot plus action buttons."""
+    from app.games.crocodile_flags import get_crocodile_runtime_switches
+    from app.games.crocodile_runtime import get_runtime_health_snapshot
+    from app.games.hinting import get_hint_prewarm_health
+    from app.providers.gemini import get_vertex_client
+    from app.web_miniapp import _get_live_model_cooldown_seconds
+
+    current = now or datetime.now(tz=UTC)
+    today = daily_croc_repo.today_puzzle_date(current)
+    stats = await daily_croc_repo.get_delivery_status(today)
+    puzzles = await daily_croc_repo.get_puzzles_for_date(today)
+    delivery_on = await get_global_setting(daily_croc_repo.DAILY_DELIVERY_SETTING_KEY, "on")
+    placeholder = await get_global_setting("daily_croc_placeholder_file_id", "")
+    placeholder_test = await get_global_setting(_DAILYCROC_PLACEHOLDER_TEST_KEY, "")
+    switches = await get_crocodile_runtime_switches()
+    hint_health = await get_hint_prewarm_health()
+    runtime_health = get_runtime_health_snapshot()
+    vertex_ready = get_vertex_client() is not None
+    live_cooldown = _get_live_model_cooldown_seconds()
+
+    prepared_lines = [
+        _daily_prep_component_line(difficulty, puzzles.get(difficulty))
+        for difficulty in daily_croc_repo.DAILY_DIFFICULTIES
+    ]
+
+    lines = [
+        f"🐊 <b>Daily Crocodile — {today.isoformat()}</b>",
+        "",
+        f"📨 <b>Рассылка:</b> {'включена ✅' if delivery_on == 'on' else 'выключена ❌'}",
+        f"🖼 <b>Placeholder:</b> {'установлен ✅' if placeholder else 'не задан ⚠️'}",
+        f"🧪 <b>Placeholder test:</b> {_render_placeholder_test_status(placeholder_test)}",
+        "",
+        "<b>Runtime switches:</b>",
+        f"  live_audio_enabled: <code>{'on' if switches.get('live_audio_enabled') else 'off'}</code>",
+        f"  crocodile_hint_prewarm_enabled: <code>{'on' if switches.get('crocodile_hint_prewarm_enabled') else 'off'}</code>",
+        f"  daily_dual_track_enabled: <code>{'on' if switches.get('daily_dual_track_enabled') else 'off'}</code>",
+        "",
+        "<b>Health:</b>",
+        f"  Vertex Live ready: <code>{'yes' if vertex_ready else 'no'}</code>",
+        f"  Live cooldown: <code>{live_cooldown}s</code>",
+        f"  Hint queue depth: <code>{hint_health.get('queue_depth', 0)}</code>",
+        f"  Hint worker running: <code>{'yes' if hint_health.get('worker_running') else 'no'}</code>",
+        f"  Replay buffers: <code>{runtime_health.get('history_buffers', 0)}</code>",
+        f"  Pending dedupe buckets: <code>{runtime_health.get('pending_result_buckets', 0)}</code>",
+        "",
+        "<b>Daily prep:</b>",
+        *prepared_lines,
+        "",
+        "<b>Подписки:</b>",
+        f"  Всего подписано:      <code>{stats.get('total_subscribed', 0)}</code>",
+        f"  Отправлено сегодня:   <code>{stats.get('sent_today', 0)}</code>",
+        f"  Осталось отправить:   <code>{stats.get('pending_today', 0)}</code>",
+        "",
+        "<b>Игра сегодня:</b>",
+        f"  Завершили:  <code>{stats.get('finished', 0)}</code>",
+        f"  Выиграли:   <code>{stats.get('won', 0)}</code>",
+        f"  В процессе: <code>{stats.get('active', 0)}</code>",
+    ]
+    return "\n".join(lines), _dailycroc_status_keyboard()
+
+
+async def _refresh_dailycroc_status_message(query, *, now: datetime | None = None) -> None:
+    text, keyboard = await build_dailycroc_status_snapshot(now=now)
+    await query.edit_message_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
 
 
 @admin_only
@@ -562,7 +732,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "• `/listmodels` — список доступных моделей\n\n"
             "*🐊 Daily Crocodile:*\n"
             "• `/set_dailycroc_delivery on|off` — включить/выключить исходящую daily-рассылку\n"
-            "• `/dailycroc_status` — снимок подписок и игры на сегодня\n"
+            "• `/dailycroc_status` — снимок подписок/готовности на сегодня + кнопки Refresh и Prep check\n"
             "• `/set_dailycroc_placeholder` — реплайни на фото, чтобы задать баннер рассылки\n\n"
             "*🌐 API ключи:*\n"
             "• `/checkgeminikeys` — проверить статус ключей Gemini\n"
@@ -798,66 +968,82 @@ async def set_dailycroc_delivery_command(update: Update, context: ContextTypes.D
 @admin_only
 async def dailycroc_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show a snapshot of today's Daily Crocodile delivery pipeline."""
-    from app.games.crocodile_flags import get_crocodile_runtime_switches
-    from app.games.crocodile_runtime import get_runtime_health_snapshot
-    from app.games.hinting import get_hint_prewarm_health
-    from app.providers.gemini import get_vertex_client
-    from app.web_miniapp import _get_live_model_cooldown_seconds
+    text, keyboard = await build_dailycroc_status_snapshot()
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
-    today = daily_croc_repo.today_puzzle_date()
-    stats = await daily_croc_repo.get_delivery_status(today)
-    puzzles = await daily_croc_repo.get_puzzles_for_date(today)
-    delivery_on = await get_global_setting(daily_croc_repo.DAILY_DELIVERY_SETTING_KEY, "on")
-    placeholder = await get_global_setting("daily_croc_placeholder_file_id", "")
-    switches = await get_crocodile_runtime_switches()
-    hint_health = await get_hint_prewarm_health()
-    runtime_health = get_runtime_health_snapshot()
-    vertex_ready = get_vertex_client() is not None
-    live_cooldown = _get_live_model_cooldown_seconds()
 
-    prepared_lines = []
-    for difficulty in daily_croc_repo.DAILY_DIFFICULTIES:
-        puzzle = puzzles.get(difficulty)
-        if not puzzle:
-            prepared_lines.append(f"  {difficulty}: <code>missing</code>")
-            continue
-        prepared_lines.append(
-            f"  {difficulty}: <code>{'ready' if daily_croc_repo.is_puzzle_fully_prepared(puzzle) else 'warming'}</code>"
+@admin_only
+async def refresh_dailycroc_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Refresh the daily status card in-place without chat spam."""
+    query = update.callback_query
+    if not query:
+        return
+
+    try:
+        await _refresh_dailycroc_status_message(query)
+        await query.answer("🔄 Статус обновлён")
+    except BadRequest as exc:
+        if "message is not modified" in str(exc):
+            await query.answer("✅ Данные актуальны", show_alert=False)
+            return
+        logging.error("Error refreshing dailycroc status: %s", exc)
+        await query.answer("❌ Ошибка обновления", show_alert=True)
+    except Exception as exc:
+        logging.error("Error in dailycroc status refresh callback: %s", exc, exc_info=True)
+        await query.answer("❌ Внутренняя ошибка", show_alert=True)
+
+
+@admin_only
+async def run_dailycroc_prep_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Force a readiness pass for today's/future daily puzzles, then refresh the status card."""
+    from app.games.crocodile_daily import ensure_prepared_puzzles
+
+    query = update.callback_query
+    if not query:
+        return
+
+    await query.answer("🧪 Проверяю daily prep…", show_alert=False)
+    try:
+        await ensure_prepared_puzzles(context.bot, now=datetime.now(tz=UTC))
+        await _refresh_dailycroc_status_message(query)
+    except BadRequest as exc:
+        if "message is not modified" in str(exc):
+            return
+        logging.error("Error updating dailycroc status after prep check: %s", exc)
+    except Exception as exc:
+        logging.error("Error in dailycroc prep check callback: %s", exc, exc_info=True)
+
+
+@admin_only
+async def send_dailycroc_test_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send the current daily invite to the admin without affecting delivery bookkeeping."""
+    from app.handlers.daily_crocodile import send_daily_prompt
+
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+
+    today = daily_croc_repo.today_puzzle_date(datetime.now(tz=UTC))
+    try:
+        sent_as_photo = await send_daily_prompt(
+            context.bot,
+            update.effective_user.id,
+            today,
+            include_subscribe=False,
+            mark_delivered=False,
+            track_prompt_message=False,
         )
-
-    lines = [
-        f"🐊 <b>Daily Crocodile — {today.isoformat()}</b>",
-        "",
-        f"📨 <b>Рассылка:</b> {'включена ✅' if delivery_on == 'on' else 'выключена ❌'}",
-        f"🖼 <b>Placeholder:</b> {'установлен ✅' if placeholder else 'не задан ⚠️'}",
-        "",
-        "<b>Runtime switches:</b>",
-        f"  live_audio_enabled: <code>{'on' if switches.get('live_audio_enabled') else 'off'}</code>",
-        f"  crocodile_hint_prewarm_enabled: <code>{'on' if switches.get('crocodile_hint_prewarm_enabled') else 'off'}</code>",
-        f"  daily_dual_track_enabled: <code>{'on' if switches.get('daily_dual_track_enabled') else 'off'}</code>",
-        "",
-        "<b>Health:</b>",
-        f"  Vertex Live ready: <code>{'yes' if vertex_ready else 'no'}</code>",
-        f"  Live cooldown: <code>{live_cooldown}s</code>",
-        f"  Hint queue depth: <code>{hint_health.get('queue_depth', 0)}</code>",
-        f"  Hint worker running: <code>{'yes' if hint_health.get('worker_running') else 'no'}</code>",
-        f"  Replay buffers: <code>{runtime_health.get('history_buffers', 0)}</code>",
-        f"  Pending dedupe buckets: <code>{runtime_health.get('pending_result_buckets', 0)}</code>",
-        "",
-        "<b>Daily prep:</b>",
-        *prepared_lines,
-        "",
-        "<b>Подписки:</b>",
-        f"  Всего подписано:      <code>{stats.get('total_subscribed', 0)}</code>",
-        f"  Отправлено сегодня:   <code>{stats.get('sent_today', 0)}</code>",
-        f"  Осталось отправить:   <code>{stats.get('pending_today', 0)}</code>",
-        "",
-        "<b>Игра сегодня:</b>",
-        f"  Завершили:  <code>{stats.get('finished', 0)}</code>",
-        f"  Выиграли:   <code>{stats.get('won', 0)}</code>",
-        f"  В процессе: <code>{stats.get('active', 0)}</code>",
-    ]
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+        await _write_placeholder_test_status(status="ok", mode="photo" if sent_as_photo else "text")
+        mode = "с placeholder" if sent_as_photo else "текстом"
+        await query.answer(f"📬 Тест отправлен админу ({mode})", show_alert=False)
+    except TelegramError as exc:
+        logging.error("Dailycroc test send failed for admin %s: %s", update.effective_user.id, exc, exc_info=True)
+        await _write_placeholder_test_status(status="error", error=str(exc))
+        await query.answer("❌ Не удалось отправить тест", show_alert=True)
+    except Exception as exc:
+        logging.error("Dailycroc test send crashed for admin %s: %s", update.effective_user.id, exc, exc_info=True)
+        await _write_placeholder_test_status(status="error", error=str(exc))
+        await query.answer("❌ Не удалось отправить тест", show_alert=True)
 
 
 @admin_only

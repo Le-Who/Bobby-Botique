@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.games import crocodile_daily_telegram
-from app.handlers import daily_crocodile
+from app.handlers import cmd_admin, daily_crocodile
 from app.repos import crocodile_daily as repo
 from app.web import quart_app
 from tests.factories import make_valid_init_data
@@ -116,6 +116,205 @@ def test_intro_keyboard_labels() -> None:
     labels = [button.text for row in markup.inline_keyboard for button in row]
 
     assert labels == ["Открыть daily", "Получать каждый день", "Не напоминать 2 недели"]
+
+
+@pytest.mark.asyncio
+async def test_send_daily_prompt_uses_placeholder_photo_and_tracks_prompt_message() -> None:
+    sent_message = SimpleNamespace(chat_id=77, message_id=501)
+    bot = SimpleNamespace(
+        send_photo=AsyncMock(return_value=sent_message),
+        send_message=AsyncMock(),
+    )
+
+    with (
+        patch("app.handlers.daily_crocodile._get_placeholder_file_id", new_callable=AsyncMock, return_value="placeholder-file"),
+        patch("app.handlers.daily_crocodile.repo.register_prompt_message", new_callable=AsyncMock) as register_mock,
+        patch("app.handlers.daily_crocodile.repo.get_preference", new_callable=AsyncMock, return_value={"timezone": "Europe/Kyiv"}),
+        patch("app.handlers.daily_crocodile.repo.mark_daily_sent", new_callable=AsyncMock) as mark_mock,
+    ):
+        sent_as_photo = await daily_crocodile.send_daily_prompt(bot, 77, date(2026, 4, 23))
+
+    assert sent_as_photo is True
+    bot.send_photo.assert_awaited_once()
+    bot.send_message.assert_not_awaited()
+    register_mock.assert_awaited_once_with(
+        user_id=77,
+        puzzle_date=date(2026, 4, 23),
+        chat_id=77,
+        message_id=501,
+    )
+    mark_mock.assert_awaited_once_with(77, date(2026, 4, 23), timezone="Europe/Kyiv")
+
+
+@pytest.mark.asyncio
+async def test_send_daily_prompt_can_skip_prompt_tracking() -> None:
+    sent_message = SimpleNamespace(chat_id=77, message_id=888)
+    bot = SimpleNamespace(
+        send_photo=AsyncMock(return_value=sent_message),
+        send_message=AsyncMock(),
+    )
+
+    with (
+        patch("app.handlers.daily_crocodile._get_placeholder_file_id", new_callable=AsyncMock, return_value="placeholder-file"),
+        patch("app.handlers.daily_crocodile.repo.register_prompt_message", new_callable=AsyncMock) as register_mock,
+        patch("app.handlers.daily_crocodile.repo.get_preference", new_callable=AsyncMock, return_value={"timezone": "Europe/Kyiv"}),
+        patch("app.handlers.daily_crocodile.repo.mark_daily_sent", new_callable=AsyncMock),
+    ):
+        sent_as_photo = await daily_crocodile.send_daily_prompt(
+            bot,
+            77,
+            date(2026, 4, 23),
+            track_prompt_message=False,
+        )
+
+    assert sent_as_photo is True
+    register_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dailycroc_command_reuses_placeholder_sender_for_manual_entry() -> None:
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=77),
+        effective_chat=SimpleNamespace(id=77),
+        message=SimpleNamespace(message_id=900),
+    )
+    context = SimpleNamespace(bot=SimpleNamespace())
+    original = daily_crocodile.dailycroc_command.__wrapped__.__wrapped__
+
+    with (
+        patch("app.handlers.daily_crocodile.repo.record_player_activity", new_callable=AsyncMock) as activity_mock,
+        patch("app.handlers.daily_crocodile.repo.get_preference", new_callable=AsyncMock, return_value={"is_subscribed": False}),
+        patch("app.handlers.daily_crocodile.repo.today_puzzle_date", return_value=date(2026, 4, 23)),
+        patch("app.handlers.daily_crocodile._send_daily_entry_message", new_callable=AsyncMock) as sender_mock,
+        patch("app.handlers.daily_crocodile.repo.mark_daily_sent", new_callable=AsyncMock) as mark_mock,
+    ):
+        await original(update, context)
+
+    activity_mock.assert_awaited_once_with(77, event="daily_played")
+    sender_mock.assert_awaited_once()
+    call = sender_mock.await_args
+    assert call.args[0] is context.bot
+    assert call.kwargs["chat_id"] == 77
+    assert call.kwargs["user_id"] == 77
+    assert call.kwargs["puzzle_date"] == date(2026, 4, 23)
+    assert call.kwargs["include_subscribe"] is True
+    assert call.kwargs["reply_to_message_id"] == 900
+    assert "На сегодня доступны" in call.kwargs["caption"]
+    mark_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_build_dailycroc_status_snapshot_shows_hint_and_art_breakdown() -> None:
+    easy = repo.DailyPuzzle(
+        puzzle_date=date(2026, 4, 23),
+        target_word="крокодил",
+        topic="Разное",
+        lang="ru",
+        difficulty="easy",
+        hints=["h1", "h2", "h3"],
+        image_file_id="img-1",
+        prepared_at=datetime(2026, 4, 23, 6, 15, tzinfo=UTC),
+    )
+    hard = repo.DailyPuzzle(
+        puzzle_date=date(2026, 4, 23),
+        target_word="телескоп",
+        topic="Разное",
+        lang="ru",
+        difficulty="hard",
+        hints=["h1", "h2", "h3"],
+        image_file_id="",
+        prepared_at=datetime(2026, 4, 23, 6, 45, tzinfo=UTC),
+    )
+
+    async def fake_get_global_setting(key: str, default=""):
+        values = {
+            repo.DAILY_DELIVERY_SETTING_KEY: "on",
+            "daily_croc_placeholder_file_id": "placeholder-file",
+            "daily_croc_placeholder_test_status": '{"status":"ok","mode":"photo","timestamp":"2026-04-23T06:20:00+00:00","error":""}',
+        }
+        return values.get(key, default)
+
+    with (
+        patch("app.handlers.cmd_admin.daily_croc_repo.get_delivery_status", new_callable=AsyncMock, return_value={"total_subscribed": 5, "sent_today": 2, "pending_today": 3, "finished": 4, "won": 4, "active": 0}),
+        patch("app.handlers.cmd_admin.daily_croc_repo.get_puzzles_for_date", new_callable=AsyncMock, return_value={"easy": easy, "hard": hard}),
+        patch("app.handlers.cmd_admin.get_global_setting", new_callable=AsyncMock, side_effect=fake_get_global_setting),
+        patch("app.games.crocodile_flags.get_crocodile_runtime_switches", new_callable=AsyncMock, return_value={"live_audio_enabled": True, "crocodile_hint_prewarm_enabled": True, "daily_dual_track_enabled": True}),
+        patch("app.games.hinting.get_hint_prewarm_health", new_callable=AsyncMock, return_value={"queue_depth": 0, "worker_running": False}),
+        patch("app.games.crocodile_runtime.get_runtime_health_snapshot", return_value={"history_buffers": 0, "pending_result_buckets": 0}),
+        patch("app.providers.gemini.get_vertex_client", return_value=object()),
+        patch("app.web_miniapp._get_live_model_cooldown_seconds", return_value=0),
+    ):
+        text, keyboard = await cmd_admin.build_dailycroc_status_snapshot(now=datetime(2026, 4, 23, 9, 0, tzinfo=UTC))
+
+    assert "easy: <code>ready</code> · puzzle=<code>yes</code> · hints=<code>3/3</code> · art=<code>yes</code> · prepared=<code>23.04 09:15 Kyiv</code>" in text
+    assert "hard: <code>ready</code> · puzzle=<code>yes</code> · hints=<code>3/3</code> · art=<code>no</code> · prepared=<code>23.04 09:45 Kyiv</code>" in text
+    assert "🧪 <b>Placeholder test:</b> <code>ok/photo @ 23.04 09:20 Kyiv</code>" in text
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+    assert labels == ["🔄 Refresh", "🧪 Prep check", "📬 Send test to admin"]
+
+
+@pytest.mark.asyncio
+async def test_dailycroc_prep_check_callback_runs_preparation_and_refreshes_status() -> None:
+    query = SimpleNamespace(
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=1),
+    )
+    context = SimpleNamespace(bot=object())
+    original = cmd_admin.run_dailycroc_prep_check_callback.__wrapped__
+
+    with (
+        patch("app.games.crocodile_daily.ensure_prepared_puzzles", new_callable=AsyncMock) as ensure_mock,
+        patch("app.handlers.cmd_admin._refresh_dailycroc_status_message", new_callable=AsyncMock) as refresh_mock,
+    ):
+        await original(update, context)
+
+    query.answer.assert_awaited_once_with("🧪 Проверяю daily prep…", show_alert=False)
+    ensure_mock.assert_awaited_once()
+    assert ensure_mock.await_args.args[0] is context.bot
+    assert ensure_mock.await_args.kwargs["now"] is not None
+    refresh_mock.assert_awaited_once_with(query)
+
+
+@pytest.mark.asyncio
+async def test_send_dailycroc_test_callback_uses_daily_prompt_without_marking_delivery() -> None:
+    query = SimpleNamespace(answer=AsyncMock())
+    update = SimpleNamespace(
+        callback_query=query,
+        effective_user=SimpleNamespace(id=777),
+    )
+    context = SimpleNamespace(bot=object())
+    original = cmd_admin.send_dailycroc_test_callback.__wrapped__
+
+    with (
+        patch("app.handlers.cmd_admin.daily_croc_repo.today_puzzle_date", return_value=date(2026, 4, 23)),
+        patch(
+            "app.handlers.daily_crocodile.send_daily_prompt",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as prompt_mock,
+        patch("app.handlers.cmd_admin.set_global_setting", new_callable=AsyncMock) as set_mock,
+    ):
+        await original(update, context)
+
+    prompt_mock.assert_awaited_once_with(
+        context.bot,
+        777,
+        date(2026, 4, 23),
+        include_subscribe=False,
+        mark_delivered=False,
+        track_prompt_message=False,
+    )
+    set_mock.assert_awaited_once()
+    stored_key, stored_value = set_mock.await_args.args
+    assert stored_key == "daily_croc_placeholder_test_status"
+    payload = json.loads(stored_value)
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "photo"
+    query.answer.assert_awaited_once_with("📬 Тест отправлен админу (с placeholder)", show_alert=False)
 
 
 @pytest.mark.asyncio
