@@ -22,3 +22,7 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+## 2026-04-24 - [Weak Hashing] MD5 Usage
+**Vulnerability:** The `hashlib.md5` algorithm was used in `app/utils/response_tags.py` and `app/middleware/dedup.py` for deduplication and cache keys.
+**Learning:** Even when not used for cryptographic purposes (like passwords), using weak hashes like MD5 triggers security scanners (e.g., Bandit) and sets a bad precedent.
+**Prevention:** Default to modern algorithms like `hashlib.sha256()`. If length constraints exist (like Telegram's 64-byte `callback_data` limit), safely truncate the `sha256` digest output instead of resorting to shorter, weak hashes.
