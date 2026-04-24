@@ -14,6 +14,28 @@ from app.utils.decorators import safe_handler
 
 logger = logging.getLogger(__name__)
 
+
+async def _edit_callback_text(
+    query,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+    parse_mode: str | None = None,
+) -> None:
+    """Edit callback message, handling both text and photo (caption) messages.
+
+    When the daily prompt was sent as a photo (placeholder image exists),
+    the original message has no `.text` — only a caption.  Telegram's
+    ``editMessageText`` rejects that with *"There is no text in the message
+    to edit"*.  This helper detects the situation and falls back to
+    ``edit_message_caption``.
+    """
+    msg = query.message
+    if msg and msg.text is not None:
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    else:
+        # Photo / media message — edit the caption instead.
+        await query.edit_message_caption(caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
+
 _TIME_CHOICES = (9, 13, 19, 21)
 _PLACEHOLDER_KEY = "daily_croc_placeholder_file_id"
 
@@ -254,7 +276,8 @@ async def daily_subscribe_callback(update: Update, context: ContextTypes.DEFAULT
         return
     await query.answer()
     await repo.upsert_preference(update.effective_user.id)
-    await query.edit_message_text(
+    await _edit_callback_text(
+        query,
         "Когда присылать ежедневного Крокодила?\n\nВыбери удобное местное время:",
         reply_markup=subscribe_time_keyboard(),
     )
@@ -276,7 +299,8 @@ async def daily_time_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await query.answer("Подписка включена")
     tz = pref.get("timezone") or repo.DEFAULT_TIMEZONE
-    await query.edit_message_text(
+    await _edit_callback_text(
+        query,
         f"✅ Готово. Буду присылать Крокодила дня примерно в {hour:02d}:00.\n"
         f"Часовой пояс определю автоматически; сейчас используется {tz}.",
         reply_markup=daily_play_keyboard(include_subscribe=False),
@@ -289,7 +313,8 @@ async def daily_snooze_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
     until = await repo.snooze_discovery(update.effective_user.id)
     await query.answer("Не буду напоминать 2 недели")
-    await query.edit_message_text(
+    await _edit_callback_text(
+        query,
         f"👌 Не буду напоминать до {until.astimezone().strftime('%d.%m.%Y')}.\n\n"
         "Если захочешь сыграть раньше, команда /dailycroc всегда доступна.",
         reply_markup=daily_play_keyboard(include_subscribe=False),
