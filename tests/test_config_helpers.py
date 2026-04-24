@@ -114,3 +114,19 @@ def test_load_settings_reads_webhook_backpressure_envs(monkeypatch):
     assert settings.WEBHOOK_SECRET_TOKEN == "my-secret-token"
     assert settings.WEBHOOK_MAX_CONNECTIONS == 75
     assert settings.UPDATE_QUEUE_MAXSIZE == 2500
+
+
+def test_load_settings_reads_game_hub_envs(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    monkeypatch.setenv("GAME_HUB_URL", "https://games.tri.mom/")
+    monkeypatch.setenv("GAME_HUB_DIRECT_LINK", "https://t.me/b0b_bot/games")
+    monkeypatch.setenv("GAME_HUB_MINIAPP_SHORT_NAME", "games")
+
+    settings = load_settings()
+    assert settings.GAME_HUB_URL == "https://games.tri.mom"
+    assert settings.GAME_HUB_DIRECT_LINK == "https://t.me/b0b_bot/games"
+    assert settings.GAME_HUB_MINIAPP_SHORT_NAME == "games"

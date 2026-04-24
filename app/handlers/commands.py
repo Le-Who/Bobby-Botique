@@ -569,10 +569,44 @@ async def live_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
+@authorized_only
+@safe_handler("Произошла ошибка при запуске игрового хаба")
+async def games_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Launch the external CC-GH Telegram Mini App."""
+    from app.config import settings
+
+    game_hub_url = getattr(settings, "GAME_HUB_URL", "").strip().rstrip("/")
+    if not game_hub_url or not game_hub_url.startswith("https://"):
+        await update.message.reply_text("❌ Игровой хаб сейчас не настроен.")
+        return
+
+    direct_link = getattr(settings, "GAME_HUB_DIRECT_LINK", "").strip()
+    if not direct_link:
+        short_name = getattr(settings, "GAME_HUB_MINIAPP_SHORT_NAME", "games").strip()
+        bot_username = getattr(getattr(context, "bot", None), "username", "") or ""
+        direct_link = f"https://t.me/{bot_username}/{short_name}" if bot_username and short_name else game_hub_url
+
+    text = "🎮 **Игровой хаб**\n\nОткройте коллекцию мини-игр."
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+
+    chat_type = getattr(getattr(update, "effective_chat", None), "type", "")
+    if chat_type == "private":
+        button = InlineKeyboardButton("🎮 Играть", web_app=WebAppInfo(url=game_hub_url))
+    else:
+        button = InlineKeyboardButton("🎮 Играть", url=direct_link)
+
+    await update.message.reply_text(
+        formatted_text,
+        parse_mode=parse_mode,
+        reply_markup=InlineKeyboardMarkup([[button]]),
+    )
+
+
 def register(application: Application) -> None:
     # Core user commands
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("live", live_command))
+    application.add_handler(CommandHandler("games", games_command))
     from app.handlers.daily_crocodile import dailycroc_command
 
     application.add_handler(CommandHandler("dailycroc", dailycroc_command))

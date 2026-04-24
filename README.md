@@ -609,6 +609,7 @@ The application features a heavily engineered test suite (**1,835 unit and integ
   - `/clearmemory` — Wipe all long-term vector-indexed memories.
   - `/remind` — Set timed reminders with bilingual time parsing (EN/RU). Supports text, QnA, and agentic AI task delivery.
   - `/draw`, `/img`, `/image`, `/generate` — Imagen 4 text-to-image generation. Interactive Canvas with aspect ratio and model controls after each image.
+  - `/games` — Opens the external CC-GH game hub Mini App. Private chats use a native `web_app` button; groups use the direct `https://t.me/b0b_bot/games` link.
   - `/subscribe`, `/unsubscribe` — Manage hourly intelligence brief subscriptions (LTM-topic-aware web research summaries).
   - `/mydata`, `/deleteme` — GDPR compliant data export and account deletion.
 

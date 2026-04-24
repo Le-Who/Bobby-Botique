@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -52,3 +53,68 @@ async def test_new_chat_command():
         update.message.reply_text.assert_called_once()
         args, kwargs = update.message.reply_text.call_args
         assert "Новый чат" in args[0]
+
+
+@pytest.mark.asyncio
+async def test_games_command_private_chat_uses_web_app_button():
+    update = MagicMock()
+    context = MagicMock()
+    context.bot.username = "b0b_bot"
+    context.user_data = {}
+    update.effective_user.id = 12345
+    update.effective_chat.id = 67890
+    update.effective_chat.type = "private"
+    update.update_id = 22222
+    update.message.text = "/games"
+    update.message.reply_text = AsyncMock()
+    update.callback_query = None
+
+    with (
+        patch("app.config.settings", SimpleNamespace(GAME_HUB_URL="https://games.tri.mom")),
+        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch("app.utils.decorators.set_request_id"),
+    ):
+        from app.handlers.commands import games_command
+
+        await games_command(update, context)
+
+    update.message.reply_text.assert_awaited_once()
+    keyboard = update.message.reply_text.await_args.kwargs["reply_markup"]
+    button = keyboard.inline_keyboard[0][0]
+    assert button.web_app.url == "https://games.tri.mom"
+    assert button.url is None
+
+
+@pytest.mark.asyncio
+async def test_games_command_group_chat_uses_direct_link_button():
+    update = MagicMock()
+    context = MagicMock()
+    context.bot.username = "b0b_bot"
+    context.user_data = {}
+    update.effective_user.id = 12345
+    update.effective_chat.id = -1001
+    update.effective_chat.type = "supergroup"
+    update.update_id = 33333
+    update.message.text = "/games"
+    update.message.reply_text = AsyncMock()
+    update.callback_query = None
+
+    settings = SimpleNamespace(
+        GAME_HUB_URL="https://games.tri.mom",
+        GAME_HUB_DIRECT_LINK="https://t.me/b0b_bot/games",
+        GAME_HUB_MINIAPP_SHORT_NAME="games",
+    )
+    with (
+        patch("app.config.settings", settings),
+        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch("app.utils.decorators.set_request_id"),
+    ):
+        from app.handlers.commands import games_command
+
+        await games_command(update, context)
+
+    update.message.reply_text.assert_awaited_once()
+    keyboard = update.message.reply_text.await_args.kwargs["reply_markup"]
+    button = keyboard.inline_keyboard[0][0]
+    assert button.url == "https://t.me/b0b_bot/games"
+    assert button.web_app is None

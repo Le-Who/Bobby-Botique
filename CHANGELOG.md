@@ -5,6 +5,10 @@ Format is optimized for agent-parseable context.
 
 ## [Unreleased] - 2026-04-23 - 48-Hour Production Audit: Lock Eviction P0, Voice Engine Hardening
 
+### 🎮 External Game Hub Integration
+
+- **Added `/games` as the CC-GH Mini App entrypoint (`app/handlers/commands.py`, `app/config.py`, `.github/workflows/deploy.yml`, `tests/test_commands.py`, `tests/test_config_helpers.py`):** The bot can now launch the separately deployed CC-GH game hub through `GAME_HUB_URL`. Private chats use a native Telegram `web_app` button, while groups use the direct Mini App link (`GAME_HUB_DIRECT_LINK`) so the existing Crocodile `MINIAPP_SHORT_NAME=game` route remains unchanged.
+
 ### 🎙️ Experimental Vertex Internet Live Route
 
 - **Added an opt-in Vertex Live transport without changing the default route (`app/web_miniapp.py`, `app/templates/live_audio.html`, `app/database.py`, `app/repos/chats.py`, `tests/test_live_audio.py`, `scripts/migrations/046_add_live_connection_mode.sql`):** Live Audio now persists a per-user `live_connection_mode` preset. `standard` keeps the existing Gemini GenAI Live API path (`/webapp/live/ws`), while `vertex_internet` enables an experimental `/webapp/live-vertex/ws` transport on `gemini-live-2.5-flash-native-audio`.
