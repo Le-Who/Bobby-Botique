@@ -5,3 +5,7 @@
 ## 2024-05-15 - Unsafe RLS with CTEs
 **Learning:** You cannot use `set_config` inside a Common Table Expression (CTE) to safely set Row Level Security (RLS) context for the main query. PostgreSQL does not guarantee that the CTE will be evaluated before the RLS policies on the main query's table scan, leading to unpredictable failures or bypassed security.
 **Action:** When optimizing database roundtrips involving RLS context (e.g., `set_user_context`), avoid CTEs. Look for opportunities to reduce sequential queries inside the transaction instead (e.g., using `LEFT JOIN`s or combining `UPDATE` statements).
+
+## 2025-04-25 - Consolidate Sequential Database Reads
+**Learning:** In handlers like `get_start_menu_content` where multiple database metrics are fetched (`get_user_today_request_count`, `get_user_documents`, `get_conversation_count`), executing them sequentially creates multiple network roundtrips. Even worse, fetching full records (like `get_user_documents`) into Python memory just to compute a `len()` wastes immense network and memory bandwidth.
+**Action:** Consolidate multiple metrics into a single atomic CTE or subquery approach (e.g., `get_user_activity_summary`) to perform native aggregation (`COUNT(*)`) inside the database, entirely eliminating the O(N) transport overhead for Python.
