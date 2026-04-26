@@ -881,13 +881,19 @@ def get_english_equivalent(word: str) -> str | None:
 # ── Word bank analytics (used by /wordbank admin command) ─────────────────────
 
 
-def get_bank_stats(category: str, *, lang: str = "ru") -> dict[str, int]:
+async def get_bank_stats(category: str, *, lang: str = "ru") -> dict[str, int]:
     """Return difficulty-band breakdown for a built-in category.
 
     Returns a dict with keys: total, easy, medium, hard.
     Returns all-zero dict if the category does not exist in the bank.
     """
     words = list((WORD_BANK.get(lang) or {}).get(category, []))
+    
+    from app.games.judgement_cache import get_cached_generated_words
+    cached_gen = await get_cached_generated_words(lang, category)
+    if cached_gen:
+        words.extend(cached_gen)
+        
     if not words:
         return {"total": 0, "easy": 0, "medium": 0, "hard": 0}
     bands = [_word_difficulty_band(w) for w in words]

@@ -1120,7 +1120,7 @@ def _get_wb_cat_map() -> dict:
 _WB_PAGE_SIZE = 8  # categories per page
 
 
-def _wb_categories_page_kb(page: int, total_cats: int) -> InlineKeyboardMarkup:
+async def _wb_categories_page_kb(page: int, total_cats: int) -> InlineKeyboardMarkup:
     """Build InlineKeyboard for a page of the category list."""
     from app.games.word_bank import WORD_BANK, get_bank_stats
 
@@ -1130,7 +1130,7 @@ def _wb_categories_page_kb(page: int, total_cats: int) -> InlineKeyboardMarkup:
 
     rows = []
     for cat in page_cats:
-        stats = get_bank_stats(cat)
+        stats = await get_bank_stats(cat)
         warn = " ⚠️" if stats["total"] == 0 else ""
         rows.append([
             InlineKeyboardButton(f"{cat} ({stats['total']}){warn}", callback_data=f"wb:cat:{_wb_cat_key(cat)}")
@@ -1205,7 +1205,7 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if len(parts) >= 3 and parts[1] == "cats":
         page = int(parts[2]) if parts[2].isdigit() else 0
         cats = list((WORD_BANK.get("ru") or {}).keys())
-        kb = _wb_categories_page_kb(page, len(cats))
+        kb = await _wb_categories_page_kb(page, len(cats))
         await query.edit_message_text(
             "📋 <b>Категории банка слов</b>\nВыберите категорию для просмотра статистики:",
             parse_mode="HTML",
@@ -1219,7 +1219,7 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not cat_name:
             await query.edit_message_text("❌ Категория не найдена.")
             return
-        stats = get_bank_stats(cat_name)
+        stats = await get_bank_stats(cat_name)
         text = (
             f"📊 <b>{cat_name}</b>\n\n"
             f"Всего слов: <b>{stats['total']}</b>\n"
@@ -1265,8 +1265,10 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         try:
             from app.games.word_bank import generate_words_for_category
             result = await generate_words_for_category(cat_name)
-            added = result.get("added", 0)
-            skipped = result.get("skipped", 0)
+            if result is None:
+                raise ValueError("LLM generation failed or timed out.")
+            added = len(result)
+            skipped = "Неизвестно" # duplicates filtered internally
             text = (
                 f"✅ Сгенерированы слова для <b>{cat_name}</b>\n"
                 f"Добавлено: <b>{added}</b> | Дублей отброшено: <b>{skipped}</b>"
