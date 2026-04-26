@@ -609,13 +609,17 @@ class ProviderRouter:
                         t.cancel()
                 winner_key = keys_to_race[winner_idx]
 
-                # Record success for the winner (Opencode keys skip DB writes)
-                try:
-                    if not is_opencode_model(model_used):
-                        await status_mgr.record_success(winner_key["key_hash"], model_used)
-                    await use_case.increment_key_usage(winner_key["key_hash"], model_used, use_openrouter)
-                except Exception as e:
-                    logging.debug("Non-critical stats update failed: %s", e)
+                # Record success for the winner.
+                # Skip DB writes for the Vertex AI pseudo-key — it is a sentinel
+                # (not a row in api_keys) and the FK on key_usage would fire.
+                # Same guard as inline.py:1230.
+                if winner_key["key_hash"] != _VERTEX_KH:
+                    try:
+                        if not is_opencode_model(model_used):
+                            await status_mgr.record_success(winner_key["key_hash"], model_used)
+                        await use_case.increment_key_usage(winner_key["key_hash"], model_used, use_openrouter)
+                    except Exception as e:
+                        logging.debug("Non-critical stats update failed: %s", e)
 
                 loser_khs = [k["key_hash"][:8] for i, k in enumerate(keys_to_race) if i != winner_idx]
                 logging.info(
