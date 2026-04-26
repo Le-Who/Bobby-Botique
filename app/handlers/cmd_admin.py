@@ -128,12 +128,15 @@ def _daily_prep_component_line(difficulty: str, puzzle) -> str:
     art_ready = bool(str(getattr(puzzle, "image_file_id", "") or "").strip())
     prepared_at = _format_daily_prepared_at(getattr(puzzle, "prepared_at", None))
     state = "ready" if daily_croc_repo.is_puzzle_fully_prepared(puzzle) else "warming"
+    
+    target_date = getattr(puzzle, "puzzle_date", None)
+    date_str = f" ({target_date.isoformat()})" if target_date else ""
     return (
-        f"  {difficulty}: <code>{state}</code> · "
+        f"  {difficulty}{date_str}: <code>{state}</code> · "
         f"puzzle=<code>{'yes' if puzzle_ready else 'no'}</code> · "
         f"hints=<code>{hints_count}/{_EXPECTED_DAILY_HINTS}</code> · "
         f"art=<code>{'yes' if art_ready else 'no'}</code> · "
-        f"prepared=<code>{prepared_at}</code>"
+        f"gen_time=<code>{prepared_at}</code>"
     )
 
 
@@ -1225,7 +1228,26 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("⚡ Сгенерировать слова", callback_data=f"wb:gen:{cat_key}"),
         ], [
+            InlineKeyboardButton("🗑 Очистить сгенерированные", callback_data=f"wb:clr:{cat_key}"),
+        ], [
             InlineKeyboardButton("🔙 Назад", callback_data="wb:cats:0"),
+        ]])
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+        return
+
+    if len(parts) >= 3 and parts[1] == "clr":
+        cat_key = parts[2]
+        cat_name = _get_wb_cat_map().get(cat_key)
+        if not cat_name:
+            await query.edit_message_text("❌ Категория не найдена.")
+            return
+        
+        from app.games.word_bank import clear_generated_category
+        await clear_generated_category(cat_name)
+        
+        text = f"✅ Кэш сгенерированных слов для <b>{cat_name}</b> очищен!"
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 К категории", callback_data=f"wb:cat:{cat_key}"),
         ]])
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
         return

@@ -514,3 +514,18 @@ async def cache_generated_words(
         await _redis_hash_set("generated_words", key, payload)
     else:
         await _persist_generated_words()
+
+
+async def clear_cached_generated_words(
+    lang: str,
+    category: str,
+    *,
+    topic_id: str | None = "",
+) -> None:
+    """Clear AI-generated words for a category from all caches."""
+    key = _generated_words_key(lang, category, topic_id)
+    _generated_words_store.pop(key, None)
+    if redis_client:
+        await _redis_hash_delete("generated_words", key)
+    else:
+        await _persist_generated_words()

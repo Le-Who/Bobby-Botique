@@ -167,6 +167,7 @@ graph TD;
 | Database        | `asyncpg`             | High-performance Async PostgreSQL driver       |
 | Vector DB       | `pgvector`            | Storing and querying semantic memories         |
 | Data Validation | `pydantic`            | Configuration and strictly-typed object models |
+| Observability   | `structlog`           | Structured JSON logging & context correlation  |
 
 ## Setup
 

@@ -1,13 +1,11 @@
 """
-Centralized logging configuration for GemAI Bot.
+Centralized logging configuration for GemAI Bot using structlog.
 
 Provides:
 - setup_detailed_logging() for initial configuration
-- JSONFormatter for structured production logging
-- DevFormatter for human-readable development logging
-- Optional Rich handler for colored, pretty console output
 - get_logger() helper for module-specific loggers
-- RequestContextFilter for injecting request_id, user_id, chat_id from contextvars
+- timed_operation() for async performance tracking
+- Bridge for legacy RequestContextvars to structlog formatting
 """
 
 import functools
@@ -16,282 +14,102 @@ import os
 import sys
 import time
 
-from app.request_context import get_chat_id, get_request_id, get_user_id
-from app.utils.json_compat import json
-
-# Try importing Rich for pretty dev output (optional dependency)
 try:
-    from rich.console import Console
-    from rich.logging import RichHandler
-    from rich.traceback import install as install_rich_tracebacks
-
-    HAS_RICH = True
+    import structlog
+    HAS_STRUCTLOG = True
 except ImportError:
-    HAS_RICH = False
+    HAS_STRUCTLOG = False
 
-
-# =============================================================================
-# FORMATTERS
-# =============================================================================
-
-
-class JSONFormatter(logging.Formatter):
-    """
-    JSON formatter for structured logging in production.
-
-    Automatically includes:
-    - timestamp, level, logger, message
-    - module, function, line number
-    - service, hostname for log aggregation
-    - user_id, chat_id if set on record
-    - exception info if present
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        import socket
-
-        self._hostname = os.environ.get("HOSTNAME", socket.gethostname())
-        self._service = os.environ.get("SERVICE_NAME", "gemaibotv2")
-
-    def format(self, record: logging.LogRecord) -> str:
-        log_entry = {
-            "timestamp": self.formatTime(record),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-            "module": record.module,
-            "function": record.funcName,
-            "line": record.lineno,
-            "service": self._service,
-            "hostname": self._hostname,
-        }
-
-        # Add context fields if present
-        if hasattr(record, "user_id"):
-            log_entry["user_id"] = record.user_id
-        if hasattr(record, "chat_id"):
-            log_entry["chat_id"] = record.chat_id
-        if hasattr(record, "extra_context"):
-            log_entry["context"] = record.extra_context
-        if hasattr(record, "request_id"):
-            log_entry["request_id"] = record.request_id
-
-        # Add exception info
-        if record.exc_info:
-            log_entry["exception"] = self.formatException(record.exc_info)
-
-        return json.dumps(log_entry, ensure_ascii=False)
-
-
-class RequestContextFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        if not hasattr(record, "request_id"):
-            record.request_id = get_request_id() or "-"
-        if not hasattr(record, "user_id"):
-            record.user_id = get_user_id()
-        if not hasattr(record, "chat_id"):
-            record.chat_id = get_chat_id()
-        return True
-
-
-# Default formatter for development (compact single-line)
-DEFAULT_FORMATTER = logging.Formatter(
-    "%(asctime)s - %(name)s - %(levelname)s - [request_id=%(request_id)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-
-
-class DevFormatter(logging.Formatter):
-    """
-    Human-readable multi-line formatter for local debugging.
-
-    Output example:
-        00:57:13 INFO     │ app.handlers.ai_chat     │ handle_message:42
-                          │ 🤖 GEMINI REQUEST STARTED
-                          │   model: gemini-2.5-flash
-                          │   user_id: 123456
-    """
-
-    # ANSI color codes
-    COLORS = {
-        "DEBUG": "\033[36m",  # cyan
-        "INFO": "\033[32m",  # green
-        "WARNING": "\033[33m",  # yellow
-        "ERROR": "\033[31m",  # red
-        "CRITICAL": "\033[1;31m",  # bold red
-    }
-    RESET = "\033[0m"
-    DIM = "\033[2m"
-
-    def format(self, record: logging.LogRecord) -> str:
-        # Timestamp (short)
-        ts = time.strftime("%H:%M:%S", time.localtime(record.created))
-
-        # Colorize level
-        color = self.COLORS.get(record.levelname, "")
-        level = f"{color}{record.levelname:<8}{self.RESET}"
-
-        # Logger name (truncated)
-        name = record.name[-25:] if len(record.name) > 25 else record.name
-
-        # Location & Context
-        loc = f"{record.funcName}:{record.lineno}"
-        req_id = getattr(record, "request_id", "-")
-        ctx = f"{self.DIM}[{req_id}]{self.RESET} " if req_id and req_id != "-" else ""
-
-        # Header line
-        header = f"{self.DIM}{ts}{self.RESET} {level} {self.DIM}│{self.RESET} {name:<25} {self.DIM}│{self.RESET} {ctx}{loc}"
-
-        # Message — try to detect and pretty-print embedded JSON
-        msg = record.getMessage()
-        body_lines = self._format_message(msg)
-
-        pad = " " * 18  # align with header
-        sep = f"{self.DIM}│{self.RESET}"
-        body = "\n".join(f"{pad} {sep} {line}" for line in body_lines)
-
-        result = f"{header}\n{body}"
-
-        # Exception info
-        if record.exc_info and not record.exc_text:
-            record.exc_text = self.formatException(record.exc_info)
-        if record.exc_text:
-            result += f"\n{pad} {sep} {self.COLORS['ERROR']}TRACEBACK:{self.RESET}\n"
-            for tb_line in record.exc_text.splitlines():
-                result += f"{pad} {sep}   {tb_line}\n"
-
-        return result
-
-    def _format_message(self, msg: str) -> list[str]:
-        """Try to extract and pretty-print JSON from the message."""
-        # Check if message contains JSON blob (common pattern: "emoji TEXT: {...}")
-        json_start = msg.find("{")
-        if json_start > 0:
-            prefix = msg[:json_start].strip()
-            json_part = msg[json_start:]
-            try:
-                data = json.loads(json_part)
-                lines = [prefix]
-                for k, v in data.items():
-                    if v is not None:
-                        lines.append(f"  {self.DIM}{k}:{self.RESET} {v}")
-                return lines
-            except (json.JSONDecodeError, ValueError):
-                pass
-        return [msg]
-
+from app.request_context import get_chat_id, get_request_id, get_user_id
 
 # =============================================================================
-# LOGGER HELPERS
+# STRUCTLOG PIPELINE
 # =============================================================================
 
+def bridge_legacy_contextvars(logger, method_name, event_dict):
+    """Bridge legacy thread-local context variables into structlog."""
+    if req_id := get_request_id():
+        event_dict["request_id"] = req_id
+    if user_id := get_user_id():
+        event_dict["user_id"] = user_id
+    if chat_id := get_chat_id():
+        event_dict["chat_id"] = chat_id
+    return event_dict
 
-def get_logger(name: str) -> logging.Logger:
-    """
-    Get a logger by name with standard configuration.
 
-    Usage:
-        logger = get_logger(__name__)
-        logger.info("Processing request", extra={"user_id": 123})
-    """
-    return logging.getLogger(name)
+def configure_structlog_pipeline(enable_structured: bool, enable_pretty: bool) -> logging.Formatter:
+    """Configures structlog to intercept and format log records."""
+    import socket
+    hostname = os.environ.get("HOSTNAME", socket.gethostname())
+    service = os.environ.get("SERVICE_NAME", "gemaibotv2")
 
+    def add_service_vars(logger, method_name, event_dict):
+        event_dict["service"] = service
+        event_dict["hostname"] = hostname
+        return event_dict
 
-def timed_operation(operation_name: str = ""):
-    """Decorator that logs the execution time of async functions.
+    shared_processors = [
+        structlog.contextvars.merge_contextvars,
+        bridge_legacy_contextvars,
+        add_service_vars,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso" if enable_structured else "%Y-%m-%d %H:%M:%S"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+    ]
 
-    Usage:
-        @timed_operation("database_query")
-        async def get_user(user_id: int):
-            ...
-    """
+    structlog.configure(
+        processors=shared_processors + [structlog.stdlib.ProcessorFormatter.wrap_for_formatter],  # type: ignore
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
 
-    def decorator(fn):
-        name = operation_name or fn.__qualname__
+    if enable_structured:
+        return structlog.stdlib.ProcessorFormatter(
+            processor=structlog.processors.JSONRenderer()
+        )
+    return structlog.stdlib.ProcessorFormatter(
+        processor=structlog.dev.ConsoleRenderer(colors=enable_pretty)
+    )
 
-        @functools.wraps(fn)
-        async def wrapper(*args, **kwargs):
-            start = time.perf_counter()
-            try:
-                result = await fn(*args, **kwargs)
-                elapsed_ms = (time.perf_counter() - start) * 1000
-                if elapsed_ms > 500:
-                    logging.warning(
-                        f"Slow operation {name}: {elapsed_ms:.1f}ms",
-                        extra={"operation": name, "duration_ms": round(elapsed_ms, 1)},
-                    )
-                else:
-                    logging.debug(
-                        f"Operation {name}: {elapsed_ms:.1f}ms",
-                        extra={"operation": name, "duration_ms": round(elapsed_ms, 1)},
-                    )
-                return result
-            except Exception:
-                elapsed_ms = (time.perf_counter() - start) * 1000
-                logging.debug(
-                    f"Operation {name} failed after {elapsed_ms:.1f}ms",
-                    extra={"operation": name, "duration_ms": round(elapsed_ms, 1)},
-                )
-                raise
-
-        return wrapper
-
-    return decorator
+# Fallback basic formatter if structlog is missing
+class FallbackFormatter(logging.Formatter):
+    def format(self, record):
+        return super().format(record)
 
 
 # =============================================================================
 # SETUP FUNCTIONS
 # =============================================================================
 
-
-def _get_formatter(enable_structured_logging: bool, enable_pretty: bool = False) -> logging.Formatter:
-    """Get appropriate formatter based on configuration."""
-    if enable_structured_logging:
-        return JSONFormatter()
-    if enable_pretty:
-        return DevFormatter()
-    return DEFAULT_FORMATTER
-
-
-def _setup_logger(
-    logger_name: str,
-    level: int,
-    enable_structured_logging: bool,
-    enable_pretty: bool = False,
-) -> None:
-    """
-    Configure a named logger with standard settings.
-
-    Args:
-        logger_name: Name of the logger to configure
-        level: Logging level
-        enable_structured_logging: Whether to use JSON format
-        enable_pretty: Whether to use human-readable dev format
-    """
-    logger = logging.getLogger(logger_name)
-    logger.setLevel(level)
-
-    # Don't add handlers if they already exist
-    if not logger.handlers:
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(level)
-        handler.addFilter(RequestContextFilter())
-        handler.setFormatter(_get_formatter(enable_structured_logging, enable_pretty))
-        logger.addHandler(handler)
-
-    # Disable propagation to avoid duplicate logs
-    logger.propagate = False
-
-
 def _is_production_environment() -> bool:
     """Detect if we're running in a production container environment."""
     indicators = ("DYNO", "RENDER", "RAILWAY_ENVIRONMENT", "FLY_APP_NAME")
     if any(os.environ.get(k) for k in indicators):
         return True
-    # VPS / generic Docker: PORT is set and HOSTNAME looks like a container ID
     hostname = os.environ.get("HOSTNAME", "")
     return bool(os.environ.get("PORT") and len(hostname) >= 12 and hostname.isalnum())
+
+
+def _setup_logger(
+    logger_name: str,
+    level: int,
+    formatter: logging.Formatter
+) -> None:
+    """Configure a named logger with standard settings."""
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(level)
+
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(level)
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
+    logger.propagate = False
 
 
 def setup_detailed_logging(
@@ -301,19 +119,9 @@ def setup_detailed_logging(
     enable_structured_logging: bool | None = None,
     enable_pretty: bool | None = None,
 ) -> None:
-    """
-    Configure logging for all bot components.
-
-    Args:
-        log_level: Logging level (INFO, WARNING, ERROR, CRITICAL).
-        log_to_file: Whether to also log to a file.
-        log_file_path: Path to the log file.
-        enable_structured_logging: Force JSON logging. When *None* (default),
-            auto-enables in production or honours the STRUCTURED_LOGGING env var.
-        enable_pretty: Enable human-readable dev logging. Auto-detects
-                       from LOG_PRETTY env var when None.
-    """
-    # Auto-resolve structured logging if not explicitly passed
+    """Configure logging for all bot components and setup structlog bridging."""
+    
+    # Auto-resolve settings
     if enable_structured_logging is None:
         env_val = os.environ.get("STRUCTURED_LOGGING", "").lower()
         if env_val in ("1", "true", "yes"):
@@ -321,109 +129,124 @@ def setup_detailed_logging(
         elif env_val in ("0", "false", "no"):
             enable_structured_logging = False
         else:
-            # Auto-detect: enable in production containers
             enable_structured_logging = _is_production_environment()
 
-    # Resolve pretty mode from env if not explicitly set
     if enable_pretty is None:
-        enable_pretty = os.environ.get("LOG_PRETTY", "").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
+        enable_pretty = os.environ.get("LOG_PRETTY", "").lower() in ("1", "true", "yes")
 
-    # Structured logging takes priority over pretty
     if enable_structured_logging:
         enable_pretty = False
 
-    # Convert string to logging level
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)
 
-    # Configure root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(numeric_level)
-
-    # Clear existing handlers
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    # Choose handler: Rich > DevFormatter > DEFAULT_FORMATTER
-    stdout_handler: logging.Handler
-    if enable_pretty and HAS_RICH and not enable_structured_logging:
-        # Rich provides its own formatting — no need for our formatter
-        install_rich_tracebacks(show_locals=False, width=200)
-        stdout_handler = RichHandler(
-            console=Console(stderr=False, width=200),
-            rich_tracebacks=True,
-            tracebacks_show_locals=False,
-            show_path=True,
-            markup=True,
-        )
-        stdout_handler.setLevel(numeric_level)
-        stdout_handler.addFilter(RequestContextFilter())
-        root_logger.addHandler(stdout_handler)
+    if HAS_STRUCTLOG:
+        formatter = configure_structlog_pipeline(enable_structured_logging, enable_pretty)
     else:
-        formatter = _get_formatter(enable_structured_logging, enable_pretty)
-        stdout_handler = logging.StreamHandler(sys.stdout)
-        stdout_handler.setLevel(numeric_level)
-        stdout_handler.addFilter(RequestContextFilter())
-        stdout_handler.setFormatter(formatter)
-        root_logger.addHandler(stdout_handler)
+        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
-    # File handler (optional)
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setLevel(numeric_level)
+    stdout_handler.setFormatter(formatter)
+    root_logger.addHandler(stdout_handler)
+
     if log_to_file:
         try:
             file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
             file_handler.setLevel(numeric_level)
-            file_handler.addFilter(RequestContextFilter())
-            # File always uses plain formatter (no ANSI colors)
-            file_handler.setFormatter(_get_formatter(enable_structured_logging, enable_pretty=False))
+            # File always plainly formatted
+            if HAS_STRUCTLOG:
+                file_formatter = configure_structlog_pipeline(enable_structured_logging, False)
+            else:
+                file_formatter = formatter
+            file_handler.setFormatter(file_formatter)
             root_logger.addHandler(file_handler)
         except Exception:
             pass
 
-    # Configure specialized loggers
-    # httpx is suppressed to WARNING+ to prevent Bearer tokens from request headers
-    # leaking into debug-level logs (H5 security fix).
+    # Suppress loud HTTPX logging
     for logger_name in ["api_logger", "telegram", "asyncpg", "httpx", "httpcore"]:
         _setup_logger(
             logger_name,
-            (max(numeric_level, logging.WARNING) if logger_name in ("httpx", "httpcore") else numeric_level),
-            enable_structured_logging,
-            enable_pretty,
+            max(numeric_level, logging.WARNING) if logger_name in ("httpx", "httpcore") else numeric_level,
+            formatter
         )
 
-    pretty_mode = "rich" if (enable_pretty and HAS_RICH) else ("dev" if enable_pretty else "off")
     logging.info(
-        "Logging setup complete — level=%s, structured=%s, pretty=%s, file=%s",
+        "Logging setup complete — level=%s, structlog=%s, structured=%s, pretty=%s",
         log_level,
+        HAS_STRUCTLOG,
         enable_structured_logging,
-        pretty_mode,
-        log_file_path if log_to_file else "disabled",
+        enable_pretty,
     )
 
 
+# =============================================================================
+# LOGGER HELPERS
+# =============================================================================
+
+def get_logger(name: str):
+    """
+    Get a structlog-aware logger config. 
+    Drop-in compatibility with: logger = get_logger(__name__)
+    """
+    if HAS_STRUCTLOG:
+        return structlog.get_logger(name)
+    return logging.getLogger(name)
+
+
+def timed_operation(operation_name: str = ""):
+    """Decorator that logs the execution time of async functions."""
+    def decorator(fn):
+        name = operation_name or fn.__qualname__
+
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            start = time.perf_counter()
+            log = get_logger(__name__)
+            try:
+                result = await fn(*args, **kwargs)
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                if elapsed_ms > 500:
+                    log.warning(
+                        f"Slow operation {name}: {elapsed_ms:.1f}ms",
+                        operation=name,
+                        duration_ms=round(elapsed_ms, 1)
+                    )
+                else:
+                    log.debug(
+                        f"Operation {name}: {elapsed_ms:.1f}ms",
+                        operation=name,
+                        duration_ms=round(elapsed_ms, 1)
+                    )
+                return result
+            except Exception:
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                log.debug(
+                    f"Operation {name} failed after {elapsed_ms:.1f}ms",
+                    operation=name,
+                    duration_ms=round(elapsed_ms, 1)
+                )
+                raise
+        return wrapper
+    return decorator
+
 # Legacy compatibility functions
 def setup_api_logger(level: int, enable_structured_logging: bool = False) -> None:
-    """Настраивает логгер для API запросов"""
-    _setup_logger("api_logger", level, enable_structured_logging)
-
+    pass
 
 def setup_telegram_logger(level: int, enable_structured_logging: bool = False) -> None:
-    """Настраивает логгер для Telegram Bot API"""
-    _setup_logger("telegram", level, enable_structured_logging)
-
+    pass
 
 def setup_database_logger(level: int, enable_structured_logging: bool = False) -> None:
-    """Настраивает логгер для базы данных"""
-    _setup_logger("asyncpg", level, enable_structured_logging)
-
+    pass
 
 def is_pretty_logging() -> bool:
-    """Check if pretty logging is active (for use by api_logger etc.)."""
     return os.environ.get("LOG_PRETTY", "").lower() in ("1", "true", "yes")
 
-
 def log_api_summary() -> None:
-    """Выводит краткую сводку по API логированию."""
     logging.info("API logging active — Gemini, Tavily, Telegram request/response + error tracing")

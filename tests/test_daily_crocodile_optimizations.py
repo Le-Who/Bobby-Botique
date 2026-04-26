@@ -1,16 +1,19 @@
 
+import hashlib
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from unittest.mock import patch, Mock, AsyncMock
+
+from app.games.crocodile_daily import _build_daily_image_prompt
 from app.games.word_bank import (
-    _word_difficulty_band,
     _filter_words_by_difficulty,
-    get_english_equivalent,
-    get_bank_stats,
+    _word_difficulty_band,
     find_duplicates,
+    get_bank_stats,
+    get_english_equivalent,
 )
 from app.repos.crocodile_daily import get_used_daily_words
-from app.games.crocodile_daily import _build_daily_image_prompt
-import hashlib
+
 
 @pytest.mark.unit
 def test_word_difficulty_band_kaleidoscope_not_easy():
@@ -90,8 +93,9 @@ def test_find_duplicates_detects_cross_category():
 
 @pytest.mark.asyncio
 async def test_wordbank_menu_callback_renders_categories():
+    from telegram import CallbackQuery, Message, Update, User
+
     from app.handlers.cmd_admin import wb_callback
-    from telegram import Update, CallbackQuery, User, Message
     user = Mock(spec=User)
     user.id = 9999999 
     
@@ -117,9 +121,10 @@ async def test_wordbank_menu_callback_renders_categories():
 
 @pytest.mark.asyncio
 async def test_wordbank_gen_callback_triggers_generation():
-    from app.handlers.cmd_admin import wb_callback, _get_wb_cat_map
-    from telegram import Update, CallbackQuery, User, Message
+    from telegram import CallbackQuery, Message, Update, User
+
     from app.games.word_bank import WORD_BANK
+    from app.handlers.cmd_admin import _get_wb_cat_map, wb_callback
     
     first_cat = list((WORD_BANK.get("ru") or {}).keys())[0]
     cat_key = hashlib.md5(first_cat.encode()).hexdigest()[:8]

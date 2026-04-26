@@ -1004,10 +1004,18 @@ _GEN_FALLBACK_MODEL = "gemini-2.5-flash"
 _GEN_TIMEOUT_S = 30.0  # Background task: user not waiting, let slow providers finish
 
 _GEN_PROMPT = (
-    "Ты помощник игры 'Крокодил'. Придумай ровно 20 существительных на тему \"{category}\"."
-    " Слова должны быть:"
-    ' конкретные, легко изображаемые жестами; от 1 до 3 слов в словосочетании; на "{lang_hint}".'
-    ' Ответь ТОЛЬКО JSON-массивом строк, без пояснений. Пример: ["слово1","слово2"]'
+    "Ты опытный геймдизайнер-пантомим игры 'Крокодил'. Твоя цель — придумать ровно 20 уникальных существительных "
+    "на тему \"{category}\".\n\n"
+    "Ограничения (КРИТИЧНО!):\n"
+    "1. ФИЗИЧЕСКИЙ ТЕСТ: Возвращай ТОЛЬКО предметы, которые физически можно нарисовать, показать жестами и потрогать.\n"
+    "2. НИКАКИХ абстракций (любовь, свобода, закон), эмоций, профессий (если нет четкого атрибута), имен собственных и брендов.\n"
+    "3. Максимальное смысловое разнообразие (не выдавай 5 видов одного и того же).\n"
+    "4. От 1 до 3 слов в одной фразе.\n"
+    "5. Язык: {lang_hint}.\n\n"
+    "Примеры (Контрастные):\n"
+    "❌ 'Скорость', 'Радость' (Абстракции)\n"
+    "✅ 'Спидометр', 'Улыбка' (Предметы/Явления)\n\n"
+    "Ответь СТРОГО Markdown блоком ` ```json\n[\"слово1\", \"слово2\"]\n``` ` без пояснений."
 )
 
 
@@ -1331,6 +1339,24 @@ async def generate_words_for_category(
     finally:
         if _GENERATED_INFLIGHT.get(cache_key) is generation_task:
             _GENERATED_INFLIGHT.pop(cache_key, None)
+
+
+async def clear_generated_category(
+    category: str,
+    *,
+    lang: str = "ru",
+    topic_id: str | None = None,
+) -> None:
+    """Clear cached AI-generated words for a category from Memory & Persistent Cache."""
+    from app.games.judgement_cache import clear_cached_generated_words
+
+    category_norm = category.strip()
+    topic_id_norm = (topic_id or "").strip()
+    cache_key = _generated_cache_key(lang, category_norm, topic_id=topic_id_norm or None)
+    
+    _GENERATED_CACHE.pop(cache_key, None)
+    
+    await clear_cached_generated_words(lang, category_norm, topic_id=topic_id_norm)
 
 
 async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | None:

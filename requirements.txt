@@ -26,8 +26,9 @@ Pillow>=9.5.0,<13.0.0
 # External APIs
 tavily-python>=0.3.0,<1.0.0
 
-# Logging (pretty console output)
+# Logging (pretty console & structured correlation)
 rich>=13.0.0,<15.0.0
+structlog>=24.1.0,<25.0.0
 
 # Performance (Linux/Docker only — 2-4× event loop throughput)
 uvloop>=0.19.0,<1.0.0; sys_platform != "win32"
