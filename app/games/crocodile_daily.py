@@ -117,14 +117,66 @@ async def get_daily_hints(puzzle: repo.DailyPuzzle) -> list[str]:
     return hints
 
 
-def _build_daily_image_prompt(word: str, topic: str, *, difficulty: str) -> str:
-    tension = "Make the composition immediately readable." if difficulty == "easy" else "Keep the concept readable but a little less literal."
+# Default negative prompt applied to all daily puzzle images.
+# Prevents text/logos leaking into the image even when the model is
+# given a detailed instruction not to include them.
+DAILY_NEGATIVE_PROMPT = (
+    "text, letters, words, numbers, captions, labels, speech bubbles, "
+    "watermark, signature, logo, UI, title, subtitle, handwriting, typography"
+)
+
+
+async def _translate_word_for_prompt(word: str) -> str | None:
+    """Translate *word* to English for use in the image prompt.
+
+    Result is cached in ``word_bank._PROMPT_TRANSLATION_CACHE`` so repeated
+    calls never hit the LLM twice for the same word.
+    """
+    from app.games.word_bank import _PROMPT_TRANSLATION_CACHE
+
+    key = word.strip().lower()
+    if key in _PROMPT_TRANSLATION_CACHE:
+        return _PROMPT_TRANSLATION_CACHE[key]
+
+    prompt = (
+        f"Translate the Russian word or phrase \"{word}\" to English. "
+        "Reply with ONLY the English word or short phrase, nothing else."
+    )
+    try:
+        from app.providers.router import get_provider_router
+
+        router = get_provider_router()
+        response_text, _ = await router.get_response(
+            preferred_model="opencode-go/minimax-m2.5",
+            history=[{"role": "user", "parts": [prompt]}],
+            max_key_retries=1,
+            timeout=6.0,
+        )
+        translated = (response_text or "").strip().strip("\"\'`.,").lower()
+        if translated and 2 <= len(translated) <= 60:
+            _PROMPT_TRANSLATION_CACHE[key] = translated
+            return translated
+    except Exception as exc:
+        logger.debug("Word translation failed for %r: %s", word, exc)
+
+    return None
+
+
+async def _build_daily_image_prompt(word: str, topic: str, *, difficulty: str) -> str:
+    from app.games.word_bank import get_english_equivalent
+
+    en_word = get_english_equivalent(word)
+    if not en_word:
+        en_word = await _translate_word_for_prompt(word)
+    display_word = en_word or word
+
+    tension = "Make the composition immediately readable." if difficulty == "easy" else "Keep the concept readable but slightly less literal."
     return (
         "Create a vivid polished illustration for a charades game reveal. "
-        f"The hidden word is '{word}'. Topic/context: '{topic}'. "
-        "Show the concept clearly and literally, with one readable main scene or subject. "
+        f"The subject is \"{display_word}\". "
+        "Show the concept clearly and literally, one readable main scene or subject. "
         f"{tension} "
-        "No text, no letters, no captions, no speech bubbles, no UI, no watermark. "
+        "Absolutely no text, no letters, no captions, no speech bubbles, no UI, no watermark. "
         "Bright colors, expressive details, clean composition, friendly high-quality digital art."
     )
 
@@ -156,7 +208,8 @@ async def _generate_daily_image_file_id(
         width=1024,
         height=1024,
         seed=_daily_image_seed(puzzle_date, difficulty),
-        enhance=True,
+        enhance=False,
+        negative_prompt=DAILY_NEGATIVE_PROMPT,
     )
 
     # Alert admin if model was silently substituted (e.g. pollen exhausted → flux)
@@ -247,7 +300,7 @@ async def prepare_daily_puzzle(
                 puzzle = replace(puzzle, hints=hints, prepared_at=None)
 
             if not puzzle.image_prompt:
-                image_prompt = _build_daily_image_prompt(puzzle.target_word, puzzle.topic, difficulty=puzzle.difficulty)
+                image_prompt = await _build_daily_image_prompt(puzzle.target_word, puzzle.topic, difficulty=puzzle.difficulty)
                 await repo.set_puzzle_image_prompt(
                     puzzle.puzzle_date,
                     image_prompt,

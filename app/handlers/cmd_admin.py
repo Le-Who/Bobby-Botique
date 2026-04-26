@@ -734,7 +734,9 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "• `/clearoldmetrics` — очистить старые метрики 30\\+ дней\n"
             "• `/clearolddocs` — очистить старые документы 3\\+ дня\n"
             "• `/listmodels` — список доступных моделей\n\n"
-            "*🐊 Daily Crocodile:*\n"
+            "*🗂 Word Bank:*\n"
+            "• `/wordbank` — управление банком слов (статистика, генерация, дубли)\n\n"
+            "*🐊 Daily Crocodile:*\n" 
             "• `/set_dailycroc_delivery on|off` — включить/выключить исходящую daily-рассылку\n"
             "• `/dailycroc_status` — снимок подписок/готовности на сегодня + кнопки Refresh и Prep check\n"
             "• `/set_dailycroc_placeholder` — реплайни на фото, чтобы задать баннер рассылки\n\n"
@@ -1084,3 +1086,221 @@ async def set_dailycroc_placeholder_command(update: Update, context: ContextType
         f"✅ Placeholder сохранён.\n<code>file_id: {file_id[:60]}…</code>",
         parse_mode="HTML",
     )
+
+
+# ── /wordbank — Word Bank Management ──────────────────────────────────────────
+
+import hashlib as _hashlib
+
+
+def _wb_cat_key(category: str) -> str:
+    """Short stable key for a category name used in callback_data."""
+    return _hashlib.md5(category.encode()).hexdigest()[:8]  # noqa: S324
+
+
+# Build category key ↔ name mapping at module level (done once on import).
+def _build_wb_cat_map() -> dict:
+    from app.games.word_bank import WORD_BANK
+    return {_wb_cat_key(cat): cat for cat in (WORD_BANK.get("ru") or {})}
+
+
+_WB_CAT_MAP: dict[str, str] = {}  # populated lazily on first use
+
+
+def _get_wb_cat_map() -> dict:
+    global _WB_CAT_MAP
+    if not _WB_CAT_MAP:
+        _WB_CAT_MAP = _build_wb_cat_map()
+    return _WB_CAT_MAP
+
+
+_WB_PAGE_SIZE = 8  # categories per page
+
+
+def _wb_categories_page_kb(page: int, total_cats: int) -> InlineKeyboardMarkup:
+    """Build InlineKeyboard for a page of the category list."""
+    from app.games.word_bank import WORD_BANK, get_bank_stats
+
+    cats = list((WORD_BANK.get("ru") or {}).keys())
+    start = page * _WB_PAGE_SIZE
+    page_cats = cats[start: start + _WB_PAGE_SIZE]
+
+    rows = []
+    for cat in page_cats:
+        stats = get_bank_stats(cat)
+        warn = " ⚠️" if stats["total"] == 0 else ""
+        rows.append([
+            InlineKeyboardButton(f"{cat} ({stats['total']}){warn}", callback_data=f"wb:cat:{_wb_cat_key(cat)}")
+        ])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"wb:cats:{page - 1}"))
+    max_page = max(0, (total_cats - 1) // _WB_PAGE_SIZE)
+    nav.append(InlineKeyboardButton(f"{page + 1}/{max_page + 1}", callback_data="wb:noop"))
+    if page < max_page:
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"wb:cats:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([
+        InlineKeyboardButton("🔍 Найти дубликаты", callback_data="wb:dup"),
+        InlineKeyboardButton("🔙 Назад", callback_data="wb:menu"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+def _wb_menu_kb() -> InlineKeyboardMarkup:
+    from app.games.word_bank import WORD_BANK
+    cats = list((WORD_BANK.get("ru") or {}).keys())
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"📋 Категории ({len(cats)})", callback_data="wb:cats:0"),
+        InlineKeyboardButton("🔍 Найти дубликаты", callback_data="wb:dup"),
+    ]])
+
+
+@admin_only
+async def wordbank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show word bank management menu."""
+    from app.games.word_bank import WORD_BANK
+    cats = list((WORD_BANK.get("ru") or {}).keys())
+    total_words = sum(len(v) for v in (WORD_BANK.get("ru") or {}).values())
+    text = (
+        f"🗂 <b>Word Bank</b>\n"
+        f"Категорий: <b>{len(cats)}</b> | Слов: <b>{total_words}</b>\n\n"
+        "Выберите действие:"
+    )
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=_wb_menu_kb())
+
+
+@admin_only
+async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route /wordbank inline button callbacks."""
+    from app.games.word_bank import WORD_BANK, find_duplicates, get_bank_stats
+
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+
+    data = query.data or ""
+    parts = data.split(":")
+
+    if data == "wb:menu":
+        cats = list((WORD_BANK.get("ru") or {}).keys())
+        total_words = sum(len(v) for v in (WORD_BANK.get("ru") or {}).values())
+        text = (
+            f"🗂 <b>Word Bank</b>\n"
+            f"Категорий: <b>{len(cats)}</b> | Слов: <b>{total_words}</b>\n\n"
+            "Выберите действие:"
+        )
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=_wb_menu_kb())
+        return
+
+    if data == "wb:noop":
+        return
+
+    if len(parts) >= 3 and parts[1] == "cats":
+        page = int(parts[2]) if parts[2].isdigit() else 0
+        cats = list((WORD_BANK.get("ru") or {}).keys())
+        kb = _wb_categories_page_kb(page, len(cats))
+        await query.edit_message_text(
+            "📋 <b>Категории банка слов</b>\nВыберите категорию для просмотра статистики:",
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+        return
+
+    if len(parts) >= 3 and parts[1] == "cat":
+        cat_key = parts[2]
+        cat_name = _get_wb_cat_map().get(cat_key)
+        if not cat_name:
+            await query.edit_message_text("❌ Категория не найдена.")
+            return
+        stats = get_bank_stats(cat_name)
+        text = (
+            f"📊 <b>{cat_name}</b>\n\n"
+            f"Всего слов: <b>{stats['total']}</b>\n"
+            f"easy: {stats['easy']} | medium: {stats['medium']} | hard: {stats['hard']}\n"
+        )
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⚡ Сгенерировать слова", callback_data=f"wb:gen:{cat_key}"),
+        ], [
+            InlineKeyboardButton("🔙 Назад", callback_data="wb:cats:0"),
+        ]])
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+        return
+
+    if len(parts) >= 3 and parts[1] == "gen":
+        cat_key = parts[2]
+        cat_name = _get_wb_cat_map().get(cat_key)
+        if not cat_name:
+            await query.edit_message_text("❌ Категория не найдена.")
+            return
+        await query.edit_message_text(
+            f"⚙️ Генерация слов для категории <b>{cat_name}</b>…\n<i>Это займёт несколько секунд.</i>",
+            parse_mode="HTML",
+        )
+        try:
+            from app.games.word_bank import generate_words_for_category
+            result = await generate_words_for_category(cat_name)
+            added = result.get("added", 0)
+            skipped = result.get("skipped", 0)
+            text = (
+                f"✅ Сгенерированы слова для <b>{cat_name}</b>\n"
+                f"Добавлено: <b>{added}</b> | Дублей отброшено: <b>{skipped}</b>"
+            )
+        except Exception as exc:
+            logging.error("wb gen failed for %s: %s", cat_name, exc, exc_info=True)
+            text = f"❌ Ошибка генерации слов для <b>{cat_name}</b>: {exc}"
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 К категории", callback_data=f"wb:cat:{cat_key}"),
+        ]])
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+        return
+
+    if data == "wb:dup":
+        await query.edit_message_text(
+            "🔍 <b>Поиск дубликатов…</b>\n<i>Анализируем банк слов…</i>",
+            parse_mode="HTML",
+        )
+        dupes = find_duplicates()
+        if not dupes:
+            text = "✅ Дублей не обнаружено! Банк слов чист."
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="wb:menu")]])
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+            return
+
+        # Show first 10 in message, full list as file
+        preview_lines = []
+        for d in dupes[:10]:
+            cats_str = " + ".join(d["categories"])
+            preview_lines.append(f"• <code>{d['word_key']}</code> → {cats_str}")
+        text = (
+            f"⚠️ Найдено <b>{len(dupes)}</b> дублей:\n\n"
+            + "\n".join(preview_lines)
+            + ("\n<i>…и ещё. Скачайте полный отчёт:</i>" if len(dupes) > 10 else "")
+        )
+        kb_rows = []
+        if len(dupes) > 10:
+            kb_rows.append([InlineKeyboardButton("📋 Полный отчёт (файл)", callback_data="wb:dup_file")])
+        kb_rows.append([InlineKeyboardButton("🔙 Назад", callback_data="wb:menu")])
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb_rows))
+        return
+
+    if data == "wb:dup_file":
+        dupes = find_duplicates()
+        lines = ["# Word Bank Duplicate Report\n"]
+        for d in dupes:
+            cats_str = ", ".join(d["categories"])
+            lines.append(f"{d['word_key']}: {cats_str}")
+        import io
+        file_bytes = "\n".join(lines).encode("utf-8")
+        doc = io.BytesIO(file_bytes)
+        doc.name = "wordbank_duplicates.txt"
+        if update.effective_message:
+            await update.effective_message.reply_document(
+                document=doc,
+                filename="wordbank_duplicates.txt",
+                caption=f"📋 Полный отчёт: {len(dupes)} дублей",
+            )
+        return

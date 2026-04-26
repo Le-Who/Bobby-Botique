@@ -288,13 +288,21 @@ def is_puzzle_fully_prepared(puzzle: DailyPuzzle) -> bool:
     return bool(puzzle.hints)
 
 
-async def get_used_daily_words(*, conn=None) -> set[str]:
+async def get_used_daily_words(*, days_back: int = 30, conn=None) -> set[str]:
+    """Return words used in daily puzzles within the last *days_back* days.
+
+    Using a rolling window instead of querying all-time history lets words
+    re-enter the rotation after the cooldown, and prevents cross-difficulty
+    repetition within the window (both easy and hard words are included).
+    """
     rows = await db.db_query(
         """
         SELECT target_word
         FROM public.crocodile_daily_puzzles
         WHERE target_word <> ''
+          AND puzzle_date >= (CURRENT_DATE - $1::int)
         """,
+        (days_back,),
         conn=conn,
     )
     return {normalize_daily_word(row.get("target_word")) for row in rows if normalize_daily_word(row.get("target_word"))}

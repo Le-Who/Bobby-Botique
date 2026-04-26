@@ -657,6 +657,8 @@ def register(application: Application) -> None:
         set_inline_thinking_command,
         set_provider_command,
         update_tavily_keys_command,
+        wb_callback,
+        wordbank_command,
     )
 
     application.add_handler(CommandHandler("listmodels", list_models_command))
@@ -684,6 +686,9 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("set_inline_thinking", set_inline_thinking_command))
     application.add_handler(CommandHandler("set_inline_tabs", set_inline_tabs_command))
     application.add_handler(CommandHandler("set_provider", set_provider_command))
+    application.add_handler(CommandHandler("wordbank", wordbank_command))
+    from telegram.ext import CallbackQueryHandler
+    application.add_handler(CallbackQueryHandler(wb_callback, pattern=r"^wb:"))
 
     # Conversation commands (from cmd_conversations)
     from app.handlers.cmd_conversations import (

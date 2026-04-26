@@ -859,6 +859,68 @@ def find_word_category(word: str) -> str | None:
     return _WORD_TO_CATEGORY.get(word.strip().lower())
 
 
+
+
+# ── Word-to-English translation cache (for image prompt quality) ─────────────
+# Populated at runtime by crocodile_daily._translate_word_for_prompt().
+# Kept here so the cache survives handler reloads within a process lifetime.
+
+_PROMPT_TRANSLATION_CACHE: dict[str, str] = {}
+
+
+def get_english_equivalent(word: str) -> str | None:
+    """Return a cached English translation of *word*, or None if not yet known.
+
+    The in-process cache is populated by ``crocodile_daily._translate_word_for_prompt``
+    the first time a word is translated.  Subsequent calls for the same word
+    are O(1) lookups with no LLM round-trip.
+    """
+    return _PROMPT_TRANSLATION_CACHE.get(word.strip().lower())
+
+
+# ── Word bank analytics (used by /wordbank admin command) ─────────────────────
+
+
+def get_bank_stats(category: str, *, lang: str = "ru") -> dict[str, int]:
+    """Return difficulty-band breakdown for a built-in category.
+
+    Returns a dict with keys: total, easy, medium, hard.
+    Returns all-zero dict if the category does not exist in the bank.
+    """
+    words = list((WORD_BANK.get(lang) or {}).get(category, []))
+    if not words:
+        return {"total": 0, "easy": 0, "medium": 0, "hard": 0}
+    bands = [_word_difficulty_band(w) for w in words]
+    return {
+        "total": len(words),
+        "easy": bands.count("easy"),
+        "medium": bands.count("medium"),
+        "hard": bands.count("hard"),
+    }
+
+
+def find_duplicates(*, lang: str = "ru") -> list[dict]:
+    """Find words that appear in multiple categories (by normalised lemma key).
+
+    Uses the same normalisation as the word-picker to detect morphologically
+    related duplicates.  Returns a list of dicts:
+      [{"word_key": str, "categories": [str, ...]}]
+    Sorted by duplicate-count descending, then alphabetically by word_key.
+    """
+    bank = WORD_BANK.get(lang) or {}
+    seen: dict[str, list[str]] = {}
+    for category, words in bank.items():
+        for word in words:
+            key = _normalise_word_diversity_key(word) or word.strip().lower()
+            seen.setdefault(key, []).append(category)
+
+    dupes = [
+        {"word_key": k, "categories": cats}
+        for k, cats in seen.items()
+        if len(cats) > 1
+    ]
+    return sorted(dupes, key=lambda d: (-len(d["categories"]), d["word_key"]))
+
 async def resolve_custom_word_category(word: str) -> str:
     """Classify a custom word strictly into a canonical category, or fallback to 'Слово игрока' / 'Разное'."""
     local_cat = find_word_category(word)
@@ -981,15 +1043,43 @@ def _normalise_word_diversity_key(word: str) -> str:
     return re.sub(r"\s+", " ", base).strip(" -")
 
 
+# Characters that significantly raise word difficulty (slavic rares + latin outliers)
+_RARE_CHARS: frozenset[str] = frozenset("щъёэцшжqxz")
+
+
 def _word_difficulty_band(word: str) -> str:
-    score = len(word.replace(" ", ""))
+    """Classify a word into easy / medium / hard using a composite score.
+
+    Factors (additive):
+      1. Character count (without spaces/hyphens) × 0.8  — primary signal
+      2. Compound word / hyphenated phrase bonus: +3.0
+      3. Rare-character bonus: +1.5 per rare char occurrence
+      4. High unique-character ratio bonus: +2.0 when >80 % of chars are distinct
+
+    Thresholds (calibrated examples):
+      «кот»           2.4  → easy
+      «зонтик»        4.8  → easy
+      «крокодил»      6.4  → easy
+      «телескоп»      6.4  → easy
+      «калейдоскоп»   9.6  → medium  ✔ (was easy under the old scorer)
+      «акробатика»    8.8  → medium
+      «обсерватория» 11.2  → medium/hard
+      «кресло-качалка» 14.4 → hard
+    """
+    clean = word.replace(" ", "").replace("-", "")
+    score: float = len(clean) * 0.8
+
     if " " in word or "-" in word:
-        score += 2
-    if any(ch in word for ch in ("щ", "ъ", "ё", "q", "x", "z")):
-        score += 1
-    if score >= 14:
+        score += 3.0
+
+    score += sum(1.5 for ch in clean if ch in _RARE_CHARS)
+
+    if clean and len(set(clean)) / len(clean) > 0.8:
+        score += 2.0
+
+    if score >= 13.0:
         return "hard"
-    if score >= 9:
+    if score >= 8.0:
         return "medium"
     return "easy"
 
@@ -1017,14 +1107,23 @@ def _filter_words_by_difficulty(words: list[str], *, topic_id: str, preferred_di
 
     scored = [(word, describe_word_bank_entry(word, topic_id=topic_id)) for word in words]
     if preferred_difficulty == "easy":
+        # Tier 1: strictly easy + common
         filtered = [
             word for word, meta in scored
             if meta["difficulty_band"] == "easy" and meta["rarity_band"] == "common"
         ]
         if filtered:
             return filtered
-        return sorted(words, key=lambda item: (len(item.replace(" ", "")), item))[: max(1, len(words) // 2)]
+        # Tier 2: easy or medium (never hard) — broadened pool when bank is small
+        filtered = [word for word, meta in scored if meta["difficulty_band"] in ("easy", "medium")]
+        if filtered:
+            return filtered
+        # Tier 3: absolute fallback — exclude hard-band words, take shorter half
+        non_hard = [word for word, meta in scored if meta["difficulty_band"] != "hard"]
+        pool = non_hard or words
+        return sorted(pool, key=lambda item: (len(item.replace(" ", "")), item))[: max(1, len(pool) // 2)]
 
+    # hard: prefer hard-band or rare words
     filtered = [
         word for word, meta in scored
         if meta["difficulty_band"] == "hard" or meta["rarity_band"] == "rare"
