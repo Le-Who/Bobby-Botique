@@ -385,9 +385,8 @@ async def game_mutation_lock(game_id: str):
             async with local_lock:
                 yield
             return
-
-    lock = _local_locks.setdefault(game_id, asyncio.Lock())
-    async with lock:
+    local_lock = _local_locks.setdefault(game_id, asyncio.Lock())
+    async with local_lock:
         yield
 
 

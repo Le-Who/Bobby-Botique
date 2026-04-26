@@ -233,13 +233,13 @@ async def _route_tts(msg: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
         # Resolve the user's configured voice preference
-        user = msg.from_user or (context._user_id if hasattr(context, "_user_id") else None)  # type: ignore[union-attr]
+        _user_id = msg.from_user.id if msg.from_user else getattr(context, "_user_id", 0)
         tts_voice = "Aoede"
         tts_temperature_val: float | None = None
-        if user:
+        if _user_id:
             from app.repos.chats import get_user_chat
 
-            chat_state = await get_user_chat(user.id if hasattr(user, "id") else user)
+            chat_state = await get_user_chat(_user_id)
             tts_voice = chat_state.voice_id or "Aoede"
             tts_temperature_val = chat_state.tts_temperature
 
@@ -248,7 +248,7 @@ async def _route_tts(msg: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         await fire_voice_reply(
             bot=context.bot,
-            user_id=user.id if hasattr(user, "id") else user,
+            user_id=int(_user_id),
             chat_id=msg.chat_id,
             reply_to_message_id=msg.message_id,
             response_text=response_text,

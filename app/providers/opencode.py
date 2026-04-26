@@ -371,8 +371,6 @@ class OpencodeGoProvider(OpenRouterProvider):
             system_segments.append(system_text)
 
         for item in history:
-            if not isinstance(item, dict):
-                continue
             role = str(item.get("role", "user") or "user")
             if role == "model":
                 role = "assistant"
@@ -440,7 +438,7 @@ class OpencodeGoProvider(OpenRouterProvider):
         if not img_bytes:
             return None
 
-        img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))
+        img_b64 = await asyncio.to_thread(lambda b: base64.b64encode(b).decode("utf-8"), img_bytes)
         return {
             "type": "image",
             "source": {

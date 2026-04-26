@@ -701,3 +701,32 @@ class GeminiProvider(BaseAIProvider):
                 success=False,
                 error_message=msg,
             )
+
+
+
+# ── Vertex AI Provider ────────────────────────────────────────────────────────
+
+_VERTEX_PLACEHOLDER_KEY = "vertex"  # Sentinel api_key for VertexGeminiProvider
+
+
+class VertexGeminiProvider(GeminiProvider):
+    """Vertex AI-backed Gemini provider.
+
+    Uses the module-level Vertex AI client singleton (get_vertex_client()) instead
+    of a per-key cached genai.Client.  The api_key parameter is a sentinel string
+    ("vertex") that satisfies BaseAIProvider validation but is not used for auth.
+
+    Intended as a supplementary race participant for models that experience 503
+    storms on the Gemini Developer API while Vertex AI remains healthy.
+    """
+
+    provider_name = "gemini-vertex"
+
+    def __init__(self) -> None:
+        # BaseAIProvider.__init__ requires a non-empty string; use sentinel.
+        super().__init__(_VERTEX_PLACEHOLDER_KEY)
+        vertex_client = get_vertex_client()
+        if vertex_client is None:
+            raise RuntimeError("Vertex AI client is not configured")
+        self._client = vertex_client
+        self._client_api_key = _VERTEX_PLACEHOLDER_KEY

@@ -128,7 +128,7 @@ async def _send_daily_completion_art(bot, user_id: int, puzzle_date: date, *, di
     try:
         await repo.clear_puzzle_image_asset(puzzle_date, difficulty=difficulty)
         refreshed = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty=difficulty)
-        if not refreshed.image_file_id:
+        if not refreshed or not refreshed.image_file_id:
             return False
         await bot.send_photo(
             chat_id=user_id,

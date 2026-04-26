@@ -959,7 +959,7 @@ def _generated_cache_key(lang: str, category: str, *, topic_id: str | None = Non
 
 def _has_full_generated_bank(words: list[str] | None) -> bool:
     """Return True only for a fully generated topic bank, not a fast-path seed."""
-    return bool(words) and len(words) >= 5
+    return words is not None and len(words) >= 5
 
 
 def _topic_bank_hash(words: list[str]) -> str:
@@ -1387,7 +1387,7 @@ async def pick_random_word_for_topic(
         cached_words = _GENERATED_CACHE.get(cache_key)
         provisional_word = _PROVISIONAL_GENERATED.get(cache_key)
 
-        if _has_full_generated_bank(cached_words):
+        if cached_words is not None and len(cached_words) >= 5:
             words = cached_words
             is_generated = True
         else:

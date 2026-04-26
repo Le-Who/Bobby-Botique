@@ -331,6 +331,16 @@ class ProviderRouter:
                 else:
                     break  # No more keys available
 
+            # ── Inject Vertex AI Express Slot ─────────────────────────
+            # Only for supported models (currently gemini-3.1-flash-lite-preview)
+            # and only if we have at least one valid Gemini key to race alongside it.
+            if keys_to_race and resolved_model and "gemini-3.1-flash-lite-preview" in resolved_model:
+                from app.providers.gemini import get_vertex_client
+                vertex_client = get_vertex_client()
+                _VERTEX_KH = "__vertex_ai__"
+                if vertex_client and _VERTEX_KH not in failed_keys:
+                    keys_to_race.append({"api_key": "vertex", "key_hash": _VERTEX_KH})
+
             if not keys_to_race or not resolved_model:
                 # ── Cross-provider fallback: Opencode Go → Gemini (streaming) ─────
                 if is_opencode_model(preferred_model) and not _is_fallback:
@@ -519,24 +529,22 @@ class ProviderRouter:
                     own_fr = _fr_var.get()
                     await q.put((idx, _StreamEndSignal(own_fr), None))
 
-                kh_a = keys_to_race[0]["key_hash"][:8]
-                kh_b = keys_to_race[1]["key_hash"][:8]
+                # Log race participants
+                khs = [kd["key_hash"][:8] for kd in keys_to_race]
                 logging.info(
-                    "Race Requests: model=%s keys=[%s…, %s…] attempt=%d/%d",
+                    "Race Requests: model=%s keys=%s attempt=%d/%d",
                     model_used,
-                    kh_a,
-                    kh_b,
+                    khs,
                     _attempt + 1,
                     max_key_retries,
                 )
 
                 tasks = [
-                    asyncio.create_task(_race_stream(0, keys_to_race[0])),
-                    asyncio.create_task(_race_stream(1, keys_to_race[1])),
+                    asyncio.create_task(_race_stream(i, kd))
+                    for i, kd in enumerate(keys_to_race)
                 ]
 
                 winner_idx: int | None = None
-                loser_idx: int | None = None
                 race_errors: dict[int, Exception] = {}
 
                 # Wait for the first signal from either racer
@@ -561,7 +569,6 @@ class ProviderRouter:
                         continue
                     # We have a winner!
                     winner_idx = idx
-                    loser_idx = 1 - idx
 
                 if winner_idx is None:
                     # Both failed (or timed out) — mark keys as failed, no sleep, retry
@@ -596,9 +603,10 @@ class ProviderRouter:
                             all_permanent = False
                     continue  # Next retry — zero delay!
 
-                # Cancel the loser
-                assert loser_idx is not None
-                tasks[loser_idx].cancel()
+                # Cancel the losers
+                for i, t in enumerate(tasks):
+                    if i != winner_idx:
+                        t.cancel()
                 winner_key = keys_to_race[winner_idx]
 
                 # Record success for the winner (Opencode keys skip DB writes)
@@ -609,10 +617,11 @@ class ProviderRouter:
                 except Exception as e:
                     logging.debug("Non-critical stats update failed: %s", e)
 
+                loser_khs = [k["key_hash"][:8] for i, k in enumerate(keys_to_race) if i != winner_idx]
                 logging.info(
-                    "Race winner: key=%s… (loser %s… cancelled)",
+                    "Race winner: key=%s… (losers %s cancelled)",
                     winner_key["key_hash"][:8],
-                    keys_to_race[loser_idx]["key_hash"][:8],
+                    loser_khs,
                 )
 
                 # Yield the first winning chunk

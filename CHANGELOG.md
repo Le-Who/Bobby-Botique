@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-04-26 - Vertex AI Race Slot & Request ID Log Correlation
+
+### 🛡️ Resilience & Scaling
+
+- **Vertex AI Race Slot (`app/providers/gemini.py`, `app/providers/router.py`, `app/providers/base.py`):** Integrated Vertex AI internally as an independent "third racer" alongside AI Studio keys in the provider pool. Created an isolated `VertexGeminiProvider` capable of handling concurrent requests independently. Modified the race logic to dynamically inject a third slot into the race loop if `VERTEX_AI_KEY` or `VERTEX_AI_PROJECT` are configured and model supports Vertex fallback. This serves as a secondary layer of resilience, specifically designed to bypass 503-storms on AI Studio during high load.
+- **Request ID Log Correlation (`bot.py`, `app/request_context.py`):** Added a globally registered `RequestContextFilter` to track asynchronous task lifecycles effectively. All application logs (API paths, database interactions, provider traces) now inherently include a localized `request_id`, bridging context between disparate async execution events. Also implemented context injection for `user_id`, `chat_id`, and initial system parameters.
+
 ## [Unreleased] - 2026-04-23 - 48-Hour Production Audit: Lock Eviction P0, Voice Engine Hardening
 
 ### 🎮 External Game Hub Integration

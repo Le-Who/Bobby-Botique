@@ -282,6 +282,11 @@ def is_opencode_model(model_name: str) -> bool:
     return model_name.startswith("opencode-go/")
 
 
+def is_vertex_provider_key(api_key: str) -> bool:
+    """Check if the provided api_key is the pseudo-key for Vertex AI."""
+    return api_key == "vertex"
+
+
 def get_provider_for_model(model_name: str, api_key: str) -> BaseAIProvider:
     """
     Factory function to get appropriate provider for a model.
@@ -298,7 +303,7 @@ def get_provider_for_model(model_name: str, api_key: str) -> BaseAIProvider:
     Returns:
         Appropriate AIProvider instance
     """
-    from app.providers.gemini import GeminiProvider
+    from app.providers.gemini import GeminiProvider, VertexGeminiProvider
     from app.providers.opencode import OpencodeGoProvider
     from app.providers.openrouter import OpenRouterProvider
 
@@ -306,5 +311,7 @@ def get_provider_for_model(model_name: str, api_key: str) -> BaseAIProvider:
         return OpencodeGoProvider(api_key)
     elif is_openrouter_model(model_name):
         return OpenRouterProvider(api_key)
+    elif is_vertex_provider_key(api_key):
+        return VertexGeminiProvider()
     else:
         return GeminiProvider(api_key)

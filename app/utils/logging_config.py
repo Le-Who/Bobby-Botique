@@ -135,11 +135,13 @@ class DevFormatter(logging.Formatter):
         # Logger name (truncated)
         name = record.name[-25:] if len(record.name) > 25 else record.name
 
-        # Location
+        # Location & Context
         loc = f"{record.funcName}:{record.lineno}"
+        req_id = getattr(record, "request_id", "-")
+        ctx = f"{self.DIM}[{req_id}]{self.RESET} " if req_id and req_id != "-" else ""
 
         # Header line
-        header = f"{self.DIM}{ts}{self.RESET} {level} {self.DIM}│{self.RESET} {name:<25} {self.DIM}│{self.RESET} {loc}"
+        header = f"{self.DIM}{ts}{self.RESET} {level} {self.DIM}│{self.RESET} {name:<25} {self.DIM}│{self.RESET} {ctx}{loc}"
 
         # Message — try to detect and pretty-print embedded JSON
         msg = record.getMessage()
