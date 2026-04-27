@@ -334,10 +334,10 @@ class ProviderRouter:
             # ── Inject Vertex AI Express Slot ─────────────────────────
             # Only for supported models (currently gemini-3.1-flash-lite-preview)
             # and only if we have at least one valid Gemini key to race alongside it.
+            _VERTEX_KH = "__vertex_ai__"
             if keys_to_race and resolved_model and "gemini-3.1-flash-lite-preview" in resolved_model:
                 from app.providers.gemini import get_vertex_client
                 vertex_client = get_vertex_client()
-                _VERTEX_KH = "__vertex_ai__"
                 if vertex_client and _VERTEX_KH not in failed_keys:
                     keys_to_race.append({"api_key": "vertex", "key_hash": _VERTEX_KH})
 
