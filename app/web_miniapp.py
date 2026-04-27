@@ -2170,3 +2170,103 @@ async def api_admin_dailycroc_regen(user_id: int):
     except Exception as e:
         logger.error("Webapp dailycroc regen failed: %s", e, exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+@miniapp_blueprint.route("/api/admin/dailycroc/reset-word", methods=["POST"])
+@require_webapp_auth
+async def api_admin_dailycroc_reset_word(user_id: int):
+    """Delete a puzzle row so it is recreated with a fresh word on next access."""
+    from app.config import settings
+
+    if user_id != settings.ADMIN_ID:
+        return jsonify({"error": "forbidden"}), 403
+
+    body = await request.get_json(silent=True) or {}
+    puzzle_date_str = body.get("date")
+    difficulty = body.get("difficulty", "easy")
+
+    if not puzzle_date_str:
+        return jsonify({"error": "missing date"}), 400
+
+    try:
+        dt = datetime.fromisoformat(puzzle_date_str).date()
+    except ValueError:
+        return jsonify({"error": "invalid date format"}), 400
+
+    from app import database as db
+
+    await db.db_query(
+        "DELETE FROM public.crocodile_daily_puzzles WHERE puzzle_date = $1 AND difficulty = $2",
+        (dt, difficulty),
+    )
+
+    # Trigger fresh puzzle creation immediately with the new rotation logic
+    from app.repos.crocodile_daily import create_puzzle_if_missing
+
+    new_puzzle = await create_puzzle_if_missing(dt, difficulty=difficulty)
+    return jsonify({
+        "ok": True,
+        "new_word": new_puzzle.target_word,
+        "new_topic": new_puzzle.topic,
+    })
+
+
+@miniapp_blueprint.route("/api/admin/dailycroc/image", methods=["GET"])
+@require_webapp_auth
+async def api_admin_dailycroc_image(user_id: int):
+    """Proxy a Telegram file_id as raw image bytes for dashboard preview."""
+    import httpx
+
+    from app.config import settings
+
+    if user_id != settings.ADMIN_ID:
+        return jsonify({"error": "forbidden"}), 403
+
+    file_id = request.args.get("file_id", "")
+    if not file_id:
+        return jsonify({"error": "missing file_id"}), 400
+
+    token = settings.TELEGRAM_BOT_TOKEN
+    local_url = getattr(settings, "TELEGRAM_LOCAL_SERVER_URL", None)
+
+    # Resolve file_id → file_path via Bot API
+    api_base = local_url.rstrip("/") if local_url else f"https://api.telegram.org/bot{token}"
+    # local URL is like http://tg-api:8081/bot<token> — use it directly
+    if local_url:
+        get_file_url = f"{api_base}/getFile?file_id={file_id}"
+    else:
+        get_file_url = f"https://api.telegram.org/bot{token}/getFile?file_id={file_id}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(get_file_url)
+            r.raise_for_status()
+            data = r.json()
+            file_path = data.get("result", {}).get("file_path")
+            if not file_path:
+                return jsonify({"error": "no file_path"}), 404
+
+            # Download the actual file
+            if local_url:
+                # Local API: files live at http://tg-api:8081/<file_path>
+                download_url = f"http://tg-api:8081/{file_path}"
+            else:
+                download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+
+            img_r = await client.get(download_url)
+            img_r.raise_for_status()
+
+        from quart import Response
+
+        content_type = img_r.headers.get("content-type", "image/jpeg")
+        return Response(
+            img_r.content,
+            status=200,
+            headers={
+                "Content-Type": content_type,
+                "Cache-Control": "public, max-age=3600",
+            },
+        )
+    except Exception as exc:
+        logger.error("Admin image proxy failed file_id=%s: %s", file_id, exc, exc_info=True)
+        return jsonify({"error": "proxy_error", "detail": str(exc)}), 502

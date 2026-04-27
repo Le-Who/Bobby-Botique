@@ -319,16 +319,59 @@ async def _create_puzzle_if_missing_with_conn(
     if existing:
         return existing
 
-    from app.games.word_bank import pick_random_word_for_topic, resolve_topic
+    from app.games.word_bank import (
+        WORD_BANK,
+        _filter_words_by_difficulty,  # type: ignore[attr-defined]
+        pick_random_word_for_topic,
+        resolve_topic,
+    )
 
     await ensure_puzzle_day(puzzle_date, conn=conn)
-    topic = resolve_topic("разное")
+
     used_words = await get_used_daily_words(conn=conn)
-    easy_puzzle = None
     if difficulty == "hard":
         easy_puzzle = await get_puzzle(puzzle_date, difficulty="easy", conn=conn)
         if easy_puzzle:
             used_words.add(normalize_daily_word(easy_puzzle.target_word))
+
+    # ── Date-based topic rotation across all RU categories ─────────────────
+    # Each day maps to a different category so the user never sees the
+    # same topic two days in a row, and topic diversity is maximised.
+    ru_categories = list(WORD_BANK.get("ru", {}).keys())  # stable insertion order
+    n = len(ru_categories)
+
+    # Hard offset so easy/hard don't always pick the same topic on the same day
+    difficulty_offset = 0 if difficulty == "easy" else n // 2
+
+    # Ordered list of categories to try — starting from today's slot, wrapping
+    day_ordinal = puzzle_date.toordinal()
+    topic_candidates = [
+        ru_categories[(day_ordinal + difficulty_offset + i) % n]
+        for i in range(n)
+    ]
+
+    # Try each candidate in rotating order; pick the first that still has
+    # unused words of the right difficulty band.
+    chosen_topic_raw = topic_candidates[0]  # default: today's slot
+    for candidate_cat in topic_candidates:
+        candidate_words = list(WORD_BANK["ru"].get(candidate_cat, []))
+        available = _filter_words_by_difficulty(
+            candidate_words,
+            topic_id=f"builtin:ru:{candidate_cat.lower()}",
+            preferred_difficulty=difficulty,
+        )
+        unused = [
+            w for w in available
+            if normalize_daily_word(w) not in used_words
+        ]
+        if unused:
+            chosen_topic_raw = candidate_cat
+            break
+    # If ALL categories are exhausted just use today's slot — the AI
+    # word-generation fallback inside pick_random_word_for_topic will kick in.
+
+    topic = resolve_topic(chosen_topic_raw)
+
     word, lang, category, _ = await pick_random_word_for_topic(
         topic,
         used_words=used_words,
@@ -355,6 +398,7 @@ async def _create_puzzle_if_missing_with_conn(
     if not puzzle:
         raise RuntimeError(f"daily puzzle was not created for {puzzle_date} difficulty={difficulty}")
     return puzzle
+
 
 
 async def create_puzzle_if_missing(puzzle_date: date, *, difficulty: str = "easy") -> DailyPuzzle:
