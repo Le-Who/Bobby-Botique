@@ -48,6 +48,10 @@ _HIGH_DEBUG = re.compile(
     r"(?:ошибк|error|traceback|не работает|bug|fix|exception|stack.?trace|debug)",
     re.IGNORECASE,
 )
+_HIGH_LONG_FORM_WRITING = re.compile(
+    r"(?:сочинени|сачыненне|сочини|эссе|доклад|реферат|курсовая|диплом|essay|report|thesis|dissertation|статью|лонгрид)",
+    re.IGNORECASE,
+)
 
 # LOW signals — ALL must match → "low"
 _LOW_GREETING = re.compile(
@@ -139,6 +143,10 @@ def classify_thinking_level(
 
     if _HIGH_LEGAL.search(message):
         logger.debug("Thinking classifier: HIGH (legal/contract)")
+        return "high"
+
+    if _HIGH_LONG_FORM_WRITING.search(message):
+        logger.debug("Thinking classifier: HIGH (long-form writing / essay)")
         return "high"
 
     # ── LOW signals (ALL must match) ──

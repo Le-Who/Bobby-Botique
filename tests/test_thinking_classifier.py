@@ -117,6 +117,28 @@ def test_high_debug_keyword():
     assert result == "high"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "напиши сочинение на тему осень",
+        "сделай мне реферат по истории",
+        "подготовь доклад про космос",
+        "нужно эссе для университета",
+        "write a long dissertation",
+        "сочини сказку", # this overlaps with the creative ones, but long form wins
+        "can you write a report on this?",
+    ],
+    ids=["ru_essay", "ru_referat", "ru_report", "ru_essay2", "en_dissertation", "ru_compose", "en_report"],
+)
+def test_high_long_form_writing_signals(text):
+    """Long-form writing requests must yield 'high' thinking level."""
+    # Arrange / Act
+    result = classify_thinking_level(text)
+
+    # Assert
+    assert result == "high", f"Expected 'high' for writing request: {text!r}"
+
+
 def test_high_long_message_over_800_chars():
     """Messages over 800 characters must yield 'high' thinking level."""
     # Arrange
