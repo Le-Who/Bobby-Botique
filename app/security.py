@@ -22,6 +22,10 @@ from app.errors import InputSanitizationError
 # match loop runs in C rather than bytecode-interpreted Python.
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f]")
 
+_WHITESPACE_RE = re.compile(r"\s+")
+_DANGEROUS_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_MULTIPLE_UNDERSCORES_RE = re.compile(r"_+")
+
 
 class InputSanitizer:
     """Input sanitization and validation utilities."""
@@ -84,7 +88,8 @@ class InputSanitizer:
         sanitized = html.escape(sanitized)
 
         # Remove multiple spaces and normalize
-        sanitized = re.sub(r"\s+", " ", sanitized).strip()
+        # Optimization: use pre-compiled module-level regex for higher throughput
+        sanitized = _WHITESPACE_RE.sub(" ", sanitized).strip()
 
         if not sanitized:
             raise InputSanitizationError("Text contains only dangerous content")
@@ -112,11 +117,11 @@ class InputSanitizer:
             raise InputSanitizationError(f"Filename too long: {len(filename)} > {self.MAX_LENGTHS['filename']}")
 
         # Remove path separators and dangerous characters
-        dangerous_chars = r'[<>:"/\\|?*\x00-\x1f]'
-        sanitized = re.sub(dangerous_chars, "_", filename)
+        # Optimization: use pre-compiled module-level regexes
+        sanitized = _DANGEROUS_FILENAME_CHARS_RE.sub("_", filename)
 
         # Remove multiple underscores
-        sanitized = re.sub(r"_+", "_", sanitized)
+        sanitized = _MULTIPLE_UNDERSCORES_RE.sub("_", sanitized)
 
         # Remove leading/trailing underscores and dots
         sanitized = sanitized.strip("_.")
@@ -258,7 +263,8 @@ class InputSanitizer:
         sanitized = _CONTROL_CHARS_RE.sub("", sanitized)
 
         # Normalize whitespace
-        sanitized = re.sub(r"\s+", " ", sanitized).strip()
+        # Optimization: use pre-compiled module-level regex
+        sanitized = _WHITESPACE_RE.sub(" ", sanitized).strip()
 
         if not sanitized:
             raise InputSanitizationError("Query contains only dangerous content")

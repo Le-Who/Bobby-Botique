@@ -475,11 +475,7 @@ async def _upsert_graph(
                                 edges_upserted += 1
                                 continue
 
-                        # ── Temporal conflict: 2-stage gate (MemPalace) ────────
-                        # Stage 1: Embedding distance triage
-                        #   < 0.15  → near-duplicate, handled by merge above
-                        #   0.15-0.35 → ambiguous zone → LLM judge
-                        #   >= 0.35 → clearly different → close old edge
+                        # Stage 1 + 2 Triage and Resolution
                         if pred_emb_str:
                             conflicting = await conn.fetch(
                                 """
@@ -498,6 +494,27 @@ async def _upsert_graph(
                                 tgt_id,
                                 pred_emb_str,
                             )
+                            
+                            # Pre-fetch all Stage 2 (ambiguous zone) verdicts concurrently
+                            # This eliminates N+1 LLM API calls and avoids holding the DB transaction open sequentially
+                            stage_2_tasks = []
+                            for old_edge in conflicting:
+                                distance = float(old_edge.get("distance", 1.0))
+                                if distance >= 0.15 and distance < 0.35:
+                                    stage_2_tasks.append(
+                                        _resolve_ambiguous_conflict(
+                                            old_edge["predicate"],
+                                            rel.predicate,
+                                            src_name,
+                                            tgt_name,
+                                            api_key,
+                                        )
+                                    )
+                                    
+                            stage_2_verdicts = await asyncio.gather(*stage_2_tasks) if stage_2_tasks else []
+                            verdict_idx = 0
+                            skip_new_edge_insert = False
+
                             for old_edge in conflicting:
                                 distance = float(old_edge.get("distance", 1.0))
 
@@ -515,14 +532,10 @@ async def _upsert_graph(
                                         distance,
                                     )
                                 else:
-                                    # Stage 2: ambiguous zone (0.15-0.35) → LLM judge
-                                    verdict = await _resolve_ambiguous_conflict(
-                                        old_edge["predicate"],
-                                        rel.predicate,
-                                        src_name,
-                                        tgt_name,
-                                        api_key,
-                                    )
+                                    # Stage 2: ambiguous zone (0.15-0.35) → use gathered LLM judge verdict
+                                    verdict = stage_2_verdicts[verdict_idx]
+                                    verdict_idx += 1
+                                    
                                     if verdict == "update":
                                         await conn.execute(
                                             "UPDATE memory_edges SET valid_to = now() WHERE id = $1",
@@ -557,7 +570,7 @@ async def _upsert_graph(
                                             rel.predicate,
                                             user_id,
                                         )
-                                        continue  # skip insert below
+                                        skip_new_edge_insert = True
                                     else:
                                         # parallel — keep both, no action on old
                                         logging.info(
@@ -566,6 +579,9 @@ async def _upsert_graph(
                                             rel.predicate,
                                             user_id,
                                         )
+
+                            if skip_new_edge_insert:
+                                continue  # skip inserting the new edge since it was merged
 
                         # Insert new edge
                         await conn.execute(
