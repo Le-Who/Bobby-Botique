@@ -54,7 +54,7 @@ def _dailycroc_status_keyboard() -> InlineKeyboardMarkup:
 
     from app.config import settings
 
-    webapp_url = f"{settings.WEBHOOK_BASE_URL.rstrip('/')}/webapp/admin_dailycroc"
+    webapp_url = f"{settings.WEBAPP_BASE_URL.rstrip('/')}/webapp/admin_dailycroc"
     
     return InlineKeyboardMarkup(
         [
