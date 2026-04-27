@@ -174,32 +174,39 @@ jobs:
             fi
 
             # ── Local Telegram Bot API Server ─────────────────────────────
-            docker stop tg-api || true
-            docker rm tg-api || true
+            # Only start if not already running — this is a stable, separate
+            # container that does NOT need to restart on every bot deploy.
+            if ! docker inspect -f '{{.State.Running}}' tg-api 2>/dev/null | grep -q true; then
+              echo ">>> Starting Local Bot API Server (not running)..."
+              docker stop tg-api 2>/dev/null || true
+              docker rm   tg-api 2>/dev/null || true
 
-            docker run -d \
-              --name tg-api \
-              --restart unless-stopped \
-              --network tg-net \
-              -e TELEGRAM_API_ID="$TELEGRAM_API_ID" \
-              -e TELEGRAM_API_HASH="$TELEGRAM_API_HASH" \
-              -e TELEGRAM_LOCAL=1 \
-              -e TZ=Europe/Kyiv \
-              -v tg-api-data:/var/lib/telegram-bot-api \
-              aiogram/telegram-bot-api:latest
+              docker run -d \
+                --name tg-api \
+                --restart unless-stopped \
+                --network tg-net \
+                -e TELEGRAM_API_ID="$TELEGRAM_API_ID" \
+                -e TELEGRAM_API_HASH="$TELEGRAM_API_HASH" \
+                -e TELEGRAM_LOCAL=1 \
+                -e TZ=Europe/Kyiv \
+                -v tg-api-data:/var/lib/telegram-bot-api \
+                aiogram/telegram-bot-api:latest
 
-            # Wait for local API server to be ready
-            echo ">>> Waiting for Local Bot API Server to start..."
-            for i in $(seq 1 30); do
-              if docker exec tg-api wget -qO- http://localhost:8081/ 2>/dev/null | grep -q '"ok"'; then
-                echo ">>> Local API Server is ready."
-                break
-              fi
-              if [ $i -eq 30 ]; then
-                echo ">>> WARNING: Local API Server health check timed out after 60s"
-              fi
-              sleep 2
-            done
+              # Wait for local API server to be ready
+              echo ">>> Waiting for Local Bot API Server to start..."
+              for i in $(seq 1 30); do
+                if docker exec tg-api wget -qO- http://localhost:8081/ 2>/dev/null | grep -q '"ok"'; then
+                  echo ">>> Local API Server is ready."
+                  break
+                fi
+                if [ $i -eq 30 ]; then
+                  echo ">>> WARNING: Local API Server health check timed out after 60s"
+                fi
+                sleep 2
+              done
+            else
+              echo ">>> Local API Server already running, skipping restart."
+            fi
 
             # Fix shared volume permissions: telegram-bot-api (uid 101) creates dirs
             # with 700. The bot container runs as 'app' (GID 101) and needs group-read.
