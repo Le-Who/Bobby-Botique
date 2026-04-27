@@ -123,6 +123,7 @@ def register(application: Application) -> None:
     )
     from app.handlers.cmd_admin import (
         refresh_dailycroc_status_callback,
+        regenerate_dailycroc_image_callback,
         run_dailycroc_prep_check_callback,
         send_dailycroc_test_callback,
     )
@@ -208,6 +209,7 @@ def register(application: Application) -> None:
     _add_fast_callback(application, refresh_dailycroc_status_callback, "^dailycroc_status:refresh$")
     application.add_handler(CallbackQueryHandler(run_dailycroc_prep_check_callback, pattern="^dailycroc_status:check$"))
     application.add_handler(CallbackQueryHandler(send_dailycroc_test_callback, pattern="^dailycroc_status:send_test$"))
+    application.add_handler(CallbackQueryHandler(regenerate_dailycroc_image_callback, pattern="^dailycroc_status:regen:.*$"))
 
     # Conversation branching
     from app.handlers.cb_branches import branch_create_callback, branch_return_callback

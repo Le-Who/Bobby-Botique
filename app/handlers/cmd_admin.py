@@ -40,6 +40,7 @@ from app.utils.formatting import TelegramFormatter
 _DAILYCROC_STATUS_REFRESH = "dailycroc_status:refresh"
 _DAILYCROC_STATUS_CHECK = "dailycroc_status:check"
 _DAILYCROC_STATUS_SEND_TEST = "dailycroc_status:send_test"
+_DAILYCROC_REGEN_IMAGE = "dailycroc_status:regen:"
 _EXPECTED_DAILY_HINTS = 3
 _DAILYCROC_PLACEHOLDER_TEST_KEY = "daily_croc_placeholder_test_status"
 
@@ -54,6 +55,10 @@ def _dailycroc_status_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("🔄 Refresh", callback_data=_DAILYCROC_STATUS_REFRESH),
                 InlineKeyboardButton("🧪 Prep check", callback_data=_DAILYCROC_STATUS_CHECK),
+            ],
+            [
+                InlineKeyboardButton("🖼 Regen Easy", callback_data=f"{_DAILYCROC_REGEN_IMAGE}easy"),
+                InlineKeyboardButton("🖼 Regen Hard", callback_data=f"{_DAILYCROC_REGEN_IMAGE}hard"),
             ],
             [InlineKeyboardButton("📬 Send test to admin", callback_data=_DAILYCROC_STATUS_SEND_TEST)],
         ]
@@ -131,9 +136,13 @@ def _daily_prep_component_line(difficulty: str, puzzle) -> str:
     
     target_date = getattr(puzzle, "puzzle_date", None)
     date_str = f" ({target_date.isoformat()})" if target_date else ""
+    word_str = str(getattr(puzzle, "target_word", "") or "").strip()
+    word_display = f"word=<code>{word_str}</code> · " if word_str else ""
+    
     return (
         f"  {difficulty}{date_str}: <code>{state}</code> · "
         f"puzzle=<code>{'yes' if puzzle_ready else 'no'}</code> · "
+        f"{word_display}"
         f"hints=<code>{hints_count}/{_EXPECTED_DAILY_HINTS}</code> · "
         f"art=<code>{'yes' if art_ready else 'no'}</code> · "
         f"gen_time=<code>{prepared_at}</code>"
@@ -1053,6 +1062,30 @@ async def send_dailycroc_test_callback(update: Update, context: ContextTypes.DEF
         logging.error("Dailycroc test send crashed for admin %s: %s", update.effective_user.id, exc, exc_info=True)
         await _write_placeholder_test_status(status="error", error=str(exc))
         await query.answer("❌ Не удалось отправить тест", show_alert=True)
+
+
+@admin_only
+async def regenerate_dailycroc_image_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Regenerate the daily image for a specific difficulty and refresh the card."""
+    from app.games.crocodile_daily import prepare_daily_puzzle
+
+    query = update.callback_query
+    if not query:
+        return
+
+    diff = query.data.split(":")[-1]
+    await query.answer(f"🖼 Перегенерация {diff}...", show_alert=False)
+    try:
+        today = daily_croc_repo.today_puzzle_date(datetime.now(tz=UTC))
+        await prepare_daily_puzzle(today, bot=context.bot, difficulty=diff, force_image=True)
+        await _refresh_dailycroc_status_message(query)
+    except BadRequest as exc:
+        if _is_message_not_modified_error(exc):
+            return
+        logging.error("Error updating dailycroc status after image regen: %s", exc)
+    except Exception as exc:
+        logging.error("Error in dailycroc image regen callback: %s", exc, exc_info=True)
+        await query.answer("❌ Ошибка перегенерации", show_alert=True)
 
 
 @admin_only

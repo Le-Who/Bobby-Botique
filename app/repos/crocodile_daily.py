@@ -288,7 +288,7 @@ def is_puzzle_fully_prepared(puzzle: DailyPuzzle) -> bool:
     return bool(puzzle.hints)
 
 
-async def get_used_daily_words(*, days_back: int = 30, conn=None) -> set[str]:
+async def get_used_daily_words(*, days_back: int = 365, conn=None) -> set[str]:
     """Return words used in daily puzzles within the last *days_back* days.
 
     Using a rolling window instead of querying all-time history lets words
