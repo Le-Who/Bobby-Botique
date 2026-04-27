@@ -21,6 +21,7 @@ can decline to count the attempt rather than lie to the user.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import re
 import time
@@ -242,6 +243,7 @@ def _allowed_edits(length: int) -> int:
     return 2
 
 
+@functools.lru_cache(maxsize=4096)
 def _local_check(target: str, guess: str) -> str | None:
     """Return 'exact_match' if guess is target with at most N typos, else None.
 
@@ -513,12 +515,85 @@ async def _race_generate(
             return result
         logger.warning("Judge: fallback model %r also failed", fallback_mdl)
     else:
+
+        # Resolve up to 3 Gemini API keys
+        keys: list[dict] = []
+        resolved_model: str | None = None
+        for _ in range(3):
+            kd, mdl, _ = await use_case.resolve_ai_request(
+                _PRIMARY_MODEL,
+                excluded_key_hashes={k["key_hash"] for k in keys},
+            )
+            if kd and mdl:
+                keys.append(kd)
+                resolved_model = mdl
+            else:
+                break
+
+        resolved_model = resolved_model or _PRIMARY_MODEL
+        primary_pairs = [(kd["api_key"], kd["key_hash"]) for kd in keys]
+        keys.clear()
+
+        # Concurrent task list: Gemini API key pool + Vertex AI.
+        # _one_vertex_call() returns None instantly when Vertex AI is not configured.
+        all_tasks: list[asyncio.Task] = [  # type: ignore[type-arg]
+            asyncio.create_task(_one_call(ak, kh, resolved_model)) for ak, kh in primary_pairs
+        ]
+        all_tasks.append(asyncio.create_task(_one_vertex_call()))
+
+        result: GuessJudgement | None = None
+        pending = set(all_tasks)
+        try:
+            while pending and result is None:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for finished in done:
+                    r = finished.result()
+                    if r is not None:
+                        result = r
+                        break
+        finally:
+            for t in pending:
+                t.cancel()
+
+        if result is not None:
+            if _primary_circuit_open_until > 0.0:
+                logger.info("Judge: primary race recovered — circuit closed")
+                _primary_circuit_open_until = 0.0
+            return result
+
+        # All Gemini keys + Vertex AI failed — open circuit
+        _primary_circuit_open_until = time.monotonic() + _PRIMARY_CIRCUIT_COOLDOWN_S
+        logger.warning(
+            "Judge: primary model %r all-fail — circuit opened for %.0fs, routing to %r",
+            resolved_model,
+            _PRIMARY_CIRCUIT_COOLDOWN_S,
+            _FALLBACK_MODEL,
+        )
+
+    # ── Fallback model race ───────────────────────────────────────────────────
+    # Primary model race returned nothing (503 / 429 / all keys failed).
+    # resolve_ai_request will skip keys already suspended by _one_call above.
+    fallback_kd, fallback_mdl, _ = await use_case.resolve_ai_request(_FALLBACK_MODEL)
+    if fallback_kd and fallback_mdl:
+        fallback_pair = [(fallback_kd["api_key"], fallback_kd["key_hash"])]
+        result = await _run_race(fallback_pair, fallback_mdl, timeout=_LLM_FALLBACK_TIMEOUT_S)
+        if result is not None:
+            logger.info("Judge: fallback model %r succeeded", fallback_mdl)
+            return result
+        logger.warning("Judge: fallback model %r also failed", fallback_mdl)
+    else:
         logger.warning("Judge: no keys available for fallback model %r", _FALLBACK_MODEL)
 
     return None
 
 
 # ── Progressive hint generation ───────────────────────────────────────────────
+
+_HINT_SPACES_RE = re.compile(r"\s+")
+_HINT_LIST_STRIP_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)]|подсказка\s*\d+\s*[:.)-]?)\s*", flags=re.IGNORECASE)
+_HINT_FALLBACK_CLEAN_RE = re.compile(r"^(here are the hints|подсказки)\s*:?$", flags=re.IGNORECASE)
+_HINT_QUOTED_RE = re.compile(r'"([^"]+)"')
+_HINT_SPLIT_RE = re.compile(r"[\s\-]+")
 
 
 async def generate_hints(word: str, category: str, mode: HintGenerationMode = "foreground") -> list[str]:
@@ -533,7 +608,7 @@ async def generate_hints(word: str, category: str, mode: HintGenerationMode = "f
         seen: set[str] = set()
         result: list[str] = []
         for item in items:
-            cleaned = re.sub(r"\s+", " ", item).strip().strip("\"'`")
+            cleaned = _HINT_SPACES_RE.sub(" ", item).strip().strip("\"'`")
             if not cleaned:
                 continue
             key = cleaned.casefold()
@@ -579,7 +654,7 @@ async def generate_hints(word: str, category: str, mode: HintGenerationMode = "f
         numbered_lines: list[str] = []
         for line in cleaned_text.splitlines():
             stripped = line.strip()
-            normalized = re.sub(r"^\s*(?:[-*•]|\d+[.)]|подсказка\s*\d+\s*[:.)-]?)\s*", "", line, flags=re.I).strip()
+            normalized = _HINT_LIST_STRIP_RE.sub("", line).strip()
             if not normalized:
                 continue
             if normalized.lower() == "hints":
@@ -588,7 +663,7 @@ async def generate_hints(word: str, category: str, mode: HintGenerationMode = "f
                 continue
             if normalized.endswith(":"):
                 continue
-            if re.match(r"^(here are the hints|подсказки)\s*:?$", normalized, flags=re.I):
+            if _HINT_FALLBACK_CLEAN_RE.match(normalized):
                 continue
             if len(normalized) >= 3:
                 numbered_lines.append(normalized)
@@ -596,7 +671,7 @@ async def generate_hints(word: str, category: str, mode: HintGenerationMode = "f
         if len(numbered_hints) >= 3:
             return numbered_hints[:3]
 
-        quoted = re.findall(r'"([^"]+)"', cleaned_text)
+        quoted = _HINT_QUOTED_RE.findall(cleaned_text)
         quoted_hints = _dedupe_nonempty([q for q in quoted if q.lower() != "hints"])
         if len(quoted_hints) >= 3:
             return quoted_hints[:3]
@@ -604,8 +679,8 @@ async def generate_hints(word: str, category: str, mode: HintGenerationMode = "f
         return []
 
     def _local_fallback_hints(target_word: str, target_category: str) -> list[str]:
-        compact_word = re.sub(r"\s+", " ", target_word).strip()
-        tokens = [token for token in re.split(r"[\s\-]+", compact_word) if token]
+        compact_word = _HINT_SPACES_RE.sub(" ", target_word).strip()
+        tokens = [token for token in _HINT_SPLIT_RE.split(compact_word) if token]
         token_lengths = [sum(1 for ch in token if ch.isalnum()) for token in tokens]
         alnum_chars = [ch for ch in compact_word if ch.isalnum()]
         first_char = alnum_chars[0].upper() if alnum_chars else "?"

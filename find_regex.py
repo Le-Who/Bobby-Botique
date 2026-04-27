@@ -1,10 +1,11 @@
 import ast
-import os
 import glob
+import os
+
 
 def find_re_compile_in_funcs(filepath):
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, encoding='utf-8') as f:
             tree = ast.parse(f.read(), filename=filepath)
     except Exception:
         return

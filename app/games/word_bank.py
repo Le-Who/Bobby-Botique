@@ -17,6 +17,7 @@ Words are purposely lowercase and normalised (stripped).
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import logging
 import random
@@ -1049,10 +1050,12 @@ def _topic_bank_hash(words: list[str]) -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
+@functools.lru_cache(maxsize=4096)
 def _normalise_word_pick_key(word: str) -> str:
     return _SPACES_RE.sub(" ", word.strip().lower())
 
 
+@functools.lru_cache(maxsize=4096)
 def _normalise_word_diversity_key(word: str) -> str:
     base = _normalise_word_pick_key(word)
     base = unicodedata.normalize("NFKD", base)
@@ -1067,6 +1070,7 @@ def _normalise_word_diversity_key(word: str) -> str:
 _RARE_CHARS: frozenset[str] = frozenset("щъёэцшжqxz")
 
 
+@functools.lru_cache(maxsize=4096)
 def _word_difficulty_band(word: str) -> str:
     """Classify a word into easy / medium / hard using a composite score.
 
@@ -1104,6 +1108,7 @@ def _word_difficulty_band(word: str) -> str:
     return "easy"
 
 
+@functools.lru_cache(maxsize=4096)
 def _word_rarity_band(word: str) -> str:
     score = len(set(word.replace(" ", "")))
     if " " in word or "-" in word:

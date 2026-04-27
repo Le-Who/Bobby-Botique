@@ -1,9 +1,10 @@
 import ast
-import os
 import glob
+import os
+
 
 def find_await_in_loops(filepath):
-    with open(filepath, 'r', encoding='utf-8') as f:
+    with open(filepath, encoding='utf-8') as f:
         try:
             tree = ast.parse(f.read(), filename=filepath)
         except Exception:

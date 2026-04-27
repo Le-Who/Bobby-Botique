@@ -13,6 +13,8 @@ from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 
+_SPACES_RE = re.compile(r"\s+")
+
 _HINTS_INFLIGHT: dict[str, asyncio.Task[list[str] | None]] = {}
 _BANK_PREFETCH_QUEUE: deque[_BankPrefetchItem] = deque()
 _BANK_PREFETCH_PENDING_TOPICS: set[str] = set()
@@ -38,7 +40,7 @@ def _dedupe_hint_items(items: list[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for item in items:
-        cleaned = re.sub(r"\s+", " ", item).strip().strip("\"'`")
+        cleaned = _SPACES_RE.sub(" ", item).strip().strip("\"'`")
         if not cleaned:
             continue
         key = cleaned.casefold()
@@ -50,7 +52,7 @@ def _dedupe_hint_items(items: list[str]) -> list[str]:
 
 
 def _normalize_batch_word(word: str) -> str:
-    return re.sub(r"\s+", " ", word).strip().lower()
+    return _SPACES_RE.sub(" ", word).strip().lower()
 
 
 def _pick_batch_hint_model(settings_obj: object | None) -> str | None:
