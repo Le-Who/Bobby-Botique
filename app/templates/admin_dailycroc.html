@@ -181,7 +181,7 @@ async function loadPuzzles() {
   container.innerHTML = '<div class="loading-container">Loading...</div>';
   
   try {
-    const res = await fetch('/api/admin/dailycroc', { headers: apiHeaders });
+    const res = await fetch('/webapp/api/admin/dailycroc', { headers: apiHeaders });
     const data = await res.json();
     
     if (data.error) throw new Error(data.error);
@@ -242,7 +242,7 @@ async function regenerate(date, diff) {
   
   tg.HapticFeedback.impactOccurred('medium');
   try {
-    const res = await fetch('/api/admin/dailycroc/regenerate', {
+    const res = await fetch('/webapp/api/admin/dailycroc/regenerate', {
       method: 'POST',
       headers: apiHeaders,
       body: JSON.stringify({ date: date, difficulty: diff })
