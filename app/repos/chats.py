@@ -24,20 +24,26 @@ from app.utils.logging_config import timed_operation
 
 
 def _extract_message_content(msg: dict) -> str:
-    """Extract content string from a message dict that may use 'content' or 'parts' key."""
-    if "content" in msg:
-        content = msg["content"]
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
-    if "parts" in msg:
-        parts = msg["parts"]
-        if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
-        return str(parts)
-    return ""
+    """Extract content string from a message dict without massive string allocations."""
+    val = msg["content"] if "content" in msg else msg.get("parts", "")
+    if isinstance(val, str):
+        return val
+    if isinstance(val, (bytes, bytearray)):
+        return ""
+    if isinstance(val, dict):
+        return str(val.get("text", "")) if "text" in val else ""
+    if isinstance(val, list):
+        text_parts = []
+        for p in val:
+            if isinstance(p, (bytes, bytearray)):
+                continue
+            if isinstance(p, dict):
+                if "text" in p:
+                    text_parts.append(str(p["text"]))
+            else:
+                text_parts.append(str(p))
+        return " ".join(text_parts)
+    return str(val)
 
 
 import json
