@@ -152,7 +152,7 @@ async def main(args: argparse.Namespace) -> int:
 
     log.info("Connecting to database...")
     try:
-        conn = await asyncpg.connect(database_url)
+        conn = await asyncpg.connect(database_url, statement_cache_size=0)
     except Exception as exc:
         log.error("Cannot connect to database: %s", exc)
         return 1
