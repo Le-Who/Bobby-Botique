@@ -2111,15 +2111,15 @@ async def api_admin_dailycroc_list(user_id: int):
 
     from datetime import timedelta
 
-    from app.repos.crocodile_daily import get_daily_puzzle, today_puzzle_date
+    from app.repos.crocodile_daily import get_puzzle, today_puzzle_date
 
     today = today_puzzle_date(datetime.now(tz=UTC))
     dates = [today + timedelta(days=i - 1) for i in range(14)]  # Yesterday + next 13 days
-    
+
     puzzles = []
     for dt in dates:
         for diff in ("easy", "hard"):
-            puzzle = await get_daily_puzzle(dt, diff)
+            puzzle = await get_puzzle(dt, difficulty=diff)
             if puzzle:
                 puzzles.append({
                     "date": dt.isoformat(),
