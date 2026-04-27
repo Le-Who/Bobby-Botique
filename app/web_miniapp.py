@@ -2088,3 +2088,85 @@ async def _handle_live_session(
                 pass
 
     logger.info("live_audio_ws: disconnected user=%d mode=%s", user_id, transport_mode)
+
+
+# ── Admin Daily Crocodile Dashboard ─────────────────────────────────────────
+
+@miniapp_blueprint.route("/admin_dailycroc")
+async def admin_dailycroc_page():
+    """Serve the Daily Crocodile TWA Admin Dashboard."""
+    from quart import render_template
+
+    return await render_template("admin_dailycroc.html")
+
+
+@miniapp_blueprint.route("/api/admin/dailycroc", methods=["GET"])
+@require_webapp_auth
+async def api_admin_dailycroc_list(user_id: int):
+    """List 14 upcoming/current daily puzzles via the API."""
+    from app.config import settings
+
+    if user_id != settings.ADMIN_ID:
+        return jsonify({"error": "forbidden"}), 403
+
+    from datetime import timedelta
+
+    from app.repos.crocodile_daily import get_daily_puzzle, today_puzzle_date
+
+    today = today_puzzle_date(datetime.now(tz=UTC))
+    dates = [today + timedelta(days=i - 1) for i in range(14)]  # Yesterday + next 13 days
+    
+    puzzles = []
+    for dt in dates:
+        for diff in ("easy", "hard"):
+            puzzle = await get_daily_puzzle(dt, diff)
+            if puzzle:
+                puzzles.append({
+                    "date": dt.isoformat(),
+                    "difficulty": diff,
+                    "target_word": puzzle.target_word,
+                    "topic": puzzle.topic,
+                    "image_file_id": puzzle.image_file_id,
+                })
+            else:
+                puzzles.append({
+                    "date": dt.isoformat(),
+                    "difficulty": diff,
+                    "target_word": None,
+                    "topic": None,
+                    "image_file_id": None,
+                })
+    return jsonify({"puzzles": puzzles})
+
+
+@miniapp_blueprint.route("/api/admin/dailycroc/regenerate", methods=["POST"])
+@require_webapp_auth
+async def api_admin_dailycroc_regen(user_id: int):
+    """Force an image regeneration for a specific puzzle date and difficulty."""
+    from app.config import settings
+
+    if user_id != settings.ADMIN_ID:
+        return jsonify({"error": "forbidden"}), 403
+        
+    body = await request.get_json(silent=True) or {}
+    puzzle_date_str = body.get("date")
+    difficulty = body.get("difficulty", "easy")
+    
+    if not puzzle_date_str:
+        return jsonify({"error": "missing date"}), 400
+        
+    try:
+        dt = datetime.fromisoformat(puzzle_date_str).date()
+    except ValueError:
+        return jsonify({"error": "invalid date format"}), 400
+
+    from app.bot_instance import get_bot
+    from app.games.crocodile_daily import prepare_daily_puzzle
+
+    bot = get_bot()
+    try:
+        await prepare_daily_puzzle(dt, bot=bot, difficulty=difficulty, force_image=True)
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error("Webapp dailycroc regen failed: %s", e, exc_info=True)
+        return jsonify({"error": str(e)}), 500

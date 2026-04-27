@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Admin: Daily Crocodile</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root {
+  --bg: var(--tg-theme-bg-color, #ffffff);
+  --text: var(--tg-theme-text-color, #000000);
+  --hint: var(--tg-theme-hint-color, #999999);
+  --link: var(--tg-theme-link-color, #2678b6);
+  --secondary-bg: var(--tg-theme-secondary-bg-color, #f0f0f0);
+  --destructive: var(--tg-theme-destructive-text-color, #e53935);
+  --section-bg: var(--tg-theme-section-bg-color, var(--bg));
+  --section-header: var(--tg-theme-section-header-text-color, var(--hint));
+  --radius: 12px;
+  --shadow: 0 1px 3px rgba(0,0,0,.08);
+  font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+}
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+
+html { height: 100%; overflow: hidden; }
+body {
+  background: var(--secondary-bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior-y: none;
+  padding-bottom: 32px;
+}
+
+.header {
+  padding: 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--secondary-bg);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header h1 {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.puzzle-list {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.puzzle-card {
+  background: var(--section-bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px;
+  overflow: hidden;
+}
+
+.puzzle-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.puzzle-date {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--hint);
+}
+
+.puzzle-diff {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--secondary-bg);
+  color: var(--text);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.diff-easy { color: #4caf50; background: rgba(76, 175, 80, 0.1); }
+.diff-hard { color: #ef5350; background: rgba(239, 83, 80, 0.1); }
+
+.puzzle-word {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.puzzle-topic {
+  font-size: 14px;
+  color: var(--hint);
+  margin-bottom: 12px;
+}
+
+.btn {
+  background: var(--secondary-bg);
+  color: var(--link);
+  border: none;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  width: 100%;
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn:active {
+  opacity: 0.8;
+}
+
+.btn-regen {
+  background: color-mix(in srgb, var(--link) 10%, transparent);
+}
+
+.skeleton { 
+  background: linear-gradient(90deg, var(--secondary-bg) 25%, var(--bg) 50%, var(--secondary-bg) 75%); 
+  background-size: 200% 100%; 
+  animation: shimmer 1.5s infinite; 
+  border-radius: 6px; 
+}
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+
+.loading-container {
+  padding: 32px;
+  text-align: center;
+  color: var(--hint);
+}
+
+.badge-missing {
+  display: inline-block;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(239, 83, 80, 0.1);
+  color: #ef5350;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Daily Crocodile</h1>
+  <button class="btn" style="width: auto; padding: 6px 12px;" onclick="loadPuzzles()">🔄</button>
+</div>
+
+<div class="puzzle-list" id="puzzle-container">
+  <div class="loading-container">Loading puzzles...</div>
+</div>
+
+<script>
+const tg = window.Telegram.WebApp;
+tg.ready();
+tg.expand();
+tg.setHeaderColor('bg_color');
+tg.setBackgroundColor('secondary_bg_color');
+
+const apiHeaders = {
+  'Authorization': 'twa ' + tg.initData,
+  'Content-Type': 'application/json'
+};
+
+async function loadPuzzles() {
+  const container = document.getElementById('puzzle-container');
+  container.innerHTML = '<div class="loading-container">Loading...</div>';
+  
+  try {
+    const res = await fetch('/api/admin/dailycroc', { headers: apiHeaders });
+    const data = await res.json();
+    
+    if (data.error) throw new Error(data.error);
+    
+    renderPuzzles(data.puzzles);
+  } catch (e) {
+    container.innerHTML = `<div class="loading-container" style="color: var(--destructive)">Error: ${e.message}</div>`;
+  }
+}
+
+function renderPuzzles(puzzles) {
+  const container = document.getElementById('puzzle-container');
+  container.innerHTML = '';
+  
+  if (!puzzles || !puzzles.length) {
+    container.innerHTML = '<div class="loading-container">No puzzles found.</div>';
+    return;
+  }
+  
+  // Sort by date descending
+  puzzles.sort((a, b) => new Date(b.date) - new Date(a.date));
+  
+  puzzles.forEach(p => {
+    const isMissing = !p.target_word;
+    const dateObj = new Date(p.date);
+    const dateStr = dateObj.toLocaleDateString('ru-RU', { weekday: 'short', month: 'short', day: 'numeric' });
+    const diffClass = p.difficulty === 'easy' ? 'diff-easy' : 'diff-hard';
+    
+    t = document.createElement('div');
+    t.className = 'puzzle-card';
+    t.innerHTML = `
+      <div class="puzzle-header">
+        <div class="puzzle-date">${dateStr}</div>
+        <div class="puzzle-diff ${diffClass}">${p.difficulty}</div>
+      </div>
+      
+      ${isMissing ? `
+        <div class="badge-missing">Not Prepared</div>
+      ` : `
+        <div class="puzzle-word">${p.target_word}</div>
+        <div class="puzzle-topic">Topic: ${p.topic}</div>
+        <div style="font-size: 12px; color: var(--hint); margin-bottom: 12px; word-break: break-all;">
+          Pic: ${p.image_file_id ? '✅ Yes' : '❌ No'}
+        </div>
+      `}
+      
+      <button class="btn btn-regen" onclick="regenerate('${p.date}', '${p.difficulty}')" ${isMissing ? 'disabled style="opacity: 0.5"' : ''}>
+        🖼 Regenerate Image
+      </button>
+    `;
+    
+    container.appendChild(t);
+  });
+}
+
+async function regenerate(date, diff) {
+  if (!confirm(`Regenerate image for ${date} (${diff})? This replaces the current image.`)) return;
+  
+  tg.HapticFeedback.impactOccurred('medium');
+  try {
+    const res = await fetch('/api/admin/dailycroc/regenerate', {
+      method: 'POST',
+      headers: apiHeaders,
+      body: JSON.stringify({ date: date, difficulty: diff })
+    });
+    const data = await res.json();
+    
+    if (data.error) throw new Error(data.error);
+    
+    tg.HapticFeedback.notificationOccurred('success');
+    tg.showAlert(`Regenerated image for ${date} successfully.`);
+    loadPuzzles(); // Reload
+  } catch (e) {
+    tg.HapticFeedback.notificationOccurred('error');
+    tg.showAlert(`Error regenerating: ${e.message}`);
+  }
+}
+
+// Initial load
+loadPuzzles();
+</script>
+</body>
+</html>

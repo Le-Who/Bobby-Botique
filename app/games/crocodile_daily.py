@@ -127,20 +127,25 @@ DAILY_NEGATIVE_PROMPT = (
 
 
 async def _translate_word_for_prompt(word: str) -> str | None:
-    """Translate *word* to English for use in the image prompt.
+    """Translate *word* to English and evaluate its visual form.
 
     Result is cached in ``word_bank._PROMPT_TRANSLATION_CACHE`` so repeated
     calls never hit the LLM twice for the same word.
     """
     from app.games.word_bank import _PROMPT_TRANSLATION_CACHE
+    from app.utils.json_compat import json
 
     key = word.strip().lower()
     if key in _PROMPT_TRANSLATION_CACHE:
         return _PROMPT_TRANSLATION_CACHE[key]
 
     prompt = (
-        f"Translate the Russian word or phrase \"{word}\" to English. "
-        "Reply with ONLY the English word or short phrase, nothing else."
+        f"Analyze the Russian charades word: \"{word}\".\n"
+        "1. Is it possible to draw this word as a clear physical object or distinct scene? (True/False)\n"
+        "2. If True, provide a short English phrase describing how to draw it.\n"
+        "3. If False, provide the closest physical metaphor in English.\n"
+        "Return ONLY a clean JSON object without Markdown backticks:\n"
+        '{"is_drawable": true, "visual_description": "english phrase"}'
     )
     try:
         from app.providers.router import get_provider_router
@@ -150,10 +155,22 @@ async def _translate_word_for_prompt(word: str) -> str | None:
             preferred_model="opencode-go/minimax-m2.5",
             history=[{"role": "user", "parts": [prompt]}],
             max_key_retries=1,
-            timeout=6.0,
+            timeout=8.0,
         )
-        translated = (response_text or "").strip().strip("\"\'`.,").lower()
-        if translated and 2 <= len(translated) <= 60:
+        
+        resp_clean = (response_text or "").strip()
+        if resp_clean.startswith("```json"):
+            resp_clean = resp_clean[7:-3].strip()
+        elif resp_clean.startswith("```"):
+            resp_clean = resp_clean[3:-3].strip()
+
+        data = json.loads(resp_clean)
+        translated = data.get("visual_description", "").strip()
+        is_drawable = bool(data.get("is_drawable", True))
+
+        if translated and 2 <= len(translated) <= 150:
+            if not is_drawable:
+                logger.warning("DailyCroc prompt explicitly marked non-drawable by LLM for word: %s", word)
             _PROMPT_TRANSLATION_CACHE[key] = translated
             return translated
     except Exception as exc:

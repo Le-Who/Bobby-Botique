@@ -50,6 +50,12 @@ def _is_message_not_modified_error(exc: Exception) -> bool:
 
 
 def _dailycroc_status_keyboard() -> InlineKeyboardMarkup:
+    from telegram import WebAppInfo
+
+    from app.config import settings
+
+    webapp_url = f"{settings.WEBHOOK_BASE_URL.rstrip('/')}/webapp/admin_dailycroc"
+    
     return InlineKeyboardMarkup(
         [
             [
@@ -59,6 +65,9 @@ def _dailycroc_status_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("🖼 Regen Easy", callback_data=f"{_DAILYCROC_REGEN_IMAGE}easy"),
                 InlineKeyboardButton("🖼 Regen Hard", callback_data=f"{_DAILYCROC_REGEN_IMAGE}hard"),
+            ],
+            [
+                InlineKeyboardButton("🎛 WebApp Dashboard", web_app=WebAppInfo(url=webapp_url)),
             ],
             [InlineKeyboardButton("📬 Send test to admin", callback_data=_DAILYCROC_STATUS_SEND_TEST)],
         ]
