@@ -789,6 +789,12 @@ def validate_custom_word(word: str) -> str | None:
 
 
 _FAST_WORD_ALLOWED_RE = re.compile(r"^[a-zA-Zа-яА-ЯёЁ0-9][a-zA-Zа-яА-ЯёЁ0-9\s\-']*$", re.UNICODE)
+_SPACES_RE = re.compile(r"\s+")
+_NON_ALNUM_RE = re.compile(r"[^a-zа-яё0-9 -]")
+_RUSSIAN_SUFFIX_RE = re.compile(r"(ами|ями|ями|ого|ему|ому|ыми|ими|ыми|ий|ый|ой|ая|яя|ое|ее|ые|ие|ов|ев|ом|ем|ам|ям|ах|ях|у|ю|а|я|е|и|ы|о)$")
+_MD_FENCE_START_RE = re.compile(r"^```[a-z]*\n?", re.IGNORECASE)
+_MD_FENCE_END_RE = re.compile(r"\n?```$")
+
 _FAST_WORD_SERVICE_MARKERS = (
     "ответ",
     "слово",
@@ -806,9 +812,9 @@ def _normalise_fast_word_candidate(raw: str | None, lang: str = "ru") -> str | N
     if not raw:
         return None
 
-    cleaned = re.sub(r"^```[a-z]*\n?", "", raw.strip(), flags=re.IGNORECASE)
-    cleaned = re.sub(r"\n?```$", "", cleaned).strip().strip("\"'` \r\n.")
-    cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
+    cleaned = _MD_FENCE_START_RE.sub("", raw.strip())
+    cleaned = _MD_FENCE_END_RE.sub("", cleaned).strip().strip("\"'` \r\n.")
+    cleaned = _SPACES_RE.sub(" ", cleaned).strip().lower()
     if not cleaned:
         return None
     if len(cleaned) < 3 or len(cleaned) > 60:
@@ -816,7 +822,7 @@ def _normalise_fast_word_candidate(raw: str | None, lang: str = "ru") -> str | N
     if not _FAST_WORD_ALLOWED_RE.match(cleaned):
         return None
 
-    tokens = [token for token in re.split(r"\s+", cleaned) if token]
+    tokens = [token for token in _SPACES_RE.split(cleaned) if token]
     if not (1 <= len(tokens) <= 3):
         return None
     if any(len(token) < 2 for token in tokens):
@@ -1044,17 +1050,17 @@ def _topic_bank_hash(words: list[str]) -> str:
 
 
 def _normalise_word_pick_key(word: str) -> str:
-    return re.sub(r"\s+", " ", word.strip().lower())
+    return _SPACES_RE.sub(" ", word.strip().lower())
 
 
 def _normalise_word_diversity_key(word: str) -> str:
     base = _normalise_word_pick_key(word)
     base = unicodedata.normalize("NFKD", base)
     base = "".join(ch for ch in base if not unicodedata.combining(ch))
-    base = re.sub(r"[^a-zа-яё0-9 -]", "", base)
+    base = _NON_ALNUM_RE.sub("", base)
     base = base.replace("ё", "е")
-    base = re.sub(r"(ами|ями|ями|ого|ему|ому|ыми|ими|ыми|ий|ый|ой|ая|яя|ое|ее|ые|ие|ов|ев|ом|ем|ам|ям|ах|ях|у|ю|а|я|е|и|ы|о)$", "", base)
-    return re.sub(r"\s+", " ", base).strip(" -")
+    base = _RUSSIAN_SUFFIX_RE.sub("", base)
+    return _SPACES_RE.sub(" ", base).strip(" -")
 
 
 # Characters that significantly raise word difficulty (slavic rares + latin outliers)
@@ -1201,7 +1207,7 @@ def _normalise_generated_words(words: list[object]) -> list[str]:
     for raw_word in words:
         if not isinstance(raw_word, str):
             continue
-        word = re.sub(r"\s+", " ", raw_word.strip().lower())
+        word = _SPACES_RE.sub(" ", raw_word.strip().lower())
         meta = describe_word_bank_entry(word)
         diversity_key = meta["normalized_lemma"] or word
         if not (2 <= len(word) <= 60) or diversity_key in seen:
@@ -1296,8 +1302,8 @@ async def generate_words_for_category(
                     continue
 
                 # Strip markdown code fences if model wraps output
-                raw = re.sub(r"^```[a-z]*\n?", "", raw, flags=re.IGNORECASE)
-                raw = re.sub(r"\n?```$", "", raw).strip()
+                raw = _MD_FENCE_START_RE.sub("", raw)
+                raw = _MD_FENCE_END_RE.sub("", raw).strip()
 
                 words = json.loads(raw)
                 if not isinstance(words, list) or len(words) < 5:
