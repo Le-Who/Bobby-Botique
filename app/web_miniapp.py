@@ -2214,9 +2214,14 @@ async def api_admin_dailycroc_reset_word(user_id: int):
 @miniapp_blueprint.route("/api/admin/dailycroc/image", methods=["GET"])
 @require_webapp_auth
 async def api_admin_dailycroc_image(user_id: int):
-    """Proxy a Telegram file_id as raw image bytes for dashboard preview."""
-    import httpx
+    """Proxy a Telegram file_id as raw image bytes for dashboard preview.
 
+    Uses aiogram's bot.download() which correctly handles both the public
+    Telegram API and local Bot API server modes — the local API returns
+    an absolute filesystem path from getFile that cannot be fetched via
+    a raw HTTP request to the tg-api container.
+    """
+    from app.bot_instance import get_bot
     from app.config import settings
 
     if user_id != settings.ADMIN_ID:
@@ -2226,54 +2231,27 @@ async def api_admin_dailycroc_image(user_id: int):
     if not file_id:
         return jsonify({"error": "missing file_id"}), 400
 
-    token = settings.TELEGRAM_BOT_TOKEN
-    local_url = getattr(settings, "TELEGRAM_LOCAL_SERVER_URL", None)
-
-    # TELEGRAM_LOCAL_SERVER_URL = "http://tg-api:8081/bot" (no token suffix).
-    # The Local Bot API requires the token in the path: /bot<TOKEN>/getFile.
-    # Strip the trailing "/bot" to get the bare host, then build properly.
-    if local_url:
-        host_base = local_url.rstrip("/")
-        if host_base.endswith("/bot"):
-            host_base = host_base[:-4]
-        host_base = host_base.rstrip("/")
-        get_file_url = f"{host_base}/bot{token}/getFile?file_id={file_id}"
-        local_files_host = host_base
-    else:
-        get_file_url = f"https://api.telegram.org/bot{token}/getFile?file_id={file_id}"
-        local_files_host = None
-
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(get_file_url)
-            r.raise_for_status()
-            data = r.json()
-            file_path = data.get("result", {}).get("file_path")
-            if not file_path:
-                return jsonify({"error": "no file_path"}), 404
-
-            # Download the actual file
-            if local_files_host:
-                # Local API: getFile returns an absolute path like /var/lib/telegram-bot-api/.../photos/file_42.jpg
-                # Joining with "/" would produce a double slash, so we concatenate directly.
-                download_url = local_files_host + ("" if file_path.startswith("/") else "/") + file_path
-            else:
-                download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
-
-            img_r = await client.get(download_url)
-            img_r.raise_for_status()
+        import io
 
         from quart import Response
 
-        content_type = img_r.headers.get("content-type", "image/jpeg")
+        bot = get_bot()
+        # bot.download() resolves file_id → file_path via getFile, then
+        # downloads via the bot's configured base URL (handles local API).
+        buf = await bot.download(file_id, destination=io.BytesIO())
+        if buf is None:
+            return jsonify({"error": "download returned None"}), 502
+        buf.seek(0)
         return Response(
-            img_r.content,
+            buf.read(),
             status=200,
             headers={
-                "Content-Type": content_type,
+                "Content-Type": "image/jpeg",
                 "Cache-Control": "public, max-age=3600",
             },
         )
     except Exception as exc:
         logger.error("Admin image proxy failed file_id=%s: %s", file_id, exc, exc_info=True)
         return jsonify({"error": "proxy_error", "detail": str(exc)}), 502
+
