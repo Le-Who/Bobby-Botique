@@ -36,7 +36,6 @@ def _extract_message_content(msg: dict) -> str:
                     text_parts.append(p)
                 elif isinstance(p, dict) and "text" in p:
                     text_parts.append(str(p["text"]))
-                # Skip memory-heavy binary/base64 payloads and non-text dicts
                 elif isinstance(p, (bytes, bytearray)):
                     continue
                 elif not isinstance(p, dict):
@@ -52,7 +51,6 @@ def _extract_message_content(msg: dict) -> str:
                     text_parts.append(p)
                 elif isinstance(p, dict) and "text" in p:
                     text_parts.append(str(p["text"]))
-                # Skip memory-heavy binary/base64 payloads and non-text dicts
                 elif isinstance(p, (bytes, bytearray)):
                     continue
                 elif not isinstance(p, dict):
