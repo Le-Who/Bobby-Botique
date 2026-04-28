@@ -73,8 +73,10 @@ body {
 .image-placeholder {
   width: 100%; aspect-ratio: 1;
   display: flex; align-items: center; justify-content: center;
-  background: var(--secondary-bg);
+  background: rgba(0,0,0,.06);
   color: var(--hint); font-size: 13px;
+  border-top: 1px solid rgba(0,0,0,.05);
+  border-bottom: 1px solid rgba(0,0,0,.05);
 }
 
 /* Buttons area */
@@ -161,6 +163,8 @@ function renderPuzzles(puzzles) {
     container.innerHTML = '<div class="loading-container">No puzzles found.</div>';
     return;
   }
+  console.log('[dailycroc] first puzzle sample:', JSON.stringify(puzzles[0]));
+  console.log('[dailycroc] image_file_id values:', puzzles.map(p => p.date + '/' + p.difficulty + ':' + JSON.stringify(p.image_file_id)));
   // Sort: ascending by date (earliest first), easy before hard within same date
   puzzles.sort((a, b) => {
     if (a.date !== b.date) return a.date < b.date ? -1 : 1;
