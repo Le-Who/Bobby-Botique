@@ -2254,8 +2254,9 @@ async def api_admin_dailycroc_image(user_id: int):
 
             # Download the actual file
             if local_files_host:
-                # Local API: files live at <host>/<file_path>
-                download_url = f"{local_files_host}/{file_path}"
+                # Local API: getFile returns an absolute path like /var/lib/telegram-bot-api/.../photos/file_42.jpg
+                # Joining with "/" would produce a double slash, so we concatenate directly.
+                download_url = local_files_host + ("" if file_path.startswith("/") else "/") + file_path
             else:
                 download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
 
