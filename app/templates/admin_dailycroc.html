@@ -127,6 +127,20 @@ const apiHeaders = {
 // GET headers (no Content-Type for GET with fetch)
 const getHeaders = { 'Authorization': 'tma ' + tg.initData };
 
+async function loadImage(imgEl) {
+  const fileId = imgEl.dataset.fileId;
+  if (!fileId) return;
+  try {
+    const res = await fetch(
+      '/webapp/api/admin/dailycroc/image?file_id=' + encodeURIComponent(fileId),
+      { headers: getHeaders }
+    );
+    if (!res.ok) { imgEl.style.display = 'none'; return; }
+    const blob = await res.blob();
+    imgEl.src = URL.createObjectURL(blob);
+  } catch { imgEl.style.display = 'none'; }
+}
+
 async function loadPuzzles() {
   const container = document.getElementById('puzzle-container');
   container.innerHTML = '<div class="loading-container">Loading...</div>';
@@ -164,12 +178,12 @@ function renderPuzzles(puzzles) {
     card.className = 'puzzle-card';
     card.id = cardId;
 
-    // Build image section
+    // Build image section — use data-file-id so loadImage() can fetch with auth header
     let imageSection = '';
     if (!isMissing) {
       if (p.image_file_id) {
-        const imgUrl = `/webapp/api/admin/dailycroc/image?file_id=${encodeURIComponent(p.image_file_id)}`;
-        imageSection = `<img class="image-preview" src="${imgUrl}" alt="puzzle image" loading="lazy" onerror="this.style.display='none'">`;
+        const escapedId = p.image_file_id.replace(/"/g, '&quot;');
+        imageSection = `<img class="image-preview" data-file-id="${escapedId}" alt="puzzle image">`;
       } else {
         imageSection = `<div class="image-placeholder">❌ No image</div>`;
       }
@@ -203,6 +217,8 @@ function renderPuzzles(puzzles) {
       </div>
     `;
     container.appendChild(card);
+    // Load images via authenticated fetch (img src can't carry auth headers)
+    card.querySelectorAll('img[data-file-id]').forEach(loadImage);
   });
 }
 
