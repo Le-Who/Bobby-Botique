@@ -177,7 +177,6 @@ def _extract_text(msg: dict[str, Any]) -> str:
                     text_parts.append(p)
                 elif isinstance(p, dict) and "text" in p:
                     text_parts.append(str(p["text"]))
-                # Skip memory-heavy binary/base64 payloads and non-text dicts
                 elif isinstance(p, (bytes, bytearray)):
                     continue
                 elif not isinstance(p, dict):
@@ -191,7 +190,6 @@ def _extract_text(msg: dict[str, Any]) -> str:
             text_parts.append(part)
         elif isinstance(part, dict) and "text" in part:
             text_parts.append(str(part["text"]))
-        # Skip memory-heavy binary/base64 payloads and non-text dicts
         elif isinstance(part, (bytes, bytearray)):
             continue
         elif not isinstance(part, dict):
