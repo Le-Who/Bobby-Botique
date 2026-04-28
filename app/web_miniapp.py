@@ -2229,13 +2229,19 @@ async def api_admin_dailycroc_image(user_id: int):
     token = settings.TELEGRAM_BOT_TOKEN
     local_url = getattr(settings, "TELEGRAM_LOCAL_SERVER_URL", None)
 
-    # Resolve file_id → file_path via Bot API
-    api_base = local_url.rstrip("/") if local_url else f"https://api.telegram.org/bot{token}"
-    # local URL is like http://tg-api:8081/bot<token> — use it directly
+    # TELEGRAM_LOCAL_SERVER_URL = "http://tg-api:8081/bot" (no token suffix).
+    # The Local Bot API requires the token in the path: /bot<TOKEN>/getFile.
+    # Strip the trailing "/bot" to get the bare host, then build properly.
     if local_url:
-        get_file_url = f"{api_base}/getFile?file_id={file_id}"
+        host_base = local_url.rstrip("/")
+        if host_base.endswith("/bot"):
+            host_base = host_base[:-4]
+        host_base = host_base.rstrip("/")
+        get_file_url = f"{host_base}/bot{token}/getFile?file_id={file_id}"
+        local_files_host = host_base
     else:
         get_file_url = f"https://api.telegram.org/bot{token}/getFile?file_id={file_id}"
+        local_files_host = None
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -2247,9 +2253,9 @@ async def api_admin_dailycroc_image(user_id: int):
                 return jsonify({"error": "no file_path"}), 404
 
             # Download the actual file
-            if local_url:
-                # Local API: files live at http://tg-api:8081/<file_path>
-                download_url = f"http://tg-api:8081/{file_path}"
+            if local_files_host:
+                # Local API: files live at <host>/<file_path>
+                download_url = f"{local_files_host}/{file_path}"
             else:
                 download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
 

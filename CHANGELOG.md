@@ -3,7 +3,27 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [Unreleased] - 2026-04-26 - Vertex AI Race Slot & Request ID Log Correlation
+## [Unreleased] - 2026-04-28 - Daily Crocodile Admin Dashboard & Image Proxy Hardening
+
+### 🐊 Daily Crocodile — Word Diversity & Topic Rotation
+
+- **Date-based topic rotation (`app/repos/crocodile_daily.py`):** Replaced hardcoded `"разное"` topic in `_create_puzzle_if_missing_with_conn` with a deterministic, date-based rotation across all available word-bank categories. Uses `puzzle_date.toordinal()` to cycle through categories so each day consistently draws from a different topic domain.
+- **Exhaustion-aware fallback logic (`app/repos/crocodile_daily.py`):** After selecting the daily category by rotation, the system checks if the available word pool (excluding already-used words) is exhausted. If exhausted, it automatically advances to the next category in the rotation order until a non-exhausted pool is found. If all categories are exhausted, a new word generation pass is triggered.
+
+### 🖼️ Admin Dashboard — Word Reset & Image Preview
+
+- **`/api/admin/dailycroc/reset-word` endpoint (`app/web_miniapp.py`):** New admin endpoint that deletes an existing puzzle row (by date + difficulty), forcing the next access to regenerate it with the updated rotation logic. Enables operators to refresh specific days without redeployment.
+- **`/api/admin/dailycroc/image` proxy endpoint (`app/web_miniapp.py`):** Proxies Telegram file bytes to the browser: resolves `file_id → file_path` via getFile, then downloads and streams the image back with `Cache-Control: public, max-age=3600`. Supports both local Bot API and public Telegram API.
+- **Local Bot API token URL fix (`app/web_miniapp.py`):** Fixed `401 Unauthorized` on the `/api/admin/dailycroc/image` endpoint when running behind a Local Bot API server. `TELEGRAM_LOCAL_SERVER_URL = "http://tg-api:8081/bot"` did not include the token, so `getFile` was called as `/bot/getFile` instead of `/bot{TOKEN}/getFile`. Now strips the trailing bare `/bot` suffix from the env var and re-inserts the token properly.
+- **Frontend authenticated image loading (`app/templates/admin_dailycroc.html`):** Replaced bare `<img src="...">` (which cannot send custom Authorization headers) with a `loadImage()` JS helper that fetches via `fetch()` + `Authorization: tma ...`, converts the response to a Blob URL, and assigns to `img.src`. Called immediately after each card is appended to the DOM via `card.querySelectorAll('img[data-file-id]').forEach(loadImage)`.
+- **"New Word" button (`app/templates/admin_dailycroc.html`):** Added a reset button alongside the existing "Regen Image" button in the admin dashboard. Calls the `reset-word` endpoint and reloads the puzzle list to confirm the change.
+
+### ✅ Verification
+
+- `ruff check app/ tests/` → **All checks passed**
+- `python -m pytest tests/test_games.py tests/test_game_websocket.py -q --timeout=60` → pre-existing failures only (missing `GEMINI_API_KEYS` env / no real DB); no regressions introduced
+
+
 
 ### 🛡️ Resilience & Scaling
 
