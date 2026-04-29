@@ -1,3 +1,3 @@
-## 2025-04-28 - Optimizing message text extraction
-**Learning:** Blindly stringifying multi-modal LLM message dictionaries (`str(part)`) synchronously converts massive base64 image strings and byte arrays into strings. In large chat histories, this blocks the main thread and spikes memory consumption exponentially since it allocates entirely new giant string buffers just to generate summarizer text.
-**Action:** Always implement explicit type checking (`isinstance(p, (bytes, bytearray))`) to skip binary formats, and only extract the `"text"` key from dictionaries rather than using catch-all fallbacks like `str(p.get("text", p))` inside text processing routines.
+## 2024-04-29 - Prevent Massive String Allocations on LLM Payloads
+**Learning:** Using `str()` on message parts (dictionaries) to approximate length is extremely dangerous when parts can contain raw binary `bytes` or `bytearray` (like image data). Stringifying a dictionary containing a 5MB bytes payload takes over 100ms and allocates a massive string.
+**Action:** Avoid blindly calling `str()` on fallback dictionaries or LLM message parts. Instead, explicitly check `isinstance(part, dict)` and evaluate the length of the `text` field, or check `isinstance(part, str)` directly.
