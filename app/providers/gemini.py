@@ -64,9 +64,17 @@ class GeminiProvider(BaseAIProvider):
 
             # Compute metrics
             try:
-                prompt_length = sum(
-                    len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None
-                )
+                prompt_length = 0
+                for item in history:
+                    for part in item.get("parts", []) or []:
+                        if part is None:
+                            continue
+                        if isinstance(part, str):
+                            prompt_length += len(part)
+                        elif isinstance(part, dict) and "text" in part:
+                            prompt_length += len(str(part["text"]))
+                        elif not isinstance(part, (bytes, bytearray, dict)):
+                            prompt_length += len(str(part))
                 has_images = any(
                     isinstance(part, (bytes, bytearray, Image.Image))
                     for item in history
