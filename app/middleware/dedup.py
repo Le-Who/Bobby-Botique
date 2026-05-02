@@ -30,7 +30,7 @@ _MAX_TRACKED_PER_USER: int = 20
 
 def _hash_request(text: str) -> str:
     """Create a short hash of the request text for comparison."""
-    return hashlib.md5(text.encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
 def _cleanup_stale(user_id: int) -> None:
