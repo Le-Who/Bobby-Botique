@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Admin: Daily Crocodile</title>
-<style>
+<style nonce="{{ g.csp_nonce }}">
 :root {
   --bg: var(--tg-theme-bg-color, #ffffff);
   --text: var(--tg-theme-text-color, #000000);
@@ -108,20 +108,25 @@ body {
   border-radius: 4px; background: rgba(239,83,80,.1); color: #ef5350;
   font-weight: 600; margin-bottom: 12px;
 }
+
+.btn-refresh { width: auto; padding: 6px 12px; }
+.edit-hidden { display: none; }
+.btn-save { background: var(--link); color: #fff; }
+.mt-8 { margin-top: 8px; }
 </style>
 </head>
 <body>
 
 <div class="header">
   <h1>Daily Crocodile</h1>
-  <button class="btn" style="width:auto;padding:6px 12px;" onclick="loadPuzzles()">🔄</button>
+  <button class="btn btn-refresh" data-action="loadPuzzles">🔄</button>
 </div>
 
 <div class="puzzle-list" id="puzzle-container">
   <div class="loading-container">Loading puzzles...</div>
 </div>
 
-<script>
+<script nonce="{{ g.csp_nonce }}">
 
 
 const apiHeaders = { 'Content-Type': 'application/json' };
@@ -193,22 +198,22 @@ function renderPuzzles(puzzles) {
              <div class="prompt-section">
                <div class="prompt-header">
                  <span style="font-size:12px;color:var(--hint);font-weight:600">IMAGE PROMPT</span>
-                 <button class="btn-text" onclick="editPrompt('${p.date}', '${p.difficulty}')">✏️ Edit</button>
+                 <button class="btn-text" data-action="editPrompt" data-date="${p.date}" data-diff="${p.difficulty}">✏️ Edit</button>
                </div>
                <div class="puzzle-prompt" id="prompt-text-${p.date}-${p.difficulty}">${p.image_prompt || '<i>(No prompt)</i>'}</div>
-               <div class="prompt-edit" id="prompt-edit-${p.date}-${p.difficulty}" style="display:none;">
+               <div class="prompt-edit edit-hidden" id="prompt-edit-${p.date}-${p.difficulty}">
                  <textarea class="prompt-input" id="prompt-input-${p.date}-${p.difficulty}">${p.image_prompt || ''}</textarea>
                  <div class="btn-row">
-                   <button class="btn" style="background:var(--link);color:#fff" onclick="savePrompt('${p.date}', '${p.difficulty}')">Save</button>
-                   <button class="btn" onclick="cancelEditPrompt('${p.date}', '${p.difficulty}')">Cancel</button>
+                   <button class="btn btn-save" data-action="savePrompt" data-date="${p.date}" data-diff="${p.difficulty}">Save</button>
+                   <button class="btn" data-action="cancelPrompt" data-date="${p.date}" data-diff="${p.difficulty}">Cancel</button>
                  </div>
                </div>
-             <div class="prompt-section" style="margin-top:8px">
+             <div class="prompt-section mt-8">
                <div class="prompt-header">
                  <span style="font-size:12px;color:var(--hint);font-weight:600">IMAGE MODEL</span>
                </div>
                <select class="model-select" id="model-select-${p.date}-${p.difficulty}"
-                 onchange="saveModel('${p.date}', '${p.difficulty}', this.value)">
+                 data-action="saveModel" data-date="${p.date}" data-diff="${p.difficulty}">
                  <option value="flux" ${(p.image_model||'flux')==='flux'?'selected':''}>Flux Schnell</option>
                  <option value="zimage" ${(p.image_model||'flux')==='zimage'?'selected':''}>Z-Image Turbo ⚡</option>
                  <option value="gptimage-1-5" ${(p.image_model||'flux')==='gptimage-large'?'selected':''}>GPT Image (DALL-E 3)</option>
@@ -224,12 +229,12 @@ function renderPuzzles(puzzles) {
       <div class="card-actions">
         <div class="btn-row">
           <button class="btn btn-regen" id="regen-${p.date}-${p.difficulty}"
-            onclick="regenerate('${p.date}', '${p.difficulty}')"
+            data-action="regen" data-date="${p.date}" data-diff="${p.difficulty}"
             ${isMissing ? 'disabled' : ''}>
             🖼 Regen Image
           </button>
           <button class="btn btn-reset" id="reset-${p.date}-${p.difficulty}"
-            onclick="resetWord('${p.date}', '${p.difficulty}')">
+            data-action="reset" data-date="${p.date}" data-diff="${p.difficulty}">
             🔀 New Word
           </button>
         </div>
@@ -262,13 +267,13 @@ async function regenerate(date, diff) {
 }
 
 function editPrompt(date, diff) {
-  document.getElementById(`prompt-text-${date}-${diff}`).style.display = 'none';
-  document.getElementById(`prompt-edit-${date}-${diff}`).style.display = 'block';
+  document.getElementById(`prompt-text-${date}-${diff}`).classList.add('edit-hidden');
+  document.getElementById(`prompt-edit-${date}-${diff}`).classList.remove('edit-hidden');
 }
 
 function cancelEditPrompt(date, diff) {
-  document.getElementById(`prompt-text-${date}-${diff}`).style.display = 'block';
-  document.getElementById(`prompt-edit-${date}-${diff}`).style.display = 'none';
+  document.getElementById(`prompt-text-${date}-${diff}`).classList.remove('edit-hidden');
+  document.getElementById(`prompt-edit-${date}-${diff}`).classList.add('edit-hidden');
 }
 
 async function savePrompt(date, diff) {
@@ -331,6 +336,28 @@ async function resetWord(date, diff) {
 }
 
 loadPuzzles();
+
+document.addEventListener('click', (e) => {
+  const target = e.target.closest('[data-action]');
+  if (!target) return;
+  const action = target.dataset.action;
+  const date = target.dataset.date;
+  const diff = target.dataset.diff;
+
+  if (action === 'regen') regenerate(date, diff);
+  else if (action === 'reset') resetWord(date, diff);
+  else if (action === 'editPrompt') editPrompt(date, diff);
+  else if (action === 'savePrompt') savePrompt(date, diff);
+  else if (action === 'cancelPrompt') cancelEditPrompt(date, diff);
+  else if (action === 'loadPuzzles') loadPuzzles();
+});
+
+document.addEventListener('change', (e) => {
+  if (e.target.matches('.model-select')) {
+    saveModel(e.target.dataset.date, e.target.dataset.diff, e.target.value);
+  }
+});
+
 </script>
 </body>
 </html>
