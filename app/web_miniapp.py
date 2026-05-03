@@ -2127,6 +2127,7 @@ async def api_admin_dailycroc_list(user_id: int):
                     "target_word": puzzle.target_word,
                     "topic": puzzle.topic,
                     "image_file_id": puzzle.image_file_id,
+                    "image_prompt": puzzle.image_prompt,
                 })
             else:
                 puzzles.append({
@@ -2135,6 +2136,7 @@ async def api_admin_dailycroc_list(user_id: int):
                     "target_word": None,
                     "topic": None,
                     "image_file_id": None,
+                    "image_prompt": None,
                 })
     return jsonify({"puzzles": puzzles})
 
@@ -2170,6 +2172,34 @@ async def api_admin_dailycroc_regen(user_id: int):
     except Exception as e:
         logger.error("Webapp dailycroc regen failed: %s", e, exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+@miniapp_blueprint.route("/api/admin/dailycroc/prompt", methods=["POST"])
+@require_webapp_auth
+async def api_admin_dailycroc_update_prompt(user_id: int):
+    """Update the image generation prompt for a specific puzzle."""
+    from app.config import settings
+
+    if user_id != settings.ADMIN_ID:
+        return jsonify({"error": "forbidden"}), 403
+
+    body = await request.get_json(silent=True) or {}
+    puzzle_date_str = body.get("date")
+    difficulty = body.get("difficulty", "easy")
+    prompt = body.get("prompt")
+
+    if not puzzle_date_str or prompt is None:
+        return jsonify({"error": "missing date or prompt"}), 400
+
+    try:
+        dt = datetime.fromisoformat(puzzle_date_str).date()
+    except ValueError:
+        return jsonify({"error": "invalid date format"}), 400
+
+    from app.repos.crocodile_daily import set_puzzle_image_prompt
+
+    await set_puzzle_image_prompt(dt, difficulty=difficulty, image_prompt=prompt)
+    return jsonify({"ok": True})
 
 
 @miniapp_blueprint.route("/api/admin/dailycroc/reset-word", methods=["POST"])
@@ -2237,11 +2267,10 @@ async def api_admin_dailycroc_image(user_id: int):
         from quart import Response
 
         bot = get_bot()
-        # bot.download() resolves file_id → file_path via getFile, then
-        # downloads via the bot's configured base URL (handles local API).
-        buf = await bot.download(file_id, destination=io.BytesIO())
-        if buf is None:
-            return jsonify({"error": "download returned None"}), 502
+        # Resolve file_id → file_path via getFile, then download to memory
+        tg_file = await bot.get_file(file_id)
+        buf = io.BytesIO()
+        await tg_file.download_to_memory(out=buf)
         buf.seek(0)
         return Response(
             buf.read(),

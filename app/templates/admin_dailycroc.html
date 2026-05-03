@@ -79,6 +79,13 @@ body {
   border-bottom: 1px solid rgba(0,0,0,.05);
 }
 
+/* Prompt section */
+.prompt-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(0,0,0,.05); }
+.prompt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.btn-text { background: none; border: none; color: var(--link); font-size: 13px; font-weight: 500; cursor: pointer; }
+.puzzle-prompt { font-size: 13px; line-height: 1.4; word-break: break-word; color: var(--text); }
+.prompt-input { width: 100%; min-height: 80px; padding: 8px; border-radius: 6px; border: 1px solid var(--hint); background: var(--bg); color: var(--text); font-family: inherit; font-size: 13px; resize: vertical; margin-bottom: 8px; }
+
 /* Buttons area */
 .card-actions { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
 .btn {
@@ -202,7 +209,21 @@ function renderPuzzles(puzzles) {
         ${isMissing
           ? `<div class="badge-missing">Not Prepared</div>`
           : `<div class="puzzle-word">${p.target_word}</div>
-             <div class="puzzle-topic">${p.topic || '—'}</div>`
+             <div class="puzzle-topic">${p.topic || '—'}</div>
+             <div class="prompt-section">
+               <div class="prompt-header">
+                 <span style="font-size:12px;color:var(--hint);font-weight:600">IMAGE PROMPT</span>
+                 <button class="btn-text" onclick="editPrompt('${p.date}', '${p.difficulty}')">✏️ Edit</button>
+               </div>
+               <div class="puzzle-prompt" id="prompt-text-${p.date}-${p.difficulty}">${p.image_prompt || '<i>(No prompt)</i>'}</div>
+               <div class="prompt-edit" id="prompt-edit-${p.date}-${p.difficulty}" style="display:none;">
+                 <textarea class="prompt-input" id="prompt-input-${p.date}-${p.difficulty}">${p.image_prompt || ''}</textarea>
+                 <div class="btn-row">
+                   <button class="btn" style="background:var(--link);color:#fff" onclick="savePrompt('${p.date}', '${p.difficulty}')">Save</button>
+                   <button class="btn" onclick="cancelEditPrompt('${p.date}', '${p.difficulty}')">Cancel</button>
+                 </div>
+               </div>
+             </div>`
         }
       </div>
       ${imageSection}
@@ -244,6 +265,37 @@ async function regenerate(date, diff) {
     tg.HapticFeedback.notificationOccurred('error');
     tg.showAlert(`Error: ${e.message}`);
     btn.disabled = false; btn.textContent = '🖼 Regen Image';
+  }
+}
+
+function editPrompt(date, diff) {
+  document.getElementById(`prompt-text-${date}-${diff}`).style.display = 'none';
+  document.getElementById(`prompt-edit-${date}-${diff}`).style.display = 'block';
+}
+
+function cancelEditPrompt(date, diff) {
+  document.getElementById(`prompt-text-${date}-${diff}`).style.display = 'block';
+  document.getElementById(`prompt-edit-${date}-${diff}`).style.display = 'none';
+}
+
+async function savePrompt(date, diff) {
+  const newPrompt = document.getElementById(`prompt-input-${date}-${diff}`).value;
+  tg.HapticFeedback.impactOccurred('light');
+  try {
+    const res = await fetch('/webapp/api/admin/dailycroc/prompt', {
+      method: 'POST', headers: apiHeaders,
+      body: JSON.stringify({ date, difficulty: diff, prompt: newPrompt })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    tg.HapticFeedback.notificationOccurred('success');
+    
+    // Update UI directly instead of reloading everything
+    document.getElementById(`prompt-text-${date}-${diff}`).textContent = newPrompt || '(No prompt)';
+    cancelEditPrompt(date, diff);
+  } catch (e) {
+    tg.HapticFeedback.notificationOccurred('error');
+    tg.showAlert(`Error saving prompt: ${e.message}`);
   }
 }
 
