@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Admin: Daily Crocodile</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
 :root {
   --bg: var(--tg-theme-bg-color, #ffffff);
@@ -123,39 +122,19 @@ body {
 </div>
 
 <script>
-const tg = window.Telegram.WebApp;
-tg.ready();
-tg.expand();
-tg.setHeaderColor('bg_color');
-tg.setBackgroundColor('secondary_bg_color');
 
-const apiHeaders = {
-  'Authorization': 'tma ' + tg.initData,
-  'Content-Type': 'application/json'
-};
+
+const apiHeaders = { 'Content-Type': 'application/json' };
 
 // GET headers (no Content-Type for GET with fetch)
-const getHeaders = { 'Authorization': 'tma ' + tg.initData };
+const getHeaders = {};
 
-async function loadImage(imgEl) {
-  const fileId = imgEl.dataset.fileId;
-  if (!fileId) return;
-  try {
-    const res = await fetch(
-      '/webapp/api/admin/dailycroc/image?file_id=' + encodeURIComponent(fileId),
-      { headers: getHeaders }
-    );
-    if (!res.ok) { imgEl.style.display = 'none'; return; }
-    const blob = await res.blob();
-    imgEl.src = URL.createObjectURL(blob);
-  } catch { imgEl.style.display = 'none'; }
-}
 
 async function loadPuzzles() {
   const container = document.getElementById('puzzle-container');
   container.innerHTML = '<div class="loading-container">Loading...</div>';
   try {
-    const res = await fetch('/webapp/api/admin/dailycroc', { headers: getHeaders });
+    const res = await fetch('/api/admin/dailycroc', { headers: getHeaders });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     renderPuzzles(data.puzzles);
@@ -195,7 +174,7 @@ function renderPuzzles(puzzles) {
     if (!isMissing) {
       if (p.image_file_id) {
         const escapedId = p.image_file_id.replace(/"/g, '&quot;');
-        imageSection = `<img class="image-preview" data-file-id="${escapedId}" alt="puzzle image">`;
+        imageSection = `<img class="image-preview" src="/api/admin/dailycroc/image?file_id=${escapedId}" alt="puzzle image">`;
       } else {
         imageSection = `<div class="image-placeholder">❌ No image</div>`;
       }
@@ -232,7 +211,8 @@ function renderPuzzles(puzzles) {
                  onchange="saveModel('${p.date}', '${p.difficulty}', this.value)">
                  <option value="flux" ${(p.image_model||'flux')==='flux'?'selected':''}>Flux Schnell</option>
                  <option value="zimage" ${(p.image_model||'flux')==='zimage'?'selected':''}>Z-Image Turbo ⚡</option>
-                 <option value="gptimage" ${(p.image_model||'flux')==='gptimage'?'selected':''}>GPT Image (DALL-E 3)</option>
+                 <option value="gptimage-1-5" ${(p.image_model||'flux')==='gptimage-large'?'selected':''}>GPT Image (DALL-E 3)</option>
+                 <option value="gptimage" ${(p.image_model||'flux')==='gptimage-large'?'selected':''}>GPT Image (DALL-E 3)</option>
                  <option value="qwen-image" ${(p.image_model||'flux')==='qwen-image'?'selected':''}>Qwen Image</option>
                  <option value="wan-image" ${(p.image_model||'flux')==='wan-image'?'selected':''}>Wan Image</option>
                  <option value="klein" ${(p.image_model||'flux')==='klein'?'selected':''}>Klein</option>
@@ -256,8 +236,7 @@ function renderPuzzles(puzzles) {
       </div>
     `;
     container.appendChild(card);
-    // Load images via authenticated fetch (img src can't carry auth headers)
-    card.querySelectorAll('img[data-file-id]').forEach(loadImage);
+    
   });
 }
 
@@ -265,19 +244,19 @@ async function regenerate(date, diff) {
   if (!confirm(`Regenerate image for ${date} (${diff})? This replaces the current image.`)) return;
   const btn = document.getElementById(`regen-${date}-${diff}`);
   btn.disabled = true; btn.textContent = '⏳ Regenerating…';
-  tg.HapticFeedback.impactOccurred('medium');
+  
   try {
-    const res = await fetch('/webapp/api/admin/dailycroc/regenerate', {
+    const res = await fetch('/api/admin/dailycroc/regenerate', {
       method: 'POST', headers: apiHeaders,
       body: JSON.stringify({ date, difficulty: diff })
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
-    tg.HapticFeedback.notificationOccurred('success');
+    
     await loadPuzzles();
   } catch (e) {
-    tg.HapticFeedback.notificationOccurred('error');
-    tg.showAlert(`Error: ${e.message}`);
+    
+    alert(`Error: ${e.message}`);
     btn.disabled = false; btn.textContent = '🖼 Regen Image';
   }
 }
@@ -294,38 +273,38 @@ function cancelEditPrompt(date, diff) {
 
 async function savePrompt(date, diff) {
   const newPrompt = document.getElementById(`prompt-input-${date}-${diff}`).value;
-  tg.HapticFeedback.impactOccurred('light');
+  
   try {
-    const res = await fetch('/webapp/api/admin/dailycroc/prompt', {
+    const res = await fetch('/api/admin/dailycroc/prompt', {
       method: 'POST', headers: apiHeaders,
       body: JSON.stringify({ date, difficulty: diff, prompt: newPrompt })
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
-    tg.HapticFeedback.notificationOccurred('success');
+    
     
     // Update UI directly instead of reloading everything
     document.getElementById(`prompt-text-${date}-${diff}`).textContent = newPrompt || '(No prompt)';
     cancelEditPrompt(date, diff);
   } catch (e) {
-    tg.HapticFeedback.notificationOccurred('error');
-    tg.showAlert(`Error saving prompt: ${e.message}`);
+    
+    alert(`Error saving prompt: ${e.message}`);
   }
 }
 
 async function saveModel(date, diff, model) {
-  tg.HapticFeedback.impactOccurred('light');
+  
   try {
-    const res = await fetch('/webapp/api/admin/dailycroc/model', {
+    const res = await fetch('/api/admin/dailycroc/model', {
       method: 'POST', headers: apiHeaders,
       body: JSON.stringify({ date, difficulty: diff, model })
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
-    tg.HapticFeedback.notificationOccurred('success');
+    
   } catch (e) {
-    tg.HapticFeedback.notificationOccurred('error');
-    tg.showAlert(`Error saving model: ${e.message}`);
+    
+    alert(`Error saving model: ${e.message}`);
   }
 }
 
@@ -333,20 +312,20 @@ async function resetWord(date, diff) {
   if (!confirm(`Replace word for ${date} (${diff}) with a new one? This deletes the current puzzle and all its data.`)) return;
   const btn = document.getElementById(`reset-${date}-${diff}`);
   btn.disabled = true; btn.textContent = '⏳ Resetting…';
-  tg.HapticFeedback.impactOccurred('heavy');
+  
   try {
-    const res = await fetch('/webapp/api/admin/dailycroc/reset-word', {
+    const res = await fetch('/api/admin/dailycroc/reset-word', {
       method: 'POST', headers: apiHeaders,
       body: JSON.stringify({ date, difficulty: diff })
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
-    tg.HapticFeedback.notificationOccurred('success');
-    tg.showAlert(`New word: ${data.new_word} (${data.new_topic})`);
+    
+    alert(`New word: ${data.new_word} (${data.new_topic})`);
     await loadPuzzles();
   } catch (e) {
-    tg.HapticFeedback.notificationOccurred('error');
-    tg.showAlert(`Error: ${e.message}`);
+    
+    alert(`Error: ${e.message}`);
     btn.disabled = false; btn.textContent = '🔀 New Word';
   }
 }
