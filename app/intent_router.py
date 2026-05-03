@@ -140,9 +140,9 @@ _SORTED_CURRENCY_ALIASES: list[tuple[str, str]] = sorted(
 
 # Pattern to extract a city candidate from weather queries.
 _CITY_EXTRACT_PATTERN = re.compile(
-    # Branch A: "погода [сегодня|завтра|сейчас] в <город>" — preposition is required here
-    r"(?:погод[ауеыя]\s+(?:(?:сейчас|сегодня|завтра)\s+)?(?:в\s+|во\s+)"
-    r"|weather\s+(?:(?:today|tomorrow|now)\s+)?(?:in\s+|for\s+)"
+    # Branch A: "погода [сегодня|завтра|сейчас] [в] <город>" — preposition is optional here
+    r"(?:погод[ауеыя]\s+(?:(?:сейчас|сегодня|завтра)\s+)?(?:в\s+|во\s+)?"
+    r"|weather\s+(?:(?:today|tomorrow|now)\s+)?(?:in\s+|for\s+)?"
     # Branch B: bare "в/во" preposition anywhere in the sentence
     r"|(?<![а-яёa-z])в\s+|(?<![а-яёa-z])во\s+)"
     r"([А-ЯЁа-яёa-zA-Z][а-яёa-zA-Z\-]*(?:\s[А-ЯЁа-яёa-zA-Z][а-яёa-zA-Z\-]*)?)(?=[,?!.\s]|$)",
