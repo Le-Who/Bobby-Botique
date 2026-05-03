@@ -177,32 +177,28 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
             if messages is None:
                 return False
 
-            await db_query(
-                "DELETE FROM public.active_chat_messages WHERE user_id = $1",
-                (user_id,),
-                conn=conn,
-            )
+            roles = []
+            contents = []
             if messages:
-                insert_data = [(user_id, msg["role"], str(msg.get("content", ""))) for msg in messages]
-                await db_execute_many(
-                    "INSERT INTO public.active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
-                    insert_data,
-                    conn=conn,
-                )
+                roles = [msg["role"] for msg in messages]
+                contents = [str(msg.get("content", "")) for msg in messages]
 
-            # ⚡ Bolt Optimization: Combine token_count and system_prompt updates into 1 query
-            if role_prompt is not None:
-                await db_query(
-                    "UPDATE public.chats SET token_count = 0, system_prompt = $1 WHERE user_id = $2",
-                    (role_prompt, user_id),
-                    conn=conn,
+            # ⚡ Bolt Optimization: Consolidate active_chat_messages delete/insert and chats update into 1 CTE query
+            query = """
+                WITH del AS (
+                    DELETE FROM public.active_chat_messages WHERE user_id = $1
+                ),
+                upd AS (
+                    UPDATE public.chats
+                    SET token_count = 0,
+                        system_prompt = CASE WHEN $2::text IS NOT NULL THEN $2::text ELSE system_prompt END
+                    WHERE user_id = $1
                 )
-            else:
-                await db_query(
-                    "UPDATE public.chats SET token_count = 0 WHERE user_id = $1",
-                    (user_id,),
-                    conn=conn,
-                )
+                INSERT INTO public.active_chat_messages (user_id, role, content)
+                SELECT $1, unnest($3::text[]), unnest($4::text[])
+                WHERE cardinality($3::text[]) > 0
+            """
+            await db_query(query, (user_id, role_prompt, roles, contents), conn=conn)
 
         return True
     except (asyncpg.PostgresError, asyncpg.InterfaceError):
