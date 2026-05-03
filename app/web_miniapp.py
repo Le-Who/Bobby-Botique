@@ -2266,14 +2266,16 @@ async def api_admin_dailycroc_image(user_id: int):
 
         from quart import Response
 
+        from app.utils.tg_file import get_file_bytes
+
         bot = get_bot()
-        # Resolve file_id → file_path via getFile, then download to memory
+        if bot is None:
+            return jsonify({"error": "bot_not_ready"}), 503
+        # Resolve file_id → File, then download handling both cloud and local API modes
         tg_file = await bot.get_file(file_id)
-        buf = io.BytesIO()
-        await tg_file.download_to_memory(out=buf)
-        buf.seek(0)
+        data = await get_file_bytes(bot, tg_file)
         return Response(
-            buf.read(),
+            io.BytesIO(data).read(),
             status=200,
             headers={
                 "Content-Type": "image/jpeg",
