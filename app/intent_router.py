@@ -202,11 +202,29 @@ async def close_http_client() -> None:
 class IntentResult:
     """Result from a direct intent handler."""
 
-    __slots__ = ("text", "handled")
+    __slots__ = ("text", "handled", "context_data")
 
-    def __init__(self, text: str, handled: bool = True):
+    def __init__(self, text: str, handled: bool = True, context_data: str | None = None):
         self.text = text
         self.handled = handled
+        self.context_data = context_data
+
+
+def _is_complex_query(text: str) -> bool:
+    """Determine if a query is complex and should NOT short-circuit to API cards."""
+    # 1. Length heuristic (long text or article)
+    if len(text.split()) > 20:
+        return True
+    
+    # 2. Multiple sentences/questions
+    sentence_enders = sum(text.count(c) for c in "?!.")
+    if sentence_enders > 1:
+        return True
+
+    # 3. Conversational / advisory keywords
+    lower_text = text.lower()
+    complex_phrases = ["как одеться", "посоветуй", "что делать", "расскажи", "помоги", "подскажи", "как думаешь", "стоит ли"]
+    return any(phrase in lower_text for phrase in complex_phrases)
 
 
 async def try_direct_intent(message_text: str) -> IntentResult | None:
@@ -218,31 +236,38 @@ async def try_direct_intent(message_text: str) -> IntentResult | None:
     """
     text = message_text.strip()
     word_count = len(text.split())
+    is_complex = _is_complex_query(text)
+
+    def _prepare_result(res: IntentResult | None) -> IntentResult | None:
+        if res and is_complex:
+            res.handled = False
+            res.context_data = res.text
+        return res
 
     # Try weather first (more common)
     if _WEATHER_PATTERNS.search(text):
         result = await _handle_weather(text)
         if result:
-            return result
+            return _prepare_result(result)
 
     # Colloquial weather — only for short messages to avoid false positives
     # (e.g. "жарко спорить о политике" has 5 words but no city → falls through safely)
     if word_count <= _WEATHER_COLLOQUIAL_MAX_WORDS and _WEATHER_COLLOQUIAL_RE.search(text):
         result = await _handle_weather(text)
         if result:
-            return result
+            return _prepare_result(result)
 
     # Then currency / crypto
     if _CURRENCY_PATTERNS.search(text):
         result = await _handle_currency(text)
         if result:
-            return result
+            return _prepare_result(result)
 
     # Colloquial currency — only for short messages; currency-pair extraction is the inner guard
     if word_count <= _CURRENCY_COLLOQUIAL_MAX_WORDS and _CURRENCY_COLLOQUIAL_RE.search(text):
         result = await _handle_currency(text)
         if result:
-            return result
+            return _prepare_result(result)
 
     return None
 

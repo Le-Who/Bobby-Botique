@@ -565,6 +565,31 @@ class GeminiProvider(BaseAIProvider):
         """Convert history dicts → list[types.Content]. Returns None on total failure."""
         contents = []
         try:
+            # Pass 1: Collect tasks for concurrent processing
+            image_tasks = []
+            for item in history:
+                if not isinstance(item, dict):
+                    continue
+                parts = item.get("parts", [])
+                if not isinstance(parts, list):
+                    parts = [parts] if parts is not None else []
+                
+                for part in parts:
+                    if isinstance(part, TaggedImage) and not part.pre_compressed:
+                        image_tasks.append(
+                            save_image_as_bytes(part.data, cache_key=part.cache_key, task_type=part.task_type)
+                        )
+                    elif isinstance(part, (bytes, bytearray, Image.Image)):
+                        image_data = bytes(part) if isinstance(part, bytearray) else part
+                        image_tasks.append(save_image_as_bytes(image_data))
+            
+            # Execute concurrently
+            processed_images = []
+            if image_tasks:
+                processed_images = await asyncio.gather(*image_tasks, return_exceptions=True)
+            
+            # Pass 2: Build actual objects
+            img_idx = 0
             for item in history:
                 if not isinstance(item, dict):
                     logging.warning("Skipping invalid history item (not dict): %s", type(item))
@@ -576,13 +601,15 @@ class GeminiProvider(BaseAIProvider):
 
                 processed = []
                 for part in parts:
+                    img_bytes: bytes | None = None
                     if isinstance(part, TaggedImage):
                         if part.pre_compressed:
                             img_bytes = part.data
                         else:
-                            img_bytes = await save_image_as_bytes(  # type: ignore[assignment]  # bytes | None from save_image_as_bytes
-                                part.data, cache_key=part.cache_key, task_type=part.task_type
-                            )
+                            res = processed_images[img_idx]
+                            img_idx += 1
+                            img_bytes = res if not isinstance(res, Exception) else None
+                        
                         if img_bytes:
                             try:
                                 processed.append(
@@ -592,19 +619,22 @@ class GeminiProvider(BaseAIProvider):
                                 logging.warning("Failed to create image part: %s", e)
                         else:
                             logging.warning("Skipping TaggedImage part due to processing error")
+                    
                     elif isinstance(part, (bytes, bytearray, Image.Image)):
-                        img_bytes_raw: bytes | None = await save_image_as_bytes(
-                            bytes(part) if isinstance(part, bytearray) else part
-                        )
-                        if img_bytes_raw:
+                        res = processed_images[img_idx]
+                        img_idx += 1
+                        img_bytes = res if not isinstance(res, Exception) else None
+                        
+                        if img_bytes:
                             try:
                                 processed.append(
-                                    types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=img_bytes_raw))
+                                    types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=img_bytes))
                                 )
                             except (TypeError, ValueError) as e:
                                 logging.warning("Failed to create image part: %s", e)
                         else:
                             logging.warning("Skipping image part due to processing error")
+                    
                     else:
                         try:
                             processed.append(types.Part.from_text(text=str(part)))
@@ -616,6 +646,7 @@ class GeminiProvider(BaseAIProvider):
                         contents.append(types.Content(role=role, parts=processed))
                     except (TypeError, ValueError) as e:
                         logging.warning("Failed to create Content object: %s", e)
+
         except Exception as e:
             logging.error("Error processing history: %s", e, exc_info=True)
             return None

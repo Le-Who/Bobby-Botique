@@ -531,6 +531,13 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     state.set_last_sent_message(user_id, message_text)
                     logging.info("Intent direct routing handled for user %s", user_id)
                     return
+                elif intent_result and not intent_result.handled and intent_result.context_data:
+                    message_text = (
+                        f"{message_text}\n\n"
+                        f"<live_data>\n{intent_result.context_data}\n</live_data>\n"
+                        f"Используй эти актуальные данные для формирования полноценного ответа."
+                    )
+                    logging.info("Context enriched with live data for user %s", user_id)
             except Exception as e:
                 logging.debug("Intent routing failed (falling back to LLM): %s", e)
 
