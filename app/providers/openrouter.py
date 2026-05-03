@@ -70,6 +70,14 @@ class OpenRouterProvider(BaseAIProvider):
         """
         return model_name
 
+    def _extra_payload_params(self, model_name: str, thinking_level: str | None) -> dict:
+        """Extra OpenAI-compatible payload params (hook for subclasses).
+
+        Base implementation returns an empty dict.
+        OpencodeGoProvider overrides this to inject reasoning_effort for supporting models.
+        """
+        return {}
+
     def _build_http_error_tag(
         self,
         status: int,
@@ -128,7 +136,8 @@ class OpenRouterProvider(BaseAIProvider):
             url = self._get_url()
             headers = self._get_headers()
             api_model = self._strip_model_prefix(model_name)
-            payload = {"model": api_model, "messages": messages}
+            payload: dict = {"model": api_model, "messages": messages}
+            payload.update(self._extra_payload_params(model_name, thinking_level))
             logging.debug(
                 "%s: sending %d messages to %s (api_model=%s)",
                 self.provider_name,
@@ -215,7 +224,17 @@ class OpenRouterProvider(BaseAIProvider):
                     model=model_name,
                 )
 
-            token_count = response_data.get("usage", {}).get("total_tokens", 0)
+            usage_data = response_data.get("usage") or {}
+            token_count = usage_data.get("total_tokens", 0)
+            cached_tokens = (
+                usage_data.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+                or usage_data.get("cache_read_input_tokens", 0)
+            )
+            if cached_tokens:
+                logging.debug(
+                    "%s prompt cache hit: model=%s cached=%d total=%d",
+                    self.provider_name, model_name, cached_tokens, token_count,
+                )
 
             # Log success
             if start_time is not None:
@@ -270,7 +289,8 @@ class OpenRouterProvider(BaseAIProvider):
         url = self._get_url()
         headers = self._get_headers()
         api_model = self._strip_model_prefix(model_name)
-        payload = {"model": api_model, "messages": messages, "stream": True}
+        payload: dict = {"model": api_model, "messages": messages, "stream": True}
+        payload.update(self._extra_payload_params(model_name, thinking_level))
 
         if _openrouter_http_client is None:
             yield tag_error(ErrorCode.GENERIC, "❌ OpenRouter HTTP client not initialized")

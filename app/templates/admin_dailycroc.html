@@ -85,6 +85,7 @@ body {
 .btn-text { background: none; border: none; color: var(--link); font-size: 13px; font-weight: 500; cursor: pointer; }
 .puzzle-prompt { font-size: 13px; line-height: 1.4; word-break: break-word; color: var(--text); }
 .prompt-input { width: 100%; min-height: 80px; padding: 8px; border-radius: 6px; border: 1px solid var(--hint); background: var(--bg); color: var(--text); font-family: inherit; font-size: 13px; resize: vertical; margin-bottom: 8px; }
+.model-select { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--hint); background: var(--bg); color: var(--text); font-family: inherit; font-size: 13px; cursor: pointer; }
 
 /* Buttons area */
 .card-actions { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -223,6 +224,19 @@ function renderPuzzles(puzzles) {
                    <button class="btn" onclick="cancelEditPrompt('${p.date}', '${p.difficulty}')">Cancel</button>
                  </div>
                </div>
+             <div class="prompt-section" style="margin-top:8px">
+               <div class="prompt-header">
+                 <span style="font-size:12px;color:var(--hint);font-weight:600">IMAGE MODEL</span>
+               </div>
+               <select class="model-select" id="model-select-${p.date}-${p.difficulty}"
+                 onchange="saveModel('${p.date}', '${p.difficulty}', this.value)">
+                 <option value="flux" ${(p.image_model||'flux')==='flux'?'selected':''}>Flux Schnell</option>
+                 <option value="zimage" ${(p.image_model||'flux')==='zimage'?'selected':''}>Z-Image Turbo ⚡</option>
+                 <option value="gptimage" ${(p.image_model||'flux')==='gptimage'?'selected':''}>GPT Image (DALL-E 3)</option>
+                 <option value="qwen-image" ${(p.image_model||'flux')==='qwen-image'?'selected':''}>Qwen Image</option>
+                 <option value="wan-image" ${(p.image_model||'flux')==='wan-image'?'selected':''}>Wan Image</option>
+                 <option value="klein" ${(p.image_model||'flux')==='klein'?'selected':''}>Klein</option>
+               </select>
              </div>`
         }
       </div>
@@ -296,6 +310,22 @@ async function savePrompt(date, diff) {
   } catch (e) {
     tg.HapticFeedback.notificationOccurred('error');
     tg.showAlert(`Error saving prompt: ${e.message}`);
+  }
+}
+
+async function saveModel(date, diff, model) {
+  tg.HapticFeedback.impactOccurred('light');
+  try {
+    const res = await fetch('/webapp/api/admin/dailycroc/model', {
+      method: 'POST', headers: apiHeaders,
+      body: JSON.stringify({ date, difficulty: diff, model })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    tg.HapticFeedback.notificationOccurred('success');
+  } catch (e) {
+    tg.HapticFeedback.notificationOccurred('error');
+    tg.showAlert(`Error saving model: ${e.message}`);
   }
 }
 

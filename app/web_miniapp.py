@@ -2137,6 +2137,7 @@ async def api_admin_dailycroc_list(user_id: int):
                     "topic": None,
                     "image_file_id": None,
                     "image_prompt": None,
+                "image_model": None,
                 })
     return jsonify({"puzzles": puzzles})
 
@@ -2200,6 +2201,45 @@ async def api_admin_dailycroc_update_prompt(user_id: int):
 
     await set_puzzle_image_prompt(dt, difficulty=difficulty, image_prompt=prompt)
     return jsonify({"ok": True})
+
+
+@miniapp_blueprint.route("/api/admin/dailycroc/model", methods=["POST"])
+@require_webapp_auth
+async def api_admin_dailycroc_update_model(user_id: int):
+    """Update the image generation model for a specific puzzle."""
+    from app.config import settings
+
+    if user_id != settings.ADMIN_ID:
+        return jsonify({"error": "forbidden"}), 403
+
+    body = await request.get_json(silent=True) or {}
+    puzzle_date_str = body.get("date")
+    difficulty = body.get("difficulty", "easy")
+    model = (body.get("model") or "").strip()
+
+    if not puzzle_date_str or not model:
+        return jsonify({"error": "missing date or model"}), 400
+
+    try:
+        dt = datetime.fromisoformat(puzzle_date_str).date()
+    except ValueError:
+        return jsonify({"error": "invalid date format"}), 400
+
+    from app.repos.crocodile_daily import get_puzzle, set_puzzle_image_prompt
+
+    puzzle = await get_puzzle(dt, difficulty=difficulty)
+    if not puzzle:
+        return jsonify({"error": "puzzle not found"}), 404
+
+    # Preserve existing prompt; only update the model (and reset prepared_at via set_puzzle_image_prompt)
+    await set_puzzle_image_prompt(
+        dt,
+        puzzle.image_prompt,
+        difficulty=difficulty,
+        image_model=model,
+    )
+    logger.info("Admin set image_model=%s for %s/%s", model, dt, difficulty)
+    return jsonify({"ok": True, "model": model})
 
 
 @miniapp_blueprint.route("/api/admin/dailycroc/reset-word", methods=["POST"])

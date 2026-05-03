@@ -25,15 +25,34 @@ from app.providers.openrouter import _has_multimodal_content
 # When ALL Opencode Go keys are exhausted or fail, silently retry on Gemini.
 # Returns live mapping so hot-reloaded model names are correctly reflected.
 def _get_opencode_gemini_fallback() -> dict[str, str]:
-    """Build the Opencode → Gemini fallback map from current (live) settings."""
+    """Build the Opencode → Gemini fallback map from current (live) settings.
+
+    Covers all 14 Opencode Go models (opencode.ai/docs/go, 2026-05-01).
+    Vision-capable models fall back to gemini-3-flash-preview for image support.
+    """
     return {
-        "opencode-go/minimax-m2.7": settings.DEFAULT_MODEL,
-        "opencode-go/minimax-m2.5": settings.DEFAULT_MODEL,
-        "opencode-go/qwen3.6-plus": settings.RESEARCH_MODEL,
-        "opencode-go/qwen3.5-plus": settings.QNA_MODEL,
+        # GLM family
+        "opencode-go/glm-5": settings.RESEARCH_MODEL,
+        "opencode-go/glm-5.1": settings.RESEARCH_MODEL,
+        # Kimi family
         "opencode-go/kimi-k2.5": settings.RESEARCH_MODEL,
-        "opencode-go/big-pickle": settings.DEFAULT_MODEL,
+        "opencode-go/kimi-k2.6": settings.RESEARCH_MODEL,
+        # MiMo family (V2 + V2.5)
+        "opencode-go/mimo-v2-pro": settings.DEFAULT_MODEL,
         "opencode-go/mimo-v2-omni": "gemini-3-flash-preview",  # vision-capable fallback
+        "opencode-go/mimo-v2.5-pro": settings.DEFAULT_MODEL,
+        "opencode-go/mimo-v2.5": settings.DEFAULT_MODEL,
+        # MiniMax family
+        "opencode-go/minimax-m2.5": settings.DEFAULT_MODEL,
+        "opencode-go/minimax-m2.7": settings.DEFAULT_MODEL,
+        # Qwen family
+        "opencode-go/qwen3.5-plus": settings.QNA_MODEL,
+        "opencode-go/qwen3.6-plus": settings.RESEARCH_MODEL,
+        # DeepSeek family
+        "opencode-go/deepseek-v4-pro": settings.RESEARCH_MODEL,
+        "opencode-go/deepseek-v4-flash": settings.DEFAULT_MODEL,
+        # Legacy / routing alias
+        "opencode-go/big-pickle": settings.DEFAULT_MODEL,
     }
 
 

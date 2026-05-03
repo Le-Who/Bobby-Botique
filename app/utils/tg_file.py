@@ -63,6 +63,11 @@ async def get_file_bytes(bot: Bot, tg_file: File) -> bytes:
 
     Works transparently in both cloud and local API modes.
 
+    Priority order:
+      1. local_mode + shared volume mounted  → read from disk (zero-copy)
+      2. local_mode + volume NOT mounted     → fetch via HTTP from local Bot API server
+      3. cloud mode                          → download via api.telegram.org
+
     Args:
         bot:     PTB Bot instance (checked for local_mode flag).
         tg_file: Resolved telegram.File (from .get_file()).
@@ -78,15 +83,42 @@ async def get_file_bytes(bot: Bot, tg_file: File) -> bytes:
                 size = local_path.stat().st_size
                 logging.debug("get_file_bytes: local read %s (%d bytes)", local_path, size)
                 return local_path.read_bytes()
+
+            # Volume not mounted in this container — fetch from local Bot API server via HTTP.
+            # PTB's base_file_url in local_mode = "http://tg-api:8081/file/bot{TOKEN}"
+            # The local server serves: base_file_url + absolute_file_path
             logging.warning(
-                "get_file_bytes: local path not found (%s), diagnosing volume mount...",
+                "get_file_bytes: local path not found (%s), trying local Bot API server HTTP",
                 local_path,
             )
             _diagnose_missing_file(local_path)
+            try:
+                import httpx
+
+                file_url: str = bot.base_file_url + local_path_str
+                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                    resp = await client.get(file_url)
+                if resp.status_code == 200:
+                    logging.debug(
+                        "get_file_bytes: local server HTTP ok url=%s bytes=%d",
+                        file_url,
+                        len(resp.content),
+                    )
+                    return resp.content
+                logging.warning(
+                    "get_file_bytes: local server HTTP failed status=%d url=%s",
+                    resp.status_code,
+                    file_url,
+                )
+            except Exception as exc:
+                logging.warning("get_file_bytes: local server HTTP error: %s", exc)
         else:
             logging.warning(
                 "get_file_bytes: could not extract local path from file_path (%s), falling back to network download",
                 tg_file.file_path,
             )
 
+    # Cloud mode OR all local fallbacks exhausted: use PTB's standard network download.
+    # In cloud mode this calls api.telegram.org; in local mode this tries disk again
+    # (last-resort — should only be reached if local server HTTP also failed).
     return bytes(await tg_file.download_as_bytearray())

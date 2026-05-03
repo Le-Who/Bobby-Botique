@@ -43,6 +43,23 @@ class OpencodeGoProvider(OpenRouterProvider):
     _MESSAGES_MODELS = frozenset({"minimax-m2.5", "minimax-m2.7"})
     _MESSAGES_MAX_TOKENS = 8192
 
+    # Models that support reasoning_effort (OpenAI-compatible extended thinking).
+    # DeepSeek V4 Pro/Flash: "low"/"medium"/"high"/"max"
+    # Kimi K2.5/K2.6: "low"/"high"
+    _REASONING_EFFORT_MODELS = frozenset({
+        "deepseek-v4-pro",
+        "deepseek-v4-flash",
+        "kimi-k2.5",
+        "kimi-k2.6",
+    })
+    # Map internal thinking_level labels -> API reasoning_effort values.
+    _THINKING_TO_EFFORT: dict[str, str] = {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "max": "max",
+    }
+
     def _get_url(self) -> str:
         """Preserve OpenRouter template expectations for chat-completions models."""
         return self._CHAT_URL
@@ -88,6 +105,22 @@ class OpencodeGoProvider(OpenRouterProvider):
 
     def _uses_messages_transport(self, model_name: str) -> bool:
         return self._strip_model_prefix(model_name) in self._MESSAGES_MODELS
+
+    def _supports_reasoning_effort(self, model_name: str) -> bool:
+        return self._strip_model_prefix(model_name) in self._REASONING_EFFORT_MODELS
+
+    def _extra_payload_params(self, model_name: str, thinking_level: str | None) -> dict:
+        """Inject reasoning_effort for DeepSeek V4 and Kimi K2 models.
+
+        Called by OpenRouterProvider._execute_request and stream_response
+        to enrich the payload with model-specific thinking parameters.
+        """
+        if not thinking_level or not self._supports_reasoning_effort(model_name):
+            return {}
+        effort = self._THINKING_TO_EFFORT.get(thinking_level)
+        if not effort:
+            return {}
+        return {"reasoning_effort": effort}
 
     def _build_http_error_tag(
         self,
@@ -254,7 +287,14 @@ class OpencodeGoProvider(OpenRouterProvider):
                     model=model_name,
                 )
 
-            token_count = self._messages_token_count(response_data.get("usage"))
+            usage = response_data.get("usage") or {}
+            token_count = self._messages_token_count(usage)
+            cached_tokens = usage.get("cache_read_input_tokens", 0)
+            if cached_tokens:
+                logging.debug(
+                    "Opencode prompt cache hit: model=%s cached=%d total=%d",
+                    model_name, cached_tokens, token_count,
+                )
             if start_time is not None:
                 openrouter_provider.api_logger.log_response(
                     "opencode",

@@ -47,7 +47,7 @@ DEFAULT_POLLINATIONS_IMAGE_MODELS: list[str] = [
     "wan-image",
     "klein",
 ]
-DEFAULT_POLLINATIONS_IMAGE_MODEL: str = "flux"
+DEFAULT_POLLINATIONS_IMAGE_MODEL: str = "zimage"
 # Pollinations API base URL
 POLLINATIONS_BASE_URL: str = "https://gen.pollinations.ai"
 
@@ -242,7 +242,7 @@ class Settings(BaseModel):
     # Модели загружаются from env переменных, значения by default используются if не указаны
     AVAILABLE_MODELS: list[str] = DEFAULT_GEMINI_MODELS.copy()
     DEFAULT_MODEL: str = "gemini-3.1-flash-lite-preview"
-    QNA_MODEL: str = "gemini-2.5-flash-lite"
+    QNA_MODEL: str = "gemini-2.5-flash"
     RESEARCH_MODEL: str = "gemini-3.1-flash-lite-preview"
     URL_SELECTION_MODEL: str = "gemini-3.1-flash-lite-preview"
     TAXONOMY_MODEL: str = "gemini-3.1-flash-lite-preview"  # MemPalace: wing/room classification + contradiction judge
@@ -256,15 +256,20 @@ class Settings(BaseModel):
     OPENROUTER_URL_SELECTION_MODEL: str = "stepfun/step-3.5-flash:free"
 
     # --- OPENCODE GO MODELS ---
+    # Full model list as of 2026-05-01 (opencode.ai/docs/go):
+    #   glm-5, glm-5.1, kimi-k2.5, kimi-k2.6, mimo-v2-pro, mimo-v2-omni,
+    #   mimo-v2.5-pro, mimo-v2.5, minimax-m2.5, minimax-m2.7,
+    #   qwen3.5-plus, qwen3.6-plus, deepseek-v4-pro, deepseek-v4-flash
+    # All use prefix opencode-go/<model-id>.
     # Support comma-separated key list for rotation (same pattern as GEMINI_API_KEYS).
     OPENCODE_API_KEYS: list[str] = []  # sk-... keys, rotatable
     OPENCODE_AVAILABLE_MODELS: list[str] = []  # populated from env OPENCODE_AVAILABLE_MODELS
-    OPENCODE_DEFAULT_MODEL: str = "opencode-go/qwen3.5-plus"
+    OPENCODE_DEFAULT_MODEL: str = "opencode-go/deepseek-v4-flash"
     OPENCODE_QNA_MODEL: str = "opencode-go/qwen3.6-plus"  # High quality dialog
-    OPENCODE_RESEARCH_MODEL: str = "opencode-go/glm-5.1"  # Or keep qwen3.6-plus
+    OPENCODE_RESEARCH_MODEL: str = "opencode-go/deepseek-v4-pro"  # Deep reasoning
     OPENCODE_URL_SELECTION_MODEL: str = "opencode-go/big-pickle"
-    OPENCODE_VISION_MODEL: str = "opencode-go/mimo-v2-omni"
-    OPENCODE_INLINE_MODEL: str = "opencode-go/minimax-m2.5"  # Fast but pleasant
+    OPENCODE_VISION_MODEL: str = "opencode-go/mimo-v2-omni"  # Multimodal
+    OPENCODE_INLINE_MODEL: str = "opencode-go/deepseek-v4-flash"  # Fast but pleasant
 
     # --- API PROVIDER SELECTION ---
     # "opencode" routes primary chat/search/inline through Opencode Go with Gemini fallback.
@@ -284,7 +289,7 @@ class Settings(BaseModel):
     MAX_DOCUMENTS_PER_USER: int = 5
     MAX_CONCURRENT_HEAVY_REQUESTS: int = 4
     MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS: int = 1
-    LRU_STATE_CACHE_SIZE: int = 1000  # In-memory UserState cap; prevents OOM on free-tier containers
+    LRU_STATE_CACHE_SIZE: int = 1000  # In-memory UserState cap
 
     # --- AGENTIC RESEARCH ---
     JINA_API_KEY: str = ""
