@@ -503,72 +503,7 @@ async def _race_generate(
             _FALLBACK_MODEL,
         )
 
-    # ── Fallback model race ───────────────────────────────────────────────────
-    # Primary model race returned nothing (503 / 429 / all keys failed).
-    # resolve_ai_request will skip keys already suspended by _one_call above.
-    fallback_kd, fallback_mdl, _ = await use_case.resolve_ai_request(_FALLBACK_MODEL)
-    if fallback_kd and fallback_mdl:
-        fallback_pair = [(fallback_kd["api_key"], fallback_kd["key_hash"])]
-        result = await _run_race(fallback_pair, fallback_mdl, timeout=_LLM_FALLBACK_TIMEOUT_S)
-        if result is not None:
-            logger.info("Judge: fallback model %r succeeded", fallback_mdl)
-            return result
-        logger.warning("Judge: fallback model %r also failed", fallback_mdl)
-    else:
 
-        # Resolve up to 3 Gemini API keys
-        keys: list[dict] = []
-        resolved_model: str | None = None
-        for _ in range(3):
-            kd, mdl, _ = await use_case.resolve_ai_request(
-                _PRIMARY_MODEL,
-                excluded_key_hashes={k["key_hash"] for k in keys},
-            )
-            if kd and mdl:
-                keys.append(kd)
-                resolved_model = mdl
-            else:
-                break
-
-        resolved_model = resolved_model or _PRIMARY_MODEL
-        primary_pairs = [(kd["api_key"], kd["key_hash"]) for kd in keys]
-        keys.clear()
-
-        # Concurrent task list: Gemini API key pool + Vertex AI.
-        # _one_vertex_call() returns None instantly when Vertex AI is not configured.
-        all_tasks: list[asyncio.Task] = [  # type: ignore[type-arg]
-            asyncio.create_task(_one_call(ak, kh, resolved_model)) for ak, kh in primary_pairs
-        ]
-        all_tasks.append(asyncio.create_task(_one_vertex_call()))
-
-        result: GuessJudgement | None = None
-        pending = set(all_tasks)
-        try:
-            while pending and result is None:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for finished in done:
-                    r = finished.result()
-                    if r is not None:
-                        result = r
-                        break
-        finally:
-            for t in pending:
-                t.cancel()
-
-        if result is not None:
-            if _primary_circuit_open_until > 0.0:
-                logger.info("Judge: primary race recovered — circuit closed")
-                _primary_circuit_open_until = 0.0
-            return result
-
-        # All Gemini keys + Vertex AI failed — open circuit
-        _primary_circuit_open_until = time.monotonic() + _PRIMARY_CIRCUIT_COOLDOWN_S
-        logger.warning(
-            "Judge: primary model %r all-fail — circuit opened for %.0fs, routing to %r",
-            resolved_model,
-            _PRIMARY_CIRCUIT_COOLDOWN_S,
-            _FALLBACK_MODEL,
-        )
 
     # ── Fallback model race ───────────────────────────────────────────────────
     # Primary model race returned nothing (503 / 429 / all keys failed).

@@ -62,8 +62,6 @@ def _lock_key(game_id: str) -> str:
     return f"{_LOCK_KEY_PREFIX}{game_id}"
 
 
-
-
 async def get_runtime_hints(game_id: str) -> list[str]:
     if game_id in _local_hints:
         return list(_local_hints[game_id])

@@ -46,12 +46,14 @@ class OpencodeGoProvider(OpenRouterProvider):
     # Models that support reasoning_effort (OpenAI-compatible extended thinking).
     # DeepSeek V4 Pro/Flash: "low"/"medium"/"high"/"max"
     # Kimi K2.5/K2.6: "low"/"high"
-    _REASONING_EFFORT_MODELS = frozenset({
-        "deepseek-v4-pro",
-        "deepseek-v4-flash",
-        "kimi-k2.5",
-        "kimi-k2.6",
-    })
+    _REASONING_EFFORT_MODELS = frozenset(
+        {
+            "deepseek-v4-pro",
+            "deepseek-v4-flash",
+            "kimi-k2.5",
+            "kimi-k2.6",
+        }
+    )
     # Map internal thinking_level labels -> API reasoning_effort values.
     _THINKING_TO_EFFORT: dict[str, str] = {
         "low": "low",
@@ -293,7 +295,9 @@ class OpencodeGoProvider(OpenRouterProvider):
             if cached_tokens:
                 logging.debug(
                     "Opencode prompt cache hit: model=%s cached=%d total=%d",
-                    model_name, cached_tokens, token_count,
+                    model_name,
+                    cached_tokens,
+                    token_count,
                 )
             if start_time is not None:
                 openrouter_provider.api_logger.log_response(
@@ -458,7 +462,9 @@ class OpencodeGoProvider(OpenRouterProvider):
         if not content_blocks:
             return None
         if all(block.get("type") == "text" for block in content_blocks):
-            return "\n".join(str(block.get("text", "")) for block in content_blocks if str(block.get("text", "")).strip())
+            return "\n".join(
+                str(block.get("text", "")) for block in content_blocks if str(block.get("text", "")).strip()
+            )
         return content_blocks
 
     async def _build_anthropic_image_block(self, part: Any) -> dict[str, Any] | None:

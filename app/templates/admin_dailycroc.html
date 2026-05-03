@@ -113,6 +113,7 @@ body {
 .edit-hidden { display: none; }
 .btn-save { background: var(--link); color: #fff; }
 .mt-8 { margin-top: 8px; }
+.error-text { color: var(--destructive); }
 </style>
 </head>
 <body>
@@ -144,7 +145,7 @@ async function loadPuzzles() {
     if (data.error) throw new Error(data.error);
     renderPuzzles(data.puzzles);
   } catch (e) {
-    container.innerHTML = `<div class="loading-container" style="color:var(--destructive)">Error: ${e.message}</div>`;
+    container.innerHTML = `<div class="loading-container error-text">Error: ${e.message}</div>`;
   }
 }
 

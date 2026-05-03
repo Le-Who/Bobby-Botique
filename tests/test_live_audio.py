@@ -631,7 +631,9 @@ class TestLiveAudioProxy:
 
 @pytest.mark.asyncio
 class TestVertexLiveClientBootstrap:
-    async def test_vertex_live_client_returns_none_when_credentials_file_is_unreadable(self, live_settings, monkeypatch):
+    async def test_vertex_live_client_returns_none_when_credentials_file_is_unreadable(
+        self, live_settings, monkeypatch
+    ):
         live_settings.VERTEX_AI_PROJECT = "vertex-project"
         monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/run/secrets/vertex-live-sa.json")
         import app.providers.gemini as gemini_provider

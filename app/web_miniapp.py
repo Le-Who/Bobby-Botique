@@ -137,9 +137,7 @@ async def _send_live_fatal(
     }
     if retry_after_seconds:
         payload["retry_after_seconds"] = retry_after_seconds
-        payload["retry_at"] = (
-            datetime.now(UTC) + timedelta(seconds=retry_after_seconds)
-        ).isoformat()
+        payload["retry_at"] = (datetime.now(UTC) + timedelta(seconds=retry_after_seconds)).isoformat()
     try:
         await websocket.send_json(payload)
     except Exception:
@@ -1185,10 +1183,13 @@ async def daily_game_ws():
             except TimeoutError:
                 logger.warning("daily_game_ws: mutation lock timeout user=%s", user_id)
                 await websocket.send_json(
-                    await stamp_runtime_payload(runtime_id, {
-                        "event": "error",
-                        "message": "Сервер загружен, попробуйте через секунду.",
-                    })
+                    await stamp_runtime_payload(
+                        runtime_id,
+                        {
+                            "event": "error",
+                            "message": "Сервер загружен, попробуйте через секунду.",
+                        },
+                    )
                 )
                 continue
 
@@ -1528,10 +1529,13 @@ async def game_ws():
             except TimeoutError:
                 logger.warning("game_ws: mutation lock timeout game=%s", game_id)
                 await websocket.send_json(
-                    await stamp_runtime_payload(game_id, {
-                        "event": "error",
-                        "message": "Сервер загружен, попробуйте через секунду.",
-                    })
+                    await stamp_runtime_payload(
+                        game_id,
+                        {
+                            "event": "error",
+                            "message": "Сервер загружен, попробуйте через секунду.",
+                        },
+                    )
                 )
                 continue
 
@@ -1741,7 +1745,13 @@ async def _resolve_live_transport(
 
     client = get_live_api_client()
     if client is None:
-        return None, GEMINI_LIVE_MODEL, None, "misconfigured", "Голосовой режим временно недоступен: API ключи Gemini не настроены."
+        return (
+            None,
+            GEMINI_LIVE_MODEL,
+            None,
+            "misconfigured",
+            "Голосовой режим временно недоступен: API ключи Gemini не настроены.",
+        )
 
     cooldown_seconds = _get_live_model_cooldown_seconds()
     if cooldown_seconds > 0:
@@ -2088,5 +2098,3 @@ async def _handle_live_session(
                 pass
 
     logger.info("live_audio_ws: disconnected user=%d mode=%s", user_id, transport_mode)
-
-

@@ -1,6 +1,6 @@
 import pathlib
 
-p = pathlib.Path('app/web.py')
+p = pathlib.Path("app/web.py")
 raw = p.read_bytes()
 
 # The routes to append:
@@ -195,4 +195,4 @@ async def api_admin_dailycroc_image():
         return jsonify({"error": "proxy_error", "detail": str(exc)}), 502
 '''
 
-p.write_bytes(raw + b'\n' + ROUTES)
+p.write_bytes(raw + b"\n" + ROUTES)

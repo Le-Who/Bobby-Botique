@@ -494,7 +494,7 @@ async def _upsert_graph(
                                 tgt_id,
                                 pred_emb_str,
                             )
-                            
+
                             # Pre-fetch all Stage 2 (ambiguous zone) verdicts concurrently
                             # This eliminates N+1 LLM API calls and avoids holding the DB transaction open sequentially
                             stage_2_tasks = []
@@ -510,7 +510,7 @@ async def _upsert_graph(
                                             api_key,
                                         )
                                     )
-                                    
+
                             stage_2_verdicts = await asyncio.gather(*stage_2_tasks) if stage_2_tasks else []
                             verdict_idx = 0
                             skip_new_edge_insert = False
@@ -535,7 +535,7 @@ async def _upsert_graph(
                                     # Stage 2: ambiguous zone (0.15-0.35) → use gathered LLM judge verdict
                                     verdict = stage_2_verdicts[verdict_idx]
                                     verdict_idx += 1
-                                    
+
                                     if verdict == "update":
                                         await conn.execute(
                                             "UPDATE memory_edges SET valid_to = now() WHERE id = $1",

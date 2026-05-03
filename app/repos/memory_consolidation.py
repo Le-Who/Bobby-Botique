@@ -449,7 +449,9 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                     # ── Upsert graph entities into memory_nodes ──────────
                     # Batch semantic deduplication for nodes
                     # First, gather unique entity names to avoid redundant DB lookups
-                    unique_entity_names = {ent.get("name", "").strip() for ent in valid_entities if ent.get("name", "").strip()}
+                    unique_entity_names = {
+                        ent.get("name", "").strip() for ent in valid_entities if ent.get("name", "").strip()
+                    }
 
                     entities_with_emb = [
                         (name, f"[{','.join(str(v) for v in ent_emb_map[name])}]")

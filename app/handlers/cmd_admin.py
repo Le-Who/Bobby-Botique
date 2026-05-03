@@ -55,7 +55,7 @@ def _dailycroc_status_keyboard() -> InlineKeyboardMarkup:
     from app.config import settings
 
     webapp_url = f"{settings.WEBAPP_BASE_URL.rstrip('/')}/webapp/admin_dailycroc"
-    
+
     return InlineKeyboardMarkup(
         [
             [
@@ -142,12 +142,12 @@ def _daily_prep_component_line(difficulty: str, puzzle) -> str:
     art_ready = bool(str(getattr(puzzle, "image_file_id", "") or "").strip())
     prepared_at = _format_daily_prepared_at(getattr(puzzle, "prepared_at", None))
     state = "ready" if daily_croc_repo.is_puzzle_fully_prepared(puzzle) else "warming"
-    
+
     target_date = getattr(puzzle, "puzzle_date", None)
     date_str = f" ({target_date.isoformat()})" if target_date else ""
     word_str = str(getattr(puzzle, "target_word", "") or "").strip()
     word_display = f"word=<code>{word_str}</code> · " if word_str else ""
-    
+
     return (
         f"  {difficulty}{date_str}: <code>{state}</code> · "
         f"puzzle=<code>{'yes' if puzzle_ready else 'no'}</code> · "
@@ -757,7 +757,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "• `/listmodels` — список доступных моделей\n\n"
             "*🗂 Word Bank:*\n"
             "• `/wordbank` — управление банком слов (статистика, генерация, дубли)\n\n"
-            "*🐊 Daily Crocodile:*\n" 
+            "*🐊 Daily Crocodile:*\n"
             "• `/set_dailycroc_delivery on|off` — включить/выключить исходящую daily-рассылку\n"
             "• `/dailycroc_status` — снимок подписок/готовности на сегодня + кнопки Refresh и Prep check\n"
             "• `/set_dailycroc_placeholder` — реплайни на фото, чтобы задать баннер рассылки\n\n"
@@ -986,8 +986,7 @@ async def set_dailycroc_delivery_command(update: Update, context: ContextTypes.D
 
     state = "включена ✅" if value == "on" else "выключена ❌"
     await update.message.reply_text(
-        f"🐊 Daily-отправка {state}\n"
-        "Pre-generation пазлов, подсказок и изображений продолжает работать.",
+        f"🐊 Daily-отправка {state}\nPre-generation пазлов, подсказок и изображений продолжает работать.",
         parse_mode="HTML",
     )
 
@@ -1146,6 +1145,7 @@ def _wb_cat_key(category: str) -> str:
 # Build category key ↔ name mapping at module level (done once on import).
 def _build_wb_cat_map() -> dict:
     from app.games.word_bank import WORD_BANK
+
     return {_wb_cat_key(cat): cat for cat in (WORD_BANK.get("ru") or {})}
 
 
@@ -1168,15 +1168,15 @@ async def _wb_categories_page_kb(page: int, total_cats: int) -> InlineKeyboardMa
 
     cats = list((WORD_BANK.get("ru") or {}).keys())
     start = page * _WB_PAGE_SIZE
-    page_cats = cats[start: start + _WB_PAGE_SIZE]
+    page_cats = cats[start : start + _WB_PAGE_SIZE]
 
     rows = []
     for cat in page_cats:
         stats = await get_bank_stats(cat)
         warn = " ⚠️" if stats["total"] == 0 else ""
-        rows.append([
-            InlineKeyboardButton(f"{cat} ({stats['total']}){warn}", callback_data=f"wb:cat:{_wb_cat_key(cat)}")
-        ])
+        rows.append(
+            [InlineKeyboardButton(f"{cat} ({stats['total']}){warn}", callback_data=f"wb:cat:{_wb_cat_key(cat)}")]
+        )
 
     nav = []
     if page > 0:
@@ -1187,33 +1187,37 @@ async def _wb_categories_page_kb(page: int, total_cats: int) -> InlineKeyboardMa
         nav.append(InlineKeyboardButton("▶️", callback_data=f"wb:cats:{page + 1}"))
     if nav:
         rows.append(nav)
-    rows.append([
-        InlineKeyboardButton("🔍 Найти дубликаты", callback_data="wb:dup"),
-        InlineKeyboardButton("🔙 Назад", callback_data="wb:menu"),
-    ])
+    rows.append(
+        [
+            InlineKeyboardButton("🔍 Найти дубликаты", callback_data="wb:dup"),
+            InlineKeyboardButton("🔙 Назад", callback_data="wb:menu"),
+        ]
+    )
     return InlineKeyboardMarkup(rows)
 
 
 def _wb_menu_kb() -> InlineKeyboardMarkup:
     from app.games.word_bank import WORD_BANK
+
     cats = list((WORD_BANK.get("ru") or {}).keys())
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(f"📋 Категории ({len(cats)})", callback_data="wb:cats:0"),
-        InlineKeyboardButton("🔍 Найти дубликаты", callback_data="wb:dup"),
-    ]])
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(f"📋 Категории ({len(cats)})", callback_data="wb:cats:0"),
+                InlineKeyboardButton("🔍 Найти дубликаты", callback_data="wb:dup"),
+            ]
+        ]
+    )
 
 
 @admin_only
 async def wordbank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show word bank management menu."""
     from app.games.word_bank import WORD_BANK
+
     cats = list((WORD_BANK.get("ru") or {}).keys())
     total_words = sum(len(v) for v in (WORD_BANK.get("ru") or {}).values())
-    text = (
-        f"🗂 <b>Word Bank</b>\n"
-        f"Категорий: <b>{len(cats)}</b> | Слов: <b>{total_words}</b>\n\n"
-        "Выберите действие:"
-    )
+    text = f"🗂 <b>Word Bank</b>\nКатегорий: <b>{len(cats)}</b> | Слов: <b>{total_words}</b>\n\nВыберите действие:"
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=_wb_menu_kb())
 
 
@@ -1233,11 +1237,7 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data == "wb:menu":
         cats = list((WORD_BANK.get("ru") or {}).keys())
         total_words = sum(len(v) for v in (WORD_BANK.get("ru") or {}).values())
-        text = (
-            f"🗂 <b>Word Bank</b>\n"
-            f"Категорий: <b>{len(cats)}</b> | Слов: <b>{total_words}</b>\n\n"
-            "Выберите действие:"
-        )
+        text = f"🗂 <b>Word Bank</b>\nКатегорий: <b>{len(cats)}</b> | Слов: <b>{total_words}</b>\n\nВыберите действие:"
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=_wb_menu_kb())
         return
 
@@ -1267,13 +1267,19 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"Всего слов: <b>{stats['total']}</b>\n"
             f"easy: {stats['easy']} | medium: {stats['medium']} | hard: {stats['hard']}\n"
         )
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⚡ Сгенерировать слова", callback_data=f"wb:gen:{cat_key}"),
-        ], [
-            InlineKeyboardButton("🗑 Очистить сгенерированные", callback_data=f"wb:clr:{cat_key}"),
-        ], [
-            InlineKeyboardButton("🔙 Назад", callback_data="wb:cats:0"),
-        ]])
+        kb = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("⚡ Сгенерировать слова", callback_data=f"wb:gen:{cat_key}"),
+                ],
+                [
+                    InlineKeyboardButton("🗑 Очистить сгенерированные", callback_data=f"wb:clr:{cat_key}"),
+                ],
+                [
+                    InlineKeyboardButton("🔙 Назад", callback_data="wb:cats:0"),
+                ],
+            ]
+        )
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
         return
 
@@ -1283,14 +1289,19 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not cat_name:
             await query.edit_message_text("❌ Категория не найдена.")
             return
-        
+
         from app.games.word_bank import clear_generated_category
+
         await clear_generated_category(cat_name)
-        
+
         text = f"✅ Кэш сгенерированных слов для <b>{cat_name}</b> очищен!"
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 К категории", callback_data=f"wb:cat:{cat_key}"),
-        ]])
+        kb = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("🔙 К категории", callback_data=f"wb:cat:{cat_key}"),
+                ]
+            ]
+        )
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
         return
 
@@ -1306,11 +1317,12 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         try:
             from app.games.word_bank import generate_words_for_category
+
             result = await generate_words_for_category(cat_name)
             if result is None:
                 raise ValueError("LLM generation failed or timed out.")
             added = len(result)
-            skipped = "Неизвестно" # duplicates filtered internally
+            skipped = "Неизвестно"  # duplicates filtered internally
             text = (
                 f"✅ Сгенерированы слова для <b>{cat_name}</b>\n"
                 f"Добавлено: <b>{added}</b> | Дублей отброшено: <b>{skipped}</b>"
@@ -1318,9 +1330,13 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         except Exception as exc:
             logging.error("wb gen failed for %s: %s", cat_name, exc, exc_info=True)
             text = f"❌ Ошибка генерации слов для <b>{cat_name}</b>: {exc}"
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 К категории", callback_data=f"wb:cat:{cat_key}"),
-        ]])
+        kb = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("🔙 К категории", callback_data=f"wb:cat:{cat_key}"),
+                ]
+            ]
+        )
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
         return
 
@@ -1360,6 +1376,7 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             cats_str = ", ".join(d["categories"])
             lines.append(f"{d['word_key']}: {cats_str}")
         import io
+
         file_bytes = "\n".join(lines).encode("utf-8")
         doc = io.BytesIO(file_bytes)
         doc.name = "wordbank_duplicates.txt"

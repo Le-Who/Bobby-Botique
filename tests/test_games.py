@@ -303,7 +303,9 @@ class TestPickRandomWord:
         full_bank = ["джетт", "сова", "рейна", "вайпер", "сейдж"]
 
         with (
-            patch("app.games.word_bank.generate_words_for_category", new_callable=AsyncMock, return_value=full_bank) as gen_mock,
+            patch(
+                "app.games.word_bank.generate_words_for_category", new_callable=AsyncMock, return_value=full_bank
+            ) as gen_mock,
             patch("app.games.judgement_cache.get_cached_generated_words", new_callable=AsyncMock, return_value=None),
             patch("app.games.word_bank._pick_rotating_word", return_value="сова") as pick_mock,
         ):
@@ -328,7 +330,9 @@ class TestPickRandomWord:
             patch("app.games.word_bank.generate_words_for_category", new_callable=AsyncMock) as gen_mock,
             patch("app.games.word_bank._pick_rotating_word", return_value="нахида") as pick_mock,
         ):
-            await cache_generated_words(first_topic.lang, first_topic.category, full_bank, topic_id=first_topic.topic_id)
+            await cache_generated_words(
+                first_topic.lang, first_topic.category, full_bank, topic_id=first_topic.topic_id
+            )
             word, lang, cat, is_gen = await pick_random_word_for_topic(second_topic)
 
         assert first_topic.topic_id == second_topic.topic_id
@@ -349,10 +353,14 @@ class TestPickRandomWord:
 
         with (
             patch("app.games.judgement_cache._persist_generated_words", return_value=None),
-            patch("app.games.word_bank.generate_words_for_category", new_callable=AsyncMock, return_value=second_bank) as gen_mock,
+            patch(
+                "app.games.word_bank.generate_words_for_category", new_callable=AsyncMock, return_value=second_bank
+            ) as gen_mock,
             patch("app.games.word_bank._pick_rotating_word", return_value="кафка") as pick_mock,
         ):
-            await cache_generated_words(first_topic.lang, first_topic.category, first_bank, topic_id=first_topic.topic_id)
+            await cache_generated_words(
+                first_topic.lang, first_topic.category, first_bank, topic_id=first_topic.topic_id
+            )
             word, _, _, is_gen = await pick_random_word_for_topic(second_topic)
 
         assert first_topic.topic_id != second_topic.topic_id
@@ -407,11 +415,14 @@ class TestPickRandomWord:
 
         await record_result("ai_studio", "gemini-3.1-flash-lite-preview", "rate_limit", retry_after_seconds=60)
         with patch("app.games.hinting.is_hint_prewarm_enabled", new_callable=AsyncMock, return_value=True):
-            assert await enqueue_bank_hint_prewarm(
-                ["шериф", "доктор"],
-                "персонаж сериала Извне",
-                topic_id="custom:1",
-            ) is False
+            assert (
+                await enqueue_bank_hint_prewarm(
+                    ["шериф", "доктор"],
+                    "персонаж сериала Извне",
+                    topic_id="custom:1",
+                )
+                is False
+            )
 
 
 # ── judge — Damerau-Levenshtein algorithm ─────────────────────────────────────

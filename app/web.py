@@ -775,6 +775,7 @@ async def api_events():
 
 # ── Admin Daily Crocodile Dashboard ───────────────────────────────────
 
+
 @quart_app.route("/admin_dailycroc")
 @require_auth
 async def admin_dailycroc_page():
@@ -785,26 +786,39 @@ async def admin_dailycroc_page():
 @quart_app.route("/api/admin/dailycroc", methods=["GET"])
 @require_auth
 async def api_admin_dailycroc_list():
-    from app.config import settings
-    from app.repos.crocodile_daily import get_recent_daily_puzzles
+    from app import database as db
+    from app.repos.crocodile_daily import _row_to_puzzle
+
     try:
         limit = int(request.args.get("limit", 20))
     except ValueError:
         limit = 20
-    puzzles = await get_recent_daily_puzzles(limit=limit)
+
+    rows = await db.fetch_all(
+        """
+        SELECT puzzle_date, target_word, topic, lang, difficulty, hints, image_prompt, image_file_id, image_model, prepared_at
+        FROM crocodile_daily_puzzles
+        ORDER BY puzzle_date DESC, difficulty ASC
+        LIMIT $1
+        """,
+        limit,
+    )
+    puzzles = [_row_to_puzzle(r) for r in rows]
     out = []
     for puzzle in puzzles:
         if puzzle.puzzle_date is None:
             continue
-        out.append({
-            "date": puzzle.puzzle_date.isoformat(),
-            "difficulty": puzzle.difficulty,
-            "target_word": puzzle.target_word,
-            "topic": puzzle.topic,
-            "image_file_id": puzzle.image_file_id,
-            "image_prompt": puzzle.image_prompt,
-            "image_model": puzzle.image_model,
-        })
+        out.append(
+            {
+                "date": puzzle.puzzle_date.isoformat(),
+                "difficulty": puzzle.difficulty,
+                "target_word": puzzle.target_word,
+                "topic": puzzle.topic,
+                "image_file_id": puzzle.image_file_id,
+                "image_prompt": puzzle.image_prompt,
+                "image_model": puzzle.image_model,
+            }
+        )
     return jsonify({"puzzles": out})
 
 
@@ -814,6 +828,7 @@ async def api_admin_dailycroc_list():
 async def api_admin_dailycroc_regen():
     from app.providers.pollinations import generate_image_model
     from app.repos.crocodile_daily import get_daily_puzzle_strict, set_puzzle_image_asset
+
     data = await request.get_json()
     if not data:
         return jsonify({"error": "invalid json"}), 400
@@ -822,31 +837,34 @@ async def api_admin_dailycroc_regen():
     if not puzzle_date or not difficulty:
         return jsonify({"error": "missing date or difficulty"}), 400
     import datetime
+
     try:
         dt = datetime.date.fromisoformat(puzzle_date)
     except ValueError:
         return jsonify({"error": "invalid date format"}), 400
-    
+
     puzzle = await get_daily_puzzle_strict(dt, difficulty)
     if not puzzle:
         return jsonify({"error": "puzzle not found"}), 404
-        
+
     try:
         from telegram import InputMediaPhoto
 
         from app.bot_instance import get_bot
+
         bot = get_bot()
         if bot is None:
             return jsonify({"error": "bot not ready"}), 503
-            
+
         model = puzzle.image_model or "zimage"
         photo_bytes = await generate_image_model(puzzle.image_prompt, width=1024, height=1024, model=model)
-        
+
         # Send to config group to get file_id
         from app.config import settings
+
         msg = await bot.send_photo(chat_id=settings.CONFIG_CHAT_ID, photo=photo_bytes)
         file_id = msg.photo[-1].file_id
-        
+
         await set_puzzle_image_asset(dt, file_id, difficulty=difficulty)
         return jsonify({"success": True, "file_id": file_id})
     except Exception as e:
@@ -858,6 +876,7 @@ async def api_admin_dailycroc_regen():
 @require_auth
 async def api_admin_dailycroc_update_prompt():
     from app.repos.crocodile_daily import update_daily_puzzle_prompt
+
     data = await request.get_json()
     if not data:
         return jsonify({"error": "invalid json"}), 400
@@ -867,11 +886,12 @@ async def api_admin_dailycroc_update_prompt():
     if not puzzle_date or not difficulty or prompt is None:
         return jsonify({"error": "missing fields"}), 400
     import datetime
+
     try:
         dt = datetime.date.fromisoformat(puzzle_date)
     except ValueError:
         return jsonify({"error": "invalid date"}), 400
-    
+
     await update_daily_puzzle_prompt(dt, difficulty, prompt)
     return jsonify({"success": True})
 
@@ -890,11 +910,12 @@ async def api_admin_dailycroc_update_model():
     import datetime
 
     from app.database import db_manager
+
     try:
         dt = datetime.date.fromisoformat(puzzle_date)
     except ValueError:
         return jsonify({"error": "invalid date"}), 400
-        
+
     async with db_manager.pool.acquire() as conn:
         await conn.execute(
             """
@@ -902,7 +923,9 @@ async def api_admin_dailycroc_update_model():
             SET image_model = $1
             WHERE puzzle_date = $2 AND difficulty = $3
             """,
-            model, dt, difficulty
+            model,
+            dt,
+            difficulty,
         )
     return jsonify({"success": True})
 
@@ -911,6 +934,7 @@ async def api_admin_dailycroc_update_model():
 @require_auth
 async def api_admin_dailycroc_reset_word():
     from app.repos.crocodile_daily import regenerate_puzzle_word
+
     data = await request.get_json()
     if not data:
         return jsonify({"error": "invalid json"}), 400
@@ -919,20 +943,23 @@ async def api_admin_dailycroc_reset_word():
     if not puzzle_date or not difficulty:
         return jsonify({"error": "missing date or difficulty"}), 400
     import datetime
+
     try:
         dt = datetime.date.fromisoformat(puzzle_date)
     except ValueError:
         return jsonify({"error": "invalid date format"}), 400
-        
+
     new_puzzle = await regenerate_puzzle_word(dt, difficulty)
     if not new_puzzle:
         return jsonify({"error": "failed to regenerate puzzle"}), 500
-        
-    return jsonify({
-        "success": True,
-        "new_word": new_puzzle.target_word,
-        "new_topic": new_puzzle.topic,
-    })
+
+    return jsonify(
+        {
+            "success": True,
+            "new_word": new_puzzle.target_word,
+            "new_topic": new_puzzle.topic,
+        }
+    )
 
 
 @quart_app.route("/api/admin/dailycroc/image", methods=["GET"])
@@ -950,11 +977,11 @@ async def api_admin_dailycroc_image():
 
         from app.bot_instance import get_bot
         from app.utils.tg_file import get_file_bytes
-        
+
         bot = get_bot()
         if bot is None:
             return jsonify({"error": "bot_not_ready"}), 503
-            
+
         tg_file = await bot.get_file(file_id)
         data = await get_file_bytes(bot, tg_file)
         return Response(

@@ -140,7 +140,7 @@ async def _translate_word_for_prompt(word: str) -> str | None:
         return _PROMPT_TRANSLATION_CACHE[key]
 
     prompt = (
-        f"Analyze the Russian charades word: \"{word}\".\n"
+        f'Analyze the Russian charades word: "{word}".\n'
         "1. Is it possible to draw this word as a clear physical object or distinct scene? (True/False)\n"
         "2. If True, provide a short English phrase describing how to draw it.\n"
         "3. If False, provide the closest physical metaphor in English.\n"
@@ -157,7 +157,7 @@ async def _translate_word_for_prompt(word: str) -> str | None:
             max_key_retries=1,
             timeout=8.0,
         )
-        
+
         resp_clean = (response_text or "").strip()
         if resp_clean.startswith("```json"):
             resp_clean = resp_clean[7:-3].strip()
@@ -187,10 +187,14 @@ async def _build_daily_image_prompt(word: str, topic: str, *, difficulty: str) -
         en_word = await _translate_word_for_prompt(word)
     display_word = en_word or word
 
-    tension = "Make the composition immediately readable." if difficulty == "easy" else "Keep the concept readable but slightly less literal."
+    tension = (
+        "Make the composition immediately readable."
+        if difficulty == "easy"
+        else "Keep the concept readable but slightly less literal."
+    )
     return (
         "Create a vivid polished illustration for a charades game reveal. "
-        f"The subject is \"{display_word}\". "
+        f'The subject is "{display_word}". '
         "Show the concept clearly and literally, one readable main scene or subject. "
         f"{tension} "
         "Absolutely no text, no letters, no captions, no speech bubbles, no UI, no watermark. "
@@ -233,7 +237,9 @@ async def _generate_daily_image_file_id(
     if result.warning:
         logger.warning(
             "daily puzzle image warning date=%s difficulty=%s: %s",
-            puzzle_date, difficulty, result.warning,
+            puzzle_date,
+            difficulty,
+            result.warning,
         )
         # Propagate to admin alerting — callers check this field.
         try:
@@ -306,7 +312,12 @@ async def prepare_daily_puzzle(
                     )
                     return await repo.create_puzzle_if_missing(puzzle_date, difficulty=difficulty)
             except Exception as exc:
-                logger.warning("daily prep: Redis lock unavailable, proceeding without dist-lock date=%s/%s: %s", puzzle_date, difficulty, exc)
+                logger.warning(
+                    "daily prep: Redis lock unavailable, proceeding without dist-lock date=%s/%s: %s",
+                    puzzle_date,
+                    difficulty,
+                    exc,
+                )
                 _redis_lock_ctx = None
 
         try:
@@ -317,7 +328,9 @@ async def prepare_daily_puzzle(
                 puzzle = replace(puzzle, hints=hints, prepared_at=None)
 
             if not puzzle.image_prompt:
-                image_prompt = await _build_daily_image_prompt(puzzle.target_word, puzzle.topic, difficulty=puzzle.difficulty)
+                image_prompt = await _build_daily_image_prompt(
+                    puzzle.target_word, puzzle.topic, difficulty=puzzle.difficulty
+                )
                 await repo.set_puzzle_image_prompt(
                     puzzle.puzzle_date,
                     image_prompt,
@@ -455,9 +468,9 @@ async def build_daily_completion_summary(
     puzzles = await repo.get_puzzles_for_date(puzzle_date)
     results = await repo.get_results_for_user(user_id, puzzle_date)
     aggregate_leaderboard = await repo.get_leaderboard(puzzle_date, limit=5)
-    aggregate_rank = await repo.get_rank(user_id, puzzle_date) if any(
-        item.status != "active" for item in results.values()
-    ) else None
+    aggregate_rank = (
+        await repo.get_rank(user_id, puzzle_date) if any(item.status != "active" for item in results.values()) else None
+    )
 
     modes: dict[str, dict[str, Any]] = {}
     next_difficulty: str | None = None

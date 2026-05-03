@@ -524,7 +524,9 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                                 response_text=intent_result.text,
                                 voice=chat_state.voice_id or "Aoede",
                                 tts_temperature=chat_state.tts_temperature,
-                                source_key=build_voice_source_key("direct_intent_tts", chat_id, direct_reply.message_id),
+                                source_key=build_voice_source_key(
+                                    "direct_intent_tts", chat_id, direct_reply.message_id
+                                ),
                             )
                         except Exception as tts_err:
                             logging.debug("Direct intent TTS skipped: %s", tts_err)

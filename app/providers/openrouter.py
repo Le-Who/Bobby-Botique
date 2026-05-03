@@ -226,14 +226,16 @@ class OpenRouterProvider(BaseAIProvider):
 
             usage_data = response_data.get("usage") or {}
             token_count = usage_data.get("total_tokens", 0)
-            cached_tokens = (
-                usage_data.get("prompt_tokens_details", {}).get("cached_tokens", 0)
-                or usage_data.get("cache_read_input_tokens", 0)
+            cached_tokens = usage_data.get("prompt_tokens_details", {}).get("cached_tokens", 0) or usage_data.get(
+                "cache_read_input_tokens", 0
             )
             if cached_tokens:
                 logging.debug(
                     "%s prompt cache hit: model=%s cached=%d total=%d",
-                    self.provider_name, model_name, cached_tokens, token_count,
+                    self.provider_name,
+                    model_name,
+                    cached_tokens,
+                    token_count,
                 )
 
             # Log success
@@ -350,7 +352,7 @@ class OpenRouterProvider(BaseAIProvider):
             parts = item.get("parts", [])
             if not isinstance(parts, list):
                 parts = [parts] if parts is not None else []
-                
+
             for part in parts:
                 if isinstance(part, TaggedImage) and not part.pre_compressed:
                     image_tasks.append(
@@ -359,7 +361,7 @@ class OpenRouterProvider(BaseAIProvider):
                 elif isinstance(part, (bytes, bytearray, Image.Image)):
                     image_data = bytes(part) if isinstance(part, bytearray) else part
                     image_tasks.append(save_image_as_bytes(image_data))
-        
+
         # Execute concurrently
         processed_images = []
         if image_tasks:
@@ -381,15 +383,15 @@ class OpenRouterProvider(BaseAIProvider):
             content_parts = []
             for part in parts:
                 img_bytes: bytes | None = None
-                
+
                 if isinstance(part, TaggedImage):
                     if part.pre_compressed:
                         img_bytes = part.data
                     else:
                         res = processed_images[img_idx]
                         img_idx += 1
-                        img_bytes = res if not isinstance(res, Exception) else None
-                        
+                        img_bytes = res if not isinstance(res, BaseException) else None
+
                     if img_bytes:
                         img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]  # lambda default-arg pattern
                         content_parts.append(
@@ -401,7 +403,7 @@ class OpenRouterProvider(BaseAIProvider):
                 elif isinstance(part, (bytes, bytearray, Image.Image)):
                     res = processed_images[img_idx]
                     img_idx += 1
-                    img_bytes = res if not isinstance(res, Exception) else None
+                    img_bytes = res if not isinstance(res, BaseException) else None
                     if img_bytes:
                         img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]  # lambda default-arg pattern
                         content_parts.append(

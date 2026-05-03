@@ -573,7 +573,7 @@ class GeminiProvider(BaseAIProvider):
                 parts = item.get("parts", [])
                 if not isinstance(parts, list):
                     parts = [parts] if parts is not None else []
-                
+
                 for part in parts:
                     if isinstance(part, TaggedImage) and not part.pre_compressed:
                         image_tasks.append(
@@ -582,12 +582,12 @@ class GeminiProvider(BaseAIProvider):
                     elif isinstance(part, (bytes, bytearray, Image.Image)):
                         image_data = bytes(part) if isinstance(part, bytearray) else part
                         image_tasks.append(save_image_as_bytes(image_data))
-            
+
             # Execute concurrently
             processed_images = []
             if image_tasks:
                 processed_images = await asyncio.gather(*image_tasks, return_exceptions=True)
-            
+
             # Pass 2: Build actual objects
             img_idx = 0
             for item in history:
@@ -608,8 +608,8 @@ class GeminiProvider(BaseAIProvider):
                         else:
                             res = processed_images[img_idx]
                             img_idx += 1
-                            img_bytes = res if not isinstance(res, Exception) else None
-                        
+                            img_bytes = res if not isinstance(res, BaseException) else None
+
                         if img_bytes:
                             try:
                                 processed.append(
@@ -619,12 +619,12 @@ class GeminiProvider(BaseAIProvider):
                                 logging.warning("Failed to create image part: %s", e)
                         else:
                             logging.warning("Skipping TaggedImage part due to processing error")
-                    
+
                     elif isinstance(part, (bytes, bytearray, Image.Image)):
                         res = processed_images[img_idx]
                         img_idx += 1
-                        img_bytes = res if not isinstance(res, Exception) else None
-                        
+                        img_bytes = res if not isinstance(res, BaseException) else None
+
                         if img_bytes:
                             try:
                                 processed.append(
@@ -634,7 +634,7 @@ class GeminiProvider(BaseAIProvider):
                                 logging.warning("Failed to create image part: %s", e)
                         else:
                             logging.warning("Skipping image part due to processing error")
-                    
+
                     else:
                         try:
                             processed.append(types.Part.from_text(text=str(part)))
@@ -732,7 +732,6 @@ class GeminiProvider(BaseAIProvider):
                 success=False,
                 error_message=msg,
             )
-
 
 
 # ── Vertex AI Provider ────────────────────────────────────────────────────────

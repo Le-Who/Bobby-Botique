@@ -271,10 +271,7 @@ async def get_puzzles_for_date(puzzle_date: date, *, conn=None) -> dict[str, Dai
         (puzzle_date,),
         conn=conn,
     )
-    return {
-        normalize_daily_difficulty(row.get("difficulty")): _row_to_puzzle(row)
-        for row in rows
-    }
+    return {normalize_daily_difficulty(row.get("difficulty")): _row_to_puzzle(row) for row in rows}
 
 
 def normalize_daily_word(word: str | None) -> str:
@@ -305,7 +302,9 @@ async def get_used_daily_words(*, days_back: int = 365, conn=None) -> set[str]:
         (days_back,),
         conn=conn,
     )
-    return {normalize_daily_word(row.get("target_word")) for row in rows if normalize_daily_word(row.get("target_word"))}
+    return {
+        normalize_daily_word(row.get("target_word")) for row in rows if normalize_daily_word(row.get("target_word"))
+    }
 
 
 async def _create_puzzle_if_missing_with_conn(
@@ -345,10 +344,7 @@ async def _create_puzzle_if_missing_with_conn(
 
     # Ordered list of categories to try — starting from today's slot, wrapping
     day_ordinal = puzzle_date.toordinal()
-    topic_candidates = [
-        ru_categories[(day_ordinal + difficulty_offset + i) % n]
-        for i in range(n)
-    ]
+    topic_candidates = [ru_categories[(day_ordinal + difficulty_offset + i) % n] for i in range(n)]
 
     # Try each candidate in rotating order; pick the first that still has
     # unused words of the right difficulty band.
@@ -360,10 +356,7 @@ async def _create_puzzle_if_missing_with_conn(
             topic_id=f"builtin:ru:{candidate_cat.lower()}",
             preferred_difficulty=difficulty,
         )
-        unused = [
-            w for w in available
-            if normalize_daily_word(w) not in used_words
-        ]
+        unused = [w for w in available if normalize_daily_word(w) not in used_words]
         if unused:
             chosen_topic_raw = candidate_cat
             break
@@ -398,7 +391,6 @@ async def _create_puzzle_if_missing_with_conn(
     if not puzzle:
         raise RuntimeError(f"daily puzzle was not created for {puzzle_date} difficulty={difficulty}")
     return puzzle
-
 
 
 async def create_puzzle_if_missing(puzzle_date: date, *, difficulty: str = "easy") -> DailyPuzzle:
@@ -532,10 +524,7 @@ async def get_results_for_user(user_id: int, puzzle_date: date) -> dict[str, Dai
         """,
         (user_id, puzzle_date),
     )
-    return {
-        normalize_daily_difficulty(row.get("difficulty")): _row_to_result(row)
-        for row in rows
-    }
+    return {normalize_daily_difficulty(row.get("difficulty")): _row_to_result(row) for row in rows}
 
 
 async def increment_hint_count(user_id: int, puzzle_date: date, *, difficulty: str = "easy") -> int:
@@ -748,7 +737,9 @@ async def get_discovery_candidates(*, now: datetime | None = None, limit: int = 
     return due
 
 
-async def get_due_deliveries(*, puzzle_date: date, now: datetime | None = None, limit: int = 500) -> list[dict[str, Any]]:
+async def get_due_deliveries(
+    *, puzzle_date: date, now: datetime | None = None, limit: int = 500
+) -> list[dict[str, Any]]:
     current = now or datetime.now(tz=UTC)
     rows = await db.db_query(
         """

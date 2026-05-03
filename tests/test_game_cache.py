@@ -284,7 +284,9 @@ class TestGeneratedWordsCacheRoundTrip:
             _generated_words_store.update(json.loads(persisted_payload))
 
         monkeypatch.setattr(judgement_cache_module, "_persist_generated_words", _persist_generated_words_for_test)
-        monkeypatch.setattr(judgement_cache_module, "_load_generated_words_from_disk", _load_generated_words_from_disk_for_test)
+        monkeypatch.setattr(
+            judgement_cache_module, "_load_generated_words_from_disk", _load_generated_words_from_disk_for_test
+        )
         _generated_words_store.clear()
         words = ["венти", "чжун ли", "нахида"]
 

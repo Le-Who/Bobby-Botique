@@ -205,7 +205,8 @@ async def _run_gemini_pipeline(
                 else:
                     logger.warning(
                         "Gemini TTS: chunk %d/%d failed, sending partial audio",
-                        global_idx + 1, total,
+                        global_idx + 1,
+                        total,
                     )
                 # Stop collecting — return what we have so far
                 return pcm_parts if pcm_parts else None
@@ -381,7 +382,10 @@ class VoiceReplyManager:
                 el_timeout = min(90.0, max(30.0, len(clean_text) / 50.0 + 15.0))
                 async with self._elevenlabs_sem:
                     pcm_parts = await generate_speech_with_key_rotation(
-                        el_chunks, el_keys, voice_id=el_voice_id, timeout=el_timeout,
+                        el_chunks,
+                        el_keys,
+                        voice_id=el_voice_id,
+                        timeout=el_timeout,
                     )
 
             if pcm_parts is None:
@@ -391,14 +395,18 @@ class VoiceReplyManager:
 
                 async with self._gemini_sem:
                     pcm_parts = await _run_gemini_pipeline(
-                        gemini_chunks, gemini_voice, gemini_timeout,
+                        gemini_chunks,
+                        gemini_voice,
+                        gemini_timeout,
                         tts_temperature=job.tts_temperature,
                         model_name="gemini-3.1-flash-tts-preview",
                         language_code=language_code,
                     )
                     if not pcm_parts:
                         pcm_parts = await _run_gemini_pipeline(
-                            gemini_chunks, gemini_voice, gemini_timeout,
+                            gemini_chunks,
+                            gemini_voice,
+                            gemini_timeout,
                             tts_temperature=job.tts_temperature,
                             model_name="gemini-2.5-flash-preview-tts",
                             language_code=language_code,
@@ -413,7 +421,9 @@ class VoiceReplyManager:
         except (OSError, TimeoutError, ValueError, RuntimeError) as exc:
             logger.warning(
                 "TTS pregenerate failed: job_id=%s user_id=%s error=%s",
-                job.job_id, job.user_id, exc,
+                job.job_id,
+                job.user_id,
+                exc,
             )
             return None
 
@@ -439,7 +449,8 @@ class VoiceReplyManager:
                 except Exception as exc:
                     logger.warning(
                         "TTS future failed for job_id=%s: %s",
-                        job.job_id, exc,
+                        job.job_id,
+                        exc,
                     )
                     ogg_bytes = None  # triggers synchronous retry below
 

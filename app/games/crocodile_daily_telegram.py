@@ -64,7 +64,9 @@ async def _resolve_completion_focus(user_id: int, puzzle_date: date) -> str:
     return _preferred_completion_focus(results)
 
 
-async def _load_completion_puzzle_with_art(bot, user_id: int, puzzle_date: date, *, difficulty: str) -> repo.DailyPuzzle | None:
+async def _load_completion_puzzle_with_art(
+    bot, user_id: int, puzzle_date: date, *, difficulty: str
+) -> repo.DailyPuzzle | None:
     difficulty = repo.normalize_daily_difficulty(difficulty)
     puzzle = await repo.get_puzzle(puzzle_date, difficulty=difficulty)
     if puzzle and puzzle.image_file_id:
@@ -171,7 +173,8 @@ async def render_daily_result_body(
     attempts_label = (
         f"{int(focus_mode.get('attempts') or 0)}/{repo.DAILY_MAX_ATTEMPTS}"
         if focus_mode.get("status") == "won"
-        else "X/6" if focus_mode.get("status") == "lost"
+        else "X/6"
+        if focus_mode.get("status") == "lost"
         else f"{int(focus_mode.get('attempts') or 0)}/{repo.DAILY_MAX_ATTEMPTS}"
     )
     lines = [
@@ -203,9 +206,7 @@ async def render_daily_result_body(
             mode_suffix = "X/6"
         else:
             mode_suffix = "ещё доступен"
-        lines.append(
-            f"{mode_icon} {html.escape(repo.daily_difficulty_label(difficulty))} — {html.escape(mode_suffix)}"
-        )
+        lines.append(f"{mode_icon} {html.escape(repo.daily_difficulty_label(difficulty))} — {html.escape(mode_suffix)}")
 
     share_lines = [
         f"<code>{html.escape(_share_line(result))}</code>"
@@ -234,7 +235,9 @@ async def render_daily_result_body(
     return "\n".join(lines), keyboard
 
 
-async def send_daily_result_message(bot, user_id: int, puzzle_date: date, *, focus_difficulty: str | None = None) -> None:
+async def send_daily_result_message(
+    bot, user_id: int, puzzle_date: date, *, focus_difficulty: str | None = None
+) -> None:
     text, keyboard = await render_daily_result_body(user_id, puzzle_date, focus_difficulty=focus_difficulty)
     difficulty = repo.normalize_daily_difficulty(focus_difficulty or "easy")
     puzzle = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty=difficulty)
@@ -443,7 +446,9 @@ async def _flush_daily_result_refresh(puzzle_date: date) -> None:
                     continue
                 puzzle = None
                 if msg_type == "photo":
-                    puzzle = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty=focus_difficulty)
+                    puzzle = await _load_completion_puzzle_with_art(
+                        bot, user_id, puzzle_date, difficulty=focus_difficulty
+                    )
                 updated = await _update_result_message(bot, item, text, keyboard, puzzle=puzzle)
                 if updated:
                     await repo.deactivate_other_result_messages(user_id, puzzle_date, keep_id=int(item["id"]))

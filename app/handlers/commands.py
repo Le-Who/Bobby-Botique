@@ -688,6 +688,7 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("set_provider", set_provider_command))
     application.add_handler(CommandHandler("wordbank", wordbank_command))
     from telegram.ext import CallbackQueryHandler
+
     application.add_handler(CallbackQueryHandler(wb_callback, pattern=r"^wb:"))
 
     # Conversation commands (from cmd_conversations)

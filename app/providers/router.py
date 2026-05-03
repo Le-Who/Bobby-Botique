@@ -356,6 +356,7 @@ class ProviderRouter:
             _VERTEX_KH = "__vertex_ai__"
             if keys_to_race and resolved_model and "gemini-3.1-flash-lite-preview" in resolved_model:
                 from app.providers.gemini import get_vertex_client
+
                 vertex_client = get_vertex_client()
                 if vertex_client and _VERTEX_KH not in failed_keys:
                     keys_to_race.append({"api_key": "vertex", "key_hash": _VERTEX_KH})
@@ -558,10 +559,7 @@ class ProviderRouter:
                     max_key_retries,
                 )
 
-                tasks = [
-                    asyncio.create_task(_race_stream(i, kd))
-                    for i, kd in enumerate(keys_to_race)
-                ]
+                tasks = [asyncio.create_task(_race_stream(i, kd)) for i, kd in enumerate(keys_to_race)]
 
                 winner_idx: int | None = None
                 race_errors: dict[int, Exception] = {}

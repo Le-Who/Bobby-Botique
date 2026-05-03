@@ -215,7 +215,7 @@ def _is_complex_query(text: str) -> bool:
     # 1. Length heuristic (long text or article)
     if len(text.split()) > 20:
         return True
-    
+
     # 2. Multiple sentences/questions
     sentence_enders = sum(text.count(c) for c in "?!.")
     if sentence_enders > 1:
@@ -223,7 +223,16 @@ def _is_complex_query(text: str) -> bool:
 
     # 3. Conversational / advisory keywords
     lower_text = text.lower()
-    complex_phrases = ["как одеться", "посоветуй", "что делать", "расскажи", "помоги", "подскажи", "как думаешь", "стоит ли"]
+    complex_phrases = [
+        "как одеться",
+        "посоветуй",
+        "что делать",
+        "расскажи",
+        "помоги",
+        "подскажи",
+        "как думаешь",
+        "стоит ли",
+    ]
     return any(phrase in lower_text for phrase in complex_phrases)
 
 

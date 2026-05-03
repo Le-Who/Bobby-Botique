@@ -162,10 +162,7 @@ class _BudgetManager:
     def has_any_ai_studio_cooldown(self) -> bool:
         self._prune_expired_cooldowns()
         now = time.monotonic()
-        return any(
-            state.provider == "ai_studio" and state.cooldown_until > now
-            for state in self._cooldowns.values()
-        )
+        return any(state.provider == "ai_studio" and state.cooldown_until > now for state in self._cooldowns.values())
 
     def should_pause_background_prefetch(self) -> bool:
         return self._foreground_active > 0 or self.has_any_ai_studio_cooldown()

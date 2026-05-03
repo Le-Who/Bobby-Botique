@@ -36,6 +36,7 @@ async def _edit_callback_text(
         # Photo / media message — edit the caption instead.
         await query.edit_message_caption(caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
 
+
 _TIME_CHOICES = (9, 13, 19, 21)
 _PLACEHOLDER_KEY = "daily_croc_placeholder_file_id"
 
@@ -56,7 +57,6 @@ async def _get_placeholder_file_id() -> str:
     _placeholder_cache = str(val or "")
     _placeholder_cache_ts = now
     return _placeholder_cache
-
 
 
 def _webapp_base() -> str:
@@ -121,10 +121,7 @@ def daily_play_keyboard(*, include_subscribe: bool = True) -> InlineKeyboardMark
 
 def subscribe_time_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton(f"{hour:02d}:00", callback_data=f"dailycroc:time:{hour}")]
-            for hour in _TIME_CHOICES
-        ]
+        [[InlineKeyboardButton(f"{hour:02d}:00", callback_data=f"dailycroc:time:{hour}")] for hour in _TIME_CHOICES]
     )
 
 
@@ -328,9 +325,7 @@ async def daily_unsubscribe_callback(update: Update, context: ContextTypes.DEFAU
     await repo.unsubscribe(update.effective_user.id)
     await query.answer("Подписка отменена")
     try:
-        await query.edit_message_reply_markup(
-            reply_markup=daily_play_keyboard(include_subscribe=True)
-        )
+        await query.edit_message_reply_markup(reply_markup=daily_play_keyboard(include_subscribe=True))
     except Exception:
         pass
 

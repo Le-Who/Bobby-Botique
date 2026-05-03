@@ -792,7 +792,9 @@ def validate_custom_word(word: str) -> str | None:
 _FAST_WORD_ALLOWED_RE = re.compile(r"^[a-zA-Zа-яА-ЯёЁ0-9][a-zA-Zа-яА-ЯёЁ0-9\s\-']*$", re.UNICODE)
 _SPACES_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[^a-zа-яё0-9 -]")
-_RUSSIAN_SUFFIX_RE = re.compile(r"(ами|ями|ями|ого|ему|ому|ыми|ими|ыми|ий|ый|ой|ая|яя|ое|ее|ые|ие|ов|ев|ом|ем|ам|ям|ах|ях|у|ю|а|я|е|и|ы|о)$")
+_RUSSIAN_SUFFIX_RE = re.compile(
+    r"(ами|ями|ями|ого|ему|ому|ыми|ими|ыми|ий|ый|ой|ая|яя|ое|ее|ые|ие|ов|ев|ом|ем|ам|ям|ах|ях|у|ю|а|я|е|и|ы|о)$"
+)
 _MD_FENCE_START_RE = re.compile(r"^```[a-z]*\n?", re.IGNORECASE)
 _MD_FENCE_END_RE = re.compile(r"\n?```$")
 
@@ -866,8 +868,6 @@ def find_word_category(word: str) -> str | None:
     return _WORD_TO_CATEGORY.get(word.strip().lower())
 
 
-
-
 # ── Word-to-English translation cache (for image prompt quality) ─────────────
 # Populated at runtime by crocodile_daily._translate_word_for_prompt().
 # Kept here so the cache survives handler reloads within a process lifetime.
@@ -895,12 +895,13 @@ async def get_bank_stats(category: str, *, lang: str = "ru") -> dict[str, int]:
     Returns all-zero dict if the category does not exist in the bank.
     """
     words = list((WORD_BANK.get(lang) or {}).get(category, []))
-    
+
     from app.games.judgement_cache import get_cached_generated_words
+
     cached_gen = await get_cached_generated_words(lang, category)
     if cached_gen:
         words.extend(cached_gen)
-        
+
     if not words:
         return {"total": 0, "easy": 0, "medium": 0, "hard": 0}
     bands = [_word_difficulty_band(w) for w in words]
@@ -927,12 +928,9 @@ def find_duplicates(*, lang: str = "ru") -> list[dict]:
             key = _normalise_word_diversity_key(word) or word.strip().lower()
             seen.setdefault(key, []).append(category)
 
-    dupes = [
-        {"word_key": k, "categories": cats}
-        for k, cats in seen.items()
-        if len(cats) > 1
-    ]
+    dupes = [{"word_key": k, "categories": cats} for k, cats in seen.items() if len(cats) > 1]
     return sorted(dupes, key=lambda d: (-len(d["categories"]), d["word_key"]))
+
 
 async def resolve_custom_word_category(word: str) -> str:
     """Classify a custom word strictly into a canonical category, or fallback to 'Слово игрока' / 'Разное'."""
@@ -1018,7 +1016,7 @@ _GEN_TIMEOUT_S = 30.0  # Background task: user not waiting, let slow providers f
 
 _GEN_PROMPT = (
     "Ты опытный геймдизайнер-пантомим игры 'Крокодил'. Твоя цель — придумать ровно 20 уникальных существительных "
-    "на тему \"{category}\".\n\n"
+    'на тему "{category}".\n\n'
     "Ограничения (КРИТИЧНО!):\n"
     "1. ФИЗИЧЕСКИЙ ТЕСТ: Возвращай ТОЛЬКО предметы, которые физически можно нарисовать, показать жестами и потрогать.\n"
     "2. НИКАКИХ абстракций (любовь, свобода, закон), эмоций, профессий (если нет четкого атрибута), имен собственных и брендов.\n"
@@ -1028,7 +1026,7 @@ _GEN_PROMPT = (
     "Примеры (Контрастные):\n"
     "❌ 'Скорость', 'Радость' (Абстракции)\n"
     "✅ 'Спидометр', 'Улыбка' (Предметы/Явления)\n\n"
-    "Ответь СТРОГО Markdown блоком ` ```json\n[\"слово1\", \"слово2\"]\n``` ` без пояснений."
+    'Ответь СТРОГО Markdown блоком ` ```json\n["слово1", "слово2"]\n``` ` без пояснений.'
 )
 
 
@@ -1134,8 +1132,7 @@ def _filter_words_by_difficulty(words: list[str], *, topic_id: str, preferred_di
     if preferred_difficulty == "easy":
         # Tier 1: strictly easy + common
         filtered = [
-            word for word, meta in scored
-            if meta["difficulty_band"] == "easy" and meta["rarity_band"] == "common"
+            word for word, meta in scored if meta["difficulty_band"] == "easy" and meta["rarity_band"] == "common"
         ]
         if filtered:
             return filtered
@@ -1149,10 +1146,7 @@ def _filter_words_by_difficulty(words: list[str], *, topic_id: str, preferred_di
         return sorted(pool, key=lambda item: (len(item.replace(" ", "")), item))[: max(1, len(pool) // 2)]
 
     # hard: prefer hard-band or rare words
-    filtered = [
-        word for word, meta in scored
-        if meta["difficulty_band"] == "hard" or meta["rarity_band"] == "rare"
-    ]
+    filtered = [word for word, meta in scored if meta["difficulty_band"] == "hard" or meta["rarity_band"] == "rare"]
     if filtered:
         return filtered
     return sorted(words, key=lambda item: (len(item.replace(" ", "")), item), reverse=True)[: max(1, len(words) // 2)]
@@ -1191,11 +1185,15 @@ def _pick_rotating_word(topic_id: str, words: list[str], used: set[str] | None =
         }
 
     chosen = order[cursor % order_len]
-    chosen_key = describe_word_bank_entry(chosen, topic_id=topic_id)["normalized_lemma"] or _normalise_word_pick_key(chosen)
+    chosen_key = describe_word_bank_entry(chosen, topic_id=topic_id)["normalized_lemma"] or _normalise_word_pick_key(
+        chosen
+    )
     if chosen_key not in available_keys:
         for step in range(order_len):
             candidate = order[(cursor + step) % order_len]
-            candidate_key = describe_word_bank_entry(candidate, topic_id=topic_id)["normalized_lemma"] or _normalise_word_pick_key(candidate)
+            candidate_key = describe_word_bank_entry(candidate, topic_id=topic_id)[
+                "normalized_lemma"
+            ] or _normalise_word_pick_key(candidate)
             if candidate_key in available_keys:
                 chosen = candidate
                 cursor += step
@@ -1370,9 +1368,9 @@ async def clear_generated_category(
     category_norm = category.strip()
     topic_id_norm = (topic_id or "").strip()
     cache_key = _generated_cache_key(lang, category_norm, topic_id=topic_id_norm or None)
-    
+
     _GENERATED_CACHE.pop(cache_key, None)
-    
+
     await clear_cached_generated_words(lang, category_norm, topic_id=topic_id_norm)
 
 
@@ -1556,13 +1554,13 @@ async def pick_random_word_for_topic(
                     if not generated:
                         from app.errors import ProviderOverloadError
 
-                        raise ProviderOverloadError(
-                            f"All AI providers failed for category {topic.raw!r}"
-                        )
+                        raise ProviderOverloadError(f"All AI providers failed for category {topic.raw!r}")
                     words = generated
                 else:
                     _PROVISIONAL_GENERATED[cache_key] = fast_word
-                    submit_task(generate_words_for_category(category, lang=lang, topic_id=topic.topic_id, background=True))
+                    submit_task(
+                        generate_words_for_category(category, lang=lang, topic_id=topic.topic_id, background=True)
+                    )
                     return fast_word, lang, category, True
 
                 is_generated = True
