@@ -864,10 +864,10 @@ async def api_admin_dailycroc_regen():
 
         photo_bytes = res.images[0]
 
-        # Send to config group to get file_id
+        # Send to admin to get file_id
         from app.config import settings
 
-        msg = await bot.send_photo(chat_id=settings.CONFIG_CHAT_ID, photo=photo_bytes)
+        msg = await bot.send_photo(chat_id=settings.ADMIN_ID, photo=photo_bytes)
         file_id = msg.photo[-1].file_id
 
         await set_puzzle_image_asset(dt, file_id, difficulty=difficulty)
