@@ -825,7 +825,7 @@ async def api_admin_dailycroc_list():
 @require_auth
 @rate_limit_api
 async def api_admin_dailycroc_regen():
-    from app.providers.pollinations import generate_image_model
+    from app.providers.pollinations import get_pollinations_provider
     from app.repos.crocodile_daily import get_daily_puzzle_strict, set_puzzle_image_asset
 
     data = await request.get_json()
@@ -856,7 +856,13 @@ async def api_admin_dailycroc_regen():
             return jsonify({"error": "bot not ready"}), 503
 
         model = puzzle.image_model or "zimage"
-        photo_bytes = await generate_image_model(puzzle.image_prompt, width=1024, height=1024, model=model)
+        provider = get_pollinations_provider()
+        res = await provider.generate(puzzle.image_prompt, width=1024, height=1024, model=model)
+        
+        if not res.success or not res.images:
+             return jsonify({"error": res.error_message or "failed to generate image"}), 500
+
+        photo_bytes = res.images[0]
 
         # Send to config group to get file_id
         from app.config import settings
