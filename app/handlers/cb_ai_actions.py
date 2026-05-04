@@ -152,12 +152,15 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         try:
             async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
                 if action == "confirm":
-                    chat_state = await get_user_chat(user_id)
                     user_message = original_message.text
+                    # ⚡ Bolt Optimization: Fetch chat state and detect TTS intent concurrently
+                    import asyncio
 
                     from app.voice_intent import detect_tts_intent
-
-                    voice_decision = await detect_tts_intent(user_text=user_message)
+                    chat_state, voice_decision = await asyncio.gather(
+                        get_user_chat(user_id),
+                        detect_tts_intent(user_text=user_message)
+                    )
 
                     await agent._handle_regular_chat(
                         placeholder_message,  # type: ignore[arg-type]  # MaybeInaccessibleMessage

@@ -537,15 +537,19 @@ async def _run_generation(
         awaiting_prompt=False,
     )
 
-    # Translate if needed
-    api_prompt = prompt
-    translated = False
-    if _needs_translation(prompt, model):
-        api_prompt = await _translate_to_english(prompt, user_id=user_id)
-        translated = api_prompt != prompt
+    # ⚡ Bolt Optimization: Translate prompt and send placeholder concurrently.
+    import asyncio
+    
+    async def _do_translate():
+        if _needs_translation(prompt, model):
+            return await _translate_to_english(prompt, user_id=user_id)
+        return prompt
 
-    # Placeholder
-    placeholder = await message.reply_text("🎨 Рисую... это займёт несколько секунд.")
+    api_prompt, placeholder = await asyncio.gather(
+        _do_translate(),
+        message.reply_text("🎨 Рисую... это займёт несколько секунд.")
+    )
+    translated = api_prompt != prompt
 
     stop_event = asyncio.Event()
     heartbeat_task = asyncio.create_task(_send_typing_heartbeat(chat_id, bot, stop_event))

@@ -81,8 +81,7 @@ async def pre_shutdown_compact(timeout: float = 8.0) -> int:
         from app.repos.memory_consolidation import (
             _MSG_GATE,
             _consolidation_state,
-            consolidate_memories,
-            should_consolidate,
+            maybe_consolidate,
         )
 
         half_gate = _MSG_GATE // 2
@@ -99,11 +98,12 @@ async def pre_shutdown_compact(timeout: float = 8.0) -> int:
                 from app.repos.keys import get_available_gemini_key
                 from app.repos.memory_config import EMBEDDING_MODEL
 
-                if await should_consolidate(uid):
-                    key_data = await get_available_gemini_key(model_name=EMBEDDING_MODEL)
-                    if key_data:
-                        await consolidate_memories(uid, key_data["api_key"])
-                        logger.info("Pre-shutdown consolidation completed for user %d", uid)
+                # ⚡ maybe_consolidate fetches memories once for both check + consolidation
+                key_data = await get_available_gemini_key(model_name=EMBEDDING_MODEL)
+                if key_data:
+                    result = await maybe_consolidate(uid, key_data["api_key"])
+                    if result:
+                        logger.info("Pre-shutdown consolidation completed for user %d (%d facts)", uid, result)
             except Exception as exc:
                 logger.warning("Pre-shutdown consolidation failed for user %d: %s", uid, exc)
 

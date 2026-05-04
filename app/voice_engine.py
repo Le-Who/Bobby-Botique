@@ -307,7 +307,9 @@ class VoiceReplyManager:
             async with self._lock:
                 self._worker_tasks[user_id] = worker_task
 
-        await self._refresh_queued_statuses(user_id)
+        # ⚡ Bolt Optimization: Offload queue UI updates to a background task
+        # so sequential Telegram HTTP edits do not block the handler.
+        submit_task(self._refresh_queued_statuses(user_id))
         return VoiceEnqueueResult(True, False, queued_job.job_id, queue_position)
 
     async def wait_until_idle(self, user_id: int, timeout: float = 3.0) -> None:
@@ -335,13 +337,15 @@ class VoiceReplyManager:
                     job = queue.popleft()
                     self._active_jobs[user_id] = job
 
-                await self._refresh_queued_statuses(user_id)
+                # ⚡ Bolt Optimization: Fire and forget status updates so we don't 
+                # block the next TTS job processing on Telegram API latency.
+                submit_task(self._refresh_queued_statuses(user_id))
                 try:
                     await self._process_job(job)
                 finally:
                     async with self._lock:
                         self._active_jobs.pop(user_id, None)
-                    await self._refresh_queued_statuses(user_id)
+                    submit_task(self._refresh_queued_statuses(user_id))
         finally:
             async with self._lock:
                 worker_task = self._worker_tasks.get(user_id)

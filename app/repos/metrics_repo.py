@@ -26,9 +26,11 @@ async def optimize_database_connections() -> bool:
         return False
     try:
         async with db_manager.pool.acquire() as conn:
-            await conn.execute("SET statement_timeout = '60s'")
-            await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
-            await conn.execute("SET lock_timeout = '30s'")
+            await conn.execute(
+                "SET statement_timeout = '60s'; "
+                "SET idle_in_transaction_session_timeout = '30s'; "
+                "SET lock_timeout = '30s';"
+            )
         return True
     except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return False

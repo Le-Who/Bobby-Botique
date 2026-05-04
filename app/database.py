@@ -94,9 +94,11 @@ class DatabaseManager:
                 """Apply session-level settings to every new connection."""
                 from app.utils.json_compat import json as _json
 
-                await conn.execute("SET statement_timeout = '60s'")
-                await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
-                await conn.execute("SET lock_timeout = '30s'")
+                await conn.execute(
+                    "SET statement_timeout = '60s'; "
+                    "SET idle_in_transaction_session_timeout = '30s'; "
+                    "SET lock_timeout = '30s';"
+                )
                 # Register JSONB codec: auto-convert JSONB ↔ Python dict
                 # Uses orjson-backed json_compat for 2-6× faster round-trips
                 await conn.set_type_codec(

@@ -373,16 +373,32 @@ async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None
         logger.info("daily Crocodile delivery disabled by admin switch; pre-generation kept running")
         return
 
+    import asyncio
+
     due_delivery = await repo.get_due_deliveries(puzzle_date=today, now=now)
-    for item in due_delivery:
-        try:
-            await send_daily_prompt(context.bot, int(item["user_id"]), today)
-        except Exception as exc:
-            logger.warning("daily Crocodile delivery failed user=%s: %s", item.get("user_id"), exc)
+    if due_delivery:
+        # ⚡ Bolt Optimization: Send daily prompts concurrently with a safe concurrency limit (10)
+        # to avoid blocking the job scheduler for O(N) seconds.
+        sem = asyncio.Semaphore(10)
+
+        async def _bounded_send(item):
+            async with sem:
+                try:
+                    await send_daily_prompt(context.bot, int(item["user_id"]), today)
+                except Exception as exc:
+                    logger.warning("daily Crocodile delivery failed user=%s: %s", item.get("user_id"), exc)
+
+        await asyncio.gather(*[_bounded_send(item) for item in due_delivery])
 
     discovery = await repo.get_discovery_candidates(now=now)
-    for item in discovery:
-        try:
-            await send_discovery_intro(context.bot, int(item["user_id"]))
-        except Exception as exc:
-            logger.warning("daily Crocodile discovery failed user=%s: %s", item.get("user_id"), exc)
+    if discovery:
+        sem_disc = asyncio.Semaphore(10)
+
+        async def _bounded_discovery(item):
+            async with sem_disc:
+                try:
+                    await send_discovery_intro(context.bot, int(item["user_id"]))
+                except Exception as exc:
+                    logger.warning("daily Crocodile discovery failed user=%s: %s", item.get("user_id"), exc)
+
+        await asyncio.gather(*[_bounded_discovery(item) for item in discovery])

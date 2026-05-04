@@ -68,31 +68,37 @@ def _store_memory_in_background(user_id: int, user_message: str) -> None:
                 source_type="user_intent",
             )
 
-            # ── Real-time graph extraction (non-blocking) ─────────────
-            if memory_id:
+            # ── Real-time graph extraction & Consolidation (Concurrent) ───────
+            import asyncio
+
+            async def _run_graph():
+                if memory_id:
+                    try:
+                        from app.repos.memory_extraction import extract_and_store_graph
+
+                        await extract_and_store_graph(
+                            user_id,
+                            memory_content,
+                            _api_key,
+                            source_memory_id=memory_id,
+                        )
+                    except Exception as graph_err:
+                        logging.debug("Real-time graph extraction skipped: %s", graph_err)
+
+            async def _run_consolidation():
                 try:
-                    from app.repos.memory_extraction import extract_and_store_graph
-
-                    await extract_and_store_graph(
-                        user_id,
-                        memory_content,
-                        _api_key,
-                        source_memory_id=memory_id,
+                    from app.repos.memory_consolidation import (
+                        maybe_consolidate,
+                        should_check_consolidation,
                     )
-                except Exception as graph_err:
-                    logging.debug("Real-time graph extraction skipped: %s", graph_err)
 
-            try:
-                from app.repos.memory_consolidation import (
-                    consolidate_memories,
-                    should_check_consolidation,
-                    should_consolidate,
-                )
+                    # ⚡ maybe_consolidate fetches raw_memories once and reuses them
+                    if should_check_consolidation(user_id):
+                        await maybe_consolidate(user_id, _api_key)
+                except Exception as cons_err:
+                    logging.debug("Consolidation check skipped: %s", cons_err)
 
-                if should_check_consolidation(user_id) and await should_consolidate(user_id):
-                    await consolidate_memories(user_id, _api_key)
-            except Exception as cons_err:
-                logging.debug("Consolidation check skipped: %s", cons_err)
+            await asyncio.gather(_run_graph(), _run_consolidation())
 
         from app.utils.background_tasks import submit_retryable
 
@@ -199,26 +205,43 @@ async def _handle_regular_chat(
     chat_state.history = assembled.history
     chat_state.context_summary = assembled.summary
 
-    # ── Inject tiered memory context — MemPalace L0-L2 ─────────────────────
+    # ── Inject tiered memory context & Update UI Stage (Concurrent) ───────
     _memories_injected = 0
     _graph_triples_count = 0
-    if chat_state.ltm_enabled and key_data:
-        try:
-            from app.context.compression import inject_memory_layers
+    
+    async def _do_inject():
+        if chat_state.ltm_enabled and key_data:
+            try:
+                from app.context.compression import inject_memory_layers
 
-            system_instruction, _injection_stats = await inject_memory_layers(
-                user_id=user_id,
-                query=user_message,
-                api_key=key_data["api_key"],
-                system_instruction=system_instruction,
-                role_id=getattr(chat_state, "system_prompt_id", None),
-                limit=5,
-                min_similarity=0.60,
-            )
-            _memories_injected = _injection_stats.get("l2_memories", 0)
-            _graph_triples_count = _injection_stats.get("l2_graph_triples", 0)
-        except Exception as mem_err:
-            logging.warning("Memory recall failed for user %s: %s", user_id, mem_err)
+                return await inject_memory_layers(
+                    user_id=user_id,
+                    query=user_message,
+                    api_key=key_data["api_key"],
+                    system_instruction=system_instruction,
+                    role_id=getattr(chat_state, "system_prompt_id", None),
+                    limit=5,
+                    min_similarity=0.60,
+                )
+            except Exception as mem_err:
+                logging.warning("Memory recall failed for user %s: %s", user_id, mem_err)
+        return system_instruction, {}
+        
+    async def _do_stage_update():
+        try:
+            await update_stage(placeholder_message, STAGES_CHAT, 0)
+            return placeholder_message
+        except Exception as edit_error:
+            logging.error("Could not edit placeholder message: %s", edit_error)
+            _lang = detect_language(user_message)
+            return await placeholder_message.reply_text(t("chat.model_thinking", _lang, model=model_used))
+
+    import asyncio
+    (system_instruction_new, _injection_stats), new_placeholder = await asyncio.gather(_do_inject(), _do_stage_update())
+    system_instruction = system_instruction_new
+    placeholder_message = new_placeholder
+    _memories_injected = _injection_stats.get("l2_memories", 0)
+    _graph_triples_count = _injection_stats.get("l2_graph_triples", 0)
 
     if assembled.was_truncated:
         logging.info(
@@ -255,13 +278,6 @@ async def _handle_regular_chat(
                 existing_summary=existing_summary,
                 callback=_store_llm_summary,
             )
-
-    try:
-        await update_stage(placeholder_message, STAGES_CHAT, 0)
-    except Exception as edit_error:
-        logging.error("Could not edit placeholder message: %s", edit_error)
-        _lang = detect_language(user_message)
-        placeholder_message = await placeholder_message.reply_text(t("chat.model_thinking", _lang, model=model_used))
 
     # ── Unified Streaming ────────────────────────────────────────────
     response_text = None

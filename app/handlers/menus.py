@@ -38,13 +38,15 @@ async def get_start_menu_content(chat_state, user_id=None):
     activity_line = ""
     if user_id:
         try:
-            today_requests = await get_user_today_request_count(user_id)
+            import asyncio
+            today_requests, docs, conv_count = await asyncio.gather(
+                get_user_today_request_count(user_id),
+                get_user_documents(user_id),
+                get_conversation_count(user_id)
+            )
+            
             req_count = today_requests
-
-            docs = await get_user_documents(user_id)
             doc_count = len(docs) if docs else 0
-
-            conv_count = await get_conversation_count(user_id)
 
             if req_count > 0 or doc_count > 0 or conv_count > 0:
                 activity_line = f"📈 Сегодня: {req_count} запр. · {doc_count} док. · {conv_count} бесед\n\n"
@@ -643,8 +645,12 @@ async def get_conversations_menu_content(user_id, page=1):
     limit = 5
     offset = (page - 1) * limit
 
-    conversations = await get_user_conversations(user_id, limit, offset)
-    total_count = await get_conversation_count(user_id)
+    # ⚡ Bolt Optimization: Fetch conversations and count concurrently
+    import asyncio
+    conversations, total_count = await asyncio.gather(
+        get_user_conversations(user_id, limit, offset),
+        get_conversation_count(user_id)
+    )
 
     if not conversations:
         empty_text = (
