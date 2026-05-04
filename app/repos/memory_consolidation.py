@@ -7,6 +7,7 @@ Uses a cheap LLM call to extract atomic "Persona Facts" from raw memories,
 then replaces the batch with the consolidated facts.
 """
 
+import asyncio
 import logging
 import time
 from datetime import UTC, datetime, timedelta
@@ -428,7 +429,6 @@ async def consolidate_memories(
 
     # Store consolidated facts + graph data in a transaction
     try:
-        import asyncio
 
         from app.repos.memory import _get_embedding
 

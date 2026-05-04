@@ -457,7 +457,6 @@ async def _auto_route_to_chat(
     formatted, parse_mode = TelegramFormatter.format_text(auto_text)
     await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=None)
 
-    import asyncio
 
     from app.handlers.ai_chat import _handle_regular_chat
     from app.voice_intent import detect_tts_intent
@@ -583,7 +582,6 @@ async def _auto_route_to_search(
     formatted, parse_mode = TelegramFormatter.format_text(auto_text)
     await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=None)
 
-    import asyncio
 
     # ⚡ Bolt Optimization: Fetch chat state and send placeholder concurrently.
     new_placeholder, chat_state = await asyncio.gather(

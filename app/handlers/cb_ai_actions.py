@@ -154,8 +154,6 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 if action == "confirm":
                     user_message = original_message.text
                     # ⚡ Bolt Optimization: Fetch chat state and detect TTS intent concurrently
-                    import asyncio
-
                     from app.voice_intent import detect_tts_intent
                     chat_state, voice_decision = await asyncio.gather(
                         get_user_chat(user_id),

@@ -16,6 +16,7 @@ Key architectural decisions:
 
 import asyncio
 import logging
+import time
 
 from telegram import Update
 from telegram.error import BadRequest, NetworkError
@@ -36,56 +37,27 @@ from app.handlers.msg_roles import (
     handle_role_rename,
 )
 from app.handlers.msg_voice import handle_voice_inline
+from app.i18n import detect_language, t
 from app.metrics import metrics_collector
 from app.repos.users import is_authorized
 from app.request_context import set_request_id, set_user_context
 from app.security import check_user_rate_limit
 from app.tracing import bind_request_span
 from app.utils.api_logger import api_logger
+from app.utils.background_tasks import submit_task
 from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
-
-
-def chunk_message(text: str, max_length: int = 4096) -> list[str]:
-    """Splits a message into chunks of maximum max_length."""
-    if not text:
-        return []
-    if max_length <= 0:
-        raise ValueError("max_length must be > 0")
-
-    chunks = []
-    while len(text) > max_length:
-        # Try to find a newline to split at
-        split_at = text.rfind("\n", 0, max_length + 1)
-        if split_at == -1 or split_at == 0:
-            # If no newline, find a space
-            split_at = text.rfind(" ", 0, max_length + 1)
-
-        if split_at == -1 or split_at == 0:
-            # If no space, hard break
-            split_at = max_length
-
-        chunks.append(text[:split_at].strip())
-        text = text[split_at:].lstrip("\n ")
-
-    if text:
-        chunks.append(text.strip())
-
-    return [c for c in chunks if c]
 
 
 async def _send_busy_ephemeral(update: Update) -> None:
     """Send localized busy toast that self-destructs after 4s."""
-    from app.i18n import detect_language as _dl
-    from app.i18n import t as _t
-
     # Use effective_message — works for both new and edited message contexts
     msg_obj = update.effective_message
     text = msg_obj.text if msg_obj else None
-    lang = _dl(text)
+    lang = detect_language(text)
     if not msg_obj:
         return
     try:
-        busy_msg = await msg_obj.reply_text(_t("busy.toast", lang))
+        busy_msg = await msg_obj.reply_text(t("busy.toast", lang))
 
         async def _del() -> None:
             await asyncio.sleep(4)
@@ -93,8 +65,6 @@ async def _send_busy_ephemeral(update: Update) -> None:
                 await busy_msg.delete()
             except Exception:
                 pass
-
-        from app.utils.background_tasks import submit_task
 
         submit_task(_del())
     except Exception as e:
@@ -132,8 +102,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Immediate typing indicator — instant feedback before any processing
     try:
-        from app.utils.background_tasks import submit_task
-
         submit_task(update.effective_chat.send_action(action="typing"))
     except Exception:
         pass  # Non-critical
@@ -168,17 +136,18 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         message_text = effective_msg.text if effective_msg.text else "No text"
         if len(message_text) > settings.TELEGRAM_MESSAGE_LIMIT:
             logging.warning("Message too long from user %s: %d chars", user_id, len(message_text))
-            from app.i18n import t
-
             await effective_msg.reply_text(t("error.message_too_long"))
             return
 
         logging.info("Received message from user %s: %s", user_id, message_text[:100])
 
-        if not await check_user_rate_limit(user_id):
-            logging.warning("Rate limit exceeded for user %s", user_id)
-            from app.i18n import t
+        is_rate_ok, is_auth_ok = await asyncio.gather(
+            check_user_rate_limit(user_id),
+            is_authorized(user_id)
+        )
 
+        if not is_rate_ok:
+            logging.warning("Rate limit exceeded for user %s", user_id)
             await effective_msg.reply_text(t("error.rate_limit"))
             return
 
@@ -202,7 +171,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 logging.info("Dedup: skipping duplicate from user %s", user_id)
                 return
 
-        if not await is_authorized(user_id):
+        if not is_auth_ok:
             logging.warning("Unauthorized user %s attempted to use bot", user_id)
             return
 
@@ -229,10 +198,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             # Duration guard (skip very short accidental recordings)
             if int(getattr(effective_msg.voice, "duration", 0)) < 1:
-                from app.i18n import detect_language as _dl
-                from app.i18n import t as _t
-
-                await effective_msg.reply_text(_t("voice.too_short", _dl(None)))
+                await effective_msg.reply_text(t("voice.too_short", detect_language(None)))
                 return
 
             user_state = state.get_user_state(user_id)
@@ -241,9 +207,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 return
             user_state.is_processing = True
 
-            from app.i18n import t as _t
-
-            placeholder_message = await effective_msg.reply_text(_t("voice.processing", "ru"))
+            placeholder_message = await effective_msg.reply_text(t("voice.processing", "ru"))
 
             done_event = asyncio.Event()
             register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
@@ -258,9 +222,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         stop_heartbeat(placeholder_message.message_id)
                         logging.info("Completed voice processing for user %s", user_id)
 
-                        import time as _time
-
-                        elapsed = _time.time() - start_time
+                        elapsed = time.time() - start_time
                         api_logger.log_response(
                             "telegram",
                             start_time,
@@ -278,7 +240,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     try:
                         stop_heartbeat(placeholder_message.message_id)
                         from app.errors import build_retry_and_roles_keyboard
-                        from app.i18n import t
 
                         await placeholder_message.edit_text(
                             t("error.generic"),
@@ -287,9 +248,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     except (BadRequest, NetworkError) as edit_error:
                         logging.error("Could not edit placeholder message: %s", edit_error)
 
-                    import time as _time
-
-                    elapsed = _time.time() - start_time
+                    elapsed = time.time() - start_time
                     api_logger.log_response(
                         "telegram",
                         start_time,
@@ -309,8 +268,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     unregister_heartbeat(placeholder_message.message_id)
                     if not done_event.is_set():
                         stop_heartbeat(placeholder_message.message_id)
-
-            from app.utils.background_tasks import submit_task
 
             submit_task(voice_task_wrapper())
             return
@@ -446,16 +403,12 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             aspect_ratio=_ds["aspect_ratio"],
                             enhance=_ds.get("enhance_prompt", False),
                         )
-                        import time as _time
-
-                        elapsed = _time.time() - _st
+                        elapsed = time.time() - _st
                         api_logger.log_response("telegram", _st, method="handle_message")
                         await metrics_collector.record_request("handle_message", elapsed, success=True, user_id=_uid)
                 except Exception as _e:
                     logging.error("Error in draw task wrapper for user %s: %s", _uid, _e, exc_info=True)
-                    import time as _time
-
-                    elapsed = _time.time() - _st
+                    elapsed = time.time() - _st
                     api_logger.log_response(
                         "telegram", _st, method="handle_message", success=False, error_message=str(_e)
                     )
@@ -463,8 +416,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 finally:
                     _us = state.get_user_state(_uid)
                     _us.is_processing = False
-
-            from app.utils.background_tasks import submit_task
 
             submit_task(_draw_task_wrapper())
             return
@@ -547,14 +498,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         if is_photo:
             logging.info("Processing single photo from user %s", user_id)
-            from app.i18n import t as _t
-
-            placeholder_message = await effective_msg.reply_text(_t("msg.processing_image"))
+            placeholder_message = await effective_msg.reply_text(t("msg.processing_image"))
         else:
             logging.info("Processing text message from user %s", user_id)
-            from app.i18n import t as _t
-
-            placeholder_message = await effective_msg.reply_text(_t("msg.thinking"))
+            placeholder_message = await effective_msg.reply_text(t("msg.thinking"))
 
         # Track this placeholder so edited_message handler can reuse it
         state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
@@ -582,8 +529,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         )
                     except ImportError:
                         stop_heartbeat(placeholder_message.message_id)
-                        from app.i18n import t
-
                         await placeholder_message.edit_text(t("processing.simplified"))
 
                     stop_heartbeat(placeholder_message.message_id)
@@ -593,9 +538,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
                     logging.info("Completed task processing for user %s", user_id)
 
-                    import time as _time
-
-                    elapsed = _time.time() - start_time
+                    elapsed = time.time() - start_time
                     api_logger.log_response(
                         "telegram",
                         start_time,
@@ -612,7 +555,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 try:
                     stop_heartbeat(placeholder_message.message_id)
                     from app.errors import build_retry_and_roles_keyboard
-                    from app.i18n import t
 
                     await placeholder_message.edit_text(
                         t("error.generic"),
@@ -621,9 +563,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 except (BadRequest, NetworkError) as edit_error:
                     logging.error("Could not edit placeholder message: %s", edit_error)
 
-                import time as _time
-
-                elapsed = _time.time() - start_time
+                elapsed = time.time() - start_time
                 api_logger.log_response(
                     "telegram",
                     start_time,
@@ -639,8 +579,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 unregister_heartbeat(placeholder_message.message_id)
                 if not done_event.is_set():
                     stop_heartbeat(placeholder_message.message_id)
-
-        from app.utils.background_tasks import submit_task
 
         ai_task = submit_task(task_wrapper())
         state.register_active_task(user_id, ai_task)
@@ -668,15 +606,18 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
     if not edited_msg.text:
         return
 
-    # Re-apply rate-limit & auth guards
-    if not await check_user_rate_limit(user_id):
-        return
-    if not await is_authorized(user_id):
-        return
-
     from app.state import ensure_state_loaded
 
-    await ensure_state_loaded(user_id)
+    is_rate_ok, is_auth_ok, _ = await asyncio.gather(
+        check_user_rate_limit(user_id),
+        is_authorized(user_id),
+        ensure_state_loaded(user_id)
+    )
+
+    if not is_rate_ok:
+        return
+    if not is_auth_ok:
+        return
 
     new_text = edited_msg.text.strip()
     logging.info("edited_message from user %s: %r", user_id, new_text[:80])
@@ -689,8 +630,6 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
         await asyncio.sleep(0.15)
 
     # ── Find or create the placeholder ───────────────────────────────────────
-    from app.i18n import t as _t
-
     last = state.get_last_bot_message(user_id)
     placeholder_message = None
 
@@ -702,7 +641,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
                 _edited = await context.bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=last_msg_id,
-                    text=_t("msg.rethinking"),
+                    text=t("msg.rethinking"),
                 )
                 placeholder_message = None if isinstance(_edited, bool) else _edited
             except (BadRequest, NetworkError) as e:
@@ -710,7 +649,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
 
     if placeholder_message is None:
         # Fallback: send a fresh reply (e.g. old message was deleted by user)
-        placeholder_message = await edited_msg.reply_text(_t("msg.rethinking"))
+        placeholder_message = await edited_msg.reply_text(t("msg.rethinking"))
 
     state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
 
@@ -743,9 +682,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
                 state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
                 logging.info("edit: completed for user %s", user_id)
 
-                import time as _time
-
-                elapsed = _time.time() - start_time
+                elapsed = time.time() - start_time
                 api_logger.log_response("telegram", start_time, method="handle_edited_message")
                 await metrics_collector.record_request("handle_edited_message", elapsed, success=True, user_id=user_id)
 
@@ -758,15 +695,12 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
             try:
                 stop_heartbeat(placeholder_message.message_id)
                 from app.errors import build_retry_and_roles_keyboard
-                from app.i18n import t
 
                 await placeholder_message.edit_text(t("error.generic"), reply_markup=build_retry_and_roles_keyboard())
             except Exception:
                 pass
 
-            import time as _time
-
-            elapsed = _time.time() - start_time
+            elapsed = time.time() - start_time
             api_logger.log_response(
                 "telegram",
                 start_time,
@@ -782,8 +716,6 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
             unregister_heartbeat(placeholder_message.message_id)
             if not done_event.is_set():
                 stop_heartbeat(placeholder_message.message_id)
-
-    from app.utils.background_tasks import submit_task
 
     edit_ai_task = submit_task(edit_task_wrapper())
     state.register_active_task(user_id, edit_ai_task)

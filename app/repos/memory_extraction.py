@@ -18,6 +18,7 @@ Architecture:
        the old edge is closed (valid_to = now()) and the new one is inserted.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -207,7 +208,6 @@ async def extract_graph_structured(
                     pass
 
             if is_transient and attempt < 2:
-                import asyncio
 
                 if is_truncation:
                     # Token budget expands on next attempt logic explicitly (config max_tokens)
@@ -288,7 +288,6 @@ async def _upsert_graph(
     - Source Provenance: appends source_memory_id to source_memory_ids[].
     - Social Graph: stores chat_id and actor_user_id when in group context.
     """
-    import asyncio
 
     from app.database import db_manager
     from app.repos.db_helpers import clear_user_context, set_user_context

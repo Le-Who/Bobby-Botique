@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -38,7 +39,6 @@ async def get_start_menu_content(chat_state, user_id=None):
     activity_line = ""
     if user_id:
         try:
-            import asyncio
             today_requests, docs, conv_count = await asyncio.gather(
                 get_user_today_request_count(user_id),
                 get_user_documents(user_id),
@@ -645,8 +645,6 @@ async def get_conversations_menu_content(user_id, page=1):
     limit = 5
     offset = (page - 1) * limit
 
-    # ⚡ Bolt Optimization: Fetch conversations and count concurrently
-    import asyncio
     conversations, total_count = await asyncio.gather(
         get_user_conversations(user_id, limit, offset),
         get_conversation_count(user_id)

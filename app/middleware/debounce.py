@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -195,8 +196,6 @@ class _DebounceSlot:
     __slots__ = ("entries", "first_ts", "timer_task", "ready_event", "is_forward_burst")
 
     def __init__(self, entry: _MessageEntry) -> None:
-        import time
-
         self.entries: list[_MessageEntry] = [entry]
         self.first_ts: float = time.monotonic()
         self.timer_task: asyncio.Task[None] | None = None

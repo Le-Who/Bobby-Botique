@@ -2,6 +2,7 @@
 AI Chat handler — regular conversational chat with context management.
 """
 
+import asyncio
 import logging
 import time
 from datetime import datetime
@@ -69,8 +70,6 @@ def _store_memory_in_background(user_id: int, user_message: str) -> None:
             )
 
             # ── Real-time graph extraction & Consolidation (Concurrent) ───────
-            import asyncio
-
             async def _run_graph():
                 if memory_id:
                     try:
@@ -236,7 +235,6 @@ async def _handle_regular_chat(
             _lang = detect_language(user_message)
             return await placeholder_message.reply_text(t("chat.model_thinking", _lang, model=model_used))
 
-    import asyncio
     (system_instruction_new, _injection_stats), new_placeholder = await asyncio.gather(_do_inject(), _do_stage_update())
     system_instruction = system_instruction_new
     placeholder_message = new_placeholder

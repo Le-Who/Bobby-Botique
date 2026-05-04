@@ -538,7 +538,6 @@ async def _run_generation(
     )
 
     # ⚡ Bolt Optimization: Translate prompt and send placeholder concurrently.
-    import asyncio
     
     async def _do_translate():
         if _needs_translation(prompt, model):

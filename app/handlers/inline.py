@@ -1543,10 +1543,7 @@ def _store_retry_params(
     user_id: int | None,
 ) -> str:
     """Store retry params and return a short ID (fits in callback_data)."""
-    # Prune expired entries
-    import time as _time
-
-    now = _time.monotonic()
+    now = time.monotonic()
     expired = [k for k, v in _retry_store.items() if now - v["ts"] > _RETRY_TTL_S]
     for k in expired:
         _retry_store.pop(k, None)
@@ -1575,8 +1572,6 @@ def _store_retry_params(
 
 async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the 🔄 Повторить button press on failed inline messages."""
-    import time as _time
-
     query = update.callback_query
     if not query:
         return
@@ -1590,7 +1585,7 @@ async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEF
     retry_id = data.split(":", 1)[1]
     entry = _retry_store.pop(retry_id, None)
 
-    if not entry or (_time.monotonic() - entry["ts"] > _RETRY_TTL_S):
+    if not entry or (time.monotonic() - entry["ts"] > _RETRY_TTL_S):
         # Expired or unknown — edit with a polite message
         with contextlib.suppress(Exception):
             await query.edit_message_text(
@@ -1639,10 +1634,8 @@ def _parse_xml_segments(text: str) -> dict | None:
          and Gemini's occasional markdown wrapping around the response block.
       2. Require at a minimum a non-empty <tldr> block to consider it parseable.
     """
-    import re as _re
-
     def _extract(tag: str) -> str:
-        m = _re.search(rf"<{tag}>(.*?)</{tag}>", text, _re.DOTALL | _re.IGNORECASE)
+        m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL | re.IGNORECASE)
         return m.group(1).strip() if m else ""
 
     tldr = _extract("tldr")

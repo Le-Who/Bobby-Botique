@@ -6,6 +6,7 @@ Also provides the module-level convenience functions:
 - get_ai_response()     → backward-compat wrapper
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -311,7 +312,6 @@ class ProviderRouter:
 
         Yields chunks of text.
         """
-        import asyncio
 
         from app.agent_use_cases import AgentRequestUseCase
         from app.providers.base import get_provider_for_model

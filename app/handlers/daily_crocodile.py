@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import time
 from datetime import UTC, date, datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
+from app.config import settings
 from app.repos import crocodile_daily as repo
 from app.repos.settings_repo import get_global_setting
 from app.utils.decorators import safe_handler
@@ -47,7 +50,6 @@ _PLACEHOLDER_TTL = 60.0  # seconds
 
 
 async def _get_placeholder_file_id() -> str:
-    import time
 
     global _placeholder_cache, _placeholder_cache_ts  # noqa: PLW0603
     now = time.monotonic()
@@ -60,8 +62,6 @@ async def _get_placeholder_file_id() -> str:
 
 
 def _webapp_base() -> str:
-    from app.config import settings
-
     base = getattr(settings, "WEBAPP_BASE_URL", "").strip().rstrip("/")
     if base:
         return base
@@ -90,7 +90,6 @@ def _play_button(label: str = "Играть") -> InlineKeyboardButton:
     (error ``Button_type_invalid``).
     """
     from app.bot_instance import get_bot
-    from app.config import settings
 
     miniapp_short = getattr(settings, "MINIAPP_SHORT_NAME", "").strip()
     bot = get_bot()
@@ -372,8 +371,6 @@ async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None
     if not await is_daily_delivery_enabled():
         logger.info("daily Crocodile delivery disabled by admin switch; pre-generation kept running")
         return
-
-    import asyncio
 
     due_delivery = await repo.get_due_deliveries(puzzle_date=today, now=now)
     if due_delivery:

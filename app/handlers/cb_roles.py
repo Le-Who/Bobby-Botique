@@ -2,6 +2,7 @@
 Role management callbacks — apply, clear, create, delete, rename, detail, nav, page.
 """
 
+import asyncio
 import logging
 
 import telegram
@@ -96,8 +97,6 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     key = query.data.split(":", 1)[1]
     role_title = ""
 
-    # ⚡ Bolt Optimization: Fetch chat state and role data concurrently
-    import asyncio
     chat_state, role_data = await asyncio.gather(
         get_user_chat(user_id),
         get_role_data(key, user_id)
@@ -383,8 +382,6 @@ async def role_delete_confirm_callback(update: Update, context: ContextTypes.DEF
     try:
         role_id = int(query.data.split(":")[1])
         
-        # ⚡ Bolt Optimization: Fetch chat state and role prompt concurrently
-        import asyncio
         chat_state, role_prompt = await asyncio.gather(
             get_user_chat(user_id),
             get_custom_role_prompt(role_id, user_id)

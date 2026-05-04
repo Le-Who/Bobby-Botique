@@ -385,13 +385,11 @@ async def _init_schema():
     # Emit startup telemetry for migration drift — deferred so admin bot is ready.
     # This fires in background; startup never blocks on it.
     if migration_result.pending_at_start > 0 or not migration_result.success:
-        import asyncio
 
         async def _send_migration_alert():
-            import asyncio as _asyncio
 
             # Wait for the bot to fully initialize before sending the alert
-            await _asyncio.sleep(15)
+            await asyncio.sleep(15)
             try:
                 from app.admin_alerts import AlertSeverity, alert_admin_raw
 

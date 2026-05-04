@@ -1234,7 +1234,6 @@ async def game_ws():
                {"event": "result", "status": ..., "hint": ..., ...}
                {"event": "game_over", "word": ..., ...}
     """
-    import asyncio
     import uuid
 
     from quart import websocket

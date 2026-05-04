@@ -168,13 +168,26 @@ async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tup
 
     current = now or datetime.now(tz=UTC)
     today = daily_croc_repo.today_puzzle_date(current)
-    stats = await daily_croc_repo.get_delivery_status(today)
-    puzzles = await daily_croc_repo.get_puzzles_for_date(today)
-    delivery_on = await get_global_setting(daily_croc_repo.DAILY_DELIVERY_SETTING_KEY, "on")
-    placeholder = await get_global_setting("daily_croc_placeholder_file_id", "")
-    placeholder_test = await get_global_setting(_DAILYCROC_PLACEHOLDER_TEST_KEY, "")
-    switches = await get_crocodile_runtime_switches()
-    hint_health = await get_hint_prewarm_health()
+
+    # ⚡ Bolt Optimization: fan out 6 independent I/O calls concurrently.
+    # Previously sequential: 6 separate network round-trips (2 DB queries + 3
+    # settings reads + 1 hint health poll). Now: max(RTTs) instead of sum.
+    _results = await asyncio.gather(
+        daily_croc_repo.get_delivery_status(today),
+        daily_croc_repo.get_puzzles_for_date(today),
+        get_global_setting(daily_croc_repo.DAILY_DELIVERY_SETTING_KEY, "on"),
+        get_global_setting("daily_croc_placeholder_file_id", ""),
+        get_global_setting(_DAILYCROC_PLACEHOLDER_TEST_KEY, ""),
+        get_crocodile_runtime_switches(),
+        get_hint_prewarm_health(),
+    )
+    stats: dict = _results[0]  # type: ignore[assignment]
+    puzzles: dict = _results[1]  # type: ignore[assignment]
+    delivery_on: str = _results[2]  # type: ignore[assignment]
+    placeholder: str = _results[3]  # type: ignore[assignment]
+    placeholder_test: str = _results[4]  # type: ignore[assignment]
+    switches: dict = _results[5]  # type: ignore[assignment]
+    hint_health: dict = _results[6]  # type: ignore[assignment]
     runtime_health = get_runtime_health_snapshot()
     vertex_ready = get_vertex_client() is not None
     live_cooldown = _get_live_model_cooldown_seconds()
