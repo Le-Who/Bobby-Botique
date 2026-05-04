@@ -880,7 +880,7 @@ async def api_admin_dailycroc_regen():
 @quart_app.route("/api/admin/dailycroc/prompt", methods=["POST"])
 @require_auth
 async def api_admin_dailycroc_update_prompt():
-    from app.repos.crocodile_daily import update_daily_puzzle_prompt
+    from app.repos.crocodile_daily import set_puzzle_image_prompt
 
     data = await request.get_json()
     if not data:
@@ -897,7 +897,7 @@ async def api_admin_dailycroc_update_prompt():
     except ValueError:
         return jsonify({"error": "invalid date"}), 400
 
-    await update_daily_puzzle_prompt(dt, difficulty, prompt)
+    await set_puzzle_image_prompt(dt, prompt, difficulty=difficulty)
     return jsonify({"success": True})
 
 
