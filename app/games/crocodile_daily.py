@@ -23,6 +23,13 @@ logger = logging.getLogger(__name__)
 # could be removed, allowing concurrent entry into the critical section.
 _PREP_LOCKS: dict[str, asyncio.Lock] = {}
 
+# -- Hourly image generation quota for daily croc ---------------------------
+# Max 2 images may be generated per calendar hour to avoid hammering the
+# qwen-image model endpoint.  Redis is the primary counter (distributed-safe);
+# the in-process dict is a fallback when Redis is unavailable.
+DAILY_IMAGE_QUOTA_PER_HOUR: int = 2
+_local_image_quota: dict[str, int] = {}  # {"YYYY-MM-DDTHH": count}
+
 
 def _prep_lock_key(puzzle_date: date, difficulty: str) -> str:
     return f"{puzzle_date.isoformat()}:{difficulty}"
@@ -207,12 +214,66 @@ def _daily_image_seed(puzzle_date: date, difficulty: str) -> int:
     return int(f"{puzzle_date.strftime('%Y%m%d')}{suffix}")
 
 
+def _image_quota_key(now: datetime | None = None) -> str:
+    """Redis/local key for the current calendar-hour image quota bucket."""
+    ts = (now or datetime.now(tz=UTC)).strftime("%Y-%m-%dT%H")
+    return f"daily:img:quota:{ts}"
+
+
+async def _check_and_consume_image_quota(*, now: datetime | None = None) -> bool:
+    """Return True and increment the counter if quota is available; False if exhausted.
+
+    Uses Redis INCR + EXPIRE (atomic) when available, falls back to an
+    in-process dict so a single worker can still respect the limit without Redis.
+    """
+    key = _image_quota_key(now)
+    try:
+        from app.cache import redis_client
+
+        if redis_client:
+            current = await redis_client.incr(key)
+            if current == 1:
+                # First use of this bucket — set TTL to 2 h so keys self-clean
+                await redis_client.expire(key, 7200)
+            if current > DAILY_IMAGE_QUOTA_PER_HOUR:
+                # Over-counted: decrement back so other processes see the right value
+                await redis_client.decr(key)
+                logger.info(
+                    "daily image quota exhausted for hour %s (redis count=%d, limit=%d)",
+                    key,
+                    current,
+                    DAILY_IMAGE_QUOTA_PER_HOUR,
+                )
+                return False
+            return True
+    except Exception as exc:
+        logger.debug("daily image quota: Redis unavailable, using local counter: %s", exc)
+
+    # In-process fallback
+    count = _local_image_quota.get(key, 0)
+    if count >= DAILY_IMAGE_QUOTA_PER_HOUR:
+        logger.info(
+            "daily image quota exhausted for hour %s (local count=%d, limit=%d)",
+            key,
+            count,
+            DAILY_IMAGE_QUOTA_PER_HOUR,
+        )
+        return False
+    _local_image_quota[key] = count + 1
+    # Evict stale buckets (keep only the 2 most recent hours) to avoid unbounded growth
+    current_hour = _image_quota_key(now)
+    for old_key in [k for k in list(_local_image_quota) if k != current_hour]:
+        del _local_image_quota[old_key]
+    return True
+
+
 async def _generate_daily_image_file_id(
     bot,
     *,
     prompt: str,
     puzzle_date: date,
     difficulty: str,
+    now: datetime | None = None,
 ) -> str | None:
     from app.config import settings
     from app.providers.pollinations import get_pollinations_provider
@@ -220,6 +281,15 @@ async def _generate_daily_image_file_id(
     admin_id = getattr(settings, "ADMIN_ID", None)
     if not admin_id:
         logger.warning("daily puzzle image skipped for %s/%s: ADMIN_ID is not configured", puzzle_date, difficulty)
+        return None
+
+    if not await _check_and_consume_image_quota(now=now):
+        logger.info(
+            "daily puzzle image deferred for %s/%s: hourly quota (%d/h) exhausted",
+            puzzle_date,
+            difficulty,
+            DAILY_IMAGE_QUOTA_PER_HOUR,
+        )
         return None
 
     provider = get_pollinations_provider()
