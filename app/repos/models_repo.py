@@ -180,6 +180,11 @@ async def reset_models_to_env(provider: str) -> list[str]:
             env_list = _load_and_clean_keys("GEMINI_AVAILABLE_MODELS", required=False) or DEFAULT_GEMINI_MODELS.copy()
         except Exception:
             env_list = DEFAULT_GEMINI_MODELS.copy()
+            
+        for role_model in (settings.DEFAULT_MODEL, settings.QNA_MODEL, settings.RESEARCH_MODEL):
+            if role_model and role_model not in env_list:
+                env_list.append(role_model)
+                
         settings.AVAILABLE_MODELS = env_list
         await set_global_setting(_db_key(provider), _encode(env_list))
         logger.info("models_repo: reset gemini list to env (%d models)", len(env_list))
@@ -191,6 +196,10 @@ async def reset_models_to_env(provider: str) -> list[str]:
             env_list = _load_and_clean_keys("OPENROUTER_AVAILABLE_MODELS", required=False) or []
         except Exception:
             env_list = []
+            
+        if settings.OPENROUTER_DEFAULT_MODEL and settings.OPENROUTER_DEFAULT_MODEL not in env_list:
+            env_list.append(settings.OPENROUTER_DEFAULT_MODEL)
+            
         settings.OPENROUTER_AVAILABLE_MODELS = env_list
         await set_global_setting(_db_key(provider), _encode(env_list))
         logger.info("models_repo: reset openrouter list to env (%d models)", len(env_list))
@@ -202,6 +211,17 @@ async def reset_models_to_env(provider: str) -> list[str]:
             env_list = _load_and_clean_keys("OPENCODE_AVAILABLE_MODELS", required=False) or []
         except Exception:
             env_list = []
+            
+        for role_model in (
+            settings.OPENCODE_DEFAULT_MODEL,
+            settings.OPENCODE_QNA_MODEL,
+            settings.OPENCODE_RESEARCH_MODEL,
+            settings.OPENCODE_VISION_MODEL,
+            settings.OPENCODE_INLINE_MODEL,
+        ):
+            if role_model and role_model not in env_list:
+                env_list.append(role_model)
+                
         settings.OPENCODE_AVAILABLE_MODELS = env_list
         await set_global_setting(_db_key(provider), _encode(env_list))
         logger.info("models_repo: reset opencode list to env (%d models)", len(env_list))
