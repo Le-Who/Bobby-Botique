@@ -793,14 +793,14 @@ async def api_admin_dailycroc_list():
     except ValueError:
         limit = 20
 
-    rows = await db.fetch_all(
+    rows = await db.db_query(
         """
         SELECT puzzle_date, target_word, topic, lang, difficulty, hints, image_prompt, image_file_id, image_model, prepared_at
         FROM crocodile_daily_puzzles
         ORDER BY puzzle_date DESC, difficulty ASC
         LIMIT $1
         """,
-        limit,
+        (limit,),
     )
     
     out = []
