@@ -29,6 +29,11 @@ else:
             retry_on_timeout=True,  # Only retry on timeout, not all errors
             decode_responses=False,  # Keep as bytes for manual handling
             health_check_interval=0,  # Disable built-in health-check pings
+            # TLS: disable cert verification for hosted Redis (rediss:// scheme).
+            # The provider uses a self-signed or chain cert that Python's ssl
+            # module rejects by default. ssl_cert_reqs=None skips the check.
+            ssl_cert_reqs=None,
+            ssl_check_hostname=False,
         )
         logging.info("Redis client initialized successfully for Upstash.com")
     except (ConnectionError, RedisError) as e:

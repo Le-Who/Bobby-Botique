@@ -132,7 +132,9 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Immediate typing indicator — instant feedback before any processing
     try:
-        await update.effective_chat.send_action(action="typing")
+        from app.utils.background_tasks import submit_task
+
+        submit_task(update.effective_chat.send_action(action="typing"))
     except Exception:
         pass  # Non-critical
 
