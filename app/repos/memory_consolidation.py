@@ -589,7 +589,7 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                             rows = await conn.fetch(
                                 """
                                 SELECT t.idx, m.id, m.predicate
-                                FROM unnest($2::int[], $3::bigint[], $4::bigint[], $5::halfvec[]) AS t(idx, src, tgt, emb)
+                                FROM unnest($2::int[], $3::uuid[], $4::uuid[], $5::halfvec[]) AS t(idx, src, tgt, emb)
                                 LEFT JOIN LATERAL (
                                     SELECT id, predicate
                                     FROM memory_edges
