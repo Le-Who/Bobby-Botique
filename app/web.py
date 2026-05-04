@@ -787,7 +787,6 @@ async def admin_dailycroc_page():
 @require_auth
 async def api_admin_dailycroc_list():
     from app import database as db
-    from app.repos.crocodile_daily import _row_to_puzzle
 
     try:
         limit = int(request.args.get("limit", 20))
@@ -803,20 +802,20 @@ async def api_admin_dailycroc_list():
         """,
         limit,
     )
-    puzzles = [_row_to_puzzle(r) for r in rows]
+    
     out = []
-    for puzzle in puzzles:
-        if puzzle.puzzle_date is None:
+    for r in rows:
+        if r["puzzle_date"] is None:
             continue
         out.append(
             {
-                "date": puzzle.puzzle_date.isoformat(),
-                "difficulty": puzzle.difficulty,
-                "target_word": puzzle.target_word,
-                "topic": puzzle.topic,
-                "image_file_id": puzzle.image_file_id,
-                "image_prompt": puzzle.image_prompt,
-                "image_model": puzzle.image_model,
+                "date": r["puzzle_date"].isoformat(),
+                "difficulty": r["difficulty"],
+                "target_word": r["target_word"],
+                "topic": r["topic"],
+                "image_file_id": r["image_file_id"],
+                "image_prompt": r["image_prompt"],
+                "image_model": r["image_model"],
             }
         )
     return jsonify({"puzzles": out})
