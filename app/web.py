@@ -826,7 +826,7 @@ async def api_admin_dailycroc_list():
 @rate_limit_api
 async def api_admin_dailycroc_regen():
     from app.providers.pollinations import get_pollinations_provider
-    from app.repos.crocodile_daily import get_daily_puzzle_strict, set_puzzle_image_asset
+    from app.repos.crocodile_daily import get_puzzle, set_puzzle_image_asset
 
     data = await request.get_json()
     if not data:
@@ -842,7 +842,7 @@ async def api_admin_dailycroc_regen():
     except ValueError:
         return jsonify({"error": "invalid date format"}), 400
 
-    puzzle = await get_daily_puzzle_strict(dt, difficulty)
+    puzzle = await get_puzzle(dt, difficulty=difficulty)
     if not puzzle:
         return jsonify({"error": "puzzle not found"}), 404
 
