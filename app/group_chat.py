@@ -322,27 +322,28 @@ class GroupChatManager:
     async def get_group_stats(self, chat_id: int) -> dict[str, Any]:
         """Получает статистику группы"""
         try:
-            # Общее количество сообщений
-            total_messages = await db.db_query(
-                "SELECT COUNT(*) as count FROM group_messages WHERE chat_id = $1",
-                (chat_id,),
-            )
-
-            # Сообщения за afterдние 24 часа
-            recent_messages = await db.db_query(
-                "SELECT COUNT(*) as count FROM group_messages WHERE chat_id = $1 AND created_at > NOW() - INTERVAL '24 hours'",
-                (chat_id,),
-            )
-
-            # Активные пользователи за afterдние 24 часа
-            active_users = await db.db_query(
-                "SELECT COUNT(DISTINCT user_id) as count FROM group_messages WHERE chat_id = $1 AND created_at > NOW() - INTERVAL '24 hours'",
-                (chat_id,),
+            # Performance: all three COUNT queries are independent — fire them in
+            # parallel to collapse 3 sequential DB round-trips into ~1 RTT.
+            total_messages, recent_messages, active_users = await asyncio.gather(
+                db.db_query(
+                    "SELECT COUNT(*) as count FROM group_messages WHERE chat_id = $1",
+                    (chat_id,),
+                ),
+                db.db_query(
+                    "SELECT COUNT(*) as count FROM group_messages"
+                    " WHERE chat_id = $1 AND created_at > NOW() - INTERVAL '24 hours'",
+                    (chat_id,),
+                ),
+                db.db_query(
+                    "SELECT COUNT(DISTINCT user_id) as count FROM group_messages"
+                    " WHERE chat_id = $1 AND created_at > NOW() - INTERVAL '24 hours'",
+                    (chat_id,),
+                ),
             )
 
             return {
                 "total_messages": total_messages[0]["count"] if total_messages else 0,
-                "recent_messages": (recent_messages[0]["count"] if recent_messages else 0),
+                "recent_messages": recent_messages[0]["count"] if recent_messages else 0,
                 "active_users_24h": active_users[0]["count"] if active_users else 0,
                 "member_count": (self.active_groups[chat_id].member_count if chat_id in self.active_groups else 0),
             }

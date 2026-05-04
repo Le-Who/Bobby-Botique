@@ -96,6 +96,11 @@ _CREATIVE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# Performance: single shared tuple used by all three _find_model() calls in
+# select_model(). Eliminates 3 separate 3-element list allocations per call
+# and gives the preference order a single source of truth.
+_UPGRADE_PREFERENCE: tuple[str, ...] = ("3-flash-preview", "3.1-flash-lite", "2.5-flash")
+
 
 def select_model(
     user_message: str,
@@ -126,7 +131,7 @@ def select_model(
 
     # ── Code tasks → best available model ────────────────────────────────
     if _CODE_PATTERNS.search(user_message):
-        code_model = _find_model(available, ["3-flash-preview", "3.1-flash-lite", "2.5-flash"])
+        code_model = _find_model(available, _UPGRADE_PREFERENCE)
         if code_model and code_model != current_model and _get_tier(code_model) > current_tier:
             return SelectionResult(
                 model=code_model,
@@ -136,7 +141,7 @@ def select_model(
 
     # ── Deep reasoning → thinking model ──────────────────────────────────
     if _REASONING_PATTERNS.search(user_message) or msg_len > 1000:
-        reasoning_model = _find_model(available, ["3-flash-preview", "3.1-flash-lite", "2.5-flash"])
+        reasoning_model = _find_model(available, _UPGRADE_PREFERENCE)
         if reasoning_model and reasoning_model != current_model and _get_tier(reasoning_model) > current_tier:
             return SelectionResult(
                 model=reasoning_model,
@@ -146,7 +151,7 @@ def select_model(
 
     # ── Creative tasks → flagship model ──────────────────────────────────
     if _CREATIVE_PATTERNS.search(user_message):
-        creative_model = _find_model(available, ["3-flash-preview", "3.1-flash-lite", "2.5-flash"])
+        creative_model = _find_model(available, _UPGRADE_PREFERENCE)
         if creative_model and creative_model != current_model and _get_tier(creative_model) > current_tier:
             return SelectionResult(
                 model=creative_model,

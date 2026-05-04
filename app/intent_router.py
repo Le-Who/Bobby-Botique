@@ -168,6 +168,23 @@ _TRAILING_TEMPORAL_WORDS = frozenset(
     }
 )
 
+# Performance: hoisted from _is_complex_query() body — eliminates a list allocation
+# on every call (fired for every message that enters intent routing).
+# frozenset membership test is O(1) vs list's O(n); the allocation savings alone
+# are the primary win since any() short-circuits on the first match anyway.
+_COMPLEX_PHRASES: frozenset[str] = frozenset(
+    {
+        "как одеться",
+        "посоветуй",
+        "что делать",
+        "расскажи",
+        "помоги",
+        "подскажи",
+        "как думаешь",
+        "стоит ли",
+    }
+)
+
 
 def _clean_candidate(raw: str) -> str:
     """Strip known trailing temporal/query words from a city candidate."""
@@ -221,19 +238,10 @@ def _is_complex_query(text: str) -> bool:
     if sentence_enders > 1:
         return True
 
-    # 3. Conversational / advisory keywords
+    # 3. Conversational / advisory keywords — checked against module-level frozenset
+    # to avoid per-call list allocation and enable O(1) per-phrase hash lookup.
     lower_text = text.lower()
-    complex_phrases = [
-        "как одеться",
-        "посоветуй",
-        "что делать",
-        "расскажи",
-        "помоги",
-        "подскажи",
-        "как думаешь",
-        "стоит ли",
-    ]
-    return any(phrase in lower_text for phrase in complex_phrases)
+    return any(phrase in lower_text for phrase in _COMPLEX_PHRASES)
 
 
 async def try_direct_intent(message_text: str) -> IntentResult | None:

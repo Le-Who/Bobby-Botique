@@ -204,8 +204,11 @@ class MultiLayerCache:
         self.qna_cache = TTLCache(maxsize=500, ttl=7200)
         self.search_cache = TTLCache(maxsize=500, ttl=1800)
         self.default_cache = TTLCache(maxsize=200, ttl=3600)
-        # asyncio.Lock to protect in-memory caches from concurrent coroutine access
-        self._lock = asyncio.Lock()
+        # Performance: no asyncio.Lock needed — asyncio is single-threaded, so
+        # TTLCache.__contains__ / __getitem__ / __setitem__ (all pure synchronous ops)
+        # can never interleave between coroutines. The lock was adding a useless
+        # async context-switch cost on every cache read — the hottest path here.
+        # Identical fix was previously applied to app/queue.py for the same reason.
 
     def _get_cache(self, search_type: str):
         if search_type == "qna":
@@ -218,11 +221,10 @@ class MultiLayerCache:
     async def get(self, key: str, search_type: str) -> dict[str, Any] | None:
         """Gets value from multi-layer cache"""
         cache_dict = self._get_cache(search_type)
-        # Try memory cache first (under lock for TTLCache safety)
-        async with self._lock:
-            if key in cache_dict:
-                logging.info("Memory cache hit for key: %s", key)
-                return cache_dict[key]
+        # Try memory cache first — direct access, no lock needed (see __init__).
+        if key in cache_dict:
+            logging.info("Memory cache hit for key: %s", key)
+            return cache_dict[key]
 
         # Try Redis cache
         if redis_client:
@@ -236,9 +238,8 @@ class MultiLayerCache:
                     result = _safe_decode_redis_response(cached_data)
 
                     if result:
-                        # Store in memory cache for faster access
-                        async with self._lock:
-                            cache_dict[key] = result
+                        # Populate L1 memory cache from Redis hit — no lock needed.
+                        cache_dict[key] = result
 
                         await metrics_collector.record_cache_hit()
                         logging.info("Redis cache hit for key: %s", key)
@@ -258,10 +259,9 @@ class MultiLayerCache:
         """Sets value in multi-layer cache"""
         ttl = _get_ttl(search_type)
 
-        # Store in memory cache
+        # Store in memory cache — direct write, no lock needed (see __init__).
         cache_dict = self._get_cache(search_type)
-        async with self._lock:
-            cache_dict[key] = value
+        cache_dict[key] = value
 
         # Store in Redis cache
         if redis_client:

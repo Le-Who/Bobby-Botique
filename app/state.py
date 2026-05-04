@@ -12,6 +12,7 @@ Runtime-only maps (never persisted, ephemeral per-process):
 
 import asyncio
 import logging
+import time
 
 
 class UserState:
@@ -517,8 +518,7 @@ _STALL_THRESHOLD_S = 15.0
 
 def mark_network_waiting(user_id: int) -> None:
     """Mark the user's active task as waiting for HTTP response headers (TTFB)."""
-    import time
-
+    # Performance: `time` is now a top-level import — no per-call import machinery overhead.
     _NETWORK_STALL_SINCE[user_id] = time.monotonic()
 
 
@@ -535,8 +535,6 @@ def is_task_stalled(user_id: int) -> bool:
     - Task is actively receiving data
     - Stall duration hasn't exceeded threshold yet
     """
-    import time
-
     stall_start = _NETWORK_STALL_SINCE.get(user_id)
     if stall_start is None:
         return False
