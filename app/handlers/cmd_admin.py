@@ -1192,8 +1192,8 @@ async def _wb_categories_page_kb(page: int, total_cats: int) -> InlineKeyboardMa
     page_cats = cats[start : start + _WB_PAGE_SIZE]
 
     rows = []
-    for cat in page_cats:
-        stats = await get_bank_stats(cat)
+    stats_list = await asyncio.gather(*(get_bank_stats(cat) for cat in page_cats))
+    for cat, stats in zip(page_cats, stats_list, strict=False):
         warn = " ⚠️" if stats["total"] == 0 else ""
         rows.append(
             [InlineKeyboardButton(f"{cat} ({stats['total']}){warn}", callback_data=f"wb:cat:{_wb_cat_key(cat)}")]

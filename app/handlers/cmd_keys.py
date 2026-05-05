@@ -193,9 +193,12 @@ async def _clear_provider_key_cb(query, provider: str) -> int:
 
 async def _show_all_statuses(query) -> int:
     """Show a compact overview of all providers."""
+    import asyncio
     lines = ["🔑 **Статус всех провайдеров**\n"]
-    for provider, label in _PROVIDERS.items():
-        status = await get_provider_status(provider)
+    providers = list(_PROVIDERS.items())
+    statuses = await asyncio.gather(*(get_provider_status(p) for p, _ in providers))
+    
+    for (_provider, label), status in zip(providers, statuses, strict=False):
         if status["source"] == "missing":
             icon = "⚠️"
         elif status["source"] == "db":
@@ -271,17 +274,20 @@ async def check_single_provider_health(provider: str) -> bool | None:
 
 async def run_all_health_checks(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Background job: ping all providers and alert admin on failure."""
+    import asyncio
     admin_id = get_admin_id()
     now = time.time()
 
-    tasks = {provider: check_single_provider_health(provider) for provider in _PROVIDERS}
+    providers = list(_PROVIDERS.keys())
     # Run all health checks in parallel
-    results = {}
-    for provider, coro in tasks.items():
-        try:
-            results[provider] = await coro
-        except Exception:
+    results_list = await asyncio.gather(*(check_single_provider_health(p) for p in providers), return_exceptions=True)
+    
+    results: dict[str, bool | None] = {}
+    for provider, res in zip(providers, results_list, strict=False):
+        if isinstance(res, Exception):
             results[provider] = False
+        else:
+            results[provider] = res
 
     failures = []
     for provider, healthy in results.items():
