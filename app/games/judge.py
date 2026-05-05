@@ -74,10 +74,14 @@ _PRIMARY_CIRCUIT_COOLDOWN_S: float = 120.0  # 2 min between probes
 
 
 def _budget_provider_for_model(model_name: str, lane_type: str | None = None) -> str:
+    from app.providers.base import is_freetheai_model
+
     if lane_type == "vertex":
         return "vertex_express"
     if model_name.startswith("opencode-go/"):
         return "opencode_go"
+    if is_freetheai_model(model_name):
+        return "freetheai"
     if "/" in model_name:
         return "openrouter"
     return "ai_studio"

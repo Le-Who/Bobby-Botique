@@ -113,7 +113,7 @@ def _generate_model_buttons(models, current_model, start_index, provider="gemini
         models (list): Список моделей.
         current_model (str): Текущая выбранная model.
         start_index (int): Начальный индекс for callback_data.
-        provider (str): Провайдер ("gemini", "openrouter", "opencode").
+        provider (str): Провайдер ("gemini", "openrouter", "opencode", "freetheai").
 
     Returns:
         tuple: (list строк кнопок, следующий индекс)
@@ -133,6 +133,9 @@ def _generate_model_buttons(models, current_model, start_index, provider="gemini
         elif provider == "opencode":
             display_name = m.replace("opencode-go/", "").replace("-", " ").title()
             icon = "⚡"
+        elif provider == "freetheai":
+            display_name = m.split("/")[-1].replace("_", " ").replace("-", " ").title() if "/" in m else m
+            icon = "🔮"
         else:  # gemini
             display_name = m
             icon = "🤖"
@@ -162,6 +165,8 @@ def get_model_menu_content(chat_state, context):
         all_models.extend(settings.OPENCODE_AVAILABLE_MODELS)
     if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
         all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
+    if settings.FREETHEAI_AVAILABLE_MODELS:
+        all_models.extend(settings.FREETHEAI_AVAILABLE_MODELS)
 
     if not all_models:
         from app.utils.keyboards import error_with_back_keyboard
@@ -209,12 +214,27 @@ def get_model_menu_content(chat_state, context):
             provider="openrouter",
         )
         keyboard.extend(buttons)
+    # Add FreeTheAI models, if available
+    if settings.FREETHEAI_AVAILABLE_MODELS:
+        if settings.AVAILABLE_MODELS or settings.OPENCODE_AVAILABLE_MODELS or (
+            openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS
+        ):
+            keyboard.append([InlineKeyboardButton("─────────────", callback_data="model_none")])
+        buttons, model_index = _generate_model_buttons(
+            settings.FREETHEAI_AVAILABLE_MODELS,
+            current_model,
+            model_index,
+            provider="freetheai",
+        )
+        keyboard.extend(buttons)
 
     # Build text with model hint for decision support
-    from app.providers.base import is_opencode_model, is_openrouter_model
+    from app.providers.base import is_freetheai_model, is_opencode_model, is_openrouter_model
 
     if current_model and is_opencode_model(current_model):
         provider_name = "Opencode Go"
+    elif current_model and is_freetheai_model(current_model):
+        provider_name = "FreeTheAI"
     elif current_model and is_openrouter_model(current_model):
         provider_name = "OpenRouter"
     else:

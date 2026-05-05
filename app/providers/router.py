@@ -18,7 +18,7 @@ from app.errors import (
     is_key_related_error,
     tag_error,
 )
-from app.providers.base import is_opencode_model
+from app.providers.base import is_freetheai_model, is_opencode_model
 from app.providers.openrouter import _has_multimodal_content
 
 
@@ -148,13 +148,42 @@ class ProviderRouter:
                             timeout=timeout,
                             _is_fallback=True,
                         )
+                    # ── Cross-provider fallback: FreeTheAI → Gemini ──────────
+                    if is_freetheai_model(preferred_model) and not _is_fallback:
+                        logging.warning(
+                            "FreeTheAI keys exhausted for %s, falling back to Gemini %s",
+                            preferred_model,
+                            settings.DEFAULT_MODEL,
+                        )
+                        return await self.get_response(
+                            settings.DEFAULT_MODEL,
+                            history,
+                            system_instruction=system_instruction,
+                            user_id=user_id,
+                            chat_id=chat_id,
+                            use_openrouter=False,
+                            max_key_retries=max_key_retries,
+                            thinking_level=thinking_level,
+                            timeout=timeout,
+                            _is_fallback=True,
+                        )
                     is_or = (
                         use_openrouter
                         if use_openrouter is not None
-                        else ("/" in preferred_model and not is_opencode_model(preferred_model))
+                        else (
+                            "/" in preferred_model
+                            and not is_opencode_model(preferred_model)
+                            and not is_freetheai_model(preferred_model)
+                        )
                     )
                     provider_name = (
-                        "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
+                        "Opencode Go"
+                        if is_opencode_model(preferred_model)
+                        else (
+                            "FreeTheAI"
+                            if is_freetheai_model(preferred_model)
+                            else ("OpenRouter" if is_or else "Gemini")
+                        )
                     )
                     return (
                         tag_error(
@@ -275,9 +304,21 @@ class ProviderRouter:
         is_or = (
             use_openrouter
             if use_openrouter is not None
-            else ("/" in preferred_model and not is_opencode_model(preferred_model))
+            else (
+                "/" in preferred_model
+                and not is_opencode_model(preferred_model)
+                and not is_freetheai_model(preferred_model)
+            )
         )
-        provider_name = "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
+        provider_name = (
+            "Opencode Go"
+            if is_opencode_model(preferred_model)
+            else (
+                "FreeTheAI"
+                if is_freetheai_model(preferred_model)
+                else ("OpenRouter" if is_or else "Gemini")
+            )
+        )
         return (
             tag_error(
                 ErrorCode.KEYS_EXHAUSTED,
@@ -387,10 +428,20 @@ class ProviderRouter:
                 is_or = (
                     use_openrouter
                     if use_openrouter is not None
-                    else ("/" in preferred_model and not is_opencode_model(preferred_model))
+                    else (
+                        "/" in preferred_model
+                        and not is_opencode_model(preferred_model)
+                        and not is_freetheai_model(preferred_model)
+                    )
                 )
                 provider_name = (
-                    "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
+                    "Opencode Go"
+                    if is_opencode_model(preferred_model)
+                    else (
+                        "FreeTheAI"
+                        if is_freetheai_model(preferred_model)
+                        else ("OpenRouter" if is_or else "Gemini")
+                    )
                 )
                 yield tag_error(
                     ErrorCode.KEYS_EXHAUSTED,
@@ -756,9 +807,21 @@ class ProviderRouter:
         is_or = (
             use_openrouter
             if use_openrouter is not None
-            else ("/" in preferred_model and not is_opencode_model(preferred_model))
+            else (
+                "/" in preferred_model
+                and not is_opencode_model(preferred_model)
+                and not is_freetheai_model(preferred_model)
+            )
         )
-        provider_name = "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
+        provider_name = (
+            "Opencode Go"
+            if is_opencode_model(preferred_model)
+            else (
+                "FreeTheAI"
+                if is_freetheai_model(preferred_model)
+                else ("OpenRouter" if is_or else "Gemini")
+            )
+        )
         yield tag_error(
             ErrorCode.KEYS_EXHAUSTED,
             f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже.",

@@ -118,6 +118,17 @@ async def _handle_regular_chat(
 ):
     # Используем переопределение models, if указано, иначе model from chat_state
     model_for_this_request = model_override or chat_state.model
+
+    # ── Lyria audio intercept ─────────────────────────────────────────────
+    # When user has selected a Lyria model, generate music instead of chat.
+    from app.providers.freetheai_audio import is_lyria_model
+
+    if is_lyria_model(model_for_this_request):
+        await _handle_lyria_audio(
+            placeholder_message, user_id, user_message, model_for_this_request
+        )
+        return
+
     key_data, model_used, resolution = await _resolve_ai_request(model_for_this_request)
 
     if resolution == "all_exhausted":
@@ -357,11 +368,13 @@ async def _handle_regular_chat(
     # ── Metrics: record every chat LLM call ────────────────────────────────
 
     from app.metrics import metrics_collector as _mc
-    from app.providers.base import is_opencode_model, is_openrouter_model
+    from app.providers.base import is_freetheai_model, is_opencode_model, is_openrouter_model
 
     _chat_provider = (
         "opencode_chat"
         if is_opencode_model(model_used or "")
+        else "freetheai_chat"
+        if is_freetheai_model(model_used or "")
         else "openrouter_chat"
         if is_openrouter_model(model_used or "")
         else "gemini_chat"
@@ -596,3 +609,148 @@ async def _handle_regular_chat(
             )
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
+
+
+async def _handle_lyria_audio(
+    placeholder_message: Message,
+    user_id: int,
+    user_message: str,
+    model: str,
+) -> None:
+    """Generate music via Lyria and send as Telegram audio.
+
+    Flow:
+        1. Edit placeholder → "🎵 Генерирую музыку..."
+        2. Call FreeTheAIAudioProvider.generate()
+        3. On success: reply with audio file + caption
+        4. On failure: show error + retry button
+    """
+    from io import BytesIO
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from app.providers.freetheai_audio import LYRIA_MODEL_LABELS, get_lyria_provider
+
+    model_label = LYRIA_MODEL_LABELS.get(model, model)
+
+    try:
+        await placeholder_message.edit_text(f"🎵 Генерирую музыку ({model_label})... Это может занять до 5 минут.")
+    except Exception:
+        pass
+
+    # Typing heartbeat
+    import asyncio
+
+    from telegram.constants import ChatAction
+
+    bot = placeholder_message.get_bot()
+    chat_id = placeholder_message.chat_id
+    stop_event = asyncio.Event()
+
+    async def _heartbeat() -> None:
+        while not stop_event.is_set():
+            try:
+                await bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(asyncio.shield(stop_event.wait()), timeout=4.5)
+            except TimeoutError:
+                pass
+
+    heartbeat_task = asyncio.create_task(_heartbeat())
+
+    try:
+        provider = get_lyria_provider()
+        result = await provider.generate(prompt=user_message, model=model)
+    finally:
+        stop_event.set()
+        heartbeat_task.cancel()
+
+    if result.success and result.audio_bytes:
+        # Determine file extension from mime type
+        ext_map = {
+            "audio/mpeg": ".mp3",
+            "audio/wav": ".wav",
+            "audio/ogg": ".ogg",
+            "audio/opus": ".ogg",
+        }
+        ext = ext_map.get(result.mime_type, ".mp3")
+        filename = f"lyria_music{ext}"
+
+        # Prepare audio as file-like object
+        audio_io = BytesIO(result.audio_bytes)
+        audio_io.name = filename
+
+        # Build caption
+        short_prompt = user_message[:200].strip()
+        if len(user_message) > 200:
+            short_prompt += "..."
+        caption = f"🎵 *{short_prompt}*\n_{model_label}_"
+        if result.text_content:
+            # Include any text (e.g. lyrics) in caption, truncated
+            text_preview = result.text_content[:300].strip()
+            if len(result.text_content) > 300:
+                text_preview += "..."
+            caption += f"\n\n{text_preview}"
+
+        # Escape markdown characters
+        for ch in ("*", "_", "`", "["):
+            short_prompt = short_prompt.replace(ch, f"\\{ch}")
+
+        try:
+            await placeholder_message.reply_audio(
+                audio=audio_io,
+                title=f"AI Music: {user_message[:40]}",
+                performer="Lyria AI",
+                caption=caption,
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Новая генерация", callback_data="retry_last")],
+                ]),
+            )
+            # Delete the placeholder
+            try:
+                await placeholder_message.delete()
+            except Exception:
+                pass
+            logging.info("Lyria audio sent: user=%s model=%s size=%.1fKB", user_id, model, len(result.audio_bytes) / 1024)
+        except Exception as send_err:
+            logging.error("Failed to send Lyria audio: %s", send_err)
+            try:
+                await placeholder_message.edit_text("❌ Аудио создано, но не удалось отправить. Попробуйте снова.")
+            except Exception:
+                pass
+
+    elif result.text_content and not result.audio_bytes:
+        # Model returned text but no audio — show the text
+        text = result.text_content[:2000]
+        try:
+            await placeholder_message.edit_text(
+                f"⚠️ Модель вернула текст вместо аудио:\n\n{text}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Попробовать снова", callback_data="retry_last")],
+                ]),
+            )
+        except Exception:
+            pass
+    else:
+        # Error
+        err = result.error_message or "unknown"
+        error_texts = {
+            "no_keys": "🔑 Нет доступных ключей FreeTheAI для генерации музыки.",
+            "rate_limited": "⏳ Превышен лимит запросов. Подождите минуту.",
+            "auth_error": "🔑 Ошибка авторизации FreeTheAI.",
+            "timeout": "⏰ Время ожидания истекло. Генерация музыки может занимать до 5 минут.",
+            "no_audio_in_response": "⚠️ Модель не вернула аудиоданные. Попробуйте другой запрос.",
+        }
+        text = error_texts.get(err, f"❌ Не удалось создать музыку: `{err}`")
+        try:
+            await placeholder_message.edit_text(
+                text,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Попробовать снова", callback_data="retry_last")],
+                ]),
+            )
+        except Exception as edit_err:
+            logging.error("Could not edit Lyria error message: %s", edit_err)

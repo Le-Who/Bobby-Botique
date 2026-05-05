@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-05-05 - FreeTheAI Multimodal Integration
+
+### 🎨 FreeTheAI Multimodal Integration
+
+- **Added `FreeTheAIProvider` (`app/providers/freetheai.py`):** First-class integration for FreeTheAI acting as a router to diverse models including Claude, Gemini, GPT, and custom variations. Implemented strict prefix collision guards (`is_freetheai_model`) to ensure `vhr/`, `cat/`, `yng/` prefixes do not leak into OpenRouter.
+- **Image Generation (`app/providers/freetheai_image.py`, `app/handlers/cmd_image.py`):** Added support for models like `vhr/gpt_image_2` and `vhr/nano_banana_2`. Generates custom prompts and securely proxies requests through the FreeTheAI API, complete with specific UI messages for quota errors and provider exhaustion.
+- **Lyria Audio Generation (`app/providers/freetheai_audio.py`, `app/handlers/ai_chat.py`):** Chat texts targeting Lyria audio models (`or/google/lyria-3-pro-preview`) are now intercepted mid-flight. Standard text generation is bypassed in favor of a specialized audio generation pipeline, returning direct Telegram `reply_audio` messages (Base64 MP3 or fallback URLs).
+
 ## [Unreleased] - 2026-04-28 - Daily Crocodile Admin Dashboard & Image Proxy Hardening
 
 ### 🐊 Daily Crocodile — Word Diversity & Topic Rotation

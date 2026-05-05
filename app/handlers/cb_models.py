@@ -50,6 +50,8 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
             openrouter_available = bool(get_openrouter_keys())
             if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
                 all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
+            if settings.FREETHEAI_AVAILABLE_MODELS:
+                all_models.extend(settings.FREETHEAI_AVAILABLE_MODELS)
 
             if 0 <= model_index < len(all_models):
                 model_name = all_models[model_index]
@@ -105,7 +107,8 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if model_name.startswith("opencode-go/"):
         display_name = model_name.replace("opencode-go/", "").replace("-", " ").title()
     elif "/" in model_name:
-        display_name = model_name.split("/")[-1]
+        # Covers both OpenRouter (org/model) and FreeTheAI (prefix/model)
+        display_name = model_name.split("/")[-1].replace("_", " ").replace("-", " ").title()
     else:
         display_name = model_name
 
@@ -140,6 +143,8 @@ async def switch_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
         all_models.extend(settings.OPENCODE_AVAILABLE_MODELS)
     if settings.OPENROUTER_AVAILABLE_MODELS:
         all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
+    if settings.FREETHEAI_AVAILABLE_MODELS:
+        all_models.extend(settings.FREETHEAI_AVAILABLE_MODELS)
 
     if model_name not in all_models:
         await query.edit_message_text("⚠️ Эта модель больше недоступна.")
@@ -152,7 +157,7 @@ async def switch_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if model_name.startswith("opencode-go/"):
         display_name = model_name.replace("opencode-go/", "").replace("-", " ").title()
     elif "/" in model_name:
-        display_name = model_name.split("/")[-1]
+        display_name = model_name.split("/")[-1].replace("_", " ").replace("-", " ").title()
     else:
         display_name = model_name
 

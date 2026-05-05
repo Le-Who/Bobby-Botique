@@ -119,11 +119,15 @@ def select_model(
     if not available:
         return None
 
-    # Skip suggestions for OpenRouter / Opencode Go models — different provider,
+    # Skip suggestions for OpenRouter / Opencode Go / FreeTheAI models — different provider,
     # tier logic is Gemini-specific and inapplicable across providers.
-    from app.providers import is_opencode_model, is_openrouter_model
+    from app.providers import is_freetheai_model, is_opencode_model, is_openrouter_model
 
-    if current_model and (is_openrouter_model(current_model) or is_opencode_model(current_model)):
+    if current_model and (
+        is_openrouter_model(current_model)
+        or is_opencode_model(current_model)
+        or is_freetheai_model(current_model)
+    ):
         return None
 
     current_tier = _get_tier(current_model) if current_model else 0

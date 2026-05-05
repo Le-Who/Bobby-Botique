@@ -271,6 +271,14 @@ class Settings(BaseModel):
     OPENCODE_VISION_MODEL: str = "opencode-go/mimo-v2-omni"  # Multimodal
     OPENCODE_INLINE_MODEL: str = "opencode-go/deepseek-v4-flash"  # Fast but pleasant
 
+    # --- FREETHEAI MODELS ---
+    # FreeTheAI router (freetheai.xyz/docs): supports chat (cat/, yng/),
+    # image (vhr/), and audio (or/google/lyria-*) models.
+    # Keys are Bearer tokens, comma-separated for rotation.
+    FREETHEAI_API_KEYS: list[str] = []
+    FREETHEAI_AVAILABLE_MODELS: list[str] = []
+    FREETHEAI_DEFAULT_MODEL: str = "cat/claude-4-6-sonnet"
+
     # --- API PROVIDER SELECTION ---
     # "opencode" routes primary chat/search/inline through Opencode Go with Gemini fallback.
     # "gemini"   bypasses Opencode Go entirely (admin toggle via /set_provider).
@@ -403,6 +411,10 @@ def load_settings() -> Settings:
             ),
             "OPENCODE_VISION_MODEL": _load_single_model("OPENCODE_VISION_MODEL", "opencode-go/mimo-v2-omni"),
             "OPENCODE_INLINE_MODEL": _load_single_model("OPENCODE_INLINE_MODEL", "opencode-go/minimax-m2.5"),
+            # FreeTheAI provider
+            "FREETHEAI_API_KEYS": _load_and_clean_keys("FREETHEAI_API_KEYS", required=False),
+            "FREETHEAI_AVAILABLE_MODELS": _load_and_clean_keys("FREETHEAI_AVAILABLE_MODELS", required=False),
+            "FREETHEAI_DEFAULT_MODEL": _load_single_model("FREETHEAI_DEFAULT_MODEL", "cat/claude-4-6-sonnet"),
             "PRIMARY_PROVIDER": os.getenv("PRIMARY_PROVIDER", "opencode").strip().lower(),
             "DAILY_LIMITS": _load_daily_limits(),
             "MAX_CONCURRENT_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_HEAVY_REQUESTS", "4")),
@@ -677,6 +689,11 @@ def get_use_openrouter() -> bool:
 def get_opencode_keys() -> list[str]:
     """Returns Opencode Go API keys."""
     return config_manager.get_setting("OPENCODE_API_KEYS", [])
+
+
+def get_freetheai_keys() -> list[str]:
+    """Returns FreeTheAI API keys."""
+    return config_manager.get_setting("FREETHEAI_API_KEYS", [])
 
 
 # ── Primary provider: DB-backed runtime toggle ────────────────────────────────

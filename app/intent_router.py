@@ -138,6 +138,16 @@ _SORTED_CURRENCY_ALIASES: list[tuple[str, str]] = sorted(
     _CURRENCY_CODES.items(), key=lambda kv: len(kv[0]), reverse=True
 )
 
+# Performance: pre-compiled at module level — _handle_weather is called on every
+# weather intent match (per-message). Inline re.search() inside the function body
+# would re-compile this pattern on every call (2–4 µs/compile + cache lookup overhead).
+# Hoisting eliminates that entirely.
+_WEATHER_FUTURE_RE = re.compile(
+    r"(завтра|послезавтра|недел|дней|дня|выходны|tomorrow|week|days"
+    r"|вечер|утр[ао]|ноч[ью]|час|hour|night|evening|morning)",
+    re.IGNORECASE,
+)
+
 # Pattern to extract a city candidate from weather queries.
 _CITY_EXTRACT_PATTERN = re.compile(
     # Branch A: "погода [сегодня|завтра|сейчас] [в] <город>" — preposition is optional here
@@ -298,12 +308,10 @@ async def _handle_weather(text: str) -> IntentResult | None:
     Primary:  WeatherAPI.com (1 request, autogeocode, Russian conditions text)
     Fallback: Open-Meteo (2 requests: geocode + forecast)
     """
-    # Bail out for future/multi-day forecasts — LLM with Grounding handles these better
-    if re.search(
-        r"(завтра|послезавтра|недел|дней|дня|выходны|tomorrow|week|days|вечер|утр[ао]|ноч[ью]|час|hour|night|evening|morning)",
-        text,
-        re.IGNORECASE,
-    ):
+    # Bail out for future/multi-day forecasts — LLM with Grounding handles these better.
+    # PERF: uses module-level _WEATHER_FUTURE_RE (pre-compiled once at import) —
+    # avoids re-compiling on every weather intent call.
+    if _WEATHER_FUTURE_RE.search(text):
         return None
 
     # Extract city candidate

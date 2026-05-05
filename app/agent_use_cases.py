@@ -3,8 +3,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.config import get_opencode_keys, get_openrouter_keys, get_use_openrouter, settings
-from app.providers.base import is_opencode_model
+from app.config import get_freetheai_keys, get_opencode_keys, get_openrouter_keys, get_use_openrouter, settings
+from app.providers.base import is_freetheai_model, is_opencode_model
 from app.repos.keys import (
     get_available_gemini_key,
     get_available_openrouter_key,
@@ -18,6 +18,20 @@ from app.repos.keys import (
 # 30s default cooldown matches the transient error penalty in KeyStatusManager.
 _opencode_key_health: dict[str, datetime] = {}
 _OPENCODE_COOLDOWN = timedelta(seconds=30)
+
+# In-memory health state for FreeTheAI keys (same pattern as Opencode).
+_freetheai_key_health: dict[str, datetime] = {}
+_FREETHEAI_COOLDOWN = timedelta(seconds=30)
+
+
+def suspend_freetheai_key(key_hash: str, cooldown: timedelta | None = None) -> None:
+    """Mark a FreeTheAI key as temporarily unavailable (in-memory only)."""
+    _freetheai_key_health[key_hash] = datetime.now(UTC) + (cooldown or _FREETHEAI_COOLDOWN)
+    logging.warning(
+        "FreeTheAI key %s… suspended for %.0fs (in-memory)",
+        key_hash[:8],
+        (cooldown or _FREETHEAI_COOLDOWN).total_seconds(),
+    )
 
 
 def suspend_opencode_key(key_hash: str, cooldown: timedelta | None = None) -> None:
@@ -42,6 +56,11 @@ class AgentRequestUseCase:
         # Opencode Go models take priority (they also contain '/')
         if is_opencode_model(preferred_model):
             return await self._resolve_opencode_request(preferred_model, excluded)
+
+        # FreeTheAI models (cat/, yng/, vhr/, or/google/lyria-*) — must check
+        # BEFORE the generic "/" detection to prevent OpenRouter collision.
+        if is_freetheai_model(preferred_model):
+            return await self._resolve_freetheai_request(preferred_model, excluded)
 
         if use_openrouter is None:
             use_openrouter = "/" in preferred_model or get_use_openrouter()
@@ -198,6 +217,37 @@ class AgentRequestUseCase:
         logging.debug("All Opencode Go API keys are excluded (exhausted for this request).")
         return None, None, "all_exhausted"
 
+    async def _resolve_freetheai_request(
+        self, preferred_model: str, excluded_key_hashes: set[str] | None = None
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
+        """Resolve a FreeTheAI API key from the in-memory key pool.
+
+        Same pattern as Opencode Go: in-memory rotation with short cooldowns.
+        """
+        excluded = excluded_key_hashes or set()
+        keys = get_freetheai_keys()
+        if not keys:
+            logging.warning("FreeTheAI model %s selected but FREETHEAI_API_KEYS is empty", preferred_model)
+            return None, None, "no_keys"
+
+        now = datetime.now(UTC)
+        for key in keys:
+            key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
+            if key_hash in excluded:
+                continue
+            suspended_until = _freetheai_key_health.get(key_hash)
+            if suspended_until and now < suspended_until:
+                continue
+            return {"api_key": key, "key_hash": key_hash}, preferred_model, None
+
+        # Clean up expired suspensions
+        expired = [h for h, until in list(_freetheai_key_health.items()) if now >= until]
+        for h in expired:
+            del _freetheai_key_health[h]
+
+        logging.debug("All FreeTheAI API keys are excluded (exhausted for this request).")
+        return None, None, "all_exhausted"
+
     async def get_ai_response(
         self,
         api_key: str,
@@ -211,7 +261,12 @@ class AgentRequestUseCase:
         timeout: float | None = None,
     ) -> tuple[str, int | None]:
         if use_openrouter is None:
-            use_openrouter = "/" in model_name or get_use_openrouter()
+            # FreeTheAI models contain '/' but should NOT be treated as OpenRouter
+            use_openrouter = (
+                "/" in model_name
+                and not is_opencode_model(model_name)
+                and not is_freetheai_model(model_name)
+            ) or get_use_openrouter()
 
         if use_openrouter and not get_openrouter_keys():
             return (
@@ -241,12 +296,14 @@ class AgentRequestUseCase:
         return response.text, token_count
 
     async def increment_key_usage(self, key_hash: str, model_name: str, use_openrouter: bool | None = None) -> None:
-        # Opencode Go: daily usage tracked via DAILY_LIMITS in the DB key system.
-        # We skip the openrouter/gemini DB increment for opencode models.
-        if is_opencode_model(model_name):
+        # Opencode Go and FreeTheAI: in-memory only, no DB key tracking.
+        if is_opencode_model(model_name) or is_freetheai_model(model_name):
             return
         if use_openrouter is None:
-            use_openrouter = "/" in model_name or get_use_openrouter()
+            use_openrouter = (
+                "/" in model_name
+                and not is_freetheai_model(model_name)
+            ) or get_use_openrouter()
         if use_openrouter:
             await increment_openrouter_key_usage(key_hash, model_name)
         else:

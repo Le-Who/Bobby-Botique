@@ -93,3 +93,9 @@
 - **Optimization**: Concurrency in voice auto-routing (syncio.gather).
 - **Why**: When a voice message was auto-routed to chat or search, the system sequentially: 1) Sent a placeholder HTTP request to Telegram, 2) Loaded chat state from DB, 3) Made an LLM call to detect TTS intent. These independent I/O tasks were blocking each other.
 - **Impact**: Grouping these in syncio.gather shaves ~110-150ms off the voice message response latency, providing a much snappier feel for conversational audio.
+
+## 2026-05-04 - Inline re.search() Survived Inside _handle_weather (intent_router.py)
+
+**Learning:** All previous Bolt audits hoisted inline regex from module-level helper functions and formatters, but the early-return guard inside `_handle_weather()` was overlooked. This function fires on every message matching `_WEATHER_PATTERNS` or `_WEATHER_COLLOQUIAL_RE`. The inline `re.search(r"(завтра|...)", text, re.IGNORECASE)` compiled fresh on every invocation (2-4 µs/compile + re._cache lookup overhead).
+
+**Action:** When auditing for inline regex, do NOT stop at top-level helpers — scan ALL inner functions and early-return guards inside async handlers. The bail-out pattern "guard check at function top" is a common location for accidentally-inline patterns that escape grep for `re.compile(` (because `re.search(r"...` is harder to spot).

@@ -994,11 +994,13 @@ async def stream_and_display(
         writer.message_count,
         fr,
     )
-    from app.providers.base import is_opencode_model, is_openrouter_model
+    from app.providers.base import is_freetheai_model, is_opencode_model, is_openrouter_model
 
     _stream_provider = (
         "opencode_streaming"
         if is_opencode_model(model_name)
+        else "freetheai_streaming"
+        if is_freetheai_model(model_name)
         else "openrouter_streaming"
         if is_openrouter_model(model_name)
         else "gemini_streaming"

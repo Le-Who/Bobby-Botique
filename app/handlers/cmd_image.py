@@ -55,6 +55,12 @@ from app.config import (
     settings,
 )
 from app.metrics import metrics_collector
+from app.providers.freetheai_image import (
+    FTA_IMAGE_MODEL_LABELS,
+    FTA_IMAGE_MODELS,
+    FTAImageResult,
+    get_fta_image_provider,
+)
 from app.providers.imagen_provider import (
     ASPECT_RATIO_LABELS,
     SUPPORTED_ASPECT_RATIOS,
@@ -287,20 +293,36 @@ def _is_imagen_model(model: str) -> bool:
     return model.startswith("imagen-")
 
 
+def _is_fta_image_model(model: str) -> bool:
+    return model in FTA_IMAGE_MODELS
+
+
 def _needs_translation(prompt: str, model: str) -> bool:
     """True if prompt contains Cyrillic and model doesn't natively handle it."""
     if _is_imagen_model(model):
         return False  # Imagen understands many languages
+    if _is_fta_image_model(model):
+        return False  # FTA image models handle prompt internally
     if model in _CYRILLIC_NATIVE_MODELS:
         return False
     return bool(_CYRILLIC_RE.search(prompt))
 
 
 def _get_all_models() -> list[str]:
-    return list(settings.POLLINATIONS_IMAGE_MODELS)
+    models = list(settings.POLLINATIONS_IMAGE_MODELS)
+    # Append FTA image models (always available if keys are configured)
+    from app.config import get_freetheai_keys
+
+    if get_freetheai_keys():
+        for m in FTA_IMAGE_MODELS:
+            if m not in models:
+                models.append(m)
+    return models
 
 
 def _model_label(model: str) -> str:
+    if model in FTA_IMAGE_MODEL_LABELS:
+        return FTA_IMAGE_MODEL_LABELS[model]
     if model in IMAGEN_MODEL_LABELS:
         return IMAGEN_MODEL_LABELS[model]
     return get_model_label(model)
@@ -569,6 +591,16 @@ async def _run_generation(
                 image_bytes = result.images[0]
             else:
                 error_message = result.error_message
+        elif _is_fta_image_model(model):
+            fta_provider = get_fta_image_provider()
+            fta_result: FTAImageResult = await fta_provider.generate(
+                prompt=api_prompt,
+                model=model,
+            )
+            if fta_result.success and fta_result.images:
+                image_bytes = fta_result.images[0]
+            else:
+                error_message = fta_result.error_message
         else:
             width, height = _AR_TO_PIXELS.get(aspect_ratio, (1024, 1024))
             import random
@@ -677,7 +709,17 @@ def _error_text(err: str) -> str:
             "💳 *Эта модель требует оплаченного аккаунта.*\n\n"
             "Переключитесь на **✨ Flux** или **⚡ Z-Image** — они работают бесплатно."
         )
-    if err == "unauthorized":
+    if err == "no_keys":
+        return (
+            "🔑 *Нет доступных ключей FreeTheAI.*\n\n"
+            "Переключитесь на другую модель или попробуйте позже."
+        )
+    if err == "rate_limited":
+        return (
+            "⏳ *Превышен лимит запросов FreeTheAI.*\n\n"
+            "Подождите минуту и попробуйте снова."
+        )
+    if err in ("auth_error", "unauthorized"):
         return "🔑 *Ошибка авторизации.* Проверьте корректность `POLLINATIONS_API_KEY`."
     if err == "timeout":
         return "⏰ *Время ожидания истекло.* Серверы перегружены — попробуйте ещё раз."
