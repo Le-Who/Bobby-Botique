@@ -44,6 +44,7 @@ FTA_IMAGE_MODEL_LABELS: dict[str, str] = {
 }
 
 _FTA_IMAGES_URL = "https://api.freetheai.xyz/v1/images/generations"
+_FTA_EDITS_URL = "https://api.freetheai.xyz/v1/images/edits"
 _FTA_IMAGE_TIMEOUT = 180.0  # generous — image models can be slow
 
 # In-memory key health (same pattern as freetheai chat)
@@ -100,14 +101,16 @@ class FreeTheAIImageProvider:
         *,
         size: str | None = None,
         quality: str | None = None,
+        image_base64: str | None = None,
     ) -> FTAImageResult:
-        """Generate an image from a text prompt.
+        """Generate or edit an image from a text prompt.
 
         Args:
             prompt: Text description of the desired image.
             model: One of FTA_IMAGE_MODELS.
             size: Optional size string (e.g. "1024x1024").
             quality: Optional quality string (e.g. "hd").
+            image_base64: Optional base64 encoded image string for /edits.
 
         Returns:
             FTAImageResult with raw image bytes on success.
@@ -134,6 +137,11 @@ class FreeTheAIImageProvider:
             payload["size"] = size
         if quality:
             payload["quality"] = quality
+            
+        endpoint_url = _FTA_IMAGES_URL
+        if image_base64:
+            payload["image"] = image_base64
+            endpoint_url = _FTA_EDITS_URL
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -150,7 +158,7 @@ class FreeTheAIImageProvider:
         t0 = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=_FTA_IMAGE_TIMEOUT) as client:
-                response = await client.post(_FTA_IMAGES_URL, json=payload, headers=headers)
+                response = await client.post(endpoint_url, json=payload, headers=headers)
 
             elapsed = time.monotonic() - t0
 

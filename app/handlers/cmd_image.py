@@ -593,9 +593,11 @@ async def _run_generation(
                 error_message = result.error_message
         elif _is_fta_image_model(model):
             fta_provider = get_fta_image_provider()
+            width, height = _AR_TO_PIXELS.get(aspect_ratio, (1024, 1024))
             fta_result: FTAImageResult = await fta_provider.generate(
                 prompt=api_prompt,
                 model=model,
+                size=f"{width}x{height}",
             )
             if fta_result.success and fta_result.images:
                 image_bytes = fta_result.images[0]
