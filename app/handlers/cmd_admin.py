@@ -926,7 +926,7 @@ async def set_inline_tabs_command(update: Update, context: ContextTypes.DEFAULT_
 
 # ── Provider routing ───────────────────────────────────────────────────────────
 
-_VALID_PROVIDERS = frozenset({"opencode", "gemini"})
+_VALID_PROVIDERS = frozenset({"opencode", "gemini", "freetheai"})
 _VALID_ON_OFF_VALUES = frozenset({"on", "off"})
 
 
@@ -934,12 +934,13 @@ _VALID_ON_OFF_VALUES = frozenset({"on", "off"})
 async def set_provider_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Switch the PRIMARY_PROVIDER at runtime (no restart required).
 
-    Usage: /set_provider <opencode|gemini>
+    Usage: /set_provider <opencode|gemini|freetheai>
 
     - ``opencode``: Route all requests through Opencode Go models first,
       with automatic fallback to Gemini on key exhaustion.
     - ``gemini``: Revert to Gemini-only mode; Opencode Go models are
       still accessible via /model if explicitly selected.
+    - ``freetheai``: Route requests through FreeTheAI models.
     """
     args = context.args or []
     current_raw = await get_global_setting("primary_provider", settings.PRIMARY_PROVIDER)
@@ -947,10 +948,11 @@ async def set_provider_command(update: Update, context: ContextTypes.DEFAULT_TYP
     if not args or args[0].lower() not in _VALID_PROVIDERS:
         await update.message.reply_text(
             f"⚙️ <b>Текущий провайдер:</b> <code>{current_raw}</code>\n\n"
-            "Использование: <code>/set_provider &lt;opencode|gemini&gt;</code>\n\n"
+            "Использование: <code>/set_provider &lt;opencode|gemini|freetheai&gt;</code>\n\n"
             "📝 <b>Описание:</b>\n"
             "• <code>opencode</code> — приоритет Opencode Go (с авто-фоллбэком на Gemini)\n"
-            "• <code>gemini</code>   — только Gemini (классический режим)\n\n"
+            "• <code>gemini</code>   — только Gemini (классический режим)\n"
+            "• <code>freetheai</code> — приоритет FreeTheAI\n\n"
             "Смена вступает в силу немедленно без перезапуска.",
             parse_mode="HTML",
         )
@@ -967,7 +969,13 @@ async def set_provider_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     logging.info("Admin %s switched PRIMARY_PROVIDER → %s", update.effective_user.id, provider)
 
-    label = "🚀 Opencode Go (фоллбэк: Gemini)" if provider == "opencode" else "🔵 Gemini (классический режим)"
+    if provider == "opencode":
+        label = "🚀 Opencode Go (фоллбэк: Gemini)"
+    elif provider == "freetheai":
+        label = "🔮 FreeTheAI"
+    else:
+        label = "🔵 Gemini (классический режим)"
+        
     await update.message.reply_text(
         f"✅ <b>Провайдер переключён:</b> {label}\n"
         "Все новые запросы будут маршрутизироваться через выбранный провайдер.",

@@ -474,8 +474,15 @@ def load_settings() -> Settings:
             if role_model and role_model not in settings_obj.OPENCODE_AVAILABLE_MODELS:
                 settings_obj.OPENCODE_AVAILABLE_MODELS.append(role_model)
 
+        # Check FreeTheAI models
+        if settings_obj.FREETHEAI_DEFAULT_MODEL not in settings_obj.FREETHEAI_AVAILABLE_MODELS:
+            logging.warning(
+                f"FREETHEAI_DEFAULT_MODEL '{settings_obj.FREETHEAI_DEFAULT_MODEL}' not in FREETHEAI_AVAILABLE_MODELS. Adding it."
+            )
+            settings_obj.FREETHEAI_AVAILABLE_MODELS.append(settings_obj.FREETHEAI_DEFAULT_MODEL)
+
         # Validate PRIMARY_PROVIDER
-        if settings_obj.PRIMARY_PROVIDER not in ("opencode", "gemini", "openrouter"):
+        if settings_obj.PRIMARY_PROVIDER not in ("opencode", "gemini", "openrouter", "freetheai"):
             logging.warning(
                 "Invalid PRIMARY_PROVIDER '%s'. Falling back to 'opencode'.",
                 settings_obj.PRIMARY_PROVIDER,
