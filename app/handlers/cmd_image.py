@@ -857,12 +857,19 @@ async def draw_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
-    state = _get_draw_state(context)
-    await _run_generation(
-        update,
+    # 1. Update the canvas state with the detected prompt
+    state = _set_draw_state(
         context,
         prompt=prompt,
-        model=state["model"],
-        aspect_ratio=state["aspect_ratio"],
-        enhance=state.get("enhance_prompt", True),
+        awaiting_prompt=False,
     )
+
+    # 2. Render confirmation text
+    auto_text = f"🎨 **Запрос на генерацию:**\n`{_escape_md(prompt)}`"
+    from app.utils.formatting import TelegramFormatter
+
+    formatted, parse_mode = TelegramFormatter.format_text(auto_text)
+
+    # 3. Apply canvas menu inline
+    keyboard = _build_main_menu(state)
+    await update.message.reply_text(formatted, parse_mode=parse_mode, reply_markup=keyboard)
