@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import io
 import logging
@@ -131,6 +132,67 @@ DAILY_NEGATIVE_PROMPT = (
     "text, letters, words, numbers, captions, labels, speech bubbles, "
     "watermark, signature, logo, UI, title, subtitle, handwriting, typography"
 )
+
+# -- FTA img/gpt-image-2 rate limiter ----------------------------------------
+# Constraints: max 1 concurrent request, max 10 requests per minute.
+# The limiter *waits* instead of refusing — callers don't need retry logic.
+
+_FTA_IMG_MODELS = frozenset({"fta-gpt-image-2"})
+_FTA_DAILY_MODEL_ID = "img/gpt-image-2"  # actual model slug for FreeTheAI API
+
+
+class _FtaImageRateLimiter:
+    """Semaphore(1) + sliding-window 10 req/min for FTA img/gpt-image-2."""
+
+    __slots__ = ("_sem", "_window", "_max_per_min")
+
+    def __init__(self, max_per_min: int = 10) -> None:
+        self._sem = asyncio.Semaphore(1)
+        self._window: collections.deque[float] = collections.deque()
+        self._max_per_min = max_per_min
+
+    async def acquire(self) -> None:
+        """Wait until both the semaphore and the per-minute window allow."""
+        await self._sem.acquire()
+        now = time.monotonic()
+        # Purge entries older than 60 s
+        while self._window and self._window[0] <= now - 60.0:
+            self._window.popleft()
+        if len(self._window) >= self._max_per_min:
+            # Wait until the oldest entry exits the window
+            wait_sec = 60.0 - (now - self._window[0])
+            if wait_sec > 0:
+                logger.info(
+                    "FTA rate limiter: waiting %.1fs for per-minute window",
+                    wait_sec,
+                )
+                await asyncio.sleep(wait_sec)
+            # Re-purge after sleeping
+            now = time.monotonic()
+            while self._window and self._window[0] <= now - 60.0:
+                self._window.popleft()
+        self._window.append(time.monotonic())
+
+    def release(self) -> None:
+        self._sem.release()
+
+
+_fta_rate_limiter = _FtaImageRateLimiter(max_per_min=10)
+
+
+async def get_daily_image_model() -> str:
+    """Return the currently configured daily image model from global settings.
+
+    Returns:
+        ``"pollinations"`` (default) or ``"fta-gpt-image-2"``.
+    """
+    from app.repos.settings_repo import get_global_setting
+
+    value = await get_global_setting(repo.DAILY_IMAGE_MODEL_SETTING_KEY, "pollinations")
+    value = value.strip().lower()
+    if value in _FTA_IMG_MODELS:
+        return value
+    return "pollinations"
 
 
 async def _translate_word_for_prompt(word: str) -> str | None:
@@ -267,21 +329,15 @@ async def _check_and_consume_image_quota(*, now: datetime | None = None) -> bool
     return True
 
 
-async def _generate_daily_image_file_id(
-    bot,
+async def _generate_via_pollinations(
     *,
     prompt: str,
     puzzle_date: date,
     difficulty: str,
     now: datetime | None = None,
-) -> str | None:
-    from app.config import settings
+) -> tuple[list[bytes], str]:
+    """Generate image bytes via Pollinations. Returns (images, model_label)."""
     from app.providers.pollinations import get_pollinations_provider
-
-    admin_id = getattr(settings, "ADMIN_ID", None)
-    if not admin_id:
-        logger.warning("daily puzzle image skipped for %s/%s: ADMIN_ID is not configured", puzzle_date, difficulty)
-        return None
 
     if not await _check_and_consume_image_quota(now=now):
         logger.info(
@@ -290,7 +346,7 @@ async def _generate_daily_image_file_id(
             difficulty,
             DAILY_IMAGE_QUOTA_PER_HOUR,
         )
-        return None
+        return [], repo.DAILY_IMAGE_MODEL
 
     provider = get_pollinations_provider()
     result = await provider.generate(
@@ -311,7 +367,6 @@ async def _generate_daily_image_file_id(
             difficulty,
             result.warning,
         )
-        # Propagate to admin alerting — callers check this field.
         try:
             from app.admin_alerts import AlertSeverity, alert_admin_raw
 
@@ -320,7 +375,7 @@ async def _generate_daily_image_file_id(
                 severity=AlertSeverity.WARNING,
             )
         except Exception:
-            pass  # best-effort; logging above is the primary record
+            pass
 
     if not result.success or not result.images:
         logger.warning(
@@ -330,21 +385,102 @@ async def _generate_daily_image_file_id(
             repo.DAILY_IMAGE_MODEL,
             result.error_message or "unknown",
         )
-        return None
+        return [], repo.DAILY_IMAGE_MODEL
+
+    return result.images, repo.DAILY_IMAGE_MODEL
+
+
+async def _generate_via_fta(
+    *,
+    prompt: str,
+    puzzle_date: date,
+    difficulty: str,
+) -> tuple[list[bytes], str]:
+    """Generate image bytes via FreeTheAI img/gpt-image-2.
+
+    Enforces rate limits: max 1 concurrent request, max 10 req/min.
+    Returns (images, model_label).
+    """
+    from app.providers.freetheai_image import get_fta_image_provider
+
+    model_label = _FTA_DAILY_MODEL_ID
+    await _fta_rate_limiter.acquire()
+    try:
+        provider = get_fta_image_provider()
+        result = await provider.generate(
+            prompt=prompt,
+            model=_FTA_DAILY_MODEL_ID,
+            size="1024x1024",
+            quality="auto",
+        )
+    finally:
+        _fta_rate_limiter.release()
+
+    if not result.success or not result.images:
+        logger.warning(
+            "daily puzzle image generation (FTA) failed date=%s difficulty=%s model=%s error=%s",
+            puzzle_date,
+            difficulty,
+            model_label,
+            result.error_message or "unknown",
+        )
+        return [], model_label
+
+    return result.images, model_label
+
+
+async def _generate_daily_image_file_id(
+    bot,
+    *,
+    prompt: str,
+    puzzle_date: date,
+    difficulty: str,
+    now: datetime | None = None,
+) -> tuple[str | None, str]:
+    """Generate a daily image and upload it to Telegram.
+
+    Returns:
+        (file_id, model_label) — file_id is None on failure.
+    """
+    from app.config import settings as app_settings
+
+    admin_id = getattr(app_settings, "ADMIN_ID", None)
+    if not admin_id:
+        logger.warning("daily puzzle image skipped for %s/%s: ADMIN_ID is not configured", puzzle_date, difficulty)
+        return None, repo.DAILY_IMAGE_MODEL
+
+    image_model = await get_daily_image_model()
+
+    if image_model in _FTA_IMG_MODELS:
+        images, model_label = await _generate_via_fta(
+            prompt=prompt,
+            puzzle_date=puzzle_date,
+            difficulty=difficulty,
+        )
+    else:
+        images, model_label = await _generate_via_pollinations(
+            prompt=prompt,
+            puzzle_date=puzzle_date,
+            difficulty=difficulty,
+            now=now,
+        )
+
+    if not images:
+        return None, model_label
 
     temp_msg = None
     try:
         temp_msg = await bot.send_photo(
             chat_id=admin_id,
             photo=InputFile(
-                io.BytesIO(result.images[0]),
+                io.BytesIO(images[0]),
                 filename=f"daily-{puzzle_date.isoformat()}-{difficulty}.jpg",
             ),
         )
         if not getattr(temp_msg, "photo", None):
             logger.warning("daily puzzle image upload returned no photo sizes for %s/%s", puzzle_date, difficulty)
-            return None
-        return temp_msg.photo[-1].file_id
+            return None, model_label
+        return temp_msg.photo[-1].file_id, model_label
     finally:
         if temp_msg is not None:
             with contextlib.suppress(Exception):
@@ -397,6 +533,10 @@ async def prepare_daily_puzzle(
                 hints = await get_daily_hints(puzzle)
                 puzzle = replace(puzzle, hints=hints, prepared_at=None)
 
+            # Resolve the currently configured image model for DB tagging
+            active_model = await get_daily_image_model()
+            model_tag = _FTA_DAILY_MODEL_ID if active_model in _FTA_IMG_MODELS else repo.DAILY_IMAGE_MODEL
+
             if not puzzle.image_prompt:
                 image_prompt = await _build_daily_image_prompt(
                     puzzle.target_word, puzzle.topic, difficulty=puzzle.difficulty
@@ -405,17 +545,17 @@ async def prepare_daily_puzzle(
                     puzzle.puzzle_date,
                     image_prompt,
                     difficulty=puzzle.difficulty,
-                    image_model=repo.DAILY_IMAGE_MODEL,
+                    image_model=model_tag,
                 )
                 puzzle = replace(
                     puzzle,
                     image_prompt=image_prompt,
-                    image_model=repo.DAILY_IMAGE_MODEL,
+                    image_model=model_tag,
                     prepared_at=None,
                 )
 
             if include_image and bot and (force_image or not puzzle.image_file_id):
-                image_file_id = await _generate_daily_image_file_id(
+                image_file_id, used_model = await _generate_daily_image_file_id(
                     bot,
                     prompt=puzzle.image_prompt,
                     puzzle_date=puzzle.puzzle_date,
@@ -426,12 +566,12 @@ async def prepare_daily_puzzle(
                         puzzle.puzzle_date,
                         image_file_id,
                         difficulty=puzzle.difficulty,
-                        image_model=repo.DAILY_IMAGE_MODEL,
+                        image_model=used_model,
                     )
                     puzzle = replace(
                         puzzle,
                         image_file_id=image_file_id,
-                        image_model=repo.DAILY_IMAGE_MODEL,
+                        image_model=used_model,
                         prepared_at=None,
                     )
 

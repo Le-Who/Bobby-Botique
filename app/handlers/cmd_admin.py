@@ -180,6 +180,7 @@ async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tup
         get_global_setting(_DAILYCROC_PLACEHOLDER_TEST_KEY, ""),
         get_crocodile_runtime_switches(),
         get_hint_prewarm_health(),
+        get_global_setting(daily_croc_repo.DAILY_IMAGE_MODEL_SETTING_KEY, "pollinations"),
     )
     stats: dict = _results[0]  # type: ignore[assignment]
     puzzles: dict = _results[1]  # type: ignore[assignment]
@@ -188,6 +189,7 @@ async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tup
     placeholder_test: str = _results[4]  # type: ignore[assignment]
     switches: dict = _results[5]  # type: ignore[assignment]
     hint_health: dict = _results[6]  # type: ignore[assignment]
+    image_model_raw: str = _results[7]  # type: ignore[assignment]
     runtime_health = get_runtime_health_snapshot()
     vertex_ready = get_vertex_client() is not None
     live_cooldown = _get_live_model_cooldown_seconds()
@@ -202,6 +204,7 @@ async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tup
         "",
         f"📨 <b>Рассылка:</b> {'включена ✅' if delivery_on == 'on' else 'выключена ❌'}",
         f"🖼 <b>Placeholder:</b> {'установлен ✅' if placeholder else 'не задан ⚠️'}",
+        f"🎨 <b>Image model:</b> <code>{image_model_raw}</code>",
         f"🧪 <b>Placeholder test:</b> {_render_placeholder_test_status(placeholder_test)}",
         "",
         "<b>Runtime switches:</b>",
@@ -1008,6 +1011,51 @@ async def set_dailycroc_delivery_command(update: Update, context: ContextTypes.D
     state = "включена ✅" if value == "on" else "выключена ❌"
     await update.message.reply_text(
         f"🐊 Daily-отправка {state}\nPre-generation пазлов, подсказок и изображений продолжает работать.",
+        parse_mode="HTML",
+    )
+
+
+_VALID_DAILY_IMAGE_MODELS = frozenset({"pollinations", "fta-gpt-image-2"})
+_DAILY_IMAGE_MODEL_LABELS = {
+    "pollinations": "🌏 Pollinations (qwen-image)",
+    "fta-gpt-image-2": "🖼️ FreeTheAI (img/gpt-image-2)",
+}
+
+
+@admin_only
+async def set_dailycroc_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Switch the image model used for daily crocodile art generation.
+
+    Usage: /set_dailycroc_model <pollinations|fta-gpt-image-2>
+
+    Constraints for fta-gpt-image-2:
+        - Max 1 concurrent request (enforced by semaphore)
+        - Max 10 requests per minute (sliding window)
+    """
+    args = context.args or []
+    current = await get_global_setting(daily_croc_repo.DAILY_IMAGE_MODEL_SETTING_KEY, "pollinations")
+
+    if not args or args[0].lower() not in _VALID_DAILY_IMAGE_MODELS:
+        label = _DAILY_IMAGE_MODEL_LABELS.get(current, current)
+        await update.message.reply_text(
+            f"🎨 <b>Текущая модель daily croc:</b> {label}\n\n"
+            "Использование: <code>/set_dailycroc_model &lt;model&gt;</code>\n\n"
+            "Доступные модели:\n"
+            "• <code>pollinations</code> — Pollinations qwen-image (default)\n"
+            "• <code>fta-gpt-image-2</code> — FreeTheAI img/gpt-image-2 "
+            "(⚠️ max 1 concurrent, 10 req/min)\n",
+            parse_mode="HTML",
+        )
+        return
+
+    value = args[0].lower()
+    await set_global_setting(daily_croc_repo.DAILY_IMAGE_MODEL_SETTING_KEY, value)
+    logging.info("Admin %s set daily_croc_image_model → %s", update.effective_user.id, value)
+
+    label = _DAILY_IMAGE_MODEL_LABELS.get(value, value)
+    await update.message.reply_text(
+        f"✅ Модель для daily croc артов переключена: {label}\n"
+        "Следующая генерация будет использовать новую модель.",
         parse_mode="HTML",
     )
 
