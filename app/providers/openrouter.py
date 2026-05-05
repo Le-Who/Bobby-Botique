@@ -328,6 +328,7 @@ class OpenRouterProvider(BaseAIProvider):
                         except json.JSONDecodeError:
                             continue
         except httpx.HTTPStatusError as e:
+            await e.response.aread()
             status = e.response.status_code
             yield self._build_http_error_tag(status, e.response.text, model_name)
         except Exception as e:

@@ -68,10 +68,9 @@ def _patch_draw_state(context: ContextTypes.DEFAULT_TYPE, **kwargs) -> dict:
 
 
 def _all_valid_models() -> list[str]:
-    from app.config import settings
+    from app.handlers.cmd_image import _get_all_models
 
-    models: list[str] = list(settings.POLLINATIONS_IMAGE_MODELS)
-    return models
+    return _get_all_models()
 
 
 # ── Keyboard factory (re-imported from cmd_image lazily) ──────────────────────

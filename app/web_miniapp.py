@@ -435,7 +435,8 @@ async def api_get_settings(user_id: int):
         gemini_models = list(settings.AVAILABLE_MODELS or [])
         openrouter_models = list(settings.OPENROUTER_AVAILABLE_MODELS or [])
         opencode_models = list(settings.OPENCODE_AVAILABLE_MODELS or [])
-        all_models = gemini_models + openrouter_models + opencode_models
+        freetheai_models = list(settings.FREETHEAI_AVAILABLE_MODELS or [])
+        all_models = gemini_models + openrouter_models + opencode_models + freetheai_models
 
         # Build grouped structure for the frontend picker
         grouped_models = []
@@ -443,6 +444,8 @@ async def api_get_settings(user_id: int):
             grouped_models.append({"provider": "Google Gemini", "icon": "🤖", "models": gemini_models})
         if opencode_models:
             grouped_models.append({"provider": "Opencode Go", "icon": "⚡", "models": opencode_models})
+        if freetheai_models:
+            grouped_models.append({"provider": "FreeTheAI", "icon": "🦅", "models": freetheai_models})
         if openrouter_models:
             grouped_models.append({"provider": "OpenRouter", "icon": "🌐", "models": openrouter_models})
 
