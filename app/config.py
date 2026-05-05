@@ -475,6 +475,12 @@ def load_settings() -> Settings:
                 settings_obj.OPENCODE_AVAILABLE_MODELS.append(role_model)
 
         # Check FreeTheAI models
+        # Filter out image models so they only appear in /draw, not in chat menus.
+        settings_obj.FREETHEAI_AVAILABLE_MODELS = [
+            m for m in settings_obj.FREETHEAI_AVAILABLE_MODELS
+            if not m.startswith(("vhr/", "img/"))
+        ]
+        
         if settings_obj.FREETHEAI_DEFAULT_MODEL not in settings_obj.FREETHEAI_AVAILABLE_MODELS:
             logging.warning(
                 f"FREETHEAI_DEFAULT_MODEL '{settings_obj.FREETHEAI_DEFAULT_MODEL}' not in FREETHEAI_AVAILABLE_MODELS. Adding it."

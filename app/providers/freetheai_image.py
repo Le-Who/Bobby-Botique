@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 # FTA image models that can be selected by the user.
 FTA_IMAGE_MODELS: list[str] = [
     "vhr/gpt_image_2",
+    "img/gpt-image-2",
     "vhr/nano_banana_2",
     "vhr/bytedance_seedream_v4",
 ]
@@ -36,7 +37,8 @@ FTA_IMAGE_DEFAULT: str = "vhr/gpt_image_2"
 
 # Human-readable labels for UI
 FTA_IMAGE_MODEL_LABELS: dict[str, str] = {
-    "vhr/gpt_image_2": "🎨 GPT Image 2",
+    "vhr/gpt_image_2": "🎨 GPT Image 2 (vhr)",
+    "img/gpt-image-2": "🖼️ GPT Image 2 (img)",
     "vhr/nano_banana_2": "🍌 NanoBanana 2",
     "vhr/bytedance_seedream_v4": "🌀 SeedReam v4",
 }
