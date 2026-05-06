@@ -217,11 +217,12 @@ function renderPuzzles(puzzles) {
                  data-action="saveModel" data-date="${p.date}" data-diff="${p.difficulty}">
                  <option value="flux" ${(p.image_model||'flux')==='flux'?'selected':''}>Flux Schnell</option>
                  <option value="zimage" ${(p.image_model||'flux')==='zimage'?'selected':''}>Z-Image Turbo ⚡</option>
-                 <option value="gptimage-1-5" ${(p.image_model||'flux')==='gptimage-large'?'selected':''}>GPT Image (DALL-E 3)</option>
-                 <option value="gptimage" ${(p.image_model||'flux')==='gptimage-large'?'selected':''}>GPT Image (DALL-E 3)</option>
+                 <option value="gptimage-1-5" ${(p.image_model||'flux')==='gptimage-1-5'?'selected':''}>GPT Image 1.5</option>
+                 <option value="gptimage" ${(p.image_model||'flux')==='gptimage'?'selected':''}>GPT Image (DALL-E 3)</option>
                  <option value="qwen-image" ${(p.image_model||'flux')==='qwen-image'?'selected':''}>Qwen Image</option>
                  <option value="wan-image" ${(p.image_model||'flux')==='wan-image'?'selected':''}>Wan Image</option>
                  <option value="klein" ${(p.image_model||'flux')==='klein'?'selected':''}>Klein</option>
+                 <option value="fta-gpt-image-2" ${(p.image_model||'flux')==='fta-gpt-image-2'?'selected':''}>🖼️ GPT Image 2 (FTA)</option>
                </select>
              </div>`
         }

@@ -825,7 +825,6 @@ async def api_admin_dailycroc_list():
 @require_auth
 @rate_limit_api
 async def api_admin_dailycroc_regen():
-    from app.providers.pollinations import get_pollinations_provider
     from app.repos.crocodile_daily import get_puzzle, set_puzzle_image_asset
 
     data = await request.get_json()
@@ -847,8 +846,6 @@ async def api_admin_dailycroc_regen():
         return jsonify({"error": "puzzle not found"}), 404
 
     try:
-        from telegram import InputMediaPhoto
-
         from app.bot_instance import get_bot
 
         bot = get_bot()
@@ -856,13 +853,28 @@ async def api_admin_dailycroc_regen():
             return jsonify({"error": "bot not ready"}), 503
 
         model = puzzle.image_model or "zimage"
-        provider = get_pollinations_provider()
-        res = await provider.generate(puzzle.image_prompt, width=1024, height=1024, model=model)
-        
-        if not res.success or not res.images:
-             return jsonify({"error": res.error_message or "failed to generate image"}), 500
 
-        photo_bytes = res.images[0]
+        # Dispatch to the correct provider based on model
+        if model == "fta-gpt-image-2":
+            from app.games.crocodile_daily import _generate_via_fta
+
+            images, model_label = await _generate_via_fta(
+                prompt=puzzle.image_prompt,
+                puzzle_date=dt,
+                difficulty=difficulty,
+            )
+            if not images:
+                return jsonify({"error": "FTA image generation failed"}), 500
+            photo_bytes = images[0]
+        else:
+            from app.providers.pollinations import get_pollinations_provider
+
+            provider = get_pollinations_provider()
+            res = await provider.generate(puzzle.image_prompt, width=1024, height=1024, model=model)
+
+            if not res.success or not res.images:
+                 return jsonify({"error": res.error_message or "failed to generate image"}), 500
+            photo_bytes = res.images[0]
 
         # Send to admin to get file_id
         from app.config import settings
