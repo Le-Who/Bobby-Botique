@@ -1,0 +1,7 @@
+💡 What: Optimized performance by replacing the expensive `str(part)` call on AI message objects in `gemini.py` and `thinking_classifier.py` with explicit dictionary access and type checking.
+
+🎯 Why: In large chat histories, running `str()` on multi-modal message parts (such as dictionaries holding 500KB+ base64 image strings or large bytearrays) causes Python to unnecessarily allocate entirely new massive strings simply to measure their lengths. This was an O(N) memory and CPU spike per request that blocked the main thread.
+
+📊 Impact: Reduces CPU parsing time and peak memory consumption significantly when dealing with large conversations or rich media, skipping the creation of huge unnecessary temporary string buffers during prompt length calculations.
+
+🔬 Measurement: Reviewing the memory consumption and response latency on chat requests containing multiple images and large document attachments will show decreased overhead before making API calls to Gemini.
