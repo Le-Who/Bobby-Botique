@@ -858,7 +858,7 @@ async def api_admin_dailycroc_regen():
         if model == "fta-gpt-image-2":
             from app.games.crocodile_daily import _generate_via_fta
 
-            images, model_label = await _generate_via_fta(
+            images, _model_label = await _generate_via_fta(
                 prompt=puzzle.image_prompt,
                 puzzle_date=dt,
                 difficulty=difficulty,

@@ -278,6 +278,7 @@ KNOWN_FTA_PREFIXES: tuple[str, ...] = (
     "cat/",
     "yng/",
     "vhr/",
+    "img/",          # img/gpt-image-2 — FTA image generation endpoint
     "or/google/lyria-",
 )
 

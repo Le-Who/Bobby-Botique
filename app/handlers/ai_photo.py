@@ -144,7 +144,22 @@ async def _process_ai_vision(
         already displayed to the user.  It may be ``None`` or empty string for
         genuinely empty AI responses — callers must handle that case.
     """
-    _, model_used, _ = await _resolve_ai_request(chat_state.model or settings.DEFAULT_MODEL)
+    from app.config import settings
+    from app.providers.freetheai_image import FTA_IMAGE_MODELS
+
+    raw_model = chat_state.model or settings.DEFAULT_MODEL
+    # FTA image-generation models (img/*, vhr/*) cannot analyse received photos.
+    # Fall back to the default Gemini vision model silently.
+    if raw_model in FTA_IMAGE_MODELS:
+        logging.debug(
+            "Vision request: model %s is image-gen-only — falling back to %s",
+            raw_model,
+            settings.DEFAULT_MODEL,
+        )
+        raw_model = settings.DEFAULT_MODEL
+
+    _, model_used, _ = await _resolve_ai_request(raw_model)
+
     history = [{"role": "user", "parts": parts}]
     _vision_t0 = time.monotonic()
 
