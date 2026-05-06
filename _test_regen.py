@@ -1,14 +1,18 @@
 import asyncio
 import logging
+
 from dotenv import load_dotenv
 
 load_dotenv(".env")
 
-from app import database as db
-from app.providers.pollinations import get_pollinations_provider
-from app.bot_instance import register_bot
-from telegram import Bot
 import os
+
+from telegram import Bot
+
+from app import database as db
+from app.bot_instance import register_bot
+from app.providers.pollinations import get_pollinations_provider
+
 
 async def main():
     logging.basicConfig(level=logging.INFO)

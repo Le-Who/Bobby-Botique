@@ -411,7 +411,6 @@ async def _generate_via_fta(
             prompt=prompt,
             model=_FTA_DAILY_MODEL_ID,
             size="1024x1024",
-            quality="auto",
         )
     finally:
         _fta_rate_limiter.release()
@@ -457,6 +456,15 @@ async def _generate_daily_image_file_id(
             puzzle_date=puzzle_date,
             difficulty=difficulty,
         )
+        if not images:
+            logger.warning("FTA image generation failed for %s/%s, falling back to Pollinations", puzzle_date, difficulty)
+            # Fallback to pollinations
+            images, model_label = await _generate_via_pollinations(
+                prompt=prompt,
+                puzzle_date=puzzle_date,
+                difficulty=difficulty,
+                now=now,
+            )
     else:
         images, model_label = await _generate_via_pollinations(
             prompt=prompt,

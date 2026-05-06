@@ -1,4 +1,5 @@
 import sys
+
 content = open('CHANGELOG.md', encoding='utf-8').read()
 if 'FreeTheAI Multimodal Integration' not in content:
     lines = content.split('\n')

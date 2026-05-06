@@ -153,10 +153,11 @@ class FreeTheAIImageProvider:
         }
 
         logger.info(
-            "FTA Image: model=%s key=…%s prompt_len=%d",
+            "FTA Image: model=%s key=…%s prompt_len=%d payload=%r",
             model,
             key_suffix,
             len(prompt),
+            payload,
         )
 
         t0 = time.monotonic()

@@ -1,5 +1,7 @@
 import asyncio
+
 from app import database as db
+
 
 async def main():
     await db.init()

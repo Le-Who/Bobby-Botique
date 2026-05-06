@@ -42,6 +42,7 @@ GEMINI_LIVE_VOICE_NAME: str = os.getenv("GEMINI_LIVE_VOICE_NAME", "Aoede").strip
 DEFAULT_POLLINATIONS_IMAGE_MODELS: list[str] = [
     "flux",
     "zimage",
+    "gptimage-1-5",
     "gptimage",
     "qwen-image",
     "wan-image",
