@@ -83,6 +83,10 @@ class AudioGenResult:
 
 
 def _suspend_lyria_key(key_hash: str, cooldown: timedelta | None = None) -> None:
+    # With a single key, suspending it means total unavailability — skip.
+    if len(get_freetheai_keys()) <= 1:
+        logger.info("Lyria: single-key mode, skipping suspension for %s…", key_hash[:8])
+        return
     _lyria_key_health[key_hash] = datetime.now(UTC) + (cooldown or _LYRIA_COOLDOWN)
     logger.warning(
         "Lyria key %s… suspended for %.0fs",

@@ -25,7 +25,13 @@ _FREETHEAI_COOLDOWN = timedelta(seconds=30)
 
 
 def suspend_freetheai_key(key_hash: str, cooldown: timedelta | None = None) -> None:
-    """Mark a FreeTheAI key as temporarily unavailable (in-memory only)."""
+    """Mark a FreeTheAI key as temporarily unavailable (in-memory only).
+
+    With a single key, suspension would cause total unavailability — skip.
+    """
+    if len(get_freetheai_keys()) <= 1:
+        logging.info("FreeTheAI: single-key mode, skipping suspension for %s…", key_hash[:8])
+        return
     _freetheai_key_health[key_hash] = datetime.now(UTC) + (cooldown or _FREETHEAI_COOLDOWN)
     logging.warning(
         "FreeTheAI key %s… suspended for %.0fs (in-memory)",

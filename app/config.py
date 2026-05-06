@@ -709,6 +709,25 @@ def get_freetheai_keys() -> list[str]:
     return config_manager.get_setting("FREETHEAI_API_KEYS", [])
 
 
+def get_all_available_models() -> list[str]:
+    """Return the union of all provider model lists.
+
+    Single source of truth — use this instead of manually concatenating
+    AVAILABLE_MODELS + OPENROUTER_AVAILABLE_MODELS + ... everywhere.
+    Prevents the class of bugs where a new provider's models are added
+    to some whitelists but missed in others.
+    """
+    s = config_manager.settings
+    models: list[str] = list(s.AVAILABLE_MODELS or [])
+    if s.OPENROUTER_AVAILABLE_MODELS:
+        models.extend(s.OPENROUTER_AVAILABLE_MODELS)
+    if s.OPENCODE_AVAILABLE_MODELS:
+        models.extend(s.OPENCODE_AVAILABLE_MODELS)
+    if s.FREETHEAI_AVAILABLE_MODELS:
+        models.extend(s.FREETHEAI_AVAILABLE_MODELS)
+    return models
+
+
 # ── Primary provider: DB-backed runtime toggle ────────────────────────────────
 # The DB global_settings store is the source-of-truth when the admin uses
 # /set_provider.  If the DB is unavailable (e.g. startup), we fall back to

@@ -5,7 +5,7 @@ from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
-from app.config import get_model_hash, get_openrouter_keys, settings
+from app.config import get_all_available_models, get_model_hash, get_openrouter_keys, settings
 from app.document_processor import get_user_documents
 from app.i18n import t
 from app.metrics import get_system_status_data
@@ -158,15 +158,7 @@ def get_model_menu_content(chat_state, context):
     openrouter_available = bool(get_openrouter_keys())
 
     # Create единый list всех моделей for индексации
-    all_models = []
-    if settings.AVAILABLE_MODELS:
-        all_models.extend(settings.AVAILABLE_MODELS)
-    if settings.OPENCODE_AVAILABLE_MODELS:
-        all_models.extend(settings.OPENCODE_AVAILABLE_MODELS)
-    if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
-        all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
-    if settings.FREETHEAI_AVAILABLE_MODELS:
-        all_models.extend(settings.FREETHEAI_AVAILABLE_MODELS)
+    all_models = get_all_available_models()
 
     if not all_models:
         from app.utils.keyboards import error_with_back_keyboard

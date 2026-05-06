@@ -64,6 +64,10 @@ class FTAImageResult:
 
 
 def _suspend_fta_img_key(key_hash: str, cooldown: timedelta | None = None) -> None:
+    # With a single key, suspending it means total unavailability — skip.
+    if len(get_freetheai_keys()) <= 1:
+        logger.info("FTA Image: single-key mode, skipping suspension for %s…", key_hash[:8])
+        return
     _fta_img_key_health[key_hash] = datetime.now(UTC) + (cooldown or _FTA_IMG_COOLDOWN)
     logger.warning(
         "FTA Image key %s… suspended for %.0fs",

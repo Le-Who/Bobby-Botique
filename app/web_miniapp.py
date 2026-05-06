@@ -495,14 +495,11 @@ async def api_update_settings(user_id: int):
                 chat_state.system_prompt = prompt.strip() or None
                 changed = True
 
-        # Model — validate against all three providers
+        # Model — validate against all providers (single source of truth)
         if "model" in body:
             model = body["model"]
-            all_models = (
-                list(settings.AVAILABLE_MODELS or [])
-                + list(settings.OPENROUTER_AVAILABLE_MODELS or [])
-                + list(settings.OPENCODE_AVAILABLE_MODELS or [])
-            )
+            from app.config import get_all_available_models
+            all_models = get_all_available_models()
             if model in all_models:
                 chat_state.model = model
                 changed = True
