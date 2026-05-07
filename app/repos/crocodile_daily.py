@@ -405,6 +405,83 @@ async def create_puzzle_if_missing(puzzle_date: date, *, difficulty: str = "easy
         return await _create_puzzle_if_missing_with_conn(puzzle_date, difficulty=difficulty, conn=conn)
 
 
+async def regenerate_puzzle_word(puzzle_date: date, difficulty: str = "easy") -> DailyPuzzle | None:
+    difficulty = normalize_daily_difficulty(difficulty)
+    pool = getattr(db.db_manager, "pool", None)
+    if not pool or getattr(pool, "_closed", False):
+        raise RuntimeError("Database pool not available")
+
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("LOCK TABLE public.crocodile_daily_days IN SHARE ROW EXCLUSIVE MODE")
+        await conn.execute("LOCK TABLE public.crocodile_daily_puzzles IN SHARE ROW EXCLUSIVE MODE")
+        
+        existing = await get_puzzle(puzzle_date, difficulty=difficulty, conn=conn)
+        if not existing:
+            return None
+
+        from app.games.word_bank import (
+            WORD_BANK,
+            _filter_words_by_difficulty,  # type: ignore[attr-defined]
+            pick_random_word_for_topic,
+            resolve_topic,
+        )
+
+        used_words = await get_used_daily_words(conn=conn)
+        used_words.add(normalize_daily_word(existing.target_word))
+        
+        if difficulty == "hard":
+            easy_puzzle = await get_puzzle(puzzle_date, difficulty="easy", conn=conn)
+            if easy_puzzle:
+                used_words.add(normalize_daily_word(easy_puzzle.target_word))
+
+        ru_categories = list(WORD_BANK.get("ru", {}).keys())
+        n = len(ru_categories)
+        difficulty_offset = 0 if difficulty == "easy" else n // 2
+        day_ordinal = puzzle_date.toordinal()
+        topic_candidates = [ru_categories[(day_ordinal + difficulty_offset + i) % n] for i in range(n)]
+
+        chosen_topic_raw = topic_candidates[0]
+        for candidate_cat in topic_candidates:
+            candidate_words = list(WORD_BANK["ru"].get(candidate_cat, []))
+            available = _filter_words_by_difficulty(
+                candidate_words,
+                topic_id=f"builtin:ru:{candidate_cat.lower()}",
+                preferred_difficulty=difficulty,
+            )
+            unused = [w for w in available if normalize_daily_word(w) not in used_words]
+            if unused:
+                chosen_topic_raw = candidate_cat
+                break
+
+        topic = resolve_topic(chosen_topic_raw)
+        word, lang, category, _ = await pick_random_word_for_topic(
+            topic,
+            used_words=used_words,
+            preferred_difficulty=difficulty,
+        )
+
+        rows = await db.db_query(
+            """
+            UPDATE public.crocodile_daily_puzzles
+            SET target_word = $1,
+                topic = $2,
+                lang = $3,
+                hints = '[]'::jsonb,
+                image_prompt = '',
+                image_file_id = '',
+                prepared_at = NULL
+            WHERE puzzle_date = $4 AND difficulty = $5
+            RETURNING puzzle_date, difficulty, target_word, topic, lang, hints,
+                      image_prompt, image_file_id, image_model, prepared_at
+            """,
+            (word, category, lang, puzzle_date, difficulty),
+            conn=conn,
+        )
+        if rows:
+            return _row_to_puzzle(rows[0])
+        return None
+
+
 async def set_puzzle_hints(puzzle_date: date, hints: list[str], *, difficulty: str = "easy") -> None:
     difficulty = normalize_daily_difficulty(difficulty)
     await db.db_query(

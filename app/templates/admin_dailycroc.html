@@ -114,13 +114,18 @@ body {
 .btn-save { background: var(--link); color: #fff; }
 .mt-8 { margin-top: 8px; }
 .error-text { color: var(--destructive); }
+.security-mode .puzzle-word { filter: blur(5px); transition: filter 0.2s; user-select: none; }
+.security-mode .puzzle-word:active { filter: none; }
 </style>
 </head>
 <body>
 
 <div class="header">
   <h1>Daily Crocodile</h1>
-  <button class="btn btn-refresh" data-action="loadPuzzles">🔄</button>
+  <div style="display: flex; gap: 8px;">
+    <button class="btn btn-refresh" id="toggle-security" data-action="toggleSecurity">🔒 Скрыть слова</button>
+    <button class="btn btn-refresh" data-action="loadPuzzles">🔄</button>
+  </div>
 </div>
 
 <div class="puzzle-list" id="puzzle-container">
@@ -352,6 +357,11 @@ document.addEventListener('click', (e) => {
   else if (action === 'savePrompt') savePrompt(date, diff);
   else if (action === 'cancelPrompt') cancelEditPrompt(date, diff);
   else if (action === 'loadPuzzles') loadPuzzles();
+  else if (action === 'toggleSecurity') {
+    document.body.classList.toggle('security-mode');
+    const isSec = document.body.classList.contains('security-mode');
+    document.getElementById('toggle-security').textContent = isSec ? '👁 Показать' : '🔒 Скрыть слова';
+  }
 });
 
 document.addEventListener('change', (e) => {
