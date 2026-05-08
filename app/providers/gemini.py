@@ -62,10 +62,20 @@ class GeminiProvider(BaseAIProvider):
         try:
             await metrics_collector.record_api_call("gemini", model_name)
 
+            # ⚡ Bolt: Helper to compute part length without stringifying large dictionaries
+            # This prevents massive memory allocations and latency spikes when processing multi-modal parts (like base64 image strings)
+            def _get_part_length(p: Any) -> int:
+                if isinstance(p, dict):
+                    return len(p.get("text", ""))
+                if isinstance(p, str):
+                    return len(p)
+                return 0
+
             # Compute metrics
             try:
                 prompt_length = sum(
-                    len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None
+                    _get_part_length(part)
+                    for item in history for part in (item.get("parts", []) or []) if part is not None
                 )
                 has_images = any(
                     isinstance(part, (bytes, bytearray, Image.Image))
