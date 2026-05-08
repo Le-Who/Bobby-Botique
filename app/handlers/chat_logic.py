@@ -58,6 +58,12 @@ def classify_resolution(
             user_message=(f"🚫 Все лимиты для всех моделей {provider} на сегодня исчерпаны. Попробуйте позже."),
         )
 
+    if resolution == "decryption_failed":
+        return ResolutionResult(
+            action="decryption_failed",
+            user_message="⚠️ Системная ошибка: Не удалось расшифровать API-ключи. Пожалуйста, проверьте конфигурацию `ADMIN_SECRET`."
+        )
+
     if resolution == "confirm_fallback":
         return ResolutionResult(
             action="confirm_fallback",

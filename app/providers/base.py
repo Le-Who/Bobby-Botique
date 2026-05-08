@@ -285,6 +285,8 @@ KNOWN_FTA_PREFIXES: tuple[str, ...] = (
 
 def is_freetheai_model(model_name: str) -> bool:
     """Check if model name indicates a FreeTheAI model."""
+    if not model_name:
+        return False
     return any(model_name.startswith(p) for p in KNOWN_FTA_PREFIXES)
 
 
@@ -293,6 +295,8 @@ def is_openrouter_model(model_name: str) -> bool:
 
     Has '/' but is NOT opencode-go/ and NOT a FreeTheAI prefix.
     """
+    if not model_name:
+        return False
     return (
         "/" in model_name
         and not model_name.startswith("opencode-go/")
@@ -302,6 +306,8 @@ def is_openrouter_model(model_name: str) -> bool:
 
 def is_opencode_model(model_name: str) -> bool:
     """Check if model name indicates an Opencode Go model."""
+    if not model_name:
+        return False
     return model_name.startswith("opencode-go/")
 
 

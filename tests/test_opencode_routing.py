@@ -434,21 +434,43 @@ class TestMultimodalGuard:
             assert "opencode" not in v, f"Fallback value {v!r} must be a Gemini model"
 
     def test_fallback_map_only_contains_canonical_opencode_models(self):
-        """Guard: only approved Opencode model names in the fallback map."""
+        """Guard: only approved Opencode model names in the fallback map.
+
+        Keep this set in sync with _get_opencode_gemini_fallback() in router.py.
+        When adding new Opencode models to the router, add them here too.
+        """
         from app.providers.router import _get_opencode_gemini_fallback
 
         _CANONICAL_OPENCODE = {
-            "opencode-go/minimax-m2.7",
-            "opencode-go/minimax-m2.5",
-            "opencode-go/qwen3.6-plus",
+            # GLM family
+            "opencode-go/glm-5",
+            "opencode-go/glm-5.1",
+            # Kimi family
             "opencode-go/kimi-k2.5",
-            "opencode-go/big-pickle",
-            "opencode-go/qwen3.5-plus",
+            "opencode-go/kimi-k2.6",
+            # MiMo family (V2 + V2.5)
+            "opencode-go/mimo-v2-pro",
             "opencode-go/mimo-v2-omni",
+            "opencode-go/mimo-v2.5-pro",
+            "opencode-go/mimo-v2.5",
+            # MiniMax family
+            "opencode-go/minimax-m2.5",
+            "opencode-go/minimax-m2.7",
+            # Qwen family
+            "opencode-go/qwen3.5-plus",
+            "opencode-go/qwen3.6-plus",
+            # DeepSeek family
+            "opencode-go/deepseek-v4-pro",
+            "opencode-go/deepseek-v4-flash",
+            # Legacy / routing alias
+            "opencode-go/big-pickle",
         }
         for key in _get_opencode_gemini_fallback():
             assert key in _CANONICAL_OPENCODE, (
-                f"Non-canonical Opencode model {key!r} found in fallback map. Allowed: {sorted(_CANONICAL_OPENCODE)}"
+                f"Non-canonical Opencode model {key!r} found in fallback map.\n"
+                f"Add it to _CANONICAL_OPENCODE in this test AND ensure it has a "
+                f"Gemini fallback in _get_opencode_gemini_fallback().\n"
+                f"Current allowed set: {sorted(_CANONICAL_OPENCODE)}"
             )
 
     def test_fallback_values_are_canonical_gemini_models(self):

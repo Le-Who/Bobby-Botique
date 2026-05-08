@@ -131,7 +131,7 @@ async def _handle_regular_chat(
 
     key_data, model_used, resolution = await _resolve_ai_request(model_for_this_request)
 
-    if resolution == "all_exhausted":
+    if resolution in ("all_exhausted", "decryption_failed"):
         result = classify_resolution(resolution, model_for_this_request)
         try:
             await placeholder_message.edit_text(result.user_message or "")

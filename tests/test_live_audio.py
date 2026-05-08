@@ -568,9 +568,14 @@ class TestLiveAudioProxy:
         test_client,
         mock_bot_token,
         mock_api_keys,
-        monkeypatch,
     ):
-        """RESOURCE_EXHAUSTED should trip a model cooldown and stop reconnect retries."""
+        """RESOURCE_EXHAUSTED should trip a model cooldown and stop reconnect retries.
+
+        The cooldown is now Redis-backed (async functions), not module-level globals.
+        We patch _get_live_model_cooldown_seconds to start at 0 (no active cooldown)
+        and _mark_live_model_cooldown to simulate the penalty being applied, so the
+        fatal message carries retry_after_seconds >= 15.
+        """
         init_data = make_valid_init_data(mock_bot_token, user_id=559)
         url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
 
@@ -580,13 +585,18 @@ class TestLiveAudioProxy:
         mock_client = MagicMock()
         mock_client.aio.live.connect.return_value = failing_connect
 
-        monkeypatch.setattr("app.web_miniapp._LIVE_MODEL_COOLDOWN_UNTIL", 0.0)
-        monkeypatch.setattr("app.web_miniapp._LIVE_MODEL_COOLDOWN_REASON", "")
+        async def _no_cooldown() -> int:
+            return 0
+
+        async def _mark_cooldown(seconds: int, reason: str) -> int:
+            return max(15, min(seconds, 300))
 
         with (
             patch("app.providers.gemini.get_live_api_client", return_value=mock_client),
             patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
+            patch("app.web_miniapp._get_live_model_cooldown_seconds", _no_cooldown),
+            patch("app.web_miniapp._mark_live_model_cooldown", _mark_cooldown),
         ):
             async with test_client.websocket(url) as ws:
                 fatal_raw = await ws.receive()

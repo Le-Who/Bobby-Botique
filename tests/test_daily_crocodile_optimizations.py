@@ -90,11 +90,12 @@ def test_get_english_equivalent_built_in_words():
 
 
 @pytest.mark.unit
-def test_get_bank_stats_returns_correct_bands():
+@pytest.mark.asyncio
+async def test_get_bank_stats_returns_correct_bands():
     from app.games.word_bank import WORD_BANK
 
     first_cat = list((WORD_BANK.get("ru") or {}).keys())[0]
-    stats = get_bank_stats(first_cat)
+    stats = await get_bank_stats(first_cat)
     assert "total" in stats
     assert "easy" in stats
     assert stats["total"] == stats["easy"] + stats["medium"] + stats["hard"]

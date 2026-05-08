@@ -201,7 +201,7 @@ async def inject_memory_layers(
     *,
     role_id: str | None = None,
     limit: int = 5,
-    min_similarity: float = 0.60,
+    min_similarity: float = 0.65,
 ) -> tuple[str, dict[str, int]]:
     """Inject all memory layers (L0-L2) into system_instruction.
 

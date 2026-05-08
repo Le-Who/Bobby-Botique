@@ -450,7 +450,7 @@ async def search_memories(
                 # set, not to act as a second hard threshold.
                 rows = list(results)
                 top_sim = float(rows[0]["sim"])
-                gap_threshold = max(_adaptive_floor, top_sim - 0.15)
+                gap_threshold = max(_adaptive_floor, top_sim - 0.08)
 
                 filtered = []
                 for r in rows:

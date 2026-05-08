@@ -33,12 +33,9 @@ logger = logging.getLogger(__name__)
 
 miniapp_blueprint = Blueprint("miniapp", __name__, template_folder="templates")
 
-# State tracking for Live Audio sessions
-ACTIVE_LIVE_SESSIONS: set[int] = set()
+# State tracking for Live Audio sessions (Redis-backed)
 _KEY_ROTATION_INDEX: int = 0
 _LIVE_CONNECT_RETRY_AFTER_RE = re.compile(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE)
-_LIVE_MODEL_COOLDOWN_UNTIL: float = 0.0
-_LIVE_MODEL_COOLDOWN_REASON: str = ""
 _LIVE_DEFAULT_THINKING_LEVEL = "low"
 _LIVE_THINKING_CONFIG_MAP: dict[str, str] = {
     "off": "minimal",
@@ -103,22 +100,33 @@ def _is_live_resource_exhausted(error_text: str) -> bool:
     )
 
 
-def _get_live_model_cooldown_seconds() -> int:
-    """Return remaining process-local cooldown for the Live model."""
-    return max(0, int(_LIVE_MODEL_COOLDOWN_UNTIL - time.monotonic()))
+async def _get_live_model_cooldown_seconds() -> int:
+    """Return remaining cluster-wide cooldown for the Live model."""
+    from app.cache import redis_client
+    if not redis_client:
+        return 0
+    ttl = await redis_client.ttl("live_model_cooldown")
+    return max(0, ttl)
 
 
-def _mark_live_model_cooldown(seconds: int, reason: str) -> int:
-    """Trip a short model-level breaker to stop reconnect storms."""
-    global _LIVE_MODEL_COOLDOWN_UNTIL, _LIVE_MODEL_COOLDOWN_REASON
+async def _get_live_model_cooldown_reason() -> str:
+    """Return the reason for the active model cooldown."""
+    from app.cache import redis_client
+    if not redis_client:
+        return ""
+    reason = await redis_client.get("live_model_cooldown")
+    return reason.decode("utf-8") if reason else ""
+
+
+async def _mark_live_model_cooldown(seconds: int, reason: str) -> int:
+    """Trip a short model-level breaker to stop reconnect storms across all workers."""
+    from app.cache import redis_client
+    if not redis_client:
+        return seconds
 
     cooldown_seconds = max(15, min(seconds, 300))
-    _LIVE_MODEL_COOLDOWN_UNTIL = max(
-        _LIVE_MODEL_COOLDOWN_UNTIL,
-        time.monotonic() + cooldown_seconds,
-    )
-    _LIVE_MODEL_COOLDOWN_REASON = reason[:500]
-    return _get_live_model_cooldown_seconds()
+    await redis_client.setex("live_model_cooldown", cooldown_seconds, reason[:500])
+    return cooldown_seconds
 
 
 async def _send_live_fatal(
@@ -1628,15 +1636,27 @@ async def _open_authenticated_live_socket(route_mode: str) -> None:
         await websocket.close(4003, "No user in initData")
         return
 
-    if user_id in ACTIVE_LIVE_SESSIONS:
+    from app.cache import redis_client
+
+    has_active_session = False
+    if redis_client:
+        # Atomically check and set the active session flag (15-min TTL safety net)
+        has_active_session = not await redis_client.set(
+            f"live_session:{user_id}",
+            "1",
+            nx=True,
+            ex=900,
+        )
+
+    if has_active_session:
         await websocket.close(4009, "User already has an active session")
         return
 
-    ACTIVE_LIVE_SESSIONS.add(user_id)
     try:
         await _handle_live_session(websocket, user_id, validated, resumption_token, transport_mode=route_mode)
     finally:
-        ACTIVE_LIVE_SESSIONS.discard(user_id)
+        if redis_client:
+            await redis_client.delete(f"live_session:{user_id}")
 
 
 @miniapp_blueprint.websocket("/live/ws")
@@ -1752,7 +1772,7 @@ async def _resolve_live_transport(
             "Голосовой режим временно недоступен: API ключи Gemini не настроены.",
         )
 
-    cooldown_seconds = _get_live_model_cooldown_seconds()
+    cooldown_seconds = await _get_live_model_cooldown_seconds()
     if cooldown_seconds > 0:
         return None, GEMINI_LIVE_MODEL, None, "server_capacity", str(cooldown_seconds)
 
@@ -1825,7 +1845,7 @@ async def _handle_live_session(
                 user_id,
                 model_name,
                 cooldown_seconds,
-                _LIVE_MODEL_COOLDOWN_REASON[:160],
+                (await _get_live_model_cooldown_reason())[:160],
             )
             await _send_live_fatal(
                 websocket,
@@ -2061,7 +2081,7 @@ async def _handle_live_session(
         if _is_live_resource_exhausted(err_str):
             retry_after_seconds = _extract_live_retry_after_seconds(err_str) or 60
             if transport_mode == _LIVE_DEFAULT_CONNECTION_MODE:
-                retry_after_seconds = _mark_live_model_cooldown(retry_after_seconds, err_str)
+                retry_after_seconds = await _mark_live_model_cooldown(retry_after_seconds, err_str)
             capacity_message = (
                 "Экспериментальный internet-live временно недоступен. "
                 "Попробуйте ещё раз чуть позже или продолжите в стандартном режиме."

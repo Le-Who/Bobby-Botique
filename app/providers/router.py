@@ -378,6 +378,7 @@ class ProviderRouter:
             # ── Race Requests: resolve up to 2 keys in parallel ──────────
             keys_to_race: list[dict] = []
             resolved_model: str | None = None
+            resolution_status: str | None = None
 
             for _race_idx in range(2):
                 key_data, model_used, _resolution = await use_case.resolve_ai_request(
@@ -385,6 +386,7 @@ class ProviderRouter:
                     use_openrouter=use_openrouter,
                     excluded_key_hashes=failed_keys | {k["key_hash"] for k in keys_to_race},
                 )
+                resolution_status = _resolution
                 if key_data and model_used:
                     keys_to_race.append(key_data)
                     resolved_model = model_used
@@ -403,6 +405,12 @@ class ProviderRouter:
                     keys_to_race.append({"api_key": "vertex", "key_hash": _VERTEX_KH})
 
             if not keys_to_race or not resolved_model:
+                if resolution_status == "decryption_failed":
+                    yield tag_error(
+                        ErrorCode.DECRYPTION_FAILED,
+                        "🔐 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET).",
+                    )
+                    return
                 # ── Cross-provider fallback: Opencode Go → Gemini (streaming) ─────
                 if is_opencode_model(preferred_model) and not _is_fallback:
                     gemini_fallback = _get_opencode_gemini_fallback().get(preferred_model, settings.DEFAULT_MODEL)

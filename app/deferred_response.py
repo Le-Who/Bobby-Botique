@@ -84,7 +84,19 @@ async def handle_deferred_ai_response(**kwargs) -> dict:
     system_instruction = kwargs.get("system_instruction")
 
     # Cooldown before retrying — give the API time to recover
-    await asyncio.sleep(15.0)
+    from telegram import Bot
+    from app.config import settings
+
+    try:
+        async with Bot(settings.TELEGRAM_BOT_TOKEN) as bot:
+            for _ in range(3):
+                try:
+                    await bot.send_chat_action(chat_id=chat_id, action="typing")
+                except Exception:
+                    pass
+                await asyncio.sleep(5.0)
+    except Exception:
+        await asyncio.sleep(15.0)
 
     from app.providers import get_provider_router
 

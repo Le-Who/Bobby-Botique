@@ -48,6 +48,57 @@ from app.utils.background_tasks import submit_task
 from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
 
 
+def chunk_message(text: str, max_length: int = 4096) -> list[str]:
+    """Split *text* into chunks of at most *max_length* characters.
+
+    Split priority per chunk boundary: newline → space → hard cut.
+    Each chunk is stripped; empty chunks are silently dropped.
+
+    Args:
+        text: The text to split.
+        max_length: Maximum character count per chunk. Must be > 0.
+
+    Raises:
+        ValueError: If *max_length* is not positive.
+    """
+    if max_length <= 0:
+        raise ValueError("max_length must be > 0")
+    if not text:
+        return []
+
+    chunks: list[str] = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= max_length:
+            chunk = remaining.strip()
+            if chunk:
+                chunks.append(chunk)
+            break
+
+        window = remaining[:max_length]
+
+        # 1. Try newline split
+        nl_pos = window.rfind("\n")
+        if nl_pos > 0:
+            chunk = remaining[:nl_pos].strip()
+            remaining = remaining[nl_pos + 1:]
+        else:
+            # 2. Try space split
+            sp_pos = window.rfind(" ")
+            if sp_pos > 0:
+                chunk = remaining[:sp_pos].strip()
+                remaining = remaining[sp_pos + 1:]
+            else:
+                # 3. Hard cut
+                chunk = remaining[:max_length].strip()
+                remaining = remaining[max_length:]
+
+        if chunk:
+            chunks.append(chunk)
+
+    return chunks
+
+
 async def _send_busy_ephemeral(update: Update) -> None:
     """Send localized busy toast that self-destructs after 4s."""
     # Use effective_message — works for both new and edited message contexts

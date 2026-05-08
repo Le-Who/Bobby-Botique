@@ -79,6 +79,7 @@ def setup_mocks():
     mock_telegram.InlineKeyboardButton = MockInlineKeyboardButton
     mock_telegram.InlineKeyboardMarkup = MockInlineKeyboardMarkup
     sys.modules["telegram"] = mock_telegram
+    sys.modules["telegram.constants"] = MagicMock()
     sys.modules["telegram.ext"] = MagicMock()
 
     # Mock pydantic
@@ -93,10 +94,14 @@ def setup_mocks():
     mock_pydantic.ValidationError = Exception
     sys.modules["pydantic"] = mock_pydantic
 
-    # Mock google.genai and redis
+    # Mock google.genai and redis (mock app.cache to avoid corrupting the real
+    # redis package entry in sys.modules — setup_module runs before conftest
+    # autouse fixtures which import crocodile_runtime → app.cache → redis.asyncio)
     sys.modules["google.genai"] = MagicMock()
     sys.modules["google.genai.errors"] = MagicMock()
-    sys.modules["redis"] = MagicMock()
+    mock_cache = MagicMock()
+    mock_cache.redis_client = MagicMock()
+    sys.modules["app.cache"] = mock_cache
 
     # Mock other needed parts, but do not override app.handlers package
     return MockInlineKeyboardButton, MockInlineKeyboardMarkup
@@ -110,11 +115,12 @@ _mocked_module_keys = [
     "app.document_processor",
     "app.utils.time",
     "telegram",
+    "telegram.constants",
     "telegram.ext",
     "pydantic",
     "google.genai",
     "google.genai.errors",
-    "redis",
+    "app.cache",
 ]
 
 
@@ -380,14 +386,17 @@ async def test_start_menu_buttons_structure():
 
 
 @pytest.mark.unit
+@patch("app.handlers.menus.get_all_available_models")
 @patch("app.handlers.menus.settings")
 @patch("app.handlers.menus.get_openrouter_keys")
-def test_get_model_menu_content_gemini_only(mock_get_keys, mock_settings_obj, mock_context):
+def test_get_model_menu_content_gemini_only(mock_get_keys, mock_settings_obj, mock_get_all, mock_context):
     """Test model menu with only Gemini models available."""
     mock_settings_obj.AVAILABLE_MODELS = ["gemini-pro", "gemini-flash"]
     mock_settings_obj.OPENCODE_AVAILABLE_MODELS = []
     mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = []
+    mock_settings_obj.FREETHEAI_AVAILABLE_MODELS = []
     mock_get_keys.return_value = []
+    mock_get_all.return_value = ["gemini-pro", "gemini-flash"]
 
     chat_state = ChatState(model="gemini-pro")
 
@@ -474,13 +483,15 @@ def test_get_model_menu_content_mixed(mock_get_keys, mock_settings_obj, mock_con
 
 
 @pytest.mark.unit
+@patch("app.handlers.menus.get_all_available_models")
 @patch("app.handlers.menus.settings")
 @patch("app.handlers.menus.get_openrouter_keys")
-def test_get_model_menu_content_no_models(mock_get_keys, mock_settings_obj, mock_context):
+def test_get_model_menu_content_no_models(mock_get_keys, mock_settings_obj, mock_get_all, mock_context):
     """Test model menu when no models are available."""
     mock_settings_obj.AVAILABLE_MODELS = []
     mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = []
     mock_get_keys.return_value = []
+    mock_get_all.return_value = []
 
     chat_state = ChatState(model="nonexistent-model")
 
@@ -498,13 +509,15 @@ def test_get_model_menu_content_no_models(mock_get_keys, mock_settings_obj, mock
 
 
 @pytest.mark.unit
+@patch("app.handlers.menus.get_all_available_models")
 @patch("app.handlers.menus.settings")
 @patch("app.handlers.menus.get_openrouter_keys")
-def test_context_update(mock_get_keys, mock_settings_obj, mock_context):
+def test_context_update(mock_get_keys, mock_settings_obj, mock_get_all, mock_context):
     """Test that context.user_data is updated with model list."""
     mock_settings_obj.AVAILABLE_MODELS = ["gemini-1"]
     mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = ["or-1"]
     mock_get_keys.return_value = ["key"]
+    mock_get_all.return_value = ["gemini-1", "or-1"]
 
     chat_state = ChatState(model="gemini-1")
 

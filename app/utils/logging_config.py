@@ -75,6 +75,32 @@ def configure_structlog_pipeline(enable_structured: bool, enable_pretty: bool) -
     return structlog.stdlib.ProcessorFormatter(processor=structlog.dev.ConsoleRenderer(colors=enable_pretty))
 
 
+
+# =============================================================================
+# REQUEST CONTEXT FILTER
+# =============================================================================
+
+
+class RequestContextFilter(logging.Filter):
+    """Logging filter that injects request/user context into every log record.
+
+    Reads from the asyncio context-var store set by ``set_request_id`` /
+    ``set_user_context`` and stamps each record with:
+      - ``record.request_id``
+      - ``record.user_id``
+      - ``record.chat_id``
+
+    Attach to any ``logging.Handler`` to get automatic correlation IDs in all
+    log lines without changing call-sites.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
+        record.request_id = get_request_id()
+        record.user_id = get_user_id()
+        record.chat_id = get_chat_id()
+        return True
+
+
 # Fallback basic formatter if structlog is missing
 class FallbackFormatter(logging.Formatter):
     def format(self, record):
