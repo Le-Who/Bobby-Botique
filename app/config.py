@@ -355,7 +355,7 @@ def load_settings() -> Settings:
         # Manually load all values from the environment.
         raw_settings = {
             "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
-            "ADMIN_SECRET": os.getenv("ADMIN_SECRET"),
+            "ADMIN_SECRET": (os.getenv("ADMIN_SECRET") or "").strip().strip("\"'").strip() or None,
             "DATABASE_URL": os.getenv("DATABASE_URL"),
             "ADMIN_ID": _load_int_env("ADMIN_ID", required=False) or 0,
             "PORT": os.getenv("PORT", "10000"),  # Provide a default for PORT
