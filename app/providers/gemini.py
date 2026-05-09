@@ -24,6 +24,23 @@ from app.utils.image_utils import TaggedImage, save_image_as_bytes
 _gemini_clients_cache: LRUCache = LRUCache(maxsize=50)
 
 
+def _get_part_text_length(part: Any) -> int:
+    """Helper to safely calculate the length of a multimodal part's text.
+
+    PERFORMANCE OPTIMIZATION:
+    - Avoids calling str() on bytes/bytearray objects which causes massive
+      memory allocations and CPU spikes when generating lengths for large payloads.
+    - Expected impact: ~O(1) memory and ~0ms time for binary parts vs O(N) allocation and slow str generation.
+    """
+    if isinstance(part, str):
+        return len(part)
+    if isinstance(part, dict):
+        return len(str(part.get("text", "")))
+    if isinstance(part, (bytes, bytearray)):
+        return 0
+    return len(str(part))
+
+
 def get_cached_genai_client(api_key: str) -> genai.Client:
     """Return a cached genai.Client for the given API key, creating one if needed."""
     if api_key not in _gemini_clients_cache:
@@ -65,7 +82,8 @@ class GeminiProvider(BaseAIProvider):
             # Compute metrics
             try:
                 prompt_length = sum(
-                    len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None
+                    _get_part_text_length(part)
+                    for item in history for part in (item.get("parts", []) or []) if part is not None
                 )
                 has_images = any(
                     isinstance(part, (bytes, bytearray, Image.Image))

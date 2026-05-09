@@ -19,6 +19,22 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+def _get_part_text_length(part: Any) -> int:
+    """Helper to safely calculate the length of a multimodal part's text.
+
+    PERFORMANCE OPTIMIZATION:
+    - Avoids calling str() on bytes/bytearray objects which causes massive
+      memory allocations and CPU spikes when generating lengths for large payloads.
+    - Expected impact: ~O(1) memory and ~0ms time for binary parts vs O(N) allocation and slow str generation.
+    """
+    if isinstance(part, str):
+        return len(part)
+    if isinstance(part, dict):
+        return len(str(part.get("text", "")))
+    if isinstance(part, (bytes, bytearray)):
+        return 0
+    return len(str(part))
+
 # ── Phase 1: Regex-based heuristics ──────────────────────────────────────────
 
 # HIGH signals — any single match → "high"
@@ -172,7 +188,10 @@ def classify_thinking_level(
         long_responses = sum(
             1
             for h in recent_model_msgs
-            if any(len(str(p.get("text", "") if isinstance(p, dict) else str(p))) > 2000 for p in h.get("parts", []))
+            if any(
+                _get_part_text_length(p) > 2000
+                for p in h.get("parts", [])
+            )
         )
         if long_responses >= 3:
             logger.debug("Thinking classifier: escalated MEDIUM->HIGH (conversation complexity)")
