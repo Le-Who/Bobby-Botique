@@ -32,7 +32,7 @@ def mock_boundaries():
         # Default happy-path setup
         m_resolve.return_value = (
             {"api_key": "k", "key_hash": "h"},
-            "gemini-3.1-flash-lite-preview",
+            "gemini-3.1-flash-lite",
             "direct",
         )
 

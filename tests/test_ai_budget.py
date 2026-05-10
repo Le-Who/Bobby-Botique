@@ -33,9 +33,9 @@ async def test_retry_after_quota_text_maps_to_rate_limit_cooldown():
 @pytest.mark.asyncio
 async def test_background_ai_studio_slot_blocked_during_model_cooldown():
     reset_budget_state_for_tests()
-    await record_result("ai_studio", "gemini-3.1-flash-lite-preview", "rate_limit", retry_after_seconds=60)
+    await record_result("ai_studio", "gemini-3.1-flash-lite", "rate_limit", retry_after_seconds=60)
 
-    lease = await acquire_background_slot("hint_generation", "ai_studio", "gemini-3.1-flash-lite-preview")
+    lease = await acquire_background_slot("hint_generation", "ai_studio", "gemini-3.1-flash-lite")
     assert lease is None
 
 
@@ -43,6 +43,6 @@ async def test_background_ai_studio_slot_blocked_during_model_cooldown():
 async def test_foreground_ai_studio_slot_allows_budgeted_request():
     reset_budget_state_for_tests()
 
-    lease = await acquire_foreground_slot("hint_generation", "ai_studio", "gemini-3.1-flash-lite-preview")
+    lease = await acquire_foreground_slot("hint_generation", "ai_studio", "gemini-3.1-flash-lite")
     assert lease is not None
     await lease.release()

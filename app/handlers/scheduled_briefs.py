@@ -249,7 +249,7 @@ async def _generate_brief_summary(topics: list[str], articles: list[dict[str, st
         from app.providers.gemini import get_cached_genai_client
         from app.repos.keys import get_available_gemini_key
 
-        key_data = await get_available_gemini_key(model_name="gemini-3.1-flash-lite-preview")
+        key_data = await get_available_gemini_key(model_name="gemini-3.1-flash-lite")
         if not key_data:
             logger.warning("No Gemini API key available for brief generation.")
             return {}
@@ -273,7 +273,7 @@ async def _generate_brief_summary(topics: list[str], articles: list[dict[str, st
         )
 
         response = await client.aio.models.generate_content(
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-3.1-flash-lite",
             contents=prompt,
             config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
         )

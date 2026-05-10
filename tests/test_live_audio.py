@@ -44,7 +44,7 @@ def live_settings(monkeypatch) -> SimpleNamespace:
         VERTEX_AI_KEY="vertex-key",
         VERTEX_AI_PROJECT=None,
         VERTEX_AI_LOCATION="us-central1",
-        DEFAULT_MODEL="gemini-3.1-flash-lite-preview",
+        DEFAULT_MODEL="gemini-3.1-flash-lite",
     )
     monkeypatch.setattr("app.config.settings", settings, raising=False)
     monkeypatch.setattr("app.web_miniapp.settings", settings, raising=False)
@@ -203,7 +203,7 @@ class TestLiveAudioSettingsApi:
     async def test_patch_live_settings_persists_selected_values(self, test_client, auth_headers):
         chat_state = ChatState(
             history=[],
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-3.1-flash-lite",
             token_count=0,
             search_enabled=False,
             system_prompt=None,
@@ -235,7 +235,7 @@ class TestLiveAudioSettingsApi:
     async def test_patch_live_settings_ignores_invalid_values(self, test_client, auth_headers):
         chat_state = ChatState(
             history=[],
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-3.1-flash-lite",
             token_count=0,
             search_enabled=False,
             system_prompt=None,
@@ -275,7 +275,7 @@ class TestLiveAudioProxy:
         url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
         chat_state = ChatState(
             history=[],
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-3.1-flash-lite",
             token_count=0,
             search_enabled=False,
             system_prompt=None,
@@ -330,7 +330,7 @@ class TestLiveAudioProxy:
         url = f"/webapp/live-vertex/ws?initData={urllib.parse.quote(init_data)}"
         chat_state = ChatState(
             history=[],
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-3.1-flash-lite",
             token_count=0,
             search_enabled=False,
             system_prompt=None,

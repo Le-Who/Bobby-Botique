@@ -22,7 +22,7 @@ Prompt translation:
       to the provider.  The translated text is shown in the caption so the user
       can see what was passed; the original Russian prompt is preserved in state.
     - The translation API call is tracked in metrics_collector under the key
-      "gemini_img_translate" / model "gemini-3.1-flash-lite-preview-04-17".
+      "gemini_img_translate" / model "gemini-3.1-flash-lite-04-17".
 
 State (draw_state in context.user_data):
     prompt          str   — original user prompt (always Russian / original language)
@@ -100,7 +100,7 @@ _CYRILLIC_NATIVE_MODELS: frozenset[str] = frozenset({"zimage"})
 _CYRILLIC_RE = re.compile(r"[а-яёА-ЯЁ]")
 
 # Translation model — cheapest Gemini variant; fast and cost-effective.
-_TRANSLATE_MODEL = "gemini-3.1-flash-lite-preview"
+_TRANSLATE_MODEL = "gemini-3.1-flash-lite"
 
 _DRAW_STATE_KEY = "draw_state"
 

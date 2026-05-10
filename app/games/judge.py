@@ -42,10 +42,10 @@ logger = logging.getLogger(__name__)
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
-_PRIMARY_MODEL = "gemini-3.1-flash-lite-preview"
+_PRIMARY_MODEL = "gemini-3.1-flash-lite"
 _FALLBACK_MODEL = "gemini-2.5-flash-lite"
 _HINTS_AI_STUDIO_MODEL = "gemini-3-flash-preview"
-_HINTS_VERTEX_MODEL = "gemini-3.1-flash-lite-preview"
+_HINTS_VERTEX_MODEL = "gemini-3.1-flash-lite"
 _HINTS_OPENCODE_MODEL_CANDIDATES = (
     "opencode-go/glm-5.1",
     "opencode-go/qwen3.6-plus",
@@ -296,7 +296,7 @@ async def _race_generate(
     """Fire up to 3 Gemini keys simultaneously; return the first valid result.
 
     Fallback chain:
-        1. Race up to 3 keys on _PRIMARY_MODEL (gemini-3.1-flash-lite-preview).
+        1. Race up to 3 keys on _PRIMARY_MODEL (gemini-3.1-flash-lite).
         2. If all fail (503 / timeout / 429), retry once with _FALLBACK_MODEL.
         3. If still None → caller receives judge_unavailable sentinel.
 

@@ -19,7 +19,7 @@ class TestGetModelHash:
         assert get_model_hash("gemini-2.5-flash") == get_model_hash("gemini-2.5-flash")
 
     def test_different_models_different_hashes(self):
-        assert get_model_hash("gemini-2.5-flash") != get_model_hash("gemini-3.1-flash-lite-preview")
+        assert get_model_hash("gemini-2.5-flash") != get_model_hash("gemini-3.1-flash-lite")
 
 
 # ── _load_and_clean_keys ─────────────────────────────────────────────────────

@@ -9,6 +9,10 @@ Three-phase classification:
   3. Context-aware escalation from conversation history.
 
 User's explicit ``thinking_level`` always overrides.
+
+Model-aware defaults:
+  - ``gemini-3.1-flash-lite`` → defaults to ``"high"`` in auto mode
+    (stable version benefits from extended thinking; per Google docs).
 """
 
 from __future__ import annotations
@@ -212,15 +216,32 @@ def classify_thinking_level(
     return level
 
 
+# ── Model-specific auto-mode defaults ─────────────────────────────────────────
+# When the user hasn't set a thinking level, some models benefit from a fixed
+# default instead of the adaptive classifier.
+_MODEL_DEFAULT_THINKING: dict[str, str] = {
+    "3.1-flash-lite": "high",  # stable release; "high" maximises quality
+}
+
+
 def resolve_thinking_level(
     user_level: str | None,
     message: str,
     history: list[dict[str, Any]] | None = None,
+    *,
+    model: str | None = None,
 ) -> str | None:
     """Resolve the effective thinking level.
 
     If the user has explicitly set a level (low/medium/high/off), respect it.
-    If the user's level is None or "auto", classify automatically.
+    If the user's level is None or "auto", check model-specific defaults first,
+    then fall back to the adaptive classifier.
+
+    Args:
+        user_level: User's explicitly chosen level or None (auto).
+        message: The user's message text.
+        history: Optional recent conversation history for context-aware escalation.
+        model: Model name being used (e.g. "gemini-3.1-flash-lite").
 
     Returns:
         Effective thinking level string or None (for "off").
@@ -231,5 +252,16 @@ def resolve_thinking_level(
     if user_level == "off":
         return None
 
-    # Auto mode — classify
+    # Model-specific default (auto mode)
+    if model:
+        for pattern, default_level in _MODEL_DEFAULT_THINKING.items():
+            if pattern in model:
+                logger.debug(
+                    "Thinking resolver: using model default '%s' for %s",
+                    default_level,
+                    model,
+                )
+                return default_level
+
+    # Auto mode — classify via heuristics
     return classify_thinking_level(message, history=history)

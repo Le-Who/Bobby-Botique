@@ -24,7 +24,7 @@ class TestUnifiedCallPath:
             token_count=42,
             success=True,
             provider="gemini",
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-3.1-flash-lite",
         )
 
         with patch("app.providers.get_provider_for_model") as mock_factory:
@@ -35,13 +35,13 @@ class TestUnifiedCallPath:
             text, tokens = await use_case.get_ai_response(
                 api_key="test-key",
                 history=[{"role": "user", "parts": ["hi"]}],
-                model_name="gemini-3.1-flash-lite-preview",
+                model_name="gemini-3.1-flash-lite",
                 use_openrouter=False,
             )
 
         assert text == "Gemini says hi"
         assert tokens == 42
-        mock_factory.assert_called_once_with("gemini-3.1-flash-lite-preview", "test-key")
+        mock_factory.assert_called_once_with("gemini-3.1-flash-lite", "test-key")
 
     @pytest.mark.asyncio
     async def test_openrouter_routes_through_provider(self):
@@ -90,7 +90,7 @@ class TestUnifiedCallPath:
             success=False,
             error_message="API key invalid",
             provider="gemini",
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-3.1-flash-lite",
         )
 
         with patch("app.providers.get_provider_for_model") as mock_factory:
@@ -101,7 +101,7 @@ class TestUnifiedCallPath:
             text, tokens = await use_case.get_ai_response(
                 api_key="bad-key",
                 history=[{"role": "user", "parts": ["hi"]}],
-                model_name="gemini-3.1-flash-lite-preview",
+                model_name="gemini-3.1-flash-lite",
             )
 
         assert "❌" in text

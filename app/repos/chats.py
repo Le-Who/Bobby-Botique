@@ -164,7 +164,7 @@ async def get_user_chat(user_id: int) -> ChatState | None:
 
 
 def _default_model() -> str:
-    return settings.DEFAULT_MODEL if settings else "gemini-3.1-flash-lite-preview"
+    return settings.DEFAULT_MODEL if settings else "gemini-3.1-flash-lite"
 
 
 def _default_chat_state() -> ChatState:

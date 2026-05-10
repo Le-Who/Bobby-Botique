@@ -1377,7 +1377,7 @@ async def clear_generated_category(
 async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | None:
     """Фаст-генерация одного слова — рейтинг Vertex AI Express (приоритет) vs Opencode (резерв).
 
-    Slot A: gemini-3.1-flash-lite-preview on Vertex AI Express with Search Grounding.
+    Slot A: gemini-3.1-flash-lite on Vertex AI Express with Search Grounding.
       Grounding is safe: output constrained to 1 word/phrase; grounding only
       enriches knowledge for obscure topics (e.g. 'персонаж сериала Извне').
     Slot B: Opencode inline model via ProviderRouter (fast when healthy).
@@ -1404,7 +1404,7 @@ async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | N
 
     # ── Slot A: Vertex AI Express + Search Grounding (primary) ────────────────
     async def _vertex_slot() -> str | None:
-        lease = await acquire_foreground_slot("fast_word", "vertex_express", "gemini-3.1-flash-lite-preview")
+        lease = await acquire_foreground_slot("fast_word", "vertex_express", "gemini-3.1-flash-lite")
         if lease is None:
             return None
         try:
@@ -1418,7 +1418,7 @@ async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | N
             async with lease:
                 resp = await asyncio.wait_for(
                     vertex_client.aio.models.generate_content(
-                        model="gemini-3.1-flash-lite-preview",
+                        model="gemini-3.1-flash-lite",
                         contents=prompt,
                         config=_gtypes.GenerateContentConfig(
                             tools=[_gtypes.Tool(google_search=_gtypes.GoogleSearch())],
@@ -1430,11 +1430,11 @@ async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | N
                 )
             result = _validate(getattr(resp, "text", None))
             if result:
-                await record_result("vertex_express", "gemini-3.1-flash-lite-preview", "success")
+                await record_result("vertex_express", "gemini-3.1-flash-lite", "success")
                 logger.info("Fast word (Vertex+grounding) for %r: %r", category, result)
             return result
         except Exception as exc:
-            await record_result("vertex_express", "gemini-3.1-flash-lite-preview", "transient", reason=str(exc)[:500])
+            await record_result("vertex_express", "gemini-3.1-flash-lite", "transient", reason=str(exc)[:500])
             logger.warning("Fast word Vertex slot failed for %r: %r", category, exc)
             return None
 

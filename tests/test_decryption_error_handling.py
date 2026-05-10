@@ -48,7 +48,7 @@ async def test_resolve_key_generic_catches_decryption_error_in_fallback(use_case
     key, model, resolution = await use_case._resolve_key_generic(
         preferred_model="gemini-2.5-flash",
         get_key_func=get_key,
-        fallback_priority=["gemini-3.1-flash-lite-preview"],
+        fallback_priority=["gemini-3.1-flash-lite"],
         provider_name="Gemini",
     )
 
@@ -108,7 +108,7 @@ async def test_decryption_error_does_not_retry(use_case):
     key, model, resolution = await use_case._resolve_key_generic(
         preferred_model="gemini-2.5-flash",
         get_key_func=get_key,
-        fallback_priority=["gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite"],
+        fallback_priority=["gemini-3.1-flash-lite", "gemini-2.5-flash-lite"],
         provider_name="Gemini",
     )
 

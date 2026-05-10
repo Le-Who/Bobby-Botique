@@ -231,7 +231,7 @@ class TestProviderRouterFallback:
 
             router = ProviderRouter()
             result_text, result_tokens = await router.get_response(
-                "gemini-3.1-flash-lite-preview",
+                "gemini-3.1-flash-lite",
                 [{"role": "user", "parts": ["Hello"]}],
             )
 
@@ -254,7 +254,7 @@ class TestProviderRouterFallback:
 
         # First call — no exclusions
         key1, model1, err1 = await use_case._resolve_key_generic(
-            "gemini-3.1-flash-lite-preview",
+            "gemini-3.1-flash-lite",
             mock_get_key,
             [],
             excluded_key_hashes=None,
@@ -264,7 +264,7 @@ class TestProviderRouterFallback:
 
         # Second call — exclude first key
         key2, model2, err2 = await use_case._resolve_key_generic(
-            "gemini-3.1-flash-lite-preview",
+            "gemini-3.1-flash-lite",
             mock_get_key,
             [],
             excluded_key_hashes={"h1"},

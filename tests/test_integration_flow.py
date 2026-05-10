@@ -132,7 +132,7 @@ async def test_happy_path_text_message(run_background_sync):
 
     # Preset chat state in the mock memory block
     fake_chat_state = SimpleNamespace(
-        model="gemini-3.1-flash-lite-preview",
+        model="gemini-3.1-flash-lite",
         system_prompt=None,
         history=[],
         token_count=0,
@@ -173,7 +173,7 @@ async def test_happy_path_text_message(run_background_sync):
         patch(
             "app.handlers.ai_chat._resolve_ai_request",
             new_callable=AsyncMock,
-            return_value=({"api_key": "k"}, "gemini-3.1-flash-lite-preview", "direct"),
+            return_value=({"api_key": "k"}, "gemini-3.1-flash-lite", "direct"),
         ),
         patch(
             "app.streaming.stream_and_display",
@@ -232,7 +232,7 @@ async def test_agent_error_shows_retry_keyboard(run_background_sync):
     context = make_context()
 
     fake_chat_state = SimpleNamespace(
-        model="gemini-3.1-flash-lite-preview",
+        model="gemini-3.1-flash-lite",
         system_prompt=None,
         history=[],
         token_count=0,

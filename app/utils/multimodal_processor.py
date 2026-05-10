@@ -24,8 +24,8 @@ from app.resilience_policy import ResiliencePolicy, run_with_resilience
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-TRANSCRIPTION_MODEL = "gemini-3.1-flash-lite-preview"
-IMAGE_DESCRIPTION_MODEL = "gemini-3.1-flash-lite-preview"
+TRANSCRIPTION_MODEL = "gemini-3.1-flash-lite"
+IMAGE_DESCRIPTION_MODEL = "gemini-3.1-flash-lite"
 
 # High thinking level for accurate ASR on noisy/accented audio.
 THINKING_CONFIG_HIGH = types.ThinkingConfig(thinking_level="high")  # type: ignore[arg-type]
@@ -100,7 +100,7 @@ async def _get_api_key_for_media(
 
     Uses the existing key-rotation system with health-aware fallback.
     The ``model`` parameter ensures keys are resolved for the actual
-    media model (e.g. gemini-3.1-flash-lite-preview), not the default chat model.
+    media model (e.g. gemini-3.1-flash-lite), not the default chat model.
 
     Returns:
         (api_key, key_hash) tuple on success, or (None, None) on failure.
@@ -268,7 +268,7 @@ async def _generate_with_resilience(
 # but is often offline; gemini-3-flash-preview is the reliable last-stand;
 # opencode-go/big-pickle is used as final insurance (different infra pool).
 _INTENT_MODEL_CHAIN = [
-    "gemini-3.1-flash-lite-preview",
+    "gemini-3.1-flash-lite",
     "gemini-3-flash-preview",
     "opencode-go/big-pickle",
 ]
@@ -356,7 +356,7 @@ async def transcribe_voice(
         audio_bytes: Raw audio file content (e.g. OGG Opus from Telegram).
         api_key: Explicit API key. If None, uses automatic key rotation.
         mime_type: MIME type of the audio. Telegram voices are 'audio/ogg'.
-        model: Model to use. Defaults to gemini-3.1-flash-lite-preview.
+        model: Model to use. Defaults to gemini-3.1-flash-lite.
 
     Returns:
         Tuple of (transcript_text, intent, draw_prompt).
@@ -473,7 +473,7 @@ async def describe_image(
         api_key: Explicit API key. If None, uses automatic key rotation.
         mime_type: MIME type of the image.
         prompt: Optional user prompt to guide the description.
-        model: Model to use. Defaults to gemini-3.1-flash-lite-preview.
+        model: Model to use. Defaults to gemini-3.1-flash-lite.
 
     Returns:
         Image description text, or None on failure.
@@ -511,7 +511,7 @@ async def summarize_document_text(
     Args:
         text: Pre-extracted document text content.
         api_key: Explicit API key. If None, uses automatic key rotation.
-        model: Model to use. Defaults to gemini-3.1-flash-lite-preview.
+        model: Model to use. Defaults to gemini-3.1-flash-lite.
 
     Returns:
         Summary text, or None on failure.

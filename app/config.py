@@ -17,7 +17,7 @@ from app.utils.json_compat import json
 # Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().
 DEFAULT_GEMINI_MODELS: list[str] = [
     "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite-preview",
+    "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
 ]
@@ -193,7 +193,7 @@ class Settings(BaseModel):
     POLLINATIONS_API_KEY: str = ""
 
     # --- Vertex AI Express (optional resilience pathway for judge) ---
-    # Provides a stable alternative endpoint for gemini-3.1-flash-lite-preview
+    # Provides a stable alternative endpoint for gemini-3.1-flash-lite
     # when the Gemini API is under high load (503 storms).
     # Requires a *Google Cloud* API key — NOT a Gemini AI Studio key.
     # How to get one: GCP Console → APIs & Services → Credentials → Create API Key
@@ -242,11 +242,11 @@ class Settings(BaseModel):
     # --- MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
     AVAILABLE_MODELS: list[str] = DEFAULT_GEMINI_MODELS.copy()
-    DEFAULT_MODEL: str = "gemini-3.1-flash-lite-preview"
+    DEFAULT_MODEL: str = "gemini-3.1-flash-lite"
     QNA_MODEL: str = "gemini-2.5-flash"
-    RESEARCH_MODEL: str = "gemini-3.1-flash-lite-preview"
-    URL_SELECTION_MODEL: str = "gemini-3.1-flash-lite-preview"
-    TAXONOMY_MODEL: str = "gemini-3.1-flash-lite-preview"  # MemPalace: wing/room classification + contradiction judge
+    RESEARCH_MODEL: str = "gemini-3.1-flash-lite"
+    URL_SELECTION_MODEL: str = "gemini-3.1-flash-lite"
+    TAXONOMY_MODEL: str = "gemini-3.1-flash-lite"  # MemPalace: wing/room classification + contradiction judge
 
     # --- OPENROUTER MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
@@ -318,7 +318,7 @@ class Settings(BaseModel):
     # flash-lite: lighter architecture, faster degradation → conservative 32K.
     # flash:      good quality up to ~128K (validated sweet spot for reasoning).
     MODEL_CONTEXT_BUDGETS: dict[str, int] = {
-        "flash-lite": 32_000,  # gemini-2.5-flash-lite, gemini-3.1-flash-lite-preview
+        "flash-lite": 32_000,  # gemini-2.5-flash-lite, gemini-3.1-flash-lite
         "flash": 128_000,  # gemini-2.5-flash, gemini-3-flash-preview
     }
     DEFAULT_CONTEXT_BUDGET: int = 128_000
@@ -390,11 +390,11 @@ def load_settings() -> Settings:
             or default_gemini_models,
             "OPENROUTER_AVAILABLE_MODELS": _load_and_clean_keys("OPENROUTER_AVAILABLE_MODELS", required=False)
             or default_openrouter_models,
-            "DEFAULT_MODEL": _load_single_model("DEFAULT_MODEL", "gemini-3.1-flash-lite-preview"),
+            "DEFAULT_MODEL": _load_single_model("DEFAULT_MODEL", "gemini-3.1-flash-lite"),
             "QNA_MODEL": _load_single_model("QNA_MODEL", "gemini-2.5-flash-lite"),
-            "RESEARCH_MODEL": _load_single_model("RESEARCH_MODEL", "gemini-3.1-flash-lite-preview"),
-            "URL_SELECTION_MODEL": _load_single_model("URL_SELECTION_MODEL", "gemini-3.1-flash-lite-preview"),
-            "TAXONOMY_MODEL": _load_single_model("TAXONOMY_MODEL", "gemini-3.1-flash-lite-preview"),
+            "RESEARCH_MODEL": _load_single_model("RESEARCH_MODEL", "gemini-3.1-flash-lite"),
+            "URL_SELECTION_MODEL": _load_single_model("URL_SELECTION_MODEL", "gemini-3.1-flash-lite"),
+            "TAXONOMY_MODEL": _load_single_model("TAXONOMY_MODEL", "gemini-3.1-flash-lite"),
             "OPENROUTER_DEFAULT_MODEL": _load_single_model("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_QNA_MODEL": _load_single_model("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_RESEARCH_MODEL": _load_single_model("OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free"),

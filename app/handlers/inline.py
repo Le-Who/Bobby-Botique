@@ -62,7 +62,7 @@ from app.utils.text_format import markdown_to_html, strip_formatting
 
 # Primary inline model: Vertex AI Express (more stable, native Search Grounding).
 # AI Studio keys race alongside as fallback slots using _INLINE_FALLBACK_MODEL.
-_INLINE_MODEL = "gemini-3.1-flash-lite-preview"
+_INLINE_MODEL = "gemini-3.1-flash-lite"
 _INLINE_FALLBACK_MODEL = "gemini-2.5-flash-lite"
 
 # Outer timeout for the entire generation pipeline.
@@ -1105,11 +1105,11 @@ async def _stream_inline_fast(
             await _q.put((kh, _End(kh), None))
 
         # ── Vertex AI Express slot ─────────────────────────────────────────────
-        # gemini-3.1-flash-lite-preview on Vertex supports Search Grounding and
+        # gemini-3.1-flash-lite on Vertex supports Search Grounding and
         # races alongside the 3 AI Studio keys. Uses a pseudo-key-hash so the
         # shared queue logic treats it uniformly.
         _VERTEX_KH = "__vertex_ai__"
-        _INLINE_VERTEX_MODEL = "gemini-3.1-flash-lite-preview"
+        _INLINE_VERTEX_MODEL = "gemini-3.1-flash-lite"
         _vertex_grounding_holder: list[list[tuple[str, str]]] = [[]]  # mutable closure slot
 
         async def _vertex_race(_q: asyncio.Queue = q) -> None:
@@ -1340,7 +1340,7 @@ async def _generate_and_edit_inline(
     history = [{"role": "user", "parts": [user_query]}]
 
     # ── Step 2: Generate (3-way Race Requests, up to 4 rounds) ──────────────────
-    # Primary: Vertex AI Express (gemini-3.1-flash-lite-preview) with Search Grounding.
+    # Primary: Vertex AI Express (gemini-3.1-flash-lite) with Search Grounding.
     # Fallback racers: 2x AI Studio keys (gemini-2.5-flash-lite) per round.
     _gen_start = time.monotonic()
     final_answer: str | None = None

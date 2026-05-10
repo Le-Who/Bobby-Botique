@@ -478,7 +478,7 @@ class TestMultimodalGuard:
         from app.providers.router import _get_opencode_gemini_fallback
 
         _CANONICAL_GEMINI = {
-            "gemini-3.1-flash-lite-preview",
+            "gemini-3.1-flash-lite",
             "gemini-3-flash-preview",
             "gemini-2.5-flash",
             "gemini-2.5-flash-lite",

@@ -413,7 +413,7 @@ class TestPickRandomWord:
         reset_budget_state_for_tests()
         reset_hint_runtime_state_for_tests()
 
-        await record_result("ai_studio", "gemini-3.1-flash-lite-preview", "rate_limit", retry_after_seconds=60)
+        await record_result("ai_studio", "gemini-3.1-flash-lite", "rate_limit", retry_after_seconds=60)
         with patch("app.games.hinting.is_hint_prewarm_enabled", new_callable=AsyncMock, return_value=True):
             assert (
                 await enqueue_bank_hint_prewarm(

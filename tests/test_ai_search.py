@@ -9,7 +9,7 @@ from app.core.agentic import AgenticResult
 
 
 def make_chat_state(
-    model="gemini-3.1-flash-lite-preview",
+    model="gemini-3.1-flash-lite",
     system_prompt=None,
     history=None,
     is_deep_dive=False,

@@ -36,7 +36,7 @@ def make_original_message(caption=None, user_id=123):
 
 def make_chat_state():
     return SimpleNamespace(
-        model="gemini-3.1-flash-lite-preview",
+        model="gemini-3.1-flash-lite",
         system_prompt=None,
         history=[],
         token_count=0,
@@ -67,7 +67,7 @@ async def test_handle_photo_success():
         patch(
             "app.handlers.ai_photo._resolve_ai_request",
             new_callable=AsyncMock,
-            return_value=({"key": "val"}, "gemini-3.1-flash-lite-preview", None),
+            return_value=({"key": "val"}, "gemini-3.1-flash-lite", None),
         ),
         patch(
             "app.handlers.ai_photo._get_ai_response_with_routing",
@@ -117,7 +117,7 @@ async def test_handle_photo_empty_response():
         patch(
             "app.handlers.ai_photo._resolve_ai_request",
             new_callable=AsyncMock,
-            return_value=({"key": "val"}, "gemini-3.1-flash-lite-preview", None),
+            return_value=({"key": "val"}, "gemini-3.1-flash-lite", None),
         ),
         patch(
             "app.handlers.ai_photo.handle_ai_response_error",
@@ -160,7 +160,7 @@ async def test_handle_photo_ai_error():
         patch(
             "app.handlers.ai_photo._resolve_ai_request",
             new_callable=AsyncMock,
-            return_value=({"key": "val"}, "gemini-3.1-flash-lite-preview", None),
+            return_value=({"key": "val"}, "gemini-3.1-flash-lite", None),
         ),
         patch(
             "app.handlers.ai_photo.handle_ai_response_error",

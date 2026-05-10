@@ -394,10 +394,10 @@ class ProviderRouter:
                     break  # No more keys available
 
             # ── Inject Vertex AI Express Slot ─────────────────────────
-            # Only for supported models (currently gemini-3.1-flash-lite-preview)
+            # Only for supported models (currently gemini-3.1-flash-lite)
             # and only if we have at least one valid Gemini key to race alongside it.
             _VERTEX_KH = "__vertex_ai__"
-            if keys_to_race and resolved_model and "gemini-3.1-flash-lite-preview" in resolved_model:
+            if keys_to_race and resolved_model and "gemini-3.1-flash-lite" in resolved_model:
                 from app.providers.gemini import get_vertex_client
 
                 vertex_client = get_vertex_client()
@@ -849,7 +849,7 @@ class ProviderRouter:
         # Gemini cascade: heavy → lite (canonical model list only)
         _GEMINI_CASCADE = {
             "gemini-3-flash-preview": "gemini-2.5-flash-lite",
-            "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
+            "gemini-3.1-flash-lite": "gemini-2.5-flash-lite",
             "gemini-2.5-flash": "gemini-2.5-flash-lite",
         }
 

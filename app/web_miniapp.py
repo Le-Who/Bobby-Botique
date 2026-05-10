@@ -153,7 +153,7 @@ async def _send_live_fatal(
 
 
 def _default_model_name() -> str:
-    return settings.DEFAULT_MODEL if settings else "gemini-3.1-flash-lite-preview"
+    return settings.DEFAULT_MODEL if settings else "gemini-3.1-flash-lite"
 
 
 def _default_chat_state():

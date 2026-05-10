@@ -317,6 +317,7 @@ async def _handle_regular_chat(
             user_level=chat_state.thinking_level,
             message=user_message or "",
             history=chat_state.history,
+            model=model_used,
         )
 
     from app.streaming import stream_and_display

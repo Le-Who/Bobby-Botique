@@ -186,7 +186,7 @@ class TestJudgeGuessPipeline:
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"api_key": "test_key", "key_hash": "hash1234"}, "gemini-3.1-flash-lite-preview", None),
+                ({"api_key": "test_key", "key_hash": "hash1234"}, "gemini-3.1-flash-lite", None),
                 (None, None, None),
             ]
         )
@@ -203,4 +203,4 @@ class TestJudgeGuessPipeline:
 
         assert result is not None
         assert result.status == "hot"
-        mock_status_mgr.record_success.assert_called_once_with("hash1234", "gemini-3.1-flash-lite-preview")
+        mock_status_mgr.record_success.assert_called_once_with("hash1234", "gemini-3.1-flash-lite")

@@ -2,7 +2,7 @@
 """Smart model auto-selection based on message content.
 
 Analyzes user input characteristics to recommend the optimal model:
-- Short queries → fast models (e.g. gemini-3.1-flash-lite-preview)
+- Short queries → fast models (e.g. gemini-3.1-flash-lite)
 - Complex reasoning → thinking models (e.g. gemini-2.5-flash)
 - Image analysis → multimodal models
 - Code tasks → code-optimized models
