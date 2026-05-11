@@ -58,3 +58,9 @@ app/games/data/*.json
 
 # Environment secrets
 .env
+
+# Perf profiling scratch output (keep bench_*.py, ignore everything else)
+artifacts/perf/*.log
+artifacts/perf/*.json
+artifacts/perf/parse_*.py
+artifacts/perf/out*.log
