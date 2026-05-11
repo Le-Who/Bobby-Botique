@@ -138,7 +138,7 @@ DAILY_NEGATIVE_PROMPT = (
 # The limiter *waits* instead of refusing — callers don't need retry logic.
 
 _FTA_IMG_MODELS = frozenset({"fta-gpt-image-2"})
-_FTA_DAILY_MODEL_ID = "img/gpt-image-2"  # actual model slug for FreeTheAI API
+_FTA_DAILY_MODEL_ID = "vhr/gpt_image_2"  # actual model slug for FreeTheAI API
 
 
 class _FtaImageRateLimiter:

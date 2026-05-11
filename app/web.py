@@ -825,7 +825,7 @@ async def api_admin_dailycroc_list():
 @require_auth
 @rate_limit_api
 async def api_admin_dailycroc_regen():
-    from app.repos.crocodile_daily import get_puzzle, set_puzzle_image_asset
+    from app.repos.crocodile_daily import get_puzzle
 
     data = await request.get_json()
     if not data:
@@ -854,36 +854,19 @@ async def api_admin_dailycroc_regen():
 
         model = puzzle.image_model or "zimage"
 
-        # Dispatch to the correct provider based on model
-        if model == "fta-gpt-image-2":
-            from app.games.crocodile_daily import _generate_via_fta
+        from app.games.crocodile_daily import prepare_daily_puzzle
 
-            images, _model_label = await _generate_via_fta(
-                prompt=puzzle.image_prompt,
-                puzzle_date=dt,
-                difficulty=difficulty,
-            )
-            if not images:
-                return jsonify({"error": "FTA image generation failed"}), 500
-            photo_bytes = images[0]
-        else:
-            from app.providers.pollinations import get_pollinations_provider
+        updated_puzzle = await prepare_daily_puzzle(
+            dt, 
+            bot=bot, 
+            difficulty=difficulty, 
+            force_image=True
+        )
 
-            provider = get_pollinations_provider()
-            res = await provider.generate(puzzle.image_prompt, width=1024, height=1024, model=model)
+        if not updated_puzzle or not updated_puzzle.image_file_id:
+            return jsonify({"error": "Failed to generate or upload image"}), 500
 
-            if not res.success or not res.images:
-                 return jsonify({"error": res.error_message or "failed to generate image"}), 500
-            photo_bytes = res.images[0]
-
-        # Send to admin to get file_id
-        from app.config import settings
-
-        msg = await bot.send_photo(chat_id=settings.ADMIN_ID, photo=photo_bytes)
-        file_id = msg.photo[-1].file_id
-
-        await set_puzzle_image_asset(dt, file_id, difficulty=difficulty)
-        return jsonify({"success": True, "file_id": file_id})
+        return jsonify({"success": True, "file_id": updated_puzzle.image_file_id})
     except Exception as e:
         logging.error("Regen failed: %s", e, exc_info=True)
         return jsonify({"error": str(e)}), 500
