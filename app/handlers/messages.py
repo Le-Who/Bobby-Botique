@@ -24,7 +24,9 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from app import state
 from app.config import settings
-from app.handlers.cmd_image import _get_draw_state, _run_generation
+
+# Deferred to avoid heavy startup penalty
+# from app.handlers.cmd_image import _get_draw_state, _run_generation
 from app.handlers.msg_document import handle_document, handle_document_mode_interaction
 from app.handlers.msg_media import (
     process_media_group_update,
@@ -439,6 +441,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             ) -> None:
                 try:
                     async with state.get_user_lock(_uid):
+                        from app.handlers.cmd_image import _get_draw_state, _run_generation
                         _ds = _get_draw_state(context)
                         # Temporarily suppress heartbeat — image pipeline sends
                         # its own typing heartbeat via ChatAction.UPLOAD_PHOTO.

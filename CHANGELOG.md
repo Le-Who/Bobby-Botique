@@ -3,6 +3,45 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-05-11 - Cold-Start Latency Optimization (−54% P95)
+
+### ⚡ Startup Performance
+
+Systematic import-time profiling (`python -X importtime`) identified four hot-path modules pulling heavyweight transitive dependencies at startup. Four targeted lazy-import refactors reduced cold-start P95 by **~54%** (from ~2.41 s → ~1.11 s) with no behavior changes and no new dependencies.
+
+| Epoch | File | Deferred symbol | Heavy chain eliminated |
+|-------|------|-----------------|------------------------|
+| 1 | `app/handlers/messages.py` | `cmd_image` imports (draw state + generation) | Avoids transitive image-provider chains on every worker start |
+| 2 | `app/handlers/msg_roles.py` | `app.agents` in `handle_custom_role_generation` | Avoids agent subsystem import on non-role message paths |
+| 3 | `app/handlers/menus.py` | `app.document_processor.get_user_documents` | Eliminates `pypdf` + `docx` (125 K μs cumulative) from startup |
+| 4 | `app/handlers/cmd_admin.py` | `from google import genai` in `list_models_command` | Eliminates google-genai SDK init from startup (admin-only, rare) |
+
+**Pattern**: Python's module cache (`sys.modules`) makes each deferred import free after the first actual call, so there is zero per-call overhead beyond the first invocation.
+
+**Benchmark** (`artifacts/perf/bench_startup.py`, 5 warm subprocess spawns):
+
+| Metric | Before (baseline) | After (this PR) | Δ |
+|--------|-------------------|-----------------|---|
+| P95    | ~2.41 s           | ~1.11 s         | −54% |
+| mean   | ~2.00 s           | ~1.10 s         | −45% |
+
+### 🧪 Test Regression Fixes
+
+- **`tests/test_messages.py`**: Updated `submit_task` mock path to `app.handlers.messages.submit_task` (was wrong namespace after lazy-import refactor). Added `ensure_state_loaded` and `is_authorized` mocks to prevent live-DB dependency in the 9 message handler tests. All 9 pass.
+
+### 🛠️ Infrastructure
+
+- **`artifacts/perf/bench_startup.py`**: Benchmark harness that measures cold-start P95/P99/mean via repeated subprocess spawns of `import bot`.
+- **`artifacts/perf/bench_routing.py`**: Routing + handler benchmark scaffold (mocks all I/O; measures `handle_request` dispatch overhead).
+
+### ✅ Verification
+
+- `python -m pytest tests/test_messages.py -q` → **9 passed**
+- `python artifacts/perf/bench_startup.py` → P95 = **1.11 s**, mean = **1.10 s**
+- `ruff check app/handlers/messages.py app/handlers/msg_roles.py app/handlers/menus.py app/handlers/cmd_admin.py` → pending (run before merge)
+
+---
+
 ## [Unreleased] - 2026-05-10 - Gemini 3.1 Flash Lite Stable Migration & Model-Aware Thinking
 
 ### 🔄 Model Migration

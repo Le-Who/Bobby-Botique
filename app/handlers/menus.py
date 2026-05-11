@@ -6,7 +6,8 @@ from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from app.config import get_all_available_models, get_model_hash, get_openrouter_keys, settings
-from app.document_processor import get_user_documents
+
+# app.document_processor (pypdf, docx) is deferred to reduce startup latency
 from app.i18n import t
 from app.metrics import get_system_status_data
 from app.prompt_registry import DEFAULT_ROLES
@@ -39,6 +40,7 @@ async def get_start_menu_content(chat_state, user_id=None):
     activity_line = ""
     if user_id:
         try:
+            from app.document_processor import get_user_documents  # deferred — avoids pypdf/docx at startup
             today_requests, docs, conv_count = await asyncio.gather(
                 get_user_today_request_count(user_id),
                 get_user_documents(user_id),
@@ -618,6 +620,7 @@ async def get_metrics_content():
 
 
 async def get_documents_menu_content(user_id):
+    from app.document_processor import get_user_documents  # deferred — avoids pypdf/docx at startup
     documents = await get_user_documents(user_id)
 
     if not documents:

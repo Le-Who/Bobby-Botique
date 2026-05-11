@@ -8,7 +8,8 @@ import logging
 from datetime import UTC, datetime
 
 import httpx
-from google import genai
+
+# google.genai is deferred to reduce startup latency (used only in list_models_command)
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
@@ -254,6 +255,7 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     await update.message.reply_text("Запрашиваю список моделей у Google API...")
     try:
+        from google import genai  # deferred — avoids heavy google-genai startup cost
         client = genai.Client(api_key=key_data["api_key"])
 
         # google-genai SDK: Model has .name and .supported_actions (list of str)

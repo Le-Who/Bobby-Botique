@@ -10,7 +10,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app.handlers import agent, menus
+from app.handlers import menus
 from app.i18n import t
 from app.metrics import role_conv_metrics
 from app.prompt_registry import get_registry
@@ -270,7 +270,7 @@ async def handle_custom_role_generation(
 
         chat_state = await get_user_chat(user_id)
         from app.config import settings
-
+        from app.handlers import agent
         model_for_role = chat_state.model or settings.DEFAULT_MODEL
         key_data, model_used, _ = await agent._resolve_ai_request(model_for_role)
 
