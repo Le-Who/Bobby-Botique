@@ -326,6 +326,8 @@
     </footer>
 
     <script nonce="{{ g.csp_nonce }}">
+      function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+
       // =====================================================================
       // Dashboard data fetcher — polls all API endpoints every 15 seconds
       // =====================================================================
@@ -546,12 +548,12 @@
                 statusTxt = "✓ Available";
               }
               return `<tr>
-                  <td class="mono">${r.model_name || "—"}</td>
-                  <td class="mono dim">${r.api_key_preview || r.key_hash?.substring(0, 10) || "—"}</td>
-                  <td class="mono">${used}</td>
-                  <td class="mono">${limit ?? "∞"}</td>
-                  <td class="mono">${limit != null ? pct + "%" : "—"}</td>
-                  <td><span class="tag ${statusCls}">${statusTxt}</span></td>
+                  <td class="mono">${esc(r.model_name) || "—"}</td>
+                  <td class="mono dim">${esc(r.api_key_preview || r.key_hash?.substring(0, 10)) || "—"}</td>
+                  <td class="mono">${esc(used)}</td>
+                  <td class="mono">${esc(limit ?? "∞")}</td>
+                  <td class="mono">${esc(limit != null ? pct + "%" : "—")}</td>
+                  <td><span class="tag ${statusCls}">${esc(statusTxt)}</span></td>
               </tr>`;
             })
             .join("");
@@ -585,11 +587,11 @@
                 statusTxt = "✓ Available";
               }
               return `<tr>
-                  <td class="mono dim">${r.api_key_preview || "—"}</td>
-                  <td class="mono">${used}</td>
-                  <td class="mono">${limit}</td>
-                  <td class="mono">${pct}%</td>
-                  <td><span class="tag ${statusCls}">${statusTxt}</span></td>
+                  <td class="mono dim">${esc(r.api_key_preview) || "—"}</td>
+                  <td class="mono">${esc(used)}</td>
+                  <td class="mono">${esc(limit)}</td>
+                  <td class="mono">${esc(pct)}%</td>
+                  <td><span class="tag ${statusCls}">${esc(statusTxt)}</span></td>
               </tr>`;
             })
             .join("");
@@ -630,9 +632,9 @@
                   : "dot-warn";
             return `<div class="cb-item">
                 <span class="dot ${dotCls}"></span>
-                <span class="cb-name">${name}</span>
-                <span class="cb-state mono">${state.toUpperCase()}</span>
-                <span class="cb-detail mono dim">${cb.failure_count || 0} fails</span>
+                <span class="cb-name">${esc(name)}</span>
+                <span class="cb-state mono">${esc(state.toUpperCase())}</span>
+                <span class="cb-detail mono dim">${esc(cb.failure_count || 0)} fails</span>
             </div>`;
           })
           .join("");
@@ -721,9 +723,9 @@
           const errType = err.type || err.error_type || 'unknown';
           const msg = err.message || err.error || String(err);
           return `<div class="error-row">
-            <span class="error-ts mono dim">${ts}</span>
-            <span class="error-type mono tag tag-err">${errType}</span>
-            <span class="error-msg">${msg}</span>
+            <span class="error-ts mono dim">${esc(ts)}</span>
+            <span class="error-type mono tag tag-err">${esc(errType)}</span>
+            <span class="error-msg">${esc(msg)}</span>
           </div>`;
         }).join('');
       }
@@ -758,11 +760,11 @@
           const rotated = k.last_rotated ? new Date(k.last_rotated).toLocaleTimeString() : '—';
           const events = k.event_count ?? k.events ?? 0;
           return `<tr>
-            <td class="mono dim">${k.key_preview || k.key_hash?.substring(0, 10) || '—'}</td>
-            <td><span class="tag ${statusCls}">${statusTxt}</span></td>
-            <td class="mono">${usage}</td>
-            <td class="mono dim">${rotated}</td>
-            <td class="mono">${events}</td>
+            <td class="mono dim">${esc(k.key_preview || k.key_hash?.substring(0, 10)) || '—'}</td>
+            <td><span class="tag ${statusCls}">${esc(statusTxt)}</span></td>
+            <td class="mono">${esc(usage)}</td>
+            <td class="mono dim">${esc(rotated)}</td>
+            <td class="mono">${esc(events)}</td>
           </tr>`;
         }).join('');
       }
