@@ -166,14 +166,19 @@ def classify_thinking_level(
     # ── Phase 3: Context-aware escalation ──
     level = "medium"
 
+    def _get_part_len(part: Any) -> int:
+        if isinstance(part, dict):
+            return len(str(part.get("text", "")))
+        if isinstance(part, str):
+            return len(part)
+        if isinstance(part, (bytes, bytearray)):
+            return 0
+        return len(str(part))
+
     if history:
         # If recent model responses are long → conversation is complex → escalate
         recent_model_msgs = [h for h in history[-5:] if h.get("role") == "model"]
-        long_responses = sum(
-            1
-            for h in recent_model_msgs
-            if any(len(str(p.get("text", "") if isinstance(p, dict) else str(p))) > 2000 for p in h.get("parts", []))
-        )
+        long_responses = sum(1 for h in recent_model_msgs if any(_get_part_len(p) > 2000 for p in h.get("parts", [])))
         if long_responses >= 3:
             logger.debug("Thinking classifier: escalated MEDIUM->HIGH (conversation complexity)")
             level = "high"

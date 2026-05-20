@@ -59,13 +59,25 @@ class GeminiProvider(BaseAIProvider):
     ) -> AIResponse:
         start_time = None
 
+        def _get_part_len(part: Any) -> int:
+            if isinstance(part, dict):
+                return len(str(part.get("text", "")))
+            if isinstance(part, str):
+                return len(part)
+            if isinstance(part, (bytes, bytearray)):
+                return 0
+            return len(str(part))
+
         try:
             await metrics_collector.record_api_call("gemini", model_name)
 
             # Compute metrics
             try:
                 prompt_length = sum(
-                    len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None
+                    _get_part_len(part)
+                    for item in history
+                    for part in (item.get("parts", []) or [])
+                    if part is not None
                 )
                 has_images = any(
                     isinstance(part, (bytes, bytearray, Image.Image))
