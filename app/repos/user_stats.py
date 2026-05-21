@@ -16,6 +16,14 @@ async def get_user_today_request_count(user_id: int) -> int:
     return result[0]["cnt"] if result else 0
 
 
+async def get_user_activity_summary(user_id: int) -> dict[str, int]:
+    """Returns a combined summary of today's requests, documents count, and conversations count."""
+    result = await db.db_query(
+        "SELECT (SELECT COALESCE(request_count, 0) FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE LIMIT 1) as req_count, (SELECT COUNT(*) FROM user_documents WHERE user_id = $1) as doc_count, (SELECT COUNT(*) FROM conversations WHERE user_id = $1) as conv_count",
+        (user_id,)
+    )
+    return {"req_count": result[0]["req_count"] or 0, "doc_count": result[0]["doc_count"] or 0, "conv_count": result[0]["conv_count"] or 0} if result else {"req_count": 0, "doc_count": 0, "conv_count": 0}
+
 async def get_user_weekly_stats(user_id: int) -> list[dict[str, Any]]:
     """Returns per-day request counts for the last 7 days."""
     return await db.db_query(
