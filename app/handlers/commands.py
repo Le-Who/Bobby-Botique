@@ -14,7 +14,6 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from app.handlers import menus
 from app.i18n import t
 from app.repos.chats import get_user_chat, update_user_chat
-from app.repos.conversations import get_conversation_count
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
 
@@ -202,20 +201,18 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     badge = streak_badge(streak)
 
     from app.repos.user_stats import (
+        get_user_activity_summary,
         get_user_model_usage_today,
-        get_user_today_request_count,
         get_user_weekly_stats,
     )
 
-    today_count = await get_user_today_request_count(user_id)
+    summary = await get_user_activity_summary(user_id)
+    today_count = summary["req_count"]
+    doc_count = summary["doc_count"]
+    conv_count = summary["conv_count"]
+
     week_res = await get_user_weekly_stats(user_id)
     model_res = await get_user_model_usage_today(user_id)
-
-    from app.document_processor import get_user_documents
-
-    docs = await get_user_documents(user_id)
-    doc_count = len(docs) if docs else 0
-    conv_count = await get_conversation_count(user_id)
 
     text_parts = ["📊 **Ваша статистика**\n\n"]
 

@@ -4,12 +4,10 @@ from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import get_model_hash, get_openrouter_keys, settings
-from app.document_processor import get_user_documents
 from app.i18n import t
 from app.metrics import get_system_status_data
 from app.prompt_registry import DEFAULT_ROLES
 from app.repos.conversations import (
-    get_conversation_count,
     get_role_data,
     get_user_conversations,
 )
@@ -18,7 +16,7 @@ from app.repos.roles import (
     get_user_custom_roles,
     get_user_custom_roles_full,
 )
-from app.repos.user_stats import get_user_today_request_count
+from app.repos.user_stats import get_user_activity_summary
 from app.utils.formatting import TelegramFormatter, format_key_for_display
 
 
@@ -37,13 +35,10 @@ async def get_start_menu_content(chat_state, user_id=None):
     activity_line = ""
     if user_id:
         try:
-            today_requests = await get_user_today_request_count(user_id)
-            req_count = today_requests
-
-            docs = await get_user_documents(user_id)
-            doc_count = len(docs) if docs else 0
-
-            conv_count = await get_conversation_count(user_id)
+            summary = await get_user_activity_summary(user_id)
+            req_count = summary["req_count"]
+            doc_count = summary["doc_count"]
+            conv_count = summary["conv_count"]
 
             if req_count > 0 or doc_count > 0 or conv_count > 0:
                 activity_line = f"📈 Сегодня: {req_count} запр. · {doc_count} док. · {conv_count} бесед\n\n"
