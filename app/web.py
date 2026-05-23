@@ -138,14 +138,28 @@ async def add_security_headers(response):
 
 
 def _is_authenticated():
-    """Check if current request has a valid session or header token."""
+    """Check if current request has a valid session, header token, or Telegram admin initData."""
     # Check session cookie first
     if session.get("authenticated"):
         return True
     # Fallback: check X-Auth-Token header (for API/monitoring tools)
     token = request.headers.get("X-Auth-Token")
     expected = _get_admin_secret()
-    return bool(token and expected and hmac.compare_digest(token, expected))
+    if token and expected and hmac.compare_digest(token, expected):
+        return True
+    # Fallback: check Authorization header for Telegram WebApp initData (tma <initData>)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("tma "):
+        init_data = auth_header[4:]
+        bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+        if bot_token:
+            from app.web_miniapp import _extract_user_id, _validate_init_data
+            validated = _validate_init_data(init_data, bot_token)
+            if validated:
+                user_id = _extract_user_id(validated)
+                if user_id == getattr(settings, "ADMIN_ID", None):
+                    return True
+    return False
 
 
 def require_auth(f):
@@ -852,8 +866,6 @@ async def api_admin_dailycroc_regen():
         if bot is None:
             return jsonify({"error": "bot not ready"}), 503
 
-        model = puzzle.image_model or "zimage"
-
         from app.games.crocodile_daily import prepare_daily_puzzle
 
         updated_puzzle = await prepare_daily_puzzle(
@@ -995,3 +1007,53 @@ async def api_admin_dailycroc_image():
     except Exception as exc:
         logging.error("Admin image proxy failed file_id=%s: %s", file_id, exc, exc_info=True)
         return jsonify({"error": "proxy_error", "detail": str(exc)}), 502
+
+
+@quart_app.route("/api/admin/dailycroc/stats", methods=["GET"])
+@require_auth
+async def api_admin_dailycroc_stats():
+    """Return real-time daily crocodile operational stats."""
+    from app.repos import crocodile_daily as repo
+    from app.repos.settings_repo import get_global_setting
+
+    try:
+        now = datetime.datetime.now(datetime.UTC)
+        today = repo.today_puzzle_date(now)
+        stats = await repo.get_delivery_status(today)
+
+        # Get delivery enabled status
+        delivery_on = await get_global_setting(repo.DAILY_DELIVERY_SETTING_KEY, "on")
+        stats["delivery_enabled"] = (delivery_on.strip().lower() != "off")
+
+        # Get configured image model
+        image_model = await get_global_setting(repo.DAILY_IMAGE_MODEL_SETTING_KEY, "pollinations")
+        stats["image_model"] = image_model.strip()
+
+        # Get placeholder banner setting
+        placeholder = await get_global_setting("daily_croc_placeholder_file_id", "")
+        stats["placeholder_set"] = bool(placeholder)
+
+        return jsonify(stats)
+    except Exception as exc:
+        logging.error("Failed to get daily croc stats: %s", exc, exc_info=True)
+        return jsonify({"error": "failed_to_load_stats", "detail": str(exc)}), 500
+
+
+@quart_app.route("/api/admin/dailycroc/toggle-delivery", methods=["POST"])
+@require_auth
+async def api_admin_dailycroc_toggle_delivery():
+    """Enable or disable global daily crocodile subscription sends."""
+    from app.repos import crocodile_daily as repo
+    from app.repos.settings_repo import set_global_setting
+
+    try:
+        data = await request.get_json()
+        if not data:
+            return jsonify({"error": "invalid json"}), 400
+        enabled = bool(data.get("enabled"))
+        value = "on" if enabled else "off"
+        await set_global_setting(repo.DAILY_DELIVERY_SETTING_KEY, value)
+        return jsonify({"success": True, "enabled": enabled})
+    except Exception as exc:
+        logging.error("Failed to toggle daily croc delivery: %s", exc, exc_info=True)
+        return jsonify({"error": "toggle_failed", "detail": str(exc)}), 500

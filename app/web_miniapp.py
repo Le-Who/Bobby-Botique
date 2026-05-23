@@ -971,6 +971,13 @@ async def game_page():
     return await render_template("crocodile.html", game_id=game_id, mode=mode)
 
 
+@miniapp_blueprint.route("/admin_dailycroc")
+async def webapp_admin_dailycroc_page():
+    """Serve the Daily Crocodile Admin Dashboard to Telegram Mini App."""
+    from quart import render_template
+    return await render_template("admin_dailycroc.html")
+
+
 def _build_daily_word_mask(word: str) -> str:
     letters = [ch for ch in (word or "").strip() if ch.isalnum()]
     if not letters:

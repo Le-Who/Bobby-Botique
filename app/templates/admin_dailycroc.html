@@ -4,165 +4,616 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Admin: Daily Crocodile</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Work+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style nonce="{{ g.csp_nonce }}">
 :root {
-  --bg: var(--tg-theme-bg-color, #ffffff);
-  --text: var(--tg-theme-text-color, #000000);
-  --hint: var(--tg-theme-hint-color, #999999);
-  --link: var(--tg-theme-link-color, #2678b6);
-  --secondary-bg: var(--tg-theme-secondary-bg-color, #f0f0f0);
-  --destructive: var(--tg-theme-destructive-text-color, #e53935);
-  --section-bg: var(--tg-theme-section-bg-color, var(--bg));
-  --radius: 12px;
-  --shadow: 0 1px 3px rgba(0,0,0,.08);
-  font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  --bg: #0a0e1a;
+  --bg-surface: #111827;
+  --surface: rgba(255, 255, 255, 0.035);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.07);
+  --border-hover: rgba(255, 255, 255, 0.14);
+  --text: #e2e8f0;
+  --text-muted: #64748b;
+  --text-dim: #475569;
+  --accent: #06b6d4;
+  --accent-glow: rgba(6, 182, 212, 0.2);
+  --violet: #8b5cf6;
+  --green: #10b981;
+  --amber: #f59e0b;
+  --rose: #f43f5e;
+  --card-radius: 14px;
 }
-* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html { height: 100%; overflow: hidden; }
 body {
-  background: var(--secondary-bg);
+  background: var(--bg);
   color: var(--text);
+  font-family: "Work Sans", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   height: 100%;
   overflow: auto;
   overscroll-behavior-y: none;
-  padding-bottom: 32px;
+  padding-bottom: 40px;
+  background-image:
+    radial-gradient(ellipse at 15% 5%, rgba(6, 182, 212, 0.06) 0%, transparent 40%),
+    radial-gradient(ellipse at 85% 95%, rgba(139, 92, 246, 0.04) 0%, transparent 40%);
+  background-attachment: fixed;
 }
+
+/* ==========================================
+   TOP HEADER
+   ========================================== */
 .header {
-  padding: 16px;
-  background: var(--bg);
-  border-bottom: 1px solid var(--secondary-bg);
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 100;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding: 0.8rem 1.5rem;
+  background: rgba(10, 14, 26, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
 }
-.header h1 { font-size: 18px; font-weight: 600; }
-.puzzle-list { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
-.puzzle-card {
-  background: var(--section-bg);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+.header h1 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ==========================================
+   STATS OVERVIEW PANEL
+   ========================================== */
+.stats-panel {
+  max-width: 1280px;
+  margin: 1.2rem auto 0;
+  padding: 0 1.5rem;
+}
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.8rem;
+}
+@media (max-width: 900px) {
+  .stats-row { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 560px) {
+  .stats-row { grid-template-columns: 1fr; }
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  padding: 1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 90px;
+  position: relative;
   overflow: hidden;
 }
-.card-body { padding: 14px 16px 0; }
-.puzzle-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
-.puzzle-date { font-size: 14px; font-weight: 600; color: var(--hint); }
+.stat-card-title {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.stat-card-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--text);
+  font-family: "JetBrains Mono", monospace;
+  margin-top: 4px;
+}
+.stat-card-sub {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.stat-card-action {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+}
+
+/* Custom switch toggle */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: var(--text-dim);
+  transition: .25s;
+  border-radius: 20px;
+}
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 16px; width: 16px;
+  left: 3px; bottom: 3px;
+  background-color: #fff;
+  transition: .25s;
+  border-radius: 50%;
+}
+input:checked + .slider { background-color: var(--green); }
+input:checked + .slider:before { transform: translateX(16px); }
+
+/* ==========================================
+   PUZZLE GRID
+   ========================================== */
+.main-content {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+.section-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  margin-bottom: 0.8rem;
+  padding-left: 2px;
+}
+.puzzle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 1.2rem;
+}
+
+.puzzle-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  overflow: hidden;
+  transition: border-color 0.25s, box-shadow 0.25s, transform 0.2s;
+  display: flex;
+  flex-direction: column;
+}
+.puzzle-card:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+.card-today {
+  border-color: var(--accent);
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.15);
+}
+.card-today:hover {
+  border-color: var(--accent);
+  box-shadow: 0 6px 22px rgba(6, 182, 212, 0.25);
+}
+
+.card-body { padding: 1.1rem 1.2rem; flex-grow: 1; }
+.puzzle-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.puzzle-date { font-size: 0.85rem; font-weight: 600; color: var(--text); }
+.today-badge {
+  font-size: 0.6rem; background: var(--accent-glow); color: var(--accent);
+  padding: 1px 6px; border-radius: 4px; font-weight: 700; border: 1px solid rgba(6, 182, 212, 0.3);
+  letter-spacing: 0.5px; margin-left: 6px; text-transform: uppercase;
+}
 .puzzle-diff {
-  font-size: 11px; padding: 2px 8px; border-radius: 10px;
-  background: var(--secondary-bg); color: var(--text);
-  font-weight: 500; text-transform: uppercase; letter-spacing: .5px;
+  font-size: 0.65rem; padding: 2px 8px; border-radius: 6px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+  font-family: "JetBrains Mono", monospace;
 }
-.diff-easy { color: #4caf50; background: rgba(76,175,80,.1); }
-.diff-hard { color: #ef5350; background: rgba(239,83,80,.1); }
-.puzzle-word { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
-.puzzle-topic { font-size: 13px; color: var(--hint); margin-bottom: 12px; }
+.diff-easy { color: var(--green); background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.25); }
+.diff-hard { color: var(--rose); background: rgba(244, 63, 94, 0.12); border: 1px solid rgba(244, 63, 94, 0.25); }
 
-/* Image preview */
-.image-preview {
-  width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
-  background: var(--secondary-bg);
-  display: block;
-  margin-bottom: 0;
+.puzzle-info { margin-bottom: 12px; }
+.puzzle-word-row { display: flex; align-items: baseline; gap: 8px; }
+.puzzle-word { font-size: 1.25rem; font-weight: 700; color: #fff; letter-spacing: -0.2px; }
+.puzzle-topic { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+
+/* Image Area */
+.image-container {
+  width: 100%; aspect-ratio: 1; position: relative;
+  background: rgba(0,0,0,0.2); border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: center;
 }
+.image-preview { width: 100%; height: 100%; object-fit: cover; display: block; }
 .image-placeholder {
-  width: 100%; aspect-ratio: 1;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(0,0,0,.06);
-  color: var(--hint); font-size: 13px;
-  border-top: 1px solid rgba(0,0,0,.05);
-  border-bottom: 1px solid rgba(0,0,0,.05);
+  color: var(--text-dim); font-size: 0.8rem; display: flex; flex-direction: column;
+  align-items: center; gap: 8px; font-weight: 500;
+}
+.image-spinner {
+  width: 24px; height: 24px; border: 2px solid rgba(255,255,255,0.1);
+  border-radius: 50%; border-top-color: var(--accent); animation: spin 1s linear infinite;
 }
 
-/* Prompt section */
-.prompt-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(0,0,0,.05); }
+/* Prompts and models */
+.prompt-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .prompt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.btn-text { background: none; border: none; color: var(--link); font-size: 13px; font-weight: 500; cursor: pointer; }
-.puzzle-prompt { font-size: 13px; line-height: 1.4; word-break: break-word; color: var(--text); }
-.prompt-input { width: 100%; min-height: 80px; padding: 8px; border-radius: 6px; border: 1px solid var(--hint); background: var(--bg); color: var(--text); font-family: inherit; font-size: 13px; resize: vertical; margin-bottom: 8px; }
-.model-select { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--hint); background: var(--bg); color: var(--text); font-family: inherit; font-size: 13px; cursor: pointer; }
-
-/* Buttons area */
-.card-actions { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
-.btn {
-  background: var(--secondary-bg); color: var(--link);
-  border: none; padding: 10px 16px; border-radius: 8px;
-  font-size: 14px; font-weight: 500; width: 100%;
-  cursor: pointer; display: flex; justify-content: center; align-items: center; gap: 6px;
-  transition: opacity .15s;
+.prompt-title { font-size: 0.68rem; color: var(--text-muted); font-weight: 600; letter-spacing: 0.05em; }
+.btn-text { background: none; border: none; color: var(--accent); font-size: 0.72rem; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
+.btn-text:hover { opacity: 0.8; }
+.puzzle-prompt { font-size: 0.78rem; line-height: 1.4; color: var(--text); font-style: italic; }
+.prompt-input {
+  width: 100%; min-height: 80px; padding: 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg-surface); color: var(--text);
+  font-family: inherit; font-size: 0.78rem; resize: vertical; margin-bottom: 8px;
 }
-.btn:active { opacity: .7; }
-.btn:disabled { opacity: .45; cursor: default; }
-.btn-regen { background: color-mix(in srgb, var(--link) 10%, transparent); }
-.btn-reset { background: color-mix(in srgb, var(--destructive) 10%, transparent); color: var(--destructive); }
+.prompt-input:focus { border-color: var(--accent); outline: none; }
+
+.model-select {
+  width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg-surface); color: var(--text); font-family: inherit; font-size: 0.78rem;
+  cursor: pointer; transition: border-color 0.2s;
+}
+.model-select:focus { border-color: var(--accent); outline: none; }
+
+/* Buttons actions */
+.card-actions { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; background: rgba(0,0,0,0.1); }
+.btn {
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  padding: 9px 16px; border-radius: 8px; font-size: 0.8rem; font-weight: 500;
+  width: 100%; cursor: pointer; display: flex; justify-content: center; align-items: center;
+  gap: 6px; transition: background 0.2s, border-color 0.2s, opacity 0.15s;
+}
+.btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-hover); }
+.btn:active:not(:disabled) { opacity: 0.8; }
+.btn:disabled { opacity: 0.35; cursor: default; }
+.btn-regen { background: var(--accent-glow); color: var(--accent); border-color: rgba(6, 182, 212, 0.3); }
+.btn-regen:hover:not(:disabled) { background: rgba(6, 182, 212, 0.3); border-color: var(--accent); }
+.btn-reset { background: rgba(244, 63, 94, 0.08); color: var(--rose); border-color: rgba(244, 63, 94, 0.2); }
+.btn-reset:hover:not(:disabled) { background: rgba(244, 63, 94, 0.15); border-color: var(--rose); }
+.btn-save { background: var(--accent); color: #000; font-weight: 600; border: none; }
+.btn-save:hover { background: #08d9fd; }
 .btn-row { display: flex; gap: 8px; }
 .btn-row .btn { flex: 1; }
 
-.loading-container { padding: 32px; text-align: center; color: var(--hint); }
+.loading-container { padding: 60px 0; text-align: center; color: var(--text-muted); font-size: 0.9rem; }
 .badge-missing {
-  display: inline-block; font-size: 12px; padding: 4px 8px;
-  border-radius: 4px; background: rgba(239,83,80,.1); color: #ef5350;
-  font-weight: 600; margin-bottom: 12px;
+  display: inline-block; font-size: 0.65rem; padding: 2px 6px;
+  border-radius: 4px; background: rgba(244, 63, 94, 0.15); color: var(--rose);
+  font-weight: 700; border: 1px solid rgba(244, 63, 94, 0.25); text-transform: uppercase;
 }
 
-.btn-refresh { width: auto; padding: 6px 12px; }
+.btn-refresh { font-size: 0.8rem; font-weight: 600; padding: 6px 12px; height: 32px; border-radius: 6px; }
 .edit-hidden { display: none; }
-.btn-save { background: var(--link); color: #fff; }
 .mt-8 { margin-top: 8px; }
-.error-text { color: var(--destructive); }
-.security-mode .puzzle-word { filter: blur(5px); transition: filter 0.2s; user-select: none; }
+.error-text { color: var(--rose); }
+
+/* Security Mode: Blurring target words */
+.security-mode .puzzle-word { filter: blur(6px); transition: filter 0.15s; user-select: none; }
 .security-mode .puzzle-word:active { filter: none; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ==========================================
+   TOAST NOTIFICATIONS
+   ========================================== */
+.toast-container {
+  position: fixed; bottom: 20px; right: 20px; z-index: 1000;
+  display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+}
+.toast {
+  background: #111827; border: 1px solid var(--border); color: var(--text);
+  padding: 10px 16px; border-radius: 8px; font-size: 0.8rem; font-weight: 500;
+  backdrop-filter: blur(12px); box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  display: flex; align-items: center; gap: 8px;
+  animation: toastIn 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: auto;
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.toast-success { border-color: var(--green); }
+.toast-error { border-color: var(--rose); }
+.toast-info { border-color: var(--accent); }
+
+/* ==========================================
+   CONFIRMATION MODAL
+   ========================================== */
+.modal {
+  display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(4, 6, 12, 0.8); z-index: 1000; align-items: center; justify-content: center;
+  backdrop-filter: blur(8px);
+}
+.modal-content {
+  background: #111827; border: 1px solid var(--border); border-radius: var(--card-radius);
+  padding: 1.5rem; max-width: 400px; width: 90%; text-align: center;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+  animation: modalScale 0.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes modalScale {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+.modal h3 { font-size: 1.1rem; font-weight: 600; color: #fff; margin-bottom: 8px; }
+.modal p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 20px; line-height: 1.4; }
+.modal-buttons { display: flex; gap: 10px; }
+.modal-buttons .btn { flex: 1; }
+.btn-confirm { background: var(--rose); border: none; color: #fff; font-weight: 600; }
+.btn-confirm:hover { background: #e53935; }
 </style>
 </head>
 <body>
 
 <div class="header">
-  <h1>Daily Crocodile</h1>
-  <div style="display: flex; gap: 8px;">
+  <h1>🐊 Daily Crocodile Admin</h1>
+  <div class="header-actions">
     <button class="btn btn-refresh" id="toggle-security" data-action="toggleSecurity">🔒 Скрыть слова</button>
-    <button class="btn btn-refresh" data-action="loadPuzzles">🔄</button>
+    <button class="btn btn-refresh" data-action="loadPuzzles">🔄 Обновить</button>
   </div>
 </div>
 
-<div class="puzzle-list" id="puzzle-container">
-  <div class="loading-container">Loading puzzles...</div>
+<div class="stats-panel">
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-card-title">Подписки</div>
+      <div class="stat-card-value" id="stats-total-subs">—</div>
+      <div class="stat-card-sub" id="stats-subs-detail">Осталось отправить: —</div>
+    </div>
+    
+    <div class="stat-card">
+      <div class="stat-card-title">Глобальная рассылка</div>
+      <div class="stat-card-value" id="stats-delivery-status" style="font-size:1.15rem; margin-top:10px;">Загрузка...</div>
+      <div class="stat-card-action">
+        <label class="switch">
+          <input type="checkbox" id="delivery-toggle-chk" data-action="toggleDelivery" disabled>
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+    
+    <div class="stat-card">
+      <div class="stat-card-title">Игры сегодня</div>
+      <div class="stat-card-value" id="stats-games-completed">—</div>
+      <div class="stat-card-sub" id="stats-games-detail">Побед: — | Активных: —</div>
+    </div>
+    
+    <div class="stat-card">
+      <div class="stat-card-title">Параметры</div>
+      <div class="stat-card-value" id="stats-placeholder-status" style="font-size:1.05rem; margin-top:8px;">Баннер: —</div>
+      <div class="stat-card-sub" id="stats-model-status">Модель: —</div>
+    </div>
+  </div>
+</div>
+
+<div class="main-content">
+  <h2 class="section-title">Календарь пазлов (последние 20 дней)</h2>
+  <div class="puzzle-grid" id="puzzle-container">
+    <div class="loading-container">
+      <div class="image-spinner" style="margin:0 auto 12px;"></div>
+      Загрузка пазлов...
+    </div>
+  </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<div class="modal" id="confirm-modal">
+  <div class="modal-content">
+    <h3 id="modal-title">Подтверждение</h3>
+    <p id="modal-message">Вы уверены?</p>
+    <div class="modal-buttons">
+      <button id="modal-confirm" class="btn btn-confirm">Да, выполнить</button>
+      <button id="modal-cancel" class="btn">Отмена</button>
+    </div>
+  </div>
 </div>
 
 <script nonce="{{ g.csp_nonce }}">
-
-
+// Headers for HTTP Requests
 const apiHeaders = { 'Content-Type': 'application/json' };
-
-// GET headers (no Content-Type for GET with fetch)
 const getHeaders = {};
 
+// Inject Telegram Mini App initData if available
+if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) {
+  const initData = window.Telegram.WebApp.initData;
+  apiHeaders['Authorization'] = 'tma ' + initData;
+  getHeaders['Authorization'] = 'tma ' + initData;
+  // Initialize Telegram WebApp theme
+  window.Telegram.WebApp.ready();
+  window.Telegram.WebApp.expand();
+}
 
-async function loadPuzzles() {
-  const container = document.getElementById('puzzle-container');
-  container.innerHTML = '<div class="loading-container">Loading...</div>';
+// Global state
+let currentPuzzles = [];
+let kyivTodayStr = '';
+
+function getKyivDateString() {
   try {
-    const res = await fetch('/api/admin/dailycroc', { headers: getHeaders });
+    const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Kyiv', year: 'numeric', month: '2-digit', day: '2-digit' });
+    return formatter.format(new Date());
+  } catch (e) {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+// Toast Helper
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  
+  let icon = 'ℹ️';
+  if (type === 'success') icon = '✅';
+  if (type === 'error') icon = '❌';
+  
+  toast.innerHTML = `<span>${icon}</span> <span>${message}</span>`;
+  container.appendChild(toast);
+  
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-10px) scale(0.95)';
+    toast.style.transition = 'opacity 0.2s, transform 0.2s';
+    setTimeout(() => toast.remove(), 200);
+  }, 3500);
+}
+
+// Custom Modal Promise
+function showConfirm(title, message) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('confirm-modal');
+    const confirmBtn = document.getElementById('modal-confirm');
+    const cancelBtn = document.getElementById('modal-cancel');
+    
+    document.getElementById('modal-title').textContent = title;
+    document.getElementById('modal-message').textContent = message;
+    
+    modal.style.display = 'flex';
+    
+    const cleanup = (value) => {
+      modal.style.display = 'none';
+      confirmBtn.onclick = null;
+      cancelBtn.onclick = null;
+      resolve(value);
+    };
+    
+    confirmBtn.onclick = () => cleanup(true);
+    cancelBtn.onclick = () => cleanup(false);
+  });
+}
+
+// Load statistics
+async function loadStats() {
+  try {
+    const res = await fetch('/api/admin/dailycroc/stats', { headers: getHeaders });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
-    renderPuzzles(data.puzzles);
+
+    // Update subscriptions card
+    document.getElementById('stats-total-subs').textContent = data.total_subscribed || '0';
+    document.getElementById('stats-subs-detail').textContent = `Осталось отправить: ${data.pending_today ?? 0}`;
+
+    // Update delivery toggle card
+    const toggleChk = document.getElementById('delivery-toggle-chk');
+    const statusTxt = document.getElementById('stats-delivery-status');
+    toggleChk.checked = !!data.delivery_enabled;
+    toggleChk.disabled = false;
+    statusTxt.textContent = data.delivery_enabled ? 'Активна ✅' : 'Отключена ❌';
+    statusTxt.style.color = data.delivery_enabled ? 'var(--green)' : 'var(--rose)';
+
+    // Update games card
+    document.getElementById('stats-games-completed').textContent = data.finished || '0';
+    document.getElementById('stats-games-detail').textContent = `Побед: ${data.won ?? 0} | В игре: ${data.active ?? 0}`;
+
+    // Update config params card
+    document.getElementById('stats-placeholder-status').textContent = `Баннер: ${data.placeholder_set ? 'Установлен ✅' : 'Не задан ⚠️'}`;
+    document.getElementById('stats-model-status').textContent = `Модель: ${data.image_model || '—'}`;
   } catch (e) {
-    container.innerHTML = `<div class="loading-container error-text">Error: ${e.message}</div>`;
+    console.error('Stats load failed:', e);
+  }
+}
+
+// Authenticated image loader
+async function loadImage(img) {
+  const fileId = img.dataset.fileId;
+  if (!fileId) return;
+  
+  const container = img.parentNode;
+  // Show spinner
+  const spinner = document.createElement('div');
+  spinner.className = 'image-spinner';
+  container.appendChild(spinner);
+  
+  try {
+    const res = await fetch(`/api/admin/dailycroc/image?file_id=${encodeURIComponent(fileId)}`, {
+      headers: getHeaders
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    img.src = URL.createObjectURL(blob);
+    img.style.display = 'block';
+  } catch (e) {
+    console.error('Error preloading image:', e);
+    img.style.display = 'none';
+    const errorPlaceholder = document.createElement('div');
+    errorPlaceholder.className = 'image-placeholder';
+    errorPlaceholder.innerHTML = '<span>⚠️</span> <span>Ошибка загрузки</span>';
+    container.appendChild(errorPlaceholder);
+  } finally {
+    spinner.remove();
+  }
+}
+
+// Toggle Delivery switch
+async function toggleDelivery(chk) {
+  const targetState = chk.checked;
+  const actionLabel = targetState ? 'включить' : 'отключить';
+  
+  const confirmed = await showConfirm(
+    'Изменение режима рассылки',
+    `Вы действительно хотите ${actionLabel} глобальную автоматическую рассылку Крокодила дня?`
+  );
+  
+  if (!confirmed) {
+    chk.checked = !targetState; // Revert checkbox
+    return;
+  }
+  
+  chk.disabled = true;
+  try {
+    const res = await fetch('/api/admin/dailycroc/toggle-delivery', {
+      method: 'POST',
+      headers: apiHeaders,
+      body: JSON.stringify({ enabled: targetState })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    
+    showToast(targetState ? 'Автоматическая рассылка включена!' : 'Рассылка временно отключена.', 'success');
+    await loadStats();
+  } catch (e) {
+    showToast(`Ошибка изменения: ${e.message}`, 'error');
+    chk.checked = !targetState; // Revert
+  } finally {
+    chk.disabled = false;
+  }
+}
+
+// Load puzzles calendar
+async function loadPuzzles() {
+  const container = document.getElementById('puzzle-container');
+  try {
+    const res = await fetch('/api/admin/dailycroc', { headers: getHeaders });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    
+    currentPuzzles = data.puzzles || [];
+    kyivTodayStr = getKyivDateString();
+    renderPuzzles(currentPuzzles);
+    loadStats(); // async poll stats alongside
+  } catch (e) {
+    container.innerHTML = `<div class="loading-container error-text">Не удалось загрузить данные: ${e.message}</div>`;
   }
 }
 
 function renderPuzzles(puzzles) {
   const container = document.getElementById('puzzle-container');
   container.innerHTML = '';
+  
   if (!puzzles || !puzzles.length) {
-    container.innerHTML = '<div class="loading-container">No puzzles found.</div>';
+    container.innerHTML = '<div class="loading-container">Пазлы не найдены.</div>';
     return;
   }
-  console.log('[dailycroc] first puzzle sample:', JSON.stringify(puzzles[0]));
-  console.log('[dailycroc] image_file_id values:', puzzles.map(p => p.date + '/' + p.difficulty + ':' + JSON.stringify(p.image_file_id)));
+  
   // Sort: ascending by date (earliest first), easy before hard within same date
   puzzles.sort((a, b) => {
     if (a.date !== b.date) return a.date < b.date ? -1 : 1;
@@ -171,52 +622,72 @@ function renderPuzzles(puzzles) {
 
   puzzles.forEach(p => {
     const isMissing = !p.target_word;
+    const isToday = p.date === kyivTodayStr;
     const dateObj = new Date(p.date);
     const dateStr = dateObj.toLocaleDateString('ru-RU', { weekday: 'short', month: 'short', day: 'numeric' });
     const diffClass = p.difficulty === 'easy' ? 'diff-easy' : 'diff-hard';
     const cardId = `card-${p.date}-${p.difficulty}`;
 
     const card = document.createElement('div');
-    card.className = 'puzzle-card';
+    card.className = `puzzle-card ${isToday ? 'card-today' : ''}`;
     card.id = cardId;
 
-    // Build image section — use data-file-id so loadImage() can fetch with auth header
+    // Build image section — render with placeholder / data-file-id for lazy loading
     let imageSection = '';
     if (!isMissing) {
       if (p.image_file_id) {
         const escapedId = p.image_file_id.replace(/"/g, '&quot;');
-        imageSection = `<img class="image-preview" src="/api/admin/dailycroc/image?file_id=${escapedId}" alt="puzzle image">`;
+        imageSection = `
+          <div class="image-container">
+            <img class="image-preview" data-file-id="${escapedId}" alt="puzzle image" style="display:none">
+          </div>
+        `;
       } else {
-        imageSection = `<div class="image-placeholder">❌ No image</div>`;
+        imageSection = `
+          <div class="image-container">
+            <div class="image-placeholder"><span>❌</span> <span>Изображение отсутствует</span></div>
+          </div>
+        `;
       }
     }
 
     card.innerHTML = `
       <div class="card-body">
         <div class="puzzle-header">
-          <div class="puzzle-date">${dateStr}</div>
+          <div class="puzzle-date">
+            ${dateStr}
+            ${isToday ? `<span class="today-badge">сегодня</span>` : ''}
+          </div>
           <div class="puzzle-diff ${diffClass}">${p.difficulty}</div>
         </div>
         ${isMissing
-          ? `<div class="badge-missing">Not Prepared</div>`
-          : `<div class="puzzle-word">${p.target_word}</div>
-             <div class="puzzle-topic">${p.topic || '—'}</div>
+          ? `<div class="badge-missing">Не создан</div>`
+          : `<div class="puzzle-info">
+               <div class="puzzle-word-row">
+                 <div class="puzzle-word">${p.target_word}</div>
+               </div>
+               <div class="puzzle-topic">${p.topic || '—'}</div>
+             </div>
+             
              <div class="prompt-section">
                <div class="prompt-header">
-                 <span style="font-size:12px;color:var(--hint);font-weight:600">IMAGE PROMPT</span>
-                 <button class="btn-text" data-action="editPrompt" data-date="${p.date}" data-diff="${p.difficulty}">✏️ Edit</button>
+                 <span class="prompt-title">IMAGE PROMPT</span>
+                 <button class="btn-text" data-action="editPrompt" data-date="${p.date}" data-diff="${p.difficulty}">✏️ Изменить</button>
                </div>
-               <div class="puzzle-prompt" id="prompt-text-${p.date}-${p.difficulty}">${p.image_prompt || '<i>(No prompt)</i>'}</div>
+               <div class="puzzle-prompt" id="prompt-text-${p.date}-${p.difficulty}">${p.image_prompt || '<i>(Промпт отсутствует)</i>'}</div>
+               
                <div class="prompt-edit edit-hidden" id="prompt-edit-${p.date}-${p.difficulty}">
                  <textarea class="prompt-input" id="prompt-input-${p.date}-${p.difficulty}">${p.image_prompt || ''}</textarea>
                  <div class="btn-row">
-                   <button class="btn btn-save" data-action="savePrompt" data-date="${p.date}" data-diff="${p.difficulty}">Save</button>
-                   <button class="btn" data-action="cancelPrompt" data-date="${p.date}" data-diff="${p.difficulty}">Cancel</button>
+                   <button class="btn btn-save" data-action="savePrompt" data-date="${p.date}" data-diff="${p.difficulty}">Сохранить</button>
+                   <button class="btn" data-action="cancelPrompt" data-date="${p.date}" data-diff="${p.difficulty}">Отмена</button>
                  </div>
                </div>
+             </div>
+             
              <div class="prompt-section mt-8">
                <div class="prompt-header">
-                 <span style="font-size:12px;color:var(--hint);font-weight:600">IMAGE MODEL</span>
+                 <span class="prompt-title">IMAGE MODEL</span>
                </div>
                <select class="model-select" id="model-select-${p.date}-${p.difficulty}"
                  data-action="saveModel" data-date="${p.date}" data-diff="${p.difficulty}">
@@ -238,41 +709,53 @@ function renderPuzzles(puzzles) {
           <button class="btn btn-regen" id="regen-${p.date}-${p.difficulty}"
             data-action="regen" data-date="${p.date}" data-diff="${p.difficulty}"
             ${isMissing ? 'disabled' : ''}>
-            🖼 Regen Image
+            🖼️ Обновить арт
           </button>
           <button class="btn btn-reset" id="reset-${p.date}-${p.difficulty}"
             data-action="reset" data-date="${p.date}" data-diff="${p.difficulty}">
-            🔀 New Word
+            🔀 Новое слово
           </button>
         </div>
       </div>
     `;
     container.appendChild(card);
-    
   });
+
+  // Lazy load images with auth header
+  container.querySelectorAll('img[data-file-id]').forEach(loadImage);
 }
 
+// Regenerate image
 async function regenerate(date, diff) {
-  if (!confirm(`Regenerate image for ${date} (${diff})? This replaces the current image.`)) return;
+  const confirmed = await showConfirm(
+    'Перегенерация арта',
+    `Вы уверены, что хотите перегенерировать изображение для ${date} (${diff})? Предыдущее изображение будет удалено.`
+  );
+  if (!confirmed) return;
+
   const btn = document.getElementById(`regen-${date}-${diff}`);
-  btn.disabled = true; btn.textContent = '⏳ Regenerating…';
+  btn.disabled = true;
+  btn.textContent = '⏳ Генерация…';
   
   try {
     const res = await fetch('/api/admin/dailycroc/regenerate', {
       method: 'POST', headers: apiHeaders,
       body: JSON.stringify({ date, difficulty: diff })
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     
+    showToast('Изображение успешно сгенерировано!', 'success');
     await loadPuzzles();
   } catch (e) {
-    
-    alert(`Error: ${e.message}`);
-    btn.disabled = false; btn.textContent = '🖼 Regen Image';
+    showToast(`Ошибка: ${e.message}`, 'error');
+    btn.disabled = false;
+    btn.textContent = '🖼️ Обновить арт';
   }
 }
 
+// Edit prompt toggles
 function editPrompt(date, diff) {
   document.getElementById(`prompt-text-${date}-${diff}`).classList.add('edit-hidden');
   document.getElementById(`prompt-edit-${date}-${diff}`).classList.remove('edit-hidden');
@@ -283,6 +766,7 @@ function cancelEditPrompt(date, diff) {
   document.getElementById(`prompt-edit-${date}-${diff}`).classList.add('edit-hidden');
 }
 
+// Save prompt value
 async function savePrompt(date, diff) {
   const newPrompt = document.getElementById(`prompt-input-${date}-${diff}`).value;
   
@@ -291,59 +775,65 @@ async function savePrompt(date, diff) {
       method: 'POST', headers: apiHeaders,
       body: JSON.stringify({ date, difficulty: diff, prompt: newPrompt })
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     
-    
-    // Update UI directly instead of reloading everything
-    document.getElementById(`prompt-text-${date}-${diff}`).textContent = newPrompt || '(No prompt)';
+    showToast('Промпт успешно сохранён.', 'success');
+    document.getElementById(`prompt-text-${date}-${diff}`).textContent = newPrompt || '(Промпт отсутствует)';
     cancelEditPrompt(date, diff);
   } catch (e) {
-    
-    alert(`Error saving prompt: ${e.message}`);
+    showToast(`Ошибка сохранения промпта: ${e.message}`, 'error');
   }
 }
 
+// Save active model value
 async function saveModel(date, diff, model) {
-  
   try {
     const res = await fetch('/api/admin/dailycroc/model', {
       method: 'POST', headers: apiHeaders,
       body: JSON.stringify({ date, difficulty: diff, model })
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
-    
+    showToast('Модель генерации обновлена.', 'success');
   } catch (e) {
-    
-    alert(`Error saving model: ${e.message}`);
+    showToast(`Ошибка обновления модели: ${e.message}`, 'error');
   }
 }
 
+// Choose new random word
 async function resetWord(date, diff) {
-  if (!confirm(`Replace word for ${date} (${diff}) with a new one? This deletes the current puzzle and all its data.`)) return;
+  const confirmed = await showConfirm(
+    'Сброс слова дня',
+    `Вы действительно хотите сбросить слово для ${date} (${diff})? Это действие полностью удалит текущий прогресс игры, промпты и сгенерированный арт.`
+  );
+  if (!confirmed) return;
+
   const btn = document.getElementById(`reset-${date}-${diff}`);
-  btn.disabled = true; btn.textContent = '⏳ Resetting…';
+  btn.disabled = true;
+  btn.textContent = '⏳ Сброс…';
   
   try {
     const res = await fetch('/api/admin/dailycroc/reset-word', {
       method: 'POST', headers: apiHeaders,
       body: JSON.stringify({ date, difficulty: diff })
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     
-    alert(`New word: ${data.new_word} (${data.new_topic})`);
+    showToast(`Выбрано новое слово: ${data.new_word} (${data.new_topic})`, 'success');
     await loadPuzzles();
   } catch (e) {
-    
-    alert(`Error: ${e.message}`);
-    btn.disabled = false; btn.textContent = '🔀 New Word';
+    showToast(`Ошибка: ${e.message}`, 'error');
+    btn.disabled = false;
+    btn.textContent = '🔀 Новое слово';
   }
 }
 
-loadPuzzles();
-
+// Event Delegation for buttons
 document.addEventListener('click', (e) => {
   const target = e.target.closest('[data-action]');
   if (!target) return;
@@ -361,14 +851,20 @@ document.addEventListener('click', (e) => {
     document.body.classList.toggle('security-mode');
     const isSec = document.body.classList.contains('security-mode');
     document.getElementById('toggle-security').textContent = isSec ? '👁 Показать' : '🔒 Скрыть слова';
+  } else if (action === 'toggleDelivery') {
+    toggleDelivery(target);
   }
 });
 
+// Event Delegation for model selector dropdown
 document.addEventListener('change', (e) => {
   if (e.target.matches('.model-select')) {
     saveModel(e.target.dataset.date, e.target.dataset.diff, e.target.value);
   }
 });
+
+// Initialize dashboard
+loadPuzzles();
 
 </script>
 </body>

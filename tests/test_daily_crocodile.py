@@ -297,16 +297,23 @@ async def test_build_dailycroc_status_snapshot_shows_hint_and_art_breakdown() ->
         text, keyboard = await cmd_admin.build_dailycroc_status_snapshot(now=datetime(2026, 4, 23, 9, 0, tzinfo=UTC))
 
     assert (
-        "easy: <code>ready</code> · puzzle=<code>yes</code> · hints=<code>3/3</code> · art=<code>yes</code> · prepared=<code>23.04 09:15 Kyiv</code>"
+        "easy (2026-04-23): <code>ready</code> · puzzle=<code>yes</code> · word=<code>крокодил</code> · hints=<code>3/3</code> · art=<code>yes</code> · gen_time=<code>23.04 09:15 Kyiv</code>"
         in text
     )
     assert (
-        "hard: <code>ready</code> · puzzle=<code>yes</code> · hints=<code>3/3</code> · art=<code>no</code> · prepared=<code>23.04 09:45 Kyiv</code>"
+        "hard (2026-04-23): <code>ready</code> · puzzle=<code>yes</code> · word=<code>телескоп</code> · hints=<code>3/3</code> · art=<code>no</code> · gen_time=<code>23.04 09:45 Kyiv</code>"
         in text
     )
     assert "🧪 <b>Placeholder test:</b> <code>ok/photo @ 23.04 09:20 Kyiv</code>" in text
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
-    assert labels == ["🔄 Refresh", "🧪 Prep check", "📬 Send test to admin"]
+    assert labels == [
+        "🔄 Refresh",
+        "🧪 Prep check",
+        "🖼 Regen Easy",
+        "🖼 Regen Hard",
+        "🎛 WebApp Dashboard",
+        "📬 Send test to admin",
+    ]
 
 
 @pytest.mark.asyncio
@@ -607,6 +614,11 @@ async def test_daily_completion_bundle_passes_art_into_single_result_message_whe
             new_callable=AsyncMock,
             return_value=None,
         ),
+        patch(
+            "app.games.crocodile_daily_telegram.repo.get_results_for_user",
+            new_callable=AsyncMock,
+            return_value={"easy": SimpleNamespace(status="won")},
+        ),
         patch("app.games.crocodile_daily_telegram.repo.deactivate_other_result_messages", new_callable=AsyncMock),
         patch("app.games.crocodile_daily_telegram.repo.mark_daily_sent", new_callable=AsyncMock),
         patch("app.games.crocodile_daily_telegram.repo.get_puzzle", new_callable=AsyncMock, return_value=puzzle),
@@ -695,6 +707,11 @@ async def test_daily_completion_bundle_updates_existing_photo_result() -> None:
             "app.games.crocodile_daily_telegram.repo.get_active_result_message_for_user",
             new_callable=AsyncMock,
             return_value={"id": 17, "chat_id": 77, "message_id": 501, "message_type": "photo"},
+        ),
+        patch(
+            "app.games.crocodile_daily_telegram.repo.get_results_for_user",
+            new_callable=AsyncMock,
+            return_value={"hard": SimpleNamespace(status="won")},
         ),
         patch(
             "app.games.crocodile_daily_telegram.repo.deactivate_other_result_messages", new_callable=AsyncMock
