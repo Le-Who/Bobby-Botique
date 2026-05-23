@@ -139,11 +139,11 @@ graph TD;
 | `app/`                | Core application logic (bot, web server, DB layer, handlers).                  |
 | `app/handlers/`       | Telegram command and message processors (`ai_chat`, `ai_search`, `commands`, `inline`). |
 | `app/repos/`          | Database repository pattern implementations (queries for chats, memory, keys). |
-| `app/providers/`      | AI provider abstraction layer (base, Gemini, OpenRouter, router with race requests). |
+| `app/providers/`      | AI provider abstraction layer (base, Gemini, Opencode, OpenRouter, FreeTheAI, Pollinations, Imagen, TTS, router). |
 | `app/core/`           | Agentic research engine — multi-step query decomposition and tool use.         |
-| `app/context/`        | Context assembly subsystem (assembler, summarizer, token budget).              |
+| `app/context/`        | Context assembly subsystem (assembler, summarizer, compression, token budget). |
 | `app/documents/`      | Document processing: chunking strategies, parsers, document repository.        |
-| `app/middleware/`     | Request pipeline middleware (dedup).                                           |
+| `app/middleware/`     | Request pipeline middleware (debounce aggregation, dedup prevention).           |
 | `app/adapters/`       | Concurrency primitives and Telegram UI adapter.                                |
 | `app/db/`             | Database bootstrap: schema validation, migrations runner, RLS, seed.           |
 | `app/utils/`          | Shared utilities (formatting, keyboards, background tasks, image utils, reader SSR, etc.). |

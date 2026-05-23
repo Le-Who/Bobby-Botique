@@ -64,3 +64,20 @@ artifacts/perf/*.log
 artifacts/perf/*.json
 artifacts/perf/parse_*.py
 artifacts/perf/out*.log
+# Dev scratch & debug scripts
+_patch_*.py
+_test_*.py
+scratch*.py
+script.py
+
+# IDE configs
+.vs/
+.codex/
+
+# Log & output files
+out.log
+pytest_output.txt
+test_keys_out.txt
+
+# UV lock (not used)
+uv.lock

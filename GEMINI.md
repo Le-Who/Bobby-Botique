@@ -1,7 +1,7 @@
 # gemaibotv2 — Gemini CLI Context
 
 ## Project
-Python Telegram bot with Gemini AI backend. Stack: Python 3.12+, aiogram 3.x,
+Python Telegram bot with Gemini AI backend. Stack: Python 3.12+, python-telegram-bot (PTB),
 PostgreSQL (asyncpg + pgvector), Redis, Quart, Vertex AI, various LLM providers.
 
 ## Critical: UTF-8 Encoding (NEVER VIOLATE)
@@ -50,4 +50,4 @@ python scripts/check_encoding.py
 - `app/games/` — Crocodile game logic (word_bank.py, judge.py)
 - `app/state.py` — UserState, Redis-backed distributed state
 - `app/repos/` — Database repositories (asyncpg)
-- `tests/` — 1800+ tests, mostly unit with some integration (`-m integration`)
+- `tests/` — 171 test files (~32K LOC), mostly unit with some integration (`-m integration`)

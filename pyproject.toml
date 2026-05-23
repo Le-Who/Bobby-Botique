@@ -37,6 +37,8 @@ ignore = [
 "test_*.py" = ["T201", "E402"]
 "scripts/check_db.py" = ["T201"]
 "scripts/check_encoding.py" = ["T201"]
+# Perf benchmark scripts use print() and have loose import structure by design
+"artifacts/perf/**" = ["T201", "I001", "F841", "F821", "F541"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
