@@ -725,12 +725,11 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
     """Detect zodiac sign and target day, then query API Ninjas or fallback to Gemini."""
     lower_text = text.lower()
 
-    # 1. Detect zodiac sign
-    detected_sign = None
+    # 1. Detect zodiac signs
+    detected_signs = []
     for sign, pattern in _ZODIAC_MAPPING.items():
         if pattern.search(lower_text):
-            detected_sign = sign
-            break
+            detected_signs.append(sign)
 
     # 2. Parse target day
     if re.search(r"следующ.*(три|3)\s*дн", lower_text):
@@ -744,10 +743,10 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
     else:
         day_ru = "сегодня"
 
-    logging.info("Horoscope intent: sign=%s, day_ru=%s", detected_sign, day_ru)
+    logging.info("Horoscope intent: signs=%s, day_ru=%s", detected_signs, day_ru)
 
     # If no sign is found, guide the user
-    if not detected_sign:
+    if not detected_signs:
         guide_text = (
             "🔮 **Персональный Гороскоп**\n\n"
             "Пожалуйста, укажите знак зодиака в вашем запросе!\n"
@@ -761,7 +760,8 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
         )
         return IntentResult(guide_text)
 
-    sign_display = _ZODIAC_RU_NAMES[detected_sign]
+    sign_displays = [_ZODIAC_RU_NAMES[s] for s in detected_signs]
+    signs_str = " и ".join(sign_displays) if len(sign_displays) == 2 else ", ".join(sign_displays)
 
     from datetime import UTC, datetime, timedelta
 
@@ -796,16 +796,17 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
     logging.info("Generating horoscope using local astrological data")
     system_instruction = (
         "Ты — профессиональный, вдохновляющий и харизматичный астролог.\n"
-        f"Составь интересный, точный и структурированный прогноз на русском языке "
-        f"для знака {sign_display} на {day_ru}.\n"
+        f"Пользователь запросил: '{text}'.\n"
+        f"Знаки в запросе: {signs_str}. Ответь на запрос пользователя, учитывая указанный период ({day_ru}).\n"
+        "Если запрос касается совместимости (указано несколько знаков), проанализируй их взаимодействие.\n"
+        "Если запрос касается конкретной темы (финансы, любовь и т.д.), сделай акцент именно на ней.\n"
         "ОБЯЗАТЕЛЬНО используй предоставленные ниже реальные астрономические данные (транзиты планет, фазу Луны) "
-        "чтобы обосновать свой прогноз. Свяжи положение планет с советами по ключевым сферам жизни "
-        "(карьера, здоровье, любовь, финансы).\n\n"
+        "чтобы обосновать свой прогноз.\n\n"
         f"--- ДАННЫЕ О ТРАНЗИТАХ ---\n{astro_context}\n--------------------------\n\n"
         "Используй красивые эмодзи. Будь дружелюбен и пиши увлекательно.\n"
         "Ответ должен быть кратким и ёмким (не более 3-4 небольших абзацев)."
     )
-    prompt = f"Составь гороскоп для знака {sign_display} на {day_ru}."
+    prompt = f"Запрос пользователя: {text}"
     try:
         chunks = []
         async for chunk in provider.stream_response(  # type: ignore[attr-defined]
@@ -819,8 +820,15 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
         result_text = "".join(chunks).strip()
         if result_text:
             logging.info("Gemini direct generation completed successfully")
+            
+            # Format the output header appropriately based on the number of signs
+            if len(sign_displays) > 1:
+                title = f"🔮 **Гороскоп: Совместимость {signs_str} ({day_ru})**"
+            else:
+                title = f"🔮 **Гороскоп: {signs_str} ({day_ru})**"
+                
             formatted_response = (
-                f"🔮 **Гороскоп: {sign_display} ({day_ru})**\n\n"
+                f"{title}\n\n"
                 f"{result_text}\n\n"
                 f"_Данные: Эфемериды & Gemini_"
             )
