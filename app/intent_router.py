@@ -733,7 +733,9 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
             break
 
     # 2. Parse target day
-    if _DATE_POSLEZAVTRA_RE.search(lower_text):
+    if re.search(r"следующ.*(три|3)\s*дн", lower_text):
+        day_ru = "на следующие три дня"
+    elif _DATE_POSLEZAVTRA_RE.search(lower_text):
         day_ru = "послезавтра"
     elif _DATE_ZAVTRA_RE.search(lower_text):
         day_ru = "завтра"
@@ -741,6 +743,8 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
         day_ru = "вчера"
     else:
         day_ru = "сегодня"
+
+    logging.info("Horoscope intent: sign=%s, day_ru=%s", detected_sign, day_ru)
 
     # If no sign is found, guide the user
     if not detected_sign:
@@ -766,9 +770,10 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
         logging.warning("Failed to get horoscope API key (decryption error?): %s", exc)
         api_key = None
 
-    # If key is present, try API Ninjas
+    # If key is present and day is "сегодня", try API Ninjas
+    # API Ninjas Horoscope API only supports current day (or past dates for premium).
     api_text = None
-    if api_key:
+    if api_key and day_ru == "сегодня":
         try:
             params = {"zodiac": detected_sign}
             resp = await _get_http().get(
@@ -780,14 +785,19 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
             if resp.status_code == 200:
                 data = resp.json()
                 api_text = data.get("horoscope")
+                logging.info("API Ninjas Horoscope succeeded (length: %d)", len(api_text) if api_text else 0)
+            else:
+                logging.warning("API Ninjas Horoscope failed with status %d: %s", resp.status_code, resp.text)
         except Exception as exc:
             logging.warning("API Ninjas Horoscope failed: %s", exc)
+    else:
+        logging.info("Skipping API Ninjas Horoscope (day_ru != 'сегодня' or no api_key)")
 
     # Resolve a Gemini model dynamically
     from app.agent_use_cases import AgentRequestUseCase
     use_case = AgentRequestUseCase()
 
-    kd, mdl, _ = await use_case.resolve_ai_request("gemini-2.5-flash-lite")
+    kd, mdl, _ = await use_case.resolve_ai_request("gemini-3.1-flash-lite")
     if not kd or not mdl:
         logging.error("Failed to resolve Gemini key for horoscope intent")
         return None
@@ -816,6 +826,7 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
                     chunks.append(chunk)
             result_text = "".join(chunks).strip()
             if result_text:
+                logging.info("Gemini translation generated successfully")
                 formatted_response = (
                     f"🔮 **Гороскоп: {sign_display} ({day_ru})**\n\n"
                     f"{result_text}\n\n"
@@ -826,9 +837,10 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
             logging.warning("Failed to translate horoscope via Gemini: %s", exc)
 
     # Fallback to direct Gemini generation
+    logging.info("Falling back to direct Gemini generation for horoscope")
     system_instruction = (
         "Ты — профессиональный, вдохновляющий и харизматичный астролог.\n"
-        f"Составь интересный, точный и структурированный ежедневный гороскоп на русском языке "
+        f"Составь интересный, точный и структурированный прогноз на русском языке "
         f"для знака {sign_display} на {day_ru}.\n"
         "Гороскоп должен содержать полезные советы по ключевым сферам жизни (карьера, здоровье, любовь, финансы) "
         "и использовать красивые эмодзи. Будь дружелюбен и пиши увлекательно.\n"
@@ -847,6 +859,7 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
                 chunks.append(chunk)
         result_text = "".join(chunks).strip()
         if result_text:
+            logging.info("Gemini direct generation completed successfully")
             formatted_response = (
                 f"🔮 **Гороскоп: {sign_display} ({day_ru})**\n\n"
                 f"{result_text}\n\n"
