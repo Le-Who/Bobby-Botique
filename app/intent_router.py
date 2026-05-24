@@ -760,7 +760,11 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
     sign_display = _ZODIAC_RU_NAMES[detected_sign]
 
     from app.repos.provider_keys import get_provider_key
-    api_key = await get_provider_key("horoscope")
+    try:
+        api_key = await get_provider_key("horoscope")
+    except Exception as exc:
+        logging.warning("Failed to get horoscope API key (decryption error?): %s", exc)
+        api_key = None
 
     # If key is present, try API Ninjas
     api_text = None
