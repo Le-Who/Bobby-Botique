@@ -763,41 +763,29 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
 
     sign_display = _ZODIAC_RU_NAMES[detected_sign]
 
-    from app.repos.provider_keys import get_provider_key
-    try:
-        api_key = await get_provider_key("horoscope")
-    except Exception as exc:
-        logging.warning("Failed to get horoscope API key (decryption error?): %s", exc)
-        api_key = None
+    from datetime import UTC, datetime, timedelta
 
-    # If key is present and day is "сегодня", try API Ninjas
-    # API Ninjas Horoscope API only supports current day (or past dates for premium).
-    api_text = None
-    if api_key and day_ru == "сегодня":
-        try:
-            params = {"zodiac": detected_sign}
-            resp = await _get_http().get(
-                "https://api.api-ninjas.com/v1/horoscope",
-                params=params,
-                headers={"X-Api-Key": api_key},
-                timeout=6.0
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                api_text = data.get("horoscope")
-                logging.info("API Ninjas Horoscope succeeded (length: %d)", len(api_text) if api_text else 0)
-            else:
-                logging.warning("API Ninjas Horoscope failed with status %d: %s", resp.status_code, resp.text)
-        except Exception as exc:
-            logging.warning("API Ninjas Horoscope failed: %s", exc)
-    else:
-        logging.info("Skipping API Ninjas Horoscope (day_ru != 'сегодня' or no api_key)")
+    from app.astro import get_astro_context
+    
+    # Calculate target date for ephemeris based on day_ru
+    dt = datetime.now(UTC)
+    if day_ru == "завтра":
+        dt += timedelta(days=1)
+    elif day_ru == "послезавтра":
+        dt += timedelta(days=2)
+    elif day_ru == "вчера":
+        dt -= timedelta(days=1)
+    elif day_ru == "на следующие три дня":
+        # Let's base the transit context on tomorrow as the midpoint
+        dt += timedelta(days=1)
+        
+    astro_context = get_astro_context(dt)
 
     # Resolve a Gemini model dynamically
     from app.agent_use_cases import AgentRequestUseCase
     use_case = AgentRequestUseCase()
 
-    kd, mdl, _ = await use_case.resolve_ai_request("gemini-3.1-flash-lite")
+    kd, mdl, _ = await use_case.resolve_ai_request("gemini-3.5-flash")
     if not kd or not mdl:
         logging.error("Failed to resolve Gemini key for horoscope intent")
         return None
@@ -805,45 +793,16 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
     from app.providers.base import get_provider_for_model
     provider = get_provider_for_model(mdl, kd["api_key"])
 
-    if api_text:
-        # Translate and enrich API Ninjas text using Gemini
-        system_instruction = (
-            "Ты — харизматичный, профессиональный астролог.\n"
-            f"Переведи на русский язык и красиво оформи ежедневный гороскоп для знака {sign_display} на {day_ru}.\n"
-            "Добавь красивые астрологические эмодзи и разбей текст на логические структурированные абзацы.\n"
-            "Сделай перевод увлекательным, живым и приятным для чтения. Сохраняй исходный смысл гороскопа."
-        )
-        prompt = f"Original Horoscope in English: {api_text}"
-        try:
-            chunks = []
-            async for chunk in provider.stream_response(  # type: ignore[attr-defined]
-                history=[{"role": "user", "parts": [prompt]}],
-                model_name=mdl,
-                system_instruction=system_instruction,
-                thinking_level="off"
-            ):
-                if isinstance(chunk, str):
-                    chunks.append(chunk)
-            result_text = "".join(chunks).strip()
-            if result_text:
-                logging.info("Gemini translation generated successfully")
-                formatted_response = (
-                    f"🔮 **Гороскоп: {sign_display} ({day_ru})**\n\n"
-                    f"{result_text}\n\n"
-                    f"_Данные: API Ninjas & Gemini_"
-                )
-                return IntentResult(formatted_response)
-        except Exception as exc:
-            logging.warning("Failed to translate horoscope via Gemini: %s", exc)
-
-    # Fallback to direct Gemini generation
-    logging.info("Falling back to direct Gemini generation for horoscope")
+    logging.info("Generating horoscope using local astrological data")
     system_instruction = (
         "Ты — профессиональный, вдохновляющий и харизматичный астролог.\n"
         f"Составь интересный, точный и структурированный прогноз на русском языке "
         f"для знака {sign_display} на {day_ru}.\n"
-        "Гороскоп должен содержать полезные советы по ключевым сферам жизни (карьера, здоровье, любовь, финансы) "
-        "и использовать красивые эмодзи. Будь дружелюбен и пиши увлекательно.\n"
+        "ОБЯЗАТЕЛЬНО используй предоставленные ниже реальные астрономические данные (транзиты планет, фазу Луны) "
+        "чтобы обосновать свой прогноз. Свяжи положение планет с советами по ключевым сферам жизни "
+        "(карьера, здоровье, любовь, финансы).\n\n"
+        f"--- ДАННЫЕ О ТРАНЗИТАХ ---\n{astro_context}\n--------------------------\n\n"
+        "Используй красивые эмодзи. Будь дружелюбен и пиши увлекательно.\n"
         "Ответ должен быть кратким и ёмким (не более 3-4 небольших абзацев)."
     )
     prompt = f"Составь гороскоп для знака {sign_display} на {day_ru}."
@@ -863,7 +822,7 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
             formatted_response = (
                 f"🔮 **Гороскоп: {sign_display} ({day_ru})**\n\n"
                 f"{result_text}\n\n"
-                f"_Данные: Сгенерировано Gemini AI_"
+                f"_Данные: Эфемериды & Gemini_"
             )
             return IntentResult(formatted_response)
     except Exception as exc:
