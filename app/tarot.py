@@ -8,7 +8,7 @@ import random
 from pathlib import Path
 
 # Load dataset once at startup
-_TAROT_DATA_PATH = Path(__file__).parent / "data" / "tarot.json"
+_TAROT_DATA_PATH = Path(__file__).parent / "assets" / "tarot.json"
 _TAROT_DECK = []
 
 def _load_deck():
