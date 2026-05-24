@@ -25,6 +25,46 @@ _WEATHER_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+_HOROSCOPE_PATTERNS = re.compile(
+    r"(?:гороскоп|зодиак|\bhoroscope\b|\bzodiac\b)",
+    re.IGNORECASE,
+)
+
+_ZODIAC_MAPPING = {
+    "aries": re.compile(r"\b(?:овен|овна|овну|овном|овне|aries)\b", re.IGNORECASE),
+    "taurus": re.compile(r"\b(?:телец|тельца|тельцу|тельцом|тельце|taurus)\b", re.IGNORECASE),
+    "gemini": re.compile(r"\b(?:близнецы|близнецов|близнецам|близнецами|близнецах|gemini)\b", re.IGNORECASE),
+    "cancer": re.compile(r"\b(?:рак|рака|раку|раком|раке|раки|раков|cancer)\b", re.IGNORECASE),
+    "leo": re.compile(r"\b(?:лев|льва|льву|львом|льве|львы|львов|leo)\b", re.IGNORECASE),
+    "virgo": re.compile(r"\b(?:дева|девы|деве|деву|девой|дев|virgo)\b", re.IGNORECASE),
+    "libra": re.compile(r"\b(?:весы|весов|весам|весами|весах|libra)\b", re.IGNORECASE),
+    "scorpio": re.compile(r"\b(?:скорпион|скорпиона|скорпиону|скорпионом|скорпионе|скорпионы|скорпионов|scorpio)\b", re.IGNORECASE),
+    "sagittarius": re.compile(r"\b(?:стрелец|стрельца|стрельцу|стрельцом|стрельце|стрельцы|стрельцов|sagittarius)\b", re.IGNORECASE),
+    "capricorn": re.compile(r"\b(?:козерог|козерога|козерогу|козерогом|козероге|козероги|козерогов|capricorn)\b", re.IGNORECASE),
+    "aquarius": re.compile(r"\b(?:водолей|водолея|водолею|водолеем|водолее|водолеи|водолеев|aquarius)\b", re.IGNORECASE),
+    "pisces": re.compile(r"\b(?:рыбы|рыбы|рыбе|рыбу|рыбой|рыб|рыбам|рыбами|рыбах|pisces)\b", re.IGNORECASE),
+}
+
+_ZODIAC_RU_NAMES = {
+    "aries": "Овен ♈",
+    "taurus": "Телец ♉",
+    "gemini": "Близнецы ♊",
+    "cancer": "Рак ♋",
+    "leo": "Лев ♌",
+    "virgo": "Дева ♍",
+    "libra": "Весы ♎",
+    "scorpio": "Скорпион ♏",
+    "sagittarius": "Стрелец ♐",
+    "capricorn": "Козерог ♑",
+    "aquarius": "Водолей ♒",
+    "pisces": "Рыбы ♓",
+}
+
+_DATE_SEGODNYA_RE = re.compile(r"\b(?:сегодня|today|сейчас)\b", re.IGNORECASE)
+_DATE_ZAVTRA_RE = re.compile(r"\b(?:завтра|tomorrow)\b", re.IGNORECASE)
+_DATE_POSLEZAVTRA_RE = re.compile(r"\b(?:послезавтра)\b", re.IGNORECASE)
+_DATE_VCHERA_RE = re.compile(r"\b(?:вчера|yesterday)\b", re.IGNORECASE)
+
 # Colloquial/implicit weather queries — ONLY used when message is ≤12 words.
 # City extraction in _handle_weather acts as a second guard (no city → None → LLM).
 _WEATHER_COLLOQUIAL_RE = re.compile(
@@ -293,6 +333,12 @@ async def try_direct_intent(message_text: str) -> IntentResult | None:
     # Colloquial currency — only for short messages; currency-pair extraction is the inner guard
     if word_count <= _CURRENCY_COLLOQUIAL_MAX_WORDS and _CURRENCY_COLLOQUIAL_RE.search(text):
         result = await _handle_currency(text)
+        if result:
+            return _prepare_result(result)
+
+    # Horoscope
+    if _HOROSCOPE_PATTERNS.search(text):
+        result = await _handle_horoscope(text)
         if result:
             return _prepare_result(result)
 
@@ -673,3 +719,138 @@ def _extract_currency_pair(text: str) -> tuple[str | None, str | None]:
         return single, "RUB"
 
     return None, None
+
+
+async def _handle_horoscope(text: str) -> IntentResult | None:
+    """Detect zodiac sign and target day, then query API Ninjas or fallback to Gemini."""
+    lower_text = text.lower()
+
+    # 1. Detect zodiac sign
+    detected_sign = None
+    for sign, pattern in _ZODIAC_MAPPING.items():
+        if pattern.search(lower_text):
+            detected_sign = sign
+            break
+
+    # 2. Parse target day
+    if _DATE_POSLEZAVTRA_RE.search(lower_text):
+        day_ru = "послезавтра"
+    elif _DATE_ZAVTRA_RE.search(lower_text):
+        day_ru = "завтра"
+    elif _DATE_VCHERA_RE.search(lower_text):
+        day_ru = "вчера"
+    else:
+        day_ru = "сегодня"
+
+    # If no sign is found, guide the user
+    if not detected_sign:
+        guide_text = (
+            "🔮 **Персональный Гороскоп**\n\n"
+            "Пожалуйста, укажите знак зодиака в вашем запросе!\n"
+            "Например:\n"
+            "• _гороскоп овен на сегодня_\n"
+            "• _что ждет близнецов завтра?_\n"
+            "• _гороскоп лев на послезавтра_\n\n"
+            "**Доступные знаки:**\n"
+            "Овен ♈, Телец ♉, Близнецы ♊, Рак ♋, Лев ♌, Дева ♍, "
+            "Весы ♎, Скорпион ♏, Стрелец ♐, Козерог ♑, Водолей ♒, Рыбы ♓."
+        )
+        return IntentResult(guide_text)
+
+    sign_display = _ZODIAC_RU_NAMES[detected_sign]
+
+    from app.repos.provider_keys import get_provider_key
+    api_key = await get_provider_key("horoscope")
+
+    # If key is present, try API Ninjas
+    api_text = None
+    if api_key:
+        try:
+            params = {"zodiac": detected_sign}
+            resp = await _get_http().get(
+                "https://api.api-ninjas.com/v1/horoscope",
+                params=params,
+                headers={"X-Api-Key": api_key},
+                timeout=6.0
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                api_text = data.get("horoscope")
+        except Exception as exc:
+            logging.warning("API Ninjas Horoscope failed: %s", exc)
+
+    # Resolve a Gemini model dynamically
+    from app.agent_use_cases import AgentRequestUseCase
+    use_case = AgentRequestUseCase()
+
+    kd, mdl, _ = await use_case.resolve_ai_request("gemini-2.5-flash-lite")
+    if not kd or not mdl:
+        logging.error("Failed to resolve Gemini key for horoscope intent")
+        return None
+
+    from app.providers.base import get_provider_for_model
+    provider = get_provider_for_model(mdl, kd["api_key"])
+
+    if api_text:
+        # Translate and enrich API Ninjas text using Gemini
+        system_instruction = (
+            "Ты — харизматичный, профессиональный астролог.\n"
+            f"Переведи на русский язык и красиво оформи ежедневный гороскоп для знака {sign_display} на {day_ru}.\n"
+            "Добавь красивые астрологические эмодзи и разбей текст на логические структурированные абзацы.\n"
+            "Сделай перевод увлекательным, живым и приятным для чтения. Сохраняй исходный смысл гороскопа."
+        )
+        prompt = f"Original Horoscope in English: {api_text}"
+        try:
+            chunks = []
+            async for chunk in provider.stream_response(  # type: ignore[attr-defined]
+                history=[{"role": "user", "parts": [prompt]}],
+                model_name=mdl,
+                system_instruction=system_instruction,
+                thinking_level="off"
+            ):
+                if isinstance(chunk, str):
+                    chunks.append(chunk)
+            result_text = "".join(chunks).strip()
+            if result_text:
+                formatted_response = (
+                    f"🔮 **Гороскоп: {sign_display} ({day_ru})**\n\n"
+                    f"{result_text}\n\n"
+                    f"_Данные: API Ninjas & Gemini_"
+                )
+                return IntentResult(formatted_response)
+        except Exception as exc:
+            logging.warning("Failed to translate horoscope via Gemini: %s", exc)
+
+    # Fallback to direct Gemini generation
+    system_instruction = (
+        "Ты — профессиональный, вдохновляющий и харизматичный астролог.\n"
+        f"Составь интересный, точный и структурированный ежедневный гороскоп на русском языке "
+        f"для знака {sign_display} на {day_ru}.\n"
+        "Гороскоп должен содержать полезные советы по ключевым сферам жизни (карьера, здоровье, любовь, финансы) "
+        "и использовать красивые эмодзи. Будь дружелюбен и пиши увлекательно.\n"
+        "Ответ должен быть кратким и ёмким (не более 3-4 небольших абзацев)."
+    )
+    prompt = f"Составь гороскоп для знака {sign_display} на {day_ru}."
+    try:
+        chunks = []
+        async for chunk in provider.stream_response(  # type: ignore[attr-defined]
+            history=[{"role": "user", "parts": [prompt]}],
+            model_name=mdl,
+            system_instruction=system_instruction,
+            thinking_level="off"
+        ):
+            if isinstance(chunk, str):
+                chunks.append(chunk)
+        result_text = "".join(chunks).strip()
+        if result_text:
+            formatted_response = (
+                f"🔮 **Гороскоп: {sign_display} ({day_ru})**\n\n"
+                f"{result_text}\n\n"
+                f"_Данные: Сгенерировано Gemini AI_"
+            )
+            return IntentResult(formatted_response)
+    except Exception as exc:
+        logging.error("Failed to generate fallback horoscope: %s", exc)
+        return None
+
+    return None

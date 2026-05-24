@@ -85,6 +85,7 @@ async def handle_deferred_ai_response(**kwargs) -> dict:
 
     # Cooldown before retrying — give the API time to recover
     from telegram import Bot
+
     from app.config import settings
 
     try:

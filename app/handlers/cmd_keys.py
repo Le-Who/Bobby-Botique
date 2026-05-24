@@ -48,6 +48,7 @@ _PROVIDERS: dict[str, str] = {
     "pollinations": "🎨 Pollinations",
     "elevenlabs": "🎙️ ElevenLabs",
     "jina": "📄 Jina",
+    "horoscope": "🔮 Horoscope",
 }
 
 # ConversationHandler states
@@ -58,6 +59,7 @@ AWAITING_KEY = 0
 _HEALTH_CHECKS: dict[str, str] = {
     "weather": "https://api.weatherapi.com/v1/current.json?key={key}&q=London&aqi=no",
     "exchange": "https://v6.exchangerate-api.com/v6/{key}/pair/USD/EUR",
+    "horoscope": "https://api.api-ninjas.com/v1/horoscope?zodiac=aries",
 }
 
 # Cooldown for alerts per provider (6 hours)
@@ -263,10 +265,13 @@ async def check_single_provider_health(provider: str) -> bool | None:
     if not key:
         return False
 
-    url = template.format(key=key)
     try:
         async with httpx.AsyncClient(timeout=6.0) as client:
-            resp = await client.get(url)
+            if provider == "horoscope":
+                resp = await client.get(template, headers={"X-Api-Key": key})
+            else:
+                url = template.format(key=key)
+                resp = await client.get(url)
             return resp.status_code == 200
     except Exception:
         return False
