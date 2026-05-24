@@ -1786,6 +1786,7 @@ async def _generate_tarot_inline(
     bot,
     inline_message_id: str,
     user_query: str,
+    user_id: int | None,
 ) -> None:
     import contextlib
     import logging
