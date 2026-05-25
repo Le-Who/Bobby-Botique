@@ -172,7 +172,10 @@ def classify_thinking_level(
         long_responses = sum(
             1
             for h in recent_model_msgs
-            if any(len(str(p.get("text", "") if isinstance(p, dict) else str(p))) > 2000 for p in h.get("parts", []))
+            if any(
+                ((len(p.get("text", "")) if isinstance(p, dict) else (len(p) if isinstance(p, str) else 0)) > 2000)
+                for p in h.get("parts", [])
+            )
         )
         if long_responses >= 3:
             logger.debug("Thinking classifier: escalated MEDIUM->HIGH (conversation complexity)")
