@@ -534,6 +534,22 @@ async def run_bot_with_retry():
         except Exception as e:
             logging.warning("Failed to register reminder delivery job: %s", e)
 
+        # Schedule horoscope delivery poll (every 60 seconds, checks exact HH:MM match)
+        try:
+            from app.handlers.scheduled_horoscopes import check_and_send_horoscopes
+
+            if application.job_queue:
+                application.job_queue.run_repeating(
+                    check_and_send_horoscopes,
+                    interval=60,  # Every minute — matches HH:MM granularity
+                    first=45,  # First run 45s after boot (offset from reminder job)
+                    name="horoscope_delivery",
+                )
+                logging.info("Horoscope delivery job registered (60s interval)")
+        except Exception as e:
+            logging.warning("Failed to register horoscope delivery job: %s", e)
+
+
         # Schedule provider health check (every 30 minutes)
         try:
             from app.handlers.cmd_keys import run_all_health_checks

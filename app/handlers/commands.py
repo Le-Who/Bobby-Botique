@@ -26,6 +26,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_id = update.effective_user.id
     logging.info("Start command from user %s", user_id)
 
+    # ── Deep link routing ────────────────────────────────────────────────────
+    payload = (context.args[0] if context.args else "").strip()
+    if payload.startswith("subscribe_horoscope_"):
+        from app.handlers.horoscope_subscription import start_subscribe_horoscope
+
+        context.user_data["horo_payload"] = payload
+        await start_subscribe_horoscope(update, context)
+        return
+
     chat_state = await get_user_chat(user_id)
     formatted_text, parse_mode, reply_markup = await menus.get_start_menu_content(chat_state, user_id=user_id)
 
@@ -713,6 +722,17 @@ def register(application: Application) -> None:
 
     application.add_handler(CommandHandler("subscribe", subscribe_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
+
+    # Horoscope subscription wizard (from horoscope_subscription)
+    from app.handlers.horoscope_subscription import (
+        build_horoscope_subscription_handler,
+        horoscope_settings_callback,
+        horoscope_stop_command,
+    )
+
+    application.add_handler(build_horoscope_subscription_handler())
+    application.add_handler(CommandHandler("horoscope_stop", horoscope_stop_command))
+    application.add_handler(CallbackQueryHandler(horoscope_settings_callback, pattern=r"^horo_settings:"))
 
     # Reminder command (from cmd_reminders)
     from app.handlers.cmd_reminders import remind_command
