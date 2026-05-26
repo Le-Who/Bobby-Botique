@@ -59,6 +59,39 @@ def detect_language(text: str | None) -> str:
 # ── String Registry ──────────────────────────────────────────────────────────
 
 _STRINGS: dict[str, dict[str, str]] = {
+    # ── Mini App ─────────────────────────────────────────────────────────
+    "miniapp.voice.aoede": {"ru": "Нейтральный и естественный", "en": "Neutral and natural"},
+    "miniapp.voice.kore": {"ru": "Более энергичный и уверенный", "en": "More energetic and confident"},
+    "miniapp.voice.leda": {"ru": "Лёгкий и молодой", "en": "Light and youthful"},
+    "miniapp.voice.zephyr": {"ru": "Чёткий и бодрый", "en": "Clear and brisk"},
+    "miniapp.voice.charon": {"ru": "Сдержанный и профессиональный", "en": "Restrained and professional"},
+    "miniapp.voice.orus": {"ru": "Более глубокий и авторитетный", "en": "Deeper and authoritative"},
+    "miniapp.voice.puck": {"ru": "Бодрый", "en": "Upbeat"},
+    "miniapp.preset.off_label": {"ru": "Быстрый", "en": "Fast"},
+    "miniapp.preset.off_hint": {"ru": "Минимальная задержка, короткие ответы.", "en": "Minimal latency, short answers."},
+    "miniapp.preset.low_label": {"ru": "Сбалансированный", "en": "Balanced"},
+    "miniapp.preset.low_hint": {"ru": "Лучший режим по умолчанию для live-диалога.", "en": "Best default mode for live dialogue."},
+    "miniapp.preset.medium_label": {"ru": "Умный", "en": "Smart"},
+    "miniapp.preset.medium_hint": {"ru": "Больше размышления, но выше задержка.", "en": "More thinking, but higher latency."},
+    "miniapp.conn.standard_label": {"ru": "Стандартный Live", "en": "Standard Live"},
+    "miniapp.conn.standard_summary": {"ru": "без проверки актуальной информации в интернете (просто поболтать)", "en": "without internet fact-checking (just for chatting)"},
+    "miniapp.conn.vertex_label": {"ru": "Vertex Live · с доступом в интернет", "en": "Vertex Live · with internet access"},
+    "miniapp.conn.vertex_summary": {"ru": "с поиском актуальной информации в интернете (проверка фактов, актуальные новости)", "en": "with live internet search (fact-checking, breaking news)"},
+    "miniapp.voice_tag.conversational": {"ru": "Разговорный", "en": "Conversational"},
+    "miniapp.voice_tag.calm": {"ru": "Спокойный", "en": "Calm"},
+    "miniapp.voice_tag.deep": {"ru": "Глубокий", "en": "Deep"},
+    "miniapp.voice_tag.friendly": {"ru": "Дружелюбный", "en": "Friendly"},
+    "miniapp.voice_tag.professional": {"ru": "Профессиональный", "en": "Professional"},
+    "miniapp.voice_tag.energetic": {"ru": "Энергичный", "en": "Energetic"},
+    "miniapp.voice_tag.soft": {"ru": "Мягкий", "en": "Soft"},
+    "miniapp.voice_tag.natural_breezy": {"ru": "Естественный/Легкий", "en": "Natural/Breezy"},
+    "miniapp.voice_tag.confident_energetic": {"ru": "Уверенный/Энергичный", "en": "Confident/Energetic"},
+    "miniapp.voice_tag.upbeat_male": {"ru": "Оживленный мужской", "en": "Upbeat Male"},
+    "miniapp.voice_tag.light_youthful": {"ru": "Светлый/Молодой", "en": "Light/Youthful"},
+    "miniapp.voice_tag.deep_authoritative": {"ru": "Глубокий/Авторитетный", "en": "Deep/Authoritative"},
+    "miniapp.voice_tag.clear_cheerful": {"ru": "Чёткий/Бодрый", "en": "Clear/Cheerful"},
+    "miniapp.voice_tag.informative": {"ru": "Информативный", "en": "Informative"},
+
     # ── Voice Handler ────────────────────────────────────────────────────
     "voice.processing": {
         "ru": "🎙️ Обрабатываю голосовое сообщение...",
@@ -894,6 +927,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     "blockquote.partial_label": {
         "ru": "Частичный ответ / Сбой сети",
         "en": "Partial response / Network failure",
+    },
+    "miniapp.reconnect_note": {
+        "ru": "Изменения применяются через короткое переподключение live-сессии.",
+        "en": "Changes apply after a short reconnect of the live session.",
     },
 }
 

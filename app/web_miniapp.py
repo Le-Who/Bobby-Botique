@@ -42,34 +42,45 @@ _LIVE_THINKING_CONFIG_MAP: dict[str, str] = {
     "low": "low",
     "medium": "medium",
 }
-_LIVE_VOICE_OPTIONS: list[dict[str, str]] = [
-    {"id": "Aoede", "name": "Aoede", "gender": "female", "description": "Нейтральный и естественный"},
-    {"id": "Kore", "name": "Kore", "gender": "female", "description": "Более энергичный и уверенный"},
-    {"id": "Leda", "name": "Leda", "gender": "female", "description": "Лёгкий и молодой"},
-    {"id": "Zephyr", "name": "Zephyr", "gender": "male", "description": "Чёткий и бодрый"},
-    {"id": "Charon", "name": "Charon", "gender": "male", "description": "Сдержанный и профессиональный"},
-    {"id": "Orus", "name": "Orus", "gender": "male", "description": "Более глубокий и авторитетный"},
-]
-_LIVE_THINKING_PRESETS: list[dict[str, str]] = [
-    {"id": "off", "label": "Быстрый", "hint": "Минимальная задержка, короткие ответы."},
-    {"id": "low", "label": "Сбалансированный", "hint": "Лучший режим по умолчанию для live-диалога."},
-    {"id": "medium", "label": "Умный", "hint": "Больше размышления, но выше задержка."},
-]
+from app.i18n import t
+
+
+def _get_live_voice_options(lang: str) -> list[dict[str, str]]:
+    return [
+        {"id": "Aoede", "name": "Aoede", "gender": "female", "description": t("miniapp.voice.aoede", lang)},
+        {"id": "Kore", "name": "Kore", "gender": "female", "description": t("miniapp.voice.kore", lang)},
+        {"id": "Leda", "name": "Leda", "gender": "female", "description": t("miniapp.voice.leda", lang)},
+        {"id": "Zephyr", "name": "Zephyr", "gender": "male", "description": t("miniapp.voice.zephyr", lang)},
+        {"id": "Charon", "name": "Charon", "gender": "male", "description": t("miniapp.voice.charon", lang)},
+        {"id": "Orus", "name": "Orus", "gender": "male", "description": t("miniapp.voice.orus", lang)},
+    ]
+
+def _get_live_thinking_presets(lang: str) -> list[dict[str, str]]:
+    return [
+        {"id": "off", "label": t("miniapp.preset.off_label", lang), "hint": t("miniapp.preset.off_hint", lang)},
+        {"id": "low", "label": t("miniapp.preset.low_label", lang), "hint": t("miniapp.preset.low_hint", lang)},
+        {"id": "medium", "label": t("miniapp.preset.medium_label", lang), "hint": t("miniapp.preset.medium_hint", lang)},
+    ]
+
+_LIVE_VOICE_IDS = {"Aoede", "Kore", "Leda", "Zephyr", "Charon", "Orus"}
+_LIVE_CONNECTION_MODE_IDS = {"standard", "vertex_internet"}
 _LIVE_DEFAULT_CONNECTION_MODE = "standard"
 _LIVE_VERTEX_CONNECTION_MODE = "vertex_internet"
 _VERTEX_LIVE_MODEL = "gemini-live-2.5-flash-native-audio"
-_LIVE_CONNECTION_MODES: list[dict[str, str]] = [
-    {
-        "id": _LIVE_DEFAULT_CONNECTION_MODE,
-        "label": "Стандартный Live",
-        "summary": "Текущий live-режим без интернет-grounding.",
-    },
-    {
-        "id": _LIVE_VERTEX_CONNECTION_MODE,
-        "label": "Vertex Live · с доступом в интернет",
-        "summary": "Экспериментальный путь с Google Search grounding. Требует полноценный Vertex regional client.",
-    },
-]
+
+def _get_live_connection_modes(lang: str) -> list[dict[str, str]]:
+    return [
+        {
+            "id": _LIVE_DEFAULT_CONNECTION_MODE,
+            "label": t("miniapp.conn.standard_label", lang),
+            "summary": t("miniapp.conn.standard_summary", lang),
+        },
+        {
+            "id": _LIVE_VERTEX_CONNECTION_MODE,
+            "label": t("miniapp.conn.vertex_label", lang),
+            "summary": t("miniapp.conn.vertex_summary", lang),
+        },
+    ]
 
 # Backward-compatible test hooks for the classic game lock fallback registry.
 _game_locks = _croc_runtime._game_locks
@@ -174,7 +185,7 @@ def _default_live_voice_name() -> str:
 
 def _resolve_live_voice_name(chat_state) -> str:
     voice_name = getattr(chat_state, "live_voice_name", None) if chat_state else None
-    valid_voice_ids = {voice["id"] for voice in _LIVE_VOICE_OPTIONS}
+    valid_voice_ids = _LIVE_VOICE_IDS
     if isinstance(voice_name, str) and voice_name in valid_voice_ids:
         return voice_name
     return _default_live_voice_name()
@@ -189,7 +200,7 @@ def _resolve_live_thinking_level(chat_state) -> str:
 
 def _resolve_live_connection_mode(chat_state) -> str:
     mode = getattr(chat_state, "live_connection_mode", None) if chat_state else None
-    valid_mode_ids = {mode_item["id"] for mode_item in _LIVE_CONNECTION_MODES}
+    valid_mode_ids = _LIVE_CONNECTION_MODE_IDS
     if isinstance(mode, str) and mode in valid_mode_ids:
         return mode
     return _LIVE_DEFAULT_CONNECTION_MODE
@@ -632,6 +643,10 @@ async def api_get_voices(user_id: int):
     import time
 
     from app.config import settings
+    from app.state import get_user_state
+    
+    user_state = await get_user_state(user_id)
+    lang = user_state.lang if user_state else "ru"
 
     if settings.ELEVENLABS_API_KEYS:
         global _voices_cache, _voices_cache_ts
@@ -671,25 +686,25 @@ async def api_get_voices(user_id: int):
         _voices_cache_ts = 0.0
 
         voices = [
-            {"id": "XB0fDUnXU5powFXDhCwa", "name": "Charlotte (Conversational)"},
-            {"id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel (Calm)"},
-            {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam (Deep)"},
-            {"id": "ErXwobaYiN019PkySvjV", "name": "Antoni (Friendly)"},
-            {"id": "nPczCjzI2devNBz1zQrb", "name": "Brian (Professional)"},
-            {"id": "TX3LPaxmHKxFdv7VOQHJ", "name": "Liam (Energetic)"},
-            {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella (Soft)"},
+            {"id": "XB0fDUnXU5powFXDhCwa", "name": f"Charlotte ({t('miniapp.voice_tag.conversational', lang)})"},
+            {"id": "21m00Tcm4TlvDq8ikWAM", "name": f"Rachel ({t('miniapp.voice_tag.calm', lang)})"},
+            {"id": "pNInz6obpgDQGcFmaJgB", "name": f"Adam ({t('miniapp.voice_tag.deep', lang)})"},
+            {"id": "ErXwobaYiN019PkySvjV", "name": f"Antoni ({t('miniapp.voice_tag.friendly', lang)})"},
+            {"id": "nPczCjzI2devNBz1zQrb", "name": f"Brian ({t('miniapp.voice_tag.professional', lang)})"},
+            {"id": "TX3LPaxmHKxFdv7VOQHJ", "name": f"Liam ({t('miniapp.voice_tag.energetic', lang)})"},
+            {"id": "EXAVITQu4vr4xnSDxMaL", "name": f"Bella ({t('miniapp.voice_tag.soft', lang)})"},
         ]
     else:
         # Gemini static voices
         voices = [
-            {"id": "Aoede", "name": "Aoede (Natural/Breezy)"},
-            {"id": "Kore", "name": "Kore (Confident/Energetic)"},
-            {"id": "Puck", "name": "Puck (Upbeat Male)"},
-            {"id": "Charon", "name": "Charon (Professional)"},
-            {"id": "Leda", "name": "Leda (Light/Youthful)"},
-            {"id": "Orus", "name": "Orus (Deep/Authoritative)"},
-            {"id": "Zephyr", "name": "Zephyr (Clear/Cheerful)"},
-            {"id": "Rasalgethi", "name": "Rasalgethi (Informative)"},
+            {"id": "Aoede", "name": f"Aoede ({t('miniapp.voice_tag.natural_breezy', lang)})"},
+            {"id": "Kore", "name": f"Kore ({t('miniapp.voice_tag.confident_energetic', lang)})"},
+            {"id": "Puck", "name": f"Puck ({t('miniapp.voice_tag.upbeat_male', lang)})"},
+            {"id": "Charon", "name": f"Charon ({t('miniapp.voice_tag.professional', lang)})"},
+            {"id": "Leda", "name": f"Leda ({t('miniapp.voice_tag.light_youthful', lang)})"},
+            {"id": "Orus", "name": f"Orus ({t('miniapp.voice_tag.deep_authoritative', lang)})"},
+            {"id": "Zephyr", "name": f"Zephyr ({t('miniapp.voice_tag.clear_cheerful', lang)})"},
+            {"id": "Rasalgethi", "name": f"Rasalgethi ({t('miniapp.voice_tag.informative', lang)})"},
         ]
     return jsonify({"voices": voices})
 
@@ -700,15 +715,18 @@ async def api_get_live_settings(user_id: int):
     """Return per-user Gemini Live Audio settings and available presets."""
     try:
         from app.repos.chats import get_user_chat
+        from app.state import get_user_state
 
         chat_state = await get_user_chat(user_id)
+        user_state = await get_user_state(user_id)
+        lang = user_state.lang if user_state else "ru"
         return jsonify(
             {
                 "live_settings": _serialize_live_settings(chat_state),
-                "connection_modes": _LIVE_CONNECTION_MODES,
-                "voices": _LIVE_VOICE_OPTIONS,
-                "thinking_presets": _LIVE_THINKING_PRESETS,
-                "reconnect_note": "Изменения применяются через короткое переподключение live-сессии.",
+                "connection_modes": _get_live_connection_modes(lang),
+                "voices": _get_live_voice_options(lang),
+                "thinking_presets": _get_live_thinking_presets(lang),
+                "reconnect_note": t("miniapp.reconnect_note", lang),
             }
         )
     except Exception as e:
@@ -729,7 +747,7 @@ async def api_update_live_settings(user_id: int):
 
         if "live_voice_name" in body:
             voice_name = body["live_voice_name"]
-            valid_voice_ids = {voice["id"] for voice in _LIVE_VOICE_OPTIONS}
+            valid_voice_ids = _LIVE_VOICE_IDS
             if voice_name in valid_voice_ids:
                 chat_state.live_voice_name = voice_name
                 changed = True
@@ -742,7 +760,7 @@ async def api_update_live_settings(user_id: int):
 
         if "live_connection_mode" in body:
             connection_mode = body["live_connection_mode"]
-            valid_mode_ids = {mode["id"] for mode in _LIVE_CONNECTION_MODES}
+            valid_mode_ids = _LIVE_CONNECTION_MODE_IDS
             if connection_mode in valid_mode_ids:
                 chat_state.live_connection_mode = connection_mode
                 changed = True
