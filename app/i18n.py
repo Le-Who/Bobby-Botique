@@ -92,6 +92,88 @@ _STRINGS: dict[str, dict[str, str]] = {
     "miniapp.voice_tag.clear_cheerful": {"ru": "Чёткий/Бодрый", "en": "Clear/Cheerful"},
     "miniapp.voice_tag.informative": {"ru": "Информативный", "en": "Informative"},
 
+    # ── Inline Mode ──────────────────────────────────────────────────────
+    # Tones
+    "inline.tone_formal": {"ru": "🧑‍💼 Формальный ответ", "en": "🧑‍💼 Formal reply"},
+    "inline.tone_friendly": {"ru": "😊 Дружеский ответ", "en": "😊 Friendly reply"},
+    "inline.tone_sarcastic": {"ru": "😏 Саркастичный ответ", "en": "😏 Sarcastic reply"},
+    "inline.tone_hint_formal": {
+        "ru": "Отвечай строго, профессионально и по делу. Только факты, без юмора.",
+        "en": "Reply strictly, professionally and to the point. Facts only, no humor.",
+    },
+    "inline.tone_hint_friendly": {
+        "ru": "Отвечай тепло, понятно и неформально, как близкий друг. Допускай эмодзи.",
+        "en": "Reply warmly, clearly and informally, like a close friend. Emojis OK.",
+    },
+    "inline.tone_hint_sarcastic": {
+        "ru": "Отвечай с приятной иронией и лёгким сарказмом, оставаясь при этом полезным.",
+        "en": "Reply with pleasant irony and light sarcasm while remaining helpful.",
+    },
+    # Loading / progress
+    "inline.loading": {"ru": "⏳ Генерация…", "en": "⏳ Generating…"},
+    "inline.search_progress": {
+        "ru": "🔎 <b>{bot_name}</b> ищет в интернете…",
+        "en": "🔎 <b>{bot_name}</b> is searching the web…",
+    },
+    "inline.generate_progress": {
+        "ru": "🧠 <b>{bot_name}</b> собрал информацию, теперь генерирует ответ…",
+        "en": "🧠 <b>{bot_name}</b> gathered info, now generating answer…",
+    },
+    "inline.delayed": {
+        "ru": "⏳ <b>{bot_name}</b> задерживается…",
+        "en": "⏳ <b>{bot_name}</b> is taking longer than usual…",
+    },
+    # Empty query hint
+    "inline.hint_title": {"ru": "💬 Введите запрос после @бота…", "en": "💬 Type a query after @bot…"},
+    "inline.hint_desc": {"ru": "Например: какая погода в Москве?", "en": "Example: what's the weather in London?"},
+    "inline.empty_query": {
+        "ru": "💬 Чтобы использовать <b>{bot_name}</b>, введите запрос после @бота.",
+        "en": "💬 To use <b>{bot_name}</b>, type a query after @bot.",
+    },
+    # Image models
+    "inline.img_turbo": {"ru": "⚡ Турбо", "en": "⚡ Turbo"},
+    "inline.img_smart": {"ru": "🧠 Умный", "en": "🧠 Smart"},
+    "inline.img_art": {"ru": "🎨 Арт", "en": "🎨 Art"},
+    "inline.img_meme": {"ru": "🅰️ Мем", "en": "🅰️ Meme"},
+    "inline.img_edit": {"ru": "🪄 Изменить фото", "en": "🪄 Edit photo"},
+    "inline.img_edit_hint": {"ru": "✏️ Режим редактирования (Klein)", "en": "✏️ Edit mode (Klein)"},
+    "inline.img_meme_hint": {"ru": "🅰️ Обнаружен текст → авто-выбран Мем-режим", "en": "🅰️ Text detected → Meme mode auto-selected"},
+    "inline.img_caption": {"ru": "🎨 <b>Запрос:</b> {prompt}", "en": "🎨 <b>Prompt:</b> {prompt}"},
+    # Board
+    "inline.board_init": {
+        "ru": "📋 <b>{topic}</b>\n━━━━━━━━━━━━━━━━━━━━━\n<i>Отвечайте (reply) на это сообщение, чтобы добавить свои идеи.</i>\n\nПока ничего не предложено.",
+        "en": "📋 <b>{topic}</b>\n━━━━━━━━━━━━━━━━━━━━━\n<i>Reply to this message to add your ideas.</i>\n\nNothing proposed yet.",
+    },
+    "inline.board_activated": {"ru": "📋 Доска активирована", "en": "📋 Board activated"},
+    "inline.board_topic": {"ru": "📋 Создать доску: {topic}", "en": "📋 Create board: {topic}"},
+    "inline.board_desc": {"ru": "Участники смогут добавлять идеи через reply", "en": "Participants can add ideas via reply"},
+    # Crocodile
+    "inline.croc_custom": {"ru": "🐊 Крокодил: своё слово", "en": "🐊 Crocodile: custom word"},
+    "inline.croc_custom_desc": {"ru": "Задаёшь своё слово — второй игрок будет отгадывать", "en": "You set the word — another player will guess"},
+    "inline.croc_category": {"ru": "🐊 Крокодил: {cat}", "en": "🐊 Crocodile: {cat}"},
+    "inline.croc_cat_desc": {"ru": "Бот загадает слово из категории — второй игрок отгадывает", "en": "Bot picks a word from the category — another player guesses"},
+    "inline.croc_init": {"ru": "🐊 <b>Крокодил</b>\n<i>Игра загружается…</i>", "en": "🐊 <b>Crocodile</b>\n<i>Game loading…</i>"},
+    "inline.croc_loading": {"ru": "⏳ Загрузка...", "en": "⏳ Loading..."},
+    # Horoscope
+    "inline.horoscope_init": {"ru": "✨ <b>Гороскоп: {arg}</b>\n<i>Звёзды сходятся…</i>", "en": "✨ <b>Horoscope: {arg}</b>\n<i>The stars are aligning…</i>"},
+    "inline.horoscope_btn": {"ru": "⏳ Анализ...", "en": "⏳ Analyzing..."},
+    "inline.horoscope_desc": {"ru": "Астрономически точный прогноз", "en": "Astronomically accurate forecast"},
+    # Tarot
+    "inline.tarot_init": {"ru": "🔮 <b>Таро</b>\n<i>Тасуем колоду…</i>", "en": "🔮 <b>Tarot</b>\n<i>Shuffling the deck…</i>"},
+    "inline.tarot_btn": {"ru": "⏳ Тасуем...", "en": "⏳ Shuffling..."},
+    "inline.tarot_desc": {"ru": "Расклад на 3 карты", "en": "3-card spread"},
+    # Errors
+    "inline.timeout_error": {
+        "ru": "⏰ Модель не успела ответить вовремя. Нажмите «Повторить» ниже.",
+        "en": "⏰ Model didn't respond in time. Press «Retry» below.",
+    },
+    "inline.generation_error": {"ru": "❌ Не удалось получить ответ.", "en": "❌ Failed to get a response."},
+    "inline.fallback_error": {"ru": "Ошибка генерации ответа.", "en": "Response generation error."},
+    "inline.retry_expired": {
+        "ru": "⌛ Ссылка на повтор устарела. Введите запрос заново.",
+        "en": "⌛ Retry link has expired. Please send the query again.",
+    },
+
     # ── Voice Handler ────────────────────────────────────────────────────
     "voice.processing": {
         "ru": "🎙️ Обрабатываю голосовое сообщение...",

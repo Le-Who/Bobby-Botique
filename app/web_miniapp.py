@@ -643,10 +643,8 @@ async def api_get_voices(user_id: int):
     import time
 
     from app.config import settings
-    from app.state import get_user_state
-    
-    user_state = await get_user_state(user_id)
-    lang = user_state.lang if user_state else "ru"
+
+    lang = "ru"
 
     if settings.ELEVENLABS_API_KEYS:
         global _voices_cache, _voices_cache_ts
@@ -715,11 +713,9 @@ async def api_get_live_settings(user_id: int):
     """Return per-user Gemini Live Audio settings and available presets."""
     try:
         from app.repos.chats import get_user_chat
-        from app.state import get_user_state
 
         chat_state = await get_user_chat(user_id)
-        user_state = await get_user_state(user_id)
-        lang = user_state.lang if user_state else "ru"
+        lang = "ru"
         return jsonify(
             {
                 "live_settings": _serialize_live_settings(chat_state),
