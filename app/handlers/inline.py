@@ -1788,14 +1788,7 @@ async def _generate_tarot_inline(
     user_query: str,
     user_id: int | None,
 ) -> None:
-    import contextlib
-    import logging
-    from telegram import InlineKeyboardMarkup
-    from app.agent_use_cases import AgentRequestUseCase
-    from app.providers.base import get_provider_for_model
-    from app.tarot import get_tarot_context
-    from app.utils.text_format import markdown_to_html
-    
+    import contextlib    import logging    from telegram import InlineKeyboardMarkup    from app.agent_use_cases import AgentRequestUseCase    from app.providers.base import get_provider_for_model    from app.tarot import get_tarot_context    from app.utils.text_format import markdown_to_html    
     use_case = AgentRequestUseCase()
     kd, mdl, _ = await use_case.resolve_ai_request("gemini-3.5-flash")
     if not kd or not mdl:

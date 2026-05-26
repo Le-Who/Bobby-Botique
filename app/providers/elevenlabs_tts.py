@@ -51,6 +51,7 @@ _OUTPUT_FORMAT: Final = "pcm_24000"
 # Model: eleven_multilingual_v2 is the recommended high-quality model for
 # non-English languages (Russian, Ukrainian, etc.).  Available on all tiers.
 _DEFAULT_MODEL: Final = "eleven_multilingual_v2"
+_FLASH_MODEL: Final = "eleven_flash_v2_5"
 
 # Voice settings tuned for a warm assistant delivery (Siri/Alexa parity).
 # stability=0.50      — golden mean: expressive yet never erratic on long RU text
@@ -336,3 +337,53 @@ async def generate_speech_with_key_rotation(
         return None
 
     return pcm_parts
+
+
+async def fetch_voices(api_key: str, *, timeout: float = 10.0) -> list[dict]:
+    """Fetch available voices from ElevenLabs GET /v1/voices.
+
+    Returns list of {id, name, category, labels} dicts, or [] on error.
+    """
+    if not api_key:
+        return []
+
+    client = _get_client()
+    try:
+        response = await asyncio.wait_for(
+            client.get(
+                "/v1/voices",
+                headers={"xi-api-key": api_key, "Accept": "application/json"},
+            ),
+            timeout=timeout,
+        )
+    except Exception as e:
+        logging.warning("Failed to fetch ElevenLabs voices: %s", e)
+        return []
+
+    if response.status_code != 200:
+        logging.warning("ElevenLabs voices API returned HTTP %d", response.status_code)
+        return []
+
+    try:
+        data = response.json()
+    except Exception as e:
+        logging.warning("Failed to parse ElevenLabs voices JSON: %s", e)
+        return []
+
+    voices_list = data.get("voices", [])
+    result = []
+    for v in voices_list:
+        voice_id = v.get("voice_id")
+        name = v.get("name")
+        category = v.get("category")
+        if not voice_id or not name:
+            continue
+        if category not in ("premade", "cloned"):
+            continue
+        result.append({
+            "id": voice_id,
+            "name": name,
+            "category": category,
+            "labels": v.get("labels", {}),
+        })
+    return result

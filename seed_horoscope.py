@@ -1,6 +1,8 @@
 import asyncio
+
 from app.crypto import encrypt_api_key
 from app.repos.settings_repo import set_global_setting
+
 
 async def main():
     horoscope_key = '0nwaLaeiePnOTzcvWLuSpcMFjK6kvML6Ubsb9LgI'

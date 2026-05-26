@@ -1,6 +1,8 @@
 import asyncio
 import os
+
 import asyncpg
+
 
 async def main():
     db_url = os.environ.get("DATABASE_URL")

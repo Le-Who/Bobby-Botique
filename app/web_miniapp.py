@@ -620,22 +620,67 @@ async def api_delete_role(user_id: int, role_id: int):
         return jsonify({"error": "internal_error"}), 500
 
 
+_voices_cache: list[dict] | None = None
+_voices_cache_ts: float = 0.0
+_VOICES_CACHE_TTL: float = 300.0
+
+
 @miniapp_blueprint.route("/api/voices", methods=["GET"])
 @require_webapp_auth
 async def api_get_voices(user_id: int):
     """Provide a list of curated voices depending on available provider."""
+    import time
+
     from app.config import settings
 
     if settings.ELEVENLABS_API_KEYS:
+        global _voices_cache, _voices_cache_ts
+        now = time.time()
+
+        # Check cache
+        if _voices_cache is not None and (now - _voices_cache_ts < _VOICES_CACHE_TTL):
+            return jsonify({"voices": _voices_cache})
+
+        from app.providers.elevenlabs_tts import fetch_voices
+
+        # Use first key for checking available voices (readonly query)
+        api_key = settings.ELEVENLABS_API_KEYS[0]
+        dynamic_voices = await fetch_voices(api_key)
+
+        if dynamic_voices:
+            # Map into the structure expected by the Mini App
+            voices = []
+            for v in dynamic_voices:
+                name = v["name"]
+                # Append accent label or similar if present in labels for clarity
+                accent = v.get("labels", {}).get("accent")
+                if accent:
+                    name = f"{name} ({accent.title()})"
+                voices.append({
+                    "id": v["id"],
+                    "name": name
+                })
+            _voices_cache = voices
+            _voices_cache_ts = now
+            return jsonify({"voices": voices})
+
+        # Fallback to static ElevenLabs list on API failure
+        logger.warning("ElevenLabs voices API failed or returned empty. Falling back to static curated list.")
+        # Clear cache so next request tries again
+        _voices_cache = None
+        _voices_cache_ts = 0.0
+
         voices = [
             {"id": "XB0fDUnXU5powFXDhCwa", "name": "Charlotte (Conversational)"},
             {"id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel (Calm)"},
             {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam (Deep)"},
             {"id": "ErXwobaYiN019PkySvjV", "name": "Antoni (Friendly)"},
+            {"id": "nPczCjzI2devNBz1zQrb", "name": "Brian (Professional)"},
+            {"id": "TX3LPaxmHKxFdv7VOQHJ", "name": "Liam (Energetic)"},
             {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella (Soft)"},
-            {"id": "t0jbNlBVZ17f02VDIeMI", "name": "Jessie (Energetic)"},
         ]
     else:
+        # Gemini static voices
         voices = [
             {"id": "Aoede", "name": "Aoede (Natural/Breezy)"},
             {"id": "Kore", "name": "Kore (Confident/Energetic)"},

@@ -389,6 +389,7 @@ class VoiceReplyManager:
                         el_chunks,
                         el_keys,
                         voice_id=el_voice_id,
+                        model_id=settings.ELEVENLABS_MODEL,
                         timeout=el_timeout,
                     )
 

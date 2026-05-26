@@ -177,6 +177,7 @@ class Settings(BaseModel):
     OPENROUTER_API_KEYS: list[str] = []  # Optional, by default empty list
     ELEVENLABS_API_KEYS: list[str] = []  # Optional, free-tier ElevenLabs keys
     ELEVENLABS_VOICE_ID: str = "XB0fDUnXU5powFXDhCwa"  # Charlotte — conversational
+    ELEVENLABS_MODEL: str = "eleven_multilingual_v2"
     # Imagen image generation — uses same GEMINI_API_KEYS pool.
     # A separate per-key RPD counter is maintained in ImagenProvider so that
     # image quota exhaustion does NOT suspend keys for LLM / audio traffic.
@@ -374,6 +375,7 @@ def load_settings() -> Settings:
             "OPENROUTER_API_KEYS": _load_and_clean_keys("OPENROUTER_API_KEYS", required=False),
             "ELEVENLABS_API_KEYS": _load_and_clean_keys("ELEVENLABS_API_KEYS", required=False),
             "ELEVENLABS_VOICE_ID": os.getenv("ELEVENLABS_VOICE_ID", "XB0fDUnXU5powFXDhCwa"),
+            "ELEVENLABS_MODEL": os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
             # Pollinations image generation
             "POLLINATIONS_IMAGE_MODELS": _load_and_clean_keys("IMAGE_MODELS", required=False)
             or DEFAULT_POLLINATIONS_IMAGE_MODELS.copy(),
