@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-10-24 - [SQL Injection] Dynamic IN Clause Vulnerability
+**Vulnerability:** The SQL query used string concatenation (f-string) to dynamically construct placeholders for an `IN` clause (e.g., `model NOT IN ({placeholders})`), which could be vulnerable to SQL injection if not carefully sanitized.
+**Learning:** Constructing SQL statements dynamically with `f-strings` or string concatenation, even for placeholders, carries risks of syntax errors and potential SQL injection if not handled perfectly, and makes queries harder to cache.
+**Prevention:** Use PostgreSQL's `= ANY($1)` syntax to pass a list (array) of parameters directly as a single parameter instead of dynamically creating placeholders for an `IN` clause.
