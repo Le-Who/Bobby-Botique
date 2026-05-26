@@ -19,6 +19,20 @@ from app.providers.base import AIResponse, BaseAIProvider, _build_thinking_confi
 from app.utils.api_logger import api_logger
 from app.utils.image_utils import TaggedImage, save_image_as_bytes
 
+
+def _part_length(part: Any) -> int:
+    """Safely calculate length of a message part without stringifying binaries."""
+    if isinstance(part, str):
+        return len(part)
+    if isinstance(part, dict):
+        text = part.get("text", "")
+        return len(text) if isinstance(text, str) else len(str(text))
+    if isinstance(part, (bytes, bytearray)):
+        return 0
+    if hasattr(part, "mode") and hasattr(part, "size"):
+        return 0
+    return len(str(part))
+
 # Global cache for genai.Client instances to reuse connection pools (TLS/TCP)
 # Key: API Key (string), Value: genai.Client
 _gemini_clients_cache: LRUCache = LRUCache(maxsize=50)
@@ -65,7 +79,7 @@ class GeminiProvider(BaseAIProvider):
             # Compute metrics
             try:
                 prompt_length = sum(
-                    len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None
+                    _part_length(part) for item in history for part in (item.get("parts", []) or []) if part is not None
                 )
                 has_images = any(
                     isinstance(part, (bytes, bytearray, Image.Image))

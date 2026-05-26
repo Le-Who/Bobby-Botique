@@ -80,6 +80,20 @@ def _count_numbered_steps(text: str) -> int:
     return len(_HIGH_MULTIPART.findall(text))
 
 
+def _part_length(part: Any) -> int:
+    """Safely calculate length of a message part without stringifying binaries."""
+    if isinstance(part, str):
+        return len(part)
+    if isinstance(part, dict):
+        text = part.get("text", "")
+        return len(text) if isinstance(text, str) else len(str(text))
+    if isinstance(part, (bytes, bytearray)):
+        return 0
+    if hasattr(part, "mode") and hasattr(part, "size"):
+        return 0
+    return len(str(part))
+
+
 def classify_thinking_level(
     message: str,
     *,
@@ -172,7 +186,7 @@ def classify_thinking_level(
         long_responses = sum(
             1
             for h in recent_model_msgs
-            if any(len(str(p.get("text", "") if isinstance(p, dict) else str(p))) > 2000 for p in h.get("parts", []))
+            if any(_part_length(p) > 2000 for p in h.get("parts", []))
         )
         if long_responses >= 3:
             logger.debug("Thinking classifier: escalated MEDIUM->HIGH (conversation complexity)")
