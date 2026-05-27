@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-25 - [XSS] Unescaped API JSON Data in Template Literals
+**Vulnerability:** The `dashboard.html` and `miniapp.html` templates injected unescaped API response data into the DOM using `.innerHTML` and template literals, creating a Cross-Site Scripting (XSS) vulnerability. Furthermore, the `esc` function in `miniapp.html` used the `||` operator, which improperly rendered numeric zeros as empty strings.
+**Learning:** Even when serving internal API data, responses must be escaped on the frontend if injected via `.innerHTML`. Using `.textContent` is safer, but when using template literals to build complex HTML structures, a lightweight escaping utility is required. The nullish coalescing operator `??` is necessary to preserve falsy but valid values like `0`.
+**Prevention:** Always wrap dynamic string values in template literals assigned to `.innerHTML` with a lightweight browser-native HTML escape function (e.g., `function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }`).
