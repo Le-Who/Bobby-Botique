@@ -581,8 +581,8 @@ class MonthlyKeyManager:
 _tavily_km = MonthlyKeyManager(
     keys_table="tavily_api_keys",
     usage_table="tavily_key_usage",
-    credit_limit=settings.TAVILY_MONTHLY_CREDIT_LIMIT,
-    threshold_percent=settings.TAVILY_LIMIT_THRESHOLD_PERCENT,
+    credit_limit=settings.TAVILY_MONTHLY_CREDIT_LIMIT if settings else 1000,
+    threshold_percent=settings.TAVILY_LIMIT_THRESHOLD_PERCENT if settings else 80,
 )
 
 
