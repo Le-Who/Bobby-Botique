@@ -32,15 +32,15 @@
     </div>
 
     <nav class="tab-bar" id="tab-bar" role="tablist">
-      <button class="tab active" data-tab="overview" role="tab" aria-selected="true" aria-controls="panel-overview">📊 Overview</button>
-      <button class="tab" data-tab="providers" role="tab" aria-selected="false" aria-controls="panel-providers">🤖 AI Providers</button>
-      <button class="tab" data-tab="infra" role="tab" aria-selected="false" aria-controls="panel-infra">🛠️ Infrastructure</button>
-      <button class="tab" data-tab="errors" role="tab" aria-selected="false" aria-controls="panel-errors">⚠️ Errors <span class="tab-badge" id="error-badge" style="display:none">0</span></button>
+      <button class="tab active" id="tab-overview" data-tab="overview" role="tab" aria-selected="true" aria-controls="panel-overview">📊 Overview</button>
+      <button class="tab" id="tab-providers" data-tab="providers" role="tab" aria-selected="false" aria-controls="panel-providers">🤖 AI Providers</button>
+      <button class="tab" id="tab-infra" data-tab="infra" role="tab" aria-selected="false" aria-controls="panel-infra">🛠️ Infrastructure</button>
+      <button class="tab" id="tab-errors" data-tab="errors" role="tab" aria-selected="false" aria-controls="panel-errors">⚠️ Errors <span class="tab-badge" id="error-badge" style="display:none" aria-live="polite" aria-atomic="true">0</span></button>
     </nav>
 
     <div class="dash">
       <!-- TAB: Overview (System Health + Performance) -->
-      <div class="tab-panel active" id="panel-overview" role="tabpanel">
+      <div class="tab-panel active" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
       <!-- ROW 1: System Health -->
         <h2 class="section-title">System Health</h2>
         <div class="card-row quad">
@@ -135,7 +135,7 @@
       </div><!-- end panel-overview -->
 
       <!-- TAB: AI Providers -->
-      <div class="tab-panel" id="panel-providers" role="tabpanel">
+      <div class="tab-panel" id="panel-providers" role="tabpanel" aria-labelledby="tab-providers">
 
       <!-- Reset Time Info -->
       <section class="dash-section">
@@ -204,7 +204,7 @@
       </div><!-- end panel-providers -->
 
       <!-- TAB: Infrastructure -->
-      <div class="tab-panel" id="panel-infra" role="tabpanel">
+      <div class="tab-panel" id="panel-infra" role="tabpanel" aria-labelledby="tab-infra">
 
       <!-- ROW 4: Database & Queue -->
       <section class="dash-section">
@@ -308,7 +308,7 @@
       </div><!-- end panel-infra -->
 
       <!-- TAB: Errors -->
-      <div class="tab-panel" id="panel-errors" role="tabpanel">
+      <div class="tab-panel" id="panel-errors" role="tabpanel" aria-labelledby="tab-errors">
       <section class="dash-section">
         <h2 class="section-title">Recent Errors</h2>
         <div class="card card-full">
