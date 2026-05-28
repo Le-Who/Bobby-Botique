@@ -158,7 +158,7 @@ async def _process_ai_vision(
         )
         raw_model = settings.DEFAULT_MODEL
 
-    key_data, model_used, resolution = await _resolve_ai_request(raw_model)
+    _key_data, model_used, resolution = await _resolve_ai_request(raw_model)
 
     if resolution in ("all_exhausted", "decryption_failed"):
         from app.handlers.chat_logic import classify_resolution

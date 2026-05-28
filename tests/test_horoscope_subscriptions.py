@@ -1,11 +1,14 @@
-import pytest
-from app.repos.horoscope_subscriptions import (
-    upsert_horoscope_subscription,
-    get_horoscope_subscription,
-    get_due_horoscope_subscriptions
-)
-from app.database import db_query
 from datetime import datetime, timezone
+
+import pytest
+
+from app.database import db_query
+from app.repos.horoscope_subscriptions import (
+    get_due_horoscope_subscriptions,
+    get_horoscope_subscription,
+    upsert_horoscope_subscription,
+)
+
 
 @pytest.mark.asyncio
 async def test_upsert_and_get_subscription(db_conn):

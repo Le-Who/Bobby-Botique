@@ -3,6 +3,28 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-05-28 - Tarot Spread Variations Expansion
+
+### 🎴 Tarot Enhancements
+
+- **5 New Spread Variations (`app/tarot.py`, `app/handlers/inline.py`):** Expanded the inline Tarot system to support multiple spread types via a dropdown selector. Added variations:
+  - 🎴 **Карта дня** (Card of the Day) - single card, context changes based on whether it's requested directly or via command without query.
+  - 🔮 **Да или Нет** (Yes/No) - quick binary answer spread.
+  - 💼 **Карьера и финансы** (Career & Finances) - 3-card spread (Past, Present, Future).
+  - ❤️ **Отношения** (Relationships) - 3-card spread (You, Partner, Relationship).
+  - 🌟 **Личностный рост** (Personal Growth) - 3-card spread (Strengths, Weaknesses, Advice).
+- **Automated Validation (`app/handlers/inline.py`):** "Card of the Day" intelligently vanishes from the dropdown if the user provides a specific query string. Yes/No questions employ soft validation, falling back gracefully without requiring a literal question mark.
+- **Fortune Cookie HTML Fast-Path (`app/handlers/inline.py`):** Refactored layout to bypass LLM generation for instant, stateless UI responses during spread selection.
+- **Russian Content Enrichment (`app/assets/tarot.json`):** Extended all 78 tarot cards with `fortune_telling_ru` localizations for richer, localized interpretations.
+
+### ✅ Verification
+
+- `python -m pytest tests/test_tarot.py -q` → **10 passed**
+- Full test suite regression check → **Passed**
+- `ruff` linting and `mypy` typing → **Passed**
+
+---
+
 ## [Unreleased] - 2026-05-11 - Cold-Start Latency Optimization (−54% P95)
 
 ### ⚡ Startup Performance

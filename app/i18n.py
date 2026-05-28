@@ -158,10 +158,43 @@ _STRINGS: dict[str, dict[str, str]] = {
     "inline.horoscope_init": {"ru": "✨ <b>Гороскоп: {arg}</b>\n<i>Звёзды сходятся…</i>", "en": "✨ <b>Horoscope: {arg}</b>\n<i>The stars are aligning…</i>"},
     "inline.horoscope_btn": {"ru": "⏳ Анализ...", "en": "⏳ Analyzing..."},
     "inline.horoscope_desc": {"ru": "Астрономически точный прогноз", "en": "Astronomically accurate forecast"},
-    # Tarot
+    # Tarot — classic (legacy, kept for backward compat)
     "inline.tarot_init": {"ru": "🔮 <b>Таро</b>\n<i>Тасуем колоду…</i>", "en": "🔮 <b>Tarot</b>\n<i>Shuffling the deck…</i>"},
     "inline.tarot_btn": {"ru": "⏳ Тасуем...", "en": "⏳ Shuffling..."},
     "inline.tarot_desc": {"ru": "Расклад на 3 карты", "en": "3-card spread"},
+    "inline.tarot_classic_title": {"ru": "🔮 Прошлое / Настоящее / Будущее", "en": "🔮 Past / Present / Future"},
+    # Tarot — card of the day
+    "inline.tarot_daily_title": {"ru": "🎴 Карта дня", "en": "🎴 Card of the Day"},
+    "inline.tarot_daily_desc": {"ru": "Одна карта — совет и энергия на сегодня", "en": "One card — advice and energy for today"},
+    "inline.tarot_daily_init": {
+        "ru": "🎴 <b>Карта дня</b>\n<i>Достаём вашу карту…</i>",
+        "en": "🎴 <b>Card of the Day</b>\n<i>Drawing your card…</i>",
+    },
+    # Tarot — yes/no
+    "inline.tarot_yesno_title": {"ru": "🔮 Да или Нет", "en": "🔮 Yes or No"},
+    "inline.tarot_yesno_desc": {"ru": "Одна карта отвечает на ваш вопрос", "en": "One card answers your question"},
+    "inline.tarot_yesno_init": {
+        "ru": "🔮 <b>Да или Нет</b>\n<i>Карта решает…</i>",
+        "en": "🔮 <b>Yes or No</b>\n<i>The card decides…</i>",
+    },
+    # Tarot — relationship
+    "inline.tarot_love_title": {"ru": "💞 Отношения", "en": "💞 Relationship"},
+    "inline.tarot_love_desc": {"ru": "5 карт: ты, партнёр, связь, препятствие, итог", "en": "5 cards: you, partner, bond, obstacle, outcome"},
+    "inline.tarot_love_init": {
+        "ru": "💞 <b>Расклад на отношения</b>\n<i>Раскладываем 5 карт…</i>",
+        "en": "💞 <b>Relationship Spread</b>\n<i>Laying out 5 cards…</i>",
+    },
+    # Tarot — celtic cross
+    "inline.tarot_celtic_title": {"ru": "🌙 Кельтский крест", "en": "🌙 Celtic Cross"},
+    "inline.tarot_celtic_desc": {"ru": "6 карт: глубокий анализ ситуации", "en": "6 cards: deep situation analysis"},
+    "inline.tarot_celtic_init": {
+        "ru": "🌙 <b>Кельтский крест</b>\n<i>Раскладываем 6 карт…</i>",
+        "en": "🌙 <b>Celtic Cross</b>\n<i>Laying out 6 cards…</i>",
+    },
+    # Tarot — fortune cookie (instant, no LLM)
+    "inline.tarot_fortune_title": {"ru": "⚡ Мгновенное предсказание", "en": "⚡ Instant Fortune"},
+    "inline.tarot_fortune_desc": {"ru": "Одна фраза от карт — без ожидания", "en": "One fortune phrase — instant, no waiting"},
+
     # Errors
     "inline.timeout_error": {
         "ru": "⏰ Модель не успела ответить вовремя. Нажмите «Повторить» ниже.",
