@@ -1978,7 +1978,7 @@ def _build_fortune_cookie_html() -> str:
         f"<i>\u00ab{_html_mod.escape(fortune)}\u00bb</i>\
 \
 "
-        f"\ud83c\udfa4 {_html_mod.escape(card_name)}"
+        f"\U0001f3a4 {_html_mod.escape(card_name)}"
     )
 
 
@@ -2033,13 +2033,13 @@ async def _generate_tarot_inline(
 
     # Spread-specific header for the final message
     _HEADER_MAP = {
-        SpreadType.CLASSIC: "\ud83d\udd2e \u0422\u0430\u0440\u043e",
-        SpreadType.DAILY:   "\ud83c\udfa4 \u041a\u0430\u0440\u0442\u0430 \u0434\u043d\u044f",
-        SpreadType.YES_NO:  "\ud83d\udd2e \u0414\u0430 \u0438\u043b\u0438 \u041d\u0435\u0442",
-        SpreadType.LOVE:    "\ud83d\udc9e \u041e\u0442\u043d\u043e\u0448\u0435\u043d\u0438\u044f",
-        SpreadType.CELTIC:  "\ud83c\udf19 \u041a\u0435\u043b\u044c\u0442\u0441\u043a\u0438\u0439 \u043a\u0440\u0435\u0441\u0442",
+        SpreadType.CLASSIC: "\U0001f52e \u0422\u0430\u0440\u043e",
+        SpreadType.DAILY:   "\U0001f3a4 \u041a\u0430\u0440\u0442\u0430 \u0434\u043d\u044f",
+        SpreadType.YES_NO:  "\U0001f52e \u0414\u0430 \u0438\u043b\u0438 \u041d\u0435\u0442",
+        SpreadType.LOVE:    "\U0001f49e \u041e\u0442\u043d\u043e\u0448\u0435\u043d\u0438\u044f",
+        SpreadType.CELTIC:  "\U0001f319 \u041a\u0435\u043b\u044c\u0442\u0441\u043a\u0438\u0439 \u043a\u0440\u0435\u0441\u0442",
     }
-    header = _HEADER_MAP.get(spread, "\ud83d\udd2e \u0422\u0430\u0440\u043e")
+    header = _HEADER_MAP.get(spread, "\U0001f52e \u0422\u0430\u0440\u043e")
 
     try:
         chunks: list[str] = []
@@ -2053,6 +2053,8 @@ async def _generate_tarot_inline(
                 chunks.append(chunk)
 
         result = "".join(chunks).strip()
+        # Defense-in-depth: strip any surrogate codepoints the LLM may emit
+        result = result.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
         if result:
             cards_str = " \u2022 ".join(card_names)
             # Only show card list for spreads with a meaningful question
