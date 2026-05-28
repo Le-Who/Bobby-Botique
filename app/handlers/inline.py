@@ -605,7 +605,12 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # ── Tarot intent ────────────────────────────────────────────────────────────────────────────
     if _TAROT_PREFIX_RE.match(user_query):
+        # 1. Parse intent
         arg = _TAROT_PREFIX_RE.sub("", user_query).strip()
+        if not arg:
+            arg = "Без вопроса"
+
+        # result_id is "tarot_yesno" or similar
         has_question = bool(arg.strip())  # "таро " (trailing space) → False
 
         loading_keyboard = InlineKeyboardMarkup(
@@ -2051,25 +2056,22 @@ async def _generate_tarot_inline(
         if result:
             cards_str = " \u2022 ".join(card_names)
             # Only show card list for spreads with a meaningful question
-            if spread == SpreadType.DAILY:
-                final_text = f"{header}\
-_\u0412\u044b\u043f\u0430\u043b\u0430: {cards_str}_\
-\
-{result}"
+            if spread == SpreadType.DAILY or spread == SpreadType.YES_NO:
+                final_text = f"{header}\n_\u0412\u044b\u043f\u0430\u043b\u0430: {cards_str}_\n\n{result}"
             else:
-                final_text = f"{header}: **{arg}**\
-_\u0412\u044b\u043f\u0430\u043b\u0438: {cards_str}_\
-\
-{result}"
+                final_text = f"{header}: **{arg}**\n_\u0412\u044b\u043f\u0430\u043b\u0438: {cards_str}_\n\n{result}"
             html = markdown_to_html(final_text)
 
-            with contextlib.suppress(Exception):
+            try:
                 await bot.edit_message_text(
                     inline_message_id=inline_message_id,
                     text=html[:4000],
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup([]),
                 )
+            except Exception as edit_e:
+                logging.error("Failed to edit inline message for tarot (HTML parse error?): %s\nHTML:\n%s", edit_e, html[:500])
+                raise edit_e
     except Exception as e:
         logging.error("Tarot generation failed (spread=%s): %s", spread_type, e)
         with contextlib.suppress(Exception):
