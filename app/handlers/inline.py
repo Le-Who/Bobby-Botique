@@ -607,11 +607,10 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
     if _TAROT_PREFIX_RE.match(user_query):
         # 1. Parse intent
         arg = _TAROT_PREFIX_RE.sub("", user_query).strip()
+        has_question = bool(arg)  # evaluate BEFORE applying fallback
+
         if not arg:
             arg = "Без вопроса"
-
-        # result_id is "tarot_yesno" or similar
-        has_question = bool(arg.strip())  # "таро " (trailing space) → False
 
         loading_keyboard = InlineKeyboardMarkup(
             [[InlineKeyboardButton(t("inline.tarot_btn", lang), callback_data="inline_noop")]]
