@@ -565,7 +565,9 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
             label = t("inline.croc_category", lang, cat=cat[:40])
             desc = t("inline.croc_cat_desc", lang)
         croc_init_html = t("inline.croc_init", lang)
-        croc_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(t("inline.croc_loading", lang), callback_data="inline_noop")]])
+        croc_keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton(t("inline.croc_loading", lang), callback_data="inline_noop")]]
+        )
         results_croc = [
             InlineQueryResultArticle(
                 id="croc",
@@ -587,7 +589,9 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         if not arg:
             arg = "Овен на сегодня"
         horoscope_init_html = t("inline.horoscope_init", lang, arg=arg)
-        horoscope_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(t("inline.horoscope_btn", lang), callback_data="inline_noop")]])
+        horoscope_keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton(t("inline.horoscope_btn", lang), callback_data="inline_noop")]]
+        )
         results_horo = [
             InlineQueryResultArticle(
                 id="horoscope",
@@ -1894,7 +1898,6 @@ async def _generate_horoscope_inline(
     user_id: int | None,
 ) -> None:
     import contextlib
-    import re as _re
 
     from app.intent_router import _handle_horoscope
     from app.utils.text_format import markdown_to_html
@@ -1992,94 +1995,108 @@ async def _generate_tarot_inline(
 
     Spread-specific prompts are built by _build_tarot_system_prompt().
     spread_type maps directly to SpreadType enum values (e.g. 'tarot_love').
+
+    Uses _stream_inline_fast (Race Requests + multi-round key rotation) instead
+    of a bespoke single-key call, so 503 UNAVAILABLE errors are transparently
+    retried across different API keys and Vertex AI, exactly like regular
+    inline queries.
     """
     import contextlib
     import logging
 
     from telegram import InlineKeyboardMarkup
 
-    from app.agent_use_cases import AgentRequestUseCase
-    from app.providers.base import get_provider_for_model
     from app.tarot import SPREAD_BY_ID, SpreadType, get_tarot_context
     from app.utils.text_format import markdown_to_html
-
-    use_case = AgentRequestUseCase()
-    kd, mdl, _ = await use_case.resolve_ai_request("gemini-3.5-flash")
-    if not kd or not mdl:
-        return
-
-    provider = get_provider_for_model(mdl, kd["api_key"])
 
     # Resolve spread
     spread = SPREAD_BY_ID.get(spread_type, SpreadType.CLASSIC)
 
-    # Extract user question
+    # Extract user question (strip "таро" prefix)
     arg = _TAROT_PREFIX_RE.sub("", user_query).strip()
     if not arg:
-        arg = "\u041e\u0431\u0449\u0438\u0439 \u043f\u0440\u043e\u0433\u043d\u043e\u0437"
+        arg = "Общий прогноз"
 
     tarot_ctx, card_names = get_tarot_context(spread)
     if not tarot_ctx:
         with contextlib.suppress(Exception):
             await bot.edit_message_text(
                 inline_message_id=inline_message_id,
-                text="\u274c \u0411\u0430\u0437\u0430 \u0422\u0430\u0440\u043e \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u0430.",
+                text="❌ База Таро недоступна.",
             )
         return
 
     system_instruction = _build_tarot_system_prompt(spread, tarot_ctx, arg)
-    prompt = f"\u0412\u043e\u043f\u0440\u043e\u0441 \u043a \u0422\u0430\u0440\u043e: {arg}"
+    prompt = f"Вопрос к Таро: {arg}"
 
     # Spread-specific header for the final message
     _HEADER_MAP = {
-        SpreadType.CLASSIC: "\U0001f52e \u0422\u0430\u0440\u043e",
-        SpreadType.DAILY:   "\U0001f3a4 \u041a\u0430\u0440\u0442\u0430 \u0434\u043d\u044f",
-        SpreadType.YES_NO:  "\U0001f52e \u0414\u0430 \u0438\u043b\u0438 \u041d\u0435\u0442",
-        SpreadType.LOVE:    "\U0001f49e \u041e\u0442\u043d\u043e\u0448\u0435\u043d\u0438\u044f",
-        SpreadType.CELTIC:  "\U0001f319 \u041a\u0435\u043b\u044c\u0442\u0441\u043a\u0438\u0439 \u043a\u0440\u0435\u0441\u0442",
+        SpreadType.CLASSIC: "🔮 Таро",
+        SpreadType.DAILY:   "🎤 Карта дня",
+        SpreadType.YES_NO:  "🔮 Да или Нет",
+        SpreadType.LOVE:    "💞 Отношения",
+        SpreadType.CELTIC:  "🌙 Кельтский крест",
     }
-    header = _HEADER_MAP.get(spread, "\U0001f52e \u0422\u0430\u0440\u043e")
+    header = _HEADER_MAP.get(spread, "🔮 Таро")
 
-    try:
-        chunks: list[str] = []
-        async for chunk in provider.stream_response(  # type: ignore
-            history=[{"role": "user", "parts": [prompt]}],
-            model_name=mdl,
-            system_instruction=system_instruction,
-            thinking_level="off",
-        ):
-            if isinstance(chunk, str):
-                chunks.append(chunk)
+    # ── Use _stream_inline_fast: Race Requests + multi-round key rotation ──
+    # This is the same resilient path used by all other inline queries.
+    # It races 2 AI Studio keys + 1 Vertex AI slot per round, retries up to
+    # 4 rounds, so a single 503 on one key is completely transparent to the user.
+    result, _sources = await _stream_inline_fast(
+        preferred_model=_INLINE_FALLBACK_MODEL,
+        history=[{"role": "user", "parts": [prompt]}],
+        system_instruction=system_instruction,
+        user_id=user_id,
+        max_rounds=4,
+        enable_web_search=False,
+    )
 
-        result = "".join(chunks).strip()
-        # Defense-in-depth: strip any surrogate codepoints the LLM may emit
-        result = result.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
-        if result:
-            cards_str = " \u2022 ".join(card_names)
-            # Only show card list for spreads with a meaningful question
-            if spread == SpreadType.DAILY or spread == SpreadType.YES_NO:
-                final_text = f"{header}\n_\u0412\u044b\u043f\u0430\u043b\u0430: {cards_str}_\n\n{result}"
-            else:
-                final_text = f"{header}: **{arg}**\n_\u0412\u044b\u043f\u0430\u043b\u0438: {cards_str}_\n\n{result}"
-            html = markdown_to_html(final_text)
-
-            try:
-                await bot.edit_message_text(
-                    inline_message_id=inline_message_id,
-                    text=html[:4000],
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup([]),
-                )
-            except Exception as edit_e:
-                logging.error("Failed to edit inline message for tarot (HTML parse error?): %s\nHTML:\n%s", edit_e, html[:500])
-                raise edit_e
-    except Exception as e:
-        logging.error("Tarot generation failed (spread=%s): %s", spread_type, e)
+    if not result or not result.strip():
+        logging.error(
+            "Tarot generation failed (spread=%s): no result from _stream_inline_fast",
+            spread_type,
+        )
         with contextlib.suppress(Exception):
             await bot.edit_message_text(
                 inline_message_id=inline_message_id,
-                text="\u274c \u041a\u0430\u0440\u0442\u044b \u043c\u043e\u043b\u0447\u0430\u0442 (\u043e\u0448\u0438\u0431\u043a\u0430 \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438).",
+                text="❌ Карты молчат (ошибка генерации).",
             )
+        return
+
+    # Defense-in-depth: strip any surrogate codepoints the LLM may emit
+    result = result.strip().encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+
+    cards_str = " • ".join(card_names)
+    # Only show card list for spreads with a meaningful question
+    if spread == SpreadType.DAILY or spread == SpreadType.YES_NO:
+        final_text = f"{header}\n_Выпала: {cards_str}_\n\n{result}"
+    else:
+        final_text = f"{header}: **{arg}**\n_Выпали: {cards_str}_\n\n{result}"
+    html = markdown_to_html(final_text)
+
+    try:
+        await bot.edit_message_text(
+            inline_message_id=inline_message_id,
+            text=html[:4000],
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([]),
+        )
+    except Exception as edit_e:
+        logging.error(
+            "Failed to edit inline message for tarot (HTML parse error?): %s\nHTML:\n%s",
+            edit_e,
+            html[:500],
+        )
+        # Last resort: strip HTML and retry as plain text
+        with contextlib.suppress(Exception):
+            from app.utils.text_format import strip_formatting
+            await bot.edit_message_text(
+                inline_message_id=inline_message_id,
+                text=strip_formatting(html)[:4000] or "❌ Ошибка форматирования.",
+                reply_markup=InlineKeyboardMarkup([]),
+            )
+
 
 
 def _build_tarot_system_prompt(
@@ -2092,144 +2109,82 @@ def _build_tarot_system_prompt(
 
     if spread == SpreadType.CLASSIC:
         return (
-            "\u0422\u044b \u2014 \u043c\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0438 \u043c\u0443\u0434\u0440\u044b\u0439 \u0442\u0430\u0440\u043e\u043b\u043e\u0433.\
-"
-            "\u0422\u0432\u043e\u044f \u0437\u0430\u0434\u0430\u0447\u0430 \u2014 \u0441\u0434\u0435\u043b\u0430\u0442\u044c \u0440\u0430\u0441\u043a\u043b\u0430\u0434 \u0422\u0430\u0440\u043e \u043d\u0430 3 \u043a\u0430\u0440\u0442\u044b \u0434\u043b\u044f \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f.\
-"
-            "\u041e\u0411\u042f\u0417\u0410\u0422\u0415\u041b\u042c\u041d\u041e \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f \u0432\u044b\u043f\u0430\u0432\u0448\u0438\u0445 \u043a\u0430\u0440\u0442 (\u043f\u0440\u0435\u0434\u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d\u044b \u043d\u0438\u0436\u0435), \u0447\u0442\u043e\u0431\u044b \u0434\u0430\u0442\u044c \u0441\u0432\u044f\u0437\u043d\u044b\u0439, "
-            "\u0433\u043b\u0443\u0431\u043e\u043a\u0438\u0439 \u0438 \u043f\u043e\u043b\u0435\u0437\u043d\u044b\u0439 \u043e\u0442\u0432\u0435\u0442 \u043d\u0430 \u0432\u043e\u043f\u0440\u043e\u0441/\u0441\u0438\u0442\u0443\u0430\u0446\u0438\u044e \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f.\
-"
-            "\u041d\u0435 \u043f\u0440\u043e\u0441\u0442\u043e \u043f\u0435\u0440\u0435\u0447\u0438\u0441\u043b\u044f\u0439 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f \u043a\u0430\u0440\u0442, \u0430 \u0441\u0432\u044f\u0436\u0438 \u0438\u0445 \u0432\u043e\u0435\u0434\u0438\u043d\u043e, \u0441\u043e\u0437\u0434\u0430\u0432 \u043a\u0440\u0430\u0441\u0438\u0432\u0443\u044e \u0438\u0441\u0442\u043e\u0440\u0438\u044e (\u041f\u0440\u043e\u0448\u043b\u043e\u0435, \u041d\u0430\u0441\u0442\u043e\u044f\u0449\u0435\u0435, \u0411\u0443\u0434\u0443\u0449\u0435\u0435).\
-"
-            f"---\
-\u0412\u042b\u041f\u0410\u0412\u0428\u0418\u0415 \u041a\u0410\u0420\u0422\u042b:\
-{tarot_ctx}\
----\
-"
-            "\u041e\u0442\u0432\u0435\u0442 \u0434\u043e\u043b\u0436\u0435\u043d \u0431\u044b\u0442\u044c \u0432 \u0444\u043e\u0440\u043c\u0430\u0442\u0435 Markdown. \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439 \u043c\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u044d\u043c\u043e\u0434\u0437\u0438."
+            "Ты — мистический и мудрый таролог.\n"
+            "Твоя задача — сделать расклад Таро на 3 карты для пользователя.\n"
+            "ОБЯЗАТЕЛЬНО используй значения выпавших карт (предоставлены ниже), "
+            "чтобы дать связный, глубокий и полезный ответ на вопрос/ситуацию пользователя.\n"
+            "Не просто перечисляй значения карт, а свяжи их воедино, создав красивую историю "
+            "(Прошлое, Настоящее, Будущее).\n"
+            f"---\nВЫПАВШИЕ КАРТЫ:\n{tarot_ctx}\n---\n"
+            "Ответ должен быть в формате Markdown. Используй мистические эмодзи."
         )
 
     if spread == SpreadType.DAILY:
         return (
-            "\u0422\u044b \u2014 \u043c\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0442\u0430\u0440\u043e\u043b\u043e\u0433.\
-"
-            "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u0432\u044b\u0442\u044f\u043d\u0443\u043b \u041e\u0414\u041d\u0423 \u043a\u0430\u0440\u0442\u0443 \u0434\u043d\u044f \u2014 \u044d\u0442\u043e \u0441\u043e\u0432\u0435\u0442 \u0438 \u044d\u043d\u0435\u0440\u0433\u0438\u044f \u043d\u0430 \u0441\u0435\u0433\u043e\u0434\u043d\u044f.\
-"
-            "\u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 \u043a\u0430\u0440\u0442\u044b (\u043d\u0438\u0436\u0435), \u0447\u0442\u043e\u0431\u044b \u0434\u0430\u0442\u044c:\
-"
-            "1. \u041a\u0440\u0430\u0442\u043a\u043e\u0435 \u043e\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u044d\u043d\u0435\u0440\u0433\u0438\u0438 \u0434\u043d\u044f (2\u20133 \u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u044f)\
-"
-            "2. \u041f\u0440\u0430\u043a\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0441\u043e\u0432\u0435\u0442 \u043d\u0430 \u0441\u0435\u0433\u043e\u0434\u043d\u044f (1\u20132 \u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u044f)\
-"
-            "3. \u041e\u0442 \u0447\u0435\u0433\u043e \u0441\u0442\u043e\u0438\u0442 \u043e\u0441\u0442\u0435\u0440\u0435\u0447\u044c\u0441\u044f (1 \u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u0435)\
-\
-"
-            "\u041e\u0442\u0432\u0435\u0442 \u0434\u043e\u043b\u0436\u0435\u043d \u0431\u044b\u0442\u044c \u041a\u041e\u0420\u041e\u0422\u041a\u0418\u041c (6\u20138 \u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u0439). \u0424\u043e\u0440\u043c\u0430\u0442: Markdown. \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439 \u043c\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u044d\u043c\u043e\u0434\u0437\u0438.\
-"
-            f"---\
-\u041a\u0410\u0420\u0422\u0410 \u0414\u041d\u042f:\
-{tarot_ctx}\
----"
+            "Ты — мистический таролог.\n"
+            "Пользователь вытянул ОДНУ карту дня — это совет и энергия на сегодня.\n"
+            "Используй значение карты (ниже), чтобы дать:\n"
+            "1. Краткое описание энергии дня (2–3 предложения)\n"
+            "2. Практический совет на сегодня (1–2 предложения)\n"
+            "3. От чего стоит остеречься (1 предложение)\n\n"
+            "Ответ должен быть КОРОТКИМ (6–8 предложений). "
+            "Формат: Markdown. Используй мистические эмодзи.\n"
+            f"---\nКАРТА ДНЯ:\n{tarot_ctx}\n---"
         )
 
     if spread == SpreadType.YES_NO:
         # Determine upright/reversed from the single card's orientation in tarot_ctx
-        is_upright = "\u041f\u0440\u044f\u043c\u0430\u044f" in tarot_ctx
-        verdict = "\u0414\u0410" if is_upright else "\u041d\u0415\u0422"
-        verdict_context = "\u041f\u0420\u042f\u041c\u041e (\u043e\u0442\u0432\u0435\u0442: \u0414\u0410)" if is_upright else "\u041f\u0415\u0420\u0415\u0412\u0401\u0420\u041d\u0423\u0422\u041e (\u043e\u0442\u0432\u0435\u0442: \u041d\u0415\u0422)"
+        is_upright = "Прямая" in tarot_ctx
+        verdict = "ДА" if is_upright else "НЕТ"
+        verdict_context = "ПРЯМО (ответ: ДА)" if is_upright else "ПЕРЕВЁРНУТО (ответ: НЕТ)"
         return (
-            "\u0422\u044b \u2014 \u043c\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u043e\u0440\u0430\u043a\u0443\u043b \u0422\u0430\u0440\u043e.\
-"
-            f"\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u0437\u0430\u0434\u0430\u043b \u0432\u043e\u043f\u0440\u043e\u0441 \u0444\u043e\u0440\u043c\u0430\u0442\u0430 \u0414\u0430/\u041d\u0435\u0442. \u041a\u0430\u0440\u0442\u0430 \u0432\u044b\u043f\u0430\u043b\u0430 {verdict_context}.\
-\
-"
-            "\u0422\u0432\u043e\u044f \u0437\u0430\u0434\u0430\u0447\u0430:\
-"
-            f"1. \u0427\u0451\u0442\u043a\u043e \u043e\u0431\u044a\u044f\u0432\u0438\u0442\u044c \u0432\u0435\u0440\u0434\u0438\u043a\u0442: **{verdict}**\
-"
-            "2. \u041e\u0431\u043e\u0441\u043d\u043e\u0432\u0430\u0442\u044c \u043e\u0442\u0432\u0435\u0442 \u0447\u0435\u0440\u0435\u0437 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 \u043a\u0430\u0440\u0442\u044b (2\u20133 \u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u044f)\
-"
-            "3. \u041a\u0440\u0430\u0442\u043a\u043e\u0435 \u043d\u0430\u043f\u0443\u0442\u0441\u0442\u0432\u0438\u0435 (1 \u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u0435)\
-\
-"
-            "\u041e\u0442\u0432\u0435\u0442 \u041a\u041e\u0420\u041e\u0422\u041a\u0418\u0419 (5\u20136 \u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u0439). \u0424\u043e\u0440\u043c\u0430\u0442: Markdown. \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439 \u043c\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u044d\u043c\u043e\u0434\u0437\u0438.\
-"
-            f"---\
-\u0412\u042b\u041f\u0410\u0412\u0428\u0410\u042f \u041a\u0410\u0420\u0422\u0410:\
-{tarot_ctx}\
----"
+            "Ты — мистический оракул Таро.\n"
+            f"Пользователь задал вопрос формата Да/Нет. Карта выпала {verdict_context}.\n\n"
+            "Твоя задача:\n"
+            f"1. Чётко объявить вердикт: **{verdict}**\n"
+            "2. Обосновать ответ через значение карты (2–3 предложения)\n"
+            "3. Краткое напутствие (1 предложение)\n\n"
+            "Ответ КОРОТКИЙ (5–6 предложений). "
+            "Формат: Markdown. Используй мистические эмодзи.\n"
+            f"---\nВЫПАВШАЯ КАРТА:\n{tarot_ctx}\n---"
         )
 
     if spread == SpreadType.LOVE:
         return (
-            "\u0422\u044b \u2014 \u043c\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0442\u0430\u0440\u043e\u043b\u043e\u0433, \u0441\u043f\u0435\u0446\u0438\u0430\u043b\u0438\u0437\u0438\u0440\u0443\u044e\u0449\u0438\u0439\u0441\u044f \u043d\u0430 \u043e\u0442\u043d\u043e\u0448\u0435\u043d\u0438\u044f\u0445.\
-"
-            "\u0412\u044b\u043f\u043e\u043b\u043d\u0438 \u0440\u0430\u0441\u043a\u043b\u0430\u0434 \u043d\u0430 \u041e\u0422\u041d\u041e\u0428\u0415\u041d\u0418\u042f \u0438\u0437 5 \u043a\u0430\u0440\u0442 \u0432 \u0441\u043b\u0435\u0434\u0443\u044e\u0449\u0438\u0445 \u043f\u043e\u0437\u0438\u0446\u0438\u044f\u0445:\
-"
-            "\u2022 \u0422\u044b \u2014 \u0447\u0442\u043e \u0442\u044b \u043f\u0440\u0438\u0432\u043d\u043e\u0441\u0438\u0448\u044c \u0432 \u043e\u0442\u043d\u043e\u0448\u0435\u043d\u0438\u044f\
-"
-            "\u2022 \u041f\u0430\u0440\u0442\u043d\u0451\u0440 \u2014 \u0447\u0442\u043e \u043f\u0440\u0438\u0432\u043d\u043e\u0441\u0438\u0442 \u0432\u0442\u043e\u0440\u043e\u0439 \u0447\u0435\u043b\u043e\u0432\u0435\u043a\
-"
-            "\u2022 \u0427\u0442\u043e \u0432\u0430\u0441 \u0441\u0432\u044f\u0437\u044b\u0432\u0430\u0435\u0442 \u2014 \u043e\u0441\u043d\u043e\u0432\u0430 \u0438 \u0441\u0438\u043b\u0430 \u0432\u0430\u0448\u0435\u0433\u043e \u0441\u043e\u044e\u0437\u0430\
-"
-            "\u2022 \u0427\u0442\u043e \u043c\u0435\u0448\u0430\u0435\u0442 \u2014 \u0441\u043a\u0440\u044b\u0442\u044b\u0435 \u043f\u0440\u0435\u043f\u044f\u0442\u0441\u0442\u0432\u0438\u044f \u0438 \u043a\u043e\u043d\u0444\u043b\u0438\u043a\u0442\u044b\
-"
-            "\u2022 \u041a\u0443\u0434\u0430 \u0432\u0435\u0434\u0451\u0442 \u2014 \u0432\u0435\u0440\u043e\u044f\u0442\u043d\u044b\u0439 \u043f\u0443\u0442\u044c \u0440\u0430\u0437\u0432\u0438\u0442\u0438\u044f\
-\
-"
-            "\u041e\u0411\u042f\u0417\u0410\u0422\u0415\u041b\u042c\u041d\u041e \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f \u0432\u044b\u043f\u0430\u0432\u0448\u0438\u0445 \u043a\u0430\u0440\u0442.\
-"
-            "\u0421\u043e\u0437\u0434\u0430\u0439 \u0421\u0412\u042f\u0417\u041d\u0423\u042e \u0438\u0441\u0442\u043e\u0440\u0438\u044e \u043e\u0431 \u044d\u0442\u0438\u0445 \u043e\u0442\u043d\u043e\u0448\u0435\u043d\u0438\u044f\u0445, \u043d\u0435 \u043f\u0440\u043e\u0441\u0442\u043e \u043f\u0435\u0440\u0435\u0447\u0438\u0441\u043b\u0435\u043d\u0438\u0435.\
-"
-            "\u041e\u0442\u0432\u0435\u0442 \u0441\u0440\u0435\u0434\u043d\u0435\u0439 \u0434\u043b\u0438\u043d\u044b (10\u201315 \u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u0439). \u0424\u043e\u0440\u043c\u0430\u0442: Markdown. \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439 \u0440\u043e\u043c\u0430\u043d\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u0438 \u043c\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u044d\u043c\u043e\u0434\u0437\u0438.\
-"
-            f"---\
-\u0412\u042b\u041f\u0410\u0412\u0428\u0418\u0415 \u041a\u0410\u0420\u0422\u042b:\
-{tarot_ctx}\
----"
+            "Ты — мистический таролог, специализирующийся на отношениях.\n"
+            "Выполни расклад на ОТНОШЕНИЯ из 5 карт в следующих позициях:\n"
+            "• Ты — что ты привносишь в отношения\n"
+            "• Партнёр — что привносит второй человек\n"
+            "• Что вас связывает — основа и сила вашего союза\n"
+            "• Что мешает — скрытые препятствия и конфликты\n"
+            "• Куда ведёт — вероятный путь развития\n\n"
+            "ОБЯЗАТЕЛЬНО используй значения выпавших карт.\n"
+            "Создай СВЯЗНУЮ историю об этих отношениях, не просто перечисление.\n"
+            "Ответ средней длины (10–15 предложений). "
+            "Формат: Markdown. Используй романтические и мистические эмодзи.\n"
+            f"---\nВЫПАВШИЕ КАРТЫ:\n{tarot_ctx}\n---"
         )
 
     if spread == SpreadType.CELTIC:
         return (
-            "\u0422\u044b \u2014 \u043c\u0443\u0434\u0440\u044b\u0439 \u0438 \u043e\u043f\u044b\u0442\u043d\u044b\u0439 \u0442\u0430\u0440\u043e\u043b\u043e\u0433.\
-"
-            "\u0412\u044b\u043f\u043e\u043b\u043d\u0438 \u0440\u0430\u0441\u043a\u043b\u0430\u0434 \u00ab\u041a\u0435\u043b\u044c\u0442\u0441\u043a\u0438\u0439 \u043a\u0440\u0435\u0441\u0442\u00bb (\u0430\u0434\u0430\u043f\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0439) \u0438\u0437 6 \u043a\u0430\u0440\u0442:\
-"
-            "\u2022 \u0421\u0438\u0442\u0443\u0430\u0446\u0438\u044f \u2014 \u0446\u0435\u043d\u0442\u0440\u0430\u043b\u044c\u043d\u0430\u044f \u0442\u0435\u043c\u0430, \u0441\u0443\u0442\u044c \u0432\u043e\u043f\u0440\u043e\u0441\u0430\
-"
-            "\u2022 \u041f\u0440\u0435\u043f\u044f\u0442\u0441\u0442\u0432\u0438\u0435 \u2014 \u0447\u0442\u043e \u043f\u0435\u0440\u0435\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u043f\u0443\u0442\u044c \u043f\u0440\u044f\u043c\u043e \u0441\u0435\u0439\u0447\u0430\u0441\
-"
-            "\u2022 \u041f\u043e\u0434\u0441\u043e\u0437\u043d\u0430\u043d\u0438\u0435 \u2014 \u0433\u043b\u0443\u0431\u0438\u043d\u043d\u044b\u0435 \u043c\u043e\u0442\u0438\u0432\u044b, \u0441\u043a\u0440\u044b\u0442\u044b\u0435 \u043e\u0442 \u0441\u0430\u043c\u043e\u0433\u043e \u0447\u0435\u043b\u043e\u0432\u0435\u043a\u0430\
-"
-            "\u2022 \u041f\u0440\u043e\u0448\u043b\u043e\u0435 \u2014 \u0441\u043e\u0431\u044b\u0442\u0438\u044f \u0438 \u044d\u043d\u0435\u0440\u0433\u0438\u0438, \u043f\u0440\u0438\u0432\u0435\u0434\u0448\u0438\u0435 \u043a \u0442\u0435\u043a\u0443\u0449\u0435\u0439 \u0441\u0438\u0442\u0443\u0430\u0446\u0438\u0438\
-"
-            "\u2022 \u0411\u043b\u0438\u0436\u0430\u0439\u0448\u0435\u0435 \u0431\u0443\u0434\u0443\u0449\u0435\u0435 \u2014 \u0447\u0442\u043e \u0440\u0430\u0437\u0432\u0435\u0440\u043d\u0451\u0442\u0441\u044f \u0432 \u0431\u043b\u0438\u0436\u0430\u0439\u0448\u0435\u0435 \u0432\u0440\u0435\u043c\u044f\
-"
-            "\u2022 \u0418\u0442\u043e\u0433 \u2014 \u0444\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439 \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442, \u0435\u0441\u043b\u0438 \u0442\u0435\u043a\u0443\u0449\u0438\u0439 \u043a\u0443\u0440\u0441 \u043d\u0435 \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u0441\u044f\
-\
-"
-            "\u041e\u0411\u042f\u0417\u0410\u0422\u0415\u041b\u042c\u041d\u041e \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439 \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044f \u0432\u044b\u043f\u0430\u0432\u0448\u0438\u0445 \u043a\u0430\u0440\u0442.\
-"
-            "\u041f\u043e\u0441\u0442\u0440\u043e\u0439 \u0413\u041b\u0423\u0411\u041e\u041a\u0418\u0419 \u0438 \u0441\u0432\u044f\u0437\u043d\u044b\u0439 \u043d\u0430\u0440\u0440\u0430\u0442\u0438\u0432. \u042d\u0442\u043e \u0441\u0430\u043c\u044b\u0439 \u043f\u043e\u0434\u0440\u043e\u0431\u043d\u044b\u0439 \u0440\u0430\u0441\u043a\u043b\u0430\u0434.\
-"
-            "\u041e\u0442\u0432\u0435\u0442 \u0440\u0430\u0437\u0432\u0451\u0440\u043d\u0443\u0442\u044b\u0439 (15\u201320 \u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u0439), \u043d\u043e \u041e\u0411\u042f\u0417\u0410\u0422\u0415\u041b\u042c\u041d\u041e \u0443\u043b\u043e\u0436\u0438\u0441\u044c \u0432 3500 \u0441\u0438\u043c\u0432\u043e\u043b\u043e\u0432.\
-"
-            "\u0424\u043e\u0440\u043c\u0430\u0442: Markdown. \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439 \u043c\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u044d\u043c\u043e\u0434\u0437\u0438.\
-"
-            f"---\
-\u0412\u042b\u041f\u0410\u0412\u0428\u0418\u0415 \u041a\u0410\u0420\u0422\u042b:\
-{tarot_ctx}\
----"
+            "Ты — мудрый и опытный таролог.\n"
+            "Выполни расклад «Кельтский крест» (адаптированный) из 6 карт:\n"
+            "• Ситуация — центральная тема, суть вопроса\n"
+            "• Препятствие — что перекрывает путь прямо сейчас\n"
+            "• Подсознание — глубинные мотивы, скрытые от самого человека\n"
+            "• Прошлое — события и энергии, приведшие к текущей ситуации\n"
+            "• Ближайшее будущее — что развернётся в ближайшее время\n"
+            "• Итог — финальный результат, если текущий курс не изменится\n\n"
+            "ОБЯЗАТЕЛЬНО используй значения выпавших карт.\n"
+            "Построй ГЛУБОКИЙ и связный нарратив. Это самый подробный расклад.\n"
+            "Ответ развёрнутый (15–20 предложений), но ОБЯЗАТЕЛЬНО уложись в 3500 символов.\n"
+            "Формат: Markdown. Используй мистические эмодзи.\n"
+            f"---\nВЫПАВШИЕ КАРТЫ:\n{tarot_ctx}\n---"
         )
 
     # Fallback: CLASSIC
     return (
-        "\u0422\u044b \u2014 \u043c\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u0442\u0430\u0440\u043e\u043b\u043e\u0433.\
-"
-        f"---\
-\u0412\u042b\u041f\u0410\u0412\u0428\u0418\u0415 \u041a\u0410\u0420\u0422\u042b:\
-{tarot_ctx}\
----\
-"
-        "\u041e\u0442\u0432\u0435\u0442\u044c \u0441\u0432\u044f\u0437\u043d\u043e \u0438 \u0433\u043b\u0443\u0431\u043e\u043a\u043e. \u0424\u043e\u0440\u043c\u0430\u0442: Markdown. \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439 \u043c\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u044d\u043c\u043e\u0434\u0437\u0438."
+        "Ты — мистический таролог.\n"
+        f"---\nВЫПАВШИЕ КАРТЫ:\n{tarot_ctx}\n---\n"
+        "Ответь связно и глубоко. Формат: Markdown. Используй мистические эмодзи."
     )
