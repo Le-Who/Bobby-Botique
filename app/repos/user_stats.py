@@ -7,6 +7,23 @@ from typing import Any
 from app import database as db
 
 
+async def get_user_activity_summary(user_id: int) -> tuple[int, int, int]:
+    """Returns today's request count, total document count, and conversation count for a user in a single query."""
+    result = await db.db_query(
+        """
+        SELECT
+            (SELECT request_count FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE) as req_count,
+            (SELECT COUNT(*) FROM user_documents WHERE user_id = $1) as doc_count,
+            (SELECT COUNT(*) FROM conversations WHERE user_id = $1) as conv_count
+        """,
+        (user_id,)
+    )
+    if result:
+        row = result[0]
+        return row["req_count"] or 0, row["doc_count"] or 0, row["conv_count"] or 0
+    return 0, 0, 0
+
+
 async def get_user_today_request_count(user_id: int) -> int:
     """Returns today's request count for a user."""
     result = await db.db_query(
