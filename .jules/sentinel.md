@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2026-05-29 - [Cross-Site Scripting] Dynamic DOM Interpolation
+**Vulnerability:** The dashboard template injected JSON API response data directly into the DOM using `innerHTML` and template literals (e.g., `tbody.innerHTML = ... ${r.model_name} ...`) without sanitization, leading to DOM-based XSS.
+**Learning:** Frontend JavaScript that modifies `innerHTML` must explicitly escape user-controlled or dynamically retrieved data, even if it originates from a "trusted" internal API, as API data can be polluted.
+**Prevention:** Implement and use a lightweight browser-native HTML escaping function (`function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }`) for any variable interpolated into an `innerHTML` string.
