@@ -28,6 +28,7 @@ from app.utils.image_utils import TaggedImage, save_image_as_bytes
 from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_PHOTO, update_stage
 from app.utils.tg_file import get_file_bytes
+from app.utils.vision_intent import classify_vision_intent
 
 # Sentinel returned by _process_ai_vision when error was already displayed to user.
 _VISION_ERROR_HANDLED = object()
@@ -94,6 +95,44 @@ def _build_vision_prompt(user_caption: str | None, image_count: int = 1) -> str:
 Опиши группу изображений, следуя указанным инструкциям."""
 
 
+def _build_ocr_prompt(user_caption: str | None) -> str:
+    """Build a prompt focused purely on OCR / text extraction.
+
+    Args:
+        user_caption: Original user caption to pass context.
+
+    Returns:
+        Structured OCR prompt instructing the model to extract text verbatim.
+    """
+    prompt = user_caption or "Извлеки текст с изображения."
+    return f"""# РОЛЬ И ЗАДАЧА
+Ты — высокоточная система оптического распознавания символов (OCR). Твоя единственная задача — распознать и извлечь весь текст с изображения verbatim (дословно).
+
+# КОНТЕКСТ
+**Запрос пользователя:** {prompt}
+
+# ИНСТРУКЦИИ
+1. Извлеки абсолютно весь видимый текст с изображения дословно (verbatim).
+2. Не добавляй никаких описаний изображения, комментариев, мета-информации, пояснений или вводных фраз (например, не пиши "Вот текст с картинки:").
+3. Сохраняй оригинальную структуру абзацев, переносов строк и списков, если это возможно.
+4. Если на изображении нет никакого текста, ответь ровно одной фразой: "[На изображении не обнаружен текст]".
+5. Выведи только текст (ТОЛЬКО распознанный текст) без какого-либо описания и ничего больше.
+"""
+
+
+def _pick_ocr_model() -> str:
+    """Pick the best model for OCR tasks based on availability.
+
+    Prefers gemini-3.5-flash -> gemini-2.5-flash -> gemini-3-flash-preview -> default.
+    """
+    available = getattr(settings, "AVAILABLE_MODELS", []) or []
+    preferred = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-3-flash-preview"]
+    for pref in preferred:
+        if pref in available:
+            return pref
+    return settings.DEFAULT_MODEL
+
+
 async def _send_vision_response(
     placeholder_message: Message,
     response_text: str | None,
@@ -135,6 +174,7 @@ async def _process_ai_vision(
     chat_state: ChatState,
     user_id: int | None = None,
     chat_id: int | None = None,
+    is_ocr: bool = False,
 ) -> tuple[str | None | object, bool, Message | None]:
     """Shared AI vision processing: resolve model → stream → fallback → error check.
 
@@ -147,16 +187,19 @@ async def _process_ai_vision(
     from app.config import settings
     from app.providers.freetheai_image import FTA_IMAGE_MODELS
 
-    raw_model = chat_state.model or settings.DEFAULT_MODEL
-    # FTA image-generation models (img/*, vhr/*) cannot analyse received photos.
-    # Fall back to the default Gemini vision model silently.
-    if raw_model in FTA_IMAGE_MODELS:
-        logging.debug(
-            "Vision request: model %s is image-gen-only — falling back to %s",
-            raw_model,
-            settings.DEFAULT_MODEL,
-        )
-        raw_model = settings.DEFAULT_MODEL
+    if is_ocr:
+        raw_model = _pick_ocr_model()
+    else:
+        raw_model = chat_state.model or settings.DEFAULT_MODEL
+        # FTA image-generation models (img/*, vhr/*) cannot analyse received photos.
+        # Fall back to the default Gemini vision model silently.
+        if raw_model in FTA_IMAGE_MODELS:
+            logging.debug(
+                "Vision request: model %s is image-gen-only — falling back to %s",
+                raw_model,
+                settings.DEFAULT_MODEL,
+            )
+            raw_model = settings.DEFAULT_MODEL
 
     _key_data, model_used, resolution = await _resolve_ai_request(raw_model)
 
@@ -215,18 +258,27 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
         photo_file = await original_message.photo[-1].get_file()
         img_raw = await get_file_bytes(original_message.get_bot(), photo_file)
 
+        # Determine intent (OCR vs description)
+        intent = await classify_vision_intent(original_message.caption)
+        is_ocr = (intent == "ocr")
+
+        if is_ocr:
+            formatted_prompt = _build_ocr_prompt(original_message.caption)
+            task_type = "ocr"
+        else:
+            formatted_prompt = _build_vision_prompt(original_message.caption, image_count=1)
+            task_type = "describe"
+
         # Pre-compress with cache_key for retry savings
         file_unique_id = original_message.photo[-1].file_unique_id
-        compressed = await save_image_as_bytes(img_raw, task_type="describe", cache_key=file_unique_id)
-
-        formatted_prompt = _build_vision_prompt(original_message.caption, image_count=1)
+        compressed = await save_image_as_bytes(img_raw, task_type=task_type, cache_key=file_unique_id)
 
         # Wrap as TaggedImage so providers skip recompression
         if compressed:
             tagged = TaggedImage(
                 data=compressed,
                 cache_key=file_unique_id,
-                task_type="describe",
+                task_type=task_type,
                 pre_compressed=True,
             )
             parts = [formatted_prompt, tagged]
@@ -244,6 +296,7 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
             chat_state,
             user_id=user_id,
             chat_id=chat_id,
+            is_ocr=is_ocr,
         )
 
         if response_text is _VISION_ERROR_HANDLED:
@@ -419,12 +472,21 @@ async def _handle_media_group_photos(
 
         await update_stage(placeholder_message, STAGES_PHOTO, 1)
 
-        image_count = len(images)
-        formatted_prompt = _build_vision_prompt(caption, image_count=image_count)
+        # Classify intent for group
+        intent = await classify_vision_intent(caption)
+        is_ocr = (intent == "ocr")
 
-        # Wrap raw bytes as TaggedImage with task_type="describe"
+        image_count = len(images)
+        if is_ocr:
+            formatted_prompt = _build_ocr_prompt(caption)
+            task_type = "ocr"
+        else:
+            formatted_prompt = _build_vision_prompt(caption, image_count=image_count)
+            task_type = "describe"
+
+        # Wrap raw bytes as TaggedImage
         tagged_images = [
-            TaggedImage(data=img, task_type="describe")
+            TaggedImage(data=img, task_type=task_type)
             for img in images  # type: ignore[arg-type]  # download_one returns bytes
         ]
 
@@ -441,6 +503,7 @@ async def _handle_media_group_photos(
             chat_state,
             user_id=user_id,
             chat_id=chat_id,
+            is_ocr=is_ocr,
         )
 
         if response_text is _VISION_ERROR_HANDLED:

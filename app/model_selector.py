@@ -34,6 +34,7 @@ class SelectionResult:
 # Models are ranked roughly by capability tier.
 _MODEL_TIER = {
     # Gemini tiers
+    "3.5-flash": 5,        # flagship
     "3-flash-preview": 5,  # flagship
     "3.1-flash-lite": 4,  # excellent performance, better than 2.5
     "2.5-flash": 3,  # standard
@@ -59,6 +60,8 @@ def _get_tier(model_name: str) -> int:
         return 1
     if "luma" in name or "dall-e" in name:
         return 1
+    if "3.5-flash" in name:
+        return 5
     if "3-flash-preview" in name:
         return 5
     if "2.5-flash" in name:
@@ -99,7 +102,7 @@ _CREATIVE_PATTERNS = re.compile(
 # Performance: single shared tuple used by all three _find_model() calls in
 # select_model(). Eliminates 3 separate 3-element list allocations per call
 # and gives the preference order a single source of truth.
-_UPGRADE_PREFERENCE: tuple[str, ...] = ("3-flash-preview", "3.1-flash-lite", "2.5-flash")
+_UPGRADE_PREFERENCE: tuple[str, ...] = ("3.5-flash", "3-flash-preview", "3.1-flash-lite", "2.5-flash")
 
 
 def select_model(
@@ -172,7 +175,7 @@ def select_model(
     return None
 
 
-def _find_model(available: list | tuple, preferences: list[str]) -> str | None:
+def _find_model(available: list | tuple, preferences: list[str] | tuple[str, ...]) -> str | None:
     """Find the first preferred model that's available.
 
     Uses a list (not set) to preserve ordering.

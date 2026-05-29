@@ -17,6 +17,7 @@ from app.utils.json_compat import json
 # Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().
 DEFAULT_GEMINI_MODELS: list[str] = [
     "gemini-3-flash-preview",
+    "gemini-3.5-flash",
     "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
