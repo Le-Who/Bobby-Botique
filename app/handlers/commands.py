@@ -662,6 +662,7 @@ def register(application: Application) -> None:
         role_conv_metrics_command,
         set_dailycroc_delivery_command,
         set_dailycroc_model_command,
+        set_inline_model_command,
         set_dailycroc_placeholder_command,
         set_inline_tabs_command,
         set_inline_thinking_command,
@@ -689,6 +690,7 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("groupstats", group_stats_command))
     application.add_handler(CommandHandler("set_dailycroc_delivery", set_dailycroc_delivery_command))
     application.add_handler(CommandHandler("set_dailycroc_model", set_dailycroc_model_command))
+    application.add_handler(CommandHandler("set_inline_model", set_inline_model_command))
     application.add_handler(CommandHandler("dailycroc_status", dailycroc_status_command))
     application.add_handler(CommandHandler("set_dailycroc_placeholder", set_dailycroc_placeholder_command))
     application.add_handler(CommandHandler("rolemetrics", role_conv_metrics_command))

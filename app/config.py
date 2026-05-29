@@ -245,6 +245,7 @@ class Settings(BaseModel):
     AVAILABLE_MODELS: list[str] = DEFAULT_GEMINI_MODELS.copy()
     DEFAULT_MODEL: str = "gemini-3.1-flash-lite"
     QNA_MODEL: str = "gemini-2.5-flash"
+    INLINE_MODEL: str = "gemini-3.1-flash-lite"
     RESEARCH_MODEL: str = "gemini-3.1-flash-lite"
     URL_SELECTION_MODEL: str = "gemini-3.1-flash-lite"
     TAXONOMY_MODEL: str = "gemini-3.1-flash-lite"  # MemPalace: wing/room classification + contradiction judge
@@ -394,6 +395,7 @@ def load_settings() -> Settings:
             or default_openrouter_models,
             "DEFAULT_MODEL": _load_single_model("DEFAULT_MODEL", "gemini-3.1-flash-lite"),
             "QNA_MODEL": _load_single_model("QNA_MODEL", "gemini-2.5-flash-lite"),
+            "INLINE_MODEL": _load_single_model("INLINE_MODEL", "gemini-3.1-flash-lite"),
             "RESEARCH_MODEL": _load_single_model("RESEARCH_MODEL", "gemini-3.1-flash-lite"),
             "URL_SELECTION_MODEL": _load_single_model("URL_SELECTION_MODEL", "gemini-3.1-flash-lite"),
             "TAXONOMY_MODEL": _load_single_model("TAXONOMY_MODEL", "gemini-3.1-flash-lite"),
@@ -446,11 +448,18 @@ def load_settings() -> Settings:
             settings_obj.AVAILABLE_MODELS.append(settings_obj.DEFAULT_MODEL)
 
         if settings_obj.QNA_MODEL not in settings_obj.AVAILABLE_MODELS:
-            logging.warning(
+            logging.info(
                 "QNA_MODEL '%s' not in AVAILABLE_MODELS. Adding it.",
                 settings_obj.QNA_MODEL,
             )
             settings_obj.AVAILABLE_MODELS.append(settings_obj.QNA_MODEL)
+
+        if settings_obj.INLINE_MODEL not in settings_obj.AVAILABLE_MODELS:
+            logging.info(
+                "INLINE_MODEL '%s' not in AVAILABLE_MODELS. Adding it.",
+                settings_obj.INLINE_MODEL,
+            )
+            settings_obj.AVAILABLE_MODELS.append(settings_obj.INLINE_MODEL)
 
         if settings_obj.RESEARCH_MODEL not in settings_obj.AVAILABLE_MODELS:
             logging.warning(

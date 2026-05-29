@@ -67,9 +67,13 @@ def _get_lang(obj) -> str:
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-# Primary inline model: Vertex AI Express (more stable, native Search Grounding).
-# AI Studio keys race alongside as fallback slots using _INLINE_FALLBACK_MODEL.
-_INLINE_MODEL = "gemini-3.1-flash-lite"
+# Primary inline model is now dynamic.
+async def get_inline_model() -> str:
+    from app.config import settings
+    from app.repos.settings_repo import get_global_setting
+    default = settings.INLINE_MODEL if settings else "gemini-3.1-flash-lite"
+    return await get_global_setting("inline_model", default)
+
 _INLINE_FALLBACK_MODEL = "gemini-2.5-flash-lite"
 
 # Outer timeout for the entire generation pipeline.
@@ -1509,7 +1513,7 @@ async def _generate_and_edit_inline(
     _progress_shown = False
     _log_start = api_logger.log_request(
         "gemini_inline",
-        model=_INLINE_MODEL,
+        model=await get_inline_model(),
         query_length=len(user_query),
         tone=tone_id,
     )
@@ -1534,7 +1538,7 @@ async def _generate_and_edit_inline(
     try:
         final_answer, _grounding_sources = await asyncio.wait_for(
             _stream_inline_fast(
-                preferred_model=_INLINE_MODEL,
+                preferred_model=await get_inline_model(),
                 history=history,
                 system_instruction=system_instruction,
                 user_id=user_id,
@@ -1564,12 +1568,12 @@ async def _generate_and_edit_inline(
             "gemini_inline",
             _log_start,
             success=_gen_success,
-            model=_INLINE_MODEL,
+            model=await get_inline_model(),
             response_length=len(final_answer or ""),
         )
 
     # Record metrics (we're already in a background task — awaiting is safe)
-    await metrics_collector.record_api_call("gemini_inline", _INLINE_MODEL, user_id=user_id)
+    await metrics_collector.record_api_call("gemini_inline", await get_inline_model(), user_id=user_id)
     await metrics_collector.record_request(
         "inline",
         response_time=time.monotonic() - _gen_start,
@@ -1996,10 +2000,10 @@ async def _generate_tarot_inline(
     Spread-specific prompts are built by _build_tarot_system_prompt().
     spread_type maps directly to SpreadType enum values (e.g. 'tarot_love').
 
-    Uses _stream_inline_fast (Race Requests + multi-round key rotation) instead
-    of a bespoke single-key call, so 503 UNAVAILABLE errors are transparently
-    retried across different API keys and Vertex AI, exactly like regular
-    inline queries.
+    Uses ProviderRouter.get_response() for sequential key rotation: tries one
+    key at a time and rotates on 503/UNAVAILABLE (max 3 retries). QNA_MODEL
+    (gemini-2.5-flash) is stable enough that parallel racing would only waste
+    daily quota.
     """
     import contextlib
     import logging
@@ -2039,23 +2043,28 @@ async def _generate_tarot_inline(
     }
     header = _HEADER_MAP.get(spread, "🔮 Таро")
 
-    # ── Use _stream_inline_fast: Race Requests + multi-round key rotation ──
-    # This is the same resilient path used by all other inline queries.
-    # It races 2 AI Studio keys + 1 Vertex AI slot per round, retries up to
-    # 4 rounds, so a single 503 on one key is completely transparent to the user.
-    result, _sources = await _stream_inline_fast(
-        preferred_model=_INLINE_FALLBACK_MODEL,
+    # ── Sequential key rotation via ProviderRouter.get_response() ──
+    # gemini-3.5-flash is stable enough that parallel racing
+    # would only waste daily quota. ProviderRouter tries one key at a time,
+    # rotating to the next on 503/UNAVAILABLE, with health-aware key selection.
+    from app.errors import is_error_message
+    from app.providers.router import get_provider_router
+
+    router = get_provider_router()
+    result, _tokens = await router.get_response(
+        preferred_model="gemini-3.5-flash",
         history=[{"role": "user", "parts": [prompt]}],
         system_instruction=system_instruction,
         user_id=user_id,
-        max_rounds=4,
-        enable_web_search=False,
+        use_openrouter=False,
+        max_key_retries=3,
     )
 
-    if not result or not result.strip():
+    if not result or not result.strip() or is_error_message(result):
         logging.error(
-            "Tarot generation failed (spread=%s): no result from _stream_inline_fast",
+            "Tarot generation failed (spread=%s): %s",
             spread_type,
+            (result or "")[:120],
         )
         with contextlib.suppress(Exception):
             await bot.edit_message_text(

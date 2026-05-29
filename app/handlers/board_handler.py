@@ -299,11 +299,11 @@ async def _run_synthesis(topic: str, entries: list[dict]) -> str:
 
     try:
         # Use the same 3-way race as inline — lightweight, fast, resilient.
-        from app.handlers.inline import _INLINE_MODEL, _stream_inline_fast
+        from app.handlers.inline import get_inline_model, _stream_inline_fast
 
         result = await asyncio.wait_for(
             _stream_inline_fast(
-                preferred_model=_INLINE_MODEL,
+                preferred_model=await get_inline_model(),
                 history=[{"role": "user", "parts": [prompt]}],
                 system_instruction=None,
                 user_id=None,

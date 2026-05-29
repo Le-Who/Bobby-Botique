@@ -1025,6 +1025,35 @@ _DAILY_IMAGE_MODEL_LABELS = {
 
 
 @admin_only
+async def set_inline_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Set the default model for inline queries (no restart required).
+
+    Usage: /set_inline_model <model_name>
+    """
+    args = context.args or []
+    current = await get_global_setting("inline_model", settings.INLINE_MODEL)
+
+    if not args:
+        await update.message.reply_text(
+            f"⚙️ <b>Текущая inline-модель:</b> <code>{current}</code>\n\n"
+            "Использование: <code>/set_inline_model &lt;model_name&gt;</code>\n"
+            "Пример: <code>/set_inline_model gemini-3.5-flash</code>\n",
+            parse_mode="HTML",
+        )
+        return
+
+    model_name = args[0]
+    await set_global_setting("inline_model", model_name)
+    logging.info("Admin %s set inline_model → %s", update.effective_user.id, model_name)
+    
+    await update.message.reply_text(
+        f"✅ Модель по умолчанию для инлайна переключена на: <code>{model_name}</code>\n"
+        "Смена вступит в силу для всех новых инлайн-запросов.",
+        parse_mode="HTML",
+    )
+
+
+@admin_only
 async def set_dailycroc_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Switch the image model used for daily crocodile art generation.
 
