@@ -416,6 +416,11 @@ class TestMigrateInvalidModels:
             calls = mock_query.call_args_list
             # First call is the SELECT, next 2 are batch UPDATEs
             assert len(calls) == 3
+            select_sql = calls[0][0][0]
+            select_args = calls[0][0][1]
+            assert "ANY($1)" in select_sql
+            assert "NOT IN" not in select_sql
+            assert select_args == (["gemini-flash", "vendor/gpt-4"],)
             # Gemini batch (user 1, no "/" → gemini default)
             assert calls[1][0][1] == ("gemini-flash", [1])
             # OpenRouter batch (user 2, "/" present → openrouter default)

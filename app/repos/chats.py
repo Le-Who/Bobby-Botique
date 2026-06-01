@@ -283,15 +283,14 @@ async def migrate_invalid_models(
     if not available_models or not db_manager.is_connected:
         return 0
 
-    placeholders = ",".join([f"${i + 1}" for i in range(len(available_models))])
     invalid_chats = await db_query(
-        f"""
+        """
         SELECT user_id, model
         FROM public.chats
         WHERE model IS NOT NULL
-        AND model NOT IN ({placeholders})
+        AND NOT (model = ANY($1))
         """,
-        tuple(available_models),
+        (sorted(available_models),),
     )
 
     migrated = 0

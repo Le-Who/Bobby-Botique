@@ -205,6 +205,43 @@ async def test_logout_clears_session(client):
 
 
 @pytest.mark.asyncio
+async def test_logout_without_login_redirects_to_login(client):
+    """Test that logout redirects unauthenticated users to login."""
+    response = await client.get("/logout", follow_redirects=False)
+    assert response.status_code == 302
+    assert "/login" in response.headers.get("Location", "")
+
+
+@pytest.mark.asyncio
+async def test_logout_removes_auth_access(client):
+    """Test that logging out removes access to authenticated routes."""
+    get_response = await client.get("/login")
+    data = (await get_response.get_data()).decode()
+    m = re.search(r'name="csrf_token" value="([a-f0-9]+)"', data)
+    assert m, "CSRF token not found in login page"
+    csrf_token = m.group(1)
+
+    login_response = await client.post(
+        "/login",
+        form={"password": "test_token", "csrf_token": csrf_token},
+        follow_redirects=False,
+    )
+    assert login_response.status_code == 302
+
+    protected_response = await client.get("/")
+    assert protected_response.status_code == 200
+
+    logout_response = await client.get("/logout", follow_redirects=False)
+    assert logout_response.status_code == 302
+    set_cookie = logout_response.headers.get("Set-Cookie", "")
+    assert "session" in set_cookie.lower()
+
+    denied_response = await client.get("/", follow_redirects=False)
+    assert denied_response.status_code == 302
+    assert "/login" in denied_response.headers.get("Location", "")
+
+
+@pytest.mark.asyncio
 async def test_generate_csp_nonce_format():
     """Test that generated CSP nonce has correct format and length directly."""
     from quart import g
@@ -252,3 +289,22 @@ async def test_error_leakage_prevented(client):
 
         response_text = (await response.get_data()).decode()
         assert secret_message not in response_text
+
+
+@pytest.mark.asyncio
+async def test_generate_csp_nonce_integration(client):
+    """Test that generate_csp_nonce runs during a request and injects a unique nonce into CSP."""
+    response1 = await client.get("/health")
+    csp1 = response1.headers.get("Content-Security-Policy", "")
+    m1 = re.search(r"'nonce-([A-Za-z0-9_-]+)'", csp1)
+    assert m1 is not None, "Nonce not found in CSP header"
+    nonce1 = m1.group(1)
+    assert len(nonce1) == 22
+
+    response2 = await client.get("/health")
+    csp2 = response2.headers.get("Content-Security-Policy", "")
+    m2 = re.search(r"'nonce-([A-Za-z0-9_-]+)'", csp2)
+    assert m2 is not None, "Nonce not found in CSP header"
+    nonce2 = m2.group(1)
+
+    assert nonce1 != nonce2, "Nonce should be unique per request"
