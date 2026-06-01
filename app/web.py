@@ -108,7 +108,7 @@ async def add_security_headers(response):
             "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
             "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com; "
-            "img-src 'self' data:; "
+            "img-src 'self' data: blob:; "
             "connect-src 'self' wss:; "
             "frame-ancestors https://web.telegram.org https://*.telegram.org;"
         )
@@ -120,7 +120,7 @@ async def add_security_headers(response):
             f"script-src 'self' 'nonce-{nonce}'; "
             f"style-src 'self' 'nonce-{nonce}' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com; "
-            "img-src 'self' data:; "
+            "img-src 'self' data: blob:; "
             "connect-src 'self'; "
             "frame-ancestors 'none';"
         )
