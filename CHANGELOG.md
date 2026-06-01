@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-06-01 - OSS Maintainer Readiness
+
+### Documentation
+
+- Added an explicit MIT `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`, and `ROADMAP.md` so the public repository has standard OSS maintainer surfaces.
+- Added a top-level README overview with maintainer status, public maintenance signals, security/contribution links, and Codex/API-credit usage intent.
+- Added `docs/MAINTAINER_QUEUE.md` to document the open-PR queue snapshot, label taxonomy, and closure policy.
+- Documented that runtime user/adoption metrics are not yet published and must be exported only as anonymized aggregate deployment counts.
+- Updated the README contributing/license section to point to the new policy files.
+
+---
+
 ## [Unreleased] - 2026-05-28 - Tarot Spread Variations Expansion
 
 ### 🎴 Tarot Enhancements

@@ -1,6 +1,64 @@
-  - **Tabbed Response UI**: Inline responses are structured using XML tags (`<tldr>`, `<details>`, `<sources>`) extracted by the LLM and rendered dynamically via inline buttons. Users can seamlessly switch tabs without re-triggering generation. Admin-toggleable via `/set_inline_tabs <on|off>`.
-  - **Collaborative AI-Notes**: Prefixing a query with `доска: <topic>` initializes a persistent, shared workspace. Any user can reply to the board to add notes (bypassing privacy mode via `via_bot` detection). The bot debounces new entries (60s window) and automatically synthesizes them into an evolving structural summary via the `TaskManager`. Backed by PostgreSQL `inline_boards`.
-  - **Core Architecture**: Powered primarily by **`gemini-3.1-flash-lite` via Vertex AI Express** with native **Google Search Grounding** (`enable_web_search=True`) as the **primary inline slot**. AI Studio keys (`gemini-2.5-flash-lite`) race alongside as fallback slots via `_stream_inline_fast()` (3-way Race Requests, up to 12 slots across 4 rounds). The first valid response wins; Vertex AI Express wins most races due to lower latency and higher quota stability. Infrastructure failures raise `ProviderOverloadError` and surface a "⏳ Серверы ИИ перегружены" prompt instead of a generic error. Grounding citations are surfaced as an expandable `📎 Источники` blockquote (up to 3 URLs) at the end of the response. **5-Mode Smart Image Routing**: inline queries automatically detect intent — quoted text (`«»""`) → `wan-image` (Мем/Текст), edit verbs → `klein` (Изменить фото), or manually selectable: `zimage` (Турбо), `gptimage` (Умный), `qwen-image` (Арт). Background generation tasks are managed by the centralized `TaskManager` (graceful shutdown drain, MAX_TASKS=100 cap). On failure, translation loops gracefully trap errors and attach a **🔄 Повторить** inline retry button for one-tap re-generation. Requires `/setinline` + `/setinlinefeedback` at 100% in BotFather.
+# GemAI Bot v2
+
+GemAI Bot v2 is an open-source Telegram AI assistant framework focused on resilient real-world bot operations: multi-provider AI routing, streaming recovery, agentic web research, multimodal processing, long-term graph memory, Telegram Mini App surfaces, Docker deployment, and operator tooling.
+
+## Maintainer / OSS Status
+
+- **Primary maintainer:** [Le-Who](https://github.com/Le-Who)
+- **Repository:** <https://github.com/Le-Who/gemaibotv2>
+- **Default branch:** `vps_testai`
+- **License:** MIT, see [LICENSE](LICENSE).
+- **Security policy:** see [SECURITY.md](SECURITY.md).
+- **Contributing guide:** see [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Maintainer roadmap:** see [ROADMAP.md](ROADMAP.md).
+- **Maintainer queue:** see [docs/MAINTAINER_QUEUE.md](docs/MAINTAINER_QUEUE.md).
+
+This is a deployed, production-oriented Telegram bot codebase rather than a demo. The project is maintained as a reference implementation for Telegram AI assistants that need provider failover, user-facing recovery from model/API failures, authenticated Mini App surfaces, persistent memory, background task safety, and repeatable VPS/Docker operations.
+
+## Public Maintenance Signals
+
+These signals are intentionally limited to data that is visible from the public repository or generated from the current checkout.
+
+| Signal | Current value |
+| --- | ---: |
+| Git commits | 1,297 |
+| Open pull requests / maintenance queue items | 127 |
+| Closed pull requests | 380 |
+| Python source files | 377 |
+| Test files | 185 |
+| Docs files under `docs/` | 5 |
+
+Runtime user/adoption metrics are not published in this repository yet because they can contain private Telegram deployment data. Before citing active users, chats, request volume, or retention in a public application, export anonymized aggregate counts from the deployed metrics store and document the collection window here.
+
+## Why This Project Matters
+
+GemAI Bot v2 documents and implements hard parts that many Telegram AI bot maintainers hit in production:
+
+- provider routing with quota/failure isolation;
+- streaming response recovery and continuation UX;
+- authenticated Telegram Mini App and WebSocket flows;
+- long-running agentic web research with bounded budgets;
+- multimodal image, voice, document, and live-audio handling;
+- GraphRAG-style long-term memory with user controls;
+- Docker/VPS deployment and operator diagnostics;
+- regression tests around API/provider failure modes.
+
+## Codex / API Credits Use
+
+Additional Codex and API capacity would be used for maintainer work on this public repository:
+
+- pull-request review and regression-risk summaries;
+- focused test generation for provider, auth, webhook, WebSocket, and memory paths;
+- dependency upgrade review;
+- release-note and documentation automation;
+- security review of Telegram auth, Mini App init data validation, provider key handling, and streaming recovery paths;
+- adding an OpenAI provider/evaluation path so users can compare models without hard-coding one vendor.
+
+## Feature Overview
+
+- **Tabbed Response UI**: Inline responses are structured using XML tags (`<tldr>`, `<details>`, `<sources>`) extracted by the LLM and rendered dynamically via inline buttons. Users can seamlessly switch tabs without re-triggering generation. Admin-toggleable via `/set_inline_tabs <on|off>`.
+- **Collaborative AI-Notes**: Prefixing a query with `доска: <topic>` initializes a persistent, shared workspace. Any user can reply to the board to add notes (bypassing privacy mode via `via_bot` detection). The bot debounces new entries (60s window) and automatically synthesizes them into an evolving structural summary via the `TaskManager`. Backed by PostgreSQL `inline_boards`.
+- **Core Architecture**: Powered primarily by **`gemini-3.1-flash-lite` via Vertex AI Express** with native **Google Search Grounding** (`enable_web_search=True`) as the **primary inline slot**. AI Studio keys (`gemini-2.5-flash-lite`) race alongside as fallback slots via `_stream_inline_fast()` (3-way Race Requests, up to 12 slots across 4 rounds). The first valid response wins; Vertex AI Express wins most races due to lower latency and higher quota stability. Infrastructure failures raise `ProviderOverloadError` and surface a "⏳ Серверы ИИ перегружены" prompt instead of a generic error. Grounding citations are surfaced as an expandable `📎 Источники` blockquote (up to 3 URLs) at the end of the response. **5-Mode Smart Image Routing**: inline queries automatically detect intent — quoted text (`«»""`) → `wan-image` (Мем/Текст), edit verbs → `klein` (Изменить фото), or manually selectable: `zimage` (Турбо), `gptimage` (Умный), `qwen-image` (Арт). Background generation tasks are managed by the centralized `TaskManager` (graceful shutdown drain, MAX_TASKS=100 cap). On failure, translation loops gracefully trap errors and attach a **🔄 Повторить** inline retry button for one-tap re-generation. Requires `/setinline` + `/setinlinefeedback` at 100% in BotFather.
 - **Agentic Web Browsing (`??` prefix)**: Deep research mode utilizing Tavily API and Jina Reader API for multi-step query decomposition, autonomous site triage, content extraction, and dynamic self-correction loops. Hardened against memory leaks caused by gRPC protobuf cyclic references during long-running iterations (including threaded, non-blocking asynchronous Garbage Collection). Per-call API key usage tracking ensures accurate quota accounting across all LLM invocations within the agentic loop. Features an intelligent **Model Fallback Cascade** (automatically retries failed LLM requests or 503 errors using the next most capable model according to the capability tier rankings), parallel tool execution (`asyncio.gather` with semaphore), two-layer page content caching (session + global, 30-min TTL), source quality scoring (domain classification, freshness labels, citation validation), adaptive iteration budget (query deduplication, configurable token cap and wall-clock timeout), and rich streaming progress with search queries and iteration counters.
 - **Image Processing Pipeline**: Context-aware adaptive resize (`TASK_DIMS`: describe 1280px, search 768px, OCR 2048px) governed by **Shannon Entropy Analysis** (dynamically boosts +50% dimension for text-dense screenshots while reducing -25% for simple photos, optimizing token usage). Uses a 3-stage compression pipeline (thumbnail → JPEG q85 → fallback q75/65), TTL-cached results (`cache_key` by `file_unique_id`), and `TaggedImage` metadata carrier across handler→provider boundary to eliminate redundant recompression. Media group downloads use `Semaphore(5)` with debounced progress indicator.
 - **Image Generation (Multi-Provider)**: Text-to-image generation via `/draw <prompt>` or via **implicit natural language triggers** (e.g., *"Бот, нарисуй кота"* / *"сгенерируй картинку леса"*). Uses a multi-layered Regex heuristics engine to isolate the artistic prompt without leaking pronouns or conversational fillers (e.g. extracts "леса" from "сгенерируй мне пожалуйста картинку леса"). Implicit triggers are natively intercepted in both text and voice channels. Voice requests trigger an **Interactive Pre-Canvas Confirmation** where the parsed text and generation keyboard are rendered interactively before consuming API resources. Uses a Factory Pattern for provider routing:
@@ -736,11 +794,15 @@ python -m pytest tests/
 
 ## Contributing
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, validation, pull-request, and secret-handling guidance.
+
+Minimum maintainer checks for behavior changes:
+
 1. Create a descriptive PR.
-2. Verify all `pytest` checks pass: `python -m pytest tests/ --override-ini="addopts="`
-3. Run `ruff check app/ tests/ --output-format=concise` — zero violations required.
-4. Run `mypy app/ --ignore-missing-imports` — exit 0 required.
+2. Verify the relevant `pytest` checks pass.
+3. Run `python -m ruff check .`.
+4. Update user-facing docs when public behavior or deployment changes.
 
 ## License
 
-MIT (Verified via shield badge notation in legacy files).
+MIT, see [LICENSE](LICENSE).
