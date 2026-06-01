@@ -1,451 +1,311 @@
-import asyncio
-import contextlib
 import logging
-from dataclasses import dataclass
-from typing import Any
-
+import json
+import hashlib
+import asyncio
+import re
+from datetime import datetime, date
+import pytz
 import asyncpg
-from cachetools import TTLCache
+from asyncpg.pool import Pool
+from typing import Dict, Any, List, Optional
+from dataclasses import dataclass
 
-from app.config import settings
-from app.errors import (
-    ConfigurationError,
-    DatabaseConnectionError,
-    DatabasePoolError,
-    DatabaseRateLimitError,
-)
+from .config import settings, PACIFIC_TZ
 
+db_pool: Optional[Pool] = None
 
 @dataclass
 class ChatState:
-    history: list[dict[str, Any]]
+    history: List[Dict[str, Any]]
     model: str
     token_count: int
     search_enabled: bool
-    system_prompt: str | None
-    is_deep_dive: bool = False
-    deep_dive_thread_id: str | None = None
-    context_summary: str | None = None  # LLM-generated conversation summary
-    thinking_level: str | None = None  # User-configurable: off, low, medium, high
-    ltm_enabled: bool = True  # Long-term memory recall toggle
-    branch_id: int | None = None  # Active branch snapshot ID (branching mode)
-    temperature: float | None = None  # LLM creativity 0.0–1.0, None = model default
-    voice_id: str | None = None  # ElevenLabs voice override, None = global default
-    tts_temperature: float | None = None  # TTS creativity, None = model default
-    _original_length: int = 0
+    system_prompt: Optional[str]
 
+def _prepare_query(query: str) -> str:
+    placeholders = re.findall(r'(\?|%s)', query)
+    for i, _ in enumerate(placeholders, 1):
+        query = re.sub(r'(\?|%s)', f'${i}', query, 1)
+    return query
 
-class DatabaseManager:
-    _instance = None
+async def db_query(query: str, params: tuple = (), retries: int = 3):
+    """Выполняет запрос к БД с унифицированной обработкой параметров.
 
-    # Type declarations for attributes set in __init__
-    pool: Any
-    _active_keys_cache: Any
-    _user_auth_cache: Any
-    _model_config_cache: Any
-    _active_chats_cache: Any
-    _monitor_task: Any
+    Поддерживает передачу параметров в виде кортежа/списка, а также одиночного значения
+    (например, строки). Одиночное значение автоматически оборачивается в кортеж,
+    чтобы избежать ошибки вида: "the server expects 1 argument, N were passed".
+    """
+    if not db_pool:
+        raise Exception("Database pool is not initialized")
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
+    # Нормализуем параметры: одиночное значение -> (value,), список -> tuple(list), None -> ()
+    if params is None:
+        normalized_params = ()
+    elif isinstance(params, (list, tuple)):
+        normalized_params = tuple(params)
+    else:
+        normalized_params = (params,)
 
-    def __init__(self):
-        if self._initialized:
-            return
-        self._initialized = True
-        self.pool = None
+    query_prepared = _prepare_query(query)
+    last_exception = None
 
-        # TTL Caches to avoid manual background cleanup
-        self._active_keys_cache = TTLCache(maxsize=100, ttl=300)
-        self._user_auth_cache = TTLCache(maxsize=1000, ttl=300)
-        self._model_config_cache = TTLCache(maxsize=50, ttl=3600)
-
-        # Lock lazily created via property to avoid asyncio.Lock() before event loop
-        self._cache_lock_instance: asyncio.Lock | None = None
-        self._monitor_task = None
-
-    @property
-    def _cache_lock(self) -> asyncio.Lock:
-        """Lazily create asyncio.Lock on first access (avoids Python 3.12+ DeprecationWarning)."""
-        if self._cache_lock_instance is None:
-            self._cache_lock_instance = asyncio.Lock()
-        return self._cache_lock_instance
-
-    def _is_pool_closed(self) -> bool:
-        """Check if the connection pool is closed, wrapping asyncpg internals."""
+    for attempt in range(retries):
         try:
-            return self.pool._closed
-        except AttributeError:
-            return True
-
-    @property
-    def is_connected(self):
-        return bool(self.pool and not self._is_pool_closed())
-
-    async def create_pool(self):
-        """Создает пул соединений с базой данных"""
-        import os
-
-        pool_min = int(os.getenv("DB_POOL_MIN_SIZE", "2"))
-        pool_max = int(os.getenv("DB_POOL_MAX_SIZE", "10"))
-
-        try:
-
-            async def _init_connection(conn):
-                """Apply session-level settings to every new connection."""
-                import json
-
-                await conn.execute("SET statement_timeout = '60s'")
-                await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
-                await conn.execute("SET lock_timeout = '30s'")
-                # Register JSONB codec: auto-convert JSONB ↔ Python dict
-                await conn.set_type_codec(
-                    "jsonb",
-                    encoder=json.dumps,
-                    decoder=json.loads,
-                    schema="pg_catalog",
-                )
-
-            self.pool = await asyncpg.create_pool(
-                dsn=settings.DATABASE_URL,
-                min_size=pool_min,
-                max_size=pool_max,
-                max_inactive_connection_lifetime=300,  # evict idle conns after 5 min
-                command_timeout=30,
-                init=_init_connection,
-                statement_cache_size=0,  # Required for PgBouncer transaction mode
-                server_settings={
-                    "application_name": "gemaibotv2",
-                    "tcp_keepalives_idle": "30",
-                    "tcp_keepalives_interval": "10",
-                    "tcp_keepalives_count": "5",
-                    "jit": "off",
-                },
-            )
-
-            if self.pool and not self.pool._closed:
-                logging.info(
-                    "Database pool created: min=%d, max=%d, idle_eviction=300s",
-                    pool_min,
-                    pool_max,
-                )
-                self._monitor_task = self._start_background_task(
-                    self._monitor_task,
-                    self.monitor_connection_pool,
-                    "database pool monitor",
-                )
-                logging.info("Database pool monitoring started")
-                return self.pool
+            async with db_pool.acquire() as conn:
+                if query.strip().upper().startswith("SELECT"):
+                    return await conn.fetch(query_prepared, *normalized_params)
+                else:
+                    await conn.execute(query_prepared, *normalized_params)
+                    return None
+        except (asyncpg.exceptions.ConnectionDoesNotExistError, OSError) as e:
+            logging.warning(f"DB connection error (attempt {attempt + 1}/{retries}): {e}. Retrying...")
+            last_exception = e
+            await asyncio.sleep(1 + attempt)
         except Exception as e:
-            if "rate limit" in str(e).lower() or "quota" in str(e).lower():
-                logging.critical("Supabase.com rate limit exceeded. Please upgrade your plan or wait for quota reset.")
-                raise DatabaseRateLimitError(f"Database rate limit exceeded: {e}") from e
-            elif "connection" in str(e).lower() or "timeout" in str(e).lower():
-                logging.warning("Database connection issue: %s. This might be temporary.", e)
-                raise DatabaseConnectionError(f"Database connection failed: {e}") from e
-            else:
-                logging.error("Unexpected database error: %s", e)
-                raise DatabasePoolError(f"Database initialization failed: {e}") from e
+            logging.error(
+                f"An unexpected database error occurred during query: {query_prepared[:100]}... - {e}",
+                exc_info=False,
+            )
+            raise e
 
-    async def close(self):
-        # Cancel background tasks
-        await self._cancel_background_task("_monitor_task")
-
-        if self.pool:
-            await self.pool.close()
-            self.pool = None
-            logging.info("Database pool closed")
-
-    async def reconnect(self):
-        logging.info("Attempting to reconnect to database...")
-        # Close existing pool and task
-        await self.close()
-
-        await self.create_pool()
-        logging.info("Database reconnected successfully")
-        return True
-
-    def _start_background_task(self, task_ref, coro_factory, task_name: str):
-        """Запускает фоновую задачу с защитой от повторного старта."""
-        from app.utils.background_tasks import start_background_task
-
-        return start_background_task(task_ref, coro_factory, task_name)
-
-    async def _cancel_background_task(self, attr_name: str):
-        """Отменяет и ожидает завершение фоновой задачи по имени атрибута."""
-        from app.utils.background_tasks import cancel_background_task
-
-        await cancel_background_task(self, attr_name)
-
-    async def monitor_connection_pool(self):
-        while True:
-            try:
-                if not self.pool or self._is_pool_closed():
-                    logging.info("Pool is closed or invalid, stopping monitoring")
-                    break
-
-                pool_stats = {}
-                try:
-                    if hasattr(self.pool, "_minsize"):
-                        pool_stats["min_size"] = self.pool._minsize
-                    if hasattr(self.pool, "_maxsize"):
-                        pool_stats["max_size"] = self.pool._maxsize
-                    if hasattr(self.pool, "_size"):
-                        pool_stats["size"] = self.pool._size
-                    if hasattr(self.pool, "_free_size"):
-                        pool_stats["free_size"] = self.pool._free_size
-
-                    if "size" in pool_stats and "free_size" in pool_stats:
-                        pool_stats["in_use"] = pool_stats["size"] - pool_stats["free_size"]
-                        if "max_size" in pool_stats and pool_stats["max_size"] > 0:
-                            pool_stats["utilization"] = (
-                                (pool_stats["size"] - pool_stats["free_size"]) / pool_stats["max_size"] * 100
-                            )
-                        else:
-                            pool_stats["utilization"] = 0
-                except AttributeError as e:
-                    pool_stats["error"] = str(e)
-
-                logging.debug("Database pool stats: %s", pool_stats)
-
-                if pool_stats.get("utilization", 0) > 80:
-                    logging.warning(
-                        "Database pool high utilization: %.1f%%",
-                        pool_stats["utilization"],
-                    )
-
-                await asyncio.sleep(30)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logging.warning("Connection pool monitoring error: %s", e)
-                await asyncio.sleep(60)
-
-    async def _execute_with_retry(self, operation_name: str, operation, query_str: str, retries: int = 3):
-        """Shared retry/reconnect/backoff loop for all pooled database operations.
-
-        Args:
-            operation_name: Human-readable name for logging (e.g. "query", "executemany").
-            operation: An async callable(connection) -> result that performs the actual DB work.
-            query_str: The SQL query (used for timeout error messages).
-            retries: Number of retry attempts.
-        """
-        last_exception = None
-        for attempt in range(retries + 1):
-            try:
-                if not self.pool or self._is_pool_closed():
-                    logging.warning("Database pool not initialized or closed – attempting reconnect...")
-                    await self.reconnect()
-                    if not self.pool or self._is_pool_closed():
-                        raise Exception("Database pool is closed")
-
-                async with self.pool.acquire() as connection:
-                    return await asyncio.wait_for(operation(connection), timeout=30.0)
-
-            except TimeoutError:
-                last_exception = Exception(f"Database {operation_name} timeout: {query_str[:100]}...")
-                logging.warning("Database %s timeout (attempt %s)", operation_name, attempt + 1)
-
-            except (asyncpg.InterfaceError, asyncpg.PostgresConnectionError) as e:
-                last_exception = e
-                logging.warning("Database connection issue (attempt %s): %s", attempt + 1, e)
-                if attempt < retries:
-                    await asyncio.sleep(min(2**attempt, 10))
-                    with contextlib.suppress(Exception):
-                        await self.reconnect()
-                    continue
-
-            except asyncpg.PostgresError as e:
-                last_exception = e
-                if "rate limit" in str(e).lower():
-                    raise
-                logging.error("Database %s error (attempt %s): %s", operation_name, attempt + 1, e)
-                if attempt == retries:
-                    break
-                await asyncio.sleep(min(2**attempt, 10))
-
-        raise last_exception or Exception(f"Database {operation_name} failed")
-
-    async def query(self, query_str: str, params: tuple = (), retries: int = 3, conn=None):
-        if not isinstance(query_str, str) or not query_str.strip():
-            raise ValueError("Query must be a non-empty string")
-
-        if conn:
-            try:
-                result = await conn.fetch(query_str, *params)
-                return [dict(record) for record in result]
-            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-                logging.error("Error in provided connection query: %s", e, exc_info=True)
-                raise e
-
-        async def _do_fetch(connection):
-            result = await connection.fetch(query_str, *params)
-            return [dict(record) for record in result]
-
-        return await self._execute_with_retry("query", _do_fetch, query_str, retries)
-
-    async def execute_many(self, query_str: str, params_list: list[tuple], retries: int = 3, conn=None):
-        if not isinstance(query_str, str) or not query_str.strip():
-            raise ValueError("Query must be a non-empty string")
-
-        if not params_list:
-            return
-
-        if conn:
-            try:
-                await conn.executemany(query_str, params_list)
-                return
-            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-                logging.error("Error in provided connection executemany: %s", e, exc_info=True)
-                raise e
-
-        async def _do_executemany(connection):
-            await connection.executemany(query_str, params_list)
-
-        await self._execute_with_retry("executemany", _do_executemany, query_str, retries)
-
-
-# Global instances
-db_manager = DatabaseManager()
-
-# Module-level functions delegating to db_manager
-
-
-async def reconnect_database():
-    return await db_manager.reconnect()
-
-
-async def db_query(query: str, params: tuple = (), retries: int = 3, conn=None):
-    return await db_manager.query(query, params, retries, conn)
-
-
-async def db_execute_many(query: str, params_list: list[tuple], retries: int = 3, conn=None):
-    return await db_manager.execute_many(query, params_list, retries, conn)
-
-
-async def check_database_health():
-    if not db_manager.pool:
-        return False
-    if db_manager._is_pool_closed():
-        return False
-    try:
-        async with db_manager.pool.acquire() as conn:
-            await conn.execute("SELECT 1")
-            return True
-    except Exception:
-        return False
-
-
-def is_database_connected() -> bool:
-    """Synchronous database connectivity check for web/status endpoints."""
-    return db_manager.is_connected
-
-
-async def ensure_database_connection():
-    if not await check_database_health():
-        try:
-            return await db_manager.reconnect()
-        except Exception:
-            return False
-    return True
-
-
-# --- Business Logic (Refactored to use db_manager) ---
-
+    logging.error("All database retries failed.")
+    raise last_exception
 
 async def init_db():
-    if not settings.DATABASE_URL:
-        raise ConfigurationError("DATABASE_URL not set")
+    """Инициализирует базу данных, создавая необходимые таблицы"""
+    global db_pool
 
-    await db_manager.create_pool()
-    if not db_manager.pool:
-        raise DatabasePoolError("Critical: Failed to create database connection pool")
-
-    # NOTE: Session-level settings (statement_timeout, lock_timeout, etc.)
-    # are applied via _init_connection() callback on every pool connection.
-    # No need to apply them again here.
-
-    # Initialize Schema
-    await _init_schema()
-
-
-async def _init_schema():
-    """Create tables, setup RLS, run migrations, and seed initial data."""
-    from app.db.migrations import run_migrations
-    from app.db.schema import create_tables
-    from app.db.seed import insert_initial_data
-
-    await create_tables(db_query)
-    await setup_row_level_security()  # uses the wrapper defined below
-    await run_migrations(db_query, db_manager)
-    await insert_initial_data(db_query, db_execute_many, settings)
-
-
-# --- RLS re-exports (backward compatibility) ---
-# Import RLS config/helpers so existing `from app.database import X` keeps working.
-from app.db.rls import (  # noqa: F401, E402
-    RLS_CONFIG,
-    VALID_TABLES,
-)
-from app.db.rls import (
-    create_rls_policies as _create_rls_policies,
-)
-from app.db.rls import (
-    setup_row_level_security as _setup_rls,
-)
-
-
-async def setup_row_level_security():
-    """Backward-compatible wrapper."""
-    await _setup_rls(db_query)
-
-
-async def create_rls_policies(table_name: str):
-    """Backward-compatible wrapper."""
-    await _create_rls_policies(table_name, db_query)
-
-
-async def set_user_context(user_id: int, is_admin: bool = False, conn=None):
     try:
-        await db_query(
-            """
-            SELECT
-                set_config('app.user_id', $1, true),
-                set_config('app.is_admin', $2, true)
-        """,
-            (str(user_id), str(is_admin).lower()),
-            conn=conn,
+        # Инициализируем пул соединений
+        if not db_pool:
+            db_pool = await asyncpg.create_pool(
+                dsn=settings.DATABASE_URL,
+                min_size=1,
+                max_size=10
+            )
+
+        # Создаем таблицу для API ключей Gemini
+        await db_query("""
+            CREATE TABLE IF NOT EXISTS gemini_api_keys (
+                id SERIAL PRIMARY KEY,
+                api_key TEXT NOT NULL,
+                key_hash TEXT UNIQUE NOT NULL,
+                daily_usage INTEGER DEFAULT 0,
+                last_reset_date DATE DEFAULT CURRENT_DATE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Создаем таблицу для API ключей Tavily
+        await db_query("""
+            CREATE TABLE IF NOT EXISTS tavily_api_keys (
+                id SERIAL PRIMARY KEY,
+                api_key TEXT NOT NULL,
+                key_hash TEXT UNIQUE NOT NULL,
+                monthly_usage INTEGER DEFAULT 0,
+                last_reset_date DATE DEFAULT CURRENT_DATE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Создаем таблицу для документов пользователей
+        await db_query("""
+            CREATE TABLE IF NOT EXISTS user_documents (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                filename TEXT NOT NULL,
+                file_hash TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                pages INTEGER,
+                content TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, file_hash)
+            )
+        """)
+
+        # Создаем таблицу для настроек бота
+        await db_query("""
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                id SERIAL PRIMARY KEY,
+                setting_name TEXT UNIQUE NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Создаем остальные таблицы
+        await db_query("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0)""")
+        await db_query("""CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY, history TEXT, model TEXT, token_count INTEGER DEFAULT 0, search_enabled INTEGER DEFAULT 0, system_prompt TEXT)""")
+        await db_query("""CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
+        await db_query("""CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))""")
+        await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
+
+        # Создаем таблицу версий схемы
+        await db_query("""
+            CREATE TABLE IF NOT EXISTS schema_version (
+                id SERIAL PRIMARY KEY,
+                version INTEGER NOT NULL DEFAULT 1,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Проверяем текущую версию схемы
+        version_result = await db_query("SELECT version FROM schema_version ORDER BY id DESC LIMIT 1")
+        current_version = version_result[0]['version'] if version_result else 0
+
+        # Применяем миграции если необходимо
+        if current_version < 1:
+            await _apply_migration_1()
+            await db_query("INSERT INTO schema_version (version) VALUES (1)")
+            logging.info("Schema migration to version 1 completed.")
+
+        logging.info(f"Database schema is at version {current_version + (1 if current_version < 1 else 0)}")
+
+        # Инициализируем базовые данные
+        await db_query("INSERT INTO users (user_id, is_authorized) VALUES ($1, 1) ON CONFLICT (user_id) DO NOTHING", (settings.ADMIN_ID,))
+        for key in settings.GEMINI_API_KEYS:
+            key_hash = hashlib.sha256(key.encode()).hexdigest()
+            await db_query("INSERT INTO api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
+        for key in settings.TAVILY_API_KEYS:
+            key_hash = hashlib.sha256(key.encode()).hexdigest()
+            await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
+
+        # Инициализируем базовые настройки бота
+        default_settings = [
+            ('SAFETY_MODE', 'standard'),
+            ('ENABLE_SAFETY_FALLBACK', 'true'),
+            ('DEBUG_MODE', 'false'),
+            ('LOG_LEVEL', 'INFO'),
+            ('LOG_SAFETY_DECISIONS', 'false'),
+            ('ENABLE_CACHE', 'true'),
+            ('CACHE_TTL_HOURS', '72'),
+            ('MAX_RETRIES', '3'),
+            ('REQUEST_TIMEOUT_SECONDS', '60'),
+            ('ENABLE_PROMPT_SIMPLIFICATION', 'true'),
+            ('ENABLE_SYSTEM_INSTRUCTION_FALLBACK', 'true')
+        ]
+
+        for setting_name, default_value in default_settings:
+            await db_query(
+                "INSERT INTO bot_settings (setting_name, value) VALUES ($1, $2) ON CONFLICT (setting_name) DO NOTHING",
+                (setting_name, default_value)
+            )
+
+        logging.info("Database initialized successfully")
+
+    except Exception as e:
+        logging.error(f"Failed to initialize database: {e}")
+        raise
+
+async def get_user_chat(user_id: int) -> ChatState:
+    result = await db_query("SELECT * FROM chats WHERE user_id = $1", (user_id,))
+    if result:
+        row = result[0]
+        return ChatState(
+            history=json.loads(row['history']) if row['history'] else [],
+            model=row['model'] or settings.DEFAULT_MODEL,
+            token_count=row['token_count'] or 0,
+            search_enabled=bool(row['search_enabled']),
+            system_prompt=row['system_prompt'] or None
         )
-    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-        logging.error("Failed to set user context for user %s: %s", user_id, e, exc_info=True)
-        raise  # Propagate — callers must not run queries with stale RLS context
+    return ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None)
 
+async def update_user_chat(user_id: int, chat_state: ChatState):
+    history_json = json.dumps(chat_state.history)
+    query = """
+    INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (user_id)
+    DO UPDATE SET
+        history = EXCLUDED.history, model = EXCLUDED.model, token_count = EXCLUDED.token_count,
+        search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt;
+    """
+    await db_query(query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt))
 
-async def clear_user_context(conn=None):
+async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
+    today_pacific: date = datetime.now(PACIFIC_TZ).date()
+    daily_limit = settings.DAILY_LIMITS.get(model_name)
+    if not daily_limit:
+        keys = await db_query("SELECT * FROM api_keys")
+        return keys[0] if keys else None
+    all_keys = await db_query("SELECT * FROM api_keys")
+    for key_row in all_keys:
+        usage = await db_query("SELECT request_count FROM key_usage WHERE key_hash = $1 AND model_name = $2 AND usage_date = $3", (key_row['key_hash'], model_name, today_pacific))
+        request_count = usage[0]['request_count'] if usage else 0
+        if request_count < daily_limit * settings.LIMIT_THRESHOLD_PERCENT:
+            return key_row
+    return None
+
+async def increment_gemini_key_usage(key_hash: str, model_name: str):
+    today_pacific: date = datetime.now(PACIFIC_TZ).date()
+    query = """
+    INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, $3, 1)
+    ON CONFLICT (key_hash, model_name, usage_date)
+    DO UPDATE SET request_count = key_usage.request_count + 1;
+    """
+    await db_query(query, (key_hash, model_name, today_pacific))
+
+async def get_available_tavily_key():
+    current_month = datetime.now(pytz.utc).strftime('%Y-%m')
+    all_keys = await db_query("SELECT * FROM tavily_api_keys")
+    for key_row in all_keys:
+        usage = await db_query("SELECT credit_usage FROM tavily_key_usage WHERE key_hash = $1 AND usage_month = $2", (key_row['key_hash'], current_month))
+        credit_usage = usage[0]['credit_usage'] if usage else 0
+        if credit_usage < settings.TAVILY_MONTHLY_CREDIT_LIMIT * settings.TAVILY_LIMIT_THRESHOLD_PERCENT:
+            return key_row
+    return None
+
+async def increment_tavily_key_usage(key_hash: str, cost: int):
+    current_month = datetime.now(pytz.utc).strftime('%Y-%m')
+    query = """
+    INSERT INTO tavily_key_usage (key_hash, usage_month, credit_usage) VALUES ($1, $2, $3)
+    ON CONFLICT (key_hash, usage_month)
+    DO UPDATE SET credit_usage = tavily_key_usage.credit_usage + $4;
+    """
+    await db_query(query, (key_hash, current_month, cost, cost))
+
+def is_admin(user_id: int) -> bool:
+    return user_id == settings.ADMIN_ID
+
+async def is_authorized(user_id: int) -> bool:
+    if is_admin(user_id):
+        return True
+    result = await db_query("SELECT is_authorized FROM users WHERE user_id = $1", (user_id,))
+    return result and result[0]['is_authorized'] == 1
+
+async def _apply_migration_1():
+    """Применяет миграцию версии 1: переименование колонки request_count в credit_usage"""
     try:
-        await db_query(
-            """
-            SELECT
-                set_config('app.user_id', '', true),
-                set_config('app.is_admin', 'false', true)
-        """,
-            conn=conn,
-        )
-    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-        logging.warning("Failed to clear user context: %s", e)
+        # Проверяем, существует ли старая колонка
+        check_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='tavily_key_usage' AND column_name='request_count';"
+        column_exists = await db_query(check_column_query)
 
+        if column_exists:
+            logging.info("Applying migration 1: renaming 'request_count' to 'credit_usage'...")
+            await db_query("ALTER TABLE tavily_key_usage RENAME COLUMN request_count TO credit_usage;")
+            logging.info("Migration 1 completed successfully.")
+        else:
+            logging.info("Migration 1 not needed: column 'request_count' not found.")
 
-# =============================================================================
-# All business logic is in the repos/ layer:
-#   app.repos.users         - auth, user state, feedback
-#   app.repos.chats         - chat state management
-#   app.repos.keys          - API key management
-#   app.repos.conversations - saved conversations
-#   app.repos.roles         - custom user roles CRUD
-#   app.repos.user_stats    - per-user metrics queries
-#   app.repos.metrics_repo  - metrics queries
-#   app.repos.analytics     - user analytics
-# =============================================================================
+    except Exception as e:
+        logging.error(f"Error applying migration 1: {e}")
+        raise
+
+async def run_migrations():
+    """Запускает миграции базы данных"""
+    try:
+        from .db_migrations import migration_manager
+        result = await migration_manager.migrate_up()
+        logging.info(f"Database migrations completed: {result}")
+        return result
+    except Exception as e:
+        logging.error(f"Migration error: {e}")
+        return {"applied": 0, "status": "failed", "error": str(e)}
+
+async def close_db():
+    """Закрывает пул соединений с базой данных"""
+    global db_pool
+    if db_pool:
+        await db_pool.close()
+        db_pool = None
+        logging.info("Database pool closed")

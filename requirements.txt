@@ -1,33 +1,14 @@
-# Core bot dependencies
-python-telegram-bot[job-queue]>=20.7,<23.0
-google-genai>=0.3.0,<2.0.0
-httpx>=0.25.0,<1.0.0
-
-# Database and caching (optimized for free tiers)
-asyncpg>=0.28.0,<1.0.0
-redis>=4.5.0,<8.0.0
-
-# Web server for health checks
-Quart>=0.19.0,<1.0.0
-hypercorn>=0.14.0,<1.0.0
-
-# Configuration and utilities
-pydantic>=2.0.0,<3.0.0
-tzdata>=2024.1  # Required by zoneinfo on Windows/Alpine Docker
-psutil>=5.9.0,<8.0.0
-cachetools>=5.3.0,<8.0.0
-cryptography>=41.0.0,<48.0.0
-
-# Document processing (lightweight alternatives)
-pypdf>=5.0.0,<7.0.0
-python-docx>=0.8.11,<2.0.0
-Pillow>=9.5.0,<13.0.0
-
-# External APIs
-tavily-python>=0.3.0,<1.0.0
-
-# Logging (pretty console output)
-rich>=13.0.0,<15.0.0
-
-# Performance (Linux/Docker only — 2-4× event loop throughput)
-uvloop>=0.19.0,<1.0.0; sys_platform != "win32"
+python-telegram-bot
+google-generativeai>=0.7.0
+Pillow
+redis>=5.0.0
+pytz
+Flask
+tavily-python
+asyncpg
+httpx
+hypercorn
+pydantic-settings
+PyPDF2
+python-docx
+PyMuPDF

@@ -1,234 +1,420 @@
-"""
-Callback handlers — central registration hub.
-
-This module keeps shared helpers (semaphore, busy-check, background tasks)
-and the ``register()`` function that wires all callback handlers.
-
-Domain-specific callbacks live in sub-modules:
-    cb_roles          — role management (apply, create, delete, rename, etc.)
-    cb_documents      — document management (upload, select, delete, etc.)
-    cb_conversations  — conversation management (switch, rename, delete, etc.)
-    cb_models         — model selection buttons
-    cb_ai_actions     — heavy AI actions (complex search, fallback, retry)
-    cb_navigation     — navigation menus, help, new chat, toggle search
-    cb_feedback       — 👍/👎 feedback on AI responses
-"""
-
-__all__ = [
-    "register",
-    "_is_user_busy",
-    "_BUSY_TOAST",
-    "_HEAVY_CALLBACK_SEMAPHORE",
-    "_background_tasks",
-]
-
 import asyncio
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes, CallbackQueryHandler, Application
 
-from telegram.ext import Application, CallbackQueryHandler
+from . import agent
+from .. import database as db
+from ..config import settings
+from .. import state
+from .. import services
 
-from app import state
-from app.config import settings
+async def refresh_cache_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает нажатие кнопки 'Актуализировать ответ'"""
+    query = update.callback_query
+    await query.answer()
 
-# ── Shared helpers (imported by domain modules) ──────────────────────────────
-_HEAVY_CALLBACK_LIMIT = max(1, int(getattr(settings, "MAX_CONCURRENT_HEAVY_CALLBACKS", 4)))
-_HEAVY_CALLBACK_SEMAPHORE = asyncio.Semaphore(_HEAVY_CALLBACK_LIMIT)
+    # Извлекаем button_id из callback_data
+    button_id = query.data.split(':', 1)[1]
 
-_background_tasks: set = set()
+    try:
+        # Получаем данные кэша по button_id
+        from ..cache import _get_button_mapping
+        mapping_data = _get_button_mapping(button_id)
 
-_BUSY_TOAST = (
-    "⏳ Дождитесь завершения текущего запроса"  # Default ru, handlers use t("busy.toast", lang) when they have Update
-)
+        if not mapping_data:
+            await query.edit_message_text("❌ Не удалось найти данные для обновления. Попробуйте задать вопрос заново.")
+            return
+
+        original_query, search_type, cache_key = mapping_data
+
+        # Редактируем сообщение, показывая, что идет обновление
+        await query.edit_message_text("🔄 Обновляю ответ...")
+
+        # Удаляем старый результат из кэша
+        from ..cache import search_cache
+        await search_cache._remove_by_key(cache_key)
+
+        # Выполняем новый поиск
+        search_result = await services.tavily_search_agent(original_query, search_type=search_type)
+
+        if search_result.get("error"):
+            await query.edit_message_text(f"❌ Ошибка при обновлении: {search_result['error']}")
+            return
+
+        # Генерируем новый ответ в зависимости от типа поиска
+        if search_type == 'qna':
+            # Для QNA используем Gemini для локализации
+            from .. import prompts
+            from ..config import settings
+
+            tavily_answer = search_result['data'].get("content", "Не удалось найти прямой ответ.")
+            localization_prompt = prompts.QNA_LOCALIZATION_PROMPT.format(
+                user_message=original_query, tavily_answer=tavily_answer
+            )
+
+            gemini_key, model_used, _ = await agent._resolve_gemini_request(settings.QNA_MODEL)
+            if not gemini_key:
+                await query.edit_message_text("🚫 Ключи для модели закончились.")
+                return
+
+            final_answer, _ = await services.get_gemini_response(
+                gemini_key['api_key'],
+                [{'role': 'user', 'parts': [localization_prompt]}],
+                model_used
+            )
+
+            # Отправляем новый ответ
+            await query.edit_message_text(final_answer)
+            await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+
+        else:
+            # Для research поиска показываем краткую информацию
+            search_results = search_result['data'].get('results', [])
+            await query.edit_message_text(
+                f"✅ Ответ обновлен!\n\n"
+                f"🔍 Найдено {len(search_results)} новых источников\n"
+                f"💡 Задайте вопрос заново для получения обновленного ответа"
+            )
+
+    except Exception as e:
+        logging.error(f"Error refreshing cache: {e}")
+        await query.edit_message_text("❌ Произошла ошибка при обновлении ответа. Попробуйте задать вопрос заново.")
+
+async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    model_name = query.data.split("_", 1)[1]
+    chat_state = await db.get_user_chat(query.from_user.id)
+    chat_state.model = model_name
+    await db.update_user_chat(query.from_user.id, chat_state)
+    await query.edit_message_text(f"Основная модель изменена на: {chat_state.model}")
+
+async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    action = query.data.split(':')[1]
+    placeholder_message = query.message
+
+    if action == "cancel":
+        await placeholder_message.delete()
+        return
+
+    # Получаем оригинальное сообщение из контекста или из reply_to_message
+    original_message = None
+    if hasattr(context, 'user_data') and 'original_message' in context.user_data:
+        original_message = context.user_data['original_message']
+    else:
+        original_message = query.message.reply_to_message
+
+    if not original_message:
+        await placeholder_message.edit_text("Не удалось найти оригинальное сообщение.")
+        return
+
+    user_id = original_message.from_user.id
+    user_lock = state.get_user_lock(user_id)
+
+    if user_lock.locked():
+        return
+
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    # 1. Определяем, какую задачу будем запускать.
+    task_to_run = None
+    if action == "vision_only":
+        # 2. СРАЗУ даем обратную связь пользователю.
+        await placeholder_message.edit_text("🖼️ Описываю изображение...")
+        chat_state = await db.get_user_chat(user_id)
+        task_to_run = agent._handle_photo(placeholder_message, original_message, chat_state)
+    elif action == "confirm":
+        # У этой функции своя обратная связь ("Анализирую..."), поэтому здесь ничего не меняем.
+        search_prefix = '??' if (original_message.caption and original_message.caption.startswith('??')) else '?'
+        task_to_run = agent._handle_complex_agent_search(placeholder_message, original_message, search_prefix)
+
+    # 3. Если задача определена, запускаем ее в фоне под блокировкой.
+    if task_to_run:
+        async def task_wrapper():
+            async with user_lock:
+                await task_to_run
+
+        asyncio.create_task(task_wrapper())
 
 
-def _is_user_busy(user_id: int) -> bool:
-    """Check if user has an active AI request (lock held by streaming/processing)."""
-    return state.get_user_lock(user_id).locked()
+async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
+    _, action, model_override = query.data.split(':')
+    placeholder_message = query.message
 
-def _add_fast_callback(application: Application, callback, pattern: str):
-    """Register lightweight UI callbacks in non-blocking mode."""
-    application.add_handler(CallbackQueryHandler(callback, pattern=pattern, block=False), group=-1)
+    if action == "cancel":
+        await placeholder_message.edit_text("Операция отменена.")
+        return
 
+    # Получаем оригинальное сообщение из контекста или из reply_to_message
+    original_message = None
+    if hasattr(context, 'user_data') and 'original_message' in context.user_data:
+        original_message = context.user_data['original_message']
+    else:
+        original_message = query.message.reply_to_message
 
-# ── Registration ─────────────────────────────────────────────────────────────
+    if not original_message:
+        await placeholder_message.edit_text("Не удалось найти оригинальное сообщение.")
+        return
 
+    user_id = original_message.from_user.id
+    user_lock = state.get_user_lock(user_id)
 
-def register(application: Application) -> None:
-    # --- Lazy imports to avoid circular dependencies ---
-    from app.handlers.cb_ai_actions import (
-        complex_search_callback,
-        continue_stream_callback,
-        fallback_callback,
-        retry_last_callback,
-        tts_reply_callback,
-    )
-    from app.handlers.cb_conversations import (
-        conv_delete_ask_callback,
-        conv_delete_callback,
-        conv_delete_cancel_callback,
-        conv_delete_confirm_callback,
-        conv_page_callback,
-        conv_rename_ask_callback,
-        conv_rename_callback,
-        conv_rename_cancel_callback,
-        conv_switch_callback,
-        conv_switch_to_callback,
-        refresh_metrics_callback,
-    )
-    from app.handlers.cb_documents import document_callback
-    from app.handlers.cb_feedback import _noop_callback, feedback_callback
-    from app.handlers.cb_models import model_button_callback, switch_model_callback
-    from app.handlers.cb_navigation import (
-        deep_dive_callback,
-        help_callback,
-        help_topic_callback,
-        model_menu_callback,
-        new_chat_callback,
-        new_topic_callback,
-        open_conversations_callback,
-        open_documents_callback,
-        settings_thinking_callback,
-        toggle_ltm_callback,
-        toggle_search_callback,
-    )
-    from app.handlers.cb_roles import (
-        open_roles_callback,
-        role_apply_callback,
-        role_clear_callback,
-        role_create_callback,
-        role_create_cancel_callback,
-        role_create_manual_callback,
-        role_custom_apply_callback,
-        role_custom_retry_callback,
-        role_custom_save_callback,
-        role_delete_ask_callback,
-        role_delete_cancel_callback,
-        role_delete_confirm_callback,
-        role_detail_callback,
-        role_edit_ai_callback,
-        role_edit_ai_save_callback,
-        role_edit_ai_tweak_callback,
-        role_edit_cancel_callback,
-        role_edit_manual_callback,
-        role_edit_prompt_callback,
-        role_manual_cancel_callback,
-        role_manual_save_callback,
-        role_nav_callback,
-        role_page_callback,
-        role_rename_cancel_callback,
-        role_rename_menu_callback,
-        role_rename_pick_callback,
-        role_view_prompt_callback,
-        start_menu_callback,
-    )
+    if user_lock.locked():
+        return
 
-    # ── Fast (non-blocking) callbacks ────────────────────────────────────
-    _add_fast_callback(application, toggle_search_callback, "^toggle_search$")
-    _add_fast_callback(application, settings_thinking_callback, "^settings_thinking$")
-    _add_fast_callback(application, toggle_ltm_callback, "^toggle_ltm$")
-    _add_fast_callback(application, new_chat_callback, "^new_chat$")
-    _add_fast_callback(application, model_menu_callback, "^model_menu$")
-    _add_fast_callback(application, help_callback, "^help$")
-    _add_fast_callback(application, start_menu_callback, "^start_menu$")
-    _add_fast_callback(application, model_button_callback, "^model")
-    _add_fast_callback(application, switch_model_callback, "^switch_model:")
-    _add_fast_callback(application, open_roles_callback, r"^open_roles(:from_response)?$")
-    _add_fast_callback(application, role_apply_callback, "^role_apply:")
-    _add_fast_callback(application, role_clear_callback, "^role_clear$")
-    _add_fast_callback(application, role_nav_callback, "^role_nav:")
-    _add_fast_callback(application, role_page_callback, "^role_page:")
-    _add_fast_callback(application, conv_page_callback, "^conv_page:")
-    _add_fast_callback(application, conv_switch_callback, "^conv_switch$")
-    _add_fast_callback(application, conv_switch_to_callback, "^conv_switch_to:")
-    _add_fast_callback(application, help_topic_callback, "^help_topic:")
-    _add_fast_callback(application, open_documents_callback, "^open_documents$")
-    _add_fast_callback(application, open_conversations_callback, "^open_conversations$")
+    async def task_wrapper():
+        async with user_lock:
+            if action == "confirm":
+                chat_state = await db.get_user_chat(user_id)
+                user_message = original_message.text
+                await agent._handle_regular_chat(placeholder_message, user_id, user_message, chat_state, model_override=model_override)
 
-    # ── Blocking callbacks ───────────────────────────────────────────────
+    asyncio.create_task(task_wrapper())
+
+async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает callback-кнопки для управления документами"""
+    query = update.callback_query
+    await query.answer()
+
+    action = query.data.split(':')[1]
+    user_id = query.from_user.id
+
+    # Импортируем функции здесь, чтобы избежать проблем с областью видимости
+    from ..document_processor import get_user_documents, delete_user_document, get_document_by_id
+
+    if action == "upload_new":
+        keyboard = [
+            [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
+        ]
+
+        await query.edit_message_text(
+            "📄 **Загрузите новый документ**\n\n"
+            "Отправьте PDF или DOCX файл, и я обработаю его для вас.",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    elif action == "list":
+
+        documents = await get_user_documents(user_id)
+        if not documents:
+            await query.edit_message_text(
+                "📋 **Ваши документы**\n\n"
+                "У вас пока нет загруженных документов.",
+                parse_mode='Markdown'
+            )
+            return
+
+        # Формируем список документов
+        doc_list = "📋 **Ваши документы:**\n\n"
+        for i, doc in enumerate(documents[:10], 1):  # Показываем только первые 10
+            doc_list += f"{i}. **{doc['filename']}**\n"
+            doc_list += f"   📄 Страниц: {doc['pages']}\n"
+            doc_list += f"   📅 Загружен: {doc['created_at'][:10]}\n\n"
+
+        if len(documents) > 10:
+            doc_list += f"... и еще {len(documents) - 10} документов\n\n"
+
+        doc_list += "💡 Отправьте новый документ, чтобы начать работу с ним."
+
+        # Создаем кнопки для управления
+        keyboard = [
+            [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
+            [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
+            [InlineKeyboardButton("🗑️ Очистить все документы", callback_data="doc:clear_all")]
+        ]
+
+        await query.edit_message_text(doc_list, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    elif action == "cancel":
+        from ..state import clear_document_state
+        clear_document_state(user_id)
+
+        await query.edit_message_text(
+            "✅ **Режим работы с документами отключен**\n\n"
+            "Теперь ваши сообщения будут обрабатываться в обычном режиме чата.\n"
+            "Чтобы снова работать с документами, загрузите новый файл или используйте команду /documents.",
+            parse_mode='Markdown'
+        )
+        return
+
+    elif action == "clear_all":
+
+        # Получаем все документы пользователя
+        documents = await get_user_documents(user_id)
+        if not documents:
+            await query.edit_message_text(
+                "📋 **Ваши документы**\n\n"
+                "У вас нет документов для удаления.",
+                parse_mode='Markdown'
+            )
+            return
+
+        # Удаляем все документы
+        deleted_count = 0
+        for doc in documents:
+            success = await delete_user_document(doc['id'], user_id)
+            if success:
+                deleted_count += 1
+
+        # Очищаем состояние работы с документами
+        from ..state import clear_document_state
+        clear_document_state(user_id)
+
+        await query.edit_message_text(
+            f"🗑️ **Документы удалены**\n\n"
+            f"Удалено документов: `{deleted_count}`\n\n"
+            "Теперь ваши сообщения будут обрабатываться в обычном режиме чата.",
+            parse_mode='Markdown'
+        )
+        return
+
+    elif action == "use_existing":
+        # Используем существующий документ
+        document_id = int(query.data.split(':')[2])
+
+        document = await get_document_by_id(document_id, user_id)
+        if not document:
+            await query.edit_message_text("❌ Документ не найден.")
+            return
+
+        # Устанавливаем состояние работы с документами
+        from ..state import set_document_mode
+        set_document_mode(user_id, True, document_id)
+
+        await query.edit_message_text(
+            f"✅ **Используется существующий документ**\n\n"
+            f"📄 **{document['filename']}**\n"
+            f"📊 Страниц: {document['pages']}\n"
+            f"📅 Загружен: {document['created_at'][:10]}\n\n"
+            "Теперь вы можете задавать вопросы по этому документу.\n\n"
+            "💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n"
+            "🔄 **Для выхода из режима документов:**\n"
+            "• Нажмите кнопку '❌ Отмена' ниже\n"
+            "• Или отправьте команду /documents",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
+            ])
+        )
+        return
+
+    elif action == "force_upload":
+        await query.edit_message_text(
+            "📄 **Загрузите файл как новый документ**\n\n"
+            "Отправьте файл еще раз, и он будет сохранен как новый документ.",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Назад", callback_data="doc:list")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
+            ])
+        )
+        return
+
+    elif action == "select_document":
+        # Показываем меню выбора документа
+        documents = await get_user_documents(user_id)
+        if not documents:
+            await query.edit_message_text(
+                "📋 **Ваши документы**\n\n"
+                "У вас пока нет загруженных документов.",
+                parse_mode='Markdown'
+            )
+            return
+
+        # Создаем кнопки для каждого документа
+        keyboard = []
+        for doc in documents[:10]:  # Максимум 10 документов
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"📄 {doc['filename'][:30]}...",
+                    callback_data=f"doc:select:{doc['id']}"
+                ),
+                InlineKeyboardButton(
+                    "🗑️",
+                    callback_data=f"doc:delete_document:{doc['id']}"
+                )
+            ])
+
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")])
+
+        await query.edit_message_text(
+            "📋 **Выберите документ для работы:**\n\n"
+            "Нажмите на документ, чтобы начать работу с ним.",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    elif action == "select":
+        # Выбираем конкретный документ
+        document_id = int(query.data.split(':')[2])
+
+        document = await get_document_by_id(document_id, user_id)
+        if not document:
+            await query.edit_message_text("❌ Документ не найден.")
+            return
+
+        # Устанавливаем состояние работы с документами
+        from ..state import set_document_mode
+        set_document_mode(user_id, True, document_id)
+
+        await query.edit_message_text(
+            f"✅ **Выбран документ**\n\n"
+            f"📄 **{document['filename']}**\n"
+            f"📊 Страниц: {document['pages']}\n"
+            f"📅 Загружен: {document['created_at'][:10]}\n\n"
+            "Теперь вы можете задавать вопросы по этому документу.\n\n"
+            "💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n"
+            "🔄 **Для выхода из режима документов:**\n"
+            "• Нажмите кнопку '❌ Отмена' ниже\n"
+            "• Или отправьте команду /documents",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Назад к списку", callback_data="doc:select_document")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
+            ])
+        )
+        return
+
+    elif action == "delete_document":
+        # Удаляем конкретный документ
+        document_id = int(query.data.split(':')[2])
+
+        document = await get_document_by_id(document_id, user_id)
+        if not document:
+            await query.edit_message_text("❌ Документ не найден.")
+            return
+
+        success = await delete_user_document(document_id, user_id)
+        if success:
+            # Проверяем, был ли это выбранный документ
+            from ..state import get_selected_document_id, clear_document_state
+            selected_doc_id = get_selected_document_id(user_id)
+            if selected_doc_id == document_id:
+                # Если удалили выбранный документ, очищаем состояние
+                clear_document_state(user_id)
+
+            await query.edit_message_text(
+                f"🗑️ **Документ удален**\n\n"
+                f"Документ `{document['filename']}` был успешно удален.",
+                parse_mode='Markdown'
+            )
+        else:
+            await query.edit_message_text("❌ Ошибка при удалении документа.")
+        return
+
+def register(application: Application):
+    application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model_"))
     application.add_handler(CallbackQueryHandler(complex_search_callback, pattern="^complex:"))
     application.add_handler(CallbackQueryHandler(fallback_callback, pattern="^fallback:"))
     application.add_handler(CallbackQueryHandler(document_callback, pattern="^doc:"))
-    application.add_handler(CallbackQueryHandler(deep_dive_callback, pattern="^deepdive:"))
-    application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic"))
-    application.add_handler(CallbackQueryHandler(retry_last_callback, pattern="^retry_last$"))
-    application.add_handler(CallbackQueryHandler(continue_stream_callback, pattern="^continue_stream$"))
-    _add_fast_callback(application, tts_reply_callback, "^tts_reply$")
-
-    # Feedback buttons (👍/👎)
-    _add_fast_callback(application, feedback_callback, "^feedback:")
-    _add_fast_callback(application, _noop_callback, "^noop$")
-
-    # Роль: create/delete/rename
-    application.add_handler(CallbackQueryHandler(role_create_callback, pattern="^role_create$"))
-    application.add_handler(CallbackQueryHandler(role_create_cancel_callback, pattern="^role_create_cancel$"))
-    application.add_handler(CallbackQueryHandler(role_custom_apply_callback, pattern="^role_custom_apply$"))
-    application.add_handler(CallbackQueryHandler(role_custom_save_callback, pattern="^role_custom_save$"))
-    application.add_handler(CallbackQueryHandler(role_custom_retry_callback, pattern="^role_custom_retry$"))
-    # Manual role creation
-    application.add_handler(CallbackQueryHandler(role_create_manual_callback, pattern="^role_create_manual$"))
-    application.add_handler(CallbackQueryHandler(role_manual_cancel_callback, pattern="^role_manual_cancel$"))
-    application.add_handler(CallbackQueryHandler(role_manual_save_callback, pattern="^role_manual_save$"))
-    # Role management
-    application.add_handler(CallbackQueryHandler(role_detail_callback, pattern="^role_detail:"))
-    application.add_handler(CallbackQueryHandler(role_view_prompt_callback, pattern="^role_view_prompt:"))
-    application.add_handler(CallbackQueryHandler(role_edit_prompt_callback, pattern="^role_edit_prompt:"))
-    application.add_handler(CallbackQueryHandler(role_edit_manual_callback, pattern="^role_edit_manual:"))
-    application.add_handler(CallbackQueryHandler(role_edit_ai_callback, pattern="^role_edit_ai:"))
-    application.add_handler(CallbackQueryHandler(role_edit_ai_save_callback, pattern="^role_edit_ai_save$"))
-    application.add_handler(CallbackQueryHandler(role_edit_ai_tweak_callback, pattern="^role_edit_ai_tweak:"))
-    application.add_handler(CallbackQueryHandler(role_edit_cancel_callback, pattern="^role_edit_cancel:"))
-    application.add_handler(CallbackQueryHandler(role_delete_ask_callback, pattern="^role_delete_ask:"))
-    application.add_handler(CallbackQueryHandler(role_delete_confirm_callback, pattern="^role_delete_confirm:"))
-    application.add_handler(CallbackQueryHandler(role_delete_cancel_callback, pattern="^role_delete_cancel:"))
-
-    application.add_handler(CallbackQueryHandler(role_rename_menu_callback, pattern="^role_rename_menu$"))
-    application.add_handler(CallbackQueryHandler(role_rename_pick_callback, pattern="^role_rename_pick:"))
-    application.add_handler(CallbackQueryHandler(role_rename_cancel_callback, pattern="^role_rename_cancel$"))
-
-    # Role Navigation (noop)
-    application.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern="^noop$"))
-
-    # Conversation management callbacks
-    application.add_handler(CallbackQueryHandler(conv_rename_callback, pattern="^conv_rename$"))
-    application.add_handler(CallbackQueryHandler(conv_rename_ask_callback, pattern="^conv_rename_ask:"))
-    application.add_handler(CallbackQueryHandler(conv_rename_cancel_callback, pattern="^conv_rename_cancel$"))
-    application.add_handler(CallbackQueryHandler(conv_delete_callback, pattern="^conv_delete$"))
-    application.add_handler(CallbackQueryHandler(conv_delete_ask_callback, pattern="^conv_delete_ask:"))
-    application.add_handler(CallbackQueryHandler(conv_delete_confirm_callback, pattern="^conv_delete_confirm:"))
-    application.add_handler(CallbackQueryHandler(conv_delete_cancel_callback, pattern="^conv_delete_cancel$"))
-
-    # Refresh metrics
-    application.add_handler(CallbackQueryHandler(refresh_metrics_callback, pattern="^refresh_metrics$"))
-
-    # Conversation branching
-    from app.handlers.cb_branches import branch_create_callback, branch_return_callback
-
-    _add_fast_callback(application, branch_create_callback, "^branch_create$")
-    _add_fast_callback(application, branch_return_callback, "^branch_return$")
-
-    # Reminder cancel inline buttons
-    from app.handlers.cmd_reminders import reminder_cancel_callback
-
-    _add_fast_callback(application, reminder_cancel_callback, "^reminder_cancel:")
-
-    # Voice confirmation flow (confirm / edit / cancel / transcribe_only)
-    from app.handlers.cb_voice import voice_callback
-
-    application.add_handler(CallbackQueryHandler(voice_callback, pattern="^voice:"))
-
-    # Image generation Interactive Canvas (draw:regen, draw:ar:*, draw:model:*)
-    from app.handlers.cb_image import draw_callback
-
-    application.add_handler(CallbackQueryHandler(draw_callback, pattern="^draw:"))
-
-    # Forward-batch memory save (Improvement 7)
-    from app.handlers.cb_fwd_save import fwd_save_callback
-
-    _add_fast_callback(application, fwd_save_callback, "^fwd_save$")
-
-    # Smart Suggestions + Proactive Intent Routing (Phase 1 UX)
-    from app.handlers.cb_smart_actions import edit_query_callback, intent_route_callback, suggestion_callback
-
-    _add_fast_callback(application, suggestion_callback, "^suggest:")
-    _add_fast_callback(application, edit_query_callback, "^edit_query$")
-    application.add_handler(CallbackQueryHandler(intent_route_callback, pattern="^intent_route:"))
+    application.add_handler(CallbackQueryHandler(refresh_cache_callback, pattern="^refresh:"))

@@ -1,53 +1,10 @@
-# ── Secrets ────────────────────────────────────────────────────
+# Файл с секретами
 .env
-.env.*
+.env.txt
 
-# ── Python ────────────────────────────────────────────────────
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-.venv/
-venv/
-
-# ── Test & Coverage Artifacts ─────────────────────────────────
-.coverage
-htmlcov/
-.pytest_cache/
-.pytest_tmp/
-tests_output.log
-
-# ── Linter / Type Checker Caches ──────────────────────────────
-.ruff_cache/
-.mypy_cache/
-
-# ── IDE & Editor Configs ──────────────────────────────────────
-.vscode/
-.cursor/
-.Jules/
-.idea/
-.roomodes
-*.swp
-*.swo
-skills/
-.agents/
-
-# ── Dev artifacts ─────────────────────────────────────────────
-verification/
+# Папка с данными (база данных будет на диске Render)
 data/
 
-# ── OS files ──────────────────────────────────────────────────
-Thumbs.db
-Desktop.ini
-.DS_Store
-test_script.py
-test_sim.py
-test_perf.py
-test_size.py
-test_stream.py
-load_test.py
-benchmark*.py
-pytest*.log
-implementation_plan.md
-skills-lock.json
-walkthrough.md
+# Системные файлы Python
+__pycache__/
+*.pyc

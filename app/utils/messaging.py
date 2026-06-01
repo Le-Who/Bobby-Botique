@@ -1,137 +1,167 @@
 import asyncio
 import logging
-
 from telegram import Message
-from telegram.error import BadRequest, TelegramError
+from telegram.error import BadRequest
+from .formatting import strip_markdown, escape_markdown_v2, TelegramFormatter
+from ..config import settings
 
-from app.circuit_breaker import TELEGRAM_API_CONFIG, get_circuit_breaker
-from app.utils.heartbeat import stop_heartbeat
-from app.utils.keyboards import ai_response_keyboard, deep_dive_keyboard
-from app.utils.text_format import format_text, split_text_safe, strip_formatting
-
-
-def _get_telegram_cb():
-    """Lazy getter for Telegram circuit breaker (avoids import-time event loop)."""
-    return get_circuit_breaker("telegram", TELEGRAM_API_CONFIG)
-
-
-async def send_long_message(
-    message: Message,
-    text: str,
-    is_deep_dive: bool = False,
-    reply_markup=None,
-    preserve_formatting: bool = True,
-):
+async def send_long_message(message: Message, text: str, preserve_formatting: bool = True, reply_markup=None, from_cache: bool = False, cache_key: str = None):
     """
-    Отправляет длинное message, разбивая его на части, if необходимо.
-    Использует safe HTML форматирование.
+    Splits a long message and sends it in parts using the new TelegramFormatter.
+
+    Args:
+        message: Telegram message object
+        text: Text to send
+        preserve_formatting: Whether to preserve formatting (default: True)
+        reply_markup: Reply markup for the message
+        from_cache: Whether this response is from cache
+        cache_key: Cache key for refreshing the response
     """
-    stop_heartbeat(message.message_id)
-    # Validation состояния deep dive (legacy logic preserved)
-    if is_deep_dive:
-        try:
-            from app.repos.chats import get_user_chat
+    if not text or not text.strip():
+        return
 
-            user_id = message.from_user.id if message.from_user else None
-            if user_id:
-                chat_state = await get_user_chat(user_id)
-                if not chat_state.is_deep_dive:
-                    logging.warning("Deep dive flag set but user %s not in deep dive mode", user_id)
-                    is_deep_dive = False
-                elif not hasattr(chat_state, "deep_dive_thread_id") or not chat_state.deep_dive_thread_id:
-                    is_deep_dive = False
-        except Exception as e:
-            logging.error("Error validating deep dive state: %s", e, exc_info=True)
-            is_deep_dive = False
+    # Добавляем индикацию кэша, если ответ из кэша
+    if from_cache:
+        cache_indicator = "\n\n💾 *Ответ получен из кэша*\n"
+        if cache_key:
+            # Создаем уникальный ID для кнопки актуализации
+            # Вместо использования cache_key создаем короткий хеш
+            import hashlib
+            button_id = hashlib.md5(cache_key.encode()).hexdigest()[:16]
 
-    # Format text в HTML
-    formatted_text, parse_mode = format_text(text, parse_mode="HTML")
+            # Создаем кнопку для актуализации ответа
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            if reply_markup:
+                # Добавляем кнопку к существующей разметке
+                if hasattr(reply_markup, 'inline_keyboard'):
+                    new_keyboard = reply_markup.inline_keyboard + [[InlineKeyboardButton("🔄 Актуализировать ответ", callback_data=f"refresh:{button_id}")]]
+                    reply_markup = InlineKeyboardMarkup(new_keyboard)
+                else:
+                    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Актуализировать ответ", callback_data=f"refresh:{button_id}")]])
+            else:
+                reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Актуализировать ответ", callback_data=f"refresh:{button_id}")]])
+        text = cache_indicator + text
 
-    # Разбиваем уже отформатированный text, сохраняя теги
-    parts = split_text_safe(formatted_text)
+    parts = []
+    while len(text) > 0:
+        if len(text) <= settings.TELEGRAM_MESSAGE_LIMIT:
+            parts.append(text)
+            break
+        part = text[:settings.TELEGRAM_MESSAGE_LIMIT]
+        last_newline = part.rfind('\n')
+        slice_index = last_newline if last_newline != -1 else settings.TELEGRAM_MESSAGE_LIMIT
+        parts.append(text[:slice_index])
+        text = text[slice_index + 1:] if last_newline != -1 else text[slice_index:]
 
     is_first_part = True
-    current_message = message
+    current_message = message  # Текущее сообщение для редактирования
 
-    for i, part in enumerate(parts or []):
-        if not part or not part.strip():
+    for part in parts:
+        if not part.strip():
             continue
 
-        # Determine the keyboard
-        is_last_part = i == len(parts) - 1
-        current_reply_markup = None
+        # Используем новую систему форматирования
+        formatted_text, parse_mode = TelegramFormatter.format_text(part, preserve_formatting)
 
-        if reply_markup is not None:
-            current_reply_markup = reply_markup if is_last_part else None
-        elif is_deep_dive:
-            current_reply_markup = deep_dive_keyboard(is_last_part)
-        else:
-            current_reply_markup = ai_response_keyboard()
-
-        # Sending logic
         try:
             if is_first_part:
-                # Try to edit first
-                await _get_telegram_cb().call(
-                    current_message.edit_text,
-                    part,
-                    parse_mode=parse_mode,
-                    reply_markup=current_reply_markup,
-                    disable_web_page_preview=True,
-                )
+                if parse_mode:
+                    await current_message.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
+                else:
+                    await current_message.edit_text(formatted_text, reply_markup=reply_markup)
             else:
-                # Reply for subsequent parts
-                current_message = await _get_telegram_cb().call(
-                    current_message.reply_text,
-                    part,
-                    parse_mode=parse_mode,
-                    reply_markup=current_reply_markup,
-                    disable_web_page_preview=True,
-                )
+                if parse_mode:
+                    current_message = await current_message.reply_text(formatted_text, parse_mode=parse_mode)
+                else:
+                    current_message = await current_message.reply_text(formatted_text)
 
         except BadRequest as e:
-            logging.warning("Failed to send/edit message (parse_mode=%s): %s", parse_mode, e)
-
-            # Retry without formatting if HTML fails (should be rare with our validator)
-            try:
-                plain_text = strip_formatting(part)
-                if is_first_part:
+            # Если редактирование не удалось, создаем новое сообщение
+            if "Message can't be edited" in str(e) and is_first_part:
+                logging.warning(f"Message can't be edited, creating new message: {e}")
+                try:
+                    if parse_mode:
+                        current_message = await message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
+                    else:
+                        current_message = await message.reply_text(formatted_text, reply_markup=reply_markup)
+                except Exception as new_msg_error:
+                    logging.error(f"Failed to create new message: {new_msg_error}")
+                    # Последняя попытка - отправить как есть
                     try:
-                        await current_message.edit_text(plain_text, reply_markup=current_reply_markup)
-                    except BadRequest:
-                        # If edit fails (e.g. content same), try sending new
-                        current_message = await current_message.reply_text(
-                            plain_text, reply_markup=current_reply_markup
-                        )
-                else:
-                    current_message = await current_message.reply_text(plain_text, reply_markup=current_reply_markup)
-            except TelegramError as final_error:
-                logging.error("Critical error sending message: %s", final_error)
+                        current_message = await message.reply_text(part, reply_markup=reply_markup if is_first_part else None)
+                    except Exception as final_error:
+                        logging.error(f"Final attempt to send message failed: {final_error}")
+                        return
+            else:
+                # Если форматирование не удалось, пробуем без форматирования
+                logging.warning(f"Formatting failed for part {len(parts)}: {e}. Falling back to plain text.")
+                try:
+                    plain_text = TelegramFormatter._strip_all_formatting(part)
+                    if is_first_part:
+                        await current_message.edit_text(plain_text, reply_markup=reply_markup)
+                    else:
+                        current_message = await current_message.reply_text(plain_text)
+                except Exception as fallback_error:
+                    logging.error(f"Failed to send fallback message: {fallback_error}")
+                    # Последняя попытка - отправить как есть
+                    try:
+                        if is_first_part:
+                            current_message = await message.reply_text(part, reply_markup=reply_markup)
+                        else:
+                            current_message = await message.reply_text(part)
+                    except Exception as final_error:
+                        logging.error(f"Final attempt to send message failed: {final_error}")
 
-        except TelegramError as e:
-            logging.error("Unexpected error in send_long_message: %s", e, exc_info=True)
+        except Exception as e:
+            logging.error(f"Unexpected error sending message part: {e}")
+            # Пытаемся отправить как есть
+            try:
+                if is_first_part:
+                    current_message = await message.reply_text(part, reply_markup=reply_markup)
+                else:
+                    current_message = await current_message.reply_text(part)
+            except Exception as final_error:
+                logging.error(f"Failed to send message even as plain text: {final_error}")
 
         is_first_part = False
         await asyncio.sleep(0.3)
 
+async def send_formatted_message(message: Message, text: str, parse_mode: str = None):
+    """
+    Отправляет отформатированное сообщение с указанным parse_mode.
 
-async def send_formatted_message(message: Message, text: str, parse_mode: str = "HTML"):
-    """Wrapper for sending formatted messages."""
-    stop_heartbeat(message.message_id)
+    Args:
+        message: Telegram message object
+        text: Text to send
+        parse_mode: Parse mode ('MarkdownV2', 'HTML', or None)
+    """
     try:
-        formatted, mode = format_text(text, parse_mode=parse_mode)
-        await message.reply_text(formatted, parse_mode=mode)
-    except TelegramError as e:
-        logging.error("Error sending formatted message: %s", e, exc_info=True)
-        await message.reply_text(strip_formatting(text))
+        await message.reply_text(text, parse_mode=parse_mode)
+    except BadRequest as e:
+        logging.warning(f"Failed to send formatted message with {parse_mode}: {e}")
+        # Fallback to plain text
+        try:
+            plain_text = TelegramFormatter._strip_all_formatting(text)
+            await message.reply_text(plain_text)
+        except Exception as fallback_error:
+            logging.error(f"Failed to send fallback message: {fallback_error}")
 
+async def edit_formatted_message(message: Message, text: str, parse_mode: str = None):
+    """
+    Редактирует сообщение с форматированием.
 
-async def edit_formatted_message(message: Message, text: str, parse_mode: str = "HTML"):
-    """Wrapper for editing formatted messages."""
-    stop_heartbeat(message.message_id)
+    Args:
+        message: Telegram message object
+        text: New text
+        parse_mode: Parse mode ('MarkdownV2', 'HTML', or None)
+    """
     try:
-        formatted, mode = format_text(text, parse_mode=parse_mode)
-        await message.edit_text(formatted, parse_mode=mode)
-    except TelegramError as e:
-        logging.error("Error editing formatted message: %s", e, exc_info=True)
-        await message.edit_text(strip_formatting(text))
+        await message.edit_text(text, parse_mode=parse_mode)
+    except BadRequest as e:
+        logging.warning(f"Failed to edit formatted message with {parse_mode}: {e}")
+        # Fallback to plain text
+        try:
+            plain_text = TelegramFormatter._strip_all_formatting(text)
+            await message.edit_text(plain_text)
+        except Exception as fallback_error:
+            logging.error(f"Failed to edit fallback message: {fallback_error}")

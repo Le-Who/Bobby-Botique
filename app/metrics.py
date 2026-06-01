@@ -1,352 +1,133 @@
-import asyncio
-import contextlib
-import json
-import logging
 import time
-from collections import defaultdict, deque
+import logging
+import asyncio
+from datetime import datetime, date
+from typing import Dict, Any, Optional
 from dataclasses import dataclass, field
-from datetime import date, datetime
-from typing import Any
+from collections import defaultdict, deque
+import json
 
-from app import database as db
-from app.crypto import safe_decrypt
-from app.request_context import get_request_id
-from app.utils import time as time_utils
-
+from .config import settings
+from . import database as db
 
 @dataclass
 class PerformanceMetrics:
     """Класс для хранения метрик производительности"""
-
     request_count: int = 0
     total_response_time: float = 0.0
     error_count: int = 0
-    api_calls: dict[str, int] = field(default_factory=dict)
-    model_usage: dict[str, int] = field(default_factory=dict)
+    api_calls: Dict[str, int] = field(default_factory=dict)
+    model_usage: Dict[str, int] = field(default_factory=dict)
     search_queries: int = 0
     cache_hits: int = 0
     cache_misses: int = 0
-
 
 class MetricsCollector:
     """Сборщик метрик производительности с поддержкой базы данных"""
 
     def __init__(self):
         self.metrics = PerformanceMetrics()
-        self.response_times = deque(maxlen=1000)  # Храним последние 1000 requestов
+        self.response_times = deque(maxlen=1000)  # Храним последние 1000 запросов
         self.error_log = deque(maxlen=100)  # Храним последние 100 ошибок
-        self.api_event_log = deque(maxlen=200)  # Храним последние API события
-        self.daily_metrics: dict[str, PerformanceMetrics] = defaultdict(PerformanceMetrics)
-        # Per-user daily metrics: key = (date_str, user_id)
-        self._user_daily: dict[tuple, dict[str, Any]] = defaultdict(lambda: {"request_count": 0, "model_usage": {}})
-        self._events_queue = asyncio.Queue()
+        self.daily_metrics: Dict[str, PerformanceMetrics] = defaultdict(PerformanceMetrics)
+        self._lock = asyncio.Lock()
         self._last_save_time = time.time()
-        self._save_interval = 300  # Save каждые 5 минут
-        self._bg_save_task = None
-        self._lock = asyncio.Lock()  # Protects daily_metrics reset in _save_metrics_to_db
+        self._save_interval = 300  # Сохраняем каждые 5 минут
 
-    async def _event_processor(self):
-        """Background task to process events and periodically save metrics"""
-        logging.info("Metrics background event processor started")
-        last_save = time.time()
-        while True:
-            try:
-                timeout = max(0.1, self._save_interval - (time.time() - last_save))
-                try:
-                    event = await asyncio.wait_for(self._events_queue.get(), timeout=timeout)
-                    self._process_event(event)
-                    self._events_queue.task_done()
-                except TimeoutError:
-                    pass
+    async def _ensure_metrics_tables(self):
+        """Создает таблицы для метрик, если они не существуют"""
+        try:
+            # Таблица для общих метрик
+            await db.db_query("""
+                CREATE TABLE IF NOT EXISTS metrics (
+                    id SERIAL PRIMARY KEY,
+                    metric_date DATE NOT NULL,
+                    request_count INTEGER DEFAULT 0,
+                    total_response_time REAL DEFAULT 0.0,
+                    error_count INTEGER DEFAULT 0,
+                    search_queries INTEGER DEFAULT 0,
+                    cache_hits INTEGER DEFAULT 0,
+                    cache_misses INTEGER DEFAULT 0,
+                    api_calls JSONB DEFAULT '{}',
+                    model_usage JSONB DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(metric_date)
+                )
+            """)
 
-                now = time.time()
-                if now - last_save >= self._save_interval:
-                    if db.db_manager.is_connected:
-                        await self._save_metrics_to_db()
-                    self._prune_old_metrics()
-                    last_save = now
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logging.error("Error in metrics event processor: %s", e, exc_info=True)
-                await asyncio.sleep(5)
+            # Таблица для ошибок
+            await db.db_query("""
+                CREATE TABLE IF NOT EXISTS error_logs (
+                    id SERIAL PRIMARY KEY,
+                    error_type TEXT NOT NULL,
+                    error_message TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-    def _prune_old_metrics(self):
-        """Remove stale daily_metrics and _user_daily entries to prevent unbounded growth."""
-        today = date.today()
-        # Prune daily_metrics older than 8 days
-        from datetime import timedelta as _td
-
-        cutoff = (today - _td(days=8)).isoformat()
-        stale_days = [d for d in self.daily_metrics if d < cutoff]
-        for d in stale_days:
-            del self.daily_metrics[d]
-        # Prune _user_daily for past days (keep only today)
-        today_str = today.isoformat()
-        stale_user_keys = [k for k in self._user_daily if k[0] != today_str]
-        for k in stale_user_keys:
-            del self._user_daily[k]
-        if stale_days or stale_user_keys:
-            logging.debug(
-                "Metrics pruned: %d stale days, %d stale user-day entries",
-                len(stale_days),
-                len(stale_user_keys),
-            )
-
-    def _process_event(self, event: dict[str, Any]):
-        """Обрабатывает одно событие метрики и обновляет локальные словари без блокировок"""
-        today = date.today().isoformat()
-        event_type = event.get("type")
-
-        if event_type == "request":
-            response_time = event["response_time"]
-            success = event["success"]
-
-            self.metrics.request_count += 1
-            self.metrics.total_response_time += response_time
-            self.response_times.append(response_time)
-
-            if not success:
-                self.metrics.error_count += 1
-                self.daily_metrics[today].error_count += 1
-
-            self.daily_metrics[today].request_count += 1
-            self.daily_metrics[today].total_response_time += response_time
-
-            # Per-user tracking
-            uid = event.get("user_id")
-            if uid:
-                ukey = (today, uid)
-                self._user_daily[ukey]["request_count"] += 1
-
-        elif event_type == "api_call":
-            api_name = event["api_name"]
-            model = event["model"]
-
-            self.metrics.api_calls[api_name] = self.metrics.api_calls.get(api_name, 0) + 1
-            self.daily_metrics[today].api_calls[api_name] = self.daily_metrics[today].api_calls.get(api_name, 0) + 1
-
-            if model:
-                self.metrics.model_usage[model] = self.metrics.model_usage.get(model, 0) + 1
-                self.daily_metrics[today].model_usage[model] = self.daily_metrics[today].model_usage.get(model, 0) + 1
-
-                # Per-user model usage
-                uid = event.get("user_id")
-                if uid:
-                    ukey = (today, uid)
-                    mu = self._user_daily[ukey]["model_usage"]
-                    mu[model] = mu.get(model, 0) + 1
-
-            self.api_event_log.append(
-                {
-                    "timestamp": event["timestamp"],
-                    "api": api_name,
-                    "model": model,
-                    "request_id": event["request_id"],
-                }
-            )
-
-        elif event_type == "search_query":
-            self.metrics.search_queries += 1
-            self.daily_metrics[today].search_queries += 1
-
-        elif event_type == "cache_hit":
-            self.metrics.cache_hits += 1
-            self.daily_metrics[today].cache_hits += 1
-
-        elif event_type == "cache_miss":
-            self.metrics.cache_misses += 1
-            self.daily_metrics[today].cache_misses += 1
-
-        elif event_type == "error":
-            self.error_log.append(
-                {
-                    "timestamp": event["timestamp"],
-                    "type": event["error_type"],
-                    "message": event["error_message"],
-                    "request_id": event["request_id"],
-                    "saved": False,
-                }
-            )
+            logging.info("Metrics tables ensured")
+        except Exception as e:
+            logging.error(f"Error creating metrics tables: {e}")
 
     async def _save_metrics_to_db(self):
-        """Сохраняет текущие метрики в базу данных (Non-blocking).
-
-        Uses atomic snapshot-then-reset under lock to prevent race conditions:
-        events arriving during DB I/O are NOT lost.
-        """
-        snapshot_data = None
-        user_snapshot: list[tuple[int, dict]] = []
-
-        # ── Phase 1: Atomic snapshot + reset under lock (O(1), no I/O) ────
+        """Сохраняет текущие метрики в базу данных"""
         try:
-            async with self._lock:
-                today = date.today()
-                today_str = today.isoformat()
+            await self._ensure_metrics_tables()
 
-                daily = self.daily_metrics.get(today_str, PerformanceMetrics())
+            today = date.today()
+            today_str = today.isoformat()
+            daily_metrics = self.daily_metrics.get(today_str, PerformanceMetrics())
 
-                # Snapshot daily metrics
-                snapshot_data = {
-                    "date": today,
-                    "request_count": daily.request_count,
-                    "total_response_time": daily.total_response_time,
-                    "error_count": daily.error_count,
-                    "search_queries": daily.search_queries,
-                    "cache_hits": daily.cache_hits,
-                    "cache_misses": daily.cache_misses,
-                    "api_calls": dict(daily.api_calls),
-                    "model_usage": dict(daily.model_usage),
-                }
+            # Обновляем или вставляем метрики за сегодня
+            await db.db_query("""
+                INSERT INTO metrics (metric_date, request_count, total_response_time, error_count,
+                                   search_queries, cache_hits, cache_misses, api_calls, model_usage, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP)
+                ON CONFLICT (metric_date) DO UPDATE SET
+                    request_count = metrics.request_count + $10,
+                    total_response_time = metrics.total_response_time + $11,
+                    error_count = metrics.error_count + $12,
+                    search_queries = metrics.search_queries + $13,
+                    cache_hits = metrics.cache_hits + $14,
+                    cache_misses = metrics.cache_misses + $15,
+                    api_calls = COALESCE(metrics.api_calls, '{}'::jsonb) || $16::jsonb,
+                    model_usage = COALESCE(metrics.model_usage, '{}'::jsonb) || $17::jsonb,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (
+                today, daily_metrics.request_count, daily_metrics.total_response_time,
+                daily_metrics.error_count, daily_metrics.search_queries, daily_metrics.cache_hits,
+                daily_metrics.cache_misses, json.dumps(daily_metrics.api_calls),
+                json.dumps(daily_metrics.model_usage),
+                # Значения для UPDATE
+                daily_metrics.request_count, daily_metrics.total_response_time,
+                daily_metrics.error_count, daily_metrics.search_queries, daily_metrics.cache_hits,
+                daily_metrics.cache_misses, json.dumps(daily_metrics.api_calls),
+                json.dumps(daily_metrics.model_usage)
+            ))
 
-                # Reset immediately — events arriving after this point
-                # will accumulate in fresh counters, not be lost
-                daily.request_count = 0
-                daily.total_response_time = 0.0
-                daily.error_count = 0
-                daily.search_queries = 0
-                daily.cache_hits = 0
-                daily.cache_misses = 0
-                daily.api_calls.clear()
-                daily.model_usage.clear()
-
-                # Snapshot per-user metrics
-                user_snapshot = [
-                    (uid, {"request_count": data["request_count"], "model_usage": dict(data["model_usage"])})
-                    for (d, uid), data in self._user_daily.items()
-                    if d == today_str and data["request_count"] > 0
-                ]
-                # Reset per-user counters
-                for (d, _uid), data in self._user_daily.items():
-                    if d == today_str and data["request_count"] > 0:
-                        data["request_count"] = 0
-                        data["model_usage"] = {}
-
-            # Snapshot unsaved errors (outside lock — error_log only appended, safe to read)
-            errors_to_process = [error for error in self.error_log if not error.get("saved", False)]
-
-        except Exception as e:
-            logging.error("Error creating metrics snapshot: %s", e, exc_info=True)
-            return
-
-        # ── Phase 2: Save to DB (I/O, no lock held) ──────────────────────
-        try:
-            if snapshot_data and snapshot_data["request_count"] > 0:
-                await db.db_query(
-                    """
-                    INSERT INTO metrics (metric_date, request_count, total_response_time, error_count,
-                                       search_queries, cache_hits, cache_misses, api_calls, model_usage, updated_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP)
-                    ON CONFLICT (metric_date) DO UPDATE SET
-                        request_count = metrics.request_count + EXCLUDED.request_count,
-                        total_response_time = metrics.total_response_time + EXCLUDED.total_response_time,
-                        error_count = metrics.error_count + EXCLUDED.error_count,
-                        search_queries = metrics.search_queries + EXCLUDED.search_queries,
-                        cache_hits = metrics.cache_hits + EXCLUDED.cache_hits,
-                        cache_misses = metrics.cache_misses + EXCLUDED.cache_misses,
-                        api_calls = COALESCE(metrics.api_calls, '{}'::jsonb) || EXCLUDED.api_calls,
-                        model_usage = COALESCE(metrics.model_usage, '{}'::jsonb) || EXCLUDED.model_usage,
-                        updated_at = CURRENT_TIMESTAMP
-                """,
-                    (
-                        snapshot_data["date"],
-                        snapshot_data["request_count"],
-                        snapshot_data["total_response_time"],
-                        snapshot_data["error_count"],
-                        snapshot_data["search_queries"],
-                        snapshot_data["cache_hits"],
-                        snapshot_data["cache_misses"],
-                        snapshot_data["api_calls"],
-                        snapshot_data["model_usage"],
-                    ),
-                )
-
-            # Save new errors
-            if errors_to_process:
-                unsaved_errors = [e for e in errors_to_process if not e.get("saved", False)]
-                if unsaved_errors:
-                    params_list = [(e["type"], e["message"], e.get("request_id")) for e in unsaved_errors]
-
-                    await db.db_execute_many(
-                        """
-                        INSERT INTO error_logs (error_type, error_message, request_id)
-                        VALUES ($1, $2, $3)
-                    """,
-                        params_list,
-                    )
-
-                    for error in unsaved_errors:
-                        error["saved"] = True
+            # Сохраняем новые ошибки (только те, которые еще не были сохранены)
+            new_errors = [error for error in self.error_log if not error.get('saved', False)]
+            if new_errors:
+                for error in new_errors:
+                    await db.db_query("""
+                        INSERT INTO error_logs (error_type, error_message)
+                        VALUES ($1, $2)
+                    """, (error['type'], error['message']))
+                    error['saved'] = True  # Помечаем как сохраненную
 
             self._last_save_time = time.time()
-            logging.info("Metrics saved (bg): %s reqs", snapshot_data["request_count"] if snapshot_data else 0)
-
-            # Save per-user metrics
-            if user_snapshot:
-                params_list = [
-                    (
-                        uid,
-                        snapshot_data["date"],
-                        data["request_count"],
-                        data["model_usage"],
-                    )
-                    for uid, data in user_snapshot
-                ]
-                await db.db_execute_many(
-                    """
-                    INSERT INTO user_metrics (user_id, metric_date, request_count, model_usage, updated_at)
-                    VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
-                    ON CONFLICT (user_id, metric_date) DO UPDATE SET
-                        request_count = user_metrics.request_count + EXCLUDED.request_count,
-                        model_usage = COALESCE(user_metrics.model_usage, '{}'::jsonb) || EXCLUDED.model_usage,
-                        updated_at = CURRENT_TIMESTAMP
-                    """,
-                    params_list,
-                )
-                logging.debug("Per-user metrics saved for %s users", len(user_snapshot))
-
-                # Update streaks for active users
-                try:
-                    from app.repos.analytics import record_daily_activity
-
-                    for uid, _ in user_snapshot:
-                        await record_daily_activity(uid)
-                except Exception as streak_err:
-                    logging.debug("Streak update skipped: %s", streak_err)
+            logging.info(f"Metrics saved to database: {daily_metrics.request_count} requests, {daily_metrics.error_count} errors")
 
         except Exception as e:
-            logging.error("Error saving metrics to database: %s", e, exc_info=True)
-            # ── Compensate: re-add snapshot values so they aren't lost ────
-            if snapshot_data and snapshot_data["request_count"] > 0:
-                try:
-                    async with self._lock:
-                        today_str = date.today().isoformat()
-                        daily = self.daily_metrics[today_str]
-                        daily.request_count += snapshot_data["request_count"]
-                        daily.total_response_time += snapshot_data["total_response_time"]
-                        daily.error_count += snapshot_data["error_count"]
-                        daily.search_queries += snapshot_data["search_queries"]
-                        daily.cache_hits += snapshot_data["cache_hits"]
-                        daily.cache_misses += snapshot_data["cache_misses"]
-                        for k, v in snapshot_data["api_calls"].items():
-                            daily.api_calls[k] = daily.api_calls.get(k, 0) + v
-                        for k, v in snapshot_data["model_usage"].items():
-                            daily.model_usage[k] = daily.model_usage.get(k, 0) + v
-                        # Re-add per-user data
-                        for uid, data in user_snapshot:
-                            ukey = (today_str, uid)
-                            self._user_daily[ukey]["request_count"] += data["request_count"]
-                            for k, v in data["model_usage"].items():
-                                self._user_daily[ukey]["model_usage"][k] = (
-                                    self._user_daily[ukey]["model_usage"].get(k, 0) + v
-                                )
-                except Exception as comp_err:
-                    logging.error("Metrics compensation failed: %s", comp_err, exc_info=True)
+            logging.error(f"Error saving metrics to database: {e}")
 
     async def _load_metrics_from_db(self):
         """Загружает метрики из базы данных"""
         try:
-            # Load общие metrics (without JSONB полей в основном requestе)
+            await self._ensure_metrics_tables()
+
+            # Загружаем общие метрики (без JSONB полей в основном запросе)
             result = await db.db_query("""
                 SELECT
                     COALESCE(SUM(request_count), 0) as total_requests,
@@ -361,36 +142,56 @@ class MetricsCollector:
 
             if result and result[0]:
                 row = result[0]
-                self.metrics.request_count = row["total_requests"]
-                self.metrics.total_response_time = row["total_time"]
-                self.metrics.error_count = row["total_errors"]
-                self.metrics.search_queries = row["total_searches"]
-                self.metrics.cache_hits = row["total_cache_hits"]
-                self.metrics.cache_misses = row["total_cache_misses"]
+                self.metrics.request_count = row['total_requests']
+                self.metrics.total_response_time = row['total_time']
+                self.metrics.error_count = row['total_errors']
+                self.metrics.search_queries = row['total_searches']
+                self.metrics.cache_hits = row['total_cache_hits']
+                self.metrics.cache_misses = row['total_cache_misses']
 
-            # Optimized: Aggregate JSONB fields in SQL (O(1) Python processing)
-            # Aggregate api_calls
-            api_calls_result = await db.db_query("""
-                SELECT key, SUM(value::numeric) as total
-                FROM metrics, jsonb_each_text(api_calls)
+            # Отдельно загружаем и объединяем JSONB поля
+            jsonb_result = await db.db_query("""
+                SELECT api_calls, model_usage
+                FROM metrics
                 WHERE metric_date >= CURRENT_DATE - INTERVAL '30 days'
-                  AND jsonb_typeof(api_calls) = 'object'
-                GROUP BY key
+                AND (api_calls IS NOT NULL OR model_usage IS NOT NULL)
             """)
 
-            self.metrics.api_calls = {row["key"]: int(row["total"]) for row in api_calls_result}
+            # Объединяем JSONB данные
+            combined_api_calls = {}
+            combined_model_usage = {}
 
-            # Aggregate model_usage
-            model_usage_result = await db.db_query("""
-                SELECT key, SUM(value::numeric) as total
-                FROM metrics, jsonb_each_text(model_usage)
-                WHERE metric_date >= CURRENT_DATE - INTERVAL '30 days'
-                  AND jsonb_typeof(model_usage) = 'object'
-                GROUP BY key
-            """)
+            for row in jsonb_result:
+                # Обрабатываем api_calls
+                if row['api_calls']:
+                    if isinstance(row['api_calls'], dict):
+                        for key, value in row['api_calls'].items():
+                            combined_api_calls[key] = combined_api_calls.get(key, 0) + value
+                    elif isinstance(row['api_calls'], str):
+                        try:
+                            api_calls_dict = json.loads(row['api_calls'])
+                            for key, value in api_calls_dict.items():
+                                combined_api_calls[key] = combined_api_calls.get(key, 0) + value
+                        except:
+                            pass
 
-            self.metrics.model_usage = {row["key"]: int(row["total"]) for row in model_usage_result}
-            # Load дневные metrics за afterдние 7 дней
+                # Обрабатываем model_usage
+                if row['model_usage']:
+                    if isinstance(row['model_usage'], dict):
+                        for key, value in row['model_usage'].items():
+                            combined_model_usage[key] = combined_model_usage.get(key, 0) + value
+                    elif isinstance(row['model_usage'], str):
+                        try:
+                            model_usage_dict = json.loads(row['model_usage'])
+                            for key, value in model_usage_dict.items():
+                                combined_model_usage[key] = combined_model_usage.get(key, 0) + value
+                        except:
+                            pass
+
+            self.metrics.api_calls = combined_api_calls
+            self.metrics.model_usage = combined_model_usage
+
+            # Загружаем дневные метрики за последние 7 дней
             daily_result = await db.db_query("""
                 SELECT metric_date, request_count, total_response_time, error_count,
                        search_queries, cache_hits, cache_misses, api_calls, model_usage
@@ -400,115 +201,115 @@ class MetricsCollector:
             """)
 
             for row in daily_result:
-                try:
-                    date_str = row["metric_date"].isoformat()
-                    self.daily_metrics[date_str] = PerformanceMetrics(
-                        request_count=row.get("request_count", 0) or 0,
-                        total_response_time=row.get("total_response_time", 0.0) or 0.0,
-                        error_count=row.get("error_count", 0) or 0,
-                        search_queries=row.get("search_queries", 0) or 0,
-                        cache_hits=row.get("cache_hits", 0) or 0,
-                        cache_misses=row.get("cache_misses", 0) or 0,
-                        api_calls=(
-                            dict(row["api_calls"])
-                            if row.get("api_calls") and isinstance(row["api_calls"], dict)
-                            else {}
-                        ),
-                        model_usage=(
-                            dict(row["model_usage"])
-                            if row.get("model_usage") and isinstance(row["model_usage"], dict)
-                            else {}
-                        ),
-                    )
-                except Exception as e:
-                    logging.warning("Failed to process daily metrics row: %s, row: %s", e, row)
-                    continue
+                date_str = row['metric_date'].isoformat()
+                self.daily_metrics[date_str] = PerformanceMetrics(
+                    request_count=row['request_count'],
+                    total_response_time=row['total_response_time'],
+                    error_count=row['error_count'],
+                    search_queries=row['search_queries'],
+                    cache_hits=row['cache_hits'],
+                    cache_misses=row['cache_misses'],
+                    api_calls=dict(row['api_calls']) if row['api_calls'] and isinstance(row['api_calls'], dict) else {},
+                    model_usage=dict(row['model_usage']) if row['model_usage'] and isinstance(row['model_usage'], dict) else {}
+                )
 
-            # Load afterдние ошибки
+            # Загружаем последние ошибки
             error_result = await db.db_query("""
-                SELECT error_type, error_message, request_id, created_at
+                SELECT error_type, error_message, created_at
                 FROM error_logs
                 ORDER BY created_at DESC
                 LIMIT 100
             """)
 
-            self.error_log.clear()  # Clear existing before loading
             for row in error_result:
-                self.error_log.append(
-                    {
-                        "timestamp": row["created_at"].isoformat(),
-                        "type": row["error_type"],
-                        "message": row["error_message"],
-                        "request_id": row.get("request_id"),
-                        "saved": True,  # Loaded from DB, so it is saved
-                    }
-                )
+                self.error_log.append({
+                    'timestamp': row['created_at'].isoformat(),
+                    'type': row['error_type'],
+                    'message': row['error_message']
+                })
+
             logging.info("Metrics loaded from database")
 
         except Exception as e:
-            logging.error("Error loading metrics from database: %s", e, exc_info=True)
+            logging.error(f"Error loading metrics from database: {e}")
 
-    async def record_request(
-        self,
-        _request_type: str,
-        response_time: float,
-        success: bool = True,
-        user_id: int | None = None,
-    ):
-        """Записывает метрики запроса (Fast in-memory update)"""
-        self._events_queue.put_nowait(
-            {
-                "type": "request",
-                "response_time": response_time,
-                "success": success,
-                "user_id": user_id,
-            }
-        )
+    async def record_request(self, request_type: str, response_time: float, success: bool = True):
+        """Записывает метрики запроса"""
+        async with self._lock:
+            self.metrics.request_count += 1
+            self.metrics.total_response_time += response_time
+            self.response_times.append(response_time)
 
-    async def record_api_call(
-        self,
-        api_name: str,
-        model: str | None = None,
-        request_id: str | None = None,
-        user_id: int | None = None,
-    ):
+            if not success:
+                self.metrics.error_count += 1
+
+            # Записываем в дневные метрики
+            today = date.today().isoformat()
+            self.daily_metrics[today].request_count += 1
+            self.daily_metrics[today].total_response_time += response_time
+            if not success:
+                self.daily_metrics[today].error_count += 1
+
+            # Периодически сохраняем в БД
+            if time.time() - self._last_save_time > self._save_interval:
+                await self._save_metrics_to_db()
+
+    async def record_api_call(self, api_name: str, model: str = None):
         """Записывает вызов API"""
-        current_request_id = request_id or get_request_id()
-        self._events_queue.put_nowait(
-            {
-                "type": "api_call",
-                "api_name": api_name,
-                "model": model,
-                "request_id": current_request_id,
-                "timestamp": datetime.now().isoformat(),
-                "user_id": user_id,
-            }
-        )
+        async with self._lock:
+            self.metrics.api_calls[api_name] = self.metrics.api_calls.get(api_name, 0) + 1
+            if model:
+                self.metrics.model_usage[model] = self.metrics.model_usage.get(model, 0) + 1
+
+            today = date.today().isoformat()
+            self.daily_metrics[today].api_calls[api_name] = self.daily_metrics[today].api_calls.get(api_name, 0) + 1
+            if model:
+                self.daily_metrics[today].model_usage[model] = self.daily_metrics[today].model_usage.get(model, 0) + 1
 
     async def record_search_query(self):
         """Записывает поисковый запрос"""
-        self._events_queue.put_nowait({"type": "search_query"})
+        async with self._lock:
+            self.metrics.search_queries += 1
+            today = date.today().isoformat()
+            self.daily_metrics[today].search_queries += 1
 
     async def record_cache_hit(self):
         """Записывает попадание в кэш"""
-        self._events_queue.put_nowait({"type": "cache_hit"})
+        async with self._lock:
+            self.metrics.cache_hits += 1
+            today = date.today().isoformat()
+            self.daily_metrics[today].cache_hits += 1
 
     async def record_cache_miss(self):
         """Записывает промах кэша"""
-        self._events_queue.put_nowait({"type": "cache_miss"})
+        async with self._lock:
+            self.metrics.cache_misses += 1
+            today = date.today().isoformat()
+            self.daily_metrics[today].cache_misses += 1
 
-    async def record_error(self, error_type: str, error_message: str, request_id: str | None = None):
+    async def record_error(self, error_type: str, error_message: str):
         """Записывает ошибку"""
-        current_request_id = request_id or get_request_id()
-        self._events_queue.put_nowait(
-            {
-                "type": "error",
-                "error_type": error_type,
-                "error_message": error_message,
-                "request_id": current_request_id,
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
+        async with self._lock:
+            # Добавляем в локальный лог
+            self.error_log.append({
+                'timestamp': datetime.now().isoformat(),
+                'type': error_type,
+                'message': error_message,
+                'saved': False  # Флаг для отслеживания сохранения
+            })
+
+            # Сохраняем в базу данных
+            try:
+                await self._ensure_metrics_tables()
+                await db.db_query(
+                    "INSERT INTO error_logs (error_type, error_message) VALUES ($1, $2)",
+                    (error_type, error_message)
+                )
+                # Отмечаем как сохраненную
+                if self.error_log:
+                    self.error_log[-1]['saved'] = True
+            except Exception as e:
+                logging.error(f"Failed to save error to database: {e}")
 
     def get_average_response_time(self) -> float:
         """Возвращает среднее время ответа"""
@@ -529,315 +330,101 @@ class MetricsCollector:
             return 0.0
         return (self.metrics.cache_hits / total_cache_requests) * 100
 
-    async def get_metrics_summary(self) -> dict[str, Any]:
+    async def get_metrics_summary(self) -> Dict[str, Any]:
         """Возвращает сводку метрик"""
-        recent_errors = list(self.error_log)[-10:]
+        async with self._lock:
+            # Принудительно сохраняем текущие метрики перед получением сводки
+            await self._save_metrics_to_db()
 
-        summary = {
-            "total_requests": self.metrics.request_count,
-            "average_response_time": self.get_average_response_time(),
-            "error_rate": self.get_error_rate(),
-            "cache_hit_rate": self.get_cache_hit_rate(),
-            "api_calls": dict(self.metrics.api_calls),
-            "model_usage": dict(self.metrics.model_usage),
-            "search_queries": self.metrics.search_queries,
-            "recent_errors": recent_errors,
-            "recent_api_events": list(self.api_event_log)[-20:],
-            "daily_metrics": {
-                date: {
-                    "requests": metrics.request_count,
-                    "errors": metrics.error_count,
-                    "avg_response_time": (
-                        metrics.total_response_time / metrics.request_count if metrics.request_count > 0 else 0
-                    ),
+            # Загружаем последние ошибки из базы данных
+            try:
+                recent_errors_result = await db.db_query("""
+                    SELECT error_type, error_message, created_at
+                    FROM error_logs
+                    ORDER BY created_at DESC
+                    LIMIT 10
+                """)
+                recent_errors = [
+                    {
+                        'type': row['error_type'],
+                        'message': row['error_message'],
+                        'timestamp': row['created_at'].isoformat() if row['created_at'] else None
+                    }
+                    for row in recent_errors_result
+                ]
+            except Exception as e:
+                logging.error(f"Error loading recent errors: {e}")
+                recent_errors = list(self.error_log)[-10:]  # Fallback на локальный лог
+
+            summary = {
+                'total_requests': self.metrics.request_count,
+                'average_response_time': self.get_average_response_time(),
+                'error_rate': self.get_error_rate(),
+                'cache_hit_rate': self.get_cache_hit_rate(),
+                'api_calls': dict(self.metrics.api_calls),
+                'model_usage': dict(self.metrics.model_usage),
+                'search_queries': self.metrics.search_queries,
+                'recent_errors': recent_errors,
+                'daily_metrics': {
+                    date: {
+                        'requests': metrics.request_count,
+                        'errors': metrics.error_count,
+                        'avg_response_time': metrics.total_response_time / metrics.request_count if metrics.request_count > 0 else 0
+                    }
+                    for date, metrics in self.daily_metrics.items()
                 }
-                for date, metrics in self.daily_metrics.items()
-            },
-        }
+            }
 
-        logging.debug(
-            "Metrics summary: %d requests, %.1f%% errors",
-            summary["total_requests"],
-            summary["error_rate"],
-        )
-        return summary
+            logging.info(f"Metrics summary: {summary['total_requests']} requests, {summary['error_rate']:.1f}% errors")
+            return summary
 
     async def initialize(self):
         """Инициализирует систему метрик"""
         await self._load_metrics_from_db()
-        # Start background processor
-        if not self._bg_save_task:
-            self._bg_save_task = asyncio.create_task(self._event_processor())
-            logging.info("Metrics event processor task started")
 
     async def cleanup(self):
         """Очищает ресурсы и сохраняет метрики"""
-        try:
-            # Stop background task
-            if self._bg_save_task:
-                self._bg_save_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._bg_save_task
-                self._bg_save_task = None
-
-            # Check, что база данных доступна before сохранением
-            if db.db_manager.is_connected:
-                await self._save_metrics_to_db()
-            else:
-                logging.warning("Database pool unavailable during metrics cleanup, skipping save")
-        except Exception as e:
-            logging.error("Error during metrics cleanup: %s", e, exc_info=True)
-            # Не позволяем ошибкам метрик прерывать shutdown
-
+        await self._save_metrics_to_db()
 
 # Глобальный экземпляр сборщика метрик
 metrics_collector = MetricsCollector()
 
+async def start_metrics_server():
+    """Запускает сервер метрик"""
+    try:
+        await metrics_collector.initialize()
+        logging.info("Metrics server started successfully")
+    except Exception as e:
+        logging.error(f"Failed to start metrics server: {e}")
+        # Не прерываем запуск бота из-за ошибки метрик
 
-# Re-export middleware for backward compatibility
-from app.utils.metrics_middleware import (
-    MetricsMiddleware,
-    track_metrics,
-)  # noqa: F401,E402
+class MetricsMiddleware:
+    """Middleware для автоматического сбора метрик"""
 
-# ============================================================================
-# ROLE AND CONVERSATION METRICS
-# ============================================================================
+    def __init__(self, func_name: str):
+        self.func_name = func_name
 
+    async def __aenter__(self):
+        self.start_time = time.time()
+        return self
 
-@dataclass
-class RoleMetrics:
-    """Метрики использования ролей"""
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        response_time = time.time() - self.start_time
+        success = exc_type is None
 
-    role_applications: dict[str, int] = field(default_factory=dict)  # role_key -> count
-    custom_roles_created: int = 0
-    role_clears: int = 0
-    role_saves: int = 0
+        await metrics_collector.record_request(self.func_name, response_time, success)
 
+        if not success:
+            await metrics_collector.record_error(
+                exc_type.__name__ if exc_type else 'Unknown',
+                str(exc_val) if exc_val else 'Unknown error'
+            )
 
-@dataclass
-class ConversationMetrics:
-    """Метрики работы с беседами"""
-
-    conversations_saved: int = 0
-    conversations_switched: int = 0
-    conversations_renamed: int = 0
-    conversations_deleted: int = 0
-    total_conversations: int = 0
-    stream_recoveries: int = 0
-    voice_intents: int = 0
-
-
-@dataclass
-class SummarizationMetrics:
-    """Метрики суммаризации"""
-
-    summarizations_triggered: int = 0
-    summarizations_soft_limit: int = 0
-    summarizations_hard_limit: int = 0
-    llm_summarizations: int = 0
-    local_summarizations: int = 0
-    llm_summarization_failures: int = 0
-    total_tokens_saved: int = 0
-    average_summary_length: float = 0.0
-
-
-class RoleConversationMetricsCollector:
-    """Сборщик метрик для ролей и бесед.
-
-    Note: No lock needed — all methods are simple counter increments
-    which are atomic in single-threaded asyncio (no await between
-    read and write).
-    """
-
-    def __init__(self):
-        self.role_metrics = RoleMetrics()
-        self.conversation_metrics = ConversationMetrics()
-        self.summarization_metrics = SummarizationMetrics()
-
-    _MAX_ROLE_ENTRIES = 500
-
-    async def record_role_application(self, role_key: str):
-        """Записывает применение роли"""
-        self.role_metrics.role_applications[role_key] = self.role_metrics.role_applications.get(role_key, 0) + 1
-        # Evict least-used roles when dict exceeds cap
-        if len(self.role_metrics.role_applications) > self._MAX_ROLE_ENTRIES:
-            least_key = min(self.role_metrics.role_applications, key=self.role_metrics.role_applications.get)  # type: ignore[arg-type]
-            del self.role_metrics.role_applications[least_key]
-        logging.info("Role applied: %s", role_key)
-
-    async def record_custom_role_creation(self):
-        """Записывает создание кастомной роли"""
-        self.role_metrics.custom_roles_created += 1
-        logging.info("Custom role created")
-
-    async def record_role_clear(self):
-        """Записывает сброс роли"""
-        self.role_metrics.role_clears += 1
-        logging.info("Role cleared")
-
-    async def record_role_save(self):
-        """Записывает сохранение роли"""
-        self.role_metrics.role_saves += 1
-        logging.info("Role saved")
-
-    async def record_conversation_saved(self):
-        """Записывает сохранение беседы"""
-        self.conversation_metrics.conversations_saved += 1
-        logging.info("Conversation saved")
-
-    async def record_conversation_switched(self):
-        """Записывает переключение на беседу"""
-        self.conversation_metrics.conversations_switched += 1
-        logging.info("Conversation switched")
-
-    async def record_conversation_renamed(self):
-        """Записывает переименование беседы"""
-        self.conversation_metrics.conversations_renamed += 1
-        logging.info("Conversation renamed")
-
-    async def record_conversation_deleted(self):
-        """Записывает удаление беседы"""
-        self.conversation_metrics.conversations_deleted += 1
-        logging.info("Conversation deleted")
-
-    async def record_stream_recovery(self):
-        """Записывает успешное восстановление прерванного потока"""
-        self.conversation_metrics.stream_recoveries += 1
-        logging.info("Stream recovery triggered")
-
-    async def record_voice_intent(self):
-        """Записывает детектирование намерения голосового ответа (тег [VOICE])"""
-        self.conversation_metrics.voice_intents += 1
-        logging.info("Voice intent recorded")
-
-    async def record_summarization(self, reason: str, tokens_saved: int, summary_length: int):
-        """Записывает суммаризацию контекста"""
-        self.summarization_metrics.summarizations_triggered += 1
-
-        if "мягкий лимит" in reason:
-            self.summarization_metrics.summarizations_soft_limit += 1
-        elif "жёсткий лимит" in reason:
-            self.summarization_metrics.summarizations_hard_limit += 1
-
-        # Track LLM vs local tier
-        if reason.startswith("llm:"):
-            self.summarization_metrics.llm_summarizations += 1
-        elif reason.startswith("local:"):
-            self.summarization_metrics.local_summarizations += 1
-
-        self.summarization_metrics.total_tokens_saved += tokens_saved
-
-        # Update average summary length
-        current_avg = self.summarization_metrics.average_summary_length
-        count = self.summarization_metrics.summarizations_triggered
-        self.summarization_metrics.average_summary_length = (current_avg * (count - 1) + summary_length) / count
-
-        logging.info("Summarization triggered: %s, tokens saved: %d", reason, tokens_saved)
-
-    async def get_metrics_summary(self) -> dict[str, Any]:
-        """Возвращает сводку метрик"""
-        return {
-            "roles": {
-                "applications": dict(self.role_metrics.role_applications),
-                "custom_created": self.role_metrics.custom_roles_created,
-                "clears": self.role_metrics.role_clears,
-                "saves": self.role_metrics.role_saves,
-            },
-            "conversations": {
-                "saved": self.conversation_metrics.conversations_saved,
-                "switched": self.conversation_metrics.conversations_switched,
-                "renamed": self.conversation_metrics.conversations_renamed,
-                "deleted": self.conversation_metrics.conversations_deleted,
-                "total": self.conversation_metrics.total_conversations,
-                "recoveries": self.conversation_metrics.stream_recoveries,
-                "voice_intents": self.conversation_metrics.voice_intents,
-            },
-            "summarization": {
-                "triggered": self.summarization_metrics.summarizations_triggered,
-                "soft_limit": self.summarization_metrics.summarizations_soft_limit,
-                "hard_limit": self.summarization_metrics.summarizations_hard_limit,
-                "llm_tier": self.summarization_metrics.llm_summarizations,
-                "local_tier": self.summarization_metrics.local_summarizations,
-                "llm_failures": self.summarization_metrics.llm_summarization_failures,
-                "tokens_saved": self.summarization_metrics.total_tokens_saved,
-                "avg_summary_length": self.summarization_metrics.average_summary_length,
-            },
-        }
-
-
-# Глобальный экземпляр сборщика метрик ролей и бесед
-role_conv_metrics = RoleConversationMetricsCollector()
-
-
-def _mask_key(key: str | None) -> str:
-    """Return a masked version of an API key, showing only first/last 4 chars."""
-    if not key or len(key) < 10:
-        return "****"
-    return f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
-
-
-async def get_system_status_data() -> dict[str, Any]:
-    """
-    Агрегирует все системные metrics, вkeyая проfromводительность,
-    использование API keyей и кредитов.
-    """
-    # 1. Метрики проfromводительности
-    metrics = await metrics_collector.get_metrics_summary()
-
-    # 2. Статус keyей Gemini
-    today_pacific = time_utils.get_pacific_date()
-    gemini_keys_raw = await db.db_query("SELECT key_hash, api_key FROM api_keys")
-    gemini_keys = [
-        {
-            "key_hash": row["key_hash"],
-            "api_key": _mask_key(safe_decrypt(row["api_key"])),
-        }
-        for row in gemini_keys_raw
-    ]
-
-    # Get использование keyей Gemini за сегодня
-    gemini_usage_map: dict[str, list[Any]] = {}
-    if gemini_keys:
-        all_usage = await db.db_query(
-            "SELECT key_hash, model_name, request_count FROM key_usage WHERE usage_date = $1",
-            (today_pacific,),
-        )
-        if all_usage:
-            for row in all_usage:
-                k = row["key_hash"]
-                if k not in gemini_usage_map:
-                    gemini_usage_map[k] = []
-                gemini_usage_map[k].append(row)
-
-    # 3. Статус кредитов Tavily
-    current_month = time_utils.get_current_month_str()
-    tavily_keys_raw = await db.db_query("SELECT key_hash, api_key FROM tavily_api_keys")
-    tavily_keys = [
-        {
-            "key_hash": row["key_hash"],
-            "api_key": _mask_key(safe_decrypt(row["api_key"])),
-        }
-        for row in tavily_keys_raw
-    ]
-
-    # Get использование keyей Tavily за месяц
-    tavily_usage_map = {}
-    if tavily_keys:
-        all_tavily_usage = await db.db_query(
-            "SELECT key_hash, credit_usage FROM tavily_key_usage WHERE usage_month = $1",
-            (current_month,),
-        )
-        if all_tavily_usage:
-            for row in all_tavily_usage:
-                tavily_usage_map[row["key_hash"]] = row["credit_usage"]
-
-    return {
-        "metrics_summary": metrics,
-        "gemini": {
-            "keys": gemini_keys,
-            "usage_map": gemini_usage_map,
-            "reset_time": time_utils.get_kyiv_reset_time(),
-        },
-        "tavily": {"keys": tavily_keys, "usage_map": tavily_usage_map},
-    }
+def track_metrics(func_name: str):
+    """Декоратор для отслеживания метрик функции"""
+    async def decorator(func):
+        async def wrapper(*args, **kwargs):
+            async with MetricsMiddleware(func_name):
+                return await func(*args, **kwargs)
+        return wrapper
+    return decorator

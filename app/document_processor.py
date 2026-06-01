@@ -1,460 +1,794 @@
-"""
-Document processor — orchestration layer for document upload and processing.
-
-The heavy lifting is delegated to submodules:
-- ``app.documents.parsers``:    sync file I/O and hashing
-- ``app.documents.repository``: async database CRUD and stats
-
-This file keeps the ``DocumentProcessor`` class (orchestrator + PDF/DOCX
-parsing), the singleton instance, and backward-compatible facade functions.
-"""
-
-import asyncio
-import io
 import logging
-from pathlib import Path
-from typing import Any
-
+import io
+import asyncio
+import hashlib
 import httpx
-import pypdf
-from docx import Document as DocxDocument
+from typing import Dict, Any, List, Optional, Tuple
+from pathlib import Path
+import tempfile
+import os
 
-# Submodule imports
-from app.documents.parsers import (
-    MAX_DOCUMENT_TEXT_LENGTH,  # noqa: F401 — re-exported
-    calculate_file_hash_sync,
-)
-from app.documents.repository import (
-    check_document_limit,
-    check_duplicate_file,
-    cleanup_oldest_documents,
-    save_document_content,
-)
-from app.metrics import metrics_collector
-from app.utils.network import NetworkErrorHandler
-
-# Verify document processing libraries are available
+# Импорты для работы с документами
 try:
-    import pypdf as _pypdf_check  # noqa: F811,F401
-    from docx import Document as _docx_check  # noqa: F811,F401
-
+    import PyPDF2
+    import docx
+    from PIL import Image
+    import fitz  # PyMuPDF для более качественного извлечения PDF
     DOCUMENT_SUPPORT = True
 except ImportError:
     DOCUMENT_SUPPORT = False
     logging.warning("Document processing libraries not installed. Document support disabled.")
 
+from .config import settings
+from . import database as db
+from .metrics import metrics_collector
 
 class DocumentProcessor:
-    """Orchestrates document upload, validation, parsing, and persistence."""
+    """Процессор для обработки документов"""
 
     def __init__(self):
-        self.supported_formats = [".pdf", ".docx", ".doc"]
-        self.max_file_size = 10 * 1024 * 1024  # 10MB for free tier
-        self.max_pages = 50
+        self.supported_formats = ['.pdf', '.docx', '.doc']
+        self.max_file_size = 50 * 1024 * 1024  # 50MB
+        self.max_pages = 100  # Максимальное количество страниц
 
-    async def process_document(self, file_data, filename: str, user_id: int, is_path: bool = False) -> dict[str, Any]:
-        """Process a document and return extracted text."""
+    def _calculate_file_hash(self, file_data: bytes) -> str:
+        """Вычисляет SHA-256 хэш файла"""
+        return hashlib.sha256(file_data).hexdigest()
+
+    async def _check_duplicate_file(self, user_id: int, file_hash: str, filename: str) -> Optional[Dict[str, Any]]:
+        """Проверяет, есть ли уже такой файл у пользователя"""
+        try:
+            result = await db.db_query(
+                "SELECT id, filename, created_at FROM user_documents WHERE user_id = $1 AND file_hash = $2",
+                (user_id, file_hash)
+            )
+            if result:
+                duplicate_info = {
+                    'id': result[0]['id'],
+                    'filename': result[0]['filename'],
+                    'created_at': result[0]['created_at']
+                }
+                logging.info(f"Duplicate file found for user {user_id}: {filename} matches {duplicate_info['filename']} (hash: {file_hash[:8]}...)")
+                return duplicate_info
+            logging.info(f"No duplicate file found for user {user_id}: {filename} (hash: {file_hash[:8]}...)")
+            return None
+        except Exception as e:
+            logging.error(f"Error checking duplicate file for user {user_id}: {e}")
+            return None
+
+    async def _check_document_limit(self, user_id: int) -> bool:
+        """Проверяет, не превышен ли лимит документов для пользователя"""
+        try:
+            result = await db.db_query(
+                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = $1",
+                (user_id,)
+            )
+            doc_count = result[0]['doc_count'] if result else 0
+            # Возвращаем True, если лимит НЕ превышен (можно загружать документы)
+            limit_reached = doc_count >= 5
+            logging.info(f"Document limit check for user {user_id}: {doc_count}/5 documents, limit reached: {limit_reached}")
+            return not limit_reached
+        except Exception as e:
+            logging.error(f"Error checking document limit for user {user_id}: {e}")
+            return True  # В случае ошибки разрешаем загрузку
+
+    async def _cleanup_oldest_documents(self, user_id: int, keep_count: int = 4) -> int:
+        """Удаляет старые документы пользователя, оставляя указанное количество"""
+        try:
+            # Сначала получаем общее количество документов пользователя
+            count_result = await db.db_query(
+                "SELECT COUNT(*) as total_count FROM user_documents WHERE user_id = $1",
+                (user_id,)
+            )
+            total_count = count_result[0]['total_count'] if count_result else 0
+
+            logging.info(f"Cleanup check for user {user_id}: {total_count} documents, keeping {keep_count}")
+
+            if total_count <= keep_count:
+                logging.info(f"No cleanup needed for user {user_id}: {total_count} <= {keep_count}")
+                return 0  # Нечего удалять
+
+            # Вычисляем, сколько документов нужно удалить
+            docs_to_delete = total_count - keep_count
+            logging.info(f"Will delete {docs_to_delete} oldest documents for user {user_id}")
+
+            # Получаем ID самых старых документов для удаления
+            result = await db.db_query("""
+                SELECT id FROM user_documents
+                WHERE user_id = $1
+                ORDER BY created_at ASC
+                LIMIT $2
+            """, (user_id, docs_to_delete))
+
+            if not result:
+                logging.warning(f"No documents to delete found for user {user_id}")
+                return 0
+
+            # Удаляем старые документы
+            old_doc_ids = [row['id'] for row in result]
+            if old_doc_ids:
+                # Создаем правильные placeholder'ы для PostgreSQL
+                placeholders = ','.join([f'${i+1}' for i in range(len(old_doc_ids))])
+                logging.debug(f"Deleting documents with IDs: {old_doc_ids} for user {user_id}")
+
+                await db.db_query(f"""
+                    DELETE FROM user_documents
+                    WHERE id IN ({placeholders})
+                """, old_doc_ids)
+
+                deleted_count = len(old_doc_ids)
+                logging.info(f"Successfully cleaned up {deleted_count} oldest documents for user {user_id} (IDs: {old_doc_ids})")
+                return deleted_count
+
+            return 0
+
+        except Exception as e:
+            logging.error(f"Error cleaning up oldest documents for user {user_id}: {e}")
+            return 0
+
+    async def process_document(self, file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
+        """Обрабатывает документ и возвращает извлеченный текст"""
         if not DOCUMENT_SUPPORT:
             return {"error": "Document processing is not available"}
 
         try:
-            # Check file size
-            if is_path:
-                import os
+            # Проверяем размер файла
+            if len(file_data) > self.max_file_size:
+                return {"error": f"File too large. Maximum size is {self.max_file_size // (1024*1024)}MB"}
 
-                file_size = os.path.getsize(file_data)
-            else:
-                file_size = len(file_data)
-
-            if file_size > self.max_file_size:
-                return {"error": f"File too large. Maximum size is {self.max_file_size // (1024 * 1024)}MB"}
-
+            # Определяем тип файла
             file_ext = Path(filename).suffix.lower()
             if file_ext not in self.supported_formats:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
-            # Check document limit
-            if not await check_document_limit(user_id):
-                await cleanup_oldest_documents(user_id, 4)
-                logging.info(
-                    "Document limit exceeded for user %s, removed oldest document",
-                    user_id,
-                )
+            # Проверяем лимит документов
+            if await self._check_document_limit(user_id):
+                # Если лимит НЕ превышен, продолжаем
+                pass
+            else:
+                # Если лимит превышен, удаляем самый старый документ
+                await self._cleanup_oldest_documents(user_id, 4)
+                logging.info(f"Document limit exceeded for user {user_id}, removed oldest document")
 
-            # Hash + duplicate check
-            loop = asyncio.get_running_loop()
-            file_hash = await loop.run_in_executor(None, calculate_file_hash_sync, file_data)
-            duplicate = await check_duplicate_file(user_id, file_hash, filename)
+            # Вычисляем хэш файла и проверяем дубликаты
+            file_hash = self._calculate_file_hash(file_data)
+            duplicate = await self._check_duplicate_file(user_id, file_hash, filename)
 
             if duplicate:
-                created_date = duplicate["created_at"]
-                if hasattr(created_date, "strftime"):
-                    date_str = created_date.strftime("%Y-%m-%d")
+                # Правильно обрабатываем datetime
+                created_date = duplicate['created_at']
+                if hasattr(created_date, 'strftime'):
+                    # Это объект datetime
+                    date_str = created_date.strftime('%Y-%m-%d')
                 else:
+                    # Это строка
                     date_str = str(created_date)[:10]
 
                 return {
                     "error": "duplicate",
                     "message": f"Файл '{filename}' уже был загружен ранее как '{duplicate['filename']}' ({date_str})",
-                    "duplicate_info": duplicate,
+                    "duplicate_info": duplicate
                 }
 
-            # Dispatch to format-specific parser
-            if file_ext == ".pdf":
-                return await self._process_pdf_unified(file_data, filename, user_id, file_hash, is_path=is_path)
-            elif file_ext in [".docx", ".doc"]:
-                return await self._process_word_unified(file_data, filename, user_id, file_hash, is_path=is_path)
+            # Обрабатываем документ
+            if file_ext == '.pdf':
+                return await self._process_pdf(file_data, filename, user_id, file_hash)
+            elif file_ext in ['.docx', '.doc']:
+                return await self._process_word(file_data, filename, user_id, file_hash)
             else:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
-        except (ValueError, UnicodeDecodeError, OSError) as e:
-            logging.error("Error processing document %s: %s", filename, e, exc_info=True)
+        except Exception as e:
+            logging.error(f"Error processing document {filename}: {e}")
             await metrics_collector.record_error("document_processing", str(e))
             return {"error": f"Error processing document: {str(e)}"}
 
-    async def process_document_force(
-        self, file_data, filename: str, user_id: int, is_path: bool = False
-    ) -> dict[str, Any]:
-        """Process a document, ignoring duplicates."""
+    async def process_document_force(self, file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
+        """Обрабатывает документ принудительно (игнорируя дубликаты)"""
         if not DOCUMENT_SUPPORT:
             return {"error": "Document processing is not available"}
 
         try:
-            if is_path:
-                import os
+            # Проверяем размер файла
+            if len(file_data) > self.max_file_size:
+                return {"error": f"File too large. Maximum size is {self.max_file_size // (1024*1024)}MB"}
 
-                file_size = os.path.getsize(file_data)
-            else:
-                file_size = len(file_data)
-
-            if file_size > self.max_file_size:
-                return {"error": f"File too large. Maximum size is {self.max_file_size // (1024 * 1024)}MB"}
-
+            # Определяем тип файла
             file_ext = Path(filename).suffix.lower()
             if file_ext not in self.supported_formats:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
-            loop = asyncio.get_running_loop()
-            file_hash = await loop.run_in_executor(None, calculate_file_hash_sync, file_data)
+            # Вычисляем хэш файла (но не проверяем дубликаты)
+            file_hash = self._calculate_file_hash(file_data)
 
-            if file_ext == ".pdf":
-                return await self._process_pdf_unified(file_data, filename, user_id, file_hash, is_path=is_path)
-            elif file_ext in [".docx", ".doc"]:
-                return await self._process_word_unified(file_data, filename, user_id, file_hash, is_path=is_path)
+            # Обрабатываем документ
+            if file_ext == '.pdf':
+                return await self._process_pdf(file_data, filename, user_id, file_hash)
+            elif file_ext in ['.docx', '.doc']:
+                return await self._process_word(file_data, filename, user_id, file_hash)
             else:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
-        except (ValueError, UnicodeDecodeError, OSError) as e:
-            logging.error("Error processing document %s: %s", filename, e, exc_info=True)
+        except Exception as e:
+            logging.error(f"Error processing document {filename}: {e}")
             await metrics_collector.record_error("document_processing", str(e))
             return {"error": f"Error processing document: {str(e)}"}
 
-    # ── Synchronous parsing helpers (run via run_in_executor) ─────────────
-
-    @staticmethod
-    def _process_pdf_sync(input_data: str | io.BytesIO, max_pages: int) -> dict[str, Any]:
-        """Synchronous PDF text extraction — runs in a thread executor."""
-        pdf_file = None
-        should_close = False
-
+    async def _process_pdf(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
+        """Обрабатывает PDF документ"""
         try:
-            if isinstance(input_data, str):
-                pdf_file = open(input_data, "rb")  # noqa: SIM115
-                should_close = True
-                stream = pdf_file
-            else:
-                stream = input_data  # type: ignore[assignment]  # BytesIO is compatible with PdfReader
+            # Создаем временный файл для обработки
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+                temp_file.write(file_data)
+                temp_file_path = temp_file.name
+                logging.debug(f"Created temporary file for {filename}: {temp_file_path}")
 
-            pdf_reader = pypdf.PdfReader(stream)
+            try:
+                # Проверяем, что файл является корректным PDF
+                if not file_data.startswith(b'%PDF'):
+                    logging.warning(f"Invalid PDF format for {filename}: file does not start with %PDF (first 10 bytes: {file_data[:10]}, file size: {len(file_data)} bytes)")
+                    return {"error": "Invalid PDF file format - file does not start with %PDF"}
 
-            if len(pdf_reader.pages) > max_pages:
-                return {"error": f"PDF too large. Maximum {max_pages} pages allowed"}
+                logging.info(f"Processing PDF {filename} with PyMuPDF (file size: {len(file_data)} bytes)")
 
-            text_content: list[str] = []
-            current_length = 0
-
-            for page_num, page in enumerate(pdf_reader.pages):
+                # Используем PyMuPDF для лучшего извлечения текста
                 try:
-                    text = page.extract_text()
-                    if text.strip():
-                        chunk = f"--- Page {page_num + 1} ---\n{text}"
-                        text_content.append(chunk)
-                        current_length += len(chunk)
-                except Exception as page_error:
-                    logging.warning(
-                        "Error extracting text from page %d: %s",
-                        page_num + 1,
-                        page_error,
-                    )
-                    chunk = f"--- Page {page_num + 1} ---\n[Error extracting text from this page]"
-                    text_content.append(chunk)
-                    current_length += len(chunk)
+                    doc = fitz.open(temp_file_path)
+                    # Безопасно получаем количество страниц
+                    try:
+                        page_count_initial = len(doc)
+                        logging.info(f"Successfully opened PDF {filename} with PyMuPDF: {page_count_initial} pages")
+                    except Exception as e:
+                        logging.warning(f"Could not get initial page count for {filename}: {e}")
+                        page_count_initial = 0
+                except Exception as fitz_error:
+                    logging.warning(f"PyMuPDF failed for {filename}, trying PyPDF2: {fitz_error}")
+                    # Fallback на PyPDF2
+                    return await self._process_pdf_with_pypdf2(file_data, filename, user_id, file_hash)
 
-                if current_length > MAX_DOCUMENT_TEXT_LENGTH:
-                    text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
-                    break
+                if page_count_initial > self.max_pages:
+                    try:
+                        doc.close()
+                        logging.info(f"Closed document {filename} due to page limit: {page_count_initial} > {self.max_pages}")
+                    except Exception as close_error:
+                        logging.warning(f"Could not close document {filename} after page limit check: {close_error}")
+                    return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed, got {page_count_initial} pages"}
 
-            full_text = "\n\n".join(text_content)
-            return {
-                "success": True,
-                "pages": len(pdf_reader.pages),
-                "content": full_text,
-            }
+                text_content = []
+                page_info = []
+
+                for page_num in range(page_count_initial):
+                    try:
+                        page = doc.load_page(page_num)
+
+                        # Извлекаем текст
+                        text = page.get_text()
+                        if text.strip():
+                            text_content.append(f"--- Page {page_num + 1} ---\n{text}")
+
+                        # Извлекаем изображения (если есть)
+                        image_list = page.get_images()
+                        if image_list:
+                            page_info.append(f"Page {page_num + 1}: {len(image_list)} images found")
+
+                        # Проверяем лимит токенов
+                        if len('\n'.join(text_content)) > 100000:  # Примерный лимит
+                            text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
+                            logging.info(f"Document content truncated at page {page_num + 1} for user {user_id}")
+                            break
+                    except Exception as page_error:
+                        logging.warning(f"Error processing page {page_num + 1} for user {user_id}: {page_error}")
+                        text_content.append(f"--- Page {page_num + 1} ---\n[Error processing this page]")
+                        continue
+
+                # Сохраняем количество страниц до закрытия документа
+                try:
+                    page_count = len(doc)
+                    logging.debug(f"Got page count for {filename}: {page_count}")
+                except Exception as e:
+                    logging.warning(f"Could not get page count from document {filename}: {e}")
+                    page_count = len(text_content)  # Используем количество обработанных страниц
+                    logging.info(f"Using processed page count for {filename}: {page_count}")
+
+                # Закрываем документ
+                try:
+                    doc.close()
+                    logging.debug(f"Successfully closed document {filename}")
+                except Exception as e:
+                    logging.warning(f"Could not close document {filename} properly: {e}")
+
+                full_text = '\n\n'.join(text_content)
+
+                # Сохраняем в базу данных
+                try:
+                    await self._save_document_content(user_id, filename, full_text, page_count, file_hash)
+                    logging.info(f"Successfully saved document {filename} for user {user_id} to database")
+                except Exception as save_error:
+                    logging.error(f"Error saving document {filename} to database for user {user_id}: {save_error}")
+                    # Возвращаем ошибку, но не теряем обработанный контент
+                    return {"error": f"Document processed but failed to save to database: {str(save_error)}"}
+
+                logging.info(f"Successfully processed PDF {filename} for user {user_id}: {page_count} pages, {len(full_text)} characters, {len(page_info)} pages with images")
+
+                return {
+                    "success": True,
+                    "filename": filename,
+                    "pages": page_count,
+                    "text_length": len(full_text),
+                    "content": full_text,
+                    "page_info": page_info
+                }
+
+            finally:
+                # Удаляем временный файл
+                try:
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+                        logging.debug(f"Successfully removed temporary file for {filename}: {temp_file_path}")
+                    else:
+                        logging.warning(f"Temporary file not found for {filename}: {temp_file_path}")
+                except Exception as cleanup_error:
+                    logging.warning(f"Could not remove temporary file for {filename}: {cleanup_error}")
+
         except Exception as e:
-            return {"error": str(e)}
-        finally:
-            if should_close and pdf_file:
-                pdf_file.close()
-
-    @staticmethod
-    def _process_word_sync(input_data: str | io.BytesIO) -> dict[str, Any]:
-        """Synchronous Word text extraction — runs in a thread executor."""
-        try:
-            doc = DocxDocument(input_data)
-
-            text_content: list[str] = []
-            paragraph_count = 0
-
-            for para in doc.paragraphs:
-                if para.text.strip():
-                    text_content.append(para.text)
-                    paragraph_count += 1
-
-            table_count = 0
-            for table in doc.tables:
-                table_count += 1
-                text_content.append(f"\n--- Table {table_count} ---")
-                for row in table.rows:
-                    row_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-                    if row_text:
-                        text_content.append(" | ".join(row_text))
-
-            full_text = "\n\n".join(text_content)
-            return {
-                "success": True,
-                "pages": 1,
-                "paragraphs": paragraph_count,
-                "tables": table_count,
-                "text_length": len(full_text),
-                "content": full_text,
-            }
-        except Exception as e:
-            return {"error": str(e)}
-
-    # ── PDF parsing ──────────────────────────────────────────────────────────
-
-    async def _process_pdf_unified(
-        self,
-        file_data,
-        filename: str,
-        user_id: int,
-        file_hash: str,
-        is_path: bool = False,
-    ) -> dict[str, Any]:
-        """Process a PDF document (bytes or path)."""
-        try:
-            if not is_path and not file_data.startswith(b"%PDF"):
-                logging.warning("Invalid PDF format for %s", filename)
-                return {"error": "Invalid PDF file format"}
-
-            logging.info("Processing PDF %s with pypdf", filename)
-
-            sync_input = file_data if is_path else io.BytesIO(file_data)
-
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, self._process_pdf_sync, sync_input, self.max_pages)
-
-            if "error" in result:
-                return result
-
-            full_text = result["content"]
-            pages_count = result["pages"]
-
-            await save_document_content(user_id, filename, full_text, pages_count, file_hash)
-
-            return {
-                "success": True,
-                "filename": filename,
-                "pages": pages_count,
-                "text_length": len(full_text),
-                "content": full_text,
-                "method": "pypdf",
-            }
-
-        except (ValueError, OSError, pypdf.errors.PdfReadError) as e:
-            logging.error("Error processing PDF %s: %s", filename, e, exc_info=True)
+            logging.error(f"Error processing PDF {filename}: {e}", exc_info=True)
             await metrics_collector.record_error("pdf_processing", str(e))
             return {"error": f"Error processing PDF: {str(e)}"}
 
-    # ── Word parsing ─────────────────────────────────────────────────────────
-
-    async def _process_word_unified(
-        self,
-        file_data,
-        filename: str,
-        user_id: int,
-        file_hash: str,
-        is_path: bool = False,
-    ) -> dict[str, Any]:
-        """Process a Word document (bytes or path)."""
-        if not is_path and not file_data.startswith(b"\x50\x4b\x03\x04"):
-            logging.warning("Invalid DOCX format for %s: Missing ZIP header", filename)
-            return {"error": "Invalid Word document format. File must be a valid .docx file."}
-
+    async def _process_pdf_with_pypdf2(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
+        """Обрабатывает PDF документ с использованием PyPDF2 (fallback)"""
         try:
-            sync_input = file_data if is_path else io.BytesIO(file_data)
+            # Создаем временный файл для обработки
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+                temp_file.write(file_data)
+                temp_file_path = temp_file.name
+                logging.debug(f"Created temporary file for {filename} (PyPDF2): {temp_file_path}")
 
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, self._process_word_sync, sync_input)
+            try:
+                # Используем PyPDF2 как fallback
+                try:
+                    with open(temp_file_path, 'rb') as file:
+                        pdf_reader = PyPDF2.PdfReader(file)
+                        logging.info(f"Successfully opened PDF {filename} with PyPDF2: {len(pdf_reader.pages)} pages")
+                except Exception as pdf_error:
+                    logging.error(f"PyPDF2 failed to open {filename}: {pdf_error}")
+                    return {"error": f"Failed to open PDF file with PyPDF2: {str(pdf_error)}"}
 
-            if "error" in result:
-                logging.error("Error processing Word document %s: %s", filename, result["error"])
-                return {"error": f"Error processing Word document: {result['error']}"}
+                if len(pdf_reader.pages) > self.max_pages:
+                    logging.warning(f"PDF {filename} too large: {len(pdf_reader.pages)} pages, maximum {self.max_pages} allowed")
+                    return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed, got {len(pdf_reader.pages)} pages"}
 
-            full_text = result["content"]
+                text_content = []
 
-            await save_document_content(user_id, filename, full_text, 1, file_hash)
+                for page_num, page in enumerate(pdf_reader.pages):
+                    try:
+                        text = page.extract_text()
+                        if text.strip():
+                            text_content.append(f"--- Page {page_num + 1} ---\n{text}")
+                    except Exception as page_error:
+                        logging.warning(f"Error extracting text from page {page_num + 1} for {filename}: {page_error}")
+                        text_content.append(f"--- Page {page_num + 1} ---\n[Error extracting text from this page]")
 
-            result["filename"] = filename
-            return result
+                    # Проверяем лимит токенов
+                    if len('\n'.join(text_content)) > 100000:
+                        text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
+                        logging.info(f"Document content truncated at page {page_num + 1} for {filename}")
+                        break
 
-        except (ValueError, UnicodeDecodeError, OSError) as e:
-            logging.error("Error processing Word document %s: %s", filename, e, exc_info=True)
+                full_text = '\n\n'.join(text_content)
+
+                # Безопасно получаем количество страниц
+                try:
+                    page_count = len(pdf_reader.pages)
+                    logging.debug(f"Got page count for {filename} using PyPDF2: {page_count}")
+                except Exception as e:
+                    logging.warning(f"Could not get page count from PDF reader for {filename}: {e}")
+                    page_count = len(text_content)  # Используем количество обработанных страниц
+                    logging.info(f"Using processed page count for {filename}: {page_count}")
+
+                # Сохраняем в базу данных
+                try:
+                    await self._save_document_content(user_id, filename, full_text, page_count, file_hash)
+                    logging.info(f"Successfully saved document {filename} for user {user_id} to database using PyPDF2")
+                except Exception as save_error:
+                    logging.error(f"Error saving document {filename} to database for user {user_id}: {save_error}")
+                    # Возвращаем ошибку, но не теряем обработанный контент
+                    return {"error": f"Document processed but failed to save to database: {str(save_error)}"}
+
+                logging.info(f"Successfully processed PDF {filename} for user {user_id} using PyPDF2: {page_count} pages, {len(full_text)} characters")
+
+                return {
+                    "success": True,
+                    "filename": filename,
+                    "pages": page_count,
+                    "text_length": len(full_text),
+                    "content": full_text,
+                    "method": "PyPDF2"
+                }
+
+            finally:
+                # Удаляем временный файл
+                try:
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+                        logging.debug(f"Successfully removed temporary file for {filename} (PyPDF2): {temp_file_path}")
+                    else:
+                        logging.warning(f"Temporary file not found for {filename} (PyPDF2): {temp_file_path}")
+                except Exception as cleanup_error:
+                    logging.warning(f"Could not remove temporary file for {filename} (PyPDF2): {cleanup_error}")
+
+        except Exception as e:
+            logging.error(f"Error processing PDF with PyPDF2 {filename}: {e}", exc_info=True)
+            await metrics_collector.record_error("pdf_processing_pypdf2", str(e))
+            return {"error": f"Error processing PDF with PyPDF2: {str(e)}"}
+
+    async def _process_word(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
+        """Обрабатывает Word документ"""
+        try:
+            # Создаем временный файл
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_file:
+                temp_file.write(file_data)
+                temp_file_path = temp_file.name
+                logging.debug(f"Created temporary file for {filename} (Word): {temp_file_path}")
+
+            try:
+                doc = docx.Document(temp_file_path)
+                logging.info(f"Successfully opened Word document {filename}")
+
+                text_content = []
+                paragraph_count = 0
+
+                # Извлекаем текст из параграфов
+                for para in doc.paragraphs:
+                    try:
+                        if para.text.strip():
+                            text_content.append(para.text)
+                            paragraph_count += 1
+                    except Exception as para_error:
+                        logging.warning(f"Error processing paragraph for {filename}: {para_error}")
+                        continue
+
+                # Извлекаем текст из таблиц
+                table_count = 0
+                for table in doc.tables:
+                    try:
+                        table_count += 1
+                        text_content.append(f"\n--- Table {table_count} ---")
+                        for row in table.rows:
+                            row_text = []
+                            for cell in row.cells:
+                                try:
+                                    if cell.text.strip():
+                                        row_text.append(cell.text.strip())
+                                except Exception as cell_error:
+                                    logging.warning(f"Error processing cell in table {table_count} for {filename}: {cell_error}")
+                                    continue
+                            if row_text:
+                                text_content.append(" | ".join(row_text))
+                    except Exception as table_error:
+                        logging.warning(f"Error processing table {table_count + 1} for {filename}: {table_error}")
+                        continue
+
+                full_text = '\n\n'.join(text_content)
+
+                # Сохраняем в базу данных
+                try:
+                    await self._save_document_content(user_id, filename, full_text, 1, file_hash)  # Word документы считаем как 1 страницу
+                    logging.info(f"Successfully saved document {filename} for user {user_id} to database")
+                except Exception as save_error:
+                    logging.error(f"Error saving document {filename} to database for user {user_id}: {save_error}")
+                    # Возвращаем ошибку, но не теряем обработанный контент
+                    return {"error": f"Document processed but failed to save to database: {str(save_error)}"}
+
+                logging.info(f"Successfully processed Word document {filename} for user {user_id}: {paragraph_count} paragraphs, {table_count} tables, {len(full_text)} characters")
+
+                return {
+                    "success": True,
+                    "filename": filename,
+                    "pages": 1,
+                    "paragraphs": paragraph_count,
+                    "tables": table_count,
+                    "text_length": len(full_text),
+                    "content": full_text
+                }
+
+            finally:
+                # Удаляем временный файл
+                try:
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+                        logging.debug(f"Successfully removed temporary file for {filename} (Word): {temp_file_path}")
+                    else:
+                        logging.warning(f"Temporary file not found for {filename} (Word): {temp_file_path}")
+                except Exception as cleanup_error:
+                    logging.warning(f"Could not remove temporary file for {filename} (Word): {cleanup_error}")
+
+        except Exception as e:
+            logging.error(f"Error processing Word document {filename}: {e}", exc_info=True)
             await metrics_collector.record_error("word_processing", str(e))
             return {"error": f"Error processing Word document: {str(e)}"}
 
-    # ── Delegated repository methods (backward compat for external callers) ──
-
-    async def _cleanup_oldest_documents(self, user_id, keep_count=4):
-        return await cleanup_oldest_documents(user_id, keep_count)
-
-    async def get_document_by_id(self, document_id, user_id):
-        from app.documents.repository import get_document_by_id
-
-        return await get_document_by_id(document_id, user_id)
-
-    async def get_user_documents(self, user_id):
-        from app.documents.repository import get_user_documents
-
-        return await get_user_documents(user_id)
-
-    async def get_document_content(self, document_id, user_id):
-        from app.documents.repository import get_document_content
-
-        return await get_document_content(document_id, user_id)
-
-    async def delete_document(self, document_id, user_id):
-        from app.documents.repository import delete_document
-
-        return await delete_document(document_id, user_id)
-
-    async def delete_all_user_documents(self, user_id):
-        from app.documents.repository import delete_all_user_documents
-
-        return await delete_all_user_documents(user_id)
-
-    async def cleanup_old_documents(self, days_old=3):
-        from app.documents.repository import cleanup_old_documents
-
-        return await cleanup_old_documents(days_old)
-
-    async def get_document_stats(self):
-        from app.documents.repository import get_document_stats
-
-        return await get_document_stats()
-
-    async def get_user_document_stats(self, user_id):
-        from app.documents.repository import get_user_document_stats
-
-        return await get_user_document_stats(user_id)
-
-
-# Singleton
-document_processor = DocumentProcessor()
-
-
-# ============================================================================
-# FACADE FUNCTIONS (backward compatibility)
-# ============================================================================
-
-
-async def process_uploaded_document(file_data, filename: str, user_id: int, is_path: bool = False) -> dict[str, Any]:
-    """Process an uploaded document."""
-    return await document_processor.process_document(file_data, filename, user_id, is_path)
-
-
-async def process_uploaded_document_force(
-    file_data, filename: str, user_id: int, is_path: bool = False
-) -> dict[str, Any]:
-    """Process an uploaded document, ignoring duplicates."""
-    return await document_processor.process_document_force(file_data, filename, user_id, is_path)
-
-
-async def get_user_documents(user_id: int) -> list[dict[str, Any]]:
-    """Get user's documents."""
-    return await document_processor.get_user_documents(user_id)
-
-
-async def get_document_content(document_id: int, user_id: int) -> str | None:
-    """Get document content."""
-    return await document_processor.get_document_content(document_id, user_id)
-
-
-async def delete_user_document(document_id: int, user_id: int) -> bool:
-    """Delete a user document."""
-    return await document_processor.delete_document(document_id, user_id)
-
-
-async def delete_all_user_documents(user_id: int) -> int:
-    """Delete all user documents."""
-    return await document_processor.delete_all_user_documents(user_id)
-
-
-async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> str | None:
-    """Internal function for uploading file to x0.at with retry logic."""
-    timeout_config = httpx.Timeout(
-        connect=10.0,
-        read=60.0,
-        write=60.0,
-        pool=30.0,
-    )
-
-    async with httpx.AsyncClient(timeout=timeout_config) as client:
-        files = {"file": (filename, file_data)}
-        response = await client.post("https://x0.at/", files=files)
-
-        if response.status_code == 200:
-            url = response.text.strip()
-            if url.startswith("http"):
-                logging.info("File %s uploaded to x0.at: %s", filename, url)
-                return url
-            else:
-                logging.error("Invalid response from x0.at: %s", response.text)
-                return None
-        else:
-            logging.error(
-                "Failed to upload to x0.at: %s - %s",
-                response.status_code,
-                response.text,
+    async def _save_document_content(self, user_id: int, filename: str, content: str, pages: int, file_hash: str):
+        """Сохраняет содержимое документа в базу данных"""
+        try:
+            # Таблица уже создана в init_db, поэтому просто сохраняем документ
+            await db.db_query(
+                "INSERT INTO user_documents (user_id, filename, content, pages, file_size, file_hash) VALUES ($1, $2, $3, $4, $5, $6)",
+                (user_id, filename, content, pages, len(content), file_hash)
             )
+
+            logging.info(f"Successfully saved document {filename} for user {user_id} to database: {pages} pages, {len(content)} characters, hash: {file_hash[:8]}...")
+
+        except Exception as e:
+            logging.error(f"Error saving document {filename} to database for user {user_id}: {e}")
+            raise  # Пробрасываем ошибку для обработки в вызывающем коде
+
+    async def get_document_by_id(self, document_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+        """Получает документ по ID"""
+        try:
+            result = await db.db_query(
+                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE id = $1 AND user_id = $2",
+                (document_id, user_id)
+            )
+
+            if result:
+                row = result[0]
+                return {
+                    'id': row['id'],
+                    'filename': row['filename'],
+                    'pages': row['pages'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                    'file_size': row['file_size'],
+                    'file_hash': row['file_hash']
+                }
             return None
 
+        except Exception as e:
+            logging.error(f"Error getting document by ID: {e}")
+            return None
 
-async def upload_to_x0_at(file_data: bytes, filename: str) -> str | None:
-    """Upload file to x0.at with automatic retries."""
+    async def get_user_documents(self, user_id: int) -> List[Dict[str, Any]]:
+        """Получает список документов пользователя"""
+        try:
+            result = await db.db_query(
+                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = $1 ORDER BY created_at DESC",
+                (user_id,)
+            )
+
+            return [
+                {
+                    'id': row['id'],
+                    'filename': row['filename'],
+                    'pages': row['pages'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                    'file_size': row['file_size'],
+                    'file_hash': row['file_hash']
+                }
+                for row in result
+            ]
+
+        except Exception as e:
+            logging.error(f"Error getting user documents: {e}")
+            return []
+
+    async def get_document_content(self, document_id: int, user_id: int) -> Optional[str]:
+        """Получает содержимое документа"""
+        try:
+            result = await db.db_query(
+                "SELECT content FROM user_documents WHERE id = $1 AND user_id = $2",
+                (document_id, user_id)
+            )
+
+            if result:
+                return result[0]['content']
+            return None
+
+        except Exception as e:
+            logging.error(f"Error getting document content: {e}")
+            return None
+
+    async def delete_document(self, document_id: int, user_id: int) -> bool:
+        """Удаляет документ"""
+        try:
+            await db.db_query(
+                "DELETE FROM user_documents WHERE id = $1 AND user_id = $2",
+                (document_id, user_id)
+            )
+            return True
+
+        except Exception as e:
+            logging.error(f"Error deleting document: {e}")
+            return False
+
+    async def cleanup_old_documents(self, days_old: int = 3) -> int:
+        """Очищает документы старше указанного количества дней"""
+        try:
+            logging.info(f"Starting cleanup of documents older than {days_old} days")
+
+            # Используем один SQL запрос для удаления и получения количества удаленных строк
+            # В PostgreSQL DELETE возвращает количество удаленных строк
+            result = await db.db_query("""
+                WITH deleted AS (
+                    DELETE FROM user_documents
+                    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * $1
+                    RETURNING id
+                )
+                SELECT COUNT(*) as deleted_count FROM deleted
+            """, (days_old,))
+
+            deleted_count = result[0]['deleted_count'] if result else 0
+
+            if deleted_count > 0:
+                logging.info(f"Successfully cleaned up {deleted_count} old documents (older than {days_old} days)")
+            else:
+                logging.info(f"No documents to clean up (older than {days_old} days)")
+
+            return deleted_count
+
+        except Exception as e:
+            logging.error(f"Error cleaning up old documents (older than {days_old} days): {e}")
+            return 0
+
+    async def get_document_stats(self) -> Dict[str, Any]:
+        """Получает статистику документов"""
+        try:
+            # Общее количество документов
+            total_result = await db.db_query("SELECT COUNT(*) as total FROM user_documents")
+            total_docs = total_result[0]['total'] if total_result else 0
+
+            # Размер БД (приблизительно)
+            size_result = await db.db_query("""
+                SELECT
+                    COUNT(*) as doc_count,
+                    COALESCE(SUM(file_size), 0) as total_size,
+                    COALESCE(AVG(file_size), 0) as avg_size
+                FROM user_documents
+            """)
+
+            if size_result:
+                stats = size_result[0]
+                return {
+                    'total_documents': stats['doc_count'],
+                    'total_size_chars': stats['total_size'],
+                    'average_size_chars': stats['avg_size'],
+                    'total_size_mb': stats['total_size'] / (1024 * 1024) if stats['total_size'] else 0
+                }
+
+            return {'total_documents': 0, 'total_size_chars': 0, 'average_size_chars': 0, 'total_size_mb': 0}
+
+        except Exception as e:
+            logging.error(f"Error getting document stats: {e}")
+            return {'total_documents': 0, 'total_size_chars': 0, 'average_size_chars': 0, 'total_size_mb': 0}
+
+    async def get_user_document_stats(self, user_id: int) -> Dict[str, Any]:
+        """Получает статистику документов конкретного пользователя"""
+        try:
+            # Количество документов пользователя
+            count_result = await db.db_query(
+                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = $1",
+                (user_id,)
+            )
+            doc_count = count_result[0]['doc_count'] if count_result else 0
+
+            # Размер документов пользователя
+            size_result = await db.db_query("""
+                SELECT
+                    COALESCE(SUM(file_size), 0) as total_size,
+                    COALESCE(AVG(file_size), 0) as avg_size
+                FROM user_documents
+                WHERE user_id = $1
+            """, (user_id,))
+
+            if size_result:
+                stats = size_result[0]
+                return {
+                    'document_count': doc_count,
+                    'total_size_chars': stats['total_size'],
+                    'average_size_chars': stats['avg_size'],
+                    'total_size_mb': stats['total_size'] / (1024 * 1024) if stats['total_size'] else 0,
+                    'limit_reached': doc_count >= 5,
+                    'can_upload': doc_count < 5
+                }
+
+            return {
+                'document_count': 0,
+                'total_size_chars': 0,
+                'average_size_chars': 0,
+                'total_size_mb': 0,
+                'limit_reached': False,
+                'can_upload': True
+            }
+
+        except Exception as e:
+            logging.error(f"Error getting user document stats: {e}")
+            return {
+                'document_count': 0,
+                'total_size_chars': 0,
+                'average_size_chars': 0,
+                'total_size_mb': 0,
+                'limit_reached': False,
+                'can_upload': True
+            }
+
+# Глобальный экземпляр процессора документов
+document_processor = DocumentProcessor()
+
+async def process_uploaded_document(file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
+    """Обрабатывает загруженный документ"""
+    return await document_processor.process_document(file_data, filename, user_id)
+
+async def process_uploaded_document_force(file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
+    """Обрабатывает загруженный документ принудительно (игнорируя дубликаты)"""
+    return await document_processor.process_document_force(file_data, filename, user_id)
+
+async def get_user_documents(user_id: int) -> List[Dict[str, Any]]:
+    """Получает документы пользователя"""
+    return await document_processor.get_user_documents(user_id)
+
+async def get_document_content(document_id: int, user_id: int) -> Optional[str]:
+    """Получает содержимое документа"""
+    return await document_processor.get_document_content(document_id, user_id)
+
+async def delete_user_document(document_id: int, user_id: int) -> bool:
+    """Удаляет документ пользователя"""
+    return await document_processor.delete_document(document_id, user_id)
+
+async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
+    """Загружает файл на внешний сервис x0.at и возвращает URL"""
     try:
-        return await NetworkErrorHandler.retry_with_backoff(
-            _upload_file_to_x0_at,
-            max_retries=3,
-            base_delay=2.0,
-            file_data=file_data,
-            filename=filename,
-        )
-    except (httpx.HTTPError, OSError) as e:
-        logging.error("Error uploading to x0.at after retries: %s", e, exc_info=True)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            files = {'file': (filename, file_data)}
+            response = await client.post('https://x0.at/', files=files)
+
+            if response.status_code == 200:
+                url = response.text.strip()
+                if url.startswith('http'):
+                    logging.info(f"File {filename} uploaded to x0.at: {url}")
+                    return url
+                else:
+                    logging.error(f"Invalid response from x0.at: {response.text}")
+                    return None
+            else:
+                logging.error(f"Failed to upload to x0.at: {response.status_code} - {response.text}")
+                return None
+
+    except Exception as e:
+        logging.error(f"Error uploading to x0.at: {e}")
         return None
 
-
-async def get_document_by_id(document_id: int, user_id: int) -> dict[str, Any] | None:
-    """Get document by ID."""
+async def get_document_by_id(document_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+    """Получает документ по ID"""
     return await document_processor.get_document_by_id(document_id, user_id)
+
+async def schedule_document_cleanup():
+    """Планировщик автоматической очистки документов"""
+    import asyncio
+    from datetime import datetime
+
+    while True:
+        try:
+            # Ждем до следующего дня в 3:00 утра
+            now = datetime.now()
+            next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
+            if next_run <= now:
+                next_run = next_run.replace(day=next_run.day + 1)
+
+            wait_seconds = (next_run - now).total_seconds()
+            logging.info(f"Next document cleanup scheduled for {next_run}")
+
+            await asyncio.sleep(wait_seconds)
+
+            # Выполняем очистку
+            deleted_count = await document_processor.cleanup_old_documents(3)
+            if deleted_count > 0:
+                logging.info(f"Automatic cleanup: deleted {deleted_count} old documents (older than 3 days)")
+
+        except Exception as e:
+            logging.error(f"Error in scheduled document cleanup: {e}")
+            await asyncio.sleep(3600)  # Ждем час при ошибке
+
+# Запускаем планировщик при старте приложения
+def start_cleanup_scheduler():
+    """Запускает планировщик очистки документов"""
+    import asyncio
+    asyncio.create_task(schedule_document_cleanup())

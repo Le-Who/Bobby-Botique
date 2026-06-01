@@ -1,40 +1,67 @@
 # /app/prompts.py
-# Backward-compat re-exports — all code moved to proper homes.
-# New code should import from the canonical locations directly.
 
-from app.prompt_registry import DEFAULT_ROLES, get_registry  # noqa: F401
-from app.utils.json_utils import extract_json_object  # noqa: F401
+QNA_LOCALIZATION_PROMPT = """
+You are a localization and formatting assistant. Present information in the user's language.
 
-# ============================================================================
-# COMPOSE HELPERS — delegates to PromptRegistry
-# ============================================================================
+USER'S QUERY: "{user_message}"
+INFORMATION: "{tavily_answer}"
 
+INSTRUCTIONS:
+1. Determine the language of the user's query
+2. Translate and present the information in that language
+3. Apply basic Telegram Markdown formatting if appropriate
+4. Output only the final text without conversational filler
+"""
 
-def compose_system_instruction(role_prompt: str | None, use_compact: bool = True) -> str:
-    """Compose system instruction. Prefer get_registry().compose_system_prompt()."""
-    registry = get_registry()
-    return registry.compose_system_prompt(role_prompt=role_prompt, use_compact=use_compact)
+URL_SELECTION_PROMPT = """
+You are a research analyst. Select the most relevant web sources.
 
+USER QUERY: "{user_message}"
 
-def clear_prompt_cache():
-    """Clear composed prompt caches."""
-    registry = get_registry()
-    registry.compose_system_prompt.cache_clear()
+TASK: From the search results, select TOP 2-5 URLs most likely to contain detailed answers.
 
+CRITERIA:
+1. Relevance: Title and snippet must relate to the query
+2. Authority: Prefer well-known sites, official docs, tech reviews
+3. Content-Rich: Choose sources with detailed information
 
-# ============================================================================
-# CUSTOM ROLE CACHE — bounded with TTL
-# ============================================================================
-from cachetools import TTLCache  # noqa: E402
+OUTPUT: Return only comma-separated URLs without explanation.
 
-_custom_role_cache: TTLCache = TTLCache(maxsize=256, ttl=3600)
+SEARCH RESULTS:
+{search_results_json}
+"""
 
+SYNTHESIS_PROMPT = """
+You are a research assistant. Provide comprehensive answers based on the provided context.
 
-def get_cached_custom_role(prompt: str) -> dict | None:
-    """Get cached custom role by prompt."""
-    return _custom_role_cache.get(prompt)
+CONTEXT FROM WEB SEARCH:
+---
+{full_context}
+---
 
+USER'S QUERY: "{user_message}"
 
-def cache_custom_role(prompt: str, role: dict):
-    """Cache a custom role (auto-evicts oldest on overflow)."""
-    _custom_role_cache[prompt] = role
+TASK:
+1. Synthesize information from the context to answer the query
+2. Use Telegram MarkdownV2 syntax:
+   - Bold: *bold text*
+   - Italic: _italic text_
+   - Lists: - item
+3. Cite sources using: [display text](URL)
+4. Highlight conflicting information if found
+5. State if context is insufficient
+
+CITATION EXAMPLE:
+The price was 5500 грн [OLX listing](https://www.olx.ua/...).
+"""
+
+IMAGE_ANALYSIS_PROMPT = """
+You are an image recognition engine. Identify the main subject and output a search query.
+
+TASK: Analyze the image and output a short, factual search query.
+
+RULES:
+- Be specific (e.g., "Eiffel Tower", "red 2023 Ferrari SF90")
+- Output only the search query text
+- No explanations or conversational text
+"""

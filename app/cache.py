@@ -1,386 +1,290 @@
-import asyncio
 import hashlib
 import json
 import logging
-import os
-from typing import Any
+import asyncio
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, List
+from dataclasses import dataclass
+import time
 
-from redis.asyncio import Redis
-from redis.exceptions import ConnectionError, RedisError, TimeoutError
+from .config import settings
+from . import database as db
+from .metrics import metrics_collector
 
-from app.errors import RedisConnectionError
-from app.metrics import metrics_collector
+@dataclass
+class CacheEntry:
+    """Запись в кэше"""
+    data: Any
+    created_at: datetime
+    expires_at: datetime
+    access_count: int = 0
+    last_accessed: datetime = None
 
-# Initialize Redis client with Upstash.com optimized configuration
-redis_url = os.getenv("REDIS_URL")
-if not redis_url:
-    logging.warning("REDIS_URL environment variable not set. Caching will be disabled.")
-    redis_client = None
-else:
-    try:
-        # Redis configuration for Upstash.com
-        # Upstash free tier allows 100 concurrent connections.
-        # max_connections=10 allows concurrent handlers (bot uses concurrent_updates=True)
-        # while staying well within Upstash limits.
-        redis_client = Redis.from_url(
-            redis_url,
-            socket_timeout=5,  # Fast timeout for quick failure detection
-            socket_connect_timeout=5,  # Fast connect timeout
-            max_connections=10,  # Match concurrent handler capacity
-            retry_on_timeout=True,  # Only retry on timeout, not all errors
-            decode_responses=False,  # Keep as bytes for manual handling
-            health_check_interval=0,  # Disable built-in health-check pings
-        )
-        logging.info("Redis client initialized successfully for Upstash.com")
-    except (ConnectionError, RedisError) as e:
-        logging.warning("Failed to connect to Redis: %s. Caching will be disabled.", e)
-        redis_client = None
-
-
-async def ping_safe() -> bool:
-    """Lightweight Redis ping for health checks. Returns bool, never throws."""
-    if not redis_client:
-        return False
-    try:
-        return bool(await redis_client.ping())  # type: ignore[misc]  # always async in our setup
-    except Exception:
-        return False
-
-
-async def shutdown_redis() -> None:
-    """Close the async Redis client connection pool during graceful shutdown."""
-    global redis_client
-    if redis_client:
-        try:
-            await redis_client.aclose()
-            logging.info("Redis client closed successfully")
-        except Exception as e:
-            logging.warning("Error closing Redis client: %s", e)
-        finally:
-            redis_client = None
-
-
-def _generate_cache_key(query: str, search_type: str) -> str:
-    """Generates a cache key for the request."""
-    normalized_query = " ".join(query.lower().split())
-    key_data = f"{search_type}:{normalized_query}"
-    return hashlib.sha256(key_data.encode()).hexdigest()
-
-
-def _get_ttl(search_type: str) -> int:
-    """Returns the TTL for the search type."""
-    if search_type == "qna":
-        return 7200  # 2 hours
-    elif search_type == "search":
-        return 1800  # 30 minutes
-    else:
-        return 3600  # 1 hour
-
-
-def _safe_decode_redis_response(
-    data: bytes | str | None,
-) -> dict[str, Any] | None:
-    """Safely decodes Redis response, handling both bytes and string responses."""
-    if data is None:
-        return None
-
-    try:
-        if isinstance(data, bytes):
-            return json.loads(data.decode("utf-8"))
-        elif isinstance(data, str):
-            return json.loads(data)
-        else:
-            logging.warning("Unexpected Redis response type: %s", type(data))  # type: ignore[unreachable]  # defensive
-            return None
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        logging.error("Failed to decode Redis response: %s", e, exc_info=True)
-        return None
-
-
-async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs):
-    """Executes async Redis operation with improved retry logic."""
-    if not redis_client:
-        raise RedisConnectionError("Redis client not configured")
-
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            # Execute async Redis operation directly
-            result = await operation(*args, **kwargs)
-            return result
-
-        except (ConnectionError, TimeoutError) as e:
-            last_error = e
-            if attempt < max_retries - 1:
-                wait_time = (2**attempt) * 0.1  # Exponential backoff: 0.1s, 0.2s, 0.4s
-                logging.warning(
-                    f"Redis operation failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {wait_time}s..."
-                )
-                await asyncio.sleep(wait_time)
-            else:
-                logging.error("Redis operation failed after %d attempts: %s", max_retries, e)
-                raise RedisConnectionError(f"Redis operation failed: {e}") from e
-
-        except RedisError as e:
-            # Other Redis errors don't require retry
-            logging.error("Redis operation error: %s", e, exc_info=True)
-            raise RedisConnectionError(f"Redis operation error: {e}") from e
-
-    raise RedisConnectionError(f"Redis operation failed after {max_retries} attempts: {last_error}")
-
-
-async def get_cached_search_result(query: str, search_type: str) -> dict[str, Any] | None:
-    """Gets the search result from the multi-layer cache (Memory -> Redis)."""
-    try:
-        return await get_cached_search_result_ml(query, search_type)
-    except Exception as e:
-        logging.warning("Cache get error for query %s...: %s", query[:50], e)
-        await metrics_collector.record_cache_miss()
-        return None
-
-
-async def cache_search_result(query: str, search_type: str, result: dict[str, Any]) -> None:
-    """Saves the search result to the multi-layer cache (Memory + Redis)."""
-    try:
-        await cache_search_result_ml(query, search_type, result)
-    except Exception as e:
-        logging.warning("Cache set error for query %s...: %s", query[:50], e)
-
-
-async def get_cache_stats() -> dict[str, Any]:
-    """Returns cache statistics."""
-    if not redis_client:
-        return {"error": "Redis client not configured"}
-
-    try:
-        # Use retry logic for Redis operations
-        info = await _redis_operation_with_retry(redis_client.info)
-
-        # redis-py .info() returns a dict — access keys directly
-        db0 = info.get("db0", {})
-        total_keys = db0.get("keys", 0) if isinstance(db0, dict) else str(db0)
-
-        return {
-            "total_keys": total_keys,
-            "used_memory": info.get("used_memory_human", "N/A"),
-            "uptime_in_days": info.get("uptime_in_days", "N/A"),
-            "connected_clients": info.get("connected_clients", "N/A"),
-            "cache_hit_rate": metrics_collector.get_cache_hit_rate(),
-        }
-
-    except RedisConnectionError as e:
-        logging.warning("Redis stats unavailable: %s", e)
-        return {"error": f"Redis connection issue: {e}"}
-    except RedisError as e:
-        logging.error("Error getting Redis stats: %s", e, exc_info=True)
-        return {"error": str(e)}
-
-
-async def clear_cache() -> None:
-    """Clears the entire cache."""
-    if not redis_client:
-        return
-
-    try:
-        # Use retry logic for Redis operations
-        await _redis_operation_with_retry(redis_client.flushdb)
-        logging.info("Cache cleared")
-    except RedisConnectionError as e:
-        logging.warning("Failed to clear Redis cache (connection issue): %s", e)
-    except RedisError as e:
-        logging.error("Error clearing Redis cache: %s", e, exc_info=True)
-
-
-# Multi-layer caching implementation
-class MultiLayerCache:
-    """Multi-layer caching system: Memory -> Redis -> Database"""
+class SearchCache:
+    """Кэш для результатов поиска"""
 
     def __init__(self):
-        from cachetools import TTLCache
-
-        # Separate TTLCaches for exact expiration tracking based on search type constraints
-        self.qna_cache = TTLCache(maxsize=500, ttl=7200)
-        self.search_cache = TTLCache(maxsize=500, ttl=1800)
-        self.default_cache = TTLCache(maxsize=200, ttl=3600)
-        # asyncio.Lock to protect in-memory caches from concurrent coroutine access
+        self.cache: Dict[str, CacheEntry] = {}
+        self.max_size = 1000  # Максимальное количество записей в кэше
+        self.default_ttl = 259200  # 3 дня по умолчанию (259200 секунд)
+        self.search_ttl = 259200  # 3 дня для поисковых запросов
+        self.qna_ttl = 259200  # 3 дня для Q&A запросов
         self._lock = asyncio.Lock()
+        self._cleanup_task = None
 
-    def _get_cache(self, search_type: str):
-        if search_type == "qna":
-            return self.qna_cache
-        elif search_type == "search":
-            return self.search_cache
+    def _generate_cache_key(self, query: str, search_type: str) -> str:
+        """Генерирует ключ кэша для запроса"""
+        # Нормализуем запрос (убираем лишние пробелы, приводим к нижнему регистру)
+        normalized_query = " ".join(query.lower().split())
+        key_data = f"{search_type}:{normalized_query}"
+        cache_key = hashlib.sha256(key_data.encode()).hexdigest()
+        logging.debug(f"Generated cache key: {cache_key[:16]}... for query: '{query[:30]}...' (type: {search_type})")
+        return cache_key
+
+    def _get_ttl(self, search_type: str) -> int:
+        """Возвращает TTL для типа поиска"""
+        # Все типы поиска теперь имеют одинаковый TTL - 3 дня
+        ttl = self.default_ttl
+        logging.debug(f"TTL for search type '{search_type}': {ttl}s ({ttl/86400:.1f} days)")
+        return ttl
+
+    async def get(self, query: str, search_type: str) -> Optional[Any]:
+        """Получает данные из кэша"""
+        cache_key = self._generate_cache_key(query, search_type)
+
+        async with self._lock:
+            entry = self.cache.get(cache_key)
+
+            if entry is None:
+                logging.debug(f"Cache entry not found for key: {cache_key[:16]}... (query: {query[:30]}..., type: {search_type})")
+                return None
+
+            # Проверяем, не истек ли срок действия
+            if datetime.now() > entry.expires_at:
+                logging.debug(f"Cache entry expired for key: {cache_key[:16]}... (query: {query[:30]}..., type: {search_type})")
+                del self.cache[cache_key]
+                return None
+
+            # Обновляем статистику доступа
+            entry.access_count += 1
+            entry.last_accessed = datetime.now()
+
+            logging.debug(f"Cache hit for key: {cache_key[:16]}... (query: {query[:30]}..., type: {search_type})")
+
+            # Записываем метрики после успешного получения данных
+            try:
+                await metrics_collector.record_cache_hit()
+            except Exception as e:
+                logging.warning(f"Failed to record cache hit metric: {e}")
+
+            # Возвращаем данные с пометкой, что они из кэша
+            return {
+                'data': entry.data,
+                'from_cache': True,
+                'cache_key': cache_key,
+                'created_at': entry.created_at,
+                'expires_at': entry.expires_at
+            }
+
+    async def _record_cache_miss(self):
+        """Записывает метрику cache miss с обработкой ошибок"""
+        try:
+            await metrics_collector.record_cache_miss()
+        except Exception as e:
+            logging.warning(f"Failed to record cache miss metric: {e}")
+
+    async def set(self, query: str, search_type: str, data: Any):
+        """Сохраняет данные в кэш"""
+        cache_key = self._generate_cache_key(query, search_type)
+        ttl = self._get_ttl(search_type)
+
+        async with self._lock:
+            # Проверяем размер кэша
+            if len(self.cache) >= self.max_size:
+                logging.debug(f"Cache size limit reached ({len(self.cache)}), evicting oldest entries")
+                await self._evict_oldest()
+
+            now = datetime.now()
+            entry = CacheEntry(
+                data=data,
+                created_at=now,
+                expires_at=now + timedelta(seconds=ttl),
+                access_count=1,
+                last_accessed=now
+            )
+
+            self.cache[cache_key] = entry
+            logging.debug(f"Cache entry saved for key: {cache_key[:16]}... (query: {query[:30]}..., type: {search_type}, ttl: {ttl}s)")
+
+    async def _evict_oldest(self):
+        """Удаляет самые старые записи из кэша"""
+        if not self.cache:
+            return
+
+        # Находим записи для удаления (20% от размера кэша)
+        entries_to_remove = max(1, len(self.cache) // 5)
+
+        # Сортируем по времени последнего доступа и количеству обращений
+        sorted_entries = sorted(
+            self.cache.items(),
+            key=lambda x: (x[1].last_accessed or x[1].created_at, -x[1].access_count)
+        )
+
+        # Удаляем самые старые записи
+        for i in range(entries_to_remove):
+            if i < len(sorted_entries):
+                del self.cache[sorted_entries[i][0]]
+
+    async def cleanup_expired(self):
+        """Удаляет истекшие записи из кэша"""
+        async with self._lock:
+            now = datetime.now()
+            expired_keys = [
+                key for key, entry in self.cache.items()
+                if now > entry.expires_at
+            ]
+
+            for key in expired_keys:
+                del self.cache[key]
+
+            # Очищаем соответствующие button_id_mapping
+            if expired_keys:
+                button_ids_to_remove = [bid for bid, (_, _, ck) in button_id_mapping.items() if ck in expired_keys]
+                for bid in button_ids_to_remove:
+                    del button_id_mapping[bid]
+                if button_ids_to_remove:
+                    logging.debug(f"Cleaned up {len(button_ids_to_remove)} button mappings for expired cache entries")
+
+            if expired_keys:
+                logging.info(f"Cleaned up {len(expired_keys)} expired cache entries")
+
+    async def get_stats(self) -> Dict[str, Any]:
+        """Возвращает статистику кэша"""
+        async with self._lock:
+            now = datetime.now()
+            total_entries = len(self.cache)
+            expired_entries = sum(1 for entry in self.cache.values() if now > entry.expires_at)
+
+            if total_entries > 0:
+                avg_access_count = sum(entry.access_count for entry in self.cache.values()) / total_entries
+            else:
+                avg_access_count = 0
+
+            return {
+                'total_entries': total_entries,
+                'expired_entries': expired_entries,
+                'max_size': self.max_size,
+                'avg_access_count': avg_access_count,
+                'cache_hit_rate': metrics_collector.get_cache_hit_rate()
+            }
+
+    async def clear(self):
+        """Очищает весь кэш"""
+        async with self._lock:
+            self.cache.clear()
+            # Очищаем все button_id_mapping
+            button_id_mapping.clear()
+            logging.info("Cache and button mappings cleared")
+
+    async def _remove_by_key(self, cache_key: str):
+        """Удаляет запись из кэша по ключу"""
+        async with self._lock:
+            if cache_key in self.cache:
+                del self.cache[cache_key]
+                logging.info(f"Removed cache entry with key: {cache_key[:16]}...")
+
+                # Очищаем соответствующие button_id_mapping
+                button_ids_to_remove = [bid for bid, (_, _, ck) in button_id_mapping.items() if ck == cache_key]
+                for bid in button_ids_to_remove:
+                    del button_id_mapping[bid]
+                if button_ids_to_remove:
+                    logging.debug(f"Cleaned up {len(button_ids_to_remove)} button mappings for removed cache entry")
+
+                return True
+            return False
+
+# Глобальный экземпляр кэша
+search_cache = SearchCache()
+
+# Словарь для хранения соответствия между button_id и данными кэша
+# button_id -> (query, search_type, cache_key)
+button_id_mapping = {}
+
+def _generate_button_id(cache_key: str) -> str:
+    """Генерирует уникальный ID для кнопки актуализации"""
+    import hashlib
+    return hashlib.md5(cache_key.encode()).hexdigest()[:16]
+
+def _store_button_mapping(button_id: str, query: str, search_type: str, cache_key: str):
+    """Сохраняет соответствие между button_id и данными кэша"""
+    # Очищаем старые записи, если их слишком много
+    if len(button_id_mapping) > 1000:
+        # Удаляем 20% самых старых записей
+        keys_to_remove = list(button_id_mapping.keys())[:200]
+        for key in keys_to_remove:
+            del button_id_mapping[key]
+        logging.info(f"Cleaned up {len(keys_to_remove)} old button mappings")
+
+    button_id_mapping[button_id] = (query, search_type, cache_key)
+
+def _get_button_mapping(button_id: str):
+    """Получает данные кэша по button_id"""
+    return button_id_mapping.get(button_id)
+
+async def get_cached_search_result(query: str, search_type: str) -> Optional[Dict[str, Any]]:
+    """Получает результат поиска из кэша"""
+    try:
+        result = await search_cache.get(query, search_type)
+        if result:
+            logging.info(f"Cache hit for query: {query[:50]}...")
+            # Возвращаем данные в старом формате для обратной совместимости
+            if isinstance(result, dict) and 'data' in result:
+                return result['data']
+            return result
+        return None
+    except Exception as e:
+        logging.error(f"Error getting from cache: {e}")
+        return None
+
+async def get_cached_search_result_with_metadata(query: str, search_type: str) -> Optional[Dict[str, Any]]:
+    """Получает результат поиска из кэша с метаданными (включая информацию о кэше)"""
+    try:
+        result = await search_cache.get(query, search_type)
+        if result:
+            logging.info(f"Cache hit for query: {query[:50]}... (type: {search_type})")
+            logging.debug(f"Cache result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
         else:
-            return self.default_cache
+            logging.info(f"Cache miss for query: {query[:50]}... (type: {search_type})")
+        return result
+    except Exception as e:
+        logging.error(f"Error getting from cache: {e}")
+        return None
 
-    async def get(self, key: str, search_type: str) -> dict[str, Any] | None:
-        """Gets value from multi-layer cache"""
-        cache_dict = self._get_cache(search_type)
-        # Try memory cache first (under lock for TTLCache safety)
-        async with self._lock:
-            if key in cache_dict:
-                logging.info("Memory cache hit for key: %s", key)
-                return cache_dict[key]
+async def cache_search_result(query: str, search_type: str, result: Dict[str, Any]):
+    """Сохраняет результат поиска в кэш"""
+    try:
+        await search_cache.set(query, search_type, result)
+        logging.info(f"Cached search result for query: {query[:50]}... (type: {search_type})")
+        logging.debug(f"Cached result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
 
-        # Try Redis cache
-        if redis_client:
+        # Генерируем button_id и сохраняем соответствие
+        cache_key = search_cache._generate_cache_key(query, search_type)
+        button_id = _generate_button_id(cache_key)
+        _store_button_mapping(button_id, query, search_type, cache_key)
+        logging.debug(f"Stored button mapping: {button_id} -> {query[:30]}... ({search_type})")
+
+    except Exception as e:
+        logging.error(f"Error caching result: {e}")
+
+async def start_cache_cleanup_task():
+    """Запускает задачу очистки кэша"""
+    async def cleanup_loop():
+        while True:
             try:
-                redis_key = f"{search_type}:{key}"
-                # Use retry logic for Redis operations
-                cached_data = await _redis_operation_with_retry(redis_client.get, redis_key)
+                await search_cache.cleanup_expired()
+                await asyncio.sleep(300)  # Проверяем каждые 5 минут
+            except Exception as e:
+                logging.error(f"Error in cache cleanup: {e}")
+                await asyncio.sleep(60)
 
-                if cached_data:
-                    # Safely decode the response
-                    result = _safe_decode_redis_response(cached_data)
-
-                    if result:
-                        # Store in memory cache for faster access
-                        async with self._lock:
-                            cache_dict[key] = result
-
-                        await metrics_collector.record_cache_hit()
-                        logging.info("Redis cache hit for key: %s", key)
-                        return result
-                    else:
-                        logging.warning("Failed to decode Redis data for key: %s", key)
-
-            except RedisConnectionError as e:
-                logging.warning("Redis cache unavailable: %s", e)
-            except RedisError as e:
-                logging.warning("Redis cache error: %s", e)
-
-        await metrics_collector.record_cache_miss()
-        return None
-
-    async def set(self, key: str, search_type: str, value: dict[str, Any]):
-        """Sets value in multi-layer cache"""
-        ttl = _get_ttl(search_type)
-
-        # Store in memory cache
-        cache_dict = self._get_cache(search_type)
-        async with self._lock:
-            cache_dict[key] = value
-
-        # Store in Redis cache
-        if redis_client:
-            try:
-                redis_key = f"{search_type}:{key}"
-                json_data = json.dumps(value, ensure_ascii=False)
-
-                # Use retry logic for Redis operations
-                await _redis_operation_with_retry(redis_client.setex, redis_key, ttl, json_data)
-                logging.info("Stored in Redis cache: %s", key)
-
-            except RedisConnectionError as e:
-                logging.warning("Failed to store in Redis cache (connection issue): %s", e)
-            except RedisError as e:
-                logging.warning("Failed to store in Redis cache: %s", e)
-
-    def get_memory_stats(self) -> dict[str, Any]:
-        """Returns memory cache statistics"""
-        memory_items = len(self.qna_cache) + len(self.search_cache) + len(self.default_cache)
-        memory_max_size = self.qna_cache.maxsize + self.search_cache.maxsize + self.default_cache.maxsize
-        return {
-            "memory_items": memory_items,
-            "memory_max_size": memory_max_size,
-            "memory_utilization": (memory_items / memory_max_size * 100 if memory_max_size else 0),
-        }
-
-
-# Global multi-layer cache instance
-multi_layer_cache = MultiLayerCache()
-
-
-async def get_cached_search_result_ml(query: str, search_type: str) -> dict[str, Any] | None:
-    """Gets search result using multi-layer cache"""
-    cache_key = _generate_cache_key(query, search_type)
-    return await multi_layer_cache.get(cache_key, search_type)
-
-
-async def cache_search_result_ml(query: str, search_type: str, result: dict[str, Any]):
-    """Saves search result using multi-layer cache"""
-    cache_key = _generate_cache_key(query, search_type)
-    await multi_layer_cache.set(cache_key, search_type, result)
-
-
-async def get_multi_layer_cache_stats() -> dict[str, Any]:
-    """Returns multi-layer cache statistics"""
-    redis_stats = await get_cache_stats()
-    memory_stats = multi_layer_cache.get_memory_stats()
-
-    return {
-        "redis": redis_stats,
-        "memory": memory_stats,
-        "total_utilization": memory_stats["memory_utilization"],
-    }
-
-
-# ── Long Read Storage ─────────────────────────────────────────────────────────
-# Stores long AI responses in Redis for the Mini App reader.
-# Primary key:  long_msg:<uid>          — markdown text, TTL 24h
-# Fallback key: long_msg:<uid>:tg_url   — telegraph URL, no TTL (persist)
-
-_LONG_MSG_PREFIX = "long_msg:"
-_LONG_MSG_TTL = 86_400  # 24 hours
-
-
-async def store_long_message(uid: str, markdown: str, ttl: int = _LONG_MSG_TTL) -> bool:
-    """Store long message markdown in Redis. Returns False if Redis unavailable."""
-    if not redis_client:
-        return False
-    try:
-        key = f"{_LONG_MSG_PREFIX}{uid}"
-        await redis_client.setex(key, ttl, markdown.encode("utf-8"))
-        logging.debug("Stored long message uid=%s (%d chars)", uid, len(markdown))
-        return True
-    except Exception as e:
-        logging.warning("Failed to store long message uid=%s: %s", uid, e)
-        return False
-
-
-async def get_long_message(uid: str) -> str | None:
-    """Retrieve long message markdown from Redis. Returns None if missing/expired."""
-    if not redis_client:
-        return None
-    try:
-        key = f"{_LONG_MSG_PREFIX}{uid}"
-        data = await redis_client.get(key)
-        if data is None:
-            return None
-        return data.decode("utf-8") if isinstance(data, bytes) else data
-    except Exception as e:
-        logging.warning("Failed to get long message uid=%s: %s", uid, e)
-        return None
-
-
-async def store_telegraph_url(uid: str, url: str) -> bool:
-    """Persist a Telegraph fallback URL for a long message (no expiry).
-
-    This key survives after the primary long_msg key expires, providing
-    a permanent fallback once the 24h Redis window closes.
-    """
-    if not redis_client:
-        return False
-    try:
-        key = f"{_LONG_MSG_PREFIX}{uid}:tg_url"
-        await redis_client.set(key, url.encode("utf-8"))  # No TTL — persist forever
-        logging.debug("Stored telegraph fallback url uid=%s → %s", uid, url)
-        return True
-    except Exception as e:
-        logging.warning("Failed to store telegraph URL uid=%s: %s", uid, e)
-        return False
-
-
-async def get_telegraph_url(uid: str) -> str | None:
-    """Retrieve the Telegraph fallback URL for a long message."""
-    if not redis_client:
-        return None
-    try:
-        key = f"{_LONG_MSG_PREFIX}{uid}:tg_url"
-        data = await redis_client.get(key)
-        if data is None:
-            return None
-        return data.decode("utf-8") if isinstance(data, bytes) else data
-    except Exception as e:
-        logging.warning("Failed to get telegraph URL uid=%s: %s", uid, e)
-        return None
+    asyncio.create_task(cleanup_loop())
