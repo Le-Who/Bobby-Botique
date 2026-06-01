@@ -2013,6 +2013,26 @@ async def _generate_tarot_inline(
     from app.tarot import SPREAD_BY_ID, SpreadType, get_tarot_context
     from app.utils.text_format import markdown_to_html
 
+    async def _edit_failure(reason: str | None = None) -> None:
+        retry_id = _store_retry_params(
+            user_query=user_query,
+            tone_id="formal",
+            user_id=user_id,
+        )
+        reason_text = reason.strip() if reason else "Модель временно не ответила."
+        text = (
+            f"❌ Карты молчат: {reason_text}\n\n"
+            "Повторите запрос или попробуйте обычный inline-ответ — он пойдёт через другой маршрут и модель."
+        )
+        with contextlib.suppress(Exception):
+            await bot.edit_message_text(
+                inline_message_id=inline_message_id,
+                text=text[:4000],
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔄 Повторить обычным ИИ", callback_data=f"inl_retry:{retry_id}")]]
+                ),
+            )
+
     # Resolve spread
     spread = SPREAD_BY_ID.get(spread_type, SpreadType.CLASSIC)
 
@@ -2051,14 +2071,24 @@ async def _generate_tarot_inline(
     from app.providers.router import get_provider_router
 
     router = get_provider_router()
-    result, _tokens = await router.get_response(
-        preferred_model="gemini-3.5-flash",
-        history=[{"role": "user", "parts": [prompt]}],
-        system_instruction=system_instruction,
-        user_id=user_id,
-        use_openrouter=False,
-        max_key_retries=3,
-    )
+    try:
+        result, _tokens = await router.get_response(
+            preferred_model="gemini-3.5-flash",
+            history=[{"role": "user", "parts": [prompt]}],
+            system_instruction=system_instruction,
+            user_id=user_id,
+            use_openrouter=False,
+            max_key_retries=3,
+        )
+    except Exception as exc:
+        logging.error(
+            "Tarot generation exception (spread=%s): %s",
+            spread_type,
+            exc,
+            exc_info=True,
+        )
+        await _edit_failure("ошибка генерации. Попробуйте ещё раз.")
+        return
 
     if not result or not result.strip() or is_error_message(result):
         logging.error(
@@ -2066,11 +2096,12 @@ async def _generate_tarot_inline(
             spread_type,
             (result or "")[:120],
         )
-        with contextlib.suppress(Exception):
-            await bot.edit_message_text(
-                inline_message_id=inline_message_id,
-                text="❌ Карты молчат (ошибка генерации).",
-            )
+        if result and is_error_message(result):
+            from app.errors import strip_error_tag
+
+            await _edit_failure(strip_error_tag(result))
+        else:
+            await _edit_failure("пустой ответ от модели.")
         return
 
     # Defense-in-depth: strip any surrogate codepoints the LLM may emit

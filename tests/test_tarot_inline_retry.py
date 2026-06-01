@@ -11,10 +11,10 @@ These tests verify that:
 2. On total failure (empty or error message), it gracefully edits the message.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 
 def _make_bot(edit_calls: list | None = None) -> MagicMock:
     bot = MagicMock()
@@ -78,8 +78,15 @@ async def test_generate_tarot_inline_shows_error_on_total_failure():
         )
 
     bot.edit_message_text.assert_called()
-    error_text = bot.edit_message_text.call_args_list[-1][1].get("text", "")
+    final_kwargs = bot.edit_message_text.call_args_list[-1][1]
+    error_text = final_kwargs.get("text", "")
     assert "❌" in error_text
+    assert "Повтор" in error_text
+    assert "друг" in error_text.lower()
+    retry_markup = final_kwargs.get("reply_markup")
+    assert retry_markup is not None
+    retry_button = retry_markup.inline_keyboard[0][0]
+    assert retry_button.callback_data.startswith("inl_retry:")
 
 @pytest.mark.asyncio
 async def test_generate_tarot_inline_shows_error_on_error_message():
@@ -107,3 +114,32 @@ async def test_generate_tarot_inline_shows_error_on_error_message():
     bot.edit_message_text.assert_called()
     error_text = bot.edit_message_text.call_args_list[-1][1].get("text", "")
     assert "❌" in error_text
+
+
+@pytest.mark.asyncio
+async def test_generate_tarot_inline_shows_retry_on_provider_exception():
+    """Provider exceptions must not leave the inline placeholder stuck forever."""
+    from app.handlers.inline import _generate_tarot_inline
+
+    bot = _make_bot()
+
+    mock_router = AsyncMock()
+    mock_router.get_response.side_effect = RuntimeError("provider unavailable")
+
+    with patch("app.providers.router.get_provider_router", return_value=mock_router):
+        await _generate_tarot_inline(
+            bot=bot,
+            inline_message_id="test-msg-5",
+            user_query="таро",
+            user_id=456,
+            spread_type="tarot",
+        )
+
+    bot.edit_message_text.assert_called()
+    final_kwargs = bot.edit_message_text.call_args_list[-1][1]
+    error_text = final_kwargs.get("text", "")
+    assert "❌" in error_text
+    assert "Повтор" in error_text
+    retry_markup = final_kwargs.get("reply_markup")
+    assert retry_markup is not None
+    assert retry_markup.inline_keyboard[0][0].callback_data.startswith("inl_retry:")
