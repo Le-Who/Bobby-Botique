@@ -438,6 +438,7 @@ async def run_bot_with_retry():
                         update_id,
                         seen_update_ids,
                         seen_lock,
+                        payload=json_data,
                         ttl_seconds=dedup_ttl_seconds,
                         capacity=dedup_capacity,
                     ):
