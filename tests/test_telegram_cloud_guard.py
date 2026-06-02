@@ -43,6 +43,14 @@ class FakeCloudBot:
         return True
 
 
+class FailingEnterCloudBot:
+    async def __aenter__(self):
+        raise RuntimeError("BadRequest: Logged out")
+
+    async def __aexit__(self, *_args):
+        return None
+
+
 @pytest.mark.asyncio
 async def test_release_cloud_bot_api_deletes_active_webhook_before_logout() -> None:
     bot = FakeCloudBot([FakeWebhookInfo("https://example.test/webhook/token"), FakeWebhookInfo("")])
@@ -84,3 +92,11 @@ async def test_release_cloud_bot_api_treats_already_logged_out_cloud_as_released
     assert result.status == "cloud_already_released"
     assert result.delete_webhook_called is False
     assert result.log_out_called is False
+
+
+@pytest.mark.asyncio
+async def test_release_cloud_bot_api_treats_context_enter_logged_out_as_released() -> None:
+    result = await release_cloud_bot_api_session("123:test", bot_factory=lambda _token: FailingEnterCloudBot())
+
+    assert result.ok is True
+    assert result.status == "cloud_already_released"

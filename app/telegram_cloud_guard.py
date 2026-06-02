@@ -139,6 +139,16 @@ async def release_cloud_bot_api_session(
                 pending_update_count=pending_update_count,
             )
     except Exception as exc:
+        if _is_already_released_error(exc):
+            log.info("Official Telegram cloud Bot API is already released.")
+            return CloudBotApiReleaseResult(
+                ok=True,
+                status="cloud_already_released",
+                webhook_was_active=webhook_was_active,
+                delete_webhook_called=delete_called,
+                log_out_called=log_out_called,
+                pending_update_count=pending_update_count,
+            )
         return CloudBotApiReleaseResult(
             ok=False,
             status="cloud_release_failed",
