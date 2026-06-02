@@ -9,7 +9,7 @@ import logging
 import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, ApplicationHandlerStop, CommandHandler, ContextTypes, MessageHandler, filters
 
 from app.handlers import menus
 from app.i18n import t
@@ -18,6 +18,11 @@ from app.repos.conversations import get_conversation_count
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
 from app.utils.json_compat import json
+
+
+async def ignore_edited_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Stop edited command updates before CommandHandler sees effective_message."""
+    raise ApplicationHandlerStop
 
 
 @authorized_only
@@ -612,6 +617,11 @@ async def games_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 def register(application: Application) -> None:
+    application.add_handler(
+        MessageHandler(filters.UpdateType.EDITED_MESSAGE & filters.COMMAND, ignore_edited_command),
+        group=-100,
+    )
+
     # Core user commands
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("live", live_command))

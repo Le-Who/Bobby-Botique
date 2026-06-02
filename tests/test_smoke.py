@@ -144,6 +144,23 @@ class TestBotHandlerRegistration:
         commands.register(mock_app)
         assert mock_app.add_handler.call_count > 0
 
+    def test_commands_register_blocks_edited_commands_before_command_handlers(self):
+        """Edited command updates must not be reprocessed as fresh commands."""
+        from app.handlers import commands
+
+        mock_app = MagicMock()
+        mock_app.add_handler = MagicMock()
+
+        commands.register(mock_app)
+
+        guard_calls = [
+            call
+            for call in mock_app.add_handler.call_args_list
+            if call.kwargs.get("group") == -100
+            and getattr(call.args[0], "callback", None) is commands.ignore_edited_command
+        ]
+        assert guard_calls
+
     def test_callbacks_register(self):
         """callbacks.register() should not raise on a mock application."""
         from app.handlers import callbacks
