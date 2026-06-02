@@ -157,35 +157,15 @@ jobs:
             docker network create tg-net 2>/dev/null || true
             docker volume create tg-api-data 2>/dev/null || true
 
-            # ── ONE-TIME: Log out from Telegram cloud ────────────────────
-            # Flag file ensures log_out runs only on the FIRST deploy.
-            # After successful logout, the file persists and all subsequent
-            # deployments skip this step.
-            if [ ! -f /opt/tg-local-api-migrated ]; then
-              echo ">>> First-time migration: logging out from Telegram cloud servers..."
-              docker run --rm \
-                -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
-                $REGISTRY/$REPO:latest \
-                python -c "
-            import asyncio, os
-            from telegram import Bot
-
-            async def main():
-                bot = Bot(token=os.environ['TELEGRAM_BOT_TOKEN'])
-                async with bot:
-                    me = await bot.get_me()
-                    print(f'Connected as @{me.username}')
-                    result = await bot.log_out()
-                    print(f'log_out result: {result}')
-
-            asyncio.run(main())
-            "
-              touch /opt/tg-local-api-migrated
-              echo ">>> Logged out. Waiting 30s for Telegram to release the token..."
-              sleep 30
-            else
-              echo ">>> Local API migration already completed, skipping log_out."
-            fi
+            # ── Official cloud Bot API release guard ─────────────────────
+            # Local telegram-bot-api has independent webhook state. Before
+            # registering the local webhook, always clear/log out the official
+            # cloud Bot API side so both backends cannot deliver the same update.
+            echo ">>> Releasing official Telegram cloud Bot API state..."
+            docker run --rm \
+              -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+              $REGISTRY/$REPO:latest \
+              python /app/scripts/release_cloud_bot_api.py
 
             # ── Local Telegram Bot API Server ─────────────────────────────
             # Only start if not already running — this is a stable, separate

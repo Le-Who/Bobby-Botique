@@ -415,6 +415,25 @@ async def run_bot_with_retry():
             dedup_ttl_seconds = 86_400.0
             dedup_capacity = 10_000
 
+            if local_server_url:
+                from app.telegram_cloud_guard import release_cloud_bot_api_session
+
+                cloud_release = await release_cloud_bot_api_session(settings.TELEGRAM_BOT_TOKEN)
+                if not cloud_release.ok:
+                    raise RuntimeError(
+                        "Official Telegram cloud Bot API release failed before local webhook registration: "
+                        f"status={cloud_release.status} error={cloud_release.error}"
+                    )
+                logging.info(
+                    "Official Telegram cloud Bot API release guard passed: status=%s webhook_was_active=%s "
+                    "delete_webhook_called=%s log_out_called=%s pending_update_count=%s",
+                    cloud_release.status,
+                    cloud_release.webhook_was_active,
+                    cloud_release.delete_webhook_called,
+                    cloud_release.log_out_called,
+                    cloud_release.pending_update_count,
+                )
+
             # Register webhook route on Quart app
             @quart_app.route(webhook_path, methods=["POST"])
             async def webhook_handler():
