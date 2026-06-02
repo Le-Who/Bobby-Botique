@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import urllib.parse
 from datetime import UTC, date, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -14,6 +15,8 @@ from app.handlers import daily_2048 as daily_2048_handler
 from app.repos import daily_2048 as repo
 from app.web import quart_app
 from tests.factories import make_valid_init_data
+
+TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app" / "templates" / "daily_2048.html"
 
 
 def test_slide_merges_each_tile_once_and_reports_score() -> None:
@@ -474,3 +477,20 @@ async def test_admin_daily_mode_api_switches_to_2048() -> None:
 
     assert response.status_code == 200
     set_mock.assert_awaited_once_with(repo.DAILY_GAME_MODE_SETTING_KEY, "2048")
+
+
+def test_daily2048_template_has_compact_goal_theme_cycle_and_motion_hooks() -> None:
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+
+    assert "grid-template-rows: auto auto auto minmax(0, 1fr) auto" in template
+    assert 'id="theme-btn"' in template
+    assert "const THEMES = [" in template
+    for theme in ("aero", "desk", "swiss", "botanical", "deco"):
+        assert f"id: '{theme}'" in template
+        assert f'body[data-theme="{theme}"]' in template
+
+    assert "buildTileModels" in template
+    assert "lastMoveDirection" in template
+    assert ".tile.moved" in template
+    assert ".tile.merged" in template
+    assert ".tile.spawn" in template
