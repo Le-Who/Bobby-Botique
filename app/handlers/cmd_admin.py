@@ -196,7 +196,7 @@ async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tup
     active_daily_mode: str = _results[8]  # type: ignore[assignment]
     runtime_health = get_runtime_health_snapshot()
     vertex_ready = get_vertex_client() is not None
-    live_cooldown = _get_live_model_cooldown_seconds()
+    live_cooldown = await _get_live_model_cooldown_seconds()
 
     prepared_lines = [
         _daily_prep_component_line(difficulty, puzzles.get(difficulty))

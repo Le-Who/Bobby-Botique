@@ -412,7 +412,7 @@ async def run_bot_with_retry():
             webhook_secret = (settings.WEBHOOK_SECRET_TOKEN or "").strip()
             seen_update_ids: dict[int, float] = {}
             seen_lock = asyncio.Lock()
-            dedup_ttl_seconds = 180.0
+            dedup_ttl_seconds = 86_400.0
             dedup_capacity = 10_000
 
             # Register webhook route on Quart app
@@ -432,22 +432,16 @@ async def run_bot_with_retry():
 
                 update_id = json_data.get("update_id")
                 if isinstance(update_id, int):
-                    now = time.monotonic()
-                    async with seen_lock:
-                        # Opportunistic cleanup before capacity check
-                        stale = [uid for uid, ts in seen_update_ids.items() if now - ts > dedup_ttl_seconds]
-                        for uid in stale:
-                            seen_update_ids.pop(uid, None)
+                    from app.webhook_dedupe import should_accept_webhook_update
 
-                        if update_id in seen_update_ids:
-                            return "", 200
-
-                        if len(seen_update_ids) >= dedup_capacity:
-                            # Drop oldest entries first to keep memory bounded
-                            oldest = sorted(seen_update_ids.items(), key=lambda item: item[1])[: dedup_capacity // 10]
-                            for uid, _ in oldest:
-                                seen_update_ids.pop(uid, None)
-                        seen_update_ids[update_id] = now
+                    if not await should_accept_webhook_update(
+                        update_id,
+                        seen_update_ids,
+                        seen_lock,
+                        ttl_seconds=dedup_ttl_seconds,
+                        capacity=dedup_capacity,
+                    ):
+                        return "", 200
 
                 try:
                     update_obj = Update.de_json(json_data, application.bot)
@@ -575,7 +569,7 @@ async def run_bot_with_retry():
             logging.info("Stopping bot...")
             # We shield the shutdown calls to ensure they run even if the cancellation propagates
             if webhook_url:
-                await asyncio.shield(application.bot.delete_webhook())
+                logging.info("Webhook mode shutdown: preserving Telegram webhook for zero-downtime deploy.")
             else:
                 await asyncio.shield(application.updater.stop())
             await asyncio.shield(application.stop())

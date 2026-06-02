@@ -4,6 +4,7 @@ import asyncio
 import json
 import urllib.parse
 from datetime import UTC, date, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -15,6 +16,8 @@ from app.handlers import cmd_admin, daily_crocodile
 from app.repos import crocodile_daily as repo
 from app.web import quart_app
 from tests.factories import make_valid_init_data
+
+ADMIN_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app" / "templates" / "admin_dailycroc.html"
 
 
 def test_daily_score_formula() -> None:
@@ -292,10 +295,13 @@ async def test_build_dailycroc_status_snapshot_shows_hint_and_art_breakdown() ->
             return_value={"history_buffers": 0, "pending_result_buckets": 0},
         ),
         patch("app.providers.gemini.get_vertex_client", return_value=object()),
-        patch("app.web_miniapp._get_live_model_cooldown_seconds", return_value=0),
+        patch("app.web_miniapp._get_live_model_cooldown_seconds", new_callable=AsyncMock, return_value=12),
+        patch("app.config.settings", SimpleNamespace(WEBAPP_BASE_URL="https://example.test")),
     ):
         text, keyboard = await cmd_admin.build_dailycroc_status_snapshot(now=datetime(2026, 4, 23, 9, 0, tzinfo=UTC))
 
+    assert "coroutine" not in text
+    assert "Live cooldown: <code>12s</code>" in text
     assert (
         "easy (2026-04-23): <code>ready</code> · puzzle=<code>yes</code> · word=<code>крокодил</code> · hints=<code>3/3</code> · art=<code>yes</code> · gen_time=<code>23.04 09:15 Kyiv</code>"
         in text
@@ -314,6 +320,42 @@ async def test_build_dailycroc_status_snapshot_shows_hint_and_art_breakdown() ->
         "🎛 WebApp Dashboard",
         "📬 Send test to admin",
     ]
+
+
+@pytest.mark.asyncio
+async def test_admin_dailycroc_dashboard_can_toggle_delivery() -> None:
+    template = ADMIN_TEMPLATE_PATH.read_text(encoding="utf-8")
+    assert 'id="delivery-toggle-chk"' in template
+    assert "/api/admin/dailycroc/toggle-delivery" in template
+
+    client = quart_app.test_client()
+    headers = {"X-Auth-Token": "admin-secret"}
+
+    with (
+        patch("app.web._get_admin_secret", return_value="admin-secret"),
+        patch(
+            "app.repos.crocodile_daily.get_delivery_status",
+            new_callable=AsyncMock,
+            return_value={"total_subscribed": 2, "pending_today": 1},
+        ),
+        patch("app.repos.settings_repo.get_global_setting", new_callable=AsyncMock, return_value="off"),
+        patch("app.repos.settings_repo.set_global_setting", new_callable=AsyncMock) as set_mock,
+    ):
+        stats_response = await client.get("/api/admin/dailycroc/stats", headers=headers)
+        assert stats_response.status_code == 200
+        stats_payload = await stats_response.get_json()
+        assert stats_payload["delivery_enabled"] is False
+
+        toggle_response = await client.post(
+            "/api/admin/dailycroc/toggle-delivery",
+            headers=headers,
+            json={"enabled": True},
+        )
+        assert toggle_response.status_code == 200
+        toggle_payload = await toggle_response.get_json()
+
+    assert toggle_payload == {"enabled": True, "success": True}
+    set_mock.assert_awaited_once_with(repo.DAILY_DELIVERY_SETTING_KEY, "on")
 
 
 @pytest.mark.asyncio
