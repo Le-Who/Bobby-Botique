@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import html
 from datetime import date
+from pathlib import Path
+from typing import Any
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputMediaPhoto
 from telegram.constants import ParseMode
+from telegram.error import BadRequest, TelegramError
 
 from app.games import daily_2048
 from app.repos import daily_2048 as repo
+from app.repos.settings_repo import get_global_setting, set_global_setting
+
+_COVER_FILE_ID_KEY = "daily2048_cover_file_id"
+_COVER_PATH = Path(__file__).resolve().parents[2] / "artifacts" / "daily2048_cover.png"
+_cover_file_id_cache = ""
 
 
 def _format_duration(elapsed_ms: int) -> str:
@@ -22,6 +30,28 @@ def _month_key(puzzle_date: date) -> str:
 
 def _user_label(user_id: int) -> str:
     return f"игрок {str(user_id)[-4:]}"
+
+
+async def _get_cover_photo(*, force_upload: bool = False) -> str | InputFile:
+    global _cover_file_id_cache  # noqa: PLW0603
+    if not force_upload:
+        if not _cover_file_id_cache:
+            _cover_file_id_cache = await get_global_setting(_COVER_FILE_ID_KEY, "")
+        if _cover_file_id_cache:
+            return _cover_file_id_cache
+    return InputFile(_COVER_PATH.read_bytes(), filename=_COVER_PATH.name)
+
+
+async def _remember_cover_file_id(message: Any) -> None:
+    global _cover_file_id_cache  # noqa: PLW0603
+    photos = getattr(message, "photo", None) or []
+    if not photos:
+        return
+    file_id = getattr(photos[-1], "file_id", "")
+    if not file_id or file_id == _cover_file_id_cache:
+        return
+    _cover_file_id_cache = file_id
+    await set_global_setting(_COVER_FILE_ID_KEY, file_id)
 
 
 async def render_result_body(user_id: int, puzzle_date: date) -> tuple[str, InlineKeyboardMarkup]:
@@ -80,14 +110,70 @@ async def render_result_body(user_id: int, puzzle_date: date) -> tuple[str, Inli
     return "\n".join(lines), keyboard
 
 
-async def send_daily2048_result_message(bot, user_id: int, puzzle_date: date) -> None:
-    text, keyboard = await render_result_body(user_id, puzzle_date)
+async def _edit_prompt_to_result(bot, prompt: dict[str, Any], text: str, keyboard: InlineKeyboardMarkup) -> bool:
+    try:
+        await bot.edit_message_media(
+            chat_id=prompt["chat_id"],
+            message_id=prompt["message_id"],
+            media=InputMediaPhoto(
+                media=await _get_cover_photo(),
+                caption=text,
+                parse_mode=ParseMode.HTML,
+            ),
+            reply_markup=keyboard,
+        )
+        return True
+    except BadRequest as exc:
+        message = str(exc).lower()
+        if "message is not modified" in message:
+            return True
+        if "there is no text" not in message and "message to edit not found" not in message:
+            try:
+                await bot.edit_message_text(
+                    chat_id=prompt["chat_id"],
+                    message_id=prompt["message_id"],
+                    text=text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard,
+                    disable_web_page_preview=True,
+                )
+                return True
+            except TelegramError:
+                return False
+    except (OSError, TelegramError):
+        return False
+    return False
+
+
+async def _send_result_photo(bot, user_id: int, text: str, keyboard: InlineKeyboardMarkup) -> None:
+    try:
+        message = await bot.send_photo(
+            chat_id=user_id,
+            photo=await _get_cover_photo(),
+            caption=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+        await _remember_cover_file_id(message)
+        return
+    except (OSError, TelegramError):
+        pass
+
     await bot.send_message(
         chat_id=user_id,
         text=text,
         parse_mode=ParseMode.HTML,
         reply_markup=keyboard,
+        disable_web_page_preview=True,
     )
+
+
+async def send_daily2048_result_message(bot, user_id: int, puzzle_date: date) -> None:
+    text, keyboard = await render_result_body(user_id, puzzle_date)
+    prompt = await repo.get_active_prompt_message(user_id, puzzle_date)
+    if prompt and await _edit_prompt_to_result(bot, prompt, text, keyboard):
+        return
+    await _send_result_photo(bot, user_id, text, keyboard)
 
 
 async def render_completion_event(user_id: int, puzzle_date: date) -> dict:

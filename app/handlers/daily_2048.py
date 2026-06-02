@@ -8,9 +8,11 @@ from datetime import UTC, datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from app.config import settings
+from app.games.daily_2048_telegram import _get_cover_photo, _remember_cover_file_id
 from app.repos import crocodile_daily as daily_delivery_repo
 from app.repos import daily_2048 as repo
 from app.utils.decorators import safe_handler
@@ -68,15 +70,43 @@ async def send_daily2048_entry(
     reply_to_message_id: int | None = None,
     mark_delivered: bool = True,
 ) -> None:
+    caption = _entry_caption(puzzle_date)
+    keyboard = daily2048_entry_keyboard(include_subscribe=include_subscribe)
     send_kwargs = {
         "chat_id": user_id,
-        "text": _entry_caption(puzzle_date),
+        "photo": await _get_cover_photo(),
+        "caption": caption,
         "parse_mode": ParseMode.HTML,
-        "reply_markup": daily2048_entry_keyboard(include_subscribe=include_subscribe),
+        "reply_markup": keyboard,
     }
     if reply_to_message_id is not None:
         send_kwargs["reply_to_message_id"] = reply_to_message_id
-    await bot.send_message(**send_kwargs)
+    try:
+        message = await bot.send_photo(**send_kwargs)
+        await _remember_cover_file_id(message)
+        await repo.register_prompt_message(
+            user_id=user_id,
+            puzzle_date=puzzle_date,
+            chat_id=message.chat_id,
+            message_id=message.message_id,
+        )
+    except (OSError, TelegramError) as exc:
+        logger.warning("daily 2048 cover prompt failed user=%s: %s", user_id, exc)
+        fallback_kwargs = {
+            "chat_id": user_id,
+            "text": caption,
+            "parse_mode": ParseMode.HTML,
+            "reply_markup": keyboard,
+        }
+        if reply_to_message_id is not None:
+            fallback_kwargs["reply_to_message_id"] = reply_to_message_id
+        message = await bot.send_message(**fallback_kwargs)
+        await repo.register_prompt_message(
+            user_id=user_id,
+            puzzle_date=puzzle_date,
+            chat_id=message.chat_id,
+            message_id=message.message_id,
+        )
     if mark_delivered:
         pref = await daily_delivery_repo.get_preference(user_id)
         await daily_delivery_repo.mark_daily_sent(
@@ -92,12 +122,19 @@ async def send_discovery_intro(bot, user_id: int) -> bool:
         "Каждый день короткий 2048-челлендж на скорость. "
         "Собери цель дня за минимальное время и попади в таблицу месяца."
     )
-    await bot.send_message(
-        chat_id=user_id,
-        text=text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=daily2048_entry_keyboard(include_subscribe=True),
-    )
+    keyboard = daily2048_entry_keyboard(include_subscribe=True)
+    try:
+        message = await bot.send_photo(
+            chat_id=user_id,
+            photo=await _get_cover_photo(),
+            caption=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+        await _remember_cover_file_id(message)
+    except (OSError, TelegramError) as exc:
+        logger.warning("daily 2048 discovery cover failed user=%s: %s", user_id, exc)
+        await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
     await daily_delivery_repo.mark_discovery_sent(user_id)
     return True
 

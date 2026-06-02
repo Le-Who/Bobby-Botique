@@ -524,6 +524,53 @@ async def update_result_elapsed(
     return _row_to_result(rows[0]) if rows else None
 
 
+async def register_prompt_message(
+    *,
+    user_id: int,
+    puzzle_date: date,
+    chat_id: int,
+    message_id: int,
+) -> None:
+    await db.db_query(
+        """
+        INSERT INTO public.daily_2048_prompt_messages (user_id, puzzle_date, chat_id, message_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (user_id, puzzle_date) DO UPDATE SET
+            chat_id = EXCLUDED.chat_id,
+            message_id = EXCLUDED.message_id,
+            is_active = TRUE,
+            updated_at = NOW()
+        """,
+        (user_id, puzzle_date, chat_id, message_id),
+    )
+
+
+async def get_active_prompt_message(user_id: int, puzzle_date: date) -> dict[str, Any] | None:
+    rows = await db.db_query(
+        """
+        SELECT id, user_id, puzzle_date, chat_id, message_id
+        FROM public.daily_2048_prompt_messages
+        WHERE user_id = $1 AND puzzle_date = $2 AND is_active = TRUE
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+        """,
+        (user_id, puzzle_date),
+    )
+    return rows[0] if rows else None
+
+
+async def deactivate_prompt_message(user_id: int, puzzle_date: date) -> None:
+    await db.db_query(
+        """
+        UPDATE public.daily_2048_prompt_messages
+        SET is_active = FALSE,
+            updated_at = NOW()
+        WHERE user_id = $1 AND puzzle_date = $2
+        """,
+        (user_id, puzzle_date),
+    )
+
+
 async def get_leaderboard(puzzle_date: date, *, limit: int = 10) -> list[dict[str, Any]]:
     rows = await db.db_query(
         """

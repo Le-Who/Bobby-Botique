@@ -258,6 +258,8 @@ async def test_process_move_records_first_solution_then_keeps_practice_unranked(
     )
     assert practice["recordable"] is False
     assert practice["daily2048_completed"] is False
+    assert practice["status"] == "active"
+    assert practice["game_over"] is False
     assert practice["final_score"] == 5940
 
 
@@ -473,6 +475,81 @@ async def test_result_message_contains_moves_score_and_monthly_champions_button(
     assert "6120" in text
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
     assert "Лучшие за месяц" in labels
+
+
+@pytest.mark.asyncio
+async def test_daily2048_entry_uses_cover_photo_and_tracks_prompt_message() -> None:
+    sent_message = SimpleNamespace(
+        chat_id=77,
+        message_id=501,
+        photo=[SimpleNamespace(file_id="cover-file-id")],
+    )
+    bot = SimpleNamespace(
+        send_photo=AsyncMock(return_value=sent_message),
+        send_message=AsyncMock(),
+    )
+
+    with (
+        patch("app.handlers.daily_2048._get_cover_photo", new_callable=AsyncMock, return_value="cover-file-id"),
+        patch("app.handlers.daily_2048._remember_cover_file_id", new_callable=AsyncMock) as remember_mock,
+        patch("app.handlers.daily_2048.repo.register_prompt_message", new_callable=AsyncMock) as register_mock,
+        patch(
+            "app.handlers.daily_2048.daily_delivery_repo.get_preference",
+            new_callable=AsyncMock,
+            return_value={"timezone": "Europe/Kyiv"},
+        ),
+        patch("app.handlers.daily_2048.daily_delivery_repo.mark_daily_sent", new_callable=AsyncMock) as mark_mock,
+    ):
+        await daily_2048_handler.send_daily2048_entry(
+            bot,
+            77,
+            date(2026, 6, 2),
+            include_subscribe=True,
+        )
+
+    bot.send_photo.assert_awaited_once()
+    bot.send_message.assert_not_awaited()
+    assert bot.send_photo.await_args.kwargs["photo"] == "cover-file-id"
+    register_mock.assert_awaited_once_with(
+        user_id=77,
+        puzzle_date=date(2026, 6, 2),
+        chat_id=77,
+        message_id=501,
+    )
+    remember_mock.assert_awaited_once_with(sent_message)
+    mark_mock.assert_awaited_once_with(77, date(2026, 6, 2), timezone="Europe/Kyiv")
+
+
+@pytest.mark.asyncio
+async def test_daily2048_result_edits_existing_cover_prompt_instead_of_sending_new_message() -> None:
+    bot = SimpleNamespace(
+        edit_message_media=AsyncMock(),
+        edit_message_text=AsyncMock(),
+        send_photo=AsyncMock(),
+        send_message=AsyncMock(),
+    )
+
+    with (
+        patch(
+            "app.games.daily_2048_telegram.render_result_body",
+            new_callable=AsyncMock,
+            return_value=("result text", None),
+        ),
+        patch(
+            "app.games.daily_2048_telegram.repo.get_active_prompt_message",
+            new_callable=AsyncMock,
+            return_value={"id": 9, "chat_id": 77, "message_id": 501},
+        ),
+        patch("app.games.daily_2048_telegram._get_cover_photo", new_callable=AsyncMock, return_value="cover-file-id"),
+    ):
+        await daily_2048_telegram.send_daily2048_result_message(bot, 77, date(2026, 6, 2))
+
+    bot.edit_message_media.assert_awaited_once()
+    media = bot.edit_message_media.await_args.kwargs["media"]
+    assert media.media == "cover-file-id"
+    assert media.caption == "result text"
+    bot.send_photo.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio

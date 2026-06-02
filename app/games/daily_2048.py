@@ -238,11 +238,12 @@ def _event_from_result(
     spawned: dict[str, int] | None = None,
     practice: bool = False,
 ) -> dict[str, Any]:
+    public_status = "active" if practice and result.status == "practice" else result.status
     return {
         "event": "move_result",
         "board": result.board,
         "goal": goal_payload(puzzle),
-        "status": result.status,
+        "status": public_status,
         "moved": moved,
         "gained_score": gained_score,
         "spawned": spawned,
@@ -253,7 +254,7 @@ def _event_from_result(
         "final_score": result.final_score,
         "recordable": bool(result.recordable) and not practice,
         "daily2048_completed": result.status == "won" and not practice,
-        "game_over": result.status in {"won", "lost"},
+        "game_over": public_status in {"won", "lost"},
     }
 
 

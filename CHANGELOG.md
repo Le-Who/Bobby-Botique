@@ -14,11 +14,13 @@ Format is optimized for agent-parseable context.
 - **Daily-slot switch (`/set_daily_game crocodile|2048`, `global_settings.daily_game_mode`):** Admins can switch this month's active daily experience without removing Crocodile. `/dailycroc`, `/daily2048`, and scheduled daily prompts route to Daily 2048 while the mode is active, using the existing opt-in delivery audience.
 - **Prepared puzzle planner (`/admin_daily2048`, `/webapp/admin_daily2048`):** Operators can prepare boards several days ahead, set tile/total goals, tune par moves and target seconds, and provide deterministic spawn sequences for custom daily starts.
 - **Result and monthly champions flow (`app/games/daily_2048_telegram.py`, `app/handlers/daily_2048.py`):** Completion messages include score, moves, elapsed time, day leaderboard, and an inline "Лучшие за месяц" button that lists each day's top player for the selected month.
+- **Daily 2048 cover message flow (`app/handlers/daily_2048.py`, `app/games/daily_2048_telegram.py`, `scripts/migrations/049_add_daily_2048_prompt_messages.sql`):** Daily 2048 invitations now use the prepared cover as a photo message, track the prompt message, and edit that same cover message into the completion result instead of sending a separate plain-text result.
+- **Daily 2048 practice and theme palette polish (`app/games/daily_2048.py`, `app/templates/daily_2048.html`):** Post-completion practice now stays playable after the first extra move, while Aero, Desk, Swiss, and Deco tile palettes use distinct number-color routes. Leaf keeps its existing tile palette.
 
 ### ✅ Verification
 
-- `python -m pytest -q tests/test_daily_2048.py -n 0 --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_daily2048_norepeat_final2` → **15 passed**
-- `python -m pytest -o addopts='' -q -n 0 tests/test_daily_crocodile.py --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_dailycroc_final` → **26 passed**, 1 existing AsyncMock warning
+- `python -m pytest -q tests/test_daily_2048.py -n 0 --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_daily2048_current` → **24 passed**
+- `python -m pytest -o addopts='' -q -n 0 tests/test_daily_crocodile.py --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_dailycroc_2048_regression_env2` → **27 passed**
 - `python -m ruff check app/db/schema.py app/handlers/callbacks.py app/handlers/cmd_admin.py app/handlers/commands.py app/handlers/daily_crocodile.py app/handlers/daily_2048.py app/games/daily_2048.py app/games/daily_2048_telegram.py app/repos/daily_2048.py app/web.py app/web_miniapp.py tests/test_daily_2048.py` → **All checks passed**
 
 ---
