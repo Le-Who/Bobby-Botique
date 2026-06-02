@@ -1248,7 +1248,13 @@ async def daily2048_ws():
                     if practice_result is not None:
                         event = await process_practice_move(practice_result, puzzle, direction)
                     else:
-                        event = await process_move(user_id, direction, client_elapsed_ms=client_elapsed_ms)
+                        event = await process_move(
+                            user_id,
+                            direction,
+                            client_elapsed_ms=client_elapsed_ms,
+                            client_board_before=msg.get("client_board_before"),
+                            client_board_after=msg.get("client_board_after"),
+                        )
             except TimeoutError:
                 await websocket.send_json(
                     await stamp_runtime_payload(

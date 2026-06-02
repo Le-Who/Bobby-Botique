@@ -513,7 +513,7 @@ async def update_result_elapsed(
     rows = await db.db_query(
         """
         UPDATE public.daily_2048_results
-        SET elapsed_ms = GREATEST(elapsed_ms, $3),
+        SET elapsed_ms = $3,
             updated_at = NOW()
         WHERE user_id = $1 AND puzzle_date = $2 AND status = 'active'
         RETURNING user_id, puzzle_date, status, board, spawn_index, moves, merge_score,

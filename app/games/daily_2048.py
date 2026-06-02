@@ -210,7 +210,23 @@ def _resolve_elapsed_ms(
     if client_elapsed_ms is None:
         return max(result.elapsed_ms, wall_elapsed_ms)
     client_elapsed_ms = max(0, int(client_elapsed_ms))
-    return max(result.elapsed_ms, min(client_elapsed_ms, wall_elapsed_ms))
+    return min(client_elapsed_ms, wall_elapsed_ms)
+
+
+def _validated_client_move_outcome(
+    direction: str,
+    *,
+    client_board_before: Any | None,
+    client_board_after: Any | None,
+) -> MoveOutcome | None:
+    if client_board_before is None or client_board_after is None:
+        return None
+    outcome = apply_move(repo.normalize_board(client_board_before), direction)
+    if not outcome.moved:
+        return None
+    if outcome.board != repo.normalize_board(client_board_after):
+        return None
+    return outcome
 
 
 def _event_from_result(
@@ -247,13 +263,19 @@ async def process_move(
     *,
     now: datetime | None = None,
     client_elapsed_ms: int | None = None,
+    client_board_before: Any | None = None,
+    client_board_after: Any | None = None,
 ) -> dict[str, Any]:
     current_time = now or datetime.now(tz=UTC)
     puzzle, result = await get_daily_state(user_id, now=current_time)
     if result.status != "active":
         return _event_from_result(result, puzzle, moved=False)
 
-    outcome = apply_move(result.board, direction)
+    outcome = _validated_client_move_outcome(
+        direction,
+        client_board_before=client_board_before,
+        client_board_after=client_board_after,
+    ) or apply_move(result.board, direction)
     if not outcome.moved:
         return _event_from_result(result, puzzle, moved=False)
 
