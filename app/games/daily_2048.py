@@ -238,7 +238,7 @@ def _event_from_result(
     spawned: dict[str, int] | None = None,
     practice: bool = False,
 ) -> dict[str, Any]:
-    public_status = "active" if practice and result.status == "practice" else result.status
+    public_status = "active" if practice else result.status
     return {
         "event": "move_result",
         "board": result.board,
@@ -256,6 +256,26 @@ def _event_from_result(
         "daily2048_completed": result.status == "won" and not practice,
         "game_over": public_status in {"won", "lost"},
     }
+
+
+def _practice_base_result(result: repo.Daily2048Result, puzzle: repo.Daily2048Puzzle) -> repo.Daily2048Result:
+    if result.status != "lost":
+        return result
+    return repo.Daily2048Result(
+        user_id=result.user_id,
+        puzzle_date=result.puzzle_date,
+        status="practice",
+        board=_clone_board(puzzle.board),
+        spawn_index=0,
+        moves=0,
+        merge_score=0,
+        final_score=0,
+        elapsed_ms=0,
+        started_at=result.started_at,
+        won_at=result.won_at,
+        finished_at=result.finished_at,
+        recordable=False,
+    )
 
 
 async def process_move(
@@ -324,31 +344,32 @@ async def process_practice_move(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     del now
-    outcome = apply_move(result.board, direction)
+    base_result = _practice_base_result(result, puzzle)
+    outcome = apply_move(base_result.board, direction)
     if not outcome.moved:
-        practice_result = copy.copy(result)
+        practice_result = copy.copy(base_result)
         practice_result.recordable = False
         return _event_from_result(practice_result, puzzle, moved=False, practice=True)
 
     spawned = spawn_tile(
         outcome.board,
         puzzle.spawn_sequence,
-        spawn_index=result.spawn_index,
+        spawn_index=base_result.spawn_index,
         seed=f"{puzzle.seed}:practice",
     )
     practice_result = repo.Daily2048Result(
-        user_id=result.user_id,
-        puzzle_date=result.puzzle_date,
+        user_id=base_result.user_id,
+        puzzle_date=base_result.puzzle_date,
         status="practice",
         board=spawned.board,
         spawn_index=spawned.spawn_index,
-        moves=result.moves + 1,
-        merge_score=result.merge_score + outcome.gained_score,
-        final_score=result.final_score,
-        elapsed_ms=result.elapsed_ms,
-        started_at=result.started_at,
-        won_at=result.won_at,
-        finished_at=result.finished_at,
+        moves=base_result.moves + 1,
+        merge_score=base_result.merge_score + outcome.gained_score,
+        final_score=base_result.final_score,
+        elapsed_ms=base_result.elapsed_ms,
+        started_at=base_result.started_at,
+        won_at=base_result.won_at,
+        finished_at=base_result.finished_at,
         recordable=False,
     )
     return _event_from_result(

@@ -1120,6 +1120,7 @@
     const CLIENT_SESSION_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     let ws = null;
     let board = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+    let startBoard = cloneBoard(board);
     let status = 'loading';
     let recordable = true;
     let elapsedOffset = 0;
@@ -1132,6 +1133,7 @@
     let lastMoveDirection = null;
     let hasRenderedBoard = false;
     let windowFocused = true;
+    let practiceStartStatus = null;
 
     const THEMES = [
       { id: 'aero', label: 'Aero' },
@@ -1325,13 +1327,14 @@
 
     function renderBoard(next, options = {}) {
       const nextBoard = Array.isArray(next) ? cloneBoard(next) : cloneBoard(board);
-      const previous = cloneBoard(board);
+      const previous = options.instant ? cloneBoard(nextBoard) : cloneBoard(board);
+      const shouldFlash = hasRenderedBoard && !options.instant;
       const tiles = buildTileModels(previous, nextBoard, options).map(tile => (
         `<div class="tile ${tileClass(tile.value)} ${tile.state}" style="--x:${tile.x};--y:${tile.y};--from-x:${tile.fromX};--from-y:${tile.fromY}"><span>${tile.value}</span></div>`
       ));
       board = nextBoard;
       $('tiles').innerHTML = tiles.join('');
-      if (hasRenderedBoard) flashDirection(lastMoveDirection);
+      if (shouldFlash) flashDirection(lastMoveDirection);
       hasRenderedBoard = true;
       lastMoveDirection = null;
     }
@@ -1436,10 +1439,13 @@
     }
 
     function showOverlay(msg) {
-      $('overlay-title').textContent = msg.status === 'lost' ? 'Ходов больше нет' : 'Цель собрана';
+      const lost = msg.status === 'lost';
+      practiceStartStatus = lost ? 'lost' : 'won';
+      $('overlay-title').textContent = lost ? 'Ходов больше нет' : 'Цель собрана';
       $('overlay-score').textContent = msg.final_score || 0;
       $('overlay-moves').textContent = msg.moves || 0;
       $('overlay-time').textContent = fmt(msg.elapsed_ms || 0);
+      $('practice-btn').textContent = lost ? 'Начать заново' : 'Играть дальше';
       renderLeaderboard(msg.leaderboard || []);
       $('overlay').classList.add('visible');
       status = msg.status || 'won';
@@ -1468,6 +1474,7 @@
     function handleMessage(msg) {
       if (msg.event === 'game_state') {
         status = msg.status || 'active';
+        if (msg.start_board) startBoard = cloneBoard(msg.start_board);
         setGoal(msg.goal);
         renderBoard(msg.board);
         setMetrics(msg);
@@ -1476,6 +1483,7 @@
       if (msg.event === 'move_result') {
         clearPendingMove();
         if (msg.status) status = msg.status;
+        if (msg.start_board) startBoard = cloneBoard(msg.start_board);
         setGoal(msg.goal);
         renderBoard(msg.board, { spawned: msg.spawned });
         setMetrics(msg);
@@ -1484,6 +1492,7 @@
       }
       if (msg.event === 'daily2048_completed') {
         clearPendingMove();
+        if (msg.start_board) startBoard = cloneBoard(msg.start_board);
         renderBoard(msg.board);
         showOverlay(msg);
         return;
@@ -1614,11 +1623,16 @@
       $('overlay').classList.remove('visible');
       status = 'active';
       recordable = false;
+      if (practiceStartStatus === 'lost') {
+        clearPendingMove();
+        renderBoard(startBoard, { instant: true });
+        setMetrics({ moves: 0, merge_score: 0, final_score: 0, elapsed_ms: 0, recordable: false });
+      }
       $('record-state').textContent = 'PLAY';
       $('record-sub').textContent = 'практика';
       $('goal-meta').textContent = 'игра';
       resumeTimer();
-      showToast('Рекорд уже зафиксирован');
+      showToast(practiceStartStatus === 'lost' ? 'Тренировка с начала' : 'Рекорд уже зафиксирован');
     });
 
     document.addEventListener('visibilitychange', () => {

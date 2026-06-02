@@ -1113,7 +1113,7 @@ async def daily2048_ws():
 
     puzzle, result = await get_daily_state(user_id)
     runtime_id = f"daily2048:{puzzle.puzzle_date}:{user_id}"
-    practice_result = result if result.status == "won" else None
+    practice_result = result if result.status in {"won", "lost"} else None
     result_message_sent = result.status == "won"
 
     async def _completion_payload() -> dict[str, Any]:
@@ -1128,15 +1128,17 @@ async def daily2048_ws():
                 "goal": goal_payload(puzzle),
             }
 
-    def _practice_result_from_event(
+    def _result_from_event(
         event: dict[str, Any],
         fallback: daily2048_repo.Daily2048Result,
+        *,
+        status: str = "practice",
     ) -> daily2048_repo.Daily2048Result:
         finished_at = fallback.finished_at or datetime.now(tz=UTC)
         return daily2048_repo.Daily2048Result(
             user_id=user_id,
             puzzle_date=puzzle.puzzle_date,
-            status="practice",
+            status=status,
             board=event.get("board") or fallback.board,
             spawn_index=int(event.get("spawn_index") if event.get("spawn_index") is not None else fallback.spawn_index),
             moves=int(event.get("moves") if event.get("moves") is not None else fallback.moves),
@@ -1164,6 +1166,7 @@ async def daily2048_ws():
                 "daily2048": True,
                 "puzzle_date": puzzle.puzzle_date.isoformat(),
                 "board": result.board,
+                "start_board": puzzle.board,
                 "goal": goal_payload(puzzle),
                 "moves": result.moves,
                 "merge_score": result.merge_score,
@@ -1171,7 +1174,7 @@ async def daily2048_ws():
                 "final_score": result.final_score,
                 "status": result.status,
                 "recordable": result.status == "active" and result.recordable,
-                "can_practice": result.status == "won",
+                "can_practice": result.status in {"won", "lost"},
                 "par_moves": puzzle.par_moves,
                 "target_seconds": puzzle.target_seconds,
             },
@@ -1185,6 +1188,7 @@ async def daily2048_ws():
                 {
                     "event": "daily2048_completed",
                     "board": result.board,
+                    "start_board": puzzle.board,
                     "moves": result.moves,
                     "merge_score": result.merge_score,
                     "elapsed_ms": result.elapsed_ms,
@@ -1272,9 +1276,12 @@ async def daily2048_ws():
             if event.get("daily2048_completed"):
                 completion = await _completion_payload()
                 event = {**event, **completion}
-                practice_result = _practice_result_from_event(event, result)
+                practice_result = _result_from_event(event, result, status="won")
+            elif event.get("game_over") and event.get("status") == "lost":
+                event = {**event, "start_board": puzzle.board}
+                practice_result = _result_from_event(event, result, status="lost")
             elif practice_result is not None and event.get("event") == "move_result":
-                practice_result = _practice_result_from_event(event, practice_result)
+                practice_result = _result_from_event(event, practice_result)
 
             event = await stamp_runtime_payload(runtime_id, event)
             if pending_id:

@@ -264,6 +264,58 @@ async def test_process_move_records_first_solution_then_keeps_practice_unranked(
 
 
 @pytest.mark.asyncio
+async def test_process_practice_after_loss_restarts_from_daily_start_unranked() -> None:
+    puzzle = repo.Daily2048Puzzle(
+        puzzle_date=date(2026, 6, 2),
+        board=[[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+        goal_type="tile",
+        goal_value=256,
+        spawn_sequence=[{"x": 0, "y": 3, "value": 2}],
+        seed="lost-practice",
+        par_moves=12,
+        target_seconds=180,
+        status="ready",
+    )
+    lost = repo.Daily2048Result(
+        user_id=77,
+        puzzle_date=puzzle.puzzle_date,
+        status="lost",
+        board=[
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+        ],
+        spawn_index=12,
+        moves=33,
+        merge_score=960,
+        final_score=0,
+        elapsed_ms=180_000,
+        started_at=datetime(2026, 6, 2, 8, 0, tzinfo=UTC),
+        won_at=None,
+        finished_at=datetime(2026, 6, 2, 8, 3, tzinfo=UTC),
+        recordable=True,
+    )
+
+    practice = await daily_2048.process_practice_move(lost, puzzle, "right")
+
+    assert practice["status"] == "active"
+    assert practice["recordable"] is False
+    assert practice["daily2048_completed"] is False
+    assert practice["game_over"] is False
+    assert practice["moves"] == 1
+    assert practice["merge_score"] == 0
+    assert practice["elapsed_ms"] == 0
+    assert practice["final_score"] == 0
+    assert practice["board"] == [
+        [0, 0, 0, 2],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+        [2, 0, 0, 0],
+    ]
+
+
+@pytest.mark.asyncio
 async def test_process_move_uses_client_active_elapsed_without_counting_idle_time() -> None:
     puzzle = repo.Daily2048Puzzle(
         puzzle_date=date(2026, 6, 2),
@@ -686,6 +738,77 @@ async def test_daily2048_websocket_syncs_client_elapsed_without_move(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_daily2048_websocket_allows_lost_daily_to_restart_practice(monkeypatch) -> None:
+    monkeypatch.setattr("app.web_miniapp.settings", SimpleNamespace(TELEGRAM_BOT_TOKEN="test-token"))
+    init_data = make_valid_init_data("test-token", user_id=777)
+    url = f"/webapp/daily2048/ws?initData={urllib.parse.quote(init_data)}&tz=Europe%2FKyiv"
+    puzzle = repo.Daily2048Puzzle(
+        puzzle_date=date(2026, 6, 2),
+        board=[[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+        goal_type="tile",
+        goal_value=256,
+        spawn_sequence=[],
+        seed="lost-ws",
+        par_moves=12,
+        target_seconds=180,
+        status="ready",
+    )
+    lost = repo.Daily2048Result(
+        user_id=777,
+        puzzle_date=puzzle.puzzle_date,
+        status="lost",
+        board=[
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+            [2, 4, 2, 4],
+            [4, 2, 4, 2],
+        ],
+        spawn_index=12,
+        moves=33,
+        merge_score=960,
+        final_score=0,
+        elapsed_ms=180_000,
+        started_at=datetime(2026, 6, 2, 8, 0, tzinfo=UTC),
+        won_at=None,
+        finished_at=datetime(2026, 6, 2, 8, 3, tzinfo=UTC),
+        recordable=True,
+    )
+
+    with (
+        patch("app.games.daily_2048.get_daily_state", new_callable=AsyncMock, return_value=(puzzle, lost)),
+        patch("app.games.daily_2048.process_practice_move", new_callable=AsyncMock) as practice_mock,
+        patch("app.games.daily_2048.process_move", new_callable=AsyncMock) as move_mock,
+        patch("app.repos.crocodile_daily.update_timezone_if_known", new_callable=AsyncMock),
+        patch("app.repos.crocodile_daily.update_user_display_name", new_callable=AsyncMock),
+    ):
+        practice_mock.return_value = {
+            "event": "move_result",
+            "board": [[0, 0, 0, 2], [0, 0, 0, 0], [0, 0, 0, 0], [2, 0, 0, 0]],
+            "moves": 1,
+            "merge_score": 0,
+            "elapsed_ms": 0,
+            "final_score": 0,
+            "recordable": False,
+            "daily2048_completed": False,
+            "status": "active",
+            "game_over": False,
+        }
+        async with quart_app.test_client().websocket(url) as ws:
+            state = json.loads(await ws.receive())
+            assert state["event"] == "game_state"
+            assert state["status"] == "lost"
+            assert state["can_practice"] is True
+            assert state["start_board"] == puzzle.board
+            await ws.send(json.dumps({"type": "move", "direction": "right", "pending_id": "p1"}))
+            moved = json.loads(await ws.receive())
+
+    assert moved["recordable"] is False
+    practice_mock.assert_awaited_once()
+    assert practice_mock.await_args.args[0] == lost
+    move_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_dailycroc_command_opens_2048_when_admin_switch_is_active() -> None:
     update = SimpleNamespace(
         effective_user=SimpleNamespace(id=77),
@@ -860,3 +983,13 @@ def test_daily2048_template_locks_swipe_direction_and_pauses_timer_without_focus
     assert "lockedPointerDirection = directionFromDelta" in template
     assert "const direction = lockedPointerDirection || directionFromDelta" in template
     assert "addEventListener('lostpointercapture'" in template
+
+
+def test_daily2048_template_restarts_lost_daily_practice_from_start_board() -> None:
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+
+    assert "let startBoard" in template
+    assert "msg.start_board" in template
+    assert "practiceStartStatus === 'lost'" in template
+    assert "Начать заново" in template
+    assert "renderBoard(startBoard, { instant: true })" in template
