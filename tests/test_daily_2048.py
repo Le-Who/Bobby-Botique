@@ -238,7 +238,9 @@ async def test_process_move_records_first_solution_then_keeps_practice_unranked(
     with (
         patch("app.games.daily_2048.repo.ensure_today_puzzle", new_callable=AsyncMock, return_value=puzzle),
         patch("app.games.daily_2048.repo.get_or_create_result", new_callable=AsyncMock, return_value=active),
-        patch("app.games.daily_2048.repo.update_result_after_move", new_callable=AsyncMock, return_value=won) as update_mock,
+        patch(
+            "app.games.daily_2048.repo.update_result_after_move", new_callable=AsyncMock, return_value=won
+        ) as update_mock,
     ):
         event = await daily_2048.process_move(77, "left", now=datetime(2026, 6, 2, 8, 0, 30, tzinfo=UTC))
 
@@ -257,6 +259,62 @@ async def test_process_move_records_first_solution_then_keeps_practice_unranked(
     assert practice["recordable"] is False
     assert practice["daily2048_completed"] is False
     assert practice["final_score"] == 5940
+
+
+@pytest.mark.asyncio
+async def test_process_move_uses_client_active_elapsed_without_counting_idle_time() -> None:
+    puzzle = repo.Daily2048Puzzle(
+        puzzle_date=date(2026, 6, 2),
+        board=[[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+        goal_type="tile",
+        goal_value=256,
+        spawn_sequence=[{"x": 3, "y": 3, "value": 2}],
+        seed="elapsed",
+        par_moves=12,
+        target_seconds=180,
+        status="ready",
+    )
+    active = repo.Daily2048Result(
+        user_id=77,
+        puzzle_date=puzzle.puzzle_date,
+        status="active",
+        board=[[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+        spawn_index=0,
+        moves=0,
+        merge_score=0,
+        final_score=0,
+        elapsed_ms=20_000,
+        started_at=datetime(2026, 6, 2, 8, 0, tzinfo=UTC),
+        won_at=None,
+        finished_at=None,
+        recordable=True,
+    )
+    updated = repo.Daily2048Result(
+        **{
+            **active.__dict__,
+            "board": [[0, 0, 0, 2], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 2]],
+            "spawn_index": 1,
+            "moves": 1,
+            "elapsed_ms": 25_000,
+        }
+    )
+
+    with (
+        patch("app.games.daily_2048.repo.ensure_today_puzzle", new_callable=AsyncMock, return_value=puzzle),
+        patch("app.games.daily_2048.repo.get_or_create_result", new_callable=AsyncMock, return_value=active),
+        patch(
+            "app.games.daily_2048.repo.update_result_after_move", new_callable=AsyncMock, return_value=updated
+        ) as update_mock,
+    ):
+        event = await daily_2048.process_move(
+            77,
+            "right",
+            now=datetime(2026, 6, 2, 8, 10, tzinfo=UTC),
+            client_elapsed_ms=25_000,
+        )
+
+    assert update_mock.await_args.kwargs["elapsed_ms"] == 25_000
+    assert event["elapsed_ms"] == 25_000
 
 
 @pytest.mark.asyncio
@@ -347,11 +405,64 @@ async def test_daily2048_websocket_sends_explicit_goal_and_accepts_move(monkeypa
             state = json.loads(await ws.receive())
             assert state["event"] == "game_state"
             assert state["goal"]["label"] == "Собери кубик 256"
-            await ws.send(json.dumps({"type": "move", "direction": "left", "pending_id": "m1"}))
+            await ws.send(
+                json.dumps({"type": "move", "direction": "left", "pending_id": "m1", "client_elapsed_ms": 12_500})
+            )
             moved = json.loads(await ws.receive())
 
     assert moved["daily2048_completed"] is True
     move_mock.assert_awaited_once()
+    assert move_mock.await_args.kwargs["client_elapsed_ms"] == 12_500
+
+
+@pytest.mark.asyncio
+async def test_daily2048_websocket_syncs_client_elapsed_without_move(monkeypatch) -> None:
+    monkeypatch.setattr("app.web_miniapp.settings", SimpleNamespace(TELEGRAM_BOT_TOKEN="test-token"))
+    init_data = make_valid_init_data("test-token", user_id=777)
+    url = f"/webapp/daily2048/ws?initData={urllib.parse.quote(init_data)}&tz=Europe%2FKyiv"
+    puzzle = repo.Daily2048Puzzle(
+        puzzle_date=date(2026, 6, 2),
+        board=[[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+        goal_type="tile",
+        goal_value=256,
+        spawn_sequence=[],
+        seed="ws-sync",
+        par_moves=12,
+        target_seconds=180,
+        status="ready",
+    )
+    result = repo.Daily2048Result(
+        user_id=777,
+        puzzle_date=puzzle.puzzle_date,
+        status="active",
+        board=puzzle.board,
+        spawn_index=0,
+        moves=0,
+        merge_score=0,
+        final_score=0,
+        elapsed_ms=0,
+        started_at=datetime(2026, 6, 2, 8, 0, tzinfo=UTC),
+        won_at=None,
+        finished_at=None,
+        recordable=True,
+    )
+    synced = repo.Daily2048Result(**{**result.__dict__, "elapsed_ms": 19_000})
+
+    with (
+        patch("app.games.daily_2048.get_daily_state", new_callable=AsyncMock, return_value=(puzzle, result)),
+        patch("app.repos.daily_2048.update_result_elapsed", new_callable=AsyncMock, return_value=synced) as sync_mock,
+        patch("app.repos.crocodile_daily.update_timezone_if_known", new_callable=AsyncMock),
+        patch("app.repos.crocodile_daily.update_user_display_name", new_callable=AsyncMock),
+    ):
+        async with quart_app.test_client().websocket(url) as ws:
+            state = json.loads(await ws.receive())
+            assert state["event"] == "game_state"
+            await ws.send(json.dumps({"type": "sync_elapsed", "client_elapsed_ms": 19_000}))
+            synced_event = json.loads(await ws.receive())
+
+    assert synced_event["event"] == "timer_sync"
+    assert synced_event["elapsed_ms"] == 19_000
+    sync_mock.assert_awaited_once_with(user_id=777, puzzle_date=puzzle.puzzle_date, elapsed_ms=19_000)
 
 
 @pytest.mark.asyncio
@@ -494,3 +605,18 @@ def test_daily2048_template_has_compact_goal_theme_cycle_and_motion_hooks() -> N
     assert ".tile.moved" in template
     assert ".tile.merged" in template
     assert ".tile.spawn" in template
+
+
+def test_daily2048_template_uses_pointer_swipes_optimistic_moves_and_visible_timer() -> None:
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+
+    assert "addEventListener('pointerdown'" in template
+    assert "setPointerCapture" in template
+    assert "activePointerId" in template
+    assert "applyMoveClient(board, direction)" in template
+    assert "renderBoard(outcome.board" in template
+    assert "client_elapsed_ms: currentElapsedMs()" in template
+    assert "document.addEventListener('visibilitychange'" in template
+    assert "pauseTimer" in template
+    assert "resumeTimer" in template
+    assert "isSpawnedTile" in template

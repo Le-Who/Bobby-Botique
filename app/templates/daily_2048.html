@@ -173,6 +173,7 @@
         inset 0 1px 0 rgba(255, 255, 255, 0.12),
         inset 0 -18px 34px rgba(0, 0, 0, 0.18);
       position: relative;
+      touch-action: none;
     }
 
     .grid, .tiles {
@@ -1120,9 +1121,11 @@
     let board = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
     let status = 'loading';
     let recordable = true;
-    let startedAt = Date.now();
     let elapsedOffset = 0;
+    let activeStartedAt = null;
     let pendingMove = false;
+    let pendingMoveTimer = null;
+    let pendingMoveSnapshot = null;
     let tickTimer = null;
     let pendingCounter = 0;
     let lastMoveDirection = null;
@@ -1174,7 +1177,62 @@
     }
 
     function cloneBoard(source) {
-      return Array.isArray(source) ? source.map(row => Array.isArray(row) ? row.slice(0, 4) : [0, 0, 0, 0]) : [];
+      const result = [];
+      for (let y = 0; y < 4; y++) {
+        const row = Array.isArray(source?.[y]) ? source[y] : [];
+        result.push([0, 1, 2, 3].map(x => Number(row[x] || 0)));
+      }
+      return result;
+    }
+
+    function boardsEqual(a, b) {
+      const left = cloneBoard(a);
+      const right = cloneBoard(b);
+      for (let y = 0; y < 4; y++) {
+        for (let x = 0; x < 4; x++) {
+          if (left[y][x] !== right[y][x]) return false;
+        }
+      }
+      return true;
+    }
+
+    function mergeLineClient(values) {
+      const compact = values.filter(value => value > 0);
+      const merged = [];
+      let gained = 0;
+      for (let i = 0; i < compact.length; i++) {
+        if (i + 1 < compact.length && compact[i + 1] === compact[i]) {
+          const value = compact[i] * 2;
+          merged.push(value);
+          gained += value;
+          i += 1;
+        } else {
+          merged.push(compact[i]);
+        }
+      }
+      while (merged.length < 4) merged.push(0);
+      return { line: merged.slice(0, 4), gained };
+    }
+
+    function transposeClient(source) {
+      const normalized = cloneBoard(source);
+      return [0, 1, 2, 3].map(x => [0, 1, 2, 3].map(y => normalized[y][x]));
+    }
+
+    function applyMoveClient(source, direction) {
+      const normalized = cloneBoard(source);
+      const vertical = direction === 'up' || direction === 'down';
+      const reverse = direction === 'right' || direction === 'down';
+      const working = vertical ? transposeClient(normalized) : normalized;
+      let gained = 0;
+      const movedRows = working.map(row => {
+        const raw = reverse ? row.slice().reverse() : row.slice();
+        const merged = mergeLineClient(raw);
+        gained += merged.gained;
+        return reverse ? merged.line.slice().reverse() : merged.line;
+      });
+      const next = vertical ? transposeClient(movedRows) : movedRows;
+      return { board: next, moved: !boardsEqual(normalized, next), gained };
     }
 
     function flattenBoard(source) {
@@ -1212,14 +1270,24 @@
       return best;
     }
 
-    function buildTileModels(previous, next) {
+    function isSpawnedTile(tile, spawned) {
+      if (!spawned) return false;
+      return Number(spawned.x) === tile.x && Number(spawned.y) === tile.y && Number(spawned.value) === tile.value;
+    }
+
+    function buildTileModels(previous, next, options = {}) {
       const sources = flattenBoard(previous);
+      const spawned = options.spawned || null;
       const models = [];
       for (let y = 0; y < 4; y++) {
         for (let x = 0; x < 4; x++) {
           const value = Number(next[y]?.[x] || 0);
           if (!value) continue;
           const tile = { x, y, value };
+          if (isSpawnedTile(tile, spawned)) {
+            models.push({ x, y, fromX: x, fromY: y, value, state: hasRenderedBoard ? 'spawn' : '' });
+            continue;
+          }
           let source = takeSource(sources, tile, value);
           let state = 'moved';
 
@@ -1253,10 +1321,10 @@
       flashDirection._timer = setTimeout(() => boardEl.classList.remove(`move-${direction}`), 320);
     }
 
-    function renderBoard(next) {
+    function renderBoard(next, options = {}) {
       const nextBoard = Array.isArray(next) ? cloneBoard(next) : cloneBoard(board);
       const previous = cloneBoard(board);
-      const tiles = buildTileModels(previous, nextBoard).map(tile => (
+      const tiles = buildTileModels(previous, nextBoard, options).map(tile => (
         `<div class="tile ${tileClass(tile.value)} ${tile.state}" style="--x:${tile.x};--y:${tile.y};--from-x:${tile.fromX};--from-y:${tile.fromY}"><span>${tile.value}</span></div>`
       ));
       board = nextBoard;
@@ -1267,9 +1335,47 @@
     }
 
     function updateClock() {
-      if (status === 'active') {
-        $('timer').textContent = fmt(elapsedOffset + Date.now() - startedAt);
+      $('timer').textContent = fmt(currentElapsedMs());
+    }
+
+    function currentElapsedMs() {
+      return elapsedOffset + (activeStartedAt === null ? 0 : Date.now() - activeStartedAt);
+    }
+
+    function syncElapsedToServer() {
+      if (!ws || ws.readyState !== WebSocket.OPEN || status !== 'active' || !recordable) return;
+      try {
+        ws.send(JSON.stringify({ type: 'sync_elapsed', client_elapsed_ms: currentElapsedMs() }));
+      } catch {}
+    }
+
+    function pauseTimer(options = {}) {
+      if (activeStartedAt !== null) {
+        elapsedOffset = currentElapsedMs();
+        activeStartedAt = null;
       }
+      updateClock();
+      if (options.sync) syncElapsedToServer();
+    }
+
+    function resumeTimer() {
+      if (status !== 'active' || document.visibilityState === 'hidden') return;
+      if (activeStartedAt === null) activeStartedAt = Date.now();
+      if (!tickTimer) tickTimer = setInterval(updateClock, 250);
+      updateClock();
+    }
+
+    function stopTimer() {
+      pauseTimer();
+      clearInterval(tickTimer);
+      tickTimer = null;
+    }
+
+    function setServerElapsed(ms) {
+      elapsedOffset = Math.max(0, Number(ms || 0));
+      activeStartedAt = null;
+      if (status === 'active') resumeTimer();
+      else updateClock();
     }
 
     function setMetrics(msg) {
@@ -1277,14 +1383,14 @@
       if (typeof msg.final_score === 'number' && msg.final_score > 0) $('score').textContent = msg.final_score;
       else if (typeof msg.merge_score === 'number') $('score').textContent = msg.merge_score;
       if (typeof msg.elapsed_ms === 'number') {
-        elapsedOffset = msg.elapsed_ms;
-        startedAt = Date.now();
-        $('timer').textContent = fmt(elapsedOffset);
+        setServerElapsed(msg.elapsed_ms);
       }
       recordable = !!msg.recordable;
       $('record-state').textContent = recordable ? 'REC' : 'PLAY';
       $('record-sub').textContent = recordable ? 'рекорд дня' : 'практика';
       $('goal-meta').textContent = recordable ? 'зачёт' : 'игра';
+      if (status === 'active') resumeTimer();
+      else stopTimer();
     }
 
     function setGoal(goal) {
@@ -1351,39 +1457,62 @@
         setGoal(msg.goal);
         renderBoard(msg.board);
         setMetrics(msg);
-        if (status === 'active') {
-          startedAt = Date.now();
-          clearInterval(tickTimer);
-          tickTimer = setInterval(updateClock, 500);
-        }
         return;
       }
       if (msg.event === 'move_result') {
-        pendingMove = false;
+        clearPendingMove();
+        if (msg.status) status = msg.status;
         setGoal(msg.goal);
-        renderBoard(msg.board);
+        renderBoard(msg.board, { spawned: msg.spawned });
         setMetrics(msg);
         if (msg.daily2048_completed || msg.game_over) showOverlay(msg);
         return;
       }
       if (msg.event === 'daily2048_completed') {
+        clearPendingMove();
         renderBoard(msg.board);
         showOverlay(msg);
         return;
       }
+      if (msg.event === 'timer_sync') {
+        if (typeof msg.elapsed_ms === 'number') setServerElapsed(msg.elapsed_ms);
+        return;
+      }
       if (msg.event === 'error') {
-        pendingMove = false;
+        if (pendingMoveSnapshot) renderBoard(pendingMoveSnapshot);
+        clearPendingMove();
         showToast(msg.message || 'Ошибка');
       }
     }
 
+    function clearPendingMove() {
+      pendingMove = false;
+      pendingMoveSnapshot = null;
+      clearTimeout(pendingMoveTimer);
+      pendingMoveTimer = null;
+    }
+
     function sendMove(direction) {
       if (!ws || ws.readyState !== WebSocket.OPEN || pendingMove || status !== 'active') return;
+      const outcome = applyMoveClient(board, direction);
+      if (!outcome.moved) return;
+      pendingMoveSnapshot = cloneBoard(board);
       pendingMove = true;
       lastMoveDirection = direction;
       tg?.HapticFeedback?.impactOccurred('light');
-      ws.send(JSON.stringify({ type: 'move', direction, pending_id: `m${++pendingCounter}` }));
-      setTimeout(() => { pendingMove = false; }, 900);
+      renderBoard(outcome.board, { optimistic: true });
+      const pendingId = `m${++pendingCounter}`;
+      ws.send(JSON.stringify({
+        type: 'move',
+        direction,
+        pending_id: pendingId,
+        client_elapsed_ms: currentElapsedMs()
+      }));
+      clearTimeout(pendingMoveTimer);
+      pendingMoveTimer = setTimeout(() => {
+        pendingMoveTimer = null;
+        showToast('Ждём сервер');
+      }, 5000);
     }
 
     $('theme-btn').addEventListener('click', () => {
@@ -1409,21 +1538,53 @@
       }
     });
 
-    let touchStart = null;
-    $('board').addEventListener('touchstart', ev => {
-      const touch = ev.changedTouches[0];
-      touchStart = { x: touch.clientX, y: touch.clientY };
+    const boardInput = $('board');
+    let activePointerId = null;
+    let pointerStart = null;
+    let pointerLast = null;
+
+    function directionFromDelta(dx, dy) {
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+      if (Math.max(absX, absY) < 30) return null;
+      if (absX >= absY * 1.12) return dx > 0 ? 'right' : 'left';
+      if (absY >= absX * 1.12) return dy > 0 ? 'down' : 'up';
+      return null;
+    }
+
+    function resetPointer() {
+      activePointerId = null;
+      pointerStart = null;
+      pointerLast = null;
+    }
+
+    boardInput.addEventListener('pointerdown', ev => {
+      if (activePointerId !== null || (ev.pointerType === 'mouse' && ev.button !== 0)) return;
+      activePointerId = ev.pointerId;
+      pointerStart = { x: ev.clientX, y: ev.clientY };
+      pointerLast = pointerStart;
+      boardInput.setPointerCapture?.(ev.pointerId);
+      ev.preventDefault();
     }, { passive: false });
-    $('board').addEventListener('touchmove', ev => ev.preventDefault(), { passive: false });
-    $('board').addEventListener('touchend', ev => {
-      if (!touchStart) return;
-      const touch = ev.changedTouches[0];
-      const dx = touch.clientX - touchStart.x;
-      const dy = touch.clientY - touchStart.y;
-      touchStart = null;
-      if (Math.max(Math.abs(dx), Math.abs(dy)) < 28) return;
-      sendMove(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
+
+    boardInput.addEventListener('pointermove', ev => {
+      if (ev.pointerId !== activePointerId) return;
+      pointerLast = { x: ev.clientX, y: ev.clientY };
+      ev.preventDefault();
     }, { passive: false });
+
+    boardInput.addEventListener('pointerup', ev => {
+      if (ev.pointerId !== activePointerId || !pointerStart) return;
+      pointerLast = { x: ev.clientX, y: ev.clientY };
+      const dx = pointerLast.x - pointerStart.x;
+      const dy = pointerLast.y - pointerStart.y;
+      const direction = directionFromDelta(dx, dy);
+      resetPointer();
+      if (direction) sendMove(direction);
+      ev.preventDefault();
+    }, { passive: false });
+
+    boardInput.addEventListener('pointercancel', resetPointer);
 
     $('practice-btn').addEventListener('click', () => {
       $('overlay').classList.remove('visible');
@@ -1432,8 +1593,18 @@
       $('record-state').textContent = 'PLAY';
       $('record-sub').textContent = 'практика';
       $('goal-meta').textContent = 'игра';
+      resumeTimer();
       showToast('Рекорд уже зафиксирован');
     });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') pauseTimer({ sync: true });
+      else resumeTimer();
+    });
+    window.addEventListener('blur', () => pauseTimer({ sync: true }));
+    window.addEventListener('focus', resumeTimer);
+    window.addEventListener('pagehide', () => pauseTimer({ sync: true }));
+    window.addEventListener('pageshow', resumeTimer);
 
     initTheme();
     connect();

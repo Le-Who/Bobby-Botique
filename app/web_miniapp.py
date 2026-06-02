@@ -1149,6 +1149,13 @@ async def daily2048_ws():
             recordable=False,
         )
 
+    def _client_elapsed_ms(payload: dict[str, Any]) -> int | None:
+        try:
+            value = int(payload.get("client_elapsed_ms"))
+        except (TypeError, ValueError):
+            return None
+        return max(0, min(value, 24 * 60 * 60 * 1000))
+
     await websocket.send_json(
         await stamp_runtime_payload(
             runtime_id,
@@ -1202,7 +1209,31 @@ async def daily2048_ws():
                 await websocket.send_json({"event": "error", "message": "Invalid JSON"})
                 continue
 
-            if msg.get("type") != "move":
+            msg_type = msg.get("type")
+            client_elapsed_ms = _client_elapsed_ms(msg)
+
+            if msg_type == "sync_elapsed":
+                if practice_result is None and client_elapsed_ms is not None:
+                    try:
+                        async with game_mutation_lock(f"daily2048:{puzzle.puzzle_date}:{user_id}:timer"):
+                            synced_result = await daily2048_repo.update_result_elapsed(
+                                user_id=user_id,
+                                puzzle_date=puzzle.puzzle_date,
+                                elapsed_ms=client_elapsed_ms,
+                            )
+                            if synced_result is not None:
+                                result = synced_result
+                                await websocket.send_json(
+                                    await stamp_runtime_payload(
+                                        runtime_id,
+                                        {"event": "timer_sync", "elapsed_ms": result.elapsed_ms},
+                                    )
+                                )
+                    except Exception as exc:
+                        logger.debug("daily2048_ws: elapsed sync failed user=%s: %s", user_id, exc)
+                continue
+
+            if msg_type != "move":
                 continue
             direction = str(msg.get("direction") or "")
             pending_id = str(msg.get("pending_id") or "")
@@ -1217,7 +1248,7 @@ async def daily2048_ws():
                     if practice_result is not None:
                         event = await process_practice_move(practice_result, puzzle, direction)
                     else:
-                        event = await process_move(user_id, direction)
+                        event = await process_move(user_id, direction, client_elapsed_ms=client_elapsed_ms)
             except TimeoutError:
                 await websocket.send_json(
                     await stamp_runtime_payload(

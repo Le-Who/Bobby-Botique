@@ -504,6 +504,26 @@ async def update_result_after_move(
     raise RuntimeError(f"daily 2048 result missing for user={user_id} date={puzzle_date}")
 
 
+async def update_result_elapsed(
+    *,
+    user_id: int,
+    puzzle_date: date,
+    elapsed_ms: int,
+) -> Daily2048Result | None:
+    rows = await db.db_query(
+        """
+        UPDATE public.daily_2048_results
+        SET elapsed_ms = GREATEST(elapsed_ms, $3),
+            updated_at = NOW()
+        WHERE user_id = $1 AND puzzle_date = $2 AND status = 'active'
+        RETURNING user_id, puzzle_date, status, board, spawn_index, moves, merge_score,
+                  final_score, elapsed_ms, started_at, won_at, finished_at, recordable
+        """,
+        (user_id, puzzle_date, max(0, int(elapsed_ms))),
+    )
+    return _row_to_result(rows[0]) if rows else None
+
+
 async def get_leaderboard(puzzle_date: date, *, limit: int = 10) -> list[dict[str, Any]]:
     rows = await db.db_query(
         """

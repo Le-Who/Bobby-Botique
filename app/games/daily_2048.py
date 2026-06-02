@@ -93,10 +93,7 @@ def apply_move(board: Board, direction: Direction) -> MoveOutcome:
 
 def _available_cells(board: Board) -> list[tuple[int, int]]:
     return [
-        (x, y)
-        for y, row in enumerate(repo.normalize_board(board))
-        for x, value in enumerate(row)
-        if int(value) == 0
+        (x, y) for y, row in enumerate(repo.normalize_board(board)) for x, value in enumerate(row) if int(value) == 0
     ]
 
 
@@ -204,6 +201,18 @@ def _elapsed_ms(started_at: datetime, now: datetime) -> int:
     return max(0, int((current - started).total_seconds() * 1000))
 
 
+def _resolve_elapsed_ms(
+    result: repo.Daily2048Result,
+    now: datetime,
+    client_elapsed_ms: int | None,
+) -> int:
+    wall_elapsed_ms = _elapsed_ms(result.started_at, now)
+    if client_elapsed_ms is None:
+        return max(result.elapsed_ms, wall_elapsed_ms)
+    client_elapsed_ms = max(0, int(client_elapsed_ms))
+    return max(result.elapsed_ms, min(client_elapsed_ms, wall_elapsed_ms))
+
+
 def _event_from_result(
     result: repo.Daily2048Result,
     puzzle: repo.Daily2048Puzzle,
@@ -237,6 +246,7 @@ async def process_move(
     direction: str,
     *,
     now: datetime | None = None,
+    client_elapsed_ms: int | None = None,
 ) -> dict[str, Any]:
     current_time = now or datetime.now(tz=UTC)
     puzzle, result = await get_daily_state(user_id, now=current_time)
@@ -256,13 +266,11 @@ async def process_move(
     next_board = spawned.board
     moves = result.moves + 1
     merge_score = result.merge_score + outcome.gained_score
-    elapsed_ms = _elapsed_ms(result.started_at, current_time)
+    elapsed_ms = _resolve_elapsed_ms(result, current_time, client_elapsed_ms)
     won = goal_reached(next_board, puzzle)
     lost = not won and not moves_available(next_board)
     status = "won" if won else "lost" if lost else "active"
-    final_score = (
-        compute_final_score(puzzle, moves=moves, elapsed_ms=elapsed_ms, merge_score=merge_score) if won else 0
-    )
+    final_score = compute_final_score(puzzle, moves=moves, elapsed_ms=elapsed_ms, merge_score=merge_score) if won else 0
     updated = await repo.update_result_after_move(
         user_id=user_id,
         puzzle_date=puzzle.puzzle_date,
