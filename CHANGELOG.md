@@ -17,12 +17,15 @@ Format is optimized for agent-parseable context.
 - **Daily 2048 cover message flow (`app/handlers/daily_2048.py`, `app/games/daily_2048_telegram.py`, `scripts/migrations/049_add_daily_2048_prompt_messages.sql`):** Daily 2048 invitations now use the prepared cover as a photo message, track the prompt message, and edit that same cover message into the completion result instead of sending a separate plain-text result.
 - **Daily 2048 practice and theme palette polish (`app/games/daily_2048.py`, `app/templates/daily_2048.html`):** Post-completion practice now stays playable after the first extra move, while Aero, Desk, Swiss, and Deco tile palettes use distinct number-color routes. Leaf keeps its existing tile palette.
 - **Daily 2048 loss practice restart (`app/games/daily_2048.py`, `app/web_miniapp.py`, `app/templates/daily_2048.html`):** Players who run out of moves can enter unranked practice too; because the lost board has no legal moves, practice restarts from the daily starting board with zero practice moves, score, and timer.
+- **Daily 2048 mobile gesture lock (`app/templates/daily_2048.html`):** The Mini App now disables Telegram vertical close/minimize swipes where the client supports it and blocks browser touch scrolling while the game is open, so downward moves stay inside the 2048 board.
 
 ### ✅ Verification
 
-- `python -m pytest -q tests/test_daily_2048.py -n 0 --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_daily2048_lost_practice` → **27 passed**
+- `python -m pytest -q tests/test_daily_2048.py -n 0 --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_daily2048_swipe_lock` → **28 passed**
 - `python -m pytest -o addopts='' -q -n 0 tests/test_daily_crocodile.py --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_dailycroc_2048_regression_env2` → **27 passed**
 - `python -m ruff check app/db/schema.py app/handlers/callbacks.py app/handlers/cmd_admin.py app/handlers/commands.py app/handlers/daily_crocodile.py app/handlers/daily_2048.py app/games/daily_2048.py app/games/daily_2048_telegram.py app/repos/daily_2048.py app/web.py app/web_miniapp.py tests/test_daily_2048.py` → **All checks passed**
+- `python scripts/check_encoding.py` → **passed**
+- `node -e "<daily_2048.html script parse>"` → **daily_2048.html script parses**
 
 ---
 

@@ -985,6 +985,20 @@ def test_daily2048_template_locks_swipe_direction_and_pauses_timer_without_focus
     assert "addEventListener('lostpointercapture'" in template
 
 
+def test_daily2048_template_disables_telegram_vertical_swipes() -> None:
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+
+    assert "overscroll-behavior: none" in template
+    assert "function disableTelegramVerticalSwipes()" in template
+    assert "tg?.disableVerticalSwipes?.()" in template
+    assert "document.addEventListener('touchmove'" in template
+    assert "ev.preventDefault()" in template
+    assert "passive: false" in template
+    assert "disableTelegramVerticalSwipes();" in template
+    assert "'activated'" in template
+    assert "window.addEventListener('pageshow'" in template
+
+
 def test_daily2048_template_restarts_lost_daily_practice_from_start_board() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
 

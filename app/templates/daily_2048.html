@@ -31,7 +31,7 @@
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-    html, body { height: 100%; overflow: hidden; }
+    html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
     body {
       background:
         linear-gradient(135deg, rgba(242, 186, 87, 0.08), transparent 28%),
@@ -41,6 +41,7 @@
       font-family: var(--font);
       user-select: none;
       touch-action: none;
+      overscroll-behavior: none;
     }
 
     #app {
@@ -49,6 +50,8 @@
       grid-template-rows: auto 1fr auto;
       padding: max(14px, env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom));
       gap: 12px;
+      touch-action: none;
+      overscroll-behavior: none;
     }
 
     .top {
@@ -1111,8 +1114,14 @@
 
   <script>
     const tg = window.Telegram?.WebApp;
+
+    function disableTelegramVerticalSwipes() {
+      try { tg?.disableVerticalSwipes?.(); } catch {}
+    }
+
     tg?.ready();
     tg?.expand();
+    disableTelegramVerticalSwipes();
 
     const $ = id => document.getElementById(id);
     const INIT_DATA = tg?.initData || new URLSearchParams(location.search).get('initData') || '';
@@ -1564,6 +1573,10 @@
       }
     });
 
+    document.addEventListener('touchmove', ev => {
+      ev.preventDefault();
+    }, { passive: false });
+
     const boardInput = $('board');
     let activePointerId = null;
     let pointerStart = null;
@@ -1645,11 +1658,13 @@
     });
     window.addEventListener('focus', () => {
       windowFocused = true;
+      disableTelegramVerticalSwipes();
       resumeTimer();
     });
     window.addEventListener('pagehide', () => pauseTimer({ sync: true }));
     window.addEventListener('pageshow', () => {
       windowFocused = true;
+      disableTelegramVerticalSwipes();
       resumeTimer();
     });
     try {
@@ -1659,6 +1674,7 @@
       });
       tg?.onEvent?.('activated', () => {
         windowFocused = true;
+        disableTelegramVerticalSwipes();
         resumeTimer();
       });
     } catch {}
