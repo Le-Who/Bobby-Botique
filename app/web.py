@@ -34,12 +34,15 @@ from quart import (
 
 from app import database
 from app.config import settings
+from app.games import daily_2048 as daily_2048_game
+from app.repos import daily_2048 as daily_2048_repo
 from app.repos.metrics_repo import (
     get_active_key_info,
     get_gemini_key_usage_stats,
     get_supabase_metrics,
     get_tavily_key_usage_stats,
 )
+from app.repos.settings_repo import set_global_setting
 from app.utils.json_compat import json
 
 # --- QUART APP SETUP ---
@@ -1057,3 +1060,108 @@ async def api_admin_dailycroc_toggle_delivery():
     except Exception as exc:
         logging.error("Failed to toggle daily croc delivery: %s", exc, exc_info=True)
         return jsonify({"error": "toggle_failed", "detail": str(exc)}), 500
+
+
+# ── Admin Daily 2048 Sprint Dashboard ───────────────────────────────────
+
+
+def _serialize_daily2048_puzzle(puzzle: daily_2048_repo.Daily2048Puzzle) -> dict:
+    return {
+        "date": puzzle.puzzle_date.isoformat(),
+        "board": puzzle.board,
+        "goal_type": puzzle.goal_type,
+        "goal_value": puzzle.goal_value,
+        "goal_label": daily_2048_game.goal_payload(puzzle)["label"],
+        "spawn_sequence": puzzle.spawn_sequence,
+        "seed": puzzle.seed,
+        "par_moves": puzzle.par_moves,
+        "target_seconds": puzzle.target_seconds,
+        "status": puzzle.status,
+        "solution_moves": puzzle.solution_moves,
+        "prepared_at": puzzle.prepared_at.isoformat() if puzzle.prepared_at else "",
+    }
+
+
+@quart_app.route("/admin_daily2048")
+@require_auth
+async def admin_daily2048_page():
+    """Serve the Daily 2048 Sprint Admin Dashboard."""
+    return await render_template("admin_daily2048.html")
+
+
+@quart_app.route("/api/admin/daily2048", methods=["GET"])
+@require_auth
+async def api_admin_daily2048_list():
+    try:
+        limit = int(request.args.get("limit", 20))
+    except ValueError:
+        limit = 20
+    puzzles = await daily_2048_repo.list_puzzles(limit=max(1, min(limit, 90)))
+    return jsonify({"puzzles": [_serialize_daily2048_puzzle(puzzle) for puzzle in puzzles]})
+
+
+@quart_app.route("/api/admin/daily2048/puzzle", methods=["POST"])
+@require_auth
+@rate_limit_api
+async def api_admin_daily2048_save_puzzle():
+    data = await request.get_json()
+    if not data:
+        return jsonify({"error": "invalid json"}), 400
+    try:
+        puzzle_date = datetime.date.fromisoformat(str(data.get("date") or ""))
+        board = daily_2048_repo.normalize_board(data.get("board"))
+        goal_type = daily_2048_repo.normalize_goal_type(str(data.get("goal_type") or "tile"))
+        goal_value = int(data.get("goal_value") or 512)
+        spawn_sequence = daily_2048_repo.normalize_spawn_sequence(data.get("spawn_sequence"))
+        seed = str(data.get("seed") or f"custom:{puzzle_date.isoformat()}").strip()
+        par_moves = int(data.get("par_moves") or daily_2048_repo.DEFAULT_PAR_MOVES)
+        target_seconds = int(data.get("target_seconds") or daily_2048_repo.DEFAULT_TARGET_SECONDS)
+        status = str(data.get("status") or "draft").strip().lower()
+        solution_moves = str(data.get("solution_moves") or "")
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid puzzle payload"}), 400
+
+    if status not in {"draft", "ready", "disabled"}:
+        return jsonify({"error": "invalid status"}), 400
+    if goal_value < 8:
+        return jsonify({"error": "invalid goal_value"}), 400
+
+    puzzle = await daily_2048_repo.upsert_puzzle(
+        puzzle_date,
+        board=board,
+        goal_type=goal_type,
+        goal_value=goal_value,
+        spawn_sequence=spawn_sequence,
+        seed=seed,
+        par_moves=par_moves,
+        target_seconds=target_seconds,
+        status=status,
+        solution_moves=solution_moves,
+    )
+    return jsonify({"success": True, "puzzle": _serialize_daily2048_puzzle(puzzle)})
+
+
+@quart_app.route("/api/admin/daily2048/generate", methods=["POST"])
+@require_auth
+@rate_limit_api
+async def api_admin_daily2048_generate_default():
+    data = await request.get_json() or {}
+    try:
+        puzzle_date = datetime.date.fromisoformat(str(data.get("date") or daily_2048_repo.today_puzzle_date()))
+    except ValueError:
+        return jsonify({"error": "invalid date"}), 400
+    puzzle = await daily_2048_repo.ensure_puzzle(puzzle_date)
+    return jsonify({"success": True, "puzzle": _serialize_daily2048_puzzle(puzzle)})
+
+
+@quart_app.route("/api/admin/daily-mode", methods=["POST"])
+@require_auth
+async def api_admin_daily_mode():
+    data = await request.get_json()
+    if not data:
+        return jsonify({"error": "invalid json"}), 400
+    mode = str(data.get("mode") or "").strip().lower()
+    if mode not in {daily_2048_repo.DAILY_GAME_MODE_CROCODILE, daily_2048_repo.DAILY_GAME_MODE_2048}:
+        return jsonify({"error": "invalid mode"}), 400
+    await set_global_setting(daily_2048_repo.DAILY_GAME_MODE_SETTING_KEY, mode)
+    return jsonify({"success": True, "mode": mode})

@@ -616,9 +616,11 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("live", live_command))
     application.add_handler(CommandHandler("games", games_command))
+    from app.handlers.daily_2048 import daily2048_command
     from app.handlers.daily_crocodile import dailycroc_command
 
     application.add_handler(CommandHandler("dailycroc", dailycroc_command))
+    application.add_handler(CommandHandler("daily2048", daily2048_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("newchat", new_chat_command))
     application.add_handler(CommandHandler("model", model_command))
@@ -660,10 +662,11 @@ def register(application: Application) -> None:
         register_group_command,
         reload_config_command,
         role_conv_metrics_command,
+        set_daily_game_command,
         set_dailycroc_delivery_command,
         set_dailycroc_model_command,
-        set_inline_model_command,
         set_dailycroc_placeholder_command,
+        set_inline_model_command,
         set_inline_tabs_command,
         set_inline_thinking_command,
         set_provider_command,
@@ -689,6 +692,7 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("registergroup", register_group_command))
     application.add_handler(CommandHandler("groupstats", group_stats_command))
     application.add_handler(CommandHandler("set_dailycroc_delivery", set_dailycroc_delivery_command))
+    application.add_handler(CommandHandler("set_daily_game", set_daily_game_command))
     application.add_handler(CommandHandler("set_dailycroc_model", set_dailycroc_model_command))
     application.add_handler(CommandHandler("set_inline_model", set_inline_model_command))
     application.add_handler(CommandHandler("dailycroc_status", dailycroc_status_command))

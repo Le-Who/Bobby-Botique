@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 
 from app.config import settings
 from app.repos import crocodile_daily as repo
+from app.repos.daily_2048 import get_active_daily_game_mode
 from app.repos.settings_repo import get_global_setting
 from app.utils.decorators import safe_handler
 
@@ -242,6 +243,22 @@ async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not update.effective_user or not update.message:
         return
     user_id = update.effective_user.id
+    if await get_active_daily_game_mode() == "2048":
+        from app.handlers.daily_2048 import send_daily2048_entry
+        from app.repos import daily_2048 as daily2048_repo
+
+        today_2048 = daily2048_repo.today_puzzle_date(datetime.now(tz=UTC))
+        await daily2048_repo.ensure_puzzle(today_2048)
+        pref_2048 = await repo.get_preference(user_id)
+        await send_daily2048_entry(
+            context.bot,
+            user_id,
+            today_2048,
+            include_subscribe=not bool(pref_2048 and pref_2048.get("is_subscribed")),
+            reply_to_message_id=update.message.message_id,
+            mark_delivered=False,
+        )
+        return
     await repo.record_player_activity(user_id, event="daily_played")
     pref = await repo.get_preference(user_id)
     is_subscribed = bool(pref and pref.get("is_subscribed"))
@@ -332,6 +349,12 @@ async def daily_unsubscribe_callback(update: Update, context: ContextTypes.DEFAU
 async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
     from app.admin_alerts import AlertSeverity, alert_admin
     from app.games.crocodile_daily import active_daily_difficulties, ensure_prepared_puzzles
+
+    if await get_active_daily_game_mode() == "2048":
+        from app.handlers.daily_2048 import check_daily_2048_jobs
+
+        await check_daily_2048_jobs(context)
+        return
 
     now = datetime.now(tz=UTC)
     try:

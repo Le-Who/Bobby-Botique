@@ -28,6 +28,8 @@ EXPECTED_TABLES = frozenset(
         "crocodile_daily_results",
         "crocodile_daily_prompt_messages",
         "crocodile_player_activity",
+        "daily_2048_puzzles",
+        "daily_2048_results",
         "error_logs",
         "tavily_api_keys",
         "tavily_key_usage",

@@ -22,6 +22,7 @@ from app.metrics import role_conv_metrics
 from app.prompt_registry import DEFAULT_ROLES
 from app.queue import task_queue
 from app.repos import crocodile_daily as daily_croc_repo
+from app.repos import daily_2048 as daily_2048_repo
 from app.repos.admin import (
     authorize_user,
     clear_old_metrics,
@@ -182,6 +183,7 @@ async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tup
         get_crocodile_runtime_switches(),
         get_hint_prewarm_health(),
         get_global_setting(daily_croc_repo.DAILY_IMAGE_MODEL_SETTING_KEY, "pollinations"),
+        get_global_setting(daily_2048_repo.DAILY_GAME_MODE_SETTING_KEY, daily_2048_repo.DAILY_GAME_MODE_CROCODILE),
     )
     stats: dict = _results[0]  # type: ignore[assignment]
     puzzles: dict = _results[1]  # type: ignore[assignment]
@@ -191,6 +193,7 @@ async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tup
     switches: dict = _results[5]  # type: ignore[assignment]
     hint_health: dict = _results[6]  # type: ignore[assignment]
     image_model_raw: str = _results[7]  # type: ignore[assignment]
+    active_daily_mode: str = _results[8]  # type: ignore[assignment]
     runtime_health = get_runtime_health_snapshot()
     vertex_ready = get_vertex_client() is not None
     live_cooldown = _get_live_model_cooldown_seconds()
@@ -203,6 +206,7 @@ async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tup
     lines = [
         f"🐊 <b>Daily Crocodile — {today.isoformat()}</b>",
         "",
+        f"🎛 <b>Активная daily-игра:</b> <code>{html.escape(active_daily_mode)}</code>",
         f"📨 <b>Рассылка:</b> {'включена ✅' if delivery_on == 'on' else 'выключена ❌'}",
         f"🖼 <b>Placeholder:</b> {'установлен ✅' if placeholder else 'не задан ⚠️'}",
         f"🎨 <b>Image model:</b> <code>{image_model_raw}</code>",
@@ -776,6 +780,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "*🗂 Word Bank:*\n"
             "• `/wordbank` — управление банком слов (статистика, генерация, дубли)\n\n"
             "*🐊 Daily Crocodile:*\n"
+            "• `/set_daily_game crocodile|2048` — выбрать активную daily-игру месяца\n"
             "• `/set_dailycroc_delivery on|off` — включить/выключить исходящую daily-рассылку\n"
             "• `/dailycroc_status` — снимок подписок/готовности на сегодня + кнопки Refresh и Prep check\n"
             "• `/set_dailycroc_placeholder` — реплайни на фото, чтобы задать баннер рассылки\n\n"
@@ -933,6 +938,12 @@ async def set_inline_tabs_command(update: Update, context: ContextTypes.DEFAULT_
 
 _VALID_PROVIDERS = frozenset({"opencode", "gemini", "freetheai"})
 _VALID_ON_OFF_VALUES = frozenset({"on", "off"})
+_VALID_DAILY_GAME_MODES = frozenset(
+    {
+        daily_2048_repo.DAILY_GAME_MODE_CROCODILE,
+        daily_2048_repo.DAILY_GAME_MODE_2048,
+    }
+)
 
 
 @admin_only
@@ -984,6 +995,37 @@ async def set_provider_command(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text(
         f"✅ <b>Провайдер переключён:</b> {label}\n"
         "Все новые запросы будут маршрутизироваться через выбранный провайдер.",
+        parse_mode="HTML",
+    )
+
+
+@admin_only
+async def set_daily_game_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Switch which daily game is opened and delivered to subscribers."""
+
+    args = context.args or []
+
+    if not args or args[0].lower() not in _VALID_DAILY_GAME_MODES:
+        current = await get_global_setting(
+            daily_2048_repo.DAILY_GAME_MODE_SETTING_KEY,
+            daily_2048_repo.DAILY_GAME_MODE_CROCODILE,
+        )
+        await update.message.reply_text(
+            f"🎛 <b>Активная daily-игра:</b> <code>{html.escape(current)}</code>\n\n"
+            "Использование: <code>/set_daily_game &lt;crocodile|2048&gt;</code>\n\n"
+            "• <code>crocodile</code> — вернуть Daily Crocodile\n"
+            "• <code>2048</code> — заменить daily-слот на Daily 2048 Sprint\n",
+            parse_mode="HTML",
+        )
+        return
+
+    value = args[0].lower()
+    await set_global_setting(daily_2048_repo.DAILY_GAME_MODE_SETTING_KEY, value)
+    logging.info("Admin %s set active daily game → %s", update.effective_user.id, value)
+    label = "Daily 2048 Sprint" if value == daily_2048_repo.DAILY_GAME_MODE_2048 else "Daily Crocodile"
+    await update.message.reply_text(
+        f"✅ Активная daily-игра: <b>{label}</b>\n"
+        "Команда /dailycroc и hourly scheduler теперь используют выбранный режим.",
         parse_mode="HTML",
     )
 

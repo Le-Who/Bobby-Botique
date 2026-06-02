@@ -3,6 +3,26 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-06-02 - Daily 2048 Sprint
+
+### 🎲 Daily Games
+
+- **Daily 2048 Sprint (`app/games/daily_2048.py`, `app/repos/daily_2048.py`, `app/templates/daily_2048.html`):** Added a server-authoritative 2048-style daily sprint where the explicit objective is to reach a target tile or total board value. First completion records moves, elapsed time, merge score, and final score; subsequent post-win play stays in local practice mode and is not written to daily records.
+- **No-repeat daily challenge generation (`app/repos/daily_2048.py`, `tests/test_daily_2048.py`):** Automatic puzzle preparation now computes stable fingerprints for the visible starting board and daily challenge contract, then retries deterministic candidates until it avoids repeated challenge signatures and repeated starting boards from the prepared history.
+- **Premium tile polish (`app/templates/daily_2048.html`, `app/templates/admin_daily2048.html`):** Player tiles now use pseudo-3D gradients, internal highlights, depth shadows, and hover glow; admin mini/editor cells received the same quieter depth treatment so prepared boards look consistent with the game surface.
+- **Daily 2048 cover refresh (`artifacts/daily2048_cover.png`):** Rebuilt the cover without a phone/device artifact, removed the left-side 2-4-8-256 chain, and replaced the changelog-like copy with shorter poster-style messaging.
+- **Daily-slot switch (`/set_daily_game crocodile|2048`, `global_settings.daily_game_mode`):** Admins can switch this month's active daily experience without removing Crocodile. `/dailycroc`, `/daily2048`, and scheduled daily prompts route to Daily 2048 while the mode is active, using the existing opt-in delivery audience.
+- **Prepared puzzle planner (`/admin_daily2048`, `/webapp/admin_daily2048`):** Operators can prepare boards several days ahead, set tile/total goals, tune par moves and target seconds, and provide deterministic spawn sequences for custom daily starts.
+- **Result and monthly champions flow (`app/games/daily_2048_telegram.py`, `app/handlers/daily_2048.py`):** Completion messages include score, moves, elapsed time, day leaderboard, and an inline "Лучшие за месяц" button that lists each day's top player for the selected month.
+
+### ✅ Verification
+
+- `python -m pytest -q tests/test_daily_2048.py -n 0 --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_daily2048_norepeat_final2` → **15 passed**
+- `python -m pytest -o addopts='' -q -n 0 tests/test_daily_crocodile.py --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_dailycroc_final` → **26 passed**, 1 existing AsyncMock warning
+- `python -m ruff check app/db/schema.py app/handlers/callbacks.py app/handlers/cmd_admin.py app/handlers/commands.py app/handlers/daily_crocodile.py app/handlers/daily_2048.py app/games/daily_2048.py app/games/daily_2048_telegram.py app/repos/daily_2048.py app/web.py app/web_miniapp.py tests/test_daily_2048.py` → **All checks passed**
+
+---
+
 ## [Unreleased] - 2026-06-01 - OSS Maintainer Readiness
 
 ### Documentation

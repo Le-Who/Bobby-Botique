@@ -1027,7 +1027,17 @@ async def game_page():
 
     game_id = _req.args.get("game_id") or _req.args.get("tgWebAppStartParam") or _req.args.get("id") or ""
     mode = _req.args.get("mode") or ("daily" if game_id == "daily" else "classic")
+    if game_id in {"daily2048", "2048"} or mode in {"daily2048", "2048"}:
+        return await render_template("daily_2048.html")
     return await render_template("crocodile.html", game_id=game_id, mode=mode)
+
+
+@miniapp_blueprint.route("/daily2048")
+async def daily2048_page():
+    """Serve the Daily 2048 Sprint Mini App HTML shell."""
+    from quart import render_template
+
+    return await render_template("daily_2048.html")
 
 
 @miniapp_blueprint.route("/admin_dailycroc")
@@ -1037,11 +1047,216 @@ async def webapp_admin_dailycroc_page():
     return await render_template("admin_dailycroc.html")
 
 
+@miniapp_blueprint.route("/admin_daily2048")
+async def webapp_admin_daily2048_page():
+    """Serve the Daily 2048 Sprint Admin Dashboard to Telegram Mini App."""
+    from quart import render_template
+
+    return await render_template("admin_daily2048.html")
+
+
 def _build_daily_word_mask(word: str) -> str:
     letters = [ch for ch in (word or "").strip() if ch.isalnum()]
     if not letters:
         return ""
     return " ".join("_" for _ in letters)
+
+
+@miniapp_blueprint.websocket("/daily2048/ws")
+async def daily2048_ws():
+    """WebSocket endpoint for Daily 2048 Sprint."""
+    from quart import websocket
+
+    from app.games.crocodile_runtime import (
+        cache_pending_action_result,
+        game_mutation_lock,
+        get_cached_pending_action_result,
+        stamp_runtime_payload,
+    )
+    from app.games.daily_2048 import get_daily_state, goal_payload, process_move, process_practice_move
+    from app.games.daily_2048_telegram import render_completion_event, send_daily2048_result_message
+    from app.repos import daily_2048 as daily2048_repo
+    from app.repos.crocodile_daily import update_timezone_if_known, update_user_display_name
+
+    raw_init_data = websocket.args.get("initData", "")
+    if not raw_init_data:
+        await websocket.close(4003, "initData required")
+        return
+
+    bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+    validated = _validate_init_data(raw_init_data, bot_token) if bot_token else None
+    if validated is None:
+        await websocket.close(4003, "Unauthorized")
+        return
+
+    user_id = _extract_user_id(validated)
+    if not user_id:
+        await websocket.close(4003, "No user in initData")
+        return
+
+    timezone = websocket.args.get("tz", "")
+    if timezone:
+        try:
+            await update_timezone_if_known(user_id, timezone)
+        except Exception as exc:
+            logger.debug("daily2048_ws: timezone update failed user=%s: %s", user_id, exc)
+
+    try:
+        tg_user = validated.get("user") or {}
+        first = str(tg_user.get("first_name") or "").strip()
+        last = str(tg_user.get("last_name") or "").strip()
+        display_name = f"{first} {last}".strip() if last else first
+        if display_name:
+            await update_user_display_name(user_id, display_name)
+    except Exception as exc:
+        logger.debug("daily2048_ws: display_name update failed user=%s: %s", user_id, exc)
+
+    puzzle, result = await get_daily_state(user_id)
+    runtime_id = f"daily2048:{puzzle.puzzle_date}:{user_id}"
+    practice_result = result if result.status == "won" else None
+    result_message_sent = result.status == "won"
+
+    async def _completion_payload() -> dict[str, Any]:
+        try:
+            return await render_completion_event(user_id, puzzle.puzzle_date)
+        except Exception as exc:
+            logger.warning("daily2048_ws: completion payload failed user=%s: %s", user_id, exc)
+            return {
+                "rank": None,
+                "leaderboard": [],
+                "puzzle_date": puzzle.puzzle_date.isoformat(),
+                "goal": goal_payload(puzzle),
+            }
+
+    def _practice_result_from_event(
+        event: dict[str, Any],
+        fallback: daily2048_repo.Daily2048Result,
+    ) -> daily2048_repo.Daily2048Result:
+        finished_at = fallback.finished_at or datetime.now(tz=UTC)
+        return daily2048_repo.Daily2048Result(
+            user_id=user_id,
+            puzzle_date=puzzle.puzzle_date,
+            status="practice",
+            board=event.get("board") or fallback.board,
+            spawn_index=int(event.get("spawn_index") if event.get("spawn_index") is not None else fallback.spawn_index),
+            moves=int(event.get("moves") if event.get("moves") is not None else fallback.moves),
+            merge_score=int(event.get("merge_score") if event.get("merge_score") is not None else fallback.merge_score),
+            final_score=int(event.get("final_score") if event.get("final_score") is not None else fallback.final_score),
+            elapsed_ms=int(event.get("elapsed_ms") if event.get("elapsed_ms") is not None else fallback.elapsed_ms),
+            started_at=fallback.started_at,
+            won_at=fallback.won_at or finished_at,
+            finished_at=finished_at,
+            recordable=False,
+        )
+
+    await websocket.send_json(
+        await stamp_runtime_payload(
+            runtime_id,
+            {
+                "event": "game_state",
+                "daily2048": True,
+                "puzzle_date": puzzle.puzzle_date.isoformat(),
+                "board": result.board,
+                "goal": goal_payload(puzzle),
+                "moves": result.moves,
+                "merge_score": result.merge_score,
+                "elapsed_ms": result.elapsed_ms,
+                "final_score": result.final_score,
+                "status": result.status,
+                "recordable": result.status == "active" and result.recordable,
+                "can_practice": result.status == "won",
+                "par_moves": puzzle.par_moves,
+                "target_seconds": puzzle.target_seconds,
+            },
+        )
+    )
+    if result.status == "won":
+        completion = await _completion_payload()
+        await websocket.send_json(
+            await stamp_runtime_payload(
+                runtime_id,
+                {
+                    "event": "daily2048_completed",
+                    "board": result.board,
+                    "moves": result.moves,
+                    "merge_score": result.merge_score,
+                    "elapsed_ms": result.elapsed_ms,
+                    "final_score": result.final_score,
+                    "recordable": True,
+                    **completion,
+                },
+            )
+        )
+
+    try:
+        while True:
+            try:
+                raw = await asyncio.wait_for(websocket.receive(), timeout=300.0)
+            except TimeoutError:
+                await websocket.close(1000, "Idle timeout")
+                break
+
+            try:
+                msg = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                await websocket.send_json({"event": "error", "message": "Invalid JSON"})
+                continue
+
+            if msg.get("type") != "move":
+                continue
+            direction = str(msg.get("direction") or "")
+            pending_id = str(msg.get("pending_id") or "")
+            if pending_id:
+                cached_event = await get_cached_pending_action_result(runtime_id, pending_id)
+                if cached_event is not None:
+                    await websocket.send_json(cached_event)
+                    continue
+
+            try:
+                async with game_mutation_lock(f"daily2048:{puzzle.puzzle_date}:{user_id}"):
+                    if practice_result is not None:
+                        event = await process_practice_move(practice_result, puzzle, direction)
+                    else:
+                        event = await process_move(user_id, direction)
+            except TimeoutError:
+                await websocket.send_json(
+                    await stamp_runtime_payload(
+                        runtime_id,
+                        {"event": "error", "message": "Сервер загружен, попробуйте через секунду."},
+                    )
+                )
+                continue
+            except ValueError:
+                await websocket.send_json(
+                    await stamp_runtime_payload(runtime_id, {"event": "error", "message": "Unknown direction"})
+                )
+                continue
+
+            if event.get("daily2048_completed"):
+                completion = await _completion_payload()
+                event = {**event, **completion}
+                practice_result = _practice_result_from_event(event, result)
+            elif practice_result is not None and event.get("event") == "move_result":
+                practice_result = _practice_result_from_event(event, practice_result)
+
+            event = await stamp_runtime_payload(runtime_id, event)
+            if pending_id:
+                event["pending_id"] = pending_id
+                await cache_pending_action_result(runtime_id, pending_id, event)
+            await websocket.send_json(event)
+
+            if event.get("daily2048_completed") and not result_message_sent:
+                try:
+                    from app.bot_instance import get_bot
+
+                    bot = get_bot()
+                    if bot:
+                        await send_daily2048_result_message(bot, user_id, puzzle.puzzle_date)
+                    result_message_sent = True
+                except Exception as exc:
+                    logger.warning("daily2048_ws: result message failed user=%s: %s", user_id, exc)
+    except Exception as exc:
+        logger.warning("daily2048_ws: unexpected error user=%s: %s", user_id, exc)
 
 
 @miniapp_blueprint.websocket("/game/daily/ws")

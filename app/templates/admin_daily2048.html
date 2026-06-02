@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Admin: Daily 2048</title>
+<style nonce="{{ g.csp_nonce }}">
+:root {
+  --bg: #10100f;
+  --panel: rgba(255, 248, 234, 0.07);
+  --panel-strong: rgba(255, 248, 234, 0.12);
+  --line: rgba(255, 248, 234, 0.14);
+  --text: #fff8ea;
+  --muted: rgba(255, 248, 234, 0.62);
+  --amber: #f2ba57;
+  --mint: #7fe0bd;
+  --coral: #f27963;
+  --cyan: #6cc9dd;
+  --ink: #171512;
+  --radius: 8px;
+  --font: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  min-height: 100dvh;
+  background:
+    linear-gradient(135deg, rgba(242, 186, 87, .09), transparent 30%),
+    linear-gradient(225deg, rgba(127, 224, 189, .08), transparent 36%),
+    var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+}
+button, input, select, textarea {
+  font: inherit;
+}
+.shell {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 16px;
+}
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+h1 {
+  font-size: 22px;
+  letter-spacing: 0;
+}
+.top a {
+  color: var(--mint);
+  text-decoration: none;
+  font-weight: 800;
+  font-size: 13px;
+}
+.toolbar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.panel {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.panel label {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  font-weight: 900;
+  letter-spacing: .06em;
+  margin-bottom: 8px;
+}
+.panel strong {
+  font-size: 20px;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.btn {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-strong);
+  color: var(--text);
+  padding: 8px 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+.btn.primary {
+  border-color: transparent;
+  background: var(--amber);
+  color: var(--ink);
+}
+.btn.danger {
+  border-color: rgba(242, 121, 99, .45);
+  color: #ffd4ca;
+}
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  gap: 14px;
+  align-items: start;
+}
+.puzzles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+.puzzle {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.puzzle.active {
+  border-color: rgba(127, 224, 189, .5);
+}
+.puzzle-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.date {
+  font-size: 17px;
+  font-weight: 900;
+}
+.badge {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+.goal {
+  margin: 8px 0;
+  color: #ffe0a1;
+  font-weight: 900;
+}
+.mini-board {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+  margin: 10px 0;
+}
+.mini-cell {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background:
+    radial-gradient(circle at 30% 18%, rgba(255,255,255,.28), transparent 26%),
+    linear-gradient(145deg, rgba(255, 224, 161, .18), rgba(127, 224, 189, .08)),
+    rgba(255, 248, 234, .08);
+  color: var(--text);
+  font-weight: 900;
+  font-size: 13px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.12),
+    inset 0 -8px 14px rgba(0,0,0,.22),
+    0 8px 18px rgba(0,0,0,.18);
+}
+.meta {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.editor {
+  position: sticky;
+  top: 12px;
+}
+.editor-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.editor-grid input {
+  width: 100%;
+  aspect-ratio: 1;
+  min-height: 48px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 30% 18%, rgba(255,255,255,.18), transparent 28%),
+    linear-gradient(145deg, rgba(255,248,234,.08), rgba(0,0,0,.24));
+  color: var(--text);
+  font-weight: 900;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.1),
+    inset 0 -10px 18px rgba(0,0,0,.24);
+  transition: border-color .14s ease, box-shadow .14s ease, background .14s ease;
+}
+.editor-grid input:hover,
+.editor-grid input:focus {
+  border-color: rgba(127, 224, 189, .5);
+  outline: none;
+  box-shadow:
+    0 0 22px rgba(127, 224, 189, .16),
+    inset 0 1px 0 rgba(255,255,255,.14),
+    inset 0 -10px 18px rgba(0,0,0,.2);
+}
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.form-row.single {
+  grid-template-columns: 1fr;
+}
+.field label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  font-weight: 900;
+  letter-spacing: .06em;
+  margin-bottom: 5px;
+}
+.field input, .field select, .field textarea {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(0,0,0,.22);
+  color: var(--text);
+  padding: 8px;
+}
+.field textarea {
+  min-height: 90px;
+  resize: vertical;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+.toast {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  display: none;
+  justify-content: center;
+  padding: 12px;
+  border: 1px solid rgba(242, 186, 87, .35);
+  border-radius: var(--radius);
+  background: #191610;
+  box-shadow: 0 16px 48px rgba(0,0,0,.32);
+}
+.toast.visible { display: flex; }
+@media (max-width: 900px) {
+  .toolbar { grid-template-columns: 1fr 1fr; }
+  .layout { grid-template-columns: 1fr; }
+  .editor { position: static; }
+}
+@media (max-width: 560px) {
+  .toolbar { grid-template-columns: 1fr; }
+  .top { align-items: flex-start; flex-direction: column; }
+}
+</style>
+</head>
+<body>
+<main class="shell">
+  <header class="top">
+    <div>
+      <h1>Daily 2048 Sprint</h1>
+      <p class="meta">Планирование коротких daily-челленджей на скорость.</p>
+    </div>
+    <a href="/admin_dailycroc">Daily Croc</a>
+  </header>
+
+  <section class="toolbar">
+    <div class="panel">
+      <label>Активный daily slot</label>
+      <strong id="mode-label">—</strong>
+    </div>
+    <div class="panel">
+      <label>Готовые пазлы</label>
+      <strong id="ready-count">0</strong>
+    </div>
+    <div class="panel">
+      <label>Ближайшая цель</label>
+      <strong id="next-goal">—</strong>
+    </div>
+    <div class="panel">
+      <label>Действия</label>
+      <div class="actions">
+        <button class="btn primary" id="mode-2048" type="button">2048</button>
+        <button class="btn" id="mode-croc" type="button">Crocodile</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="layout">
+    <div class="puzzles" id="puzzles"></div>
+
+    <aside class="panel editor">
+      <div class="form-row">
+        <div class="field">
+          <label>Дата</label>
+          <input id="edit-date" type="date">
+        </div>
+        <div class="field">
+          <label>Статус</label>
+          <select id="edit-status">
+            <option value="ready">ready</option>
+            <option value="draft">draft</option>
+            <option value="disabled">disabled</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="editor-grid" id="editor-board"></div>
+
+      <div class="form-row">
+        <div class="field">
+          <label>Тип цели</label>
+          <select id="edit-goal-type">
+            <option value="tile">tile</option>
+            <option value="total">total</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Цель</label>
+          <input id="edit-goal-value" type="number" min="8" step="2" value="512">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="field">
+          <label>Par moves</label>
+          <input id="edit-par-moves" type="number" min="1" value="72">
+        </div>
+        <div class="field">
+          <label>Target seconds</label>
+          <input id="edit-target-seconds" type="number" min="30" value="240">
+        </div>
+      </div>
+
+      <div class="form-row single">
+        <div class="field">
+          <label>Seed</label>
+          <input id="edit-seed" type="text" value="custom">
+        </div>
+      </div>
+
+      <div class="form-row single">
+        <div class="field">
+          <label>Spawn sequence JSON</label>
+          <textarea id="edit-spawns">[]</textarea>
+        </div>
+      </div>
+
+      <div class="form-row single">
+        <div class="field">
+          <label>Solution notes</label>
+          <textarea id="edit-solution"></textarea>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn primary" id="save" type="button">Сохранить</button>
+        <button class="btn" id="generate" type="button">Сгенерировать день</button>
+      </div>
+    </aside>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script nonce="{{ g.csp_nonce }}">
+const tma = window.Telegram?.WebApp?.initData || '';
+const getHeaders = () => tma ? { Authorization: `tma ${tma}` } : {};
+const apiHeaders = () => ({ ...getHeaders(), 'Content-Type': 'application/json' });
+let puzzles = [];
+let selected = null;
+
+const $ = id => document.getElementById(id);
+
+function toast(text) {
+  const box = $('toast');
+  box.textContent = text;
+  box.classList.add('visible');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => box.classList.remove('visible'), 2600);
+}
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function blankBoard() {
+  return [[0,0,0,0],[0,0,0,0],[2,4,8,16],[32,64,128,0]];
+}
+
+function renderEditorBoard(board = blankBoard()) {
+  const root = $('editor-board');
+  root.innerHTML = '';
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) {
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.min = '0';
+      input.step = '2';
+      input.value = Number(board[y]?.[x] || 0) || '';
+      input.dataset.x = x;
+      input.dataset.y = y;
+      root.appendChild(input);
+    }
+  }
+}
+
+function readBoard() {
+  const board = blankBoard().map(row => row.map(() => 0));
+  $('editor-board').querySelectorAll('input').forEach(input => {
+    const x = Number(input.dataset.x);
+    const y = Number(input.dataset.y);
+    board[y][x] = Number(input.value || 0);
+  });
+  return board;
+}
+
+function miniBoard(board) {
+  return `<div class="mini-board">${board.flat().map(v => `<div class="mini-cell">${v || ''}</div>`).join('')}</div>`;
+}
+
+function selectPuzzle(puzzle) {
+  selected = puzzle;
+  $('edit-date').value = puzzle.date || todayIso();
+  $('edit-status').value = puzzle.status || 'ready';
+  $('edit-goal-type').value = puzzle.goal_type || 'tile';
+  $('edit-goal-value').value = puzzle.goal_value || 512;
+  $('edit-par-moves').value = puzzle.par_moves || 72;
+  $('edit-target-seconds').value = puzzle.target_seconds || 240;
+  $('edit-seed').value = puzzle.seed || 'custom';
+  $('edit-spawns').value = JSON.stringify(puzzle.spawn_sequence || [], null, 2);
+  $('edit-solution').value = puzzle.solution_moves || '';
+  renderEditorBoard(puzzle.board || blankBoard());
+  renderPuzzles();
+}
+
+function renderPuzzles() {
+  const root = $('puzzles');
+  if (!puzzles.length) {
+    root.innerHTML = '<div class="panel">Пазлы пока не подготовлены.</div>';
+    return;
+  }
+  root.innerHTML = puzzles.map((puzzle, index) => {
+    const active = selected && selected.date === puzzle.date ? ' active' : '';
+    return `<article class="puzzle${active}" data-index="${index}">
+      <div class="puzzle-head">
+        <div class="date">${puzzle.date}</div>
+        <div class="badge">${puzzle.status}</div>
+      </div>
+      <div class="goal">${puzzle.goal_label}</div>
+      ${miniBoard(puzzle.board || blankBoard())}
+      <div class="meta">${puzzle.par_moves} ходов · ${puzzle.target_seconds}s · ${puzzle.spawn_sequence?.length || 0} spawns</div>
+    </article>`;
+  }).join('');
+  root.querySelectorAll('[data-index]').forEach(card => {
+    card.addEventListener('click', () => selectPuzzle(puzzles[Number(card.dataset.index)]));
+  });
+}
+
+async function load() {
+  const res = await fetch('/api/admin/daily2048', { headers: getHeaders() });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  puzzles = data.puzzles || [];
+  $('ready-count').textContent = puzzles.filter(p => p.status === 'ready').length;
+  $('next-goal').textContent = puzzles[0]?.goal_label || '—';
+  $('mode-label').textContent = 'см. /dailycroc_status';
+  if (!selected) selectPuzzle(puzzles[0] || {
+    date: todayIso(),
+    board: blankBoard(),
+    goal_type: 'tile',
+    goal_value: 512,
+    spawn_sequence: [],
+    seed: 'custom',
+    par_moves: 72,
+    target_seconds: 240,
+    status: 'ready',
+    solution_moves: ''
+  });
+  renderPuzzles();
+}
+
+async function save() {
+  let spawnSequence;
+  try {
+    spawnSequence = JSON.parse($('edit-spawns').value || '[]');
+  } catch {
+    toast('Spawn JSON некорректен');
+    return;
+  }
+  const payload = {
+    date: $('edit-date').value,
+    board: readBoard(),
+    goal_type: $('edit-goal-type').value,
+    goal_value: Number($('edit-goal-value').value || 512),
+    spawn_sequence: spawnSequence,
+    seed: $('edit-seed').value || 'custom',
+    par_moves: Number($('edit-par-moves').value || 72),
+    target_seconds: Number($('edit-target-seconds').value || 240),
+    status: $('edit-status').value,
+    solution_moves: $('edit-solution').value || ''
+  };
+  const res = await fetch('/api/admin/daily2048/puzzle', {
+    method: 'POST',
+    headers: apiHeaders(),
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    toast(data.error || `HTTP ${res.status}`);
+    return;
+  }
+  toast('Пазл сохранен');
+  selected = data.puzzle;
+  await load();
+}
+
+async function generate() {
+  const date = $('edit-date').value || todayIso();
+  const res = await fetch('/api/admin/daily2048/generate', {
+    method: 'POST',
+    headers: apiHeaders(),
+    body: JSON.stringify({ date })
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    toast(data.error || `HTTP ${res.status}`);
+    return;
+  }
+  toast('День подготовлен');
+  selected = data.puzzle;
+  await load();
+}
+
+async function setMode(mode) {
+  const res = await fetch('/api/admin/daily-mode', {
+    method: 'POST',
+    headers: apiHeaders(),
+    body: JSON.stringify({ mode })
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    toast(data.error || `HTTP ${res.status}`);
+    return;
+  }
+  $('mode-label').textContent = mode;
+  toast(`Daily slot: ${mode}`);
+}
+
+$('save').addEventListener('click', save);
+$('generate').addEventListener('click', generate);
+$('mode-2048').addEventListener('click', () => setMode('2048'));
+$('mode-croc').addEventListener('click', () => setMode('crocodile'));
+
+renderEditorBoard();
+load().catch(err => toast(err.message));
+</script>
+</body>
+</html>

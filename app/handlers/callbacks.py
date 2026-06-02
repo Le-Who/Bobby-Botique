@@ -127,6 +127,7 @@ def register(application: Application) -> None:
         run_dailycroc_prep_check_callback,
         send_dailycroc_test_callback,
     )
+    from app.handlers.daily_2048 import monthly_champions_callback
 
     # ── Fast (non-blocking) callbacks ────────────────────────────────────
     _add_fast_callback(application, toggle_search_callback, "^toggle_search$")
@@ -212,6 +213,7 @@ def register(application: Application) -> None:
     application.add_handler(
         CallbackQueryHandler(regenerate_dailycroc_image_callback, pattern="^dailycroc_status:regen:.*$")
     )
+    _add_fast_callback(application, monthly_champions_callback, "^daily2048:month:")
 
     # Conversation branching
     from app.handlers.cb_branches import branch_create_callback, branch_return_callback
