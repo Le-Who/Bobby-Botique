@@ -762,7 +762,24 @@ def test_daily2048_template_uses_pointer_swipes_optimistic_moves_and_visible_tim
     assert "client_elapsed_ms: currentElapsedMs()" in template
     assert "client_board_before: pendingMoveSnapshot" in template
     assert "client_board_after: outcome.board" in template
+    assert "const CLIENT_SESSION_ID =" in template
+    assert "`${CLIENT_SESSION_ID}:m${++pendingCounter}`" in template
     assert "document.addEventListener('visibilitychange'" in template
     assert "pauseTimer" in template
     assert "resumeTimer" in template
     assert "isSpawnedTile" in template
+
+
+def test_daily2048_template_locks_swipe_direction_and_pauses_timer_without_focus() -> None:
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+
+    assert "let windowFocused = true" in template
+    assert "function isTimerForeground()" in template
+    assert "document.hasFocus" in template
+    assert "'deactivated'" in template
+    assert "'activated'" in template
+    assert "pauseTimer({ sync: true })" in template
+    assert "let lockedPointerDirection = null" in template
+    assert "lockedPointerDirection = directionFromDelta" in template
+    assert "const direction = lockedPointerDirection || directionFromDelta" in template
+    assert "addEventListener('lostpointercapture'" in template

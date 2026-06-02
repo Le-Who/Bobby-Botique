@@ -1117,6 +1117,7 @@
     const $ = id => document.getElementById(id);
     const INIT_DATA = tg?.initData || new URLSearchParams(location.search).get('initData') || '';
     const TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Kyiv';
+    const CLIENT_SESSION_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     let ws = null;
     let board = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
     let status = 'loading';
@@ -1130,6 +1131,7 @@
     let pendingCounter = 0;
     let lastMoveDirection = null;
     let hasRenderedBoard = false;
+    let windowFocused = true;
 
     const THEMES = [
       { id: 'aero', label: 'Aero' },
@@ -1335,11 +1337,23 @@
     }
 
     function updateClock() {
+      if (activeStartedAt !== null && !isTimerForeground()) {
+        pauseTimer({ sync: true });
+        return;
+      }
+      renderClock();
+    }
+
+    function renderClock() {
       $('timer').textContent = fmt(currentElapsedMs());
     }
 
     function currentElapsedMs() {
       return elapsedOffset + (activeStartedAt === null ? 0 : Date.now() - activeStartedAt);
+    }
+
+    function isTimerForeground() {
+      return document.visibilityState !== 'hidden' && (windowFocused || document.hasFocus?.() === true);
     }
 
     function syncElapsedToServer() {
@@ -1354,12 +1368,12 @@
         elapsedOffset = currentElapsedMs();
         activeStartedAt = null;
       }
-      updateClock();
+      renderClock();
       if (options.sync) syncElapsedToServer();
     }
 
     function resumeTimer() {
-      if (status !== 'active' || document.visibilityState === 'hidden') return;
+      if (status !== 'active' || !isTimerForeground()) return;
       if (activeStartedAt === null) activeStartedAt = Date.now();
       if (!tickTimer) tickTimer = setInterval(updateClock, 250);
       updateClock();
@@ -1375,7 +1389,7 @@
       elapsedOffset = Math.max(0, Number(ms || 0));
       activeStartedAt = null;
       if (status === 'active') resumeTimer();
-      else updateClock();
+      else renderClock();
     }
 
     function setMetrics(msg) {
@@ -1502,7 +1516,7 @@
       lastMoveDirection = direction;
       tg?.HapticFeedback?.impactOccurred('light');
       renderBoard(outcome.board, { optimistic: true });
-      const pendingId = `m${++pendingCounter}`;
+      const pendingId = `${CLIENT_SESSION_ID}:m${++pendingCounter}`;
       ws.send(JSON.stringify({
         type: 'move',
         direction,
@@ -1545,6 +1559,7 @@
     let activePointerId = null;
     let pointerStart = null;
     let pointerLast = null;
+    let lockedPointerDirection = null;
 
     function directionFromDelta(dx, dy) {
       const absX = Math.abs(dx);
@@ -1559,10 +1574,12 @@
       activePointerId = null;
       pointerStart = null;
       pointerLast = null;
+      lockedPointerDirection = null;
     }
 
     boardInput.addEventListener('pointerdown', ev => {
       if (activePointerId !== null || (ev.pointerType === 'mouse' && ev.button !== 0)) return;
+      windowFocused = true;
       activePointerId = ev.pointerId;
       pointerStart = { x: ev.clientX, y: ev.clientY };
       pointerLast = pointerStart;
@@ -1573,6 +1590,9 @@
     boardInput.addEventListener('pointermove', ev => {
       if (ev.pointerId !== activePointerId) return;
       pointerLast = { x: ev.clientX, y: ev.clientY };
+      if (!lockedPointerDirection && pointerStart) {
+        lockedPointerDirection = directionFromDelta(pointerLast.x - pointerStart.x, pointerLast.y - pointerStart.y);
+      }
       ev.preventDefault();
     }, { passive: false });
 
@@ -1581,13 +1601,14 @@
       pointerLast = { x: ev.clientX, y: ev.clientY };
       const dx = pointerLast.x - pointerStart.x;
       const dy = pointerLast.y - pointerStart.y;
-      const direction = directionFromDelta(dx, dy);
+      const direction = lockedPointerDirection || directionFromDelta(dx, dy);
       resetPointer();
       if (direction) sendMove(direction);
       ev.preventDefault();
     }, { passive: false });
 
     boardInput.addEventListener('pointercancel', resetPointer);
+    boardInput.addEventListener('lostpointercapture', resetPointer);
 
     $('practice-btn').addEventListener('click', () => {
       $('overlay').classList.remove('visible');
@@ -1604,10 +1625,29 @@
       if (document.visibilityState === 'hidden') pauseTimer({ sync: true });
       else resumeTimer();
     });
-    window.addEventListener('blur', () => pauseTimer({ sync: true }));
-    window.addEventListener('focus', resumeTimer);
+    window.addEventListener('blur', () => {
+      windowFocused = false;
+      pauseTimer({ sync: true });
+    });
+    window.addEventListener('focus', () => {
+      windowFocused = true;
+      resumeTimer();
+    });
     window.addEventListener('pagehide', () => pauseTimer({ sync: true }));
-    window.addEventListener('pageshow', resumeTimer);
+    window.addEventListener('pageshow', () => {
+      windowFocused = true;
+      resumeTimer();
+    });
+    try {
+      tg?.onEvent?.('deactivated', () => {
+        windowFocused = false;
+        pauseTimer({ sync: true });
+      });
+      tg?.onEvent?.('activated', () => {
+        windowFocused = true;
+        resumeTimer();
+      });
+    } catch {}
 
     initTheme();
     connect();
