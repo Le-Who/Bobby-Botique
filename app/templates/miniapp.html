@@ -387,7 +387,7 @@ body {
 <body>
 
 <!-- Page: Memories (Root) -->
-<div id="page-memories" class="page">
+<div id="page-memories" class="page" role="tabpanel" aria-labelledby="tab-memories">
 <div class="search-header">
     <div class="settings-btn" onclick="switchTab('graph')" title="Граф знаний">🕸️</div>
     <input class="search-input" type="text" placeholder="Поиск по памяти…" id="search-input">
@@ -414,7 +414,7 @@ body {
 </div>
 
 <!-- Page: Settings -->
-<div id="page-settings" class="page">
+<div id="page-settings" class="page" role="tabpanel" aria-labelledby="tab-settings">
   <div class="section-header">LLM & Персонаж</div>
   <div class="section">
     <div class="setting-row" onclick="openSheet('sheet-models')">
@@ -508,7 +508,7 @@ body {
 </div>
 
 <!-- Page: Knowledge Graph -->
-<div id="page-graph" class="page">
+<div id="page-graph" class="page" role="tabpanel" aria-labelledby="tab-graph">
   <div class="search-header" style="justify-content: center; gap: 12px;">
     <span style="font-size: 16px; font-weight: 600;">🕸️ Граф знаний</span>
   </div>
@@ -525,16 +525,16 @@ body {
 </div>
 
 <!-- Tab Bar -->
-<div class="tab-bar">
-  <div class="tab-btn" id="tab-settings" onclick="switchTab('settings')">
+<div class="tab-bar" role="tablist">
+  <div class="tab-btn" id="tab-settings" role="tab" aria-selected="false" aria-controls="page-settings" tabindex="0" onclick="switchTab('settings')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchTab('settings')}">
     <span class="tab-btn-icon">⚙️</span>
     <span>Настройки</span>
   </div>
-  <div class="tab-btn" id="tab-graph" onclick="switchTab('graph')">
+  <div class="tab-btn" id="tab-graph" role="tab" aria-selected="false" aria-controls="page-graph" tabindex="0" onclick="switchTab('graph')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchTab('graph')}">
     <span class="tab-btn-icon">🕸️</span>
     <span>Граф</span>
   </div>
-  <div class="tab-btn active" id="tab-memories" onclick="switchTab('memories')">
+  <div class="tab-btn active" id="tab-memories" role="tab" aria-selected="true" aria-controls="page-memories" tabindex="0" onclick="switchTab('memories')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchTab('memories')}">
     <span class="tab-btn-icon">🧠</span>
     <span>Память</span>
   </div>
@@ -1373,8 +1373,13 @@ function switchTab(tab) {
   tg.BackButton.hide();
   
   // Active tab button
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.remove('active');
+    b.setAttribute('aria-selected', 'false');
+  });
+  const activeBtn = document.getElementById('tab-' + tab);
+  activeBtn.classList.add('active');
+  activeBtn.setAttribute('aria-selected', 'true');
   
   if (tab === 'settings' && !settingsData) loadSettings();
   if (tab === 'graph' && !graphLoaded) loadGraph();
