@@ -18,7 +18,7 @@ This document tracks the changes required to move natal charts from MVP to produ
 - Country and city search has automated coverage for Cyrillic country prefixes, one-letter country-filtered city prefixes, and release smoke cities: Odesa/Odessa, Kyiv/Kiev, Moscow, London, New York, Ottawa, Orenburg, Berlin, Warsaw, and Istanbul.
 - The Telegram flow includes a "not in list" fallback that asks the user for the nearest large city.
 - Hosted reports and Telegraph mirrors include GeoNames / CC BY 4.0 city-data attribution.
-- `scripts/natal_smoke.py` provides a live host smoke check that generates a sample exact-time report and verifies report id, hosted URL, SVG, sections, and planets.
+- `scripts/natal_smoke.py` provides a live host smoke check that generates a sample exact-time report and verifies report id, hosted URL, storage retrieval, hosted HTML SVG, section anchors, and planets.
 - On local Python 3.14, city catalog warmup loaded 32,444 cities in about 403 ms; warm search for "Оде" took about 23 ms.
 - Ascendant and MC no longer use the old latitude-independent placeholder formula. They are calculated from local sidereal time, mean obliquity, and ecliptic/horizon or ecliptic/meridian intersections.
 - The astronomy math lives in a focused clean-room module with tests for J2000 Julian Day, sidereal time, mean obliquity, and the Kyiv Ascendant/MC reference case.

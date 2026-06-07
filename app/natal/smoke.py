@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.natal.models import BirthInput, TimePrecision
+from app.natal.report_builder import build_hosted_report_html
 from app.natal.service import create_natal_report
+from app.natal.storage import get_report
 
 
 @dataclass(frozen=True)
@@ -13,6 +15,8 @@ class NatalSmokeResult:
     telegraph_url: str | None
     planet_count: int
     section_count: int
+    hosted_html_contains_svg: bool
+    hosted_html_contains_sections: bool
 
 
 async def run_natal_smoke(webhook_url: str, user_id: int = 0, chat_id: int = 0) -> NatalSmokeResult:
@@ -46,10 +50,22 @@ async def run_natal_smoke(webhook_url: str, user_id: int = 0, chat_id: int = 0) 
         raise RuntimeError("Natal smoke failed: interpretation sections are empty.")
     if not report.chart.planets:
         raise RuntimeError("Natal smoke failed: chart has no planets.")
+    stored_report = await get_report(report.report_id)
+    if stored_report is None:
+        raise RuntimeError("Natal smoke failed: report was not readable from storage.")
+    hosted_html = build_hosted_report_html(stored_report)
+    hosted_html_contains_svg = "<svg" in hosted_html
+    hosted_html_contains_sections = all(f'id="{section.id}"' in hosted_html for section in stored_report.sections)
+    if not hosted_html_contains_svg:
+        raise RuntimeError("Natal smoke failed: hosted HTML does not contain SVG.")
+    if not hosted_html_contains_sections:
+        raise RuntimeError("Natal smoke failed: hosted HTML does not contain all section ids.")
     return NatalSmokeResult(
         report_id=report.report_id,
         hosted_url=report.hosted_url,
         telegraph_url=report.telegraph_url,
         planet_count=len(report.chart.planets),
         section_count=len(report.sections),
+        hosted_html_contains_svg=hosted_html_contains_svg,
+        hosted_html_contains_sections=hosted_html_contains_sections,
     )

@@ -28,6 +28,11 @@ def main() -> int:
     if result.telegraph_url:
         sys.stdout.write(f"telegraph_url={result.telegraph_url}\n")
     sys.stdout.write(f"planets={result.planet_count} sections={result.section_count}\n")
+    sys.stdout.write(
+        "hosted_html="
+        f"svg:{str(result.hosted_html_contains_svg).lower()} "
+        f"sections:{str(result.hosted_html_contains_sections).lower()}\n"
+    )
     return 0
 
 
