@@ -314,7 +314,7 @@ All configuration is loaded from environment variables (or a `.env` file). Varia
 |---|---|---|---|---|
 | `NATAL_REPORTS_ENABLED` | ⚙️ | `true` / `false` | `false` | Enables `/natal` and hosted natal report generation. Keep disabled until live VPS smoke tests pass, then enable explicitly. |
 | `NATAL_REPORT_TTL_DAYS` | ⚙️ | `365` | `365` | Retention window for hosted natal reports. PostgreSQL storage keeps shared links stable by default. |
-| `NATAL_GEOCODER_PROVIDER` | ⚙️ | `local` | `local` | Birth-place resolution uses a local GeoNames-backed city catalog first. Nominatim remains fallback-only for unresolved free text. |
+| `NATAL_GEOCODER_PROVIDER` | ⚙️ | `local` / `nominatim` | `local` | Birth-place resolution uses the local GeoNames-backed city catalog. Set `nominatim` explicitly to allow network fallback for unresolved free text. |
 | `NATAL_SEND_RAW_BIRTH_DATA_TO_LLM` | ⚙️ | `false` | `false` | Privacy guard. Keep `false`: LLM prompts should receive derived chart data, not raw birth date/place. |
 
 Natal city autocomplete uses GeoNames data via the `geonamescache` Python package. GeoNames data is licensed under CC BY 4.0 and should be credited in public product materials.

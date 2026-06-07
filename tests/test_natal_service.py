@@ -20,7 +20,11 @@ async def test_create_natal_report_returns_hosted_url(monkeypatch):
         birth_place="Kyiv, Ukraine",
     )
 
-    async def fake_resolve_birth_data(birth_input):
+    captured_provider = None
+
+    async def fake_resolve_birth_data(birth_input, geocoder_provider=None):
+        nonlocal captured_provider
+        captured_provider = geocoder_provider
         return ResolvedBirthData(
             birth_input=birth_input,
             latitude=50.4501,
@@ -60,6 +64,7 @@ async def test_create_natal_report_returns_hosted_url(monkeypatch):
         return None
 
     monkeypatch.setattr("app.natal.service.resolve_birth_data", fake_resolve_birth_data)
+    monkeypatch.setattr("app.natal.service._natal_geocoder_provider", lambda: "local")
     monkeypatch.setattr("app.natal.service.calculate_chart", fake_calculate_chart)
     monkeypatch.setattr("app.natal.service.generate_interpretation", fake_generate_interpretation)
     monkeypatch.setattr("app.natal.service.render_chart_svg", lambda chart: "<svg></svg>")
@@ -76,6 +81,7 @@ async def test_create_natal_report_returns_hosted_url(monkeypatch):
     assert report.report_id
     assert report.hosted_url.startswith("https://bot.example.com/reports/natal/")
     assert report.svg.startswith("<svg")
+    assert captured_provider == "local"
 
 
 @pytest.mark.asyncio

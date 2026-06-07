@@ -65,7 +65,9 @@ class NominatimGeocoder:
 async def resolve_birth_data(
     birth: BirthInput,
     geocoder: GeocoderProtocol | None = None,
+    geocoder_provider: str = "local",
 ) -> ResolvedBirthData:
+    provider = (geocoder_provider or "local").strip().lower()
     embedded = _embedded_geocode_result(birth)
     if embedded is not None:
         result, timezone_name = embedded
@@ -74,6 +76,8 @@ async def resolve_birth_data(
         if local is not None:
             result, timezone_name = local
         else:
+            if provider == "local":
+                raise GeocodingError("Место рождения не найдено в локальном каталоге. Выберите страну и ближайший город.")
             geocoder = geocoder or NominatimGeocoder()
             result = await geocoder.geocode(birth.birth_place)
             timezone_name = _resolve_timezone(result.latitude, result.longitude, result.display_name)
@@ -109,10 +113,14 @@ def _embedded_geocode_result(birth: BirthInput) -> tuple[GeocodeResult, str] | N
 
 
 def _local_city_result(place: str, country_code: str | None = None) -> tuple[GeocodeResult, str] | None:
-    matches = search_cities(place, limit=1, country_code=country_code)
-    if not matches:
+    city = None
+    for query in _local_city_queries(place):
+        matches = search_cities(query, limit=1, country_code=country_code)
+        if matches:
+            city = matches[0]
+            break
+    if city is None:
         return None
-    city = matches[0]
     return (
         GeocodeResult(
             display_name=city.display_name,
@@ -121,6 +129,17 @@ def _local_city_result(place: str, country_code: str | None = None) -> tuple[Geo
         ),
         city.timezone,
     )
+
+
+def _local_city_queries(place: str) -> list[str]:
+    query = place.strip()
+    if not query:
+        return []
+    queries = [query]
+    comma_prefix = query.split(",", 1)[0].strip()
+    if comma_prefix and comma_prefix != query:
+        queries.append(comma_prefix)
+    return queries
 
 
 def _build_local_datetime(birth: BirthInput, local_zone: ZoneInfo) -> datetime:

@@ -30,7 +30,7 @@ async def create_natal_report(
     if not _natal_reports_enabled():
         raise NatalConfigurationError("Natal reports are disabled.")
     _validate_webhook_url(webhook_url)
-    resolved = await resolve_birth_data(birth_input)
+    resolved = await resolve_birth_data(birth_input, geocoder_provider=_natal_geocoder_provider())
     chart = await calculate_chart(resolved)
     svg = render_chart_svg(chart)
     sections = await generate_interpretation(
@@ -70,6 +70,12 @@ def _natal_reports_enabled() -> bool:
     from app.config import settings
 
     return bool(getattr(settings, "NATAL_REPORTS_ENABLED", True))
+
+
+def _natal_geocoder_provider() -> str:
+    from app.config import settings
+
+    return str(getattr(settings, "NATAL_GEOCODER_PROVIDER", "local") or "local").strip().lower()
 
 
 async def _try_publish_telegraph(report: NatalReport) -> str | None:

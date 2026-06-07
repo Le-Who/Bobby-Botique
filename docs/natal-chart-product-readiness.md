@@ -13,7 +13,7 @@ This document tracks the changes required to move natal charts from MVP to produ
 - Telegram step flow now asks users to choose a country first, then a city from country-filtered inline suggestions instead of accepting ambiguous free text immediately.
 - Table input accepts `Страна рождения`, normalizes it to an ISO country code, and uses it to resolve city coordinates/timezone locally.
 - Selected city coordinates and timezone are embedded into `BirthInput`, so normal chart generation does not call external geocoding.
-- `resolve_birth_data()` now uses embedded city coordinates first, local city lookup second, and Nominatim only as fallback.
+- `resolve_birth_data()` now uses embedded city coordinates first and local city lookup second. Nominatim is available only when `NATAL_GEOCODER_PROVIDER=nominatim` is set explicitly.
 - The city catalog is warmed during handler registration to avoid first-user lookup delay.
 - Country and city search has automated coverage for Cyrillic country prefixes, one-letter country-filtered city prefixes, and release smoke cities: Odesa/Odessa, Kyiv/Kiev, Moscow, London, New York, Ottawa, Orenburg, Berlin, Warsaw, and Istanbul.
 - The Telegram flow includes a "not in list" fallback that asks the user for the nearest large city.
@@ -47,4 +47,4 @@ GeoNames data is distributed under CC BY 4.0. Product documentation and/or an ab
 - The current astrology calculator is deterministic and local, but it is not Swiss Ephemeris-grade.
 - Equal-house cusps are implemented locally; Placidus/Koch/etc. are not.
 - City autocomplete in normal Telegram chat is message-by-message, not true live keystroke autocomplete. The step flow reduces noise by asking for country first and filtering city suggestions locally. True per-character updates would require a Telegram Mini App or inline mode.
-- The fallback Nominatim geocoder is still network-dependent and should be treated as fallback only.
+- The fallback Nominatim geocoder is network-dependent and opt-in only via `NATAL_GEOCODER_PROVIDER=nominatim`.

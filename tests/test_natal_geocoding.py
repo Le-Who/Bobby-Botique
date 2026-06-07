@@ -1,6 +1,6 @@
 import pytest
 
-from app.natal.geocoding import GeocodeResult, resolve_birth_data
+from app.natal.geocoding import GeocodeResult, GeocodingError, resolve_birth_data
 from app.natal.models import BirthInput, TimePrecision
 
 
@@ -18,17 +18,20 @@ class FakeGeocoder:
 
 @pytest.mark.asyncio
 async def test_resolve_birth_data_unknown_time_uses_local_noon():
+    geocoder = FakeGeocoder()
     birth = BirthInput(
         birth_date="1995-02-14",
         time_precision=TimePrecision.UNKNOWN,
         birth_place="Kyiv, Ukraine",
     )
 
-    resolved = await resolve_birth_data(birth, geocoder=FakeGeocoder())
+    resolved = await resolve_birth_data(birth, geocoder=geocoder)
 
+    assert geocoder.called is False
     assert resolved.timezone == "Europe/Kyiv"
     assert "12:00:00" in resolved.local_datetime
-    assert resolved.latitude == 50.4501
+    assert 50.0 < resolved.latitude < 51.0
+    assert 30.0 < resolved.longitude < 31.0
 
 
 @pytest.mark.asyncio
@@ -69,3 +72,19 @@ async def test_resolve_birth_data_uses_birth_country_for_local_city_lookup_witho
     assert geocoder.called is False
     assert resolved.display_place == "Odesa, Ukraine"
     assert resolved.timezone == "Europe/Kyiv"
+
+
+@pytest.mark.asyncio
+async def test_resolve_birth_data_local_provider_does_not_call_network_fallback():
+    geocoder = FakeGeocoder()
+    birth = BirthInput(
+        birth_date="1995-02-14",
+        time_precision=TimePrecision.UNKNOWN,
+        birth_place="Definitely Missing Natal City",
+        birth_place_country_code="UA",
+    )
+
+    with pytest.raises(GeocodingError, match="локальном каталоге"):
+        await resolve_birth_data(birth, geocoder=geocoder, geocoder_provider="local")
+
+    assert geocoder.called is False
