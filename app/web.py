@@ -53,6 +53,10 @@ from app.web_miniapp import miniapp_blueprint  # noqa: E402
 
 quart_app.register_blueprint(miniapp_blueprint, url_prefix="/webapp")
 
+from app.web_natal import natal_bp  # noqa: E402
+
+quart_app.register_blueprint(natal_bp)
+
 
 # Derive a secret key for sessions from ADMIN_SECRET
 def _get_admin_secret():
