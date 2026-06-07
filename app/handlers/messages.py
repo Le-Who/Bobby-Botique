@@ -362,6 +362,15 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if await handle_document_mode_interaction(update, context, user_id):
             return
 
+        # ── 6b. Natal chart intent ───────────────────────────────────────────
+        if effective_msg.text:
+            from app.handlers.natal_chart import natal_command
+            from app.natal.intent import is_natal_chart_request
+
+            if is_natal_chart_request(message_text):
+                await natal_command(update, context)
+                return
+
         # ── 7. Save last user input for retry button ─────────────────────────
         try:
             from app.state import set_last_sent_message
