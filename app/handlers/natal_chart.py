@@ -13,7 +13,7 @@ from telegram.ext import (
     filters,
 )
 
-from app.natal.city_catalog import CityRecord, find_city_by_id, search_cities
+from app.natal.city_catalog import CityRecord, CountryRecord, find_city_by_id, search_cities, search_countries
 from app.natal.intent import NATAL_INTENT_RE
 from app.natal.models import BirthInput, TimePrecision
 from app.natal.parser import BirthInputParseError, parse_birth_table
@@ -24,6 +24,7 @@ NATAL_TABLE: Final = "NATAL_TABLE"
 NATAL_DATE: Final = "NATAL_DATE"
 NATAL_TIME_PRECISION: Final = "NATAL_TIME_PRECISION"
 NATAL_TIME_VALUE: Final = "NATAL_TIME_VALUE"
+NATAL_COUNTRY: Final = "NATAL_COUNTRY"
 NATAL_PLACE: Final = "NATAL_PLACE"
 NATAL_FOCUS: Final = "NATAL_FOCUS"
 NATAL_CONFIRM: Final = "NATAL_CONFIRM"
@@ -33,6 +34,8 @@ _NATAL_KEYS = {
     "natal_date",
     "natal_time_precision",
     "natal_time_value",
+    "natal_country_code",
+    "natal_country",
     "natal_place",
     "natal_place_data",
     "natal_focus",
@@ -101,8 +104,8 @@ async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     raw = (update.message.text or "").strip().lower()
     if raw in {"неизвестно", "unknown", "не знаю"}:
         context.user_data["natal_time_precision"] = TimePrecision.UNKNOWN
-        await update.message.reply_text("Место рождения?")
-        return NATAL_PLACE
+        await update.message.reply_text("Страна рождения?")
+        return NATAL_COUNTRY
     if raw in {"точное", "exact"}:
         context.user_data["natal_time_precision"] = TimePrecision.EXACT
     elif raw in {"примерное", "approx", "approximate"}:
@@ -115,13 +118,41 @@ async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def on_time_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     context.user_data["natal_time_value"] = update.message.text.strip()
-    await update.message.reply_text("Место рождения?")
+    await update.message.reply_text("Страна рождения?")
+    return NATAL_COUNTRY
+
+
+async def on_country(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    query = update.message.text.strip()
+    matches = search_countries(query, limit=8)
+    if not matches:
+        await update.message.reply_text("Страна не найдена. Введите больше букв.")
+        return NATAL_COUNTRY
+    await update.message.reply_text(
+        "Выберите страну из списка или введите больше букв для уточнения.",
+        reply_markup=_country_keyboard(matches),
+    )
+    return NATAL_COUNTRY
+
+
+async def on_country_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    query = update.callback_query
+    if not query:
+        return NATAL_COUNTRY
+    await query.answer()
+    country_code = query.data.replace("natal_country:", "")
+    country = search_countries(country_code, limit=1)
+    country_display = country[0].display_name if country else country_code
+    context.user_data["natal_country_code"] = country_code
+    context.user_data["natal_country"] = country_display
+    await query.edit_message_text(f"Страна рождения: {country_display}\n\nГород рождения?")
     return NATAL_PLACE
 
 
 async def on_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     query = update.message.text.strip()
-    matches = search_cities(query, limit=8)
+    country_code = context.user_data.get("natal_country_code")
+    matches = search_cities(query, limit=8, country_code=country_code if isinstance(country_code, str) else None)
     if not matches:
         await update.message.reply_text("Город не найден. Введите больше букв или укажите ближайший крупный город.")
         return NATAL_PLACE
@@ -224,6 +255,10 @@ def build_natal_chart_handler() -> ConversationHandler:
             NATAL_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_date)],
             NATAL_TIME_PRECISION: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_precision)],
             NATAL_TIME_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_value)],
+            NATAL_COUNTRY: [
+                CallbackQueryHandler(on_country_selected, pattern=r"^natal_country:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, on_country),
+            ],
             NATAL_PLACE: [
                 CallbackQueryHandler(on_place_missing, pattern=r"^natal_place_missing$"),
                 CallbackQueryHandler(on_place_selected, pattern=r"^natal_place:"),
@@ -262,6 +297,15 @@ def _confirm_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Построить", callback_data="natal_confirm:yes"),
                 InlineKeyboardButton("Отмена", callback_data="natal_confirm:cancel"),
             ]
+        ]
+    )
+
+
+def _country_keyboard(countries: list[CountryRecord]) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(country.display_name, callback_data=f"natal_country:{country.code}")]
+            for country in countries
         ]
     )
 

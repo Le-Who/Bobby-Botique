@@ -10,11 +10,11 @@ This document tracks the changes required to move natal charts from MVP to produ
 
 - Local city autocomplete is backed by `geonamescache`, a pure-Python GeoNames dataset package.
 - City records include `name`, alternate names, country, latitude, longitude, IANA timezone, and population.
-- Telegram step flow now asks users to choose a city from inline suggestions instead of accepting ambiguous free text immediately.
+- Telegram step flow now asks users to choose a country first, then a city from country-filtered inline suggestions instead of accepting ambiguous free text immediately.
 - Selected city coordinates and timezone are embedded into `BirthInput`, so normal chart generation does not call external geocoding.
 - `resolve_birth_data()` now uses embedded city coordinates first, local city lookup second, and Nominatim only as fallback.
 - The city catalog is warmed during handler registration to avoid first-user lookup delay.
-- City search has automated coverage for Odesa/Odessa, Kyiv/Kiev, Moscow, London, New York, Ottawa, Orenburg, Berlin, Warsaw, and Istanbul.
+- Country and city search has automated coverage for Cyrillic country prefixes, one-letter country-filtered city prefixes, and release smoke cities: Odesa/Odessa, Kyiv/Kiev, Moscow, London, New York, Ottawa, Orenburg, Berlin, Warsaw, and Istanbul.
 - The Telegram flow includes a "not in list" fallback that asks the user for the nearest large city.
 - On local Python 3.14, city catalog warmup loaded 32,444 cities in about 403 ms; warm search for "Оде" took about 23 ms.
 - Ascendant and MC no longer use the old latitude-independent placeholder formula. They are calculated from local sidereal time, mean obliquity, and ecliptic/horizon or ecliptic/meridian intersections.
@@ -45,5 +45,5 @@ GeoNames data is distributed under CC BY 4.0. Product documentation and/or an ab
 
 - The current astrology calculator is deterministic and local, but it is not Swiss Ephemeris-grade.
 - Equal-house cusps are implemented locally; Placidus/Koch/etc. are not.
-- City autocomplete in normal Telegram chat is message-by-message, not true live keystroke autocomplete. True per-character updates would require a Telegram Mini App or inline mode.
+- City autocomplete in normal Telegram chat is message-by-message, not true live keystroke autocomplete. The step flow reduces noise by asking for country first and filtering city suggestions locally. True per-character updates would require a Telegram Mini App or inline mode.
 - The fallback Nominatim geocoder is still network-dependent and should be treated as fallback only.

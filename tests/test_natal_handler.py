@@ -5,12 +5,15 @@ import pytest
 
 from app.handlers.natal_chart import (
     NATAL_CONFIRM,
+    NATAL_COUNTRY,
     NATAL_FOCUS,
     NATAL_PLACE,
     NATAL_TABLE,
     build_natal_chart_handler,
     clear_natal_user_data,
     natal_command,
+    on_country,
+    on_country_selected,
     on_focus,
     on_place,
     on_place_missing,
@@ -103,7 +106,7 @@ async def test_unknown_time_skips_time_value_prompt():
 
     state = await on_time_precision(update, context)
 
-    assert state == NATAL_PLACE
+    assert state == NATAL_COUNTRY
     assert context.user_data["natal_time_precision"] == TimePrecision.UNKNOWN
 
 
@@ -133,9 +136,38 @@ def test_conversation_handler_accepts_text_intent_entrypoint():
 
 
 @pytest.mark.asyncio
-async def test_place_prefix_returns_city_suggestions():
+async def test_country_prefix_returns_country_suggestions():
+    update = make_update("У")
+    context = make_context()
+
+    state = await on_country(update, context)
+
+    assert state == NATAL_COUNTRY
+    reply_text, kwargs = update.message.replies[0]
+    assert "Выберите страну" in reply_text
+    keyboard = kwargs["reply_markup"].inline_keyboard
+    assert any("Ukraine" in button.text or "UA" in button.text for row in keyboard for button in row)
+
+
+@pytest.mark.asyncio
+async def test_country_selection_stores_country_and_asks_city():
+    update = make_callback_update("natal_country:UA")
+    context = make_context()
+
+    state = await on_country_selected(update, context)
+
+    assert state == NATAL_PLACE
+    assert context.user_data["natal_country_code"] == "UA"
+    update.callback_query.edit_message_text.assert_awaited()
+    text = update.callback_query.edit_message_text.await_args.args[0]
+    assert "Город рождения" in text
+
+
+@pytest.mark.asyncio
+async def test_place_prefix_returns_city_suggestions_filtered_by_country():
     update = make_update("Оде")
     context = make_context()
+    context.user_data["natal_country_code"] = "UA"
 
     state = await on_place(update, context)
 
