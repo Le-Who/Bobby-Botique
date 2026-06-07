@@ -319,6 +319,12 @@ All configuration is loaded from environment variables (or a `.env` file). Varia
 
 Natal city autocomplete uses GeoNames data via the `geonamescache` Python package. GeoNames data is licensed under CC BY 4.0 and should be credited in public product materials.
 
+Before enabling natal reports publicly, run the live smoke check on the host with real environment variables:
+
+```bash
+python scripts/natal_smoke.py --webhook-url "$WEBHOOK_URL"
+```
+
 ---
 
 ### 🖥️  Local Bot API Server (Optional)
