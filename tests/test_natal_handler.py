@@ -13,6 +13,7 @@ from app.handlers.natal_chart import (
     natal_command,
     on_focus,
     on_place,
+    on_place_missing,
     on_place_selected,
     on_table_input,
     on_time_precision,
@@ -143,6 +144,7 @@ async def test_place_prefix_returns_city_suggestions():
     assert "Выберите город" in reply_text
     keyboard = kwargs["reply_markup"].inline_keyboard
     assert any("Odesa" in button.text or "Odessa" in button.text for row in keyboard for button in row)
+    assert any("Нет в списке" in button.text for row in keyboard for button in row)
 
 
 @pytest.mark.asyncio
@@ -159,3 +161,16 @@ async def test_place_selection_stores_city_coordinates_and_asks_focus():
     assert context.user_data["natal_place"] == city.display_name
     assert context.user_data["natal_place_data"]["timezone"] == "Europe/Kyiv"
     update.callback_query.edit_message_text.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_place_callback_asks_for_nearest_large_city():
+    update = make_callback_update("natal_place_missing")
+    context = make_context()
+
+    state = await on_place_missing(update, context)
+
+    assert state == NATAL_PLACE
+    update.callback_query.edit_message_text.assert_awaited()
+    text = update.callback_query.edit_message_text.await_args.args[0]
+    assert "ближайший крупный город" in text

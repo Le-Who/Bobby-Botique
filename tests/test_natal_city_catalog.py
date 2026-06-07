@@ -60,3 +60,25 @@ def test_search_cities_rejects_one_character_noise():
 
 def test_warm_city_catalog_returns_city_count():
     assert warm_city_catalog() > 10000
+
+
+@pytest.mark.parametrize(
+    ("query", "timezone_prefix"),
+    [
+        ("Odesa", "Europe/"),
+        ("Kyiv", "Europe/"),
+        ("Moscow", "Europe/"),
+        ("London", "Europe/"),
+        ("New York", "America/"),
+        ("Ottawa", "America/"),
+        ("Orenburg", "Asia/"),
+        ("Berlin", "Europe/"),
+        ("Warsaw", "Europe/"),
+        ("Istanbul", "Europe/"),
+    ],
+)
+def test_search_cities_covers_release_smoke_set(query: str, timezone_prefix: str):
+    results = search_cities(query, limit=5)
+
+    assert results, query
+    assert results[0].timezone.startswith(timezone_prefix)

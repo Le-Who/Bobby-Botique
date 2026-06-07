@@ -151,6 +151,18 @@ async def on_place_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return NATAL_FOCUS
 
 
+async def on_place_missing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    query = update.callback_query
+    if not query:
+        return NATAL_PLACE
+    await query.answer()
+    await query.edit_message_text(
+        "Если вашего города нет в списке, введите ближайший крупный город рядом с местом рождения. "
+        "Для натальной карты важны координаты и часовой пояс."
+    )
+    return NATAL_PLACE
+
+
 async def on_focus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     context.user_data["natal_focus"] = update.message.text.strip() or "общий"
     birth_input = _birth_input_from_steps(context.user_data)
@@ -213,6 +225,7 @@ def build_natal_chart_handler() -> ConversationHandler:
             NATAL_TIME_PRECISION: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_precision)],
             NATAL_TIME_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_value)],
             NATAL_PLACE: [
+                CallbackQueryHandler(on_place_missing, pattern=r"^natal_place_missing$"),
                 CallbackQueryHandler(on_place_selected, pattern=r"^natal_place:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, on_place),
             ],
@@ -259,6 +272,7 @@ def _city_keyboard(cities: list[CityRecord]) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(_city_button_text(city), callback_data=f"natal_place:{city.geoname_id}")]
             for city in cities
         ]
+        + [[InlineKeyboardButton("Нет в списке", callback_data="natal_place_missing")]]
     )
 
 
