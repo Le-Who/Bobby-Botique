@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
+from app.natal.city_catalog import search_countries
 from app.natal.models import BirthInput, TimePrecision
 
 
@@ -43,6 +44,7 @@ def parse_birth_table(text: str) -> BirthInput:
     precision_raw = _get_required(fields, "Время рождения")
     time_precision = _normalize_time_precision(precision_raw)
     birth_place = _get_required(fields, "Место рождения")
+    country_code = _normalize_country_code(fields.get("страна рождения", ""))
     focus = _normalize_focus(fields.get("фокус разбора", "general"))
     language = fields.get("язык", "ru").strip() or "ru"
 
@@ -70,6 +72,7 @@ def parse_birth_table(text: str) -> BirthInput:
         birth_time_range_start=range_start,
         birth_time_range_end=range_end,
         birth_place=birth_place,
+        birth_place_country_code=country_code,
         language=language,
         focus=focus,
     )
@@ -130,3 +133,13 @@ def _normalize_focus(raw: str) -> str:
     if not value:
         return "general"
     return _FOCUS_MAP.get(value, value)
+
+
+def _normalize_country_code(raw: str) -> str | None:
+    value = raw.strip()
+    if not value:
+        return None
+    matches = search_countries(value, limit=1)
+    if not matches:
+        raise BirthInputParseError("Страна рождения не найдена.")
+    return matches[0].code

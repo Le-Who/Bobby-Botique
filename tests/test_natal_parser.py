@@ -37,6 +37,20 @@ def test_parse_unknown_time_table_ru():
     assert parsed.focus == "general"
 
 
+def test_parse_table_accepts_birth_country_for_local_city_lookup():
+    parsed = parse_birth_table(
+        """
+        Дата рождения: 1995-02-14
+        Время рождения: неизвестно
+        Страна рождения: Украина
+        Место рождения: Одесса
+        """
+    )
+
+    assert parsed.birth_place_country_code == "UA"
+    assert parsed.birth_place == "Одесса"
+
+
 def test_parse_requires_birth_place():
     with pytest.raises(BirthInputParseError, match="Место рождения"):
         parse_birth_table("Дата рождения: 1995-02-14\nВремя рождения: неизвестно")

@@ -70,7 +70,7 @@ async def resolve_birth_data(
     if embedded is not None:
         result, timezone_name = embedded
     else:
-        local = _local_city_result(birth.birth_place)
+        local = _local_city_result(birth.birth_place, birth.birth_place_country_code)
         if local is not None:
             result, timezone_name = local
         else:
@@ -108,8 +108,8 @@ def _embedded_geocode_result(birth: BirthInput) -> tuple[GeocodeResult, str] | N
     )
 
 
-def _local_city_result(place: str) -> tuple[GeocodeResult, str] | None:
-    matches = search_cities(place, limit=1)
+def _local_city_result(place: str, country_code: str | None = None) -> tuple[GeocodeResult, str] | None:
+    matches = search_cities(place, limit=1, country_code=country_code)
     if not matches:
         return None
     city = matches[0]

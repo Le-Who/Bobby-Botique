@@ -11,6 +11,7 @@ This document tracks the changes required to move natal charts from MVP to produ
 - Local city autocomplete is backed by `geonamescache`, a pure-Python GeoNames dataset package.
 - City records include `name`, alternate names, country, latitude, longitude, IANA timezone, and population.
 - Telegram step flow now asks users to choose a country first, then a city from country-filtered inline suggestions instead of accepting ambiguous free text immediately.
+- Table input accepts `Страна рождения`, normalizes it to an ISO country code, and uses it to resolve city coordinates/timezone locally.
 - Selected city coordinates and timezone are embedded into `BirthInput`, so normal chart generation does not call external geocoding.
 - `resolve_birth_data()` now uses embedded city coordinates first, local city lookup second, and Nominatim only as fallback.
 - The city catalog is warmed during handler registration to avoid first-user lookup delay.

@@ -52,3 +52,20 @@ async def test_resolve_birth_data_uses_embedded_city_coordinates_without_network
     assert resolved.latitude == 46.47747
     assert resolved.longitude == 30.73262
     assert resolved.timezone == "Europe/Kyiv"
+
+
+@pytest.mark.asyncio
+async def test_resolve_birth_data_uses_birth_country_for_local_city_lookup_without_network():
+    geocoder = FakeGeocoder()
+    birth = BirthInput(
+        birth_date="1995-02-14",
+        time_precision=TimePrecision.UNKNOWN,
+        birth_place="Одесса",
+        birth_place_country_code="UA",
+    )
+
+    resolved = await resolve_birth_data(birth, geocoder=geocoder)
+
+    assert geocoder.called is False
+    assert resolved.display_place == "Odesa, Ukraine"
+    assert resolved.timezone == "Europe/Kyiv"

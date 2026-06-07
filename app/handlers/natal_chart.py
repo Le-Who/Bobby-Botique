@@ -73,6 +73,7 @@ async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
             "Время рождения: точное / примерное / диапазон / неизвестно\n"
             "Если точное или примерное:\n"
             "Если диапазон:\n"
+            "Страна рождения:\n"
             "Место рождения:\n"
             "Фокус разбора: общий / отношения / карьера / психология / кратко"
         )
@@ -366,6 +367,7 @@ def _birth_input_from_steps(user_data: dict) -> BirthInput:
         birth_input = birth_input.model_copy(
             update={
                 "birth_place_geoname_id": str(place_data.get("geoname_id") or ""),
+                "birth_place_country_code": user_data.get("natal_country_code"),
                 "birth_place_latitude": place_data.get("latitude"),
                 "birth_place_longitude": place_data.get("longitude"),
                 "birth_place_timezone": place_data.get("timezone"),

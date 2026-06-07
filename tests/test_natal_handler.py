@@ -136,6 +136,37 @@ def test_conversation_handler_accepts_text_intent_entrypoint():
 
 
 @pytest.mark.asyncio
+async def test_step_flow_embeds_selected_country_code_in_birth_input():
+    from app.natal.city_catalog import search_cities
+
+    city = search_cities("Оде", limit=1, country_code="UA")[0]
+    update = make_update("отношения")
+    context = make_context()
+    context.user_data.update(
+        {
+            "natal_date": "14.02.1995",
+            "natal_time_precision": TimePrecision.UNKNOWN,
+            "natal_country_code": "UA",
+            "natal_place": city.display_name,
+            "natal_place_data": {
+                "geoname_id": city.geoname_id,
+                "display_name": city.display_name,
+                "latitude": city.latitude,
+                "longitude": city.longitude,
+                "timezone": city.timezone,
+            },
+        }
+    )
+
+    state = await on_focus(update, context)
+
+    assert state == NATAL_CONFIRM
+    birth_input = context.user_data["natal_birth_input"]
+    assert birth_input.birth_place_country_code == "UA"
+    assert birth_input.birth_place_timezone == "Europe/Kyiv"
+
+
+@pytest.mark.asyncio
 async def test_country_prefix_returns_country_suggestions():
     update = make_update("У")
     context = make_context()
