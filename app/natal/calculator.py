@@ -1,0 +1,164 @@
+from __future__ import annotations
+
+import math
+from datetime import datetime
+
+import ephem
+
+from app.natal.models import (
+    Aspect,
+    ChartData,
+    House,
+    InputQuality,
+    PlanetPosition,
+    ResolvedBirthData,
+    TimePrecision,
+)
+
+_PLANETS = [
+    ("sun", "Солнце", ephem.Sun),
+    ("moon", "Луна", ephem.Moon),
+    ("mercury", "Меркурий", ephem.Mercury),
+    ("venus", "Венера", ephem.Venus),
+    ("mars", "Марс", ephem.Mars),
+    ("jupiter", "Юпитер", ephem.Jupiter),
+    ("saturn", "Сатурн", ephem.Saturn),
+    ("uranus", "Уран", ephem.Uranus),
+    ("neptune", "Нептун", ephem.Neptune),
+    ("pluto", "Плутон", ephem.Pluto),
+]
+
+_SIGNS = [
+    "Овен",
+    "Телец",
+    "Близнецы",
+    "Рак",
+    "Лев",
+    "Дева",
+    "Весы",
+    "Скорпион",
+    "Стрелец",
+    "Козерог",
+    "Водолей",
+    "Рыбы",
+]
+
+_ASPECTS = [
+    ("conjunction", 0.0),
+    ("sextile", 60.0),
+    ("square", 90.0),
+    ("trine", 120.0),
+    ("opposition", 180.0),
+]
+
+
+async def calculate_chart(resolved: ResolvedBirthData) -> ChartData:
+    precision = resolved.birth_input.time_precision
+    houses_available = precision != TimePrecision.UNKNOWN
+    utc_dt = datetime.fromisoformat(resolved.utc_datetime.replace("Z", "+00:00"))
+    ephem_date = ephem.Date(utc_dt.replace(tzinfo=None))
+    planets = [_planet_position(key, label, body_factory, ephem_date) for key, label, body_factory in _PLANETS]
+    aspects = _calculate_aspects(planets)
+    angles: dict[str, float] = {}
+    houses: list[House] = []
+    warnings: list[str] = []
+
+    if houses_available:
+        ascendant = _estimate_ascendant(utc_dt, resolved.longitude)
+        mc = _normalize_longitude(ascendant + 270.0)
+        angles = {"ascendant": ascendant, "mc": mc}
+        houses = []
+        for number in range(1, 13):
+            cusp = _normalize_longitude(ascendant + (number - 1) * 30.0)
+            houses.append(House(number=number, cusp_longitude=cusp, sign=_sign_for(cusp)))
+        _assign_houses(planets, houses)
+        if precision == TimePrecision.APPROXIMATE:
+            warnings.append("Время рождения примерное: дома и углы показаны с ограниченной точностью.")
+        elif precision == TimePrecision.RANGE:
+            warnings.append("Использован midpoint диапазона времени; дома и углы приблизительны.")
+    else:
+        warnings.append("Время рождения неизвестно: дома, Асцендент и MC не рассчитываются как достоверные.")
+
+    return ChartData(
+        input_quality=InputQuality(
+            time_precision=precision,
+            houses_available=houses_available,
+            angles_available=houses_available,
+            moon_uncertainty=precision == TimePrecision.UNKNOWN,
+            warnings=warnings,
+        ),
+        planets=planets,
+        aspects=aspects,
+        houses=houses,
+        angles=angles,
+    )
+
+
+def _planet_position(key: str, label: str, body_factory, ephem_date: ephem.Date) -> PlanetPosition:
+    body = body_factory(ephem_date)
+    ecliptic = ephem.Ecliptic(body)
+    longitude = _normalize_longitude(math.degrees(float(ecliptic.lon)))
+    return PlanetPosition(
+        key=key,
+        label=label,
+        longitude=longitude,
+        sign=_sign_for(longitude),
+        degree_in_sign=longitude % 30.0,
+        retrograde=False,
+    )
+
+
+def _calculate_aspects(planets: list[PlanetPosition]) -> list[Aspect]:
+    aspects: list[Aspect] = []
+    for index, first in enumerate(planets):
+        for second in planets[index + 1 :]:
+            distance = _angular_distance(first.longitude, second.longitude)
+            for aspect_name, aspect_angle in _ASPECTS:
+                orb = abs(distance - aspect_angle)
+                allowed = _allowed_orb(first.key, second.key, aspect_name)
+                if orb <= allowed:
+                    aspects.append(
+                        Aspect(
+                            point_a=first.key,
+                            point_b=second.key,
+                            aspect=aspect_name,
+                            orb=round(orb, 2),
+                        )
+                    )
+                    break
+    return aspects
+
+
+def _allowed_orb(first: str, second: str, aspect_name: str) -> float:
+    if aspect_name == "sextile":
+        return 4.0
+    if first in {"sun", "moon"} or second in {"sun", "moon"}:
+        return 8.0
+    return 6.0
+
+
+def _assign_houses(planets: list[PlanetPosition], houses: list[House]) -> None:
+    cusps = [house.cusp_longitude for house in houses]
+    asc = cusps[0]
+    for planet in planets:
+        offset = _normalize_longitude(planet.longitude - asc)
+        planet.house = int(offset // 30.0) + 1
+
+
+def _estimate_ascendant(utc_dt: datetime, longitude: float) -> float:
+    day_fraction = (utc_dt.hour + utc_dt.minute / 60 + utc_dt.second / 3600) / 24.0
+    day_of_year = utc_dt.timetuple().tm_yday
+    return _normalize_longitude((day_fraction * 360.0) + longitude + (day_of_year * 0.985647))
+
+
+def _sign_for(longitude: float) -> str:
+    return _SIGNS[int(_normalize_longitude(longitude) // 30.0)]
+
+
+def _normalize_longitude(value: float) -> float:
+    return value % 360.0
+
+
+def _angular_distance(first: float, second: float) -> float:
+    distance = abs(first - second) % 360.0
+    return min(distance, 360.0 - distance)
