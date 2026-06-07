@@ -54,3 +54,13 @@ def test_telegraph_markdown_links_to_hosted_report(sample_natal_report: NatalRep
 
     assert "https://example.com/reports/natal/abc" in markdown
     assert "<svg" not in markdown
+
+
+def test_telegraph_markdown_excludes_interactive_content(sample_natal_report: NatalReport):
+    sample_natal_report.sections[0].body_markdown = "<script>alert(1)</script>\n<svg></svg>\nText"
+
+    markdown = build_telegraph_markdown(sample_natal_report)
+
+    assert "<script" not in markdown.lower()
+    assert "<svg" not in markdown.lower()
+    assert "javascript:" not in markdown.lower()
