@@ -16,6 +16,7 @@ from app.errors import (
     classify_key_error,
     is_error_message,
     is_key_related_error,
+    is_retryable_error,
     tag_error,
 )
 from app.providers.base import is_freetheai_model, is_opencode_model
@@ -231,7 +232,9 @@ class ProviderRouter:
             )
 
             # Track health based on response
-            if response_text and is_error_message(response_text) and is_key_related_error(response_text):
+            if response_text and is_error_message(response_text) and (
+                is_key_related_error(response_text) or is_retryable_error(response_text)
+            ):
                 failed_keys.add(key_data["key_hash"])
                 error_category = classify_key_error(response_text)
 

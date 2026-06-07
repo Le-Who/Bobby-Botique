@@ -202,6 +202,8 @@ class BaseAIProvider(ABC):
         """Check if error is transient and can be retried."""
         transient_patterns = [
             "503",
+            "504",
+            "deadline",
             "unavailable",
             "overloaded",
             "rate limit",

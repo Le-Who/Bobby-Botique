@@ -255,6 +255,48 @@ class TestProviders:
             assert response.is_error is True
 
     @pytest.mark.asyncio
+    async def test_gemini_wrapper_deadline_exceeded(self):
+        """GeminiProvider should retry on 504 DEADLINE_EXCEEDED."""
+        from google.genai.errors import APIError
+        _gemini_clients_cache.clear()
+
+        # We will mock _execute_request to raise APIError for testing the raise logic,
+        # but wait, the raise logic is INSIDE _execute_request!
+        # So we mock the underlying genai Client to raise APIError("504 DEADLINE_EXCEEDED").
+        with (
+            patch("app.providers.gemini.genai.Client") as MockClient,
+            patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
+            patch("app.providers.gemini.api_logger", new_callable=MagicMock),
+            patch("app.providers.gemini.settings") as mock_settings,
+        ):
+            mock_settings.SAFETY_SETTINGS = []
+            wrapper = GeminiProvider("test-key")
+
+            class FakeAPIError(APIError):
+                def __init__(self, msg):
+                    self.msg = msg
+                def __str__(self):
+                    return self.msg
+
+            mock_aio = MagicMock()
+            # Raise the error
+            mock_aio.generate_content = AsyncMock(side_effect=FakeAPIError("504 DEADLINE_EXCEEDED"))
+            MockClient.return_value.aio.models = mock_aio
+
+            # BaseAIProvider wraps _execute_request in run_with_resilience.
+            # If it is retryable, it will be called `max_retries` times (if max_retries=2, called 2 times).
+            # Let's override the resilience policy to speed it up.
+            response = await wrapper.get_response(
+                history=[{"role": "user", "parts": ["hi"]}],
+                model_name="gemini-3.1-flash-lite",
+                max_retries=2,
+            )
+
+            # _execute_request should have been called 2 times (1 initial + 1 retry)
+            assert mock_aio.generate_content.call_count == 2
+            assert response.success is False
+
+    @pytest.mark.asyncio
     async def test_openrouter_wrapper_success(self):
         """OpenRouterProvider should return AIResponse on success."""
         wrapper = OpenRouterProvider("test-key")

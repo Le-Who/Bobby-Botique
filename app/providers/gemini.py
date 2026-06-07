@@ -356,7 +356,13 @@ class GeminiProvider(BaseAIProvider):
                     ErrorCode.QUOTA_EXCEEDED,
                     "🚫 Достигнут лимит запросов к API (Quota Exceeded).",
                 )
-            elif "503" in str(e) or "unavailable" in err_lower or "overloaded" in err_lower:
+            elif (
+                "503" in str(e)
+                or "unavailable" in err_lower
+                or "overloaded" in err_lower
+                or "504" in str(e)
+                or "deadline_exceeded" in err_lower
+            ):
                 await metrics_collector.record_error("gemini_overloaded", str(e))
                 raise  # Trigger retry in BaseAIProvider
             elif "api key" in err_lower or "api_key_invalid" in err_lower:
@@ -514,6 +520,8 @@ class GeminiProvider(BaseAIProvider):
                 "503" in str(e)
                 or "unavailable" in err_lower
                 or "overloaded" in err_lower
+                or "504" in str(e)
+                or "deadline_exceeded" in err_lower
                 or "rate limit" in err_lower
                 or retry_after_seconds is not None
             )
