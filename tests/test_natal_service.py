@@ -1,6 +1,14 @@
 import pytest
 
-from app.natal.models import BirthInput, ChartData, InputQuality, PlanetPosition, ReportSection, ResolvedBirthData, TimePrecision
+from app.natal.models import (
+    BirthInput,
+    ChartData,
+    InputQuality,
+    PlanetPosition,
+    ReportSection,
+    ResolvedBirthData,
+    TimePrecision,
+)
 from app.natal.service import create_natal_report
 
 

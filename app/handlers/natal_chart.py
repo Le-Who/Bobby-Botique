@@ -4,7 +4,14 @@ import os
 from typing import Final
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
+from telegram.ext import (
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 
 from app.natal.models import BirthInput, TimePrecision
 from app.natal.parser import BirthInputParseError, parse_birth_table
