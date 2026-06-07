@@ -17,6 +17,7 @@ This document tracks the changes required to move natal charts from MVP to produ
 - The city catalog is warmed during handler registration to avoid first-user lookup delay.
 - Country and city search has automated coverage for Cyrillic country prefixes, one-letter country-filtered city prefixes, and release smoke cities: Odesa/Odessa, Kyiv/Kiev, Moscow, London, New York, Ottawa, Orenburg, Berlin, Warsaw, and Istanbul.
 - The Telegram flow includes a "not in list" fallback that asks the user for the nearest large city.
+- Hosted reports and Telegraph mirrors include GeoNames / CC BY 4.0 city-data attribution.
 - On local Python 3.14, city catalog warmup loaded 32,444 cities in about 403 ms; warm search for "Оде" took about 23 ms.
 - Ascendant and MC no longer use the old latitude-independent placeholder formula. They are calculated from local sidereal time, mean obliquity, and ecliptic/horizon or ecliptic/meridian intersections.
 - The astronomy math lives in a focused clean-room module with tests for J2000 Julian Day, sidereal time, mean obliquity, and the Kyiv Ascendant/MC reference case.
@@ -40,7 +41,7 @@ This document tracks the changes required to move natal charts from MVP to produ
 
 Use local GeoNames-backed data for the main product path. The important fields for natal charts are latitude, longitude, and timezone. `geonamescache==3.0.1` ships those fields in a `py3-none-any` wheel, so it avoids Python 3.14 native build risk and avoids network latency during normal user interaction.
 
-GeoNames data is distributed under CC BY 4.0. Product documentation and/or an about page should include attribution before public launch.
+GeoNames data is distributed under CC BY 4.0. Hosted reports and Telegraph mirrors include attribution to GeoNames.
 
 ## Remaining Product Risks
 

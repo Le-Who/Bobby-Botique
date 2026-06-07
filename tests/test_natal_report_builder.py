@@ -47,6 +47,14 @@ def test_hosted_report_contains_svg_and_section_ids(sample_natal_report: NatalRe
     assert "Натальная карта" in html
 
 
+def test_hosted_report_credits_geonames_city_data(sample_natal_report: NatalReport):
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert "GeoNames" in html
+    assert "CC BY 4.0" in html
+    assert "https://www.geonames.org/" in html
+
+
 def test_telegraph_markdown_links_to_hosted_report(sample_natal_report: NatalReport):
     sample_natal_report.hosted_url = "https://example.com/reports/natal/abc"
 
@@ -54,6 +62,13 @@ def test_telegraph_markdown_links_to_hosted_report(sample_natal_report: NatalRep
 
     assert "https://example.com/reports/natal/abc" in markdown
     assert "<svg" not in markdown
+
+
+def test_telegraph_markdown_credits_geonames_city_data(sample_natal_report: NatalReport):
+    markdown = build_telegraph_markdown(sample_natal_report)
+
+    assert "GeoNames" in markdown
+    assert "CC BY 4.0" in markdown
 
 
 def test_telegraph_markdown_excludes_interactive_content(sample_natal_report: NatalReport):
