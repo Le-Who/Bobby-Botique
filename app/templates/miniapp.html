@@ -1344,7 +1344,7 @@ document.getElementById('s-prompt-area').addEventListener('input', e => {
 });
 
 // Helper
-function esc(s) { const d = document.createElement('div'); d.textContent = s||''; return d.innerHTML; }
+function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
 
 // Init
 const params = new URLSearchParams(window.location.search);
