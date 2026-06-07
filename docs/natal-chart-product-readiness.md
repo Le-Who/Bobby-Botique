@@ -19,6 +19,7 @@ This document tracks the changes required to move natal charts from MVP to produ
 - On local Python 3.14, city catalog warmup loaded 32,444 cities in about 403 ms; warm search for "Оде" took about 23 ms.
 - Ascendant and MC no longer use the old latitude-independent placeholder formula. They are calculated from local sidereal time, mean obliquity, and ecliptic/horizon or ecliptic/meridian intersections.
 - The astronomy math lives in a focused clean-room module with tests for J2000 Julian Day, sidereal time, mean obliquity, and the Kyiv Ascendant/MC reference case.
+- Planet retrograde flags are calculated locally from signed ecliptic longitude movement around the chart time instead of being hard-coded to false.
 - Houses use the equal-house system from the calculated Ascendant.
 
 ## Required Before Public Release
@@ -31,7 +32,7 @@ This document tracks the changes required to move natal charts from MVP to produ
 6. Decide whether `cities1000` coverage is enough or whether the product needs a denser dataset for small towns.
 7. Decide whether the "nearest large city" fallback is enough, or whether public launch needs an admin-reviewed coordinate entry path.
 8. Calibrate interpretation prompts with real sample reports and reject overconfident claims when birth time is unknown.
-9. Compare the local ephem-based planets, Ascendant, MC, and equal-house cusps against a trusted reference for a small golden set of dates before calling the calculator production-grade.
+9. Compare the local ephem-based planets, retrograde flags, Ascendant, MC, and equal-house cusps against a trusted reference for a small golden set of dates before calling the calculator production-grade.
 10. Keep Swiss Ephemeris as a future optional accuracy upgrade only if AGPL/commercial license obligations are handled explicitly.
 
 ## City Data Decision

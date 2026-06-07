@@ -83,3 +83,26 @@ async def test_angles_depend_on_latitude_and_mc_is_not_derived_from_ascendant():
     assert abs(kyiv_chart.angles["ascendant"] - equator_chart.angles["ascendant"]) > 1.0
     toy_mc = (kyiv_chart.angles["ascendant"] + 270.0) % 360.0
     assert abs(kyiv_chart.angles["mc"] - toy_mc) > 1.0
+
+
+@pytest.mark.asyncio
+async def test_calculate_marks_retrograde_planets():
+    resolved = ResolvedBirthData(
+        birth_input=BirthInput(
+            birth_date="2023-08-30",
+            time_precision=TimePrecision.UNKNOWN,
+            birth_place="Kyiv, Ukraine",
+        ),
+        latitude=50.4501,
+        longitude=30.5234,
+        timezone="Europe/Kyiv",
+        local_datetime="2023-08-30T12:00:00+03:00",
+        utc_datetime="2023-08-30T09:00:00+00:00",
+        display_place="Kyiv, Ukraine",
+    )
+
+    chart = await calculate_chart(resolved)
+    by_key = {planet.key: planet for planet in chart.planets}
+
+    assert by_key["mercury"].retrograde is True
+    assert by_key["sun"].retrograde is False

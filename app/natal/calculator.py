@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import ephem
 
@@ -110,8 +110,20 @@ def _planet_position(key: str, label: str, body_factory, ephem_date: ephem.Date)
         longitude=longitude,
         sign=_sign_for(longitude),
         degree_in_sign=longitude % 30.0,
-        retrograde=False,
+        retrograde=_is_retrograde(body_factory, ephem_date),
     )
+
+
+def _is_retrograde(body_factory, ephem_date: ephem.Date) -> bool:
+    before = _body_longitude(body_factory, ephem.Date(ephem_date.datetime() - timedelta(hours=12)))
+    after = _body_longitude(body_factory, ephem.Date(ephem_date.datetime() + timedelta(hours=12)))
+    movement = (after - before + 180.0) % 360.0 - 180.0
+    return movement < 0.0
+
+
+def _body_longitude(body_factory, ephem_date: ephem.Date) -> float:
+    body = body_factory(ephem_date)
+    return normalize_longitude(math.degrees(float(ephem.Ecliptic(body).lon)))
 
 
 def _calculate_aspects(planets: list[PlanetPosition]) -> list[Aspect]:
