@@ -185,3 +185,7 @@ async def create_telegraph_page(title: str, markdown_content: str) -> str | None
     except Exception as e:
         logger.warning("Telegraph page creation failed: %s", e)
         return None
+
+
+async def create_telegraph_page_from_markdown(title: str, markdown_content: str) -> str | None:
+    return await create_telegraph_page(title, markdown_content)
