@@ -624,6 +624,9 @@ def register(application: Application) -> None:
 
     # Core user commands
     application.add_handler(CommandHandler("start", start_command))
+    from app.handlers.natal_chart import build_natal_chart_handler
+
+    application.add_handler(build_natal_chart_handler())
     application.add_handler(CommandHandler("live", live_command))
     application.add_handler(CommandHandler("games", games_command))
     from app.handlers.daily_2048 import daily2048_command
