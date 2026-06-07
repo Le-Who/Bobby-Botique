@@ -308,6 +308,17 @@ All configuration is loaded from environment variables (or a `.env` file). Varia
 
 ---
 
+### Natal Reports
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `NATAL_REPORTS_ENABLED` | ⚙️ | `true` / `false` | `true` | Enables `/natal` and hosted natal report generation. Disable during rollout if smoke tests fail. |
+| `NATAL_REPORT_TTL_DAYS` | ⚙️ | `365` | `365` | Retention window for hosted natal reports. PostgreSQL storage keeps shared links stable by default. |
+| `NATAL_GEOCODER_PROVIDER` | ⚙️ | `nominatim` | `nominatim` | Geocoder adapter used to resolve birth places. The release-1 adapter uses OpenStreetMap Nominatim. |
+| `NATAL_SEND_RAW_BIRTH_DATA_TO_LLM` | ⚙️ | `false` | `false` | Privacy guard. Keep `false`: LLM prompts should receive derived chart data, not raw birth date/place. |
+
+---
+
 ### 🖥️  Local Bot API Server (Optional)
 
 When configured, the bot communicates with a self-hosted Local Bot API Server instead of `api.telegram.org`. This eliminates network latency for file operations, enables 2 GB file uploads, and provides zero-copy media access via a shared Docker volume.
