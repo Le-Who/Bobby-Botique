@@ -42,6 +42,8 @@ class InputQuality(BaseModel):
     time_precision: TimePrecision
     houses_available: bool
     angles_available: bool
+    calculation_engine: str = "ephem-local"
+    reference_validated: bool = False
     moon_uncertainty: bool = False
     warnings: list[str] = Field(default_factory=list)
 

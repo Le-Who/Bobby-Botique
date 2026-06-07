@@ -10,12 +10,21 @@ def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> 
     confidence_rule = ""
     if not chart.input_quality.houses_available:
         confidence_rule = "Время неизвестно: не трактуй дома, Асцендент или MC как достоверные факты."
+    quality_warnings = "\n".join(f"- {warning}" for warning in chart.input_quality.warnings)
+    quality_block = (
+        "Предупреждения качества:\n"
+        f"- Движок расчета: {chart.input_quality.calculation_engine}.\n"
+        f"- Reference validation: {chart.input_quality.reference_validated}.\n"
+        f"{quality_warnings}\n"
+        "Не подавай приблизительные дома, Асцендент или MC как полностью проверенные факты."
+    )
     return (
         "Ты пишешь текстовую интерпретацию натальной карты по уже рассчитанным данным.\n"
         "Не запрашивай и не восстанавливай сырые дату рождения, место рождения или личные данные.\n"
         f"Язык ответа: {language or 'ru'}.\n"
         f"Фокус: {focus or 'general'}.\n"
         f"{confidence_rule}\n"
+        f"{quality_block}\n"
         "Запрещены фаталистичные формулировки, медицинская, финансовая или юридическая определенность.\n"
         "Верни markdown-секции. Каждая секция должна начинаться заголовком вида `## section-id | Заголовок`.\n"
         f"Обязательные stable ids: {', '.join(section_ids)}.\n"
@@ -77,13 +86,14 @@ def _fallback_sections(chart: ChartData) -> list[ReportSection]:
     planet_lines = [f"- {planet.label}: {planet.sign} {planet.degree_in_sign:.1f}°" for planet in chart.planets]
     aspect_lines = [f"- {aspect.point_a} {aspect.aspect} {aspect.point_b}, орб {aspect.orb:.1f}°" for aspect in chart.aspects]
     unavailable = "Интерпретация временно недоступна, поэтому ниже приведены только расчетные факты."
+    quality_note = _quality_note(chart)
     sun = next((planet for planet in chart.planets if planet.key == "sun"), None)
     moon = next((planet for planet in chart.planets if planet.key == "moon"), None)
     return [
         ReportSection(
             id="section-summary",
             title="Краткое резюме",
-            body_markdown=f"{unavailable}\n\n" + "\n".join(planet_lines[:10]),
+            body_markdown=f"{unavailable}{quality_note}\n\n" + "\n".join(planet_lines[:10]),
         ),
         ReportSection(
             id="section-sun",
@@ -109,3 +119,10 @@ def _planet_fact(planet, unavailable: str) -> str:
     if planet is None:
         return unavailable
     return f"{unavailable}\n\n{planet.label}: {planet.sign} {planet.degree_in_sign:.1f}°."
+
+
+def _quality_note(chart: ChartData) -> str:
+    if not chart.input_quality.warnings:
+        return ""
+    warnings = "\n".join(f"- {warning}" for warning in chart.input_quality.warnings)
+    return f"\n\nПредупреждения качества:\n{warnings}"

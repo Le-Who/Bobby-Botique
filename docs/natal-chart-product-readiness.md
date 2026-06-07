@@ -17,6 +17,8 @@ This document tracks the changes required to move natal charts from MVP to produ
 - City search has automated coverage for Odesa/Odessa, Kyiv/Kiev, Moscow, London, New York, Ottawa, Orenburg, Berlin, Warsaw, and Istanbul.
 - The Telegram flow includes a "not in list" fallback that asks the user for the nearest large city.
 - On local Python 3.14, city catalog warmup loaded 32,444 cities in about 403 ms; warm search for "Оде" took about 23 ms.
+- Ascendant and MC no longer use the old latitude-independent placeholder formula. They are calculated from local sidereal time, mean obliquity, and ecliptic/horizon or ecliptic/meridian intersections.
+- Houses use the equal-house system from the calculated Ascendant.
 
 ## Required Before Public Release
 
@@ -28,7 +30,7 @@ This document tracks the changes required to move natal charts from MVP to produ
 6. Decide whether `cities1000` coverage is enough or whether the product needs a denser dataset for small towns.
 7. Decide whether the "nearest large city" fallback is enough, or whether public launch needs an admin-reviewed coordinate entry path.
 8. Calibrate interpretation prompts with real sample reports and reject overconfident claims when birth time is unknown.
-9. Compare the local ephem-based positions against a trusted reference for a small golden set of dates before calling the calculator production-grade.
+9. Compare the local ephem-based planets, Ascendant, MC, and equal-house cusps against a trusted reference for a small golden set of dates before calling the calculator production-grade.
 10. Keep Swiss Ephemeris as a future optional accuracy upgrade only if AGPL/commercial license obligations are handled explicitly.
 
 ## City Data Decision
@@ -40,6 +42,6 @@ GeoNames data is distributed under CC BY 4.0. Product documentation and/or an ab
 ## Remaining Product Risks
 
 - The current astrology calculator is deterministic and local, but it is not Swiss Ephemeris-grade.
-- House and ascendant calculations remain approximate.
+- Equal-house cusps are implemented locally; Placidus/Koch/etc. are not.
 - City autocomplete in normal Telegram chat is message-by-message, not true live keystroke autocomplete. True per-character updates would require a Telegram Mini App or inline mode.
 - The fallback Nominatim geocoder is still network-dependent and should be treated as fallback only.

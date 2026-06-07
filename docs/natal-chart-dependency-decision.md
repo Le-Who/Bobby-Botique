@@ -10,7 +10,7 @@ Can this be used in a hosted Telegram bot: yes. The release-1 implementation doe
 
 Do we need a commercial Swiss Ephemeris license: no for the release-1 clean-room implementation. No for an AGPL-compliant open-source Swiss Ephemeris deployment. Yes only for a proprietary or otherwise incompatible Swiss Ephemeris deployment.
 
-Docker/alpine compatibility: the production Dockerfile currently uses `python:3.14-slim`. `pyswisseph>=2.10,<3` and plan-era `timezonefinder` do not have suitable Python 3.14 binary wheels in the verified environment, so adding them would require native build tooling in the image. Release 1 avoids that Docker risk.
+Docker/alpine compatibility: the production Dockerfile currently uses `python:3.14-slim`. `pyswisseph>=2.10,<3` and plan-era `timezonefinder` do not have suitable Python 3.14 binary wheels in the verified environment, so adding them would require native build tooling in the image. On `C:\Python314`, `pip download pyswisseph==2.10.3.2 --only-binary=:all:` found no matching binary distribution, and `pip install pyswisseph==2.10.3.2` fell back to source build and failed without Microsoft C++ Build Tools. Release 1 avoids that Docker risk.
 
 Ephemeris data files required: none for release 1.
 
