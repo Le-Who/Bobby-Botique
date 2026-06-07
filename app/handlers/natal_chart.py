@@ -13,6 +13,7 @@ from telegram.ext import (
     filters,
 )
 
+from app.natal.city_catalog import CityRecord, find_city_by_id, search_cities
 from app.natal.intent import NATAL_INTENT_RE
 from app.natal.models import BirthInput, TimePrecision
 from app.natal.parser import BirthInputParseError, parse_birth_table
@@ -33,6 +34,7 @@ _NATAL_KEYS = {
     "natal_time_precision",
     "natal_time_value",
     "natal_place",
+    "natal_place_data",
     "natal_focus",
     "natal_mode",
 }
@@ -118,8 +120,34 @@ async def on_time_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> s
 
 
 async def on_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
-    context.user_data["natal_place"] = update.message.text.strip()
-    await update.message.reply_text("Фокус разбора: общий / отношения / карьера / психология / кратко")
+    query = update.message.text.strip()
+    matches = search_cities(query, limit=8)
+    if not matches:
+        await update.message.reply_text("Город не найден. Введите больше букв или укажите ближайший крупный город.")
+        return NATAL_PLACE
+    await update.message.reply_text(
+        "Выберите город из списка или введите больше букв для уточнения.",
+        reply_markup=_city_keyboard(matches),
+    )
+    return NATAL_PLACE
+
+
+async def on_place_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    query = update.callback_query
+    if not query:
+        return NATAL_PLACE
+    await query.answer()
+    geoname_id = query.data.replace("natal_place:", "")
+    city = find_city_by_id(geoname_id)
+    if city is None:
+        await query.edit_message_text("Город не найден. Введите место рождения еще раз.")
+        return NATAL_PLACE
+    context.user_data["natal_place"] = city.display_name
+    context.user_data["natal_place_data"] = _city_payload(city)
+    await query.edit_message_text(
+        f"Место рождения: {city.display_name}\n\n"
+        "Фокус разбора: общий / отношения / карьера / психология / кратко"
+    )
     return NATAL_FOCUS
 
 
@@ -184,7 +212,10 @@ def build_natal_chart_handler() -> ConversationHandler:
             NATAL_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_date)],
             NATAL_TIME_PRECISION: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_precision)],
             NATAL_TIME_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_value)],
-            NATAL_PLACE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_place)],
+            NATAL_PLACE: [
+                CallbackQueryHandler(on_place_selected, pattern=r"^natal_place:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, on_place),
+            ],
             NATAL_FOCUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_focus)],
             NATAL_CONFIRM: [CallbackQueryHandler(on_confirm, pattern=r"^natal_confirm:")],
         },
@@ -222,6 +253,29 @@ def _confirm_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def _city_keyboard(cities: list[CityRecord]) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(_city_button_text(city), callback_data=f"natal_place:{city.geoname_id}")]
+            for city in cities
+        ]
+    )
+
+
+def _city_button_text(city: CityRecord) -> str:
+    return f"{city.display_name} · {city.timezone}"
+
+
+def _city_payload(city: CityRecord) -> dict[str, object]:
+    return {
+        "geoname_id": city.geoname_id,
+        "display_name": city.display_name,
+        "latitude": city.latitude,
+        "longitude": city.longitude,
+        "timezone": city.timezone,
+    }
+
+
 def _confirmation_text(birth_input: BirthInput) -> str:
     time_text = birth_input.birth_time or birth_input.time_precision.value
     limitations = ""
@@ -248,4 +302,16 @@ def _birth_input_from_steps(user_data: dict) -> BirthInput:
         f"Место рождения: {user_data.get('natal_place', '')}\n"
         f"Фокус разбора: {user_data.get('natal_focus', 'general')}"
     )
-    return parse_birth_table(table)
+    birth_input = parse_birth_table(table)
+    place_data = user_data.get("natal_place_data")
+    if isinstance(place_data, dict):
+        birth_input = birth_input.model_copy(
+            update={
+                "birth_place_geoname_id": str(place_data.get("geoname_id") or ""),
+                "birth_place_latitude": place_data.get("latitude"),
+                "birth_place_longitude": place_data.get("longitude"),
+                "birth_place_timezone": place_data.get("timezone"),
+                "birth_place_display_name": place_data.get("display_name"),
+            }
+        )
+    return birth_input

@@ -5,12 +5,15 @@ import pytest
 
 from app.handlers.natal_chart import (
     NATAL_CONFIRM,
+    NATAL_FOCUS,
     NATAL_PLACE,
     NATAL_TABLE,
     build_natal_chart_handler,
     clear_natal_user_data,
     natal_command,
     on_focus,
+    on_place,
+    on_place_selected,
     on_table_input,
     on_time_precision,
 )
@@ -27,9 +30,26 @@ class FakeMessage:
         return SimpleNamespace(edit_text=AsyncMock())
 
 
+class FakeCallbackQuery:
+    def __init__(self, data: str) -> None:
+        self.data = data
+        self.message = FakeMessage()
+        self.answer = AsyncMock()
+        self.edit_message_text = AsyncMock()
+
+
 def make_update(text: str = ""):
     return SimpleNamespace(
         message=FakeMessage(text),
+        effective_user=SimpleNamespace(id=123),
+        effective_chat=SimpleNamespace(id=456),
+    )
+
+
+def make_callback_update(data: str):
+    return SimpleNamespace(
+        message=None,
+        callback_query=FakeCallbackQuery(data),
         effective_user=SimpleNamespace(id=123),
         effective_chat=SimpleNamespace(id=456),
     )
@@ -109,3 +129,33 @@ def test_conversation_handler_accepts_text_intent_entrypoint():
     handler = build_natal_chart_handler()
 
     assert len(handler.entry_points) >= 2
+
+
+@pytest.mark.asyncio
+async def test_place_prefix_returns_city_suggestions():
+    update = make_update("Оде")
+    context = make_context()
+
+    state = await on_place(update, context)
+
+    assert state == NATAL_PLACE
+    reply_text, kwargs = update.message.replies[0]
+    assert "Выберите город" in reply_text
+    keyboard = kwargs["reply_markup"].inline_keyboard
+    assert any("Odesa" in button.text or "Odessa" in button.text for row in keyboard for button in row)
+
+
+@pytest.mark.asyncio
+async def test_place_selection_stores_city_coordinates_and_asks_focus():
+    from app.natal.city_catalog import search_cities
+
+    city = search_cities("Оде", limit=1)[0]
+    update = make_callback_update(f"natal_place:{city.geoname_id}")
+    context = make_context()
+
+    state = await on_place_selected(update, context)
+
+    assert state == NATAL_FOCUS
+    assert context.user_data["natal_place"] == city.display_name
+    assert context.user_data["natal_place_data"]["timezone"] == "Europe/Kyiv"
+    update.callback_query.edit_message_text.assert_awaited()

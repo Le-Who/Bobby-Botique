@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from app.natal.city_catalog import search_cities
 from app.natal.models import BirthInput, ResolvedBirthData, TimePrecision
 
 logger = logging.getLogger(__name__)
@@ -65,9 +66,17 @@ async def resolve_birth_data(
     birth: BirthInput,
     geocoder: GeocoderProtocol | None = None,
 ) -> ResolvedBirthData:
-    geocoder = geocoder or NominatimGeocoder()
-    result = await geocoder.geocode(birth.birth_place)
-    timezone_name = _resolve_timezone(result.latitude, result.longitude, result.display_name)
+    embedded = _embedded_geocode_result(birth)
+    if embedded is not None:
+        result, timezone_name = embedded
+    else:
+        local = _local_city_result(birth.birth_place)
+        if local is not None:
+            result, timezone_name = local
+        else:
+            geocoder = geocoder or NominatimGeocoder()
+            result = await geocoder.geocode(birth.birth_place)
+            timezone_name = _resolve_timezone(result.latitude, result.longitude, result.display_name)
     local_zone = ZoneInfo(timezone_name)
     local_dt = _build_local_datetime(birth, local_zone)
     utc_dt = local_dt.astimezone(UTC)
@@ -79,6 +88,38 @@ async def resolve_birth_data(
         local_datetime=local_dt.isoformat(),
         utc_datetime=utc_dt.isoformat(),
         display_place=result.display_name,
+    )
+
+
+def _embedded_geocode_result(birth: BirthInput) -> tuple[GeocodeResult, str] | None:
+    if (
+        birth.birth_place_latitude is None
+        or birth.birth_place_longitude is None
+        or not birth.birth_place_timezone
+    ):
+        return None
+    return (
+        GeocodeResult(
+            display_name=birth.birth_place_display_name or birth.birth_place,
+            latitude=birth.birth_place_latitude,
+            longitude=birth.birth_place_longitude,
+        ),
+        birth.birth_place_timezone,
+    )
+
+
+def _local_city_result(place: str) -> tuple[GeocodeResult, str] | None:
+    matches = search_cities(place, limit=1)
+    if not matches:
+        return None
+    city = matches[0]
+    return (
+        GeocodeResult(
+            display_name=city.display_name,
+            latitude=city.latitude,
+            longitude=city.longitude,
+        ),
+        city.timezone,
     )
 
 

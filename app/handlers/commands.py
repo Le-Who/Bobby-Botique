@@ -625,7 +625,12 @@ def register(application: Application) -> None:
     # Core user commands
     application.add_handler(CommandHandler("start", start_command))
     from app.handlers.natal_chart import build_natal_chart_handler
+    from app.natal.city_catalog import warm_city_catalog
 
+    try:
+        warm_city_catalog()
+    except Exception as exc:
+        logging.warning("Failed to warm natal city catalog: %s", exc)
     application.add_handler(build_natal_chart_handler())
     application.add_handler(CommandHandler("live", live_command))
     application.add_handler(CommandHandler("games", games_command))

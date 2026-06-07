@@ -232,9 +232,9 @@ class Settings(BaseModel):
     GAME_HUB_MINIAPP_SHORT_NAME: str = "games"
 
     # --- NATAL CHART REPORTS ---
-    NATAL_REPORTS_ENABLED: bool = True
+    NATAL_REPORTS_ENABLED: bool = False
     NATAL_REPORT_TTL_DAYS: int = 365
-    NATAL_GEOCODER_PROVIDER: str = "nominatim"
+    NATAL_GEOCODER_PROVIDER: str = "local"
     NATAL_SEND_RAW_BIRTH_DATA_TO_LLM: bool = False
 
     # --- LOCAL BOT API SERVER ---
@@ -377,9 +377,9 @@ def load_settings() -> Settings:
             "GAME_HUB_URL": os.getenv("GAME_HUB_URL", "").rstrip("/"),
             "GAME_HUB_DIRECT_LINK": os.getenv("GAME_HUB_DIRECT_LINK", "").strip(),
             "GAME_HUB_MINIAPP_SHORT_NAME": os.getenv("GAME_HUB_MINIAPP_SHORT_NAME", "games").strip(),
-            "NATAL_REPORTS_ENABLED": os.getenv("NATAL_REPORTS_ENABLED", "true").lower() == "true",
+            "NATAL_REPORTS_ENABLED": os.getenv("NATAL_REPORTS_ENABLED", "false").lower() == "true",
             "NATAL_REPORT_TTL_DAYS": int(os.getenv("NATAL_REPORT_TTL_DAYS", "365")),
-            "NATAL_GEOCODER_PROVIDER": os.getenv("NATAL_GEOCODER_PROVIDER", "nominatim").strip().lower(),
+            "NATAL_GEOCODER_PROVIDER": os.getenv("NATAL_GEOCODER_PROVIDER", "local").strip().lower(),
             "NATAL_SEND_RAW_BIRTH_DATA_TO_LLM": os.getenv("NATAL_SEND_RAW_BIRTH_DATA_TO_LLM", "false").lower()
             == "true",
             "TELEGRAM_LOCAL_SERVER_URL": os.getenv("TELEGRAM_LOCAL_SERVER_URL", "").rstrip("/"),

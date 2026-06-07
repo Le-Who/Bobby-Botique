@@ -10,7 +10,7 @@ def test_natal_privacy_defaults_do_not_send_raw_birth_data(monkeypatch):
 
     settings = load_settings()
 
-    assert settings.NATAL_REPORTS_ENABLED is True
+    assert settings.NATAL_REPORTS_ENABLED is False
     assert settings.NATAL_REPORT_TTL_DAYS == 365
-    assert settings.NATAL_GEOCODER_PROVIDER == "nominatim"
+    assert settings.NATAL_GEOCODER_PROVIDER == "local"
     assert settings.NATAL_SEND_RAW_BIRTH_DATA_TO_LLM is False

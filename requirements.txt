@@ -39,3 +39,4 @@ msgspec>=0.18.0,<1.0.0
 
 # Astrology/Astronomy
 ephem>=4.1.0,<5.0.0
+geonamescache>=3.0.1,<4.0.0

@@ -19,6 +19,11 @@ class BirthInput(BaseModel):
     birth_time_range_start: str | None = None
     birth_time_range_end: str | None = None
     birth_place: str
+    birth_place_geoname_id: str | None = None
+    birth_place_latitude: float | None = None
+    birth_place_longitude: float | None = None
+    birth_place_timezone: str | None = None
+    birth_place_display_name: str | None = None
     language: str = "ru"
     focus: str = "general"
 
