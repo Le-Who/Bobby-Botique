@@ -18,6 +18,7 @@ This document tracks the changes required to move natal charts from MVP to produ
 - The Telegram flow includes a "not in list" fallback that asks the user for the nearest large city.
 - On local Python 3.14, city catalog warmup loaded 32,444 cities in about 403 ms; warm search for "Оде" took about 23 ms.
 - Ascendant and MC no longer use the old latitude-independent placeholder formula. They are calculated from local sidereal time, mean obliquity, and ecliptic/horizon or ecliptic/meridian intersections.
+- The astronomy math lives in a focused clean-room module with tests for J2000 Julian Day, sidereal time, mean obliquity, and the Kyiv Ascendant/MC reference case.
 - Houses use the equal-house system from the calculated Ascendant.
 
 ## Required Before Public Release
