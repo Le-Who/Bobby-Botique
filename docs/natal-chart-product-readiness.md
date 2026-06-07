@@ -16,6 +16,7 @@ This document tracks the changes required to move natal charts from MVP to produ
 - The city catalog is warmed during handler registration to avoid first-user lookup delay.
 - City search has automated coverage for Odesa/Odessa, Kyiv/Kiev, Moscow, London, New York, Ottawa, Orenburg, Berlin, Warsaw, and Istanbul.
 - The Telegram flow includes a "not in list" fallback that asks the user for the nearest large city.
+- On local Python 3.14, city catalog warmup loaded 32,444 cities in about 403 ms; warm search for "Оде" took about 23 ms.
 
 ## Required Before Public Release
 
@@ -23,7 +24,7 @@ This document tracks the changes required to move natal charts from MVP to produ
 2. Verify the hosted report link opens from Telegram on mobile and desktop.
 3. Verify report persistence and deletion/TTL behavior against the real PostgreSQL migration.
 4. Verify city search manually in Telegram for at least these cases: Odesa/Odessa, Kyiv/Kiev, Moscow, London, New York, Ottawa, Orenburg, Berlin, Warsaw, Istanbul. Automated local catalog coverage exists.
-5. Measure first process startup impact from warming the GeoNames city catalog.
+5. Repeat city catalog warmup timing on the VPS after deploy. Local Python 3.14 timing is about 403 ms for warmup and 23 ms for a warm "Оде" search.
 6. Decide whether `cities1000` coverage is enough or whether the product needs a denser dataset for small towns.
 7. Decide whether the "nearest large city" fallback is enough, or whether public launch needs an admin-reviewed coordinate entry path.
 8. Calibrate interpretation prompts with real sample reports and reject overconfident claims when birth time is unknown.
