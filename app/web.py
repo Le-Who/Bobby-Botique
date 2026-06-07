@@ -104,9 +104,22 @@ async def add_security_headers(response):
     response.headers["X-XSS-Protection"] = "1; mode=block"
 
     nonce = getattr(g, "csp_nonce", "")
+    is_natal_report = request.path.startswith("/reports/natal/")
     is_webapp = request.path.startswith("/webapp")
 
-    if is_webapp:
+    if is_natal_report:
+        response.headers["Referrer-Policy"] = "no-referrer"
+        csp = (
+            "default-src 'self'; "
+            "script-src 'none'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "object-src 'none'; "
+            "base-uri 'none'; "
+            "frame-ancestors 'none';"
+        )
+        response.headers["X-Frame-Options"] = "DENY"
+    elif is_webapp:
         # Telegram Mini App: allow telegram.org SDK script, inline styles,
         # and framing by Telegram's WebView
         csp = (

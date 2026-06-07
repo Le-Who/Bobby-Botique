@@ -3,7 +3,17 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.handlers.natal_chart import NATAL_CONFIRM, NATAL_TABLE, clear_natal_user_data, natal_command, on_table_input
+from app.handlers.natal_chart import (
+    NATAL_CONFIRM,
+    NATAL_PLACE,
+    NATAL_TABLE,
+    build_natal_chart_handler,
+    clear_natal_user_data,
+    natal_command,
+    on_focus,
+    on_table_input,
+    on_time_precision,
+)
 from app.natal.models import TimePrecision
 
 
@@ -65,5 +75,37 @@ def test_cancel_clears_natal_keys_from_user_data():
     assert data == {"other": 1}
 
 
-def test_unknown_time_skips_time_value_prompt():
-    assert NATAL_TABLE
+@pytest.mark.asyncio
+async def test_unknown_time_skips_time_value_prompt():
+    update = make_update("неизвестно")
+    context = make_context()
+
+    state = await on_time_precision(update, context)
+
+    assert state == NATAL_PLACE
+    assert context.user_data["natal_time_precision"] == TimePrecision.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_step_flow_normalizes_birth_input_date_and_focus():
+    update = make_update("отношения")
+    context = make_context()
+    context.user_data.update(
+        {
+            "natal_date": "14.02.1995",
+            "natal_time_precision": TimePrecision.UNKNOWN,
+            "natal_place": "Kyiv, Ukraine",
+        }
+    )
+
+    state = await on_focus(update, context)
+
+    assert state == NATAL_CONFIRM
+    assert context.user_data["natal_birth_input"].birth_date == "1995-02-14"
+    assert context.user_data["natal_birth_input"].focus == "relationships"
+
+
+def test_conversation_handler_accepts_text_intent_entrypoint():
+    handler = build_natal_chart_handler()
+
+    assert len(handler.entry_points) >= 2

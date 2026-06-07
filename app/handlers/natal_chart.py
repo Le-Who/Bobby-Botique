@@ -13,6 +13,7 @@ from telegram.ext import (
     filters,
 )
 
+from app.natal.intent import NATAL_INTENT_RE
 from app.natal.models import BirthInput, TimePrecision
 from app.natal.parser import BirthInputParseError, parse_birth_table
 from app.natal.service import create_natal_report
@@ -173,7 +174,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 def build_natal_chart_handler() -> ConversationHandler:
     return ConversationHandler(
-        entry_points=[CommandHandler("natal", natal_command)],
+        entry_points=[
+            CommandHandler("natal", natal_command),
+            MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(NATAL_INTENT_RE), natal_command),
+        ],
         states={
             NATAL_MODE: [CallbackQueryHandler(on_mode, pattern=r"^natal_mode:")],
             NATAL_TABLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_table_input)],
@@ -236,10 +240,12 @@ def _confirmation_text(birth_input: BirthInput) -> str:
 def _birth_input_from_steps(user_data: dict) -> BirthInput:
     precision = user_data.get("natal_time_precision", TimePrecision.UNKNOWN)
     time_value = user_data.get("natal_time_value")
-    return BirthInput(
-        birth_date=str(user_data.get("natal_date", "")),
-        time_precision=precision,
-        birth_time=time_value if precision in {TimePrecision.EXACT, TimePrecision.APPROXIMATE} else None,
-        birth_place=str(user_data.get("natal_place", "")),
-        focus=str(user_data.get("natal_focus", "general")),
+    table = (
+        f"Дата рождения: {user_data.get('natal_date', '')}\n"
+        f"Время рождения: {precision.value if isinstance(precision, TimePrecision) else precision}\n"
+        f"Если точное или примерное: {time_value or ''}\n"
+        f"Если диапазон: {time_value or ''}\n"
+        f"Место рождения: {user_data.get('natal_place', '')}\n"
+        f"Фокус разбора: {user_data.get('natal_focus', 'general')}"
     )
+    return parse_birth_table(table)

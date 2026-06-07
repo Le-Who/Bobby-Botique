@@ -27,6 +27,8 @@ async def create_natal_report(
     chat_id: int,
     webhook_url: str,
 ) -> NatalReport:
+    if not _natal_reports_enabled():
+        raise NatalConfigurationError("Natal reports are disabled.")
     _validate_webhook_url(webhook_url)
     resolved = await resolve_birth_data(birth_input)
     chart = await calculate_chart(resolved)
@@ -62,6 +64,12 @@ def _validate_webhook_url(webhook_url: str) -> None:
     is_production = bool(os.getenv("DATABASE_URL"))
     if is_production and not webhook_url.startswith("https://"):
         raise NatalConfigurationError("HTTPS WEBHOOK_URL is required in production.")
+
+
+def _natal_reports_enabled() -> bool:
+    from app.config import settings
+
+    return bool(getattr(settings, "NATAL_REPORTS_ENABLED", True))
 
 
 async def _try_publish_telegraph(report: NatalReport) -> str | None:

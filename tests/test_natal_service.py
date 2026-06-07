@@ -9,7 +9,7 @@ from app.natal.models import (
     ResolvedBirthData,
     TimePrecision,
 )
-from app.natal.service import create_natal_report
+from app.natal.service import NatalConfigurationError, create_natal_report
 
 
 @pytest.mark.asyncio
@@ -76,3 +76,22 @@ async def test_create_natal_report_returns_hosted_url(monkeypatch):
     assert report.report_id
     assert report.hosted_url.startswith("https://bot.example.com/reports/natal/")
     assert report.svg.startswith("<svg")
+
+
+@pytest.mark.asyncio
+async def test_create_natal_report_respects_disabled_feature_flag(monkeypatch):
+    birth = BirthInput(
+        birth_date="1995-02-14",
+        time_precision=TimePrecision.UNKNOWN,
+        birth_place="Kyiv, Ukraine",
+    )
+
+    monkeypatch.setattr("app.natal.service._natal_reports_enabled", lambda: False)
+
+    with pytest.raises(NatalConfigurationError, match="disabled"):
+        await create_natal_report(
+            birth_input=birth,
+            user_id=123,
+            chat_id=456,
+            webhook_url="https://bot.example.com",
+        )

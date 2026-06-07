@@ -45,3 +45,4 @@ async def test_natal_report_route_returns_html(monkeypatch):
     body = await response.get_data(as_text=True)
     assert "<svg" in body
     assert "Натальная карта" in body
+    assert "script-src 'none'" in response.headers["Content-Security-Policy"]
