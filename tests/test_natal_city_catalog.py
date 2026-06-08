@@ -250,6 +250,11 @@ def test_load_city_overrides_returns_searchable_local_records(tmp_path):
     assert results[0].timezone == "Europe/Kyiv"
 
 
+@pytest.mark.parametrize("path", [None, "", " ", "."])
+def test_load_city_overrides_treats_empty_path_as_disabled(path):
+    assert load_city_overrides(path) == []
+
+
 def test_global_city_catalog_includes_env_override(monkeypatch, tmp_path):
     path = tmp_path / "natal-city-overrides.json"
     path.write_text(

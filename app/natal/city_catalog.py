@@ -284,7 +284,11 @@ def warm_city_catalog() -> int:
 def load_city_overrides(path: str | Path | None) -> list[CityRecord]:
     if path is None:
         return []
+    if isinstance(path, str) and path.strip() in {"", "."}:
+        return []
     override_path = Path(path)
+    if override_path == Path("."):
+        return []
     if not override_path.exists():
         raise ValueError(f"Natal city override file does not exist: {override_path}")
     raw = json.loads(override_path.read_text(encoding="utf-8"))
