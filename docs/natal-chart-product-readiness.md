@@ -77,7 +77,8 @@ This document tracks the changes required to move natal charts from MVP to produ
 - Encoding: `scripts/check_encoding.py` passed after documentation and code changes.
 - Release fixture gate: `scripts/natal_accuracy.py --require-external --check-horizons --reference-fixtures docs/natal-reference-fixture.moira-jpl.json` passed. Each case had 34 local fixture checks plus 20 JPL Horizons planet checks.
 - Local independent planet gate: `scripts/natal_accuracy.py --check-horizons` passed for both golden cases, with 20 JPL Horizons planet checks per case and max deltas of 0.0704 degrees (`kyiv-1995-exact`) and 0.1433 degrees (`reading-1989-exact`).
-- VPS deploy: GitHub Actions run `27116204084` completed successfully for commit `67b95a1`.
+- VPS deploy: GitHub Actions run `27117346326` completed successfully for commit `9737103`.
+- Docker image packaging: build log includes `RUN test -f /app/docs/natal-reference-fixture.moira-jpl.json`, so the committed release fixture is present in the runtime image.
 - VPS live smoke inside `tg-bot`: `PASS natal-city-catalog`, `PASS natal-config: ready`, external Moira/JPL fixture gate, `storage=ready`, generated `smoke_report_id`, generated hosted URL ending in `/reports/natal/<report_id>`, and verified hosted HTML contains SVG and report sections.
 - VPS maintenance: deploy now runs `scripts/natal_maintenance.py` after smoke when natal reports are enabled; the latest successful deploy log should contain `OK ttl_days=<NATAL_REPORT_TTL_DAYS> deleted=<count>`.
 
