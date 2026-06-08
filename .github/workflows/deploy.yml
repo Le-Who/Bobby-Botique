@@ -350,6 +350,8 @@ jobs:
                 --min-city-count 30000 \
                 --max-city-warmup-ms 3000 \
                 --max-city-search-ms 300
+              echo ">>> Running natal chart report maintenance..."
+              docker exec tg-bot python /app/scripts/natal_maintenance.py
             fi
 
             # ── Media Cleanup Cron ────────────────────────────────────────

@@ -66,6 +66,7 @@ This document tracks the changes required to move natal charts from MVP to produ
 - Deployment forwards `NATAL_*` settings into the `tg-bot` container and runs live natal readiness smoke automatically when `NATAL_REPORTS_ENABLED=true`.
 - Empty or unset `NATAL_CITY_OVERRIDES_PATH` is treated as disabled, including CI/SSH environments that pass it through as an empty value resolving to `.`.
 - The deploy script uses `set -e`, so failed natal smoke checks now fail the deployment instead of being hidden behind a green workflow.
+- After live smoke, deployment runs `scripts/natal_maintenance.py` inside `tg-bot`, verifying the real PostgreSQL storage contract and applying `NATAL_REPORT_TTL_DAYS` soft-deletion on the VPS.
 
 ## Current Verification Evidence
 
@@ -75,12 +76,13 @@ This document tracks the changes required to move natal charts from MVP to produ
 - Encoding: `scripts/check_encoding.py` passed after documentation and code changes.
 - VPS deploy: GitHub Actions run `27116204084` completed successfully for commit `67b95a1`.
 - VPS live smoke inside `tg-bot`: `PASS natal-city-catalog`, `PASS natal-config: ready`, `storage=ready`, generated `smoke_report_id`, generated hosted URL ending in `/reports/natal/<report_id>`, and verified hosted HTML contains SVG and report sections.
+- VPS maintenance: deploy now runs `scripts/natal_maintenance.py` after smoke when natal reports are enabled; the latest successful deploy log should contain `OK ttl_days=<NATAL_REPORT_TTL_DAYS> deleted=<count>`.
 
 ## Required Before Public Release
 
 1. Done: live report smoke has run on the VPS inside the deployed `tg-bot` container with real `WEBHOOK_URL`, database, Telegram bot token, and `NATAL_REPORTS_ENABLED=true`.
 2. Verify the hosted report link opens from Telegram on mobile and desktop.
-3. Run `python scripts/natal_maintenance.py` on the VPS and verify report persistence plus deletion/TTL behavior against the real PostgreSQL migration.
+3. Done by deploy gate when `NATAL_REPORTS_ENABLED=true`: `python scripts/natal_maintenance.py` runs inside `tg-bot` after live smoke and verifies report persistence plus deletion/TTL behavior against the real PostgreSQL migration.
 4. Partially done: deployed `scripts/natal_readiness.py --check-config --check-storage --smoke --webhook-url "$WEBHOOK_URL" --min-city-count 30000 --max-city-warmup-ms 3000 --max-city-search-ms 300` passed on the VPS. Still run the stricter public-release gate with `--check-horizons --require-external --reference-fixtures <verified-angle-fixtures.json>` after external Ascendant/MC/house references are confirmed.
 5. Verify city search manually in Telegram for at least these cases: Odesa/Odessa, Kyiv/Kiev, Moscow, London, New York, Ottawa, Orenburg, Berlin, Warsaw, Istanbul. Automated local catalog coverage exists. Local Python 3.14 observed timing after prefix indexing is roughly 0.6 s for cold warmup and 35 ms for the slowest release smoke city search.
 6. `cities1000` coverage is guarded by a minimum 30,000-city readiness gate. Decide later, from real support requests, whether the product needs a denser dataset for small towns.
