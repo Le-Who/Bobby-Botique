@@ -14,6 +14,7 @@ from app.handlers.natal_chart import (
     NATAL_TABLE,
     NATAL_TIME_VALUE,
     _confirmation_text,
+    _mode_keyboard,
     build_natal_chart_handler,
     clear_natal_user_data,
     natal_command,
@@ -64,6 +65,22 @@ def test_confirmation_text_displays_dotted_date_with_month_name():
     assert "09.11.1997" in text
     assert "9 ноября 1997" in text
     assert "1997-11-09" not in text
+
+
+def test_mode_keyboard_uses_miniapp_form_when_https_base_is_configured(monkeypatch):
+    monkeypatch.setattr(
+        "app.config.settings",
+        SimpleNamespace(WEBAPP_BASE_URL="https://bot.example.com"),
+    )
+
+    keyboard = _mode_keyboard()
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    webapp_button = next(button for button in buttons if "на сайте" in button.text)
+
+    assert webapp_button.web_app is not None
+    assert webapp_button.web_app.url == "https://bot.example.com/webapp/natal-form"
+    assert webapp_button.callback_data is None
+    assert all(button.text != "Отправить таблицей" for button in buttons)
 
 
 class FakeMessage:

@@ -8,7 +8,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Final
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update, WebAppInfo
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import (
@@ -770,13 +770,36 @@ def _natal_reports_enabled_for_handler() -> bool:
 
 
 def _mode_keyboard() -> InlineKeyboardMarkup:
+    webapp_url = _natal_form_webapp_url()
+    input_row = (
+        [InlineKeyboardButton("Заполнить на сайте", web_app=WebAppInfo(url=webapp_url))]
+        if webapp_url
+        else [InlineKeyboardButton("Отправить таблицей", callback_data="natal_mode:table")]
+    )
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("Заполнить пошагово", callback_data="natal_mode:step")],
-            [InlineKeyboardButton("Отправить таблицей", callback_data="natal_mode:table")],
+            input_row,
             [InlineKeyboardButton("Отмена", callback_data="natal_mode:cancel")],
         ]
     )
+
+
+def _natal_form_webapp_url() -> str:
+    base = _webapp_base_url()
+    if not base.startswith("https://"):
+        return ""
+    return f"{base}/webapp/natal-form"
+
+
+def _webapp_base_url() -> str:
+    from app.config import settings
+
+    base = getattr(settings, "WEBAPP_BASE_URL", "").strip().rstrip("/")
+    if base:
+        return base
+    webhook_url = os.environ.get("WEBHOOK_URL", "").strip()
+    return webhook_url.split("/webhook", 1)[0].rstrip("/")
 
 
 def _confirm_keyboard() -> InlineKeyboardMarkup:

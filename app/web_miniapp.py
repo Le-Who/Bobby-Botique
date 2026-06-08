@@ -15,6 +15,7 @@ import base64
 import hashlib
 import hmac
 import logging
+import os
 import re
 import time
 import typing
@@ -23,10 +24,16 @@ from datetime import UTC, datetime, timedelta
 from functools import wraps
 from typing import Any
 
-from quart import Blueprint, jsonify, request
+from quart import Blueprint, jsonify, render_template, request
+from telegram.constants import ParseMode
+from telegram.error import TelegramError
 
+from app.bot_instance import get_bot
 from app.config import GEMINI_LIVE_VOICE_NAME, settings
 from app.games import crocodile_runtime as _croc_runtime
+from app.natal.city_catalog import find_city_by_id, search_cities, search_countries
+from app.natal.models import BirthInput, TimePrecision
+from app.natal.service import create_natal_report
 from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
@@ -370,9 +377,270 @@ def require_webapp_auth(f: typing.Callable) -> typing.Callable:
 @miniapp_blueprint.route("/")
 async def miniapp_page():
     """Serve the Mini App HTML shell."""
-    from quart import render_template
 
     return await render_template("miniapp.html")
+
+
+# ── Natal Form Mini App ─────────────────────────────────────────────────────
+
+_NATAL_FORM_COUNTRIES: tuple[tuple[str, str], ...] = (
+    ("UA", "Украина"),
+    ("RU", "Россия"),
+    ("BY", "Беларусь"),
+)
+_NATAL_FORM_CITY_QUERIES: dict[str, tuple[str, ...]] = {
+    "UA": ("Киев", "Львов", "Харьков"),
+    "RU": ("Москва", "Санкт-Петербург", "Новосибирск"),
+    "BY": ("Минск", "Гомель", "Витебск"),
+}
+_NATAL_FORM_FOCUS_LABELS: dict[str, str] = {
+    "general": "Общий",
+    "relationships": "Отношения",
+    "career": "Карьера",
+    "psychology": "Психология",
+    "brief": "Кратко",
+}
+
+
+@miniapp_blueprint.route("/natal-form")
+async def natal_form_page():
+    """Serve the natal questionnaire Mini App."""
+    return await render_template(
+        "natal_form.html",
+        natal_form_options=_natal_form_options(),
+    )
+
+
+@miniapp_blueprint.route("/api/natal/submit", methods=["POST"])
+@require_webapp_auth
+async def api_natal_submit(user_id: int):
+    """Build a natal report from Mini App form data and deliver it to the user chat."""
+    bot = get_bot()
+    if bot is None:
+        return jsonify({"error": "bot_not_ready"}), 503
+
+    body = await request.get_json(silent=True) or {}
+    try:
+        birth_input = _birth_input_from_natal_payload(body)
+    except ValueError as exc:
+        return jsonify({"error": "invalid_birth_input", "detail": str(exc)}), 400
+
+    webhook_url = _public_webapp_base_url()
+    if not webhook_url:
+        return jsonify({"error": "server_misconfiguration", "detail": "WEBAPP_BASE_URL or WEBHOOK_URL is required."}), 500
+
+    try:
+        report = await create_natal_report(
+            birth_input=birth_input,
+            user_id=user_id,
+            chat_id=user_id,
+            webhook_url=webhook_url,
+        )
+        await _send_natal_report_to_private_chat(bot, user_id, report, birth_input)
+    except Exception as exc:
+        logger.error("Mini App natal submit failed user=%s: %s", user_id, exc, exc_info=True)
+        return jsonify({"error": "natal_report_failed", "detail": str(exc)}), 500
+
+    return jsonify(
+        {
+            "ok": True,
+            "hosted_url": report.hosted_url,
+            "telegraph_url": report.telegraph_url,
+        }
+    )
+
+
+def _natal_form_options() -> dict[str, Any]:
+    return {
+        "countries": [{"code": code, "label": label} for code, label in _NATAL_FORM_COUNTRIES],
+        "cities": {
+            code: [
+                {
+                    "id": city.geoname_id,
+                    "label": query,
+                    "display": city.display_name,
+                }
+                for query in city_queries
+                for city in search_cities(query, limit=1, country_code=code)
+            ]
+            for code, city_queries in _NATAL_FORM_CITY_QUERIES.items()
+        },
+        "focuses": [{"id": key, "label": label} for key, label in _NATAL_FORM_FOCUS_LABELS.items()],
+    }
+
+
+def _birth_input_from_natal_payload(payload: dict[str, Any]) -> BirthInput:
+    if not isinstance(payload, dict):
+        raise ValueError("Некорректный формат формы.")
+
+    birth_date = _required_str(payload, "birth_date")
+    _validate_iso_date(birth_date)
+    precision = _parse_time_precision(_required_str(payload, "time_precision"))
+    country_code = _resolve_country_code(payload)
+    city = _resolve_natal_city(payload, country_code)
+    focus = str(payload.get("focus") or "general").strip() or "general"
+    if focus not in _NATAL_FORM_FOCUS_LABELS:
+        focus = "general"
+
+    time_kwargs: dict[str, str | None] = {
+        "birth_time": None,
+        "birth_time_range_start": None,
+        "birth_time_range_end": None,
+    }
+    if precision in {TimePrecision.EXACT, TimePrecision.APPROXIMATE}:
+        time_kwargs["birth_time"] = _validate_time_value(_required_str(payload, "birth_time"))
+    elif precision == TimePrecision.RANGE:
+        start = _validate_time_value(_required_str(payload, "birth_time_range_start"))
+        end = _validate_time_value(_required_str(payload, "birth_time_range_end"))
+        if _time_to_minutes(end) <= _time_to_minutes(start):
+            raise ValueError("Диапазон времени должен заканчиваться позже начала.")
+        time_kwargs["birth_time_range_start"] = start
+        time_kwargs["birth_time_range_end"] = end
+
+    return BirthInput(
+        birth_date=birth_date,
+        time_precision=precision,
+        birth_place=city.display_name,
+        birth_place_country_code=city.country_code,
+        birth_place_geoname_id=city.geoname_id,
+        birth_place_latitude=city.latitude,
+        birth_place_longitude=city.longitude,
+        birth_place_timezone=city.timezone,
+        birth_place_display_name=city.display_name,
+        focus=focus,
+        language="ru",
+        **time_kwargs,
+    )
+
+
+def _required_str(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Поле обязательно: {key}.")
+    return value.strip()
+
+
+def _validate_iso_date(value: str) -> None:
+    from datetime import date
+
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("Дата рождения должна быть в формате YYYY-MM-DD.") from exc
+
+
+def _parse_time_precision(value: str) -> TimePrecision:
+    try:
+        return TimePrecision(value)
+    except ValueError as exc:
+        raise ValueError("Выберите точность времени рождения.") from exc
+
+
+def _resolve_country_code(payload: dict[str, Any]) -> str:
+    raw_code = str(payload.get("country_code") or "").strip().upper()
+    if raw_code:
+        matches = search_countries(raw_code, limit=1)
+        if matches and matches[0].code == raw_code:
+            return raw_code
+    country_name = str(payload.get("country") or "").strip()
+    if country_name:
+        matches = search_countries(country_name, limit=1)
+        if matches:
+            return matches[0].code
+    raise ValueError("Страна рождения не найдена.")
+
+
+def _resolve_natal_city(payload: dict[str, Any], country_code: str):
+    city_id = str(payload.get("city_geoname_id") or "").strip()
+    if city_id:
+        city = find_city_by_id(city_id)
+        if city is None or city.country_code != country_code:
+            raise ValueError("Город не найден в выбранной стране.")
+        return city
+    city_query = str(payload.get("birth_place") or payload.get("city") or "").strip()
+    if not city_query:
+        raise ValueError("Поле обязательно: город рождения.")
+    matches = search_cities(city_query, limit=1, country_code=country_code)
+    if not matches:
+        raise ValueError("Город не найден в выбранной стране.")
+    return matches[0]
+
+
+def _validate_time_value(value: str) -> str:
+    parts = value.split(":", 1)
+    if len(parts) != 2:
+        raise ValueError("Время должно быть в формате HH:MM.")
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except ValueError as exc:
+        raise ValueError("Время должно быть в формате HH:MM.") from exc
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise ValueError("Время должно быть в пределах 00:00-23:59.")
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _time_to_minutes(value: str) -> int:
+    hour, minute = value.split(":", 1)
+    return int(hour) * 60 + int(minute)
+
+
+def _public_webapp_base_url() -> str:
+    base = getattr(settings, "WEBAPP_BASE_URL", "").strip().rstrip("/")
+    if base:
+        return base
+    webhook_url = os.environ.get("WEBHOOK_URL", "").strip()
+    return webhook_url.split("/webhook", 1)[0].rstrip("/")
+
+
+async def get_natal_cover_photo():
+    from app.handlers.natal_chart import _get_natal_cover_photo
+
+    return await _get_natal_cover_photo()
+
+
+async def remember_natal_cover_file_id(message: Any) -> None:
+    from app.handlers.natal_chart import _remember_natal_cover_file_id
+
+    await _remember_natal_cover_file_id(message)
+
+
+def natal_result_caption(report, birth_input: BirthInput) -> str:
+    from app.handlers.natal_chart import _result_caption
+
+    return _result_caption(report, birth_input)
+
+
+def natal_result_keyboard(report):
+    from app.handlers.natal_chart import _result_keyboard
+
+    return _result_keyboard(report)
+
+
+async def _send_natal_report_to_private_chat(bot, user_id: int, report, birth_input: BirthInput) -> None:
+    caption = natal_result_caption(report, birth_input)
+    keyboard = natal_result_keyboard(report)
+    cover = await get_natal_cover_photo()
+    if cover is not None:
+        try:
+            message = await bot.send_photo(
+                chat_id=user_id,
+                photo=cover,
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+            await remember_natal_cover_file_id(message)
+            return
+        except (OSError, TelegramError) as exc:
+            logger.warning("Mini App natal cover send failed user=%s: %s", user_id, exc)
+    await bot.send_message(
+        chat_id=user_id,
+        text=caption,
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard,
+        disable_web_page_preview=True,
+    )
 
 
 # ── Memory API ───────────────────────────────────────────────────────────────

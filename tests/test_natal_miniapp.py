@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
+from app.natal.models import (
+    BirthInput,
+    ChartData,
+    InputQuality,
+    NatalReport,
+    PlanetPosition,
+    ReportSection,
+    TimePrecision,
+)
+from app.web import quart_app
+from tests.factories import make_valid_init_data
+
+_BOT_TOKEN = "1234567890:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+
+def _auth_headers(user_id: int = 777) -> dict[str, str]:
+    init_data = make_valid_init_data(_BOT_TOKEN, user_id=user_id)
+    return {"Authorization": f"tma {init_data}"}
+
+
+def _fake_report(url: str) -> NatalReport:
+    return NatalReport(
+        report_id=url.rsplit("/", 1)[-1],
+        user_id=777,
+        chart=ChartData(
+            input_quality=InputQuality(
+                time_precision=TimePrecision.UNKNOWN,
+                houses_available=False,
+                angles_available=False,
+            ),
+            planets=[
+                PlanetPosition(
+                    key="sun",
+                    label="Солнце",
+                    longitude=325.0,
+                    sign="Водолей",
+                    degree_in_sign=25.0,
+                )
+            ],
+            aspects=[],
+        ),
+        svg="<svg></svg>",
+        sections=[ReportSection(id="section-sun", title="Солнце", body_markdown="body")],
+        hosted_url=url,
+    )
+
+
+@pytest.fixture(autouse=True)
+def natal_miniapp_settings(monkeypatch):
+    settings = SimpleNamespace(
+        TELEGRAM_BOT_TOKEN=_BOT_TOKEN,
+        WEBAPP_BASE_URL="https://bot.example.com",
+        NATAL_REPORTS_ENABLED=True,
+    )
+    monkeypatch.setattr("app.web_miniapp.settings", settings, raising=False)
+    monkeypatch.setattr("app.config.settings", settings, raising=False)
+    monkeypatch.setenv("WEBHOOK_URL", "https://bot.example.com")
+    quart_app.config["TESTING"] = True
+    return settings
+
+
+@pytest.mark.asyncio
+async def test_natal_form_page_returns_miniapp_shell():
+    client = quart_app.test_client()
+
+    response = await client.get("/webapp/natal-form")
+
+    assert response.status_code == 200
+    body = await response.get_data(as_text=True)
+    assert "telegram-web-app.js" in body
+    assert 'id="natal-form"' in body
+    assert 'data-api="/webapp/api/natal/submit"' in body
+    assert "Дата рождения" in body
+    assert "Фокус разбора" in body
+
+
+@pytest.mark.asyncio
+async def test_natal_submit_requires_webapp_auth():
+    client = quart_app.test_client()
+
+    response = await client.post("/webapp/api/natal/submit", json={})
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_natal_submit_creates_report_and_sends_result_to_user_chat(monkeypatch):
+    sent = {}
+
+    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url):
+        assert isinstance(birth_input, BirthInput)
+        sent["birth_input"] = birth_input
+        sent["user_id"] = user_id
+        sent["chat_id"] = chat_id
+        sent["webhook_url"] = webhook_url
+        return _fake_report(f"{webhook_url}/reports/natal/webapp-report-id")
+
+    bot = SimpleNamespace(send_photo=AsyncMock(), send_message=AsyncMock())
+
+    monkeypatch.setattr("app.web_miniapp.create_natal_report", fake_create_natal_report)
+    monkeypatch.setattr("app.web_miniapp.get_bot", lambda: bot)
+    monkeypatch.setattr("app.web_miniapp.get_natal_cover_photo", AsyncMock(return_value=None))
+
+    client = quart_app.test_client()
+    response = await client.post(
+        "/webapp/api/natal/submit",
+        headers=_auth_headers(user_id=777),
+        json={
+            "birth_date": "1997-11-09",
+            "time_precision": "exact",
+            "birth_time": "03:00",
+            "country_code": "UA",
+            "city_geoname_id": "698740",
+            "focus": "psychology",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = await response.get_json()
+    assert payload["ok"] is True
+    assert payload["hosted_url"] == "https://bot.example.com/reports/natal/webapp-report-id"
+    assert sent["user_id"] == 777
+    assert sent["chat_id"] == 777
+    assert sent["webhook_url"] == "https://bot.example.com"
+    assert sent["birth_input"].birth_place_country_code == "UA"
+    assert sent["birth_input"].birth_place_geoname_id == "698740"
+    assert sent["birth_input"].birth_place_timezone == "Europe/Kyiv"
+    bot.send_message.assert_awaited_once()
+    assert bot.send_message.await_args.kwargs["chat_id"] == 777
+    assert "Натальная карта готова" in bot.send_message.await_args.kwargs["text"]

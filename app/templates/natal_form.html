@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Натальная карта</title>
+<link rel="icon" href="data:,">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root {
+  --bg: var(--tg-theme-bg-color, #fbfaf7);
+  --surface: var(--tg-theme-section-bg-color, #ffffff);
+  --surface-2: var(--tg-theme-secondary-bg-color, #f1eee8);
+  --text: var(--tg-theme-text-color, #201d18);
+  --muted: var(--tg-theme-hint-color, #766f65);
+  --accent: var(--tg-theme-button-color, #0f766e);
+  --accent-text: var(--tg-theme-button-text-color, #ffffff);
+  --line: rgba(32, 29, 24, .12);
+  --warn: #b45309;
+  --danger: var(--tg-theme-destructive-text-color, #b42318);
+  --radius: 8px;
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { min-height: 100%; margin: 0; background: var(--bg); color: var(--text); }
+body { font-size: 16px; line-height: 1.35; }
+button, input { font: inherit; }
+.page {
+  width: min(680px, 100%);
+  margin: 0 auto;
+  padding: calc(14px + env(safe-area-inset-top)) 14px calc(96px + env(safe-area-inset-bottom));
+}
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin: 4px 0 14px;
+}
+h1 { margin: 0; font-size: 24px; line-height: 1.1; font-weight: 760; letter-spacing: 0; }
+.status-pill {
+  flex: none;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.layout { display: grid; gap: 10px; }
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 14px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.panel-title { margin: 0; font-size: 15px; font-weight: 720; letter-spacing: 0; }
+.panel-note { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.fields { display: grid; gap: 12px; padding: 14px; }
+.field { display: grid; gap: 7px; }
+label { color: var(--muted); font-size: 13px; }
+input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  outline: none;
+}
+input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+.chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+.time-block[hidden], .manual-block[hidden], .done[hidden], .error[hidden] { display: none; }
+.summary {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
+}
+.summary-row {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 14px;
+}
+.summary-row span:first-child { color: var(--muted); }
+.summary-row strong { font-weight: 650; overflow-wrap: anywhere; }
+.error {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);
+  border-radius: var(--radius);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 9%, var(--surface));
+}
+.done {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+.done-title { margin: 0 0 4px; font-weight: 720; }
+.done-text { margin: 0; color: var(--muted); font-size: 14px; }
+.submit {
+  position: fixed;
+  left: 14px;
+  right: 14px;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  max-width: 652px;
+  margin: 0 auto;
+  display: block;
+  min-height: 48px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 720;
+}
+.submit:disabled { opacity: .55; }
+@media (min-width: 720px) {
+  .page { padding-inline: 0; }
+  .submit { left: 50%; right: auto; width: 652px; transform: translateX(-50%); }
+}
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="topbar">
+    <h1>Натальная карта</h1>
+    <div class="status-pill" id="status-pill">Анкета</div>
+  </div>
+
+  <form id="natal-form" data-api="/webapp/api/natal/submit" novalidate>
+    <div class="layout">
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Дата и время</h2>
+          <span class="panel-note">1 из 3</span>
+        </div>
+        <div class="fields">
+          <div class="field">
+            <label for="birth-date">Дата рождения</label>
+            <input id="birth-date" name="birth_date" type="date" required>
+          </div>
+          <div class="field">
+            <label>Точность времени</label>
+            <div class="chips" data-group="time_precision">
+              <button class="chip" type="button" data-value="exact" aria-pressed="true">Точное</button>
+              <button class="chip" type="button" data-value="approximate" aria-pressed="false">Примерное</button>
+              <button class="chip" type="button" data-value="range" aria-pressed="false">Диапазон</button>
+              <button class="chip" type="button" data-value="unknown" aria-pressed="false">Не знаю</button>
+            </div>
+          </div>
+          <div class="time-block" data-time-block="single">
+            <div class="field">
+              <label for="birth-time">Время рождения</label>
+              <input id="birth-time" name="birth_time" type="time" value="12:00">
+            </div>
+          </div>
+          <div class="time-block" data-time-block="range" hidden>
+            <div class="grid-2">
+              <div class="field">
+                <label for="birth-time-start">С</label>
+                <input id="birth-time-start" name="birth_time_range_start" type="time" value="10:00">
+              </div>
+              <div class="field">
+                <label for="birth-time-end">До</label>
+                <input id="birth-time-end" name="birth_time_range_end" type="time" value="12:00">
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Место рождения</h2>
+          <span class="panel-note">2 из 3</span>
+        </div>
+        <div class="fields">
+          <div class="field">
+            <label>Страна рождения</label>
+            <div class="chips" id="country-chips"></div>
+          </div>
+          <div class="field manual-block" id="manual-country-block" hidden>
+            <label for="manual-country">Другая страна</label>
+            <input id="manual-country" name="manual_country" type="text" inputmode="text" autocomplete="country-name">
+          </div>
+          <div class="field">
+            <label>Город рождения</label>
+            <div class="chips" id="city-chips"></div>
+          </div>
+          <div class="field manual-block" id="manual-city-block" hidden>
+            <label for="manual-city">Другой город</label>
+            <input id="manual-city" name="manual_city" type="text" inputmode="text" autocomplete="address-level2">
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Фокус разбора</h2>
+          <span class="panel-note">3 из 3</span>
+        </div>
+        <div class="fields">
+          <div class="chips" id="focus-chips"></div>
+        </div>
+        <div class="summary" id="summary"></div>
+      </section>
+    </div>
+
+    <div class="error" id="error-box" hidden></div>
+    <div class="done" id="done-box" hidden>
+      <p class="done-title">Анкета отправлена</p>
+      <p class="done-text">Результат придёт сообщением в чат с ботом. Эту страницу можно закрыть.</p>
+    </div>
+
+    <button class="submit" id="submit-button" type="submit">Построить карту</button>
+  </form>
+</main>
+
+<script>
+const tg = window.Telegram?.WebApp;
+const OPTIONS = {{ natal_form_options|tojson }};
+const state = {
+  time_precision: 'exact',
+  country_code: OPTIONS.countries[0]?.code || '',
+  country_label: OPTIONS.countries[0]?.label || '',
+  city_geoname_id: '',
+  city_label: '',
+  focus: 'general',
+};
+
+const form = document.getElementById('natal-form');
+const errorBox = document.getElementById('error-box');
+const doneBox = document.getElementById('done-box');
+const submitButton = document.getElementById('submit-button');
+const statusPill = document.getElementById('status-pill');
+
+function setGroup(container, value) {
+  container.querySelectorAll('.chip').forEach((button) => {
+    button.setAttribute('aria-pressed', button.dataset.value === value ? 'true' : 'false');
+  });
+}
+
+function chip(label, value, pressed, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'chip';
+  button.textContent = label;
+  button.dataset.value = value;
+  button.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function renderCountries() {
+  const container = document.getElementById('country-chips');
+  const manualBlock = document.getElementById('manual-country-block');
+  container.textContent = '';
+  OPTIONS.countries.forEach((country) => {
+    container.appendChild(chip(country.label, country.code, state.country_code === country.code, () => {
+      state.country_code = country.code;
+      state.country_label = country.label;
+      state.city_geoname_id = '';
+      state.city_label = '';
+      document.getElementById('manual-country').value = '';
+      renderCountries();
+      renderCities();
+      renderSummary();
+    }));
+  });
+  container.appendChild(chip('Другая страна', 'manual', !state.country_code, () => {
+    state.country_code = '';
+    state.country_label = '';
+    state.city_geoname_id = '';
+    state.city_label = '';
+    manualBlock.hidden = false;
+    renderCountries();
+    renderCities();
+    renderSummary();
+    document.getElementById('manual-country').focus();
+  }));
+  manualBlock.hidden = Boolean(state.country_code);
+}
+
+function renderCities() {
+  const container = document.getElementById('city-chips');
+  const manualBlock = document.getElementById('manual-city-block');
+  container.textContent = '';
+  (OPTIONS.cities[state.country_code] || []).forEach((city) => {
+    container.appendChild(chip(city.label, city.id, state.city_geoname_id === city.id, () => {
+      state.city_geoname_id = city.id;
+      state.city_label = city.display;
+      document.getElementById('manual-city').value = '';
+      renderCities();
+      renderSummary();
+    }));
+  });
+  container.appendChild(chip('Другой город', 'manual', !state.city_geoname_id, () => {
+    state.city_geoname_id = '';
+    state.city_label = '';
+    manualBlock.hidden = false;
+    renderCities();
+    renderSummary();
+    document.getElementById('manual-city').focus();
+  }));
+  manualBlock.hidden = Boolean(state.city_geoname_id);
+}
+
+function renderFocuses() {
+  const container = document.getElementById('focus-chips');
+  container.textContent = '';
+  OPTIONS.focuses.forEach((focus) => {
+    container.appendChild(chip(focus.label, focus.id, state.focus === focus.id, () => {
+      state.focus = focus.id;
+      renderFocuses();
+      renderSummary();
+    }));
+  });
+}
+
+function selectedText(selector) {
+  const selected = document.querySelector(`${selector} .chip[aria-pressed="true"]`);
+  return selected ? selected.textContent : '—';
+}
+
+function renderSummary() {
+  const date = document.getElementById('birth-date').value || '—';
+  const precision = selectedText('[data-group="time_precision"]');
+  const time = state.time_precision === 'unknown'
+    ? 'неизвестно'
+    : state.time_precision === 'range'
+      ? `${document.getElementById('birth-time-start').value || '—'}–${document.getElementById('birth-time-end').value || '—'}`
+      : document.getElementById('birth-time').value || '—';
+  const manualCountry = document.getElementById('manual-country').value.trim();
+  const country = state.country_label || manualCountry || '—';
+  const manualCity = document.getElementById('manual-city').value.trim();
+  const city = state.city_label || manualCity || '—';
+  const focus = selectedText('#focus-chips');
+  const summary = document.getElementById('summary');
+  summary.textContent = '';
+  [
+    ['Дата', date],
+    ['Время', `${precision}, ${time}`],
+    ['Страна', country],
+    ['Город', city],
+    ['Фокус', focus],
+  ].forEach(([label, value]) => {
+    const row = document.createElement('div');
+    row.className = 'summary-row';
+    const labelEl = document.createElement('span');
+    labelEl.textContent = label;
+    const valueEl = document.createElement('strong');
+    valueEl.textContent = value;
+    row.append(labelEl, valueEl);
+    summary.appendChild(row);
+  });
+}
+
+function showTimeBlocks() {
+  const single = document.querySelector('[data-time-block="single"]');
+  const range = document.querySelector('[data-time-block="range"]');
+  single.hidden = state.time_precision === 'unknown' || state.time_precision === 'range';
+  range.hidden = state.time_precision !== 'range';
+  renderSummary();
+}
+
+document.querySelector('[data-group="time_precision"]').addEventListener('click', (event) => {
+  const button = event.target.closest('.chip');
+  if (!button) return;
+  state.time_precision = button.dataset.value;
+  setGroup(event.currentTarget, state.time_precision);
+  showTimeBlocks();
+});
+
+['birth-date', 'birth-time', 'birth-time-start', 'birth-time-end', 'manual-country', 'manual-city'].forEach((id) => {
+  document.getElementById(id).addEventListener('input', renderSummary);
+});
+
+function buildPayload() {
+  const payload = {
+    birth_date: document.getElementById('birth-date').value,
+    time_precision: state.time_precision,
+    country_code: state.country_code,
+    country: document.getElementById('manual-country').value.trim(),
+    city_geoname_id: state.city_geoname_id,
+    birth_place: document.getElementById('manual-city').value.trim(),
+    focus: state.focus,
+  };
+  if (state.time_precision === 'range') {
+    payload.birth_time_range_start = document.getElementById('birth-time-start').value;
+    payload.birth_time_range_end = document.getElementById('birth-time-end').value;
+  } else if (state.time_precision !== 'unknown') {
+    payload.birth_time = document.getElementById('birth-time').value;
+  }
+  return payload;
+}
+
+function validateBeforeSubmit(payload) {
+  if (!payload.birth_date) return 'Укажите дату рождения.';
+  if (!payload.country_code && !payload.country) return 'Выберите или введите страну рождения.';
+  if (!payload.city_geoname_id && !payload.birth_place) return 'Выберите город или введите другой.';
+  if (payload.time_precision !== 'unknown' && payload.time_precision !== 'range' && !payload.birth_time) {
+    return 'Укажите время рождения.';
+  }
+  if (payload.time_precision === 'range' && (!payload.birth_time_range_start || !payload.birth_time_range_end)) {
+    return 'Укажите начало и конец диапазона.';
+  }
+  return '';
+}
+
+async function submitNatal(event) {
+  event.preventDefault();
+  errorBox.hidden = true;
+  const payload = buildPayload();
+  const validationError = validateBeforeSubmit(payload);
+  if (validationError) {
+    errorBox.textContent = validationError;
+    errorBox.hidden = false;
+    return;
+  }
+  submitButton.disabled = true;
+  submitButton.textContent = 'Считаю карту...';
+  statusPill.textContent = 'Расчёт';
+  try {
+    const response = await fetch(form.dataset.api, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `tma ${tg?.initData || ''}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) {
+      throw new Error(result.detail || result.error || 'Не удалось отправить анкету.');
+    }
+    doneBox.hidden = false;
+    statusPill.textContent = 'Готово';
+    submitButton.textContent = 'Закрыть';
+    submitButton.disabled = false;
+    form.removeEventListener('submit', submitNatal);
+    form.addEventListener('submit', (closeEvent) => {
+      closeEvent.preventDefault();
+      tg?.close();
+    });
+  } catch (error) {
+    errorBox.textContent = error.message;
+    errorBox.hidden = false;
+    submitButton.disabled = false;
+    submitButton.textContent = 'Построить карту';
+    statusPill.textContent = 'Анкета';
+  }
+}
+
+form.addEventListener('submit', submitNatal);
+tg?.ready();
+tg?.expand();
+renderCountries();
+renderCities();
+renderFocuses();
+renderSummary();
+</script>
+</body>
+</html>
