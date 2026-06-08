@@ -84,7 +84,15 @@ def calculate_mc(utc_dt: datetime, longitude: float) -> float:
         return normalize_radians(ra - lst)
 
     roots = find_ecliptic_roots(meridian_delta)
-    return roots[0] if roots else normalize_longitude(lst * RAD_TO_DEG)
+    if not roots:
+        return normalize_longitude(lst * RAD_TO_DEG)
+    return min(
+        roots,
+        key=lambda root: angular_distance(
+            ecliptic_to_equatorial(root, obliquity)[0] * RAD_TO_DEG,
+            lst * RAD_TO_DEG,
+        ),
+    )
 
 
 def ecliptic_to_equatorial(ecliptic_longitude: float, obliquity: float) -> tuple[float, float]:

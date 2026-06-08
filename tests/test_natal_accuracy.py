@@ -187,6 +187,17 @@ def test_reference_fixture_example_is_structurally_valid_but_not_release_verifie
     assert all(set(range(1, 13)) <= case.expected_house_cusps.keys() for case in cases)
 
 
+def test_moira_jpl_reference_fixture_satisfies_release_contract():
+    cases = load_golden_cases_from_json(PROJECT_ROOT / "docs" / "natal-reference-fixture.moira-jpl.json")
+
+    assert {case.case_id for case in cases} == {"kyiv-1995-exact", "reading-1989-exact"}
+    assert all(case.externally_verified for case in cases)
+    assert all("moira-astro 3.2.3" in case.reference_source for case in cases)
+    assert all("NASA/JPL Horizons" in case.reference_source for case in cases)
+    assert all({"ascendant", "mc"} <= case.expected_angles.keys() for case in cases)
+    assert all(set(range(1, 13)) <= case.expected_house_cusps.keys() for case in cases)
+
+
 def test_export_golden_cases_template_writes_current_fixture_shape(tmp_path):
     fixture_path = tmp_path / "exported-angle-references.json"
 

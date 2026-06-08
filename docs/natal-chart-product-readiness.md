@@ -50,6 +50,7 @@ This document tracks the changes required to move natal charts from MVP to produ
 - `scripts/natal_accuracy.py --export-template <path>` writes a current UTF-8 fixture template from the in-code golden cases with all 12 equal-house cusps. Use it as the starting point for external checking, then replace the internal values/source and set `externally_verified=true`.
 - `--require-external` now requires an explicit `--reference-fixtures <path>` argument, so public release approval cannot come only from in-code constants.
 - `docs/natal-reference-fixture.example.json` provides the required fixture shape. It is intentionally marked `externally_verified=false`; copy it to a release fixture, replace the internal-regression values with independently verified references, update `reference_source`, and only then set `externally_verified=true`.
+- `docs/natal-reference-fixture.moira-jpl.json` is the current release fixture. Ascendant, MC, and all 12 equal-house cusps were checked against `moira-astro==3.2.3` `HouseSystem.EQUAL` on Python 3.14; planet longitudes and retrograde flags are checked against NASA/JPL Horizons through `--check-horizons`.
 - `scripts/natal_accuracy.py --check-horizons` and `scripts/natal_readiness.py --check-horizons` compare planet ecliptic longitudes and retrograde flags against NASA/JPL Horizons without adding a Swiss Ephemeris runtime dependency.
 - `scripts/natal_readiness.py` aggregates city catalog and accuracy checks, with optional JPL Horizons planet validation, storage preflight, config preflight, and explicit `--smoke` live report checks for VPS rollout.
 - On local Python 3.14, readiness loaded 32,444 cities in about 721 ms; the slowest checked warm city search took about 44 ms.
@@ -70,10 +71,12 @@ This document tracks the changes required to move natal charts from MVP to produ
 
 ## Current Verification Evidence
 
-- Local Python 3.14 focused suite: `187 passed, 1 warning` for all `tests/test_natal_*.py`.
+- Local Python 3.14 focused suite: `188 passed, 1 warning` for all `tests/test_natal_*.py`.
 - Affected existing suite: `43 passed` for `tests/test_horoscope_intent.py`, `tests/test_commands.py`, `tests/test_reader_utils.py`, and `tests/test_web_security.py`.
 - Lint: `ruff check app/natal app/handlers/natal_chart.py tests/test_natal_*.py` passed.
 - Encoding: `scripts/check_encoding.py` passed after documentation and code changes.
+- Release fixture gate: `scripts/natal_accuracy.py --require-external --check-horizons --reference-fixtures docs/natal-reference-fixture.moira-jpl.json` passed. Each case had 34 local fixture checks plus 20 JPL Horizons planet checks.
+- Local independent planet gate: `scripts/natal_accuracy.py --check-horizons` passed for both golden cases, with 20 JPL Horizons planet checks per case and max deltas of 0.0704 degrees (`kyiv-1995-exact`) and 0.1433 degrees (`reading-1989-exact`).
 - VPS deploy: GitHub Actions run `27116204084` completed successfully for commit `67b95a1`.
 - VPS live smoke inside `tg-bot`: `PASS natal-city-catalog`, `PASS natal-config: ready`, `storage=ready`, generated `smoke_report_id`, generated hosted URL ending in `/reports/natal/<report_id>`, and verified hosted HTML contains SVG and report sections.
 - VPS maintenance: deploy now runs `scripts/natal_maintenance.py` after smoke when natal reports are enabled; the latest successful deploy log should contain `OK ttl_days=<NATAL_REPORT_TTL_DAYS> deleted=<count>`.
@@ -83,12 +86,12 @@ This document tracks the changes required to move natal charts from MVP to produ
 1. Done: live report smoke has run on the VPS inside the deployed `tg-bot` container with real `WEBHOOK_URL`, database, Telegram bot token, and `NATAL_REPORTS_ENABLED=true`.
 2. Verify the hosted report link opens from Telegram on mobile and desktop.
 3. Done by deploy gate when `NATAL_REPORTS_ENABLED=true`: `python scripts/natal_maintenance.py` runs inside `tg-bot` after live smoke and verifies report persistence plus deletion/TTL behavior against the real PostgreSQL migration.
-4. Partially done: deployed `scripts/natal_readiness.py --check-config --check-storage --smoke --webhook-url "$WEBHOOK_URL" --min-city-count 30000 --max-city-warmup-ms 3000 --max-city-search-ms 300` passed on the VPS. Still run the stricter public-release gate with `--check-horizons --require-external --reference-fixtures <verified-angle-fixtures.json>` after external Ascendant/MC/house references are confirmed.
+4. Done locally: `scripts/natal_accuracy.py --require-external --check-horizons --reference-fixtures docs/natal-reference-fixture.moira-jpl.json` passes with externally verified angle/equal-house references and JPL Horizons planet checks. For VPS parity, run the same fixture through `scripts/natal_readiness.py --check-config --check-storage --check-horizons --smoke --require-external --reference-fixtures docs/natal-reference-fixture.moira-jpl.json --webhook-url "$WEBHOOK_URL" --min-city-count 30000 --max-city-warmup-ms 3000 --max-city-search-ms 300` after copying the fixture into the deployed image.
 5. Verify city search manually in Telegram for at least these cases: Odesa/Odessa, Kyiv/Kiev, Moscow, London, New York, Ottawa, Orenburg, Berlin, Warsaw, Istanbul. Automated local catalog coverage exists. Local Python 3.14 observed timing after prefix indexing is roughly 0.6 s for cold warmup and 35 ms for the slowest release smoke city search.
 6. `cities1000` coverage is guarded by a minimum 30,000-city readiness gate. Decide later, from real support requests, whether the product needs a denser dataset for small towns.
 7. Decide from support requests whether the "nearest large city" fallback is enough. If not, add reviewed city entries to `NATAL_CITY_OVERRIDES_PATH` using verified coordinates and timezone.
 8. Calibrate interpretation prompts with real sample reports and reject overconfident claims when birth time is unknown.
-9. Planet longitudes and retrograde flags now have an independent NASA/JPL Horizons gate. Still replace or confirm Ascendant, MC, and house cusps against a trusted astrology reference for the same cases. Start with `python scripts/natal_accuracy.py --export-template <verified-angle-fixtures.json>`, replace internal values/source with independently verified references, then make `python scripts/natal_accuracy.py --require-external --reference-fixtures <verified-angle-fixtures.json>` pass before calling the full calculator production-grade.
+9. Done for release 1 equal-house scope: planet longitudes and retrograde flags have an independent NASA/JPL Horizons gate, and Ascendant/MC/equal-house cusps have the committed Moira/JPL fixture. Do not claim Placidus/Koch/etc. support; release 1 is equal-house only.
 10. Keep Swiss Ephemeris as a future optional accuracy upgrade only if AGPL/commercial license obligations are handled explicitly.
 
 ## City Data Decision
@@ -100,7 +103,7 @@ GeoNames data is distributed under CC BY 4.0. Hosted reports and Telegraph mirro
 ## Remaining Product Risks
 
 - The current astrology calculator is deterministic and local, but it is not Swiss Ephemeris-grade.
-- Planet longitudes and retrograde flags are cross-checked against NASA/JPL Horizons, but Ascendant, MC, house cusps, and astrology-specific house system choices still need independent external verification. The fixture loader exists; the verified fixture data itself has not been supplied yet.
+- Planet longitudes and retrograde flags are cross-checked against NASA/JPL Horizons. Ascendant, MC, and equal-house cusps have a committed Moira/JPL release fixture, but this is still not a Swiss Ephemeris parity claim.
 - Equal-house cusps are implemented locally; Placidus/Koch/etc. are not.
 - City autocomplete in normal Telegram chat is message-by-message, not true live keystroke autocomplete. The step flow reduces noise by asking for country first and filtering city suggestions locally. True per-character updates would require a Telegram Mini App or inline mode.
 - The fallback Nominatim geocoder is network-dependent for coordinates and opt-in only via `NATAL_GEOCODER_PROVIDER=nominatim`; timezone resolution remains local.

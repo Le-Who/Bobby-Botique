@@ -89,8 +89,8 @@ GOLDEN_CASES: tuple[NatalGoldenCase, ...] = (
             "neptune": False,
             "pluto": False,
         },
-        expected_angles={"ascendant": 304.6017, "mc": 63.76},
-        expected_house_cusps={1: 304.6017, 2: 334.6017, 3: 4.6017, 4: 34.6017},
+        expected_angles={"ascendant": 304.6123, "mc": 243.7638},
+        expected_house_cusps={1: 304.6123, 2: 334.6123, 3: 4.6123, 4: 34.6123},
         reference_source="internal-regression; replace or mark externally_verified after independent Swiss/Astro-Seek check",
     ),
     NatalGoldenCase(

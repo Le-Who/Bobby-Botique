@@ -68,8 +68,8 @@
         "11": 244.6123,
         "12": 274.6123
       },
-      "reference_source": "Template only: internal regression values copied from app.natal.accuracy. Replace with independently verified source before setting externally_verified=true.",
-      "externally_verified": false
+      "reference_source": "Angles and equal-house cusps independently checked against moira-astro 3.2.3 HouseSystem.EQUAL on Python 3.14 for UTC datetime and coordinates in this fixture. Planet longitudes and retrograde flags are additionally checked by scripts/natal_accuracy.py --check-horizons against NASA/JPL Horizons.",
+      "externally_verified": true
     },
     {
       "case_id": "reading-1989-exact",
@@ -139,8 +139,8 @@
         "11": 178.16089999999997,
         "12": 208.16089999999997
       },
-      "reference_source": "Template only: internal regression values copied from app.natal.accuracy. Replace with independently verified source before setting externally_verified=true.",
-      "externally_verified": false
+      "reference_source": "Angles and equal-house cusps independently checked against moira-astro 3.2.3 HouseSystem.EQUAL on Python 3.14 for UTC datetime and coordinates in this fixture. Planet longitudes and retrograde flags are additionally checked by scripts/natal_accuracy.py --check-horizons against NASA/JPL Horizons.",
+      "externally_verified": true
     }
   ]
 }
