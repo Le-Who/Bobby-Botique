@@ -48,6 +48,15 @@ _NATAL_KEYS = {
     "natal_date_year_page",
     "natal_time_precision",
     "natal_time_value",
+    "natal_time_hour",
+    "natal_time_minute",
+    "natal_time_picker_view",
+    "natal_time_minute_page",
+    "natal_time_range_target",
+    "natal_time_range_start_hour",
+    "natal_time_range_start_minute",
+    "natal_time_range_end_hour",
+    "natal_time_range_end_minute",
     "natal_country_code",
     "natal_country",
     "natal_place",
@@ -124,6 +133,18 @@ _RU_MONTHS_NOMINATIVE: Final[dict[int, str]] = {
 _DATE_PICKER_YEAR_MIN: Final = 1900
 _DATE_PICKER_YEAR_PAGE_SIZE: Final = 20
 _DATE_PICKER_DEFAULT_YEAR_PAGE: Final = 1990
+
+_FAST_COUNTRIES: Final[tuple[tuple[str, str], ...]] = (
+    ("UA", "Украина"),
+    ("RU", "Россия"),
+    ("BY", "Беларусь"),
+)
+
+_FAST_CITIES: Final[dict[str, tuple[tuple[str, str], ...]]] = {
+    "UA": (("Киев", "Киев"), ("Львов", "Львов"), ("Харьков", "Харьков")),
+    "RU": (("Москва", "Москва"), ("Санкт-Петербург", "Санкт-Петербург"), ("Новосибирск", "Новосибирск")),
+    "BY": (("Минск", "Минск"), ("Гомель", "Гомель"), ("Витебск", "Витебск")),
+}
 
 
 async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -266,10 +287,47 @@ async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return NATAL_TIME_PRECISION
     if precision == TimePrecision.UNKNOWN:
         context.user_data["natal_time_precision"] = TimePrecision.UNKNOWN
-        await _show_flow_prompt(update, context, "Страна рождения?", reply_markup=_input_keyboard("country"))
+        await _show_flow_prompt(update, context, "Страна рождения?", reply_markup=_country_entry_keyboard())
         return NATAL_COUNTRY
     context.user_data["natal_time_precision"] = precision
-    await _show_flow_prompt(update, context, "Укажите время или диапазон.", reply_markup=_input_keyboard("time"))
+    await _show_time_picker(update, context)
+    return NATAL_TIME_VALUE
+
+
+async def on_time_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    query = getattr(update, "callback_query", None)
+    if not query:
+        return NATAL_TIME_VALUE
+    data = str(query.data or "")
+    parts = data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "done":
+        time_value = _selected_time_value_from_picker(context.user_data)
+        if not time_value:
+            await query.answer("Выберите время.")
+            await _show_time_picker(update, context)
+            return NATAL_TIME_VALUE
+        await query.answer()
+        context.user_data["natal_time_value"] = time_value
+        await _show_flow_prompt(update, context, "Страна рождения?", reply_markup=_country_entry_keyboard())
+        return NATAL_COUNTRY
+
+    await query.answer()
+    if action == "noop":
+        await _show_time_picker(update, context)
+        return NATAL_TIME_VALUE
+    if action == "view" and len(parts) >= 3:
+        context.user_data["natal_time_picker_view"] = parts[2]
+    elif action == "target" and len(parts) >= 3:
+        context.user_data["natal_time_range_target"] = parts[2]
+    elif action == "minute_page" and len(parts) >= 3:
+        context.user_data["natal_time_minute_page"] = _safe_int(parts[2])
+        context.user_data["natal_time_picker_view"] = "minute"
+    elif action in {"hour", "minute"} and len(parts) >= 3:
+        _set_time_picker_part(context.user_data, action, _safe_int(parts[2]))
+        context.user_data["natal_time_picker_view"] = "minute" if action == "hour" else "hour"
+    await _show_time_picker(update, context)
     return NATAL_TIME_VALUE
 
 
@@ -278,7 +336,7 @@ async def on_time_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> s
         return NATAL_TIME_VALUE
     context.user_data["natal_time_value"] = update.message.text.strip()
     await _delete_user_message(update)
-    await _show_flow_prompt(update, context, "Страна рождения?", reply_markup=_input_keyboard("country"))
+    await _show_flow_prompt(update, context, "Страна рождения?", reply_markup=_country_entry_keyboard())
     return NATAL_COUNTRY
 
 
@@ -314,7 +372,7 @@ async def on_country_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
         update,
         context,
         f"Страна рождения: {country_display}\n\nГород рождения?",
-        reply_markup=_input_keyboard("city"),
+        reply_markup=_place_entry_keyboard(country_code),
     )
     return NATAL_PLACE
 
@@ -334,7 +392,7 @@ async def on_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
             update,
             context,
             "Город не найден. Введите больше букв или укажите ближайший крупный город.",
-            reply_markup=_input_keyboard("city"),
+            reply_markup=_place_entry_keyboard(country_code),
         )
         return NATAL_PLACE
     await _show_flow_prompt(
@@ -390,7 +448,7 @@ async def on_place_missing(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context,
         "Если вашего города нет в списке, введите ближайший крупный город рядом с местом рождения. "
         "Для натальной карты важны координаты и часовой пояс.",
-        reply_markup=_input_keyboard("city"),
+        reply_markup=_place_entry_keyboard(context.user_data.get("natal_country_code")),
     )
     return NATAL_PLACE
 
@@ -671,6 +729,7 @@ def build_natal_chart_handler() -> ConversationHandler:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_precision),
             ],
             NATAL_TIME_VALUE: [
+                CallbackQueryHandler(on_time_picker, pattern=r"^natal_time:"),
                 CallbackQueryHandler(on_input_hint, pattern=r"^natal_input:time$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_value),
             ],
@@ -744,6 +803,151 @@ def _time_precision_keyboard() -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+async def _show_time_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _show_flow_prompt(
+        update,
+        context,
+        "Время рождения: выберите час и минуты кнопками.",
+        reply_markup=_time_picker_keyboard(context.user_data),
+    )
+
+
+def _time_picker_keyboard(user_data: dict) -> InlineKeyboardMarkup:
+    view = str(user_data.get("natal_time_picker_view") or "hour")
+    if view not in {"hour", "minute"}:
+        view = "hour"
+    rows: list[list[InlineKeyboardButton]] = []
+    precision = user_data.get("natal_time_precision")
+    if precision == TimePrecision.RANGE:
+        target = _time_range_target(user_data)
+        rows.append(
+            [
+                InlineKeyboardButton(_time_target_label("start", "С", target, user_data), callback_data="natal_time:target:start"),
+                InlineKeyboardButton(_time_target_label("end", "До", target, user_data), callback_data="natal_time:target:end"),
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(_time_view_label("hour", "Час", view), callback_data="natal_time:view:hour"),
+            InlineKeyboardButton(_time_view_label("minute", "Минуты", view), callback_data="natal_time:view:minute"),
+        ]
+    )
+    if view == "minute":
+        rows.extend(_time_minute_rows(user_data))
+    else:
+        rows.extend(_time_hour_rows(user_data))
+    time_value = _selected_time_value_from_picker(user_data)
+    if time_value:
+        rows.append([InlineKeyboardButton(f"Далее: {time_value}", callback_data="natal_time:done")])
+    else:
+        rows.append([InlineKeyboardButton("Выберите время", callback_data="natal_time:noop")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _time_view_label(part: str, label: str, view: str) -> str:
+    return f">{label}" if view == part else label
+
+
+def _time_target_label(target: str, label: str, selected: str, user_data: dict) -> str:
+    prefix = ">" if target == selected else ""
+    value = _time_range_part_value(user_data, target) or "--:--"
+    return f"{prefix}{label}: {value}"
+
+
+def _time_hour_rows(user_data: dict) -> list[list[InlineKeyboardButton]]:
+    selected = _selected_time_part(user_data, "hour")
+    buttons = [
+        InlineKeyboardButton(
+            f"[{hour:02d}]" if selected == hour else f"{hour:02d}",
+            callback_data=f"natal_time:hour:{hour}",
+        )
+        for hour in range(24)
+    ]
+    return _button_rows(buttons, 6)
+
+
+def _time_minute_rows(user_data: dict) -> list[list[InlineKeyboardButton]]:
+    page = user_data.get("natal_time_minute_page")
+    start = 30 if page == 30 else 0
+    end = start + 29
+    selected = _selected_time_part(user_data, "minute")
+    buttons = [
+        InlineKeyboardButton(
+            f"[{minute:02d}]" if selected == minute else f"{minute:02d}",
+            callback_data=f"natal_time:minute:{minute}",
+        )
+        for minute in range(start, end + 1)
+    ]
+    rows = _button_rows(buttons, 6)
+    rows.append(
+        [
+            InlineKeyboardButton("00-29", callback_data="natal_time:minute_page:0"),
+            InlineKeyboardButton("30-59", callback_data="natal_time:minute_page:30"),
+        ]
+    )
+    return rows
+
+
+def _set_time_picker_part(user_data: dict, part: str, value: int | None) -> None:
+    if value is None:
+        return
+    if part == "hour" and not 0 <= value <= 23:
+        return
+    if part == "minute" and not 0 <= value <= 59:
+        return
+    precision = user_data.get("natal_time_precision")
+    if precision == TimePrecision.RANGE:
+        target = _time_range_target(user_data)
+        user_data[f"natal_time_range_{target}_{part}"] = value
+        if _time_range_part_value(user_data, target) and target == "start":
+            user_data["natal_time_range_target"] = "end"
+        return
+    user_data[f"natal_time_{part}"] = value
+
+
+def _selected_time_part(user_data: dict, part: str) -> int | None:
+    precision = user_data.get("natal_time_precision")
+    if precision == TimePrecision.RANGE:
+        value = user_data.get(f"natal_time_range_{_time_range_target(user_data)}_{part}")
+    else:
+        value = user_data.get(f"natal_time_{part}")
+    return value if isinstance(value, int) else None
+
+
+def _selected_time_value_from_picker(user_data: dict) -> str | None:
+    if user_data.get("natal_time_precision") == TimePrecision.RANGE:
+        start = _time_range_part_value(user_data, "start")
+        end = _time_range_part_value(user_data, "end")
+        if not start or not end:
+            return None
+        if _time_to_minutes(end) <= _time_to_minutes(start):
+            return None
+        return f"{start}-{end}"
+    hour = user_data.get("natal_time_hour")
+    minute = user_data.get("natal_time_minute")
+    if not isinstance(hour, int) or not isinstance(minute, int):
+        return None
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _time_range_part_value(user_data: dict, target: str) -> str | None:
+    hour = user_data.get(f"natal_time_range_{target}_hour")
+    minute = user_data.get(f"natal_time_range_{target}_minute")
+    if not isinstance(hour, int) or not isinstance(minute, int):
+        return None
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _time_range_target(user_data: dict) -> str:
+    target = str(user_data.get("natal_time_range_target") or "start")
+    return target if target in {"start", "end"} else "start"
+
+
+def _time_to_minutes(value: str) -> int:
+    hour, minute = value.split(":", 1)
+    return int(hour) * 60 + int(minute)
 
 
 def _focus_keyboard() -> InlineKeyboardMarkup:
@@ -937,6 +1141,31 @@ def _draft_date_text(user_data: dict) -> str:
     month_text = _RU_MONTHS_NOMINATIVE.get(month, "-") if isinstance(month, int) else "-"
     year_text = str(year) if isinstance(year, int) else "-"
     return f"день {day_text}, месяц {month_text}, год {year_text}"
+
+
+def _country_entry_keyboard() -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(label, callback_data=f"natal_country:{code}") for code, label in _FAST_COUNTRIES]]
+    rows.append([InlineKeyboardButton("Введите другую страну сообщением", callback_data="natal_input:country")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _place_entry_keyboard(country_code: object) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if isinstance(country_code, str):
+        quick_buttons = _fast_city_buttons(country_code)
+        if quick_buttons:
+            rows.extend(_button_rows(quick_buttons, 1))
+    rows.append([InlineKeyboardButton("Введите другой город сообщением", callback_data="natal_input:city")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _fast_city_buttons(country_code: str) -> list[InlineKeyboardButton]:
+    buttons: list[InlineKeyboardButton] = []
+    for label, query in _FAST_CITIES.get(country_code, ()):
+        matches = search_cities(query, limit=1, country_code=country_code)
+        if matches:
+            buttons.append(InlineKeyboardButton(label, callback_data=f"natal_place:{matches[0].geoname_id}"))
+    return buttons
 
 
 def _input_keyboard(target: str) -> InlineKeyboardMarkup:

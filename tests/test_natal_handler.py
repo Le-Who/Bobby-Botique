@@ -28,6 +28,7 @@ from app.handlers.natal_chart import (
     on_place_missing,
     on_place_selected,
     on_table_input,
+    on_time_picker,
     on_time_precision,
     on_time_value,
 )
@@ -267,6 +268,55 @@ async def test_step_flow_uses_buttons_for_time_precision_and_focus():
     assert await on_place_selected(place_update, context) == NATAL_FOCUS
     focus_keyboard = place_update.callback_query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard
     assert any(button.callback_data == "natal_focus:relationships" for row in focus_keyboard for button in row)
+
+
+@pytest.mark.asyncio
+async def test_exact_time_picker_selects_time_without_text_input():
+    context = make_context()
+
+    assert await on_time_precision(make_callback_update("natal_time_precision:exact"), context) == NATAL_TIME_VALUE
+    assert await on_time_picker(make_callback_update("natal_time:hour:3"), context) == NATAL_TIME_VALUE
+    assert await on_time_picker(make_callback_update("natal_time:minute:0"), context) == NATAL_TIME_VALUE
+
+    done_update = make_callback_update("natal_time:done")
+    state = await on_time_picker(done_update, context)
+
+    assert state == NATAL_COUNTRY
+    assert context.user_data["natal_time_precision"] == TimePrecision.EXACT
+    assert context.user_data["natal_time_value"] == "03:00"
+    text = done_update.callback_query.edit_message_text.await_args.args[0]
+    assert "03:00" in text
+    assert "Страна рождения" in text
+
+
+@pytest.mark.asyncio
+async def test_country_prompt_contains_fast_country_buttons():
+    context = make_context()
+
+    update = make_callback_update("natal_time_precision:unknown")
+    assert await on_time_precision(update, context) == NATAL_COUNTRY
+
+    keyboard = update.callback_query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard
+    buttons = [button for row in keyboard for button in row]
+    assert any(button.text == "Украина" and button.callback_data == "natal_country:UA" for button in buttons)
+    assert any(button.text == "Россия" and button.callback_data == "natal_country:RU" for button in buttons)
+    assert any(button.text == "Беларусь" and button.callback_data == "natal_country:BY" for button in buttons)
+
+
+@pytest.mark.asyncio
+async def test_country_selection_shows_fast_city_buttons_for_selected_country():
+    context = make_context()
+
+    update = make_callback_update("natal_country:UA")
+    assert await on_country_selected(update, context) == NATAL_PLACE
+
+    keyboard = update.callback_query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard
+    labels = [button.text for row in keyboard for button in row]
+    callbacks = [button.callback_data for row in keyboard for button in row]
+    assert "Киев" in labels
+    assert "Харьков" in labels
+    assert "Львов" in labels
+    assert any(callback and callback.startswith("natal_place:") for callback in callbacks)
 
 
 @pytest.mark.asyncio
