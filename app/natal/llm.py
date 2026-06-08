@@ -17,6 +17,21 @@ _POINT_TITLE_HINTS = {
     "pluto": "Плутон — глубина и трансформация",
 }
 
+_SIGN_ALIASES = {
+    "Овен": ("овен", "овне", "овна"),
+    "Телец": ("телец", "тельце", "тельца"),
+    "Близнецы": ("близнецы", "близнецах", "близнецов"),
+    "Рак": ("рак", "раке", "рака"),
+    "Лев": ("лев", "льве", "льва"),
+    "Дева": ("дева", "деве", "девы"),
+    "Весы": ("весы", "весах", "весов"),
+    "Скорпион": ("скорпион", "скорпионе", "скорпиона"),
+    "Стрелец": ("стрелец", "стрельце", "стрельца"),
+    "Козерог": ("козерог", "козероге", "козерога"),
+    "Водолей": ("водолей", "водолее", "водолея"),
+    "Рыбы": ("рыбы", "рыбах", "рыб"),
+}
+
 
 def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> str:
     prompt_chart = _chart_for_prompt(chart)
@@ -75,6 +90,8 @@ async def generate_interpretation(
             timeout=60,
         )
         sections = _parse_sections(response or "")
+        if sections and _sections_contradict_calculated_signs(chart, sections):
+            return _fallback_sections(chart)
         return sections or _fallback_sections(chart)
     except Exception:
         return _fallback_sections(chart)
@@ -150,6 +167,29 @@ def _title_hints_for_chart(chart: ChartData) -> list[str]:
 
 def _point_title(point_key: str, fallback_label: str) -> str:
     return _POINT_TITLE_HINTS.get(point_key.lower(), fallback_label)
+
+
+def _sections_contradict_calculated_signs(chart: ChartData, sections: list[ReportSection]) -> bool:
+    if not chart.planets:
+        return False
+    markdown = "\n".join(f"{section.title}\n{section.body_markdown}" for section in sections).lower()
+    for planet in chart.planets:
+        wrong_aliases: list[str] = []
+        for sign, aliases in _SIGN_ALIASES.items():
+            if sign != planet.sign:
+                wrong_aliases.extend(aliases)
+        if _planet_mentions_any_sign_alias(markdown, planet.label, wrong_aliases):
+            return True
+    return False
+
+
+def _planet_mentions_any_sign_alias(markdown: str, planet_label: str, sign_aliases: list[str]) -> bool:
+    planet = re.escape(planet_label.lower())
+    for alias in sign_aliases:
+        sign = re.escape(alias)
+        if re.search(rf"\b{planet}\b[^.\n!?;:]{{0,140}}\b(?:в|во)\s+(?:знаке\s+)?{sign}\b", markdown):
+            return True
+    return False
 
 
 def _quality_note(chart: ChartData) -> str:

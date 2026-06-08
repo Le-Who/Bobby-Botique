@@ -3,6 +3,8 @@ from __future__ import annotations
 import html
 import logging
 import os
+from calendar import monthrange
+from datetime import date
 from pathlib import Path
 from typing import Any, Final
 
@@ -39,6 +41,11 @@ NATAL_CONFIRM: Final = "NATAL_CONFIRM"
 _NATAL_KEYS = {
     "natal_birth_input",
     "natal_date",
+    "natal_date_day",
+    "natal_date_month",
+    "natal_date_year",
+    "natal_date_picker_view",
+    "natal_date_year_page",
     "natal_time_precision",
     "natal_time_value",
     "natal_country_code",
@@ -84,6 +91,40 @@ _TIME_PRECISION_RESULT_LABELS: Final[dict[TimePrecision, str]] = {
     TimePrecision.UNKNOWN: "время неизвестно",
 }
 
+_RU_MONTHS_GENITIVE: Final[dict[int, str]] = {
+    1: "января",
+    2: "февраля",
+    3: "марта",
+    4: "апреля",
+    5: "мая",
+    6: "июня",
+    7: "июля",
+    8: "августа",
+    9: "сентября",
+    10: "октября",
+    11: "ноября",
+    12: "декабря",
+}
+
+_RU_MONTHS_NOMINATIVE: Final[dict[int, str]] = {
+    1: "январь",
+    2: "февраль",
+    3: "март",
+    4: "апрель",
+    5: "май",
+    6: "июнь",
+    7: "июль",
+    8: "август",
+    9: "сентябрь",
+    10: "октябрь",
+    11: "ноябрь",
+    12: "декабрь",
+}
+
+_DATE_PICKER_YEAR_MIN: Final = 1900
+_DATE_PICKER_YEAR_PAGE_SIZE: Final = 20
+_DATE_PICKER_DEFAULT_YEAR_PAGE: Final = 1990
+
 
 async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     if not update.message:
@@ -126,7 +167,7 @@ async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
             "Фокус разбора: общий / отношения / карьера / психология / кратко"
         )
         return NATAL_TABLE
-    await _show_flow_prompt(update, context, "Дата рождения? Например: 14.02.1995", reply_markup=_input_keyboard("date"))
+    await _show_date_picker(update, context)
     return NATAL_DATE
 
 
@@ -156,6 +197,49 @@ async def on_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     await _delete_user_message(update)
     await _show_flow_prompt(update, context, "Время рождения известно?", reply_markup=_time_precision_keyboard())
     return NATAL_TIME_PRECISION
+
+
+async def on_date_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    query = getattr(update, "callback_query", None)
+    if not query:
+        return NATAL_DATE
+    data = str(query.data or "")
+    parts = data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "done":
+        selected = _selected_date_from_picker(context.user_data)
+        if selected is None:
+            await query.answer("Выберите день, месяц и год.")
+            await _show_date_picker(update, context)
+            return NATAL_DATE
+        await query.answer()
+        context.user_data["natal_date"] = selected.isoformat()
+        await _show_flow_prompt(update, context, "Время рождения известно?", reply_markup=_time_precision_keyboard())
+        return NATAL_TIME_PRECISION
+
+    await query.answer()
+    if action == "noop":
+        await _show_date_picker(update, context)
+        return NATAL_DATE
+    if action == "view" and len(parts) >= 3:
+        context.user_data["natal_date_picker_view"] = parts[2]
+    elif action == "day" and len(parts) >= 3:
+        context.user_data["natal_date_day"] = _safe_int(parts[2])
+        context.user_data["natal_date_picker_view"] = "month"
+    elif action == "month" and len(parts) >= 3:
+        context.user_data["natal_date_month"] = _safe_int(parts[2])
+        _drop_invalid_selected_day(context.user_data)
+        context.user_data["natal_date_picker_view"] = "year"
+    elif action == "year" and len(parts) >= 3:
+        context.user_data["natal_date_year"] = _safe_int(parts[2])
+        _drop_invalid_selected_day(context.user_data)
+        context.user_data["natal_date_picker_view"] = _next_missing_date_part(context.user_data)
+    elif action == "year_page" and len(parts) >= 3:
+        context.user_data["natal_date_year_page"] = _safe_int(parts[2])
+        context.user_data["natal_date_picker_view"] = "year"
+    await _show_date_picker(update, context)
+    return NATAL_DATE
 
 
 async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -547,7 +631,7 @@ def _is_terminal_flow_text(text: str) -> bool:
 
 
 def _draft_lines(user_data: dict) -> list[str]:
-    date = str(user_data.get("natal_date") or "—")
+    date_text = _draft_date_text(user_data)
     precision = user_data.get("natal_time_precision")
     time_value = str(user_data.get("natal_time_value") or "")
     time_text = "—"
@@ -561,7 +645,7 @@ def _draft_lines(user_data: dict) -> list[str]:
     place = str(user_data.get("natal_place") or "—")
     focus = str(user_data.get("natal_focus") or "—")
     return [
-        f"Дата: {date}",
+        f"Дата: {date_text}",
         f"Время: {time_text}",
         f"Страна: {country}",
         f"Город: {place}",
@@ -578,7 +662,10 @@ def build_natal_chart_handler() -> ConversationHandler:
         states={
             NATAL_MODE: [CallbackQueryHandler(on_mode, pattern=r"^natal_mode:")],
             NATAL_TABLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_table_input)],
-            NATAL_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_date)],
+            NATAL_DATE: [
+                CallbackQueryHandler(on_date_picker, pattern=r"^natal_date:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, on_date),
+            ],
             NATAL_TIME_PRECISION: [
                 CallbackQueryHandler(on_time_precision, pattern=r"^natal_time_precision:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_precision),
@@ -675,6 +762,183 @@ def _focus_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+async def _show_date_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _show_flow_prompt(
+        update,
+        context,
+        "Дата рождения: выберите день, месяц и год кнопками.",
+        reply_markup=_date_picker_keyboard(context.user_data),
+    )
+
+
+def _date_picker_keyboard(user_data: dict) -> InlineKeyboardMarkup:
+    view = str(user_data.get("natal_date_picker_view") or _next_missing_date_part(user_data))
+    if view not in {"day", "month", "year"}:
+        view = "day"
+
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(_date_part_label("day", "День", user_data, view), callback_data="natal_date:view:day"),
+            InlineKeyboardButton(_date_part_label("month", "Месяц", user_data, view), callback_data="natal_date:view:month"),
+            InlineKeyboardButton(_date_part_label("year", "Год", user_data, view), callback_data="natal_date:view:year"),
+        ]
+    ]
+    if view == "month":
+        rows.extend(_date_picker_month_rows(user_data))
+    elif view == "year":
+        rows.extend(_date_picker_year_rows(user_data))
+    else:
+        rows.extend(_date_picker_day_rows(user_data))
+
+    selected = _selected_date_from_picker(user_data)
+    if selected is None:
+        rows.append([InlineKeyboardButton("Выберите день, месяц и год", callback_data="natal_date:noop")])
+    else:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"Далее: {_format_birth_date_for_confirmation(selected.isoformat())}",
+                    callback_data="natal_date:done",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(rows)
+
+
+def _date_part_label(part: str, label: str, user_data: dict, view: str) -> str:
+    prefix = ">" if view == part else ""
+    if part == "day":
+        value = user_data.get("natal_date_day")
+    elif part == "month":
+        month = user_data.get("natal_date_month")
+        value = _RU_MONTHS_NOMINATIVE.get(month) if isinstance(month, int) else None
+    else:
+        value = user_data.get("natal_date_year")
+    return f"{prefix}{label}: {value or '-'}"
+
+
+def _date_picker_day_rows(user_data: dict) -> list[list[InlineKeyboardButton]]:
+    max_day = _max_selectable_day(user_data)
+    selected_day = user_data.get("natal_date_day")
+    buttons = [
+        InlineKeyboardButton(
+            f"[{day}]" if selected_day == day else str(day),
+            callback_data=f"natal_date:day:{day}",
+        )
+        for day in range(1, max_day + 1)
+    ]
+    return _button_rows(buttons, 7)
+
+
+def _date_picker_month_rows(user_data: dict) -> list[list[InlineKeyboardButton]]:
+    selected_month = user_data.get("natal_date_month")
+    buttons = [
+        InlineKeyboardButton(
+            f"[{label}]" if selected_month == month else label,
+            callback_data=f"natal_date:month:{month}",
+        )
+        for month, label in _RU_MONTHS_NOMINATIVE.items()
+    ]
+    return _button_rows(buttons, 3)
+
+
+def _date_picker_year_rows(user_data: dict) -> list[list[InlineKeyboardButton]]:
+    start = _year_page_start(user_data.get("natal_date_year_page"))
+    end = min(start + _DATE_PICKER_YEAR_PAGE_SIZE - 1, _date_picker_year_max())
+    selected_year = user_data.get("natal_date_year")
+    buttons = [
+        InlineKeyboardButton(
+            f"[{year}]" if selected_year == year else str(year),
+            callback_data=f"natal_date:year:{year}",
+        )
+        for year in range(start, end + 1)
+    ]
+    rows = _button_rows(buttons, 5)
+    nav: list[InlineKeyboardButton] = []
+    if start > _DATE_PICKER_YEAR_MIN:
+        prev_start = max(_DATE_PICKER_YEAR_MIN, start - _DATE_PICKER_YEAR_PAGE_SIZE)
+        nav.append(InlineKeyboardButton(f"< {prev_start}-{prev_start + _DATE_PICKER_YEAR_PAGE_SIZE - 1}", callback_data=f"natal_date:year_page:{prev_start}"))
+    if end < _date_picker_year_max():
+        next_start = start + _DATE_PICKER_YEAR_PAGE_SIZE
+        nav.append(InlineKeyboardButton(f"{next_start}-{min(next_start + _DATE_PICKER_YEAR_PAGE_SIZE - 1, _date_picker_year_max())} >", callback_data=f"natal_date:year_page:{next_start}"))
+    if nav:
+        rows.append(nav)
+    return rows
+
+
+def _button_rows(buttons: list[InlineKeyboardButton], size: int) -> list[list[InlineKeyboardButton]]:
+    return [buttons[index : index + size] for index in range(0, len(buttons), size)]
+
+
+def _year_page_start(value: object) -> int:
+    year = value if isinstance(value, int) else _DATE_PICKER_DEFAULT_YEAR_PAGE
+    return max(_DATE_PICKER_YEAR_MIN, min(year, _date_picker_year_max()))
+
+
+def _date_picker_year_max() -> int:
+    return date.today().year
+
+
+def _selected_date_from_picker(user_data: dict) -> date | None:
+    day = user_data.get("natal_date_day")
+    month = user_data.get("natal_date_month")
+    year = user_data.get("natal_date_year")
+    if not isinstance(day, int) or not isinstance(month, int) or not isinstance(year, int):
+        return None
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _drop_invalid_selected_day(user_data: dict) -> None:
+    day = user_data.get("natal_date_day")
+    if isinstance(day, int) and day > _max_selectable_day(user_data):
+        user_data.pop("natal_date_day", None)
+
+
+def _max_selectable_day(user_data: dict) -> int:
+    month = user_data.get("natal_date_month")
+    year = user_data.get("natal_date_year")
+    if not isinstance(month, int) or not 1 <= month <= 12:
+        return 31
+    if not isinstance(year, int):
+        year = 2000
+    return monthrange(year, month)[1]
+
+
+def _next_missing_date_part(user_data: dict) -> str:
+    if not isinstance(user_data.get("natal_date_day"), int):
+        return "day"
+    if not isinstance(user_data.get("natal_date_month"), int):
+        return "month"
+    if not isinstance(user_data.get("natal_date_year"), int):
+        return "year"
+    return "day"
+
+
+def _safe_int(value: str) -> int | None:
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _draft_date_text(user_data: dict) -> str:
+    value = user_data.get("natal_date")
+    if isinstance(value, str) and value:
+        return _format_birth_date_for_confirmation(value)
+    day = user_data.get("natal_date_day")
+    month = user_data.get("natal_date_month")
+    year = user_data.get("natal_date_year")
+    if not any(isinstance(part, int) for part in (day, month, year)):
+        return "-"
+    day_text = str(day) if isinstance(day, int) else "-"
+    month_text = _RU_MONTHS_NOMINATIVE.get(month, "-") if isinstance(month, int) else "-"
+    year_text = str(year) if isinstance(year, int) else "-"
+    return f"день {day_text}, месяц {month_text}, год {year_text}"
+
+
 def _input_keyboard(target: str) -> InlineKeyboardMarkup:
     labels = {
         "date": "Введите дату сообщением",
@@ -756,12 +1020,22 @@ def _confirmation_text(birth_input: BirthInput) -> str:
         limitations = "Без точного времени я не буду трактовать дома и асцендент как достоверные."
     return (
         "Проверьте данные:\n\n"
-        f"Дата: {birth_input.birth_date}\n"
+        f"Дата: {_format_birth_date_for_confirmation(birth_input.birth_date)}\n"
         f"Время: {time_text}\n"
         f"Место: {birth_input.birth_place}\n"
         f"Фокус: {birth_input.focus}\n"
         f"Ограничения: {limitations or 'нет'}"
     )
+
+
+def _format_birth_date_for_confirmation(value: str) -> str:
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return value
+    dotted = parsed.strftime("%d.%m.%Y")
+    month_name = _RU_MONTHS_GENITIVE.get(parsed.month, parsed.strftime("%m"))
+    return f"{dotted} ({parsed.day} {month_name} {parsed.year})"
 
 
 def _birth_input_from_steps(user_data: dict) -> BirthInput:

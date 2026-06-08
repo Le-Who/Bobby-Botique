@@ -1,4 +1,8 @@
-from app.natal.llm import _fallback_sections, build_interpretation_prompt
+from types import SimpleNamespace
+
+import pytest
+
+from app.natal.llm import _fallback_sections, build_interpretation_prompt, generate_interpretation
 from app.natal.models import ChartData, InputQuality, PlanetPosition, TimePrecision
 
 
@@ -178,3 +182,44 @@ def test_fallback_sections_use_user_facing_planet_titles():
 
     assert sections[1].title == "Солнце — ядро личности"
     assert sections[2].title == "Луна — эмоции и потребности"
+
+
+@pytest.mark.asyncio
+async def test_generate_interpretation_falls_back_when_llm_contradicts_calculated_sign(monkeypatch):
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.EXACT,
+            houses_available=True,
+            angles_available=True,
+        ),
+        planets=[
+            PlanetPosition(
+                key="sun",
+                label="Солнце",
+                longitude=226.7,
+                sign="Скорпион",
+                degree_in_sign=16.7,
+            )
+        ],
+        aspects=[],
+    )
+
+    class FakeRouter:
+        async def get_response(self, **kwargs):
+            del kwargs
+            return (
+                "## section-summary | Краткое резюме\n"
+                "Солнце в Деве делает карту аналитичной.\n\n"
+                "## section-sun | Солнце — ядро личности\n"
+                "Солнце в Деве описывает аккуратность и порядок.",
+                0,
+            )
+
+    monkeypatch.setattr("app.config.settings", SimpleNamespace(RESEARCH_MODEL="test-model", DEFAULT_MODEL=""))
+    monkeypatch.setattr("app.providers.get_provider_router", lambda: FakeRouter())
+
+    sections = await generate_interpretation(chart, user_id=123, chat_id=456)
+
+    bodies = "\n".join(section.body_markdown for section in sections)
+    assert "Деве" not in bodies
+    assert "Скорпион" in bodies

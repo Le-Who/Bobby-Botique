@@ -13,6 +13,7 @@ from app.handlers.natal_chart import (
     NATAL_PLACE,
     NATAL_TABLE,
     NATAL_TIME_VALUE,
+    _confirmation_text,
     build_natal_chart_handler,
     clear_natal_user_data,
     natal_command,
@@ -20,6 +21,7 @@ from app.handlers.natal_chart import (
     on_country,
     on_country_selected,
     on_date,
+    on_date_picker,
     on_focus,
     on_mode,
     on_place,
@@ -29,7 +31,15 @@ from app.handlers.natal_chart import (
     on_time_precision,
     on_time_value,
 )
-from app.natal.models import ChartData, InputQuality, NatalReport, PlanetPosition, ReportSection, TimePrecision
+from app.natal.models import (
+    BirthInput,
+    ChartData,
+    InputQuality,
+    NatalReport,
+    PlanetPosition,
+    ReportSection,
+    TimePrecision,
+)
 
 
 def test_natal_cover_asset_exists():
@@ -37,6 +47,22 @@ def test_natal_cover_asset_exists():
     assert _NATAL_COVER_PATH.stat().st_size > 2_000_000
     with Image.open(_NATAL_COVER_PATH) as image:
         assert image.size == (1448, 1086)
+
+
+def test_confirmation_text_displays_dotted_date_with_month_name():
+    text = _confirmation_text(
+        BirthInput(
+            birth_date="1997-11-09",
+            time_precision=TimePrecision.EXACT,
+            birth_time="03:00",
+            birth_place="Odesa, Odesa Oblast, Ukraine",
+            focus="general",
+        )
+    )
+
+    assert "09.11.1997" in text
+    assert "9 ноября 1997" in text
+    assert "1997-11-09" not in text
 
 
 class FakeMessage:
@@ -185,6 +211,41 @@ async def test_step_flow_deletes_raw_text_inputs_after_processing(monkeypatch):
     assert context.user_data["natal_date"] == "14.02.1995"
     assert "14.02.1995" in date_update.message.replies[-1][0]
     assert "удаляю" in date_update.message.replies[-1][0]
+
+
+@pytest.mark.asyncio
+async def test_date_picker_selects_november_ninth_without_text_input(monkeypatch):
+    monkeypatch.setattr("app.handlers.natal_chart._natal_reports_enabled_for_handler", lambda: True)
+    context = make_context()
+
+    assert await on_mode(make_callback_update("natal_mode:step"), context) == NATAL_DATE
+    assert await on_date_picker(make_callback_update("natal_date:day:9"), context) == NATAL_DATE
+    assert await on_date_picker(make_callback_update("natal_date:month:11"), context) == NATAL_DATE
+    assert await on_date_picker(make_callback_update("natal_date:year:1997"), context) == NATAL_DATE
+
+    done_update = make_callback_update("natal_date:done")
+    state = await on_date_picker(done_update, context)
+
+    assert state == "NATAL_TIME_PRECISION"
+    assert context.user_data["natal_date"] == "1997-11-09"
+    text = done_update.callback_query.edit_message_text.await_args.args[0]
+    assert "09.11.1997" in text
+    assert "9 ноября 1997" in text
+
+
+@pytest.mark.asyncio
+async def test_date_picker_year_page_can_be_changed_with_buttons():
+    context = make_context()
+    context.user_data["natal_date_picker_view"] = "year"
+
+    update = make_callback_update("natal_date:year_page:1970")
+    state = await on_date_picker(update, context)
+
+    assert state == NATAL_DATE
+    keyboard = update.callback_query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard
+    labels = [button.text for row in keyboard for button in row]
+    assert "1970" in labels
+    assert "1989" in labels
 
 
 @pytest.mark.asyncio
