@@ -5,11 +5,12 @@ AI Search handlers — QnA quick answers, research agent, and complex agent sear
 import asyncio
 import logging
 import time
+from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.error import BadRequest, NetworkError
 
-from app.config import settings
+from app.config import DEFAULT_GEMINI_MODELS, GEMINI_ECONOMY_MODEL, GEMINI_PRIMARY_MODEL, settings
 from app.core.agentic import AgenticResult, AgenticSearch
 from app.database import ChatState
 
@@ -33,6 +34,18 @@ from app.utils.stage_indicators import (
 )
 from app.utils.tg_file import get_file_bytes
 from app.utils.waiting_facts import get_waiting_message
+
+_DEFAULT_OPENCODE_QNA_MODEL = "opencode-go/qwen3.6-plus"
+
+
+def _setting(name: str, fallback: Any) -> Any:
+    value = getattr(settings, name, None) if settings is not None else None
+    return fallback if value is None else value
+
+
+def _available_models() -> list[str]:
+    value = _setting("AVAILABLE_MODELS", DEFAULT_GEMINI_MODELS)
+    return value if isinstance(value, list) and value else DEFAULT_GEMINI_MODELS
 
 
 @track_metrics("qna_search")
@@ -87,7 +100,10 @@ async def _handle_qna_search(
             f"{role_extra}\n"
             f"{grounding_context}".strip()
         )
-        fallback_chain = [settings.OPENCODE_QNA_MODEL, settings.QNA_MODEL]
+        fallback_chain = [
+            _setting("OPENCODE_QNA_MODEL", _DEFAULT_OPENCODE_QNA_MODEL),
+            _setting("QNA_MODEL", GEMINI_ECONOMY_MODEL),
+        ]
         enable_web_search = False  # JINA grounding already in system prompt
     else:
         # ── Gemini path: native Google Search Grounding ────────────────────────
@@ -251,7 +267,12 @@ async def _handle_research_agent(
     # Get the key and model for AgenticSearch. Fallback to default if no OpenRouter/override
     from app.repos.keys import get_available_gemini_key, increment_gemini_key_usage
 
-    model_used = model_override or chat_state.model or settings.AGENTIC_MODEL or settings.RESEARCH_MODEL
+    model_used = (
+        model_override
+        or chat_state.model
+        or _setting("AGENTIC_MODEL", "")
+        or _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL)
+    )
     key_data = await get_available_gemini_key(model_used)
     if not key_data:
         try:
@@ -297,7 +318,7 @@ async def _handle_research_agent(
     from app.model_selector import _get_tier
 
     _primary = model_used
-    _other_models = [m for m in settings.AVAILABLE_MODELS if m != _primary]
+    _other_models = [m for m in _available_models() if m != _primary]
     # Sort remaining models by tier descending (most capable fallback first)
     _other_models.sort(key=_get_tier, reverse=True)
     _fallback_chain: list[str] = [_primary] + _other_models
@@ -418,7 +439,8 @@ async def _handle_research_agent(
 
         # ── Long Read transition for large responses (>4000 chars) ────────────────────
         reader_url: str | None = None
-        if len(final_answer) > 4000 and settings.WEBAPP_BASE_URL:
+        webapp_base_url = _setting("WEBAPP_BASE_URL", "")
+        if len(final_answer) > 4000 and webapp_base_url:
             try:
                 import uuid
 
@@ -426,7 +448,7 @@ async def _handle_research_agent(
 
                 uid = str(uuid.uuid4())
                 await store_long_message(uid, final_answer)
-                reader_url = f"{settings.WEBAPP_BASE_URL}/webapp/reader?id={uid}"
+                reader_url = f"{webapp_base_url}/webapp/reader?id={uid}"
                 logging.info(f"AgenticSearch: Created MiniApp Reader URL for {len(final_answer)} chars: {reader_url}")
 
                 # Launch background telegraph fallback
@@ -559,7 +581,7 @@ async def _handle_complex_agent_search(placeholder_message: Message, original_me
         # If не можем отредактировать, отправляем new message
         placeholder_message = await placeholder_message.reply_text("🖼️ Анализирую изображение...")
 
-    vision_model = settings.RESEARCH_MODEL
+    vision_model = _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL)
 
     photo_file = await original_message.photo[-1].get_file()
     photo_data = await get_file_bytes(original_message.get_bot(), photo_file)

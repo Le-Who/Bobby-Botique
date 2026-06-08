@@ -12,7 +12,7 @@ Coverage:
   OC-01  Opencode keys exhausted → transparent Gemini fallback
   OC-02  Opencode streaming cascade → Gemini stream fallback
   OC-03  Gemini fallback exhausted → meaningful error surfaced
-  OC-04  Opencode vision model (mimo-v2-omni) maps to gemini-3-flash-preview
+  OC-04  Opencode vision model (mimo-v2-omni) maps to gemini-3.5-flash
   OC-05  Non-Opencode model bypasses cascade entirely
   OC-06  _is_fallback=True prevents infinite recursion
 """
@@ -108,13 +108,13 @@ class TestOpencodeGetResponseCascade:
 
     @pytest.mark.asyncio
     async def test_vision_model_maps_to_gemini_flash(self):
-        """The vision-capable mimo-v2-omni should cascade to gemini-3-flash-preview."""
+        """The vision-capable mimo-v2-omni should cascade to gemini-3.5-flash."""
         fake_status = FakeKeyStatusManager()
         history = [{"role": "user", "parts": ["describe image"]}]
 
         resolve_effects = [
             (None, None, "all_exhausted"),  # opencode exhausted
-            ({"api_key": "gk2", "key_hash": "ghash2"}, "gemini-3-flash-preview", None),
+            ({"api_key": "gk2", "key_hash": "ghash2"}, "gemini-3.5-flash", None),
         ]
         response_effects = [("Vision result", 10)]
 
@@ -124,7 +124,7 @@ class TestOpencodeGetResponseCascade:
         mock_settings.DEFAULT_MODEL = "gemini-2.5-flash"
         mock_settings.RESEARCH_MODEL = "gemini-2.5-flash"
         mock_settings.QNA_MODEL = "gemini-2.5-flash"
-        mock_settings.AVAILABLE_MODELS = ["gemini-3-flash-preview", "gemini-2.5-flash"]
+        mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash"]
 
         captured_fallback_model: list[str] = []
 
@@ -149,7 +149,7 @@ class TestOpencodeGetResponseCascade:
 
         # Second call must be the Gemini vision fallback model
         assert len(captured_fallback_model) >= 2
-        assert captured_fallback_model[1] == "gemini-3-flash-preview"
+        assert captured_fallback_model[1] == "gemini-3.5-flash"
 
     @pytest.mark.asyncio
     async def test_is_fallback_flag_prevents_infinite_recursion(self):

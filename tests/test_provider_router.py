@@ -45,12 +45,21 @@ class FakeAgentRequestUseCase:
         self.response_sequence = list(response_sequence)
         self.resolves_made = 0
         self.responses_made = 0
+        self.resolve_calls: list[dict] = []
         self.usages_incremented: list[str] = []
 
     async def resolve_ai_request(
         self, model_name: str, use_openrouter: bool = False, excluded_key_hashes: set[str] | None = None, **kwargs
     ) -> tuple[dict | None, str | None, str | None]:
         self.resolves_made += 1
+        self.resolve_calls.append(
+            {
+                "preferred_model": model_name,
+                "use_openrouter": use_openrouter,
+                "excluded_key_hashes": excluded_key_hashes,
+                **kwargs,
+            }
+        )
         if self.resolve_sequence:
             return self.resolve_sequence.pop(0)
         return (None, None, "all_exhausted")
@@ -253,6 +262,46 @@ class TestProviderRouter:
         assert "hash3" in fake_status.suspended_keys
 
         assert "hash4" in fake_status.successful_keys
+
+    @pytest.mark.asyncio
+    async def test_model_fallback_prefers_3_1_lite_after_3_5_flash_failures(self):
+        """Permanent failure of all 3.5 keys should try 3.1 Flash Lite before other Gemini models."""
+        router = ProviderRouter()
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[
+                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3.5-flash", None),
+                ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3.5-flash", None),
+                ({"api_key": "k3", "key_hash": "hash3"}, "gemini-3.5-flash", None),
+                ({"api_key": "k4", "key_hash": "hash4"}, "gemini-3.1-flash-lite", None),
+            ],
+            response_sequence=[
+                ("🔑 Неверный API ключ.", None),
+                ("🔑 Неверный API ключ.", None),
+                ("🔑 Неверный API ключ.", None),
+                ("Lite fallback response!", 10),
+            ],
+        )
+
+        mock_settings = MagicMock()
+        mock_settings.AVAILABLE_MODELS = [
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash",
+        ]
+
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
+            patch("app.providers.router.settings", mock_settings),
+        ):
+            text, tokens = await router.get_response(
+                "gemini-3.5-flash", [{"role": "user", "parts": ["hi"]}], max_key_retries=3
+            )
+
+        assert text == "Lite fallback response!"
+        assert tokens == 10
+        assert fake_use_case.resolve_calls[3]["preferred_model"] == "gemini-3.1-flash-lite"
 
     @pytest.mark.asyncio
     async def test_no_model_fallback_on_non_permanent_errors(self, monkeypatch):

@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 _PRIMARY_MODEL = "gemini-3.1-flash-lite"
 _FALLBACK_MODEL = "gemini-2.5-flash-lite"
-_HINTS_AI_STUDIO_MODEL = "gemini-3-flash-preview"
+_HINTS_AI_STUDIO_MODEL = "gemini-3.5-flash"
 _HINTS_VERTEX_MODEL = "gemini-3.1-flash-lite"
 _HINTS_OPENCODE_MODEL_CANDIDATES = (
     "opencode-go/glm-5.1",

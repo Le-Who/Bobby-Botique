@@ -6,10 +6,17 @@ concurrent image downloads, and complex media group search.
 import asyncio
 import logging
 import time
+from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from app.config import settings
+from app.config import (
+    DEFAULT_GEMINI_MODELS,
+    GEMINI_ECONOMY_MODEL,
+    GEMINI_LEGACY_PREVIEW_MODEL,
+    GEMINI_PRIMARY_MODEL,
+    settings,
+)
 from app.database import ChatState
 from app.handlers.ai_core import (
     _get_ai_response_with_routing,
@@ -34,6 +41,16 @@ from app.utils.vision_intent import classify_vision_intent
 _VISION_ERROR_HANDLED = object()
 
 # ── Shared helpers (DRY) ─────────────────────────────────────────────────────
+
+
+def _setting(name: str, fallback: Any) -> Any:
+    value = getattr(settings, name, None) if settings is not None else None
+    return fallback if value is None else value
+
+
+def _available_models() -> list[str]:
+    value = _setting("AVAILABLE_MODELS", DEFAULT_GEMINI_MODELS)
+    return value if isinstance(value, list) and value else DEFAULT_GEMINI_MODELS
 
 
 def _build_vision_prompt(user_caption: str | None, image_count: int = 1) -> str:
@@ -123,14 +140,19 @@ def _build_ocr_prompt(user_caption: str | None) -> str:
 def _pick_ocr_model() -> str:
     """Pick the best model for OCR tasks based on availability.
 
-    Prefers gemini-3.5-flash -> gemini-2.5-flash -> gemini-3-flash-preview -> default.
+    Prefers gemini-3.5-flash -> gemini-3.1-flash-lite -> gemini-2.5-flash -> preview.
     """
-    available = getattr(settings, "AVAILABLE_MODELS", []) or []
-    preferred = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-3-flash-preview"]
+    available = _available_models()
+    preferred = [
+        GEMINI_PRIMARY_MODEL,
+        GEMINI_ECONOMY_MODEL,
+        "gemini-2.5-flash",
+        GEMINI_LEGACY_PREVIEW_MODEL,
+    ]
     for pref in preferred:
         if pref in available:
             return pref
-    return settings.DEFAULT_MODEL
+    return _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL)
 
 
 async def _send_vision_response(
@@ -184,22 +206,22 @@ async def _process_ai_vision(
         already displayed to the user.  It may be ``None`` or empty string for
         genuinely empty AI responses — callers must handle that case.
     """
-    from app.config import settings
     from app.providers.freetheai_image import FTA_IMAGE_MODELS
 
     if is_ocr:
         raw_model = _pick_ocr_model()
     else:
-        raw_model = chat_state.model or settings.DEFAULT_MODEL
+        default_model = _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL)
+        raw_model = chat_state.model or default_model
         # FTA image-generation models (img/*, vhr/*) cannot analyse received photos.
         # Fall back to the default Gemini vision model silently.
         if raw_model in FTA_IMAGE_MODELS:
             logging.debug(
                 "Vision request: model %s is image-gen-only — falling back to %s",
                 raw_model,
-                settings.DEFAULT_MODEL,
+                default_model,
             )
-            raw_model = settings.DEFAULT_MODEL
+            raw_model = default_model
 
     _key_data, model_used, resolution = await _resolve_ai_request(raw_model)
 
@@ -547,7 +569,7 @@ async def _handle_complex_media_group_search(
         logging.error("Could not edit placeholder message: %s", edit_error)
         placeholder_message = await placeholder_message.reply_text("🖼️ Анализирую группу изображений...")
 
-    vision_model = settings.RESEARCH_MODEL
+    vision_model = _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL)
 
     try:
         # Load все images from groups

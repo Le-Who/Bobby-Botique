@@ -264,12 +264,12 @@ async def _generate_with_resilience(
 
 
 # ── Intent classification model chain ───────────────────────────────────────
-# Tried in order until one succeeds. gemini-3.1-flash-lite is first (cheapest)
-# but is often offline; gemini-3-flash-preview is the reliable last-stand;
+# Tried in order until one succeeds. gemini-3.1-flash-lite is first (cheap);
+# gemini-3.5-flash is the stable high-quality fallback;
 # opencode-go/big-pickle is used as final insurance (different infra pool).
 _INTENT_MODEL_CHAIN = [
     "gemini-3.1-flash-lite",
-    "gemini-3-flash-preview",
+    "gemini-3.5-flash",
     "opencode-go/big-pickle",
 ]
 
@@ -378,7 +378,7 @@ async def transcribe_voice(
     if raw_text:
         # Whisper gives a clean transcript but no INTENT:/DRAW_PROMPT: tags.
         # Run a cheap text-only call through the multi-provider intent chain
-        # (gemini-3.1-flash-lite → gemini-3-flash-preview → opencode-go/big-pickle).
+        # (gemini-3.1-flash-lite → gemini-3.5-flash → opencode-go/big-pickle).
         # This avoids re-uploading the audio while preserving DRAW/SEARCH routing.
         intent_prompt = (
             f"{_VOICE_SYSTEM_PROMPT}\n\n"
@@ -401,11 +401,11 @@ async def transcribe_voice(
         inline_data=types.Blob(mime_type=mime_type, data=audio_bytes),
     )
 
-    # Try Gemini ASR through the model chain (lite-preview → 3-flash-preview).
+    # Try Gemini ASR through the model chain (lite → 3.5-flash).
     # Opencode models cannot handle audio blobs so they are excluded here.
-    # Deduplicate in case `model` arg is already gemini-3-flash-preview.
+    # Deduplicate in case `model` arg is already gemini-3.5-flash.
     _seen: set[str] = set()
-    _GEMINI_ASR_MODELS = [m for m in [model, "gemini-3-flash-preview"] if not (m in _seen or _seen.add(m))]  # type: ignore[func-returns-value]
+    _GEMINI_ASR_MODELS = [m for m in [model, "gemini-3.5-flash"] if not (m in _seen or _seen.add(m))]  # type: ignore[func-returns-value]
     raw_text = None
     for _model in _GEMINI_ASR_MODELS:
         raw_text = await _generate_with_resilience(

@@ -74,6 +74,34 @@ class TestResolveAiRequest:
         assert status == "confirm_fallback"
 
     @pytest.mark.asyncio
+    async def test_gemini_3_5_exhaustion_falls_back_to_3_1_lite_first(self, usecase, mock_settings):
+        """If primary 3.5 Flash keys are exhausted, the first Gemini fallback must be 3.1 Flash Lite."""
+        mock_settings.DEFAULT_MODEL = "gemini-3.5-flash"
+        mock_settings.RESEARCH_MODEL = "gemini-3.5-flash"
+        mock_settings.QNA_MODEL = "gemini-3.1-flash-lite"
+        fallback_key = {"api_key": "lite_key", "key_hash": "lite_hash"}
+        attempted_models: list[str] = []
+
+        async def mock_get_key(model, excluded_hashes=None):
+            attempted_models.append(model)
+            if model == "gemini-3.1-flash-lite":
+                return fallback_key
+            return None
+
+        with (
+            patch("app.agent_use_cases.settings", mock_settings),
+            patch("app.agent_use_cases.get_use_openrouter", return_value=False),
+            patch("app.agent_use_cases.get_available_gemini_key", side_effect=mock_get_key),
+            patch("app.agent_use_cases.invalidate_key_cache", new_callable=AsyncMock),
+        ):
+            key, model, status = await usecase.resolve_ai_request("gemini-3.5-flash")
+
+        assert key == fallback_key
+        assert model == "gemini-3.1-flash-lite"
+        assert status == "confirm_fallback"
+        assert attempted_models[:2] == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+
+    @pytest.mark.asyncio
     async def test_all_keys_exhausted(self, usecase, mock_settings):
         """When no keys are available at all, return all_exhausted status."""
         with (

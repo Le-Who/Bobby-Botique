@@ -49,7 +49,7 @@ def hint_settings(monkeypatch) -> SimpleNamespace:
 async def test_generate_hints_ignores_fast_lane_exception_and_uses_slower_valid_lane(hint_settings):
     router = _RouterStub(
         {
-            "gemini-3-flash-preview": (0.0, RuntimeError("boom")),
+            "gemini-3.5-flash": (0.0, RuntimeError("boom")),
             "opencode-go/glm-5.1": (
                 0.05,
                 '```json\n{"hints":["электроархонт из известной игры","связана с Инадзумой и молнией","имя начинается на Р и это не Розария"]}\n```',
@@ -70,7 +70,7 @@ async def test_generate_hints_ignores_fast_lane_exception_and_uses_slower_valid_
         "связана с Инадзумой и молнией",
         "имя начинается на Р и это не Розария",
     ]
-    assert "gemini-3-flash-preview" in router.calls
+    assert "gemini-3.5-flash" in router.calls
     assert "opencode-go/glm-5.1" in router.calls
 
 
@@ -104,7 +104,7 @@ async def test_generate_hints_accepts_numbered_list_when_json_missing(hint_setti
 async def test_generate_hints_returns_deterministic_fallback_when_all_models_fail(hint_settings):
     router = _RouterStub(
         {
-            "gemini-3-flash-preview": (0.0, ""),
+            "gemini-3.5-flash": (0.0, ""),
             "opencode-go/glm-5.1": (0.0, "[GENERIC]❌ Ошибка API: OpenRouter API error: RuntimeError('boom')"),
         }
     )
@@ -141,7 +141,7 @@ async def test_generate_hints_background_mode_skips_ai_studio_lane(hint_settings
         hints = await generate_hints("райден", "персонаж genshin impact", mode="background")
 
     assert hints == ["широкий намек", "средний намек", "почти прямой намек"]
-    assert "gemini-3-flash-preview" not in router.calls
+    assert "gemini-3.5-flash" not in router.calls
     assert router.calls == ["opencode-go/glm-5.1"]
 
 

@@ -383,23 +383,24 @@ class TestPickTransientFallbackModel:
 
     def test_gemini_flash_cascades_to_lite(self):
         router = self._get_router()
-        from app.config import settings
+        mock_settings = MagicMock()
+        mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
 
-        # Only test if gemini-2.5-flash-lite is in AVAILABLE_MODELS
-        if "gemini-2.5-flash-lite" not in settings.AVAILABLE_MODELS:
-            pytest.skip("gemini-2.5-flash-lite not configured")
-        result = router._pick_transient_fallback_model("gemini-2.5-flash", use_openrouter=False)
-        assert result == "gemini-2.5-flash-lite"
+        with patch("app.providers.router.settings", mock_settings):
+            result = router._pick_transient_fallback_model("gemini-3.5-flash", use_openrouter=False)
+
+        assert result == "gemini-3.1-flash-lite"
 
     def test_opencode_model_cascades_to_gemini(self):
         router = self._get_router()
-        from app.config import settings
+        from app.config import DEFAULT_GEMINI_MODELS, settings
 
         result = router._pick_transient_fallback_model("opencode-go/minimax-m2.7", use_openrouter=None)
         # Should return a Gemini fallback if it's in AVAILABLE_MODELS
         if result is not None:
             assert "opencode" not in result
-            assert result in settings.AVAILABLE_MODELS
+            available = getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else DEFAULT_GEMINI_MODELS
+            assert result in available
 
     def test_openrouter_model_returns_none(self):
         router = self._get_router()
@@ -478,6 +479,7 @@ class TestMultimodalGuard:
         from app.providers.router import _get_opencode_gemini_fallback
 
         _CANONICAL_GEMINI = {
+            "gemini-3.5-flash",
             "gemini-3.1-flash-lite",
             "gemini-3-flash-preview",
             "gemini-2.5-flash",
@@ -508,10 +510,11 @@ class TestModelSelectorOpencodeSkip:
         assert result is None, "Should not suggest a different model when current is Opencode"
 
     def test_suggestions_still_work_for_gemini_model(self):
-        from app.config import settings
+        from app.config import DEFAULT_GEMINI_MODELS, settings
         from app.model_selector import select_model
 
-        if len(settings.AVAILABLE_MODELS) < 2:
+        available = getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else DEFAULT_GEMINI_MODELS
+        if len(available) < 2:
             pytest.skip("Need at least 2 Gemini models for upgrade suggestions")
         # A complex coding query with a lite model should potentially suggest an upgrade
         result = select_model(

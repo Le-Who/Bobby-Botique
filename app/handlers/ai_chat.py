@@ -33,6 +33,17 @@ from app.utils.ux_improvements import (
 
 # Removed _background_tasks set, using centralized TaskManager
 
+_DEFAULT_CONTEXT_BUDGET = 128_000
+_DEFAULT_MODEL_CONTEXT_BUDGETS = {
+    "flash-lite": 32_000,
+    "flash": _DEFAULT_CONTEXT_BUDGET,
+}
+
+
+def _setting(name: str, fallback: Any) -> Any:
+    value = getattr(settings, name, None) if settings is not None else None
+    return fallback if value is None else value
+
 
 def _store_memory_in_background(user_id: int, user_message: str) -> None:
     """Store user intent as long-term memory + extract graph (background, non-blocking).
@@ -195,9 +206,10 @@ async def _handle_regular_chat(
         system_instruction += fwd_override
 
     # Resolve model-specific token budget for context assembly
-    context_budget = settings.DEFAULT_CONTEXT_BUDGET
+    context_budget = _setting("DEFAULT_CONTEXT_BUDGET", _DEFAULT_CONTEXT_BUDGET)
     model_lower = (model_used or "").lower()
-    for pattern, budget in settings.MODEL_CONTEXT_BUDGETS.items():
+    model_context_budgets = _setting("MODEL_CONTEXT_BUDGETS", _DEFAULT_MODEL_CONTEXT_BUDGETS)
+    for pattern, budget in model_context_budgets.items():
         if pattern in model_lower:
             context_budget = budget
             break
@@ -310,7 +322,7 @@ async def _handle_regular_chat(
 
     # ── Resolve thinking level (adaptive or user-configured) ────────────
     effective_thinking_level = chat_state.thinking_level
-    if settings.ADAPTIVE_THINKING_ENABLED:
+    if _setting("ADAPTIVE_THINKING_ENABLED", True):
         from app.thinking_classifier import resolve_thinking_level
 
         effective_thinking_level = resolve_thinking_level(

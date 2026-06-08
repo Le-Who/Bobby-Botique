@@ -15,14 +15,24 @@ from app.utils.json_compat import json
 
 # Single source of truth for default Gemini models.
 # Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().
+GEMINI_PRIMARY_MODEL: str = "gemini-3.5-flash"
+GEMINI_ECONOMY_MODEL: str = "gemini-3.1-flash-lite"
+GEMINI_LEGACY_PREVIEW_MODEL: str = "gemini-3-flash-preview"
 DEFAULT_GEMINI_MODELS: list[str] = [
-    "gemini-3-flash-preview",
-    "gemini-3.5-flash",
-    "gemini-3.1-flash-lite",
+    GEMINI_PRIMARY_MODEL,
+    GEMINI_ECONOMY_MODEL,
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
+    GEMINI_LEGACY_PREVIEW_MODEL,
 ]
 DEFAULT_DAILY_LIMIT_PER_MODEL: int = 15
+DEFAULT_DAILY_LIMITS_BY_MODEL: dict[str, int] = {
+    GEMINI_PRIMARY_MODEL: DEFAULT_DAILY_LIMIT_PER_MODEL,
+    GEMINI_ECONOMY_MODEL: 250,
+    "gemini-2.5-flash": DEFAULT_DAILY_LIMIT_PER_MODEL,
+    "gemini-2.5-flash-lite": 250,
+    GEMINI_LEGACY_PREVIEW_MODEL: 5,
+}
 
 # --- Imagen 4 model identifiers (AI Studio / Gemini API) ---
 IMAGEN_MODEL_FAST: str = "imagen-4.0-fast-generate-001"
@@ -119,7 +129,10 @@ def _load_daily_limits() -> dict[str, int]:
     value = os.getenv("DAILY_LIMITS")
 
     # Reuse module-level constant for defaults
-    default_limits = dict.fromkeys(DEFAULT_GEMINI_MODELS, DEFAULT_DAILY_LIMIT_PER_MODEL)
+    default_limits = {
+        model: DEFAULT_DAILY_LIMITS_BY_MODEL.get(model, DEFAULT_DAILY_LIMIT_PER_MODEL)
+        for model in DEFAULT_GEMINI_MODELS
+    }
 
     if not value:
         return default_limits
@@ -251,12 +264,12 @@ class Settings(BaseModel):
     # --- MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
     AVAILABLE_MODELS: list[str] = DEFAULT_GEMINI_MODELS.copy()
-    DEFAULT_MODEL: str = "gemini-3.1-flash-lite"
-    QNA_MODEL: str = "gemini-2.5-flash"
-    INLINE_MODEL: str = "gemini-3.1-flash-lite"
-    RESEARCH_MODEL: str = "gemini-3.1-flash-lite"
-    URL_SELECTION_MODEL: str = "gemini-3.1-flash-lite"
-    TAXONOMY_MODEL: str = "gemini-3.1-flash-lite"  # MemPalace: wing/room classification + contradiction judge
+    DEFAULT_MODEL: str = GEMINI_PRIMARY_MODEL
+    QNA_MODEL: str = GEMINI_ECONOMY_MODEL
+    INLINE_MODEL: str = GEMINI_ECONOMY_MODEL
+    RESEARCH_MODEL: str = GEMINI_PRIMARY_MODEL
+    URL_SELECTION_MODEL: str = GEMINI_ECONOMY_MODEL
+    TAXONOMY_MODEL: str = GEMINI_ECONOMY_MODEL  # MemPalace: wing/room classification + contradiction judge
 
     # --- OPENROUTER MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
@@ -329,7 +342,7 @@ class Settings(BaseModel):
     # flash:      good quality up to ~128K (validated sweet spot for reasoning).
     MODEL_CONTEXT_BUDGETS: dict[str, int] = {
         "flash-lite": 32_000,  # gemini-2.5-flash-lite, gemini-3.1-flash-lite
-        "flash": 128_000,  # gemini-2.5-flash, gemini-3-flash-preview
+        "flash": 128_000,  # gemini-2.5-flash, gemini-3.5-flash, gemini-3-flash-preview
     }
     DEFAULT_CONTEXT_BUDGET: int = 128_000
 
@@ -407,12 +420,12 @@ def load_settings() -> Settings:
             or default_gemini_models,
             "OPENROUTER_AVAILABLE_MODELS": _load_and_clean_keys("OPENROUTER_AVAILABLE_MODELS", required=False)
             or default_openrouter_models,
-            "DEFAULT_MODEL": _load_single_model("DEFAULT_MODEL", "gemini-3.1-flash-lite"),
-            "QNA_MODEL": _load_single_model("QNA_MODEL", "gemini-2.5-flash-lite"),
-            "INLINE_MODEL": _load_single_model("INLINE_MODEL", "gemini-3.1-flash-lite"),
-            "RESEARCH_MODEL": _load_single_model("RESEARCH_MODEL", "gemini-3.1-flash-lite"),
-            "URL_SELECTION_MODEL": _load_single_model("URL_SELECTION_MODEL", "gemini-3.1-flash-lite"),
-            "TAXONOMY_MODEL": _load_single_model("TAXONOMY_MODEL", "gemini-3.1-flash-lite"),
+            "DEFAULT_MODEL": _load_single_model("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+            "QNA_MODEL": _load_single_model("QNA_MODEL", GEMINI_ECONOMY_MODEL),
+            "INLINE_MODEL": _load_single_model("INLINE_MODEL", GEMINI_ECONOMY_MODEL),
+            "RESEARCH_MODEL": _load_single_model("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+            "URL_SELECTION_MODEL": _load_single_model("URL_SELECTION_MODEL", GEMINI_ECONOMY_MODEL),
+            "TAXONOMY_MODEL": _load_single_model("TAXONOMY_MODEL", GEMINI_ECONOMY_MODEL),
             "OPENROUTER_DEFAULT_MODEL": _load_single_model("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_QNA_MODEL": _load_single_model("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_RESEARCH_MODEL": _load_single_model("OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free"),
@@ -787,7 +800,10 @@ def get_primary_provider() -> str:
     # For synchronous callers the env fallback is used on first call;
     # the DB value is fetched asynchronously the first time through the
     # admin command and then cached.
-    env_value: str = config_manager.get_setting("PRIMARY_PROVIDER", "opencode")
+    try:
+        env_value: str = config_manager.get_setting("PRIMARY_PROVIDER", "opencode")
+    except Exception:
+        env_value = os.getenv("PRIMARY_PROVIDER", "opencode").strip().lower() or "opencode"
     return env_value
 
 
@@ -803,6 +819,9 @@ async def get_primary_provider_async() -> str:
             return db_value
     except Exception:
         pass  # DB unavailable — fall through to env
-    env_value: str = config_manager.get_setting("PRIMARY_PROVIDER", "opencode")
+    try:
+        env_value: str = config_manager.get_setting("PRIMARY_PROVIDER", "opencode")
+    except Exception:
+        env_value = os.getenv("PRIMARY_PROVIDER", "opencode").strip().lower() or "opencode"
     _primary_provider_cache = env_value
     return env_value

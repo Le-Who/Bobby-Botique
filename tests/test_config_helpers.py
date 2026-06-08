@@ -4,7 +4,14 @@ import logging
 
 import pytest
 
-from app.config import _load_and_clean_keys, _load_daily_limits, get_model_hash, get_settings_safe, load_settings
+from app.config import (
+    DEFAULT_GEMINI_MODELS,
+    _load_and_clean_keys,
+    _load_daily_limits,
+    get_model_hash,
+    get_settings_safe,
+    load_settings,
+)
 
 # ── get_model_hash ───────────────────────────────────────────────────────────
 
@@ -101,6 +108,15 @@ class TestLoadDailyLimits:
         result = _load_daily_limits()
         assert isinstance(result, dict)
 
+    def test_default_limits_include_primary_and_economy_models_first(self, monkeypatch):
+        monkeypatch.delenv("DAILY_LIMITS", raising=False)
+
+        result = _load_daily_limits()
+
+        assert DEFAULT_GEMINI_MODELS[:2] == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+        assert "gemini-3-flash-preview" not in DEFAULT_GEMINI_MODELS[:2]
+        assert result["gemini-3.5-flash"] < result["gemini-3.1-flash-lite"]
+
 
 def test_load_settings_reads_webhook_backpressure_envs(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
@@ -116,6 +132,35 @@ def test_load_settings_reads_webhook_backpressure_envs(monkeypatch):
     assert settings.WEBHOOK_SECRET_TOKEN == "my-secret-token"
     assert settings.WEBHOOK_MAX_CONNECTIONS == 75
     assert settings.UPDATE_QUEUE_MAXSIZE == 2500
+
+
+def test_load_settings_defaults_to_3_5_primary_and_3_1_lite_economy(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    for key in (
+        "GEMINI_AVAILABLE_MODELS",
+        "DEFAULT_MODEL",
+        "RESEARCH_MODEL",
+        "QNA_MODEL",
+        "INLINE_MODEL",
+        "URL_SELECTION_MODEL",
+        "TAXONOMY_MODEL",
+        "DAILY_LIMITS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    settings = load_settings()
+
+    assert settings.AVAILABLE_MODELS[:2] == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+    assert settings.DEFAULT_MODEL == "gemini-3.5-flash"
+    assert settings.RESEARCH_MODEL == "gemini-3.5-flash"
+    assert settings.QNA_MODEL == "gemini-3.1-flash-lite"
+    assert settings.INLINE_MODEL == "gemini-3.1-flash-lite"
+    assert settings.URL_SELECTION_MODEL == "gemini-3.1-flash-lite"
+    assert settings.TAXONOMY_MODEL == "gemini-3.1-flash-lite"
 
 
 def test_load_settings_reads_game_hub_envs(monkeypatch):

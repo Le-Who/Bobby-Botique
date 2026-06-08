@@ -16,7 +16,7 @@ Design rules:
 import re
 from dataclasses import dataclass
 
-from app.config import settings
+from app.config import DEFAULT_GEMINI_MODELS, settings
 
 
 @dataclass
@@ -34,8 +34,8 @@ class SelectionResult:
 # Models are ranked roughly by capability tier.
 _MODEL_TIER = {
     # Gemini tiers
-    "3.5-flash": 5,        # flagship
-    "3-flash-preview": 5,  # flagship
+    "3.5-flash": 5,  # stable primary
+    "3-flash-preview": 3,  # legacy preview, below current stable 3.5
     "3.1-flash-lite": 4,  # excellent performance, better than 2.5
     "2.5-flash": 3,  # standard
     "2.5-flash-lite": 1,  # low latency fallback
@@ -63,7 +63,7 @@ def _get_tier(model_name: str) -> int:
     if "3.5-flash" in name:
         return 5
     if "3-flash-preview" in name:
-        return 5
+        return 3
     if "2.5-flash" in name:
         return 3
     return 2  # Unknown models get middle tier
@@ -102,7 +102,7 @@ _CREATIVE_PATTERNS = re.compile(
 # Performance: single shared tuple used by all three _find_model() calls in
 # select_model(). Eliminates 3 separate 3-element list allocations per call
 # and gives the preference order a single source of truth.
-_UPGRADE_PREFERENCE: tuple[str, ...] = ("3.5-flash", "3-flash-preview", "3.1-flash-lite", "2.5-flash")
+_UPGRADE_PREFERENCE: tuple[str, ...] = ("3.5-flash", "3.1-flash-lite", "2.5-flash", "3-flash-preview")
 
 
 def select_model(
@@ -118,7 +118,7 @@ def select_model(
     """
     # Performance: read the live list directly — _find_model() only iterates, never
     # mutates, so there is no need for a defensive list() copy on every call.
-    available = settings.AVAILABLE_MODELS or []
+    available = (getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else None) or DEFAULT_GEMINI_MODELS
     if not available:
         return None
 

@@ -3,7 +3,15 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.config import get_freetheai_keys, get_opencode_keys, get_openrouter_keys, get_use_openrouter, settings
+from app.config import (
+    GEMINI_ECONOMY_MODEL,
+    GEMINI_PRIMARY_MODEL,
+    get_freetheai_keys,
+    get_opencode_keys,
+    get_openrouter_keys,
+    get_use_openrouter,
+    settings,
+)
 from app.providers.base import is_freetheai_model, is_opencode_model
 from app.repos.keys import (
     get_available_gemini_key,
@@ -22,6 +30,39 @@ _OPENCODE_COOLDOWN = timedelta(seconds=30)
 # In-memory health state for FreeTheAI keys (same pattern as Opencode).
 _freetheai_key_health: dict[str, datetime] = {}
 _FREETHEAI_COOLDOWN = timedelta(seconds=30)
+
+
+def _dedupe_models(models: list[str | None], *, exclude: str | None = None) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for model in models:
+        if not isinstance(model, str) or not model.strip():
+            continue
+        normalized = model.strip()
+        if normalized == exclude or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+def _gemini_fallback_priority(preferred_model: str) -> list[str]:
+    """Return Gemini fallback order with 3.5 Flash → 3.1 Flash Lite as the first downgrade."""
+    priority: list[str | None] = []
+    if preferred_model == GEMINI_PRIMARY_MODEL:
+        priority.append(GEMINI_ECONOMY_MODEL)
+    else:
+        priority.extend([GEMINI_PRIMARY_MODEL, GEMINI_ECONOMY_MODEL])
+    priority.extend(
+        [
+            getattr(settings, "RESEARCH_MODEL", None),
+            getattr(settings, "DEFAULT_MODEL", None),
+            getattr(settings, "QNA_MODEL", None),
+            getattr(settings, "INLINE_MODEL", None),
+            "gemini-2.5-flash-lite",
+        ]
+    )
+    return _dedupe_models(priority, exclude=preferred_model)
 
 
 def suspend_freetheai_key(key_hash: str, cooldown: timedelta | None = None) -> None:
@@ -142,11 +183,7 @@ class AgentRequestUseCase:
     async def _resolve_gemini_request(
         self, preferred_model: str, excluded_key_hashes: set[str] | None = None
     ) -> tuple[dict[str, Any] | None, str | None, str | None]:
-        fallback_priority = [
-            settings.RESEARCH_MODEL,
-            settings.DEFAULT_MODEL,
-            settings.QNA_MODEL,
-        ]
+        fallback_priority = _gemini_fallback_priority(preferred_model)
         return await self._resolve_key_generic(
             preferred_model,
             get_available_gemini_key,

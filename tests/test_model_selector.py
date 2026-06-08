@@ -8,10 +8,13 @@ from app.model_selector import SelectionResult, _find_model, _get_tier, select_m
 
 
 class TestGetTier:
-    """Tier ranking should follow the hierarchy: 3.0-flash > 3.1-flash-lite > 2.5-flash > 2.5-flash-lite."""
+    """Tier ranking should follow the hierarchy: 3.5-flash > 3.1-flash-lite > 2.5-flash > 2.5-flash-lite."""
 
-    def test_3_0_flash_is_highest(self):
-        assert _get_tier("gemini-3-flash-preview") == 5
+    def test_3_5_flash_is_highest(self):
+        assert _get_tier("gemini-3.5-flash") == 5
+
+    def test_3_flash_preview_is_below_3_5_flash(self):
+        assert _get_tier("gemini-3-flash-preview") < _get_tier("gemini-3.5-flash")
 
     def test_3_1_flash_lite_is_tier_4(self):
         assert _get_tier("gemini-3.1-flash-lite") == 4
@@ -65,6 +68,7 @@ class TestSelectModel:
 
         mock_settings = MagicMock()
         mock_settings.AVAILABLE_MODELS = [
+            "gemini-3.5-flash",
             "gemini-3.1-flash-lite",
             "gemini-2.5-flash",
             "gemini-2.5-flash-lite",
@@ -120,7 +124,7 @@ class TestSelectModel:
 
     def test_same_model_not_suggested(self):
         """Should not suggest switching to the same model (already at top available tier)."""
-        result = select_model("```\ncode block\n```", current_model="gemini-3.1-flash-lite")
+        result = select_model("```\ncode block\n```", current_model="gemini-3.5-flash")
         assert result is None
 
     # ── SelectionResult structure ────────────────────────────────────────
