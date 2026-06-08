@@ -9,6 +9,7 @@ from app.handlers.natal_chart import (
     NATAL_FOCUS,
     NATAL_PLACE,
     NATAL_TABLE,
+    NATAL_TIME_VALUE,
     build_natal_chart_handler,
     clear_natal_user_data,
     natal_command,
@@ -64,7 +65,8 @@ def make_context():
 
 
 @pytest.mark.asyncio
-async def test_natal_command_sends_mode_selection():
+async def test_natal_command_sends_mode_selection(monkeypatch):
+    monkeypatch.setattr("app.handlers.natal_chart._natal_reports_enabled_for_handler", lambda: True)
     update = make_update()
     context = make_context()
 
@@ -75,7 +77,99 @@ async def test_natal_command_sends_mode_selection():
 
 
 @pytest.mark.asyncio
+async def test_natal_command_does_not_collect_birth_data_when_reports_disabled(monkeypatch):
+    monkeypatch.setattr("app.handlers.natal_chart._natal_reports_enabled_for_handler", lambda: False)
+    update = make_update()
+    context = make_context()
+
+    state = await natal_command(update, context)
+
+    assert state == -1
+    assert "временно недоступны" in update.message.replies[0][0]
+    assert context.user_data == {}
+
+
+@pytest.mark.asyncio
 async def test_table_mode_stores_parsed_birth_input():
+    update = make_update(
+        """
+        Дата рождения: 1995-02-14
+        Время рождения: неизвестно
+        Страна рождения: Украина
+        Место рождения: Kyiv, Ukraine
+        """
+    )
+    context = make_context()
+
+    state = await on_table_input(update, context)
+
+    assert state == NATAL_CONFIRM
+    assert context.user_data["natal_birth_input"].time_precision == TimePrecision.UNKNOWN
+    assert context.user_data["natal_birth_input"].birth_place_country_code == "UA"
+
+
+@pytest.mark.asyncio
+async def test_table_mode_embeds_local_city_coordinates_before_confirmation():
+    update = make_update(
+        """
+        Дата рождения: 1995-02-14
+        Время рождения: неизвестно
+        Страна рождения: Украина
+        Место рождения: Одесса
+        """
+    )
+    context = make_context()
+
+    state = await on_table_input(update, context)
+
+    assert state == NATAL_CONFIRM
+    birth_input = context.user_data["natal_birth_input"]
+    assert birth_input.birth_place_display_name == "Odesa, Odesa Oblast, Ukraine"
+    assert birth_input.birth_place_timezone == "Europe/Kyiv"
+    assert birth_input.birth_place_latitude is not None
+    assert birth_input.birth_place_longitude is not None
+
+
+@pytest.mark.asyncio
+async def test_table_mode_uses_region_hint_for_same_name_city():
+    update = make_update(
+        """
+        Дата рождения: 1995-02-14
+        Время рождения: неизвестно
+        Страна рождения: США
+        Место рождения: Reading, Massachusetts
+        """
+    )
+    context = make_context()
+
+    state = await on_table_input(update, context)
+
+    assert state == NATAL_CONFIRM
+    birth_input = context.user_data["natal_birth_input"]
+    assert birth_input.birth_place_display_name == "Reading, Massachusetts, United States"
+
+
+@pytest.mark.asyncio
+async def test_table_mode_rejects_unknown_local_city_before_confirmation():
+    update = make_update(
+        """
+        Дата рождения: 1995-02-14
+        Время рождения: неизвестно
+        Страна рождения: Украина
+        Место рождения: Definitely Missing Natal City
+        """
+    )
+    context = make_context()
+
+    state = await on_table_input(update, context)
+
+    assert state == NATAL_TABLE
+    assert "Город не найден" in update.message.replies[0][0]
+    assert "natal_birth_input" not in context.user_data
+
+
+@pytest.mark.asyncio
+async def test_table_mode_requires_birth_country():
     update = make_update(
         """
         Дата рождения: 1995-02-14
@@ -87,8 +181,8 @@ async def test_table_mode_stores_parsed_birth_input():
 
     state = await on_table_input(update, context)
 
-    assert state == NATAL_CONFIRM
-    assert context.user_data["natal_birth_input"].time_precision == TimePrecision.UNKNOWN
+    assert state == NATAL_TABLE
+    assert "Страна рождения" in update.message.replies[0][0]
 
 
 def test_cancel_clears_natal_keys_from_user_data():
@@ -111,6 +205,18 @@ async def test_unknown_time_skips_time_value_prompt():
 
 
 @pytest.mark.asyncio
+async def test_invalid_time_precision_does_not_default_to_range():
+    update = make_update("утром")
+    context = make_context()
+
+    state = await on_time_precision(update, context)
+
+    assert state == "NATAL_TIME_PRECISION"
+    assert "точное / примерное / диапазон / неизвестно" in update.message.replies[0][0]
+    assert "natal_time_precision" not in context.user_data
+
+
+@pytest.mark.asyncio
 async def test_step_flow_normalizes_birth_input_date_and_focus():
     update = make_update("отношения")
     context = make_context()
@@ -118,6 +224,8 @@ async def test_step_flow_normalizes_birth_input_date_and_focus():
         {
             "natal_date": "14.02.1995",
             "natal_time_precision": TimePrecision.UNKNOWN,
+            "natal_country_code": "UA",
+            "natal_country": "Ukraine (UA)",
             "natal_place": "Kyiv, Ukraine",
         }
     )
@@ -127,6 +235,72 @@ async def test_step_flow_normalizes_birth_input_date_and_focus():
     assert state == NATAL_CONFIRM
     assert context.user_data["natal_birth_input"].birth_date == "1995-02-14"
     assert context.user_data["natal_birth_input"].focus == "relationships"
+
+
+@pytest.mark.asyncio
+async def test_step_flow_rejects_overnight_time_range_before_confirmation():
+    update = make_update("общий")
+    context = make_context()
+    context.user_data.update(
+        {
+            "natal_date": "14.02.1995",
+            "natal_time_precision": TimePrecision.RANGE,
+            "natal_time_value": "23:30-01:30",
+            "natal_country_code": "UA",
+            "natal_country": "Ukraine (UA)",
+            "natal_place": "Kyiv, Ukraine",
+        }
+    )
+
+    state = await on_focus(update, context)
+
+    assert state == NATAL_TIME_VALUE
+    assert "Диапазон времени" in update.message.replies[0][0]
+    assert "natal_birth_input" not in context.user_data
+
+
+@pytest.mark.asyncio
+async def test_step_flow_rejects_incomplete_time_range_before_confirmation():
+    update = make_update("общий")
+    context = make_context()
+    context.user_data.update(
+        {
+            "natal_date": "14.02.1995",
+            "natal_time_precision": TimePrecision.RANGE,
+            "natal_time_value": "около 06:00",
+            "natal_country_code": "UA",
+            "natal_country": "Ukraine (UA)",
+            "natal_place": "Kyiv, Ukraine",
+        }
+    )
+
+    state = await on_focus(update, context)
+
+    assert state == NATAL_TIME_VALUE
+    assert "Диапазон времени" in update.message.replies[0][0]
+    assert "natal_birth_input" not in context.user_data
+
+
+@pytest.mark.asyncio
+async def test_step_flow_rejects_approximate_time_without_value_before_confirmation():
+    update = make_update("общий")
+    context = make_context()
+    context.user_data.update(
+        {
+            "natal_date": "14.02.1995",
+            "natal_time_precision": TimePrecision.APPROXIMATE,
+            "natal_time_value": "примерно утром",
+            "natal_country_code": "UA",
+            "natal_country": "Ukraine (UA)",
+            "natal_place": "Kyiv, Ukraine",
+        }
+    )
+
+    state = await on_focus(update, context)
+
+    assert state == NATAL_TIME_VALUE
+    assert "примерное время" in update.message.replies[0][0]
+    assert "natal_birth_input" not in context.user_data
 
 
 def test_conversation_handler_accepts_text_intent_entrypoint():
@@ -211,12 +385,24 @@ async def test_place_prefix_returns_city_suggestions_filtered_by_country():
 
 
 @pytest.mark.asyncio
+async def test_place_prefix_requires_selected_country():
+    update = make_update("Оде")
+    context = make_context()
+
+    state = await on_place(update, context)
+
+    assert state == NATAL_COUNTRY
+    assert "Сначала выберите страну" in update.message.replies[0][0]
+
+
+@pytest.mark.asyncio
 async def test_place_selection_stores_city_coordinates_and_asks_focus():
     from app.natal.city_catalog import search_cities
 
     city = search_cities("Оде", limit=1)[0]
     update = make_callback_update(f"natal_place:{city.geoname_id}")
     context = make_context()
+    context.user_data["natal_country_code"] = "UA"
 
     state = await on_place_selected(update, context)
 
@@ -224,6 +410,39 @@ async def test_place_selection_stores_city_coordinates_and_asks_focus():
     assert context.user_data["natal_place"] == city.display_name
     assert context.user_data["natal_place_data"]["timezone"] == "Europe/Kyiv"
     update.callback_query.edit_message_text.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_place_selection_requires_selected_country():
+    from app.natal.city_catalog import search_cities
+
+    city = search_cities("Оде", limit=1, country_code="UA")[0]
+    update = make_callback_update(f"natal_place:{city.geoname_id}")
+    context = make_context()
+
+    state = await on_place_selected(update, context)
+
+    assert state == NATAL_COUNTRY
+    assert "Сначала выберите страну" in update.callback_query.edit_message_text.await_args.args[0]
+    assert "natal_place_data" not in context.user_data
+
+
+@pytest.mark.asyncio
+async def test_place_selection_rejects_city_outside_selected_country():
+    from app.natal.city_catalog import search_cities
+
+    city = search_cities("Ottawa", limit=1, country_code="CA")[0]
+    update = make_callback_update(f"natal_place:{city.geoname_id}")
+    context = make_context()
+    context.user_data["natal_country_code"] = "UA"
+
+    state = await on_place_selected(update, context)
+
+    assert state == NATAL_PLACE
+    assert "natal_place_data" not in context.user_data
+    update.callback_query.edit_message_text.assert_awaited()
+    text = update.callback_query.edit_message_text.await_args.args[0]
+    assert "выбранной стране" in text
 
 
 @pytest.mark.asyncio

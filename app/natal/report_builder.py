@@ -17,11 +17,11 @@ def build_hosted_report_html(report: NatalReport) -> str:
     for section in report.sections:
         section_id = html.escape(section.id, quote=True)
         title = html.escape(section.title)
-        body = markdown_to_html(section.body_markdown)
+        body = _sanitize_hosted_body(markdown_to_html(section.body_markdown))
         sections.append(f'<section id="{section_id}"><h2>{title}</h2><div>{body}</div></section>')
 
     telegraph = ""
-    if report.telegraph_url:
+    if report.telegraph_url and _is_safe_external_url(report.telegraph_url):
         url = html.escape(report.telegraph_url, quote=True)
         telegraph = f'<p><a href="{url}" rel="noopener noreferrer">Telegraph mirror</a></p>'
 
@@ -38,7 +38,7 @@ def build_hosted_report_html(report: NatalReport) -> str:
         "h1,h2{line-height:1.2}a{color:#2563eb}.privacy,.attribution{font-size:14px;color:#4b5563}"
         "</style></head><body><main>"
         "<h1>Натальная карта</h1>"
-        f"{report.svg}"
+        f"{_sanitize_hosted_svg(report.svg)}"
         f"{''.join(sections)}"
         f"{telegraph}"
         '<p class="privacy">Privacy: LLM receives only derived chart data, not raw birth date or place.</p>'
@@ -66,3 +66,18 @@ def build_telegraph_markdown(report: NatalReport) -> str:
     markdown = re.sub(r"<\s*/?\s*script\b.*?>", "", markdown, flags=re.IGNORECASE | re.DOTALL)
     markdown = re.sub(r"javascript:", "", markdown, flags=re.IGNORECASE)
     return markdown
+
+
+def _sanitize_hosted_body(value: str) -> str:
+    return re.sub(r"javascript\s*:", "", value, flags=re.IGNORECASE)
+
+
+def _sanitize_hosted_svg(value: str) -> str:
+    without_scripts = re.sub(r"<\s*script\b.*?<\s*/\s*script\s*>", "", value, flags=re.IGNORECASE | re.DOTALL)
+    without_event_handlers = re.sub(r"\s+on[a-z0-9_-]+\s*=\s*(['\"]).*?\1", "", without_scripts, flags=re.IGNORECASE | re.DOTALL)
+    return re.sub(r"javascript\s*:", "", without_event_handlers, flags=re.IGNORECASE)
+
+
+def _is_safe_external_url(value: str) -> bool:
+    normalized = value.strip().lower()
+    return normalized.startswith("https://")

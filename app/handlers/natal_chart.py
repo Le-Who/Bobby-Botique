@@ -47,6 +47,9 @@ async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> s
     if not update.message:
         return ConversationHandler.END
     clear_natal_user_data(context.user_data)
+    if not _natal_reports_enabled_for_handler():
+        await update.message.reply_text("Натальные карты временно недоступны.")
+        return ConversationHandler.END
     await update.message.reply_text(
         "Натальная карта строится по дате, месту и, если известно, времени рождения.\n"
         "Если точного времени нет, я построю карту без домов и асцендента и явно отмечу ограничения.",
@@ -90,6 +93,10 @@ async def on_table_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except BirthInputParseError as exc:
         await update.message.reply_text(f"Не удалось разобрать данные: {exc}")
         return NATAL_TABLE
+    birth_input = _birth_input_with_local_city(birth_input)
+    if birth_input is None:
+        await update.message.reply_text("Город не найден в выбранной стране. Введите ближайший крупный город.")
+        return NATAL_TABLE
     context.user_data["natal_birth_input"] = birth_input
     await update.message.reply_text(_confirmation_text(birth_input), reply_markup=_confirm_keyboard())
     return NATAL_CONFIRM
@@ -111,8 +118,11 @@ async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         context.user_data["natal_time_precision"] = TimePrecision.EXACT
     elif raw in {"примерное", "approx", "approximate"}:
         context.user_data["natal_time_precision"] = TimePrecision.APPROXIMATE
-    else:
+    elif raw in {"диапазон", "range"}:
         context.user_data["natal_time_precision"] = TimePrecision.RANGE
+    else:
+        await update.message.reply_text("Время рождения: точное / примерное / диапазон / неизвестно")
+        return NATAL_TIME_PRECISION
     await update.message.reply_text("Укажите время или диапазон.")
     return NATAL_TIME_VALUE
 
@@ -153,7 +163,10 @@ async def on_country_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def on_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     query = update.message.text.strip()
     country_code = context.user_data.get("natal_country_code")
-    matches = search_cities(query, limit=8, country_code=country_code if isinstance(country_code, str) else None)
+    if not isinstance(country_code, str) or not country_code:
+        await update.message.reply_text("Сначала выберите страну рождения.")
+        return NATAL_COUNTRY
+    matches = search_cities(query, limit=8, country_code=country_code)
     if not matches:
         await update.message.reply_text("Город не найден. Введите больше букв или укажите ближайший крупный город.")
         return NATAL_PLACE
@@ -173,6 +186,13 @@ async def on_place_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     city = find_city_by_id(geoname_id)
     if city is None:
         await query.edit_message_text("Город не найден. Введите место рождения еще раз.")
+        return NATAL_PLACE
+    country_code = context.user_data.get("natal_country_code")
+    if not isinstance(country_code, str) or not country_code:
+        await query.edit_message_text("Сначала выберите страну рождения.")
+        return NATAL_COUNTRY
+    if city.country_code != country_code:
+        await query.edit_message_text("Этот город не относится к выбранной стране. Введите город еще раз.")
         return NATAL_PLACE
     context.user_data["natal_place"] = city.display_name
     context.user_data["natal_place_data"] = _city_payload(city)
@@ -197,7 +217,13 @@ async def on_place_missing(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def on_focus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     context.user_data["natal_focus"] = update.message.text.strip() or "общий"
-    birth_input = _birth_input_from_steps(context.user_data)
+    try:
+        birth_input = _birth_input_from_steps(context.user_data)
+    except BirthInputParseError as exc:
+        await update.message.reply_text(f"Не удалось разобрать данные: {exc}")
+        if "врем" in str(exc).lower():
+            return NATAL_TIME_VALUE
+        return NATAL_DATE
     context.user_data["natal_birth_input"] = birth_input
     await update.message.reply_text(_confirmation_text(birth_input), reply_markup=_confirm_keyboard())
     return NATAL_CONFIRM
@@ -281,6 +307,12 @@ def clear_natal_user_data(user_data: dict) -> None:
             user_data.pop(key, None)
 
 
+def _natal_reports_enabled_for_handler() -> bool:
+    from app.config import settings
+
+    return bool(getattr(settings, "NATAL_REPORTS_ENABLED", False))
+
+
 def _mode_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
@@ -335,6 +367,37 @@ def _city_payload(city: CityRecord) -> dict[str, object]:
     }
 
 
+def _birth_input_with_local_city(birth_input: BirthInput) -> BirthInput | None:
+    city = None
+    for query in _local_city_queries(birth_input.birth_place):
+        matches = search_cities(query, limit=1, country_code=birth_input.birth_place_country_code)
+        if matches:
+            city = matches[0]
+            break
+    if city is None:
+        return None
+    return birth_input.model_copy(
+        update={
+            "birth_place_geoname_id": city.geoname_id,
+            "birth_place_latitude": city.latitude,
+            "birth_place_longitude": city.longitude,
+            "birth_place_timezone": city.timezone,
+            "birth_place_display_name": city.display_name,
+        }
+    )
+
+
+def _local_city_queries(place: str) -> list[str]:
+    query = place.strip()
+    if not query:
+        return []
+    queries = [query]
+    comma_prefix = query.split(",", 1)[0].strip()
+    if comma_prefix and comma_prefix != query:
+        queries.append(comma_prefix)
+    return queries
+
+
 def _confirmation_text(birth_input: BirthInput) -> str:
     time_text = birth_input.birth_time or birth_input.time_precision.value
     limitations = ""
@@ -358,6 +421,7 @@ def _birth_input_from_steps(user_data: dict) -> BirthInput:
         f"Время рождения: {precision.value if isinstance(precision, TimePrecision) else precision}\n"
         f"Если точное или примерное: {time_value or ''}\n"
         f"Если диапазон: {time_value or ''}\n"
+        f"Страна рождения: {user_data.get('natal_country_code', '')}\n"
         f"Место рождения: {user_data.get('natal_place', '')}\n"
         f"Фокус разбора: {user_data.get('natal_focus', 'general')}"
     )

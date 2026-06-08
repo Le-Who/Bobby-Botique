@@ -55,6 +55,54 @@ def test_hosted_report_credits_geonames_city_data(sample_natal_report: NatalRepo
     assert "https://www.geonames.org/" in html
 
 
+def test_hosted_report_strips_javascript_urls_from_section_body(sample_natal_report: NatalReport):
+    sample_natal_report.sections[0].body_markdown = "[опасная ссылка](javascript:alert(1))"
+
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert "javascript:" not in html.lower()
+    assert "опасная ссылка" in html
+
+
+def test_hosted_report_ignores_unsafe_telegraph_url(sample_natal_report: NatalReport):
+    sample_natal_report.telegraph_url = "javascript:alert(1)"
+
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert "javascript:" not in html.lower()
+    assert "Telegraph mirror" not in html
+
+
+def test_hosted_report_ignores_insecure_telegraph_url(sample_natal_report: NatalReport):
+    sample_natal_report.telegraph_url = "http://telegra.ph/natal-report"
+
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert "http://telegra.ph/natal-report" not in html
+    assert "Telegraph mirror" not in html
+
+
+def test_hosted_report_sanitizes_stored_svg_payload(sample_natal_report: NatalReport):
+    sample_natal_report.svg = '<svg><script>alert(1)</script><a href="javascript:alert(2)">x</a></svg>'
+
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert "<svg" in html
+    assert "<script" not in html.lower()
+    assert "javascript:" not in html.lower()
+
+
+def test_hosted_report_sanitizes_svg_event_handler_attributes(sample_natal_report: NatalReport):
+    sample_natal_report.svg = '<svg onload="alert(1)"><circle onclick="alert(2)" cx="1" cy="1" r="1"/></svg>'
+
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert "<svg" in html
+    assert "onload=" not in html.lower()
+    assert "onclick=" not in html.lower()
+    assert "<circle" in html
+
+
 def test_telegraph_markdown_links_to_hosted_report(sample_natal_report: NatalReport):
     sample_natal_report.hosted_url = "https://example.com/reports/natal/abc"
 

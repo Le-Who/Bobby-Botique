@@ -1,0 +1,15 @@
+{
+  "cities": [
+    {
+      "geoname_id": "manual-example-city",
+      "name": "Example City",
+      "country_code": "UA",
+      "admin1_name": "Example Region",
+      "latitude": 46.48572,
+      "longitude": 30.74383,
+      "timezone": "Europe/Kyiv",
+      "population": 0,
+      "alternatenames": ["Пример", "Example"]
+    }
+  ]
+}

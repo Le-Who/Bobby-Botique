@@ -1,5 +1,6 @@
 import pytest
 
+from app.natal import service
 from app.natal.models import (
     BirthInput,
     ChartData,
@@ -12,19 +13,11 @@ from app.natal.models import (
 from app.natal.service import NatalConfigurationError, create_natal_report
 
 
-@pytest.mark.asyncio
-async def test_create_natal_report_returns_hosted_url(monkeypatch):
-    birth = BirthInput(
-        birth_date="1995-02-14",
-        time_precision=TimePrecision.UNKNOWN,
-        birth_place="Kyiv, Ukraine",
-    )
-
-    captured_provider = None
+def patch_report_dependencies(monkeypatch, *, telegraph_url=None, saved_reports=None):
+    captured = {"provider": None}
 
     async def fake_resolve_birth_data(birth_input, geocoder_provider=None):
-        nonlocal captured_provider
-        captured_provider = geocoder_provider
+        captured["provider"] = geocoder_provider
         return ResolvedBirthData(
             birth_input=birth_input,
             latitude=50.4501,
@@ -58,18 +51,32 @@ async def test_create_natal_report_returns_hosted_url(monkeypatch):
         return [ReportSection(id="section-sun", title="Солнце", body_markdown="body")]
 
     async def fake_save_report(report):
-        return None
+        if saved_reports is not None:
+            saved_reports.append(report.model_copy(deep=True))
 
     async def fake_create_telegraph_page_from_markdown(title, markdown_content):
-        return None
+        return telegraph_url
 
     monkeypatch.setattr("app.natal.service.resolve_birth_data", fake_resolve_birth_data)
+    monkeypatch.setattr("app.natal.service._natal_reports_enabled", lambda: True)
     monkeypatch.setattr("app.natal.service._natal_geocoder_provider", lambda: "local")
     monkeypatch.setattr("app.natal.service.calculate_chart", fake_calculate_chart)
     monkeypatch.setattr("app.natal.service.generate_interpretation", fake_generate_interpretation)
     monkeypatch.setattr("app.natal.service.render_chart_svg", lambda chart: "<svg></svg>")
     monkeypatch.setattr("app.natal.service.save_report", fake_save_report)
     monkeypatch.setattr("app.natal.service.create_telegraph_page_from_markdown", fake_create_telegraph_page_from_markdown)
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_create_natal_report_returns_hosted_url(monkeypatch):
+    birth = BirthInput(
+        birth_date="1995-02-14",
+        time_precision=TimePrecision.UNKNOWN,
+        birth_place="Kyiv, Ukraine",
+    )
+
+    captured = patch_report_dependencies(monkeypatch)
 
     report = await create_natal_report(
         birth_input=birth,
@@ -81,7 +88,33 @@ async def test_create_natal_report_returns_hosted_url(monkeypatch):
     assert report.report_id
     assert report.hosted_url.startswith("https://bot.example.com/reports/natal/")
     assert report.svg.startswith("<svg")
-    assert captured_provider == "local"
+    assert captured["provider"] == "local"
+
+
+@pytest.mark.asyncio
+async def test_create_natal_report_ignores_insecure_telegraph_url(monkeypatch):
+    birth = BirthInput(
+        birth_date="1995-02-14",
+        time_precision=TimePrecision.UNKNOWN,
+        birth_place="Kyiv, Ukraine",
+    )
+    saved_reports = []
+    patch_report_dependencies(
+        monkeypatch,
+        telegraph_url="http://telegra.ph/insecure-natal-report",
+        saved_reports=saved_reports,
+    )
+
+    report = await create_natal_report(
+        birth_input=birth,
+        user_id=123,
+        chat_id=456,
+        webhook_url="https://bot.example.com",
+    )
+
+    assert report.telegraph_url is None
+    assert len(saved_reports) == 1
+    assert saved_reports[0].telegraph_url is None
 
 
 @pytest.mark.asyncio
@@ -101,3 +134,12 @@ async def test_create_natal_report_respects_disabled_feature_flag(monkeypatch):
             chat_id=456,
             webhook_url="https://bot.example.com",
         )
+
+
+def test_natal_reports_enabled_fails_closed_when_setting_is_missing(monkeypatch):
+    class SettingsWithoutNatalFlag:
+        pass
+
+    monkeypatch.setattr("app.config.settings", SettingsWithoutNatalFlag())
+
+    assert service._natal_reports_enabled() is False

@@ -44,7 +44,7 @@ def parse_birth_table(text: str) -> BirthInput:
     precision_raw = _get_required(fields, "Время рождения")
     time_precision = _normalize_time_precision(precision_raw)
     birth_place = _get_required(fields, "Место рождения")
-    country_code = _normalize_country_code(fields.get("страна рождения", ""))
+    country_code = _normalize_country_code(_get_required(fields, "Страна рождения"))
     focus = _normalize_focus(fields.get("фокус разбора", "general"))
     language = fields.get("язык", "ru").strip() or "ru"
 
@@ -58,12 +58,17 @@ def parse_birth_table(text: str) -> BirthInput:
             birth_time = _extract_time(precision_raw)
         if not birth_time and time_precision == TimePrecision.EXACT:
             raise BirthInputParseError("Укажите точное время рождения.")
+        if not birth_time and time_precision == TimePrecision.APPROXIMATE:
+            raise BirthInputParseError("Укажите примерное время рождения.")
     elif time_precision == TimePrecision.RANGE:
         range_raw = fields.get("если диапазон", "")
         times = _TIME_RE.findall(range_raw)
-        if len(times) >= 2:
-            range_start = f"{int(times[0][0]):02d}:{times[0][1]}"
-            range_end = f"{int(times[1][0]):02d}:{times[1][1]}"
+        if len(times) < 2:
+            raise BirthInputParseError("Диапазон времени должен содержать начало и конец.")
+        range_start = f"{int(times[0][0]):02d}:{times[0][1]}"
+        range_end = f"{int(times[1][0]):02d}:{times[1][1]}"
+        if _time_to_minutes(range_end) <= _time_to_minutes(range_start):
+            raise BirthInputParseError("Диапазон времени должен быть в пределах одного дня.")
 
     return BirthInput(
         birth_date=birth_date,
@@ -126,6 +131,11 @@ def _extract_time(raw: str) -> str | None:
         return None
     hour, minute = match.groups()
     return f"{int(hour):02d}:{minute}"
+
+
+def _time_to_minutes(value: str) -> int:
+    hour, minute = value.split(":", 1)
+    return int(hour) * 60 + int(minute)
 
 
 def _normalize_focus(raw: str) -> str:

@@ -52,7 +52,7 @@ async def create_natal_report(
     )
     await save_report(report)
     telegraph_url = await _try_publish_telegraph(report)
-    if telegraph_url:
+    if _is_safe_telegraph_url(telegraph_url):
         report.telegraph_url = telegraph_url
         await save_report(report)
     return report
@@ -69,7 +69,7 @@ def _validate_webhook_url(webhook_url: str) -> None:
 def _natal_reports_enabled() -> bool:
     from app.config import settings
 
-    return bool(getattr(settings, "NATAL_REPORTS_ENABLED", True))
+    return bool(getattr(settings, "NATAL_REPORTS_ENABLED", False))
 
 
 def _natal_geocoder_provider() -> str:
@@ -81,3 +81,7 @@ def _natal_geocoder_provider() -> str:
 async def _try_publish_telegraph(report: NatalReport) -> str | None:
     markdown = build_telegraph_markdown(report)
     return await create_telegraph_page_from_markdown("Натальная карта", markdown)
+
+
+def _is_safe_telegraph_url(value: str | None) -> bool:
+    return bool(value and value.strip().lower().startswith("https://"))

@@ -1,8 +1,10 @@
 """Tests for app.config helper functions — pure parsing logic."""
 
+import logging
+
 import pytest
 
-from app.config import _load_and_clean_keys, _load_daily_limits, get_model_hash, load_settings
+from app.config import _load_and_clean_keys, _load_daily_limits, get_model_hash, get_settings_safe, load_settings
 
 # ── get_model_hash ───────────────────────────────────────────────────────────
 
@@ -130,3 +132,29 @@ def test_load_settings_reads_game_hub_envs(monkeypatch):
     assert settings.GAME_HUB_URL == "https://games.tri.mom"
     assert settings.GAME_HUB_DIRECT_LINK == "https://t.me/b0b_bot/games"
     assert settings.GAME_HUB_MINIAPP_SHORT_NAME == "games"
+
+
+def test_load_settings_reads_natal_city_override_path(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    monkeypatch.setenv("NATAL_CITY_OVERRIDES_PATH", " /srv/bot/natal-city-overrides.json ")
+
+    settings = load_settings()
+
+    assert settings.NATAL_CITY_OVERRIDES_PATH == "/srv/bot/natal-city-overrides.json"
+
+
+def test_get_settings_safe_does_not_log_expected_missing_env_errors(monkeypatch, caplog):
+    import app.config as config
+
+    monkeypatch.setattr(config, "_settings_instance", None)
+    monkeypatch.delenv("GEMINI_API_KEYS", raising=False)
+
+    with caplog.at_level(logging.ERROR):
+        settings = get_settings_safe()
+
+    assert settings is None
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]

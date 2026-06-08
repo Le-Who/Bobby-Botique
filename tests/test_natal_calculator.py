@@ -20,6 +20,22 @@ def resolved_unknown_time() -> ResolvedBirthData:
     )
 
 
+def resolved_unknown_time_for_date(birth_date: str, local_datetime: str, utc_datetime: str) -> ResolvedBirthData:
+    return ResolvedBirthData(
+        birth_input=BirthInput(
+            birth_date=birth_date,
+            time_precision=TimePrecision.UNKNOWN,
+            birth_place="Kyiv, Ukraine",
+        ),
+        latitude=50.4501,
+        longitude=30.5234,
+        timezone="Europe/Kyiv",
+        local_datetime=local_datetime,
+        utc_datetime=utc_datetime,
+        display_place="Kyiv, Ukraine",
+    )
+
+
 @pytest.mark.asyncio
 async def test_calculate_unknown_time_disables_houses_and_angles():
     chart = await calculate_chart(resolved_unknown_time())
@@ -29,6 +45,39 @@ async def test_calculate_unknown_time_disables_houses_and_angles():
     assert chart.houses == []
     assert chart.angles == {}
     assert {planet.key for planet in chart.planets} >= {"sun", "moon", "mercury", "venus", "mars"}
+
+
+@pytest.mark.asyncio
+async def test_unknown_time_marks_moon_uncertain_when_moon_sign_or_aspects_change():
+    stable = resolved_unknown_time_for_date(
+        "1982-10-05",
+        "1982-10-05T12:00:00+02:00",
+        "1982-10-05T10:00:00+00:00",
+    )
+    sign_change = resolved_unknown_time_for_date(
+        "1995-02-01",
+        "1995-02-01T12:00:00+02:00",
+        "1995-02-01T10:00:00+00:00",
+    )
+
+    stable_chart = await calculate_chart(stable)
+    sign_change_chart = await calculate_chart(sign_change)
+
+    assert stable_chart.input_quality.moon_uncertainty is False
+    assert sign_change_chart.input_quality.moon_uncertainty is True
+
+
+@pytest.mark.asyncio
+async def test_unknown_time_marks_moon_uncertain_when_moon_aspects_change():
+    aspect_change = resolved_unknown_time_for_date(
+        "1990-01-02",
+        "1990-01-02T12:00:00+02:00",
+        "1990-01-02T10:00:00+00:00",
+    )
+
+    chart = await calculate_chart(aspect_change)
+
+    assert chart.input_quality.moon_uncertainty is True
 
 
 @pytest.mark.asyncio

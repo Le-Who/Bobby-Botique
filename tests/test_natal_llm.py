@@ -57,6 +57,39 @@ def test_prompt_surfaces_quality_warnings_for_exact_time_heuristic_houses():
     assert "не подавай приблизительные дома" in prompt.lower()
 
 
+def test_prompt_redacts_raw_birth_details_from_quality_warnings():
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.EXACT,
+            houses_available=True,
+            angles_available=True,
+            warnings=[
+                "birth_date=1995-02-14 birth_place=Kyiv, Ukraine",
+                "Дата рождения: 14.02.1995; Место рождения: Одесса",
+            ],
+        ),
+        planets=[
+            PlanetPosition(
+                key="sun",
+                label="Солнце",
+                longitude=325,
+                sign="Водолей",
+                degree_in_sign=25,
+            )
+        ],
+        aspects=[],
+    )
+
+    prompt = build_interpretation_prompt(chart=chart, language="ru", focus="general")
+
+    assert "1995-02-14" not in prompt
+    assert "14.02.1995" not in prompt
+    assert "Kyiv" not in prompt
+    assert "Ukraine" not in prompt
+    assert "Одесса" not in prompt
+    assert "[redacted birth data]" in prompt
+
+
 def test_fallback_sections_include_quality_warnings():
     chart = ChartData(
         input_quality=InputQuality(

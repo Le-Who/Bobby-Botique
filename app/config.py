@@ -235,6 +235,7 @@ class Settings(BaseModel):
     NATAL_REPORTS_ENABLED: bool = False
     NATAL_REPORT_TTL_DAYS: int = 365
     NATAL_GEOCODER_PROVIDER: str = "local"
+    NATAL_CITY_OVERRIDES_PATH: str = ""
     NATAL_SEND_RAW_BIRTH_DATA_TO_LLM: bool = False
 
     # --- LOCAL BOT API SERVER ---
@@ -380,6 +381,7 @@ def load_settings() -> Settings:
             "NATAL_REPORTS_ENABLED": os.getenv("NATAL_REPORTS_ENABLED", "false").lower() == "true",
             "NATAL_REPORT_TTL_DAYS": int(os.getenv("NATAL_REPORT_TTL_DAYS", "365")),
             "NATAL_GEOCODER_PROVIDER": os.getenv("NATAL_GEOCODER_PROVIDER", "local").strip().lower(),
+            "NATAL_CITY_OVERRIDES_PATH": os.getenv("NATAL_CITY_OVERRIDES_PATH", "").strip(),
             "NATAL_SEND_RAW_BIRTH_DATA_TO_LLM": os.getenv("NATAL_SEND_RAW_BIRTH_DATA_TO_LLM", "false").lower()
             == "true",
             "TELEGRAM_LOCAL_SERVER_URL": os.getenv("TELEGRAM_LOCAL_SERVER_URL", "").rstrip("/"),
@@ -558,8 +560,12 @@ def get_settings_safe() -> Settings | None:
     Safe version that returns None if settings cannot be loaded.
     Useful for testing and development.
     """
+    global _settings_instance
+    if _settings_instance is not None:
+        return _settings_instance
     try:
-        return get_settings()
+        _settings_instance = load_settings()
+        return _settings_instance
     except Exception:
         return None
 
@@ -567,11 +573,7 @@ def get_settings_safe() -> Settings | None:
 # --- SINGLETON INSTANCE ---
 # Create the one and only settings object for the app.
 # Use lazy loading to prevent import errors
-try:
-    settings = get_settings()
-except Exception:
-    # During development/testing, allow None settings
-    settings = None  # type: ignore[assignment]  # Settings is expected, None only in dev
+settings = get_settings_safe()
 
 
 class ConfigManager:

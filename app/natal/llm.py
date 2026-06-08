@@ -6,11 +6,12 @@ from app.natal.models import ChartData, ReportSection
 
 
 def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> str:
+    prompt_chart = _chart_for_prompt(chart)
     section_ids = ["section-summary", *(f"section-{planet.key}" for planet in chart.planets), "section-aspects"]
     confidence_rule = ""
     if not chart.input_quality.houses_available:
         confidence_rule = "Время неизвестно: не трактуй дома, Асцендент или MC как достоверные факты."
-    quality_warnings = "\n".join(f"- {warning}" for warning in chart.input_quality.warnings)
+    quality_warnings = "\n".join(f"- {warning}" for warning in prompt_chart.input_quality.warnings)
     quality_block = (
         "Предупреждения качества:\n"
         f"- Движок расчета: {chart.input_quality.calculation_engine}.\n"
@@ -30,7 +31,7 @@ def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> 
         f"Обязательные stable ids: {', '.join(section_ids)}.\n"
         "Для русского языка пиши кратко, глубоко и бережно.\n"
         "ChartData JSON:\n"
-        f"{chart.model_dump_json()}"
+        f"{prompt_chart.model_dump_json()}"
     )
 
 
@@ -124,5 +125,23 @@ def _planet_fact(planet, unavailable: str) -> str:
 def _quality_note(chart: ChartData) -> str:
     if not chart.input_quality.warnings:
         return ""
-    warnings = "\n".join(f"- {warning}" for warning in chart.input_quality.warnings)
+    warnings = "\n".join(f"- {_redact_raw_birth_data(warning)}" for warning in chart.input_quality.warnings)
     return f"\n\nПредупреждения качества:\n{warnings}"
+
+
+def _chart_for_prompt(chart: ChartData) -> ChartData:
+    return chart.model_copy(
+        deep=True,
+        update={
+            "input_quality": chart.input_quality.model_copy(
+                update={"warnings": [_redact_raw_birth_data(warning) for warning in chart.input_quality.warnings]}
+            )
+        },
+    )
+
+
+def _redact_raw_birth_data(value: str) -> str:
+    if re.search(r"\b(?:birth_date|birth_place)\b|дата рождения|место рождения", value, flags=re.IGNORECASE):
+        return "[redacted birth data]"
+    redacted = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", "[redacted date]", value)
+    return re.sub(r"\b\d{1,2}\.\d{1,2}\.\d{4}\b", "[redacted date]", redacted)

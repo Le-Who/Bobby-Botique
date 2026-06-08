@@ -4,8 +4,9 @@ from dataclasses import dataclass
 
 from app.natal.models import BirthInput, TimePrecision
 from app.natal.report_builder import build_hosted_report_html
+from app.natal.report_ids import is_valid_report_id
 from app.natal.service import create_natal_report
-from app.natal.storage import get_report
+from app.natal.storage import check_storage_ready, get_report
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class NatalSmokeResult:
 
 
 async def run_natal_smoke(webhook_url: str, user_id: int = 0, chat_id: int = 0) -> NatalSmokeResult:
+    await check_storage_ready()
     birth_input = BirthInput(
         birth_date="1995-02-14",
         time_precision=TimePrecision.EXACT,
@@ -42,8 +44,12 @@ async def run_natal_smoke(webhook_url: str, user_id: int = 0, chat_id: int = 0) 
     )
     if not report.report_id:
         raise RuntimeError("Natal smoke failed: report_id is empty.")
+    if not is_valid_report_id(report.report_id):
+        raise RuntimeError("Natal smoke failed: report_id format is incompatible with hosted route.")
     if not report.hosted_url:
         raise RuntimeError("Natal smoke failed: hosted_url is empty.")
+    if not report.hosted_url.rstrip("/").endswith(f"/reports/natal/{report.report_id}"):
+        raise RuntimeError("Natal smoke failed: hosted_url does not match report_id.")
     if not report.svg.lstrip().startswith("<svg"):
         raise RuntimeError("Natal smoke failed: SVG was not generated.")
     if not report.sections:
