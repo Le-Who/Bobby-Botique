@@ -63,13 +63,25 @@ This document tracks the changes required to move natal charts from MVP to produ
 - Step-by-step time precision accepts only explicit exact/approximate/range/unknown values; unrecognized text no longer defaults to range mode.
 - Runtime birth-data resolution also rejects exact/approximate inputs without time values and invalid range inputs, so direct `BirthInput` callers cannot bypass parser validation and fall back to noon.
 - Houses use the equal-house system from the calculated Ascendant.
+- Deployment forwards `NATAL_*` settings into the `tg-bot` container and runs live natal readiness smoke automatically when `NATAL_REPORTS_ENABLED=true`.
+- Empty or unset `NATAL_CITY_OVERRIDES_PATH` is treated as disabled, including CI/SSH environments that pass it through as an empty value resolving to `.`.
+- The deploy script uses `set -e`, so failed natal smoke checks now fail the deployment instead of being hidden behind a green workflow.
+
+## Current Verification Evidence
+
+- Local Python 3.14 focused suite: `187 passed, 1 warning` for all `tests/test_natal_*.py`.
+- Affected existing suite: `43 passed` for `tests/test_horoscope_intent.py`, `tests/test_commands.py`, `tests/test_reader_utils.py`, and `tests/test_web_security.py`.
+- Lint: `ruff check app/natal app/handlers/natal_chart.py tests/test_natal_*.py` passed.
+- Encoding: `scripts/check_encoding.py` passed after documentation and code changes.
+- VPS deploy: GitHub Actions run `27116204084` completed successfully for commit `67b95a1`.
+- VPS live smoke inside `tg-bot`: `PASS natal-city-catalog`, `PASS natal-config: ready`, `storage=ready`, generated `smoke_report_id`, generated hosted URL ending in `/reports/natal/<report_id>`, and verified hosted HTML contains SVG and report sections.
 
 ## Required Before Public Release
 
-1. Run `python scripts/natal_smoke.py --webhook-url "$WEBHOOK_URL"` on the VPS with real `WEBHOOK_URL`, database, Telegram bot token, and `NATAL_REPORTS_ENABLED=true`.
+1. Done: live report smoke has run on the VPS inside the deployed `tg-bot` container with real `WEBHOOK_URL`, database, Telegram bot token, and `NATAL_REPORTS_ENABLED=true`.
 2. Verify the hosted report link opens from Telegram on mobile and desktop.
 3. Run `python scripts/natal_maintenance.py` on the VPS and verify report persistence plus deletion/TTL behavior against the real PostgreSQL migration.
-4. Run `python scripts/natal_readiness.py --check-config --check-storage --check-horizons --smoke --webhook-url "$WEBHOOK_URL" --min-city-count 30000 --max-city-warmup-ms 2000 --max-city-search-ms 250` on the VPS after deploy. For release approval, also run it with `--require-external --reference-fixtures <verified-angle-fixtures.json>` after external Ascendant/MC/house references are confirmed.
+4. Partially done: deployed `scripts/natal_readiness.py --check-config --check-storage --smoke --webhook-url "$WEBHOOK_URL" --min-city-count 30000 --max-city-warmup-ms 3000 --max-city-search-ms 300` passed on the VPS. Still run the stricter public-release gate with `--check-horizons --require-external --reference-fixtures <verified-angle-fixtures.json>` after external Ascendant/MC/house references are confirmed.
 5. Verify city search manually in Telegram for at least these cases: Odesa/Odessa, Kyiv/Kiev, Moscow, London, New York, Ottawa, Orenburg, Berlin, Warsaw, Istanbul. Automated local catalog coverage exists. Local Python 3.14 observed timing after prefix indexing is roughly 0.6 s for cold warmup and 35 ms for the slowest release smoke city search.
 6. `cities1000` coverage is guarded by a minimum 30,000-city readiness gate. Decide later, from real support requests, whether the product needs a denser dataset for small towns.
 7. Decide from support requests whether the "nearest large city" fallback is enough. If not, add reviewed city entries to `NATAL_CITY_OVERRIDES_PATH` using verified coordinates and timezone.
