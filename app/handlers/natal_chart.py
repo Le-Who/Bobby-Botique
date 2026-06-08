@@ -40,6 +40,22 @@ _NATAL_KEYS = {
     "natal_place_data",
     "natal_focus",
     "natal_mode",
+    "natal_flow_message",
+}
+
+_TIME_PRECISION_LABELS: Final[dict[str, tuple[TimePrecision, str]]] = {
+    "exact": (TimePrecision.EXACT, "точное"),
+    "approximate": (TimePrecision.APPROXIMATE, "примерное"),
+    "range": (TimePrecision.RANGE, "диапазон"),
+    "unknown": (TimePrecision.UNKNOWN, "неизвестно"),
+}
+
+_FOCUS_LABELS: Final[dict[str, str]] = {
+    "general": "общий",
+    "relationships": "отношения",
+    "career": "карьера",
+    "psychology": "психология",
+    "brief": "кратко",
 }
 
 
@@ -50,16 +66,17 @@ async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> s
     if not _natal_reports_enabled_for_handler():
         await update.message.reply_text("Натальные карты временно недоступны.")
         return ConversationHandler.END
-    await update.message.reply_text(
+    flow_message = await update.message.reply_text(
         "Натальная карта строится по дате, месту и, если известно, времени рождения.\n"
         "Если точного времени нет, я построю карту без домов и асцендента и явно отмечу ограничения.",
         reply_markup=_mode_keyboard(),
     )
+    context.user_data["natal_flow_message"] = flow_message
     return NATAL_MODE
 
 
 async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
-    query = update.callback_query
+    query = getattr(update, "callback_query", None)
     if not query:
         return NATAL_MODE
     await query.answer()
@@ -70,7 +87,9 @@ async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
         return ConversationHandler.END
     context.user_data["natal_mode"] = mode
     if mode == "table":
-        await query.edit_message_text(
+        await _show_flow_prompt(
+            update,
+            context,
             "Скопируйте и заполните:\n\n"
             "Дата рождения:\n"
             "Время рождения: точное / примерное / диапазон / неизвестно\n"
@@ -81,7 +100,7 @@ async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
             "Фокус разбора: общий / отношения / карьера / психология / кратко"
         )
         return NATAL_TABLE
-    await query.edit_message_text("Дата рождения? Например: 14.02.1995")
+    await _show_flow_prompt(update, context, "Дата рождения? Например: 14.02.1995", reply_markup=_input_keyboard("date"))
     return NATAL_DATE
 
 
@@ -91,45 +110,54 @@ async def on_table_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         birth_input = parse_birth_table(update.message.text)
     except BirthInputParseError as exc:
-        await update.message.reply_text(f"Не удалось разобрать данные: {exc}")
+        await _show_flow_prompt(update, context, f"Не удалось разобрать данные: {exc}")
         return NATAL_TABLE
     birth_input = _birth_input_with_local_city(birth_input)
     if birth_input is None:
-        await update.message.reply_text("Город не найден в выбранной стране. Введите ближайший крупный город.")
+        await _show_flow_prompt(update, context, "Город не найден в выбранной стране. Введите ближайший крупный город.")
         return NATAL_TABLE
     context.user_data["natal_birth_input"] = birth_input
-    await update.message.reply_text(_confirmation_text(birth_input), reply_markup=_confirm_keyboard())
+    await _show_flow_prompt(update, context, _confirmation_text(birth_input), reply_markup=_confirm_keyboard())
     return NATAL_CONFIRM
 
 
 async def on_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     context.user_data["natal_date"] = update.message.text.strip()
-    await update.message.reply_text("Время рождения: точное / примерное / диапазон / неизвестно")
+    await _show_flow_prompt(update, context, "Время рождения известно?", reply_markup=_time_precision_keyboard())
     return NATAL_TIME_PRECISION
 
 
 async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
-    raw = (update.message.text or "").strip().lower()
-    if raw in {"неизвестно", "unknown", "не знаю"}:
-        context.user_data["natal_time_precision"] = TimePrecision.UNKNOWN
-        await update.message.reply_text("Страна рождения?")
-        return NATAL_COUNTRY
-    if raw in {"точное", "exact"}:
-        context.user_data["natal_time_precision"] = TimePrecision.EXACT
-    elif raw in {"примерное", "approx", "approximate"}:
-        context.user_data["natal_time_precision"] = TimePrecision.APPROXIMATE
-    elif raw in {"диапазон", "range"}:
-        context.user_data["natal_time_precision"] = TimePrecision.RANGE
+    query = getattr(update, "callback_query", None)
+    if query:
+        await query.answer()
+        raw = query.data.replace("natal_time_precision:", "")
+        precision, _label = _TIME_PRECISION_LABELS.get(raw, (TimePrecision.UNKNOWN, "неизвестно"))
     else:
-        await update.message.reply_text("Время рождения: точное / примерное / диапазон / неизвестно")
-        return NATAL_TIME_PRECISION
-    await update.message.reply_text("Укажите время или диапазон.")
+        raw = (update.message.text or "").strip().lower()
+        if raw in {"неизвестно", "unknown", "не знаю"}:
+            precision = TimePrecision.UNKNOWN
+        elif raw in {"точное", "exact"}:
+            precision = TimePrecision.EXACT
+        elif raw in {"примерное", "approx", "approximate"}:
+            precision = TimePrecision.APPROXIMATE
+        elif raw in {"диапазон", "range"}:
+            precision = TimePrecision.RANGE
+        else:
+            await _show_flow_prompt(update, context, "Время рождения известно?", reply_markup=_time_precision_keyboard())
+            return NATAL_TIME_PRECISION
+    if precision == TimePrecision.UNKNOWN:
+        context.user_data["natal_time_precision"] = TimePrecision.UNKNOWN
+        await _show_flow_prompt(update, context, "Страна рождения?", reply_markup=_input_keyboard("country"))
+        return NATAL_COUNTRY
+    context.user_data["natal_time_precision"] = precision
+    await _show_flow_prompt(update, context, "Укажите время или диапазон.", reply_markup=_input_keyboard("time"))
     return NATAL_TIME_VALUE
 
 
 async def on_time_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     context.user_data["natal_time_value"] = update.message.text.strip()
-    await update.message.reply_text("Страна рождения?")
+    await _show_flow_prompt(update, context, "Страна рождения?", reply_markup=_input_keyboard("country"))
     return NATAL_COUNTRY
 
 
@@ -137,9 +165,11 @@ async def on_country(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     query = update.message.text.strip()
     matches = search_countries(query, limit=8)
     if not matches:
-        await update.message.reply_text("Страна не найдена. Введите больше букв.")
+        await _show_flow_prompt(update, context, "Страна не найдена. Введите больше букв.", reply_markup=_input_keyboard("country"))
         return NATAL_COUNTRY
-    await update.message.reply_text(
+    await _show_flow_prompt(
+        update,
+        context,
         "Выберите страну из списка или введите больше букв для уточнения.",
         reply_markup=_country_keyboard(matches),
     )
@@ -147,7 +177,7 @@ async def on_country(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
 
 
 async def on_country_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
-    query = update.callback_query
+    query = getattr(update, "callback_query", None)
     if not query:
         return NATAL_COUNTRY
     await query.answer()
@@ -156,7 +186,12 @@ async def on_country_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     country_display = country[0].display_name if country else country_code
     context.user_data["natal_country_code"] = country_code
     context.user_data["natal_country"] = country_display
-    await query.edit_message_text(f"Страна рождения: {country_display}\n\nГород рождения?")
+    await _show_flow_prompt(
+        update,
+        context,
+        f"Страна рождения: {country_display}\n\nГород рождения?",
+        reply_markup=_input_keyboard("city"),
+    )
     return NATAL_PLACE
 
 
@@ -164,13 +199,20 @@ async def on_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     query = update.message.text.strip()
     country_code = context.user_data.get("natal_country_code")
     if not isinstance(country_code, str) or not country_code:
-        await update.message.reply_text("Сначала выберите страну рождения.")
+        await _show_flow_prompt(update, context, "Сначала выберите страну рождения.", reply_markup=_input_keyboard("country"))
         return NATAL_COUNTRY
     matches = search_cities(query, limit=8, country_code=country_code)
     if not matches:
-        await update.message.reply_text("Город не найден. Введите больше букв или укажите ближайший крупный город.")
+        await _show_flow_prompt(
+            update,
+            context,
+            "Город не найден. Введите больше букв или укажите ближайший крупный город.",
+            reply_markup=_input_keyboard("city"),
+        )
         return NATAL_PLACE
-    await update.message.reply_text(
+    await _show_flow_prompt(
+        update,
+        context,
         "Выберите город из списка или введите больше букв для уточнения.",
         reply_markup=_city_keyboard(matches),
     )
@@ -185,20 +227,28 @@ async def on_place_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     geoname_id = query.data.replace("natal_place:", "")
     city = find_city_by_id(geoname_id)
     if city is None:
-        await query.edit_message_text("Город не найден. Введите место рождения еще раз.")
+        await _show_flow_prompt(update, context, "Город не найден. Введите место рождения еще раз.", reply_markup=_input_keyboard("city"))
         return NATAL_PLACE
     country_code = context.user_data.get("natal_country_code")
     if not isinstance(country_code, str) or not country_code:
-        await query.edit_message_text("Сначала выберите страну рождения.")
+        await _show_flow_prompt(update, context, "Сначала выберите страну рождения.", reply_markup=_input_keyboard("country"))
         return NATAL_COUNTRY
     if city.country_code != country_code:
-        await query.edit_message_text("Этот город не относится к выбранной стране. Введите город еще раз.")
+        await _show_flow_prompt(
+            update,
+            context,
+            "Этот город не относится к выбранной стране. Введите город еще раз.",
+            reply_markup=_input_keyboard("city"),
+        )
         return NATAL_PLACE
     context.user_data["natal_place"] = city.display_name
     context.user_data["natal_place_data"] = _city_payload(city)
-    await query.edit_message_text(
+    await _show_flow_prompt(
+        update,
+        context,
         f"Место рождения: {city.display_name}\n\n"
-        "Фокус разбора: общий / отношения / карьера / психология / кратко"
+        "Фокус разбора:",
+        reply_markup=_focus_keyboard(),
     )
     return NATAL_FOCUS
 
@@ -208,24 +258,33 @@ async def on_place_missing(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not query:
         return NATAL_PLACE
     await query.answer()
-    await query.edit_message_text(
+    await _show_flow_prompt(
+        update,
+        context,
         "Если вашего города нет в списке, введите ближайший крупный город рядом с местом рождения. "
-        "Для натальной карты важны координаты и часовой пояс."
+        "Для натальной карты важны координаты и часовой пояс.",
+        reply_markup=_input_keyboard("city"),
     )
     return NATAL_PLACE
 
 
 async def on_focus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
-    context.user_data["natal_focus"] = update.message.text.strip() or "общий"
+    query = getattr(update, "callback_query", None)
+    if query:
+        await query.answer()
+        focus_key = query.data.replace("natal_focus:", "")
+        context.user_data["natal_focus"] = _FOCUS_LABELS.get(focus_key, "общий")
+    else:
+        context.user_data["natal_focus"] = update.message.text.strip() or "общий"
     try:
         birth_input = _birth_input_from_steps(context.user_data)
     except BirthInputParseError as exc:
-        await update.message.reply_text(f"Не удалось разобрать данные: {exc}")
+        await _show_flow_prompt(update, context, f"Не удалось разобрать данные: {exc}")
         if "врем" in str(exc).lower():
             return NATAL_TIME_VALUE
         return NATAL_DATE
     context.user_data["natal_birth_input"] = birth_input
-    await update.message.reply_text(_confirmation_text(birth_input), reply_markup=_confirm_keyboard())
+    await _show_flow_prompt(update, context, _confirmation_text(birth_input), reply_markup=_confirm_keyboard())
     return NATAL_CONFIRM
 
 
@@ -243,7 +302,7 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not isinstance(birth_input, BirthInput):
         await query.edit_message_text("Данные не найдены. Запустите /natal заново.")
         return ConversationHandler.END
-    await query.edit_message_text("Считаю карту...")
+    await _show_flow_prompt(update, context, "Считаю карту...")
     webhook_url = os.getenv("WEBHOOK_URL", "").strip()
     try:
         report = await create_natal_report(
@@ -253,14 +312,29 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             webhook_url=webhook_url,
         )
     except Exception as exc:
-        await query.message.reply_text(f"Не удалось построить карту: {exc}")
+        await _show_flow_prompt(update, context, f"Не удалось построить карту: {exc}")
         return ConversationHandler.END
     lines = [f"Готово: {report.hosted_url}"]
     if report.telegraph_url:
         lines.append(f"Telegraph: {report.telegraph_url}")
-    await query.message.reply_text("\n".join(lines))
+    await _show_flow_prompt(update, context, "\n".join(lines))
     clear_natal_user_data(context.user_data)
     return ConversationHandler.END
+
+
+async def on_input_hint(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    query = update.callback_query
+    if not query:
+        return NATAL_DATE
+    await query.answer("Введите значение сообщением в чат.")
+    target = query.data.replace("natal_input:", "")
+    if target == "country":
+        return NATAL_COUNTRY
+    if target == "city":
+        return NATAL_PLACE
+    if target == "time":
+        return NATAL_TIME_VALUE
+    return NATAL_DATE
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -268,6 +342,28 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message:
         await update.message.reply_text("Отменено.")
     return ConversationHandler.END
+
+
+async def _show_flow_prompt(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    query = getattr(update, "callback_query", None)
+    if query:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+        if query.message and "natal_flow_message" not in context.user_data:
+            context.user_data["natal_flow_message"] = query.message
+        return
+
+    flow_message = context.user_data.get("natal_flow_message")
+    if flow_message is not None and hasattr(flow_message, "edit_text"):
+        await flow_message.edit_text(text, reply_markup=reply_markup)
+        return
+
+    if update.message:
+        context.user_data["natal_flow_message"] = await update.message.reply_text(text, reply_markup=reply_markup)
 
 
 def build_natal_chart_handler() -> ConversationHandler:
@@ -280,18 +376,29 @@ def build_natal_chart_handler() -> ConversationHandler:
             NATAL_MODE: [CallbackQueryHandler(on_mode, pattern=r"^natal_mode:")],
             NATAL_TABLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_table_input)],
             NATAL_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_date)],
-            NATAL_TIME_PRECISION: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_precision)],
-            NATAL_TIME_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_value)],
+            NATAL_TIME_PRECISION: [
+                CallbackQueryHandler(on_time_precision, pattern=r"^natal_time_precision:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_precision),
+            ],
+            NATAL_TIME_VALUE: [
+                CallbackQueryHandler(on_input_hint, pattern=r"^natal_input:time$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_value),
+            ],
             NATAL_COUNTRY: [
+                CallbackQueryHandler(on_input_hint, pattern=r"^natal_input:country$"),
                 CallbackQueryHandler(on_country_selected, pattern=r"^natal_country:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, on_country),
             ],
             NATAL_PLACE: [
+                CallbackQueryHandler(on_input_hint, pattern=r"^natal_input:city$"),
                 CallbackQueryHandler(on_place_missing, pattern=r"^natal_place_missing$"),
                 CallbackQueryHandler(on_place_selected, pattern=r"^natal_place:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, on_place),
             ],
-            NATAL_FOCUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_focus)],
+            NATAL_FOCUS: [
+                CallbackQueryHandler(on_focus, pattern=r"^natal_focus:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, on_focus),
+            ],
             NATAL_CONFIRM: [CallbackQueryHandler(on_confirm, pattern=r"^natal_confirm:")],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -332,6 +439,47 @@ def _confirm_keyboard() -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def _time_precision_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Точное", callback_data="natal_time_precision:exact"),
+                InlineKeyboardButton("Примерное", callback_data="natal_time_precision:approximate"),
+            ],
+            [
+                InlineKeyboardButton("Диапазон", callback_data="natal_time_precision:range"),
+                InlineKeyboardButton("Не знаю", callback_data="natal_time_precision:unknown"),
+            ],
+        ]
+    )
+
+
+def _focus_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Общий", callback_data="natal_focus:general"),
+                InlineKeyboardButton("Отношения", callback_data="natal_focus:relationships"),
+            ],
+            [
+                InlineKeyboardButton("Карьера", callback_data="natal_focus:career"),
+                InlineKeyboardButton("Психология", callback_data="natal_focus:psychology"),
+            ],
+            [InlineKeyboardButton("Кратко", callback_data="natal_focus:brief")],
+        ]
+    )
+
+
+def _input_keyboard(target: str) -> InlineKeyboardMarkup:
+    labels = {
+        "date": "Введите дату сообщением",
+        "time": "Введите время сообщением",
+        "country": "Введите страну сообщением",
+        "city": "Введите город сообщением",
+    }
+    return InlineKeyboardMarkup([[InlineKeyboardButton(labels.get(target, "Введите сообщением"), callback_data=f"natal_input:{target}")]])
 
 
 def _country_keyboard(countries: list[CountryRecord]) -> InlineKeyboardMarkup:

@@ -45,6 +45,9 @@ def test_hosted_report_contains_svg_and_section_ids(sample_natal_report: NatalRe
     assert "<svg" in html
     assert 'id="section-sun"' in html
     assert "Натальная карта" in html
+    assert 'class="chart-stage"' in html
+    assert 'class="highlights"' in html
+    assert 'class="positions-grid"' in html
 
 
 def test_hosted_report_credits_geonames_city_data(sample_natal_report: NatalReport):
@@ -53,6 +56,35 @@ def test_hosted_report_credits_geonames_city_data(sample_natal_report: NatalRepo
     assert "GeoNames" in html
     assert "CC BY 4.0" in html
     assert "https://www.geonames.org/" in html
+
+
+def test_hosted_report_groups_positions_before_full_interpretation(sample_natal_report: NatalReport):
+    sample_natal_report.sections.extend(
+        [
+            ReportSection(
+                id="section-moon",
+                title="Луна",
+                body_markdown="Эмоциональный ритм и потребности.",
+                chart_refs=["moon"],
+            ),
+            ReportSection(
+                id="section-aspects",
+                title="Аспекты",
+                body_markdown="Главные связи между планетами.",
+                chart_refs=["sun", "moon"],
+            ),
+        ]
+    )
+
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert html.index('class="highlights"') < html.index('class="positions-grid"')
+    assert html.index('class="positions-grid"') < html.index('class="full-reading"')
+    assert "Главные акценты" in html
+    assert "Позиции" in html
+    assert "Полный разбор" in html
+    assert "Планеты" in html
+    assert "Аспекты" in html
 
 
 def test_hosted_report_strips_javascript_urls_from_section_body(sample_natal_report: NatalReport):

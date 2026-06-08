@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 NATAL_INTENT_RE = re.compile(
-    r"(?:натальн\w*\s+карт\w*|birth\s+chart|natal\s+chart|астрологическ\w*\s+карт\w*)",
+    r"(?:натальн\w*\s+карт\w*|расч[её]т\s+наталк\w*|наталк\w*|birth\s+chart|natal\s+chart|астрологическ\w*\s+карт\w*)",
     re.IGNORECASE,
 )
 

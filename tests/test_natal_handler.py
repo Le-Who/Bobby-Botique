@@ -34,10 +34,14 @@ class FakeMessage:
     def __init__(self, text: str = "") -> None:
         self.text = text
         self.replies = []
+        self.edit_text = AsyncMock()
+        self.last_reply_message = None
 
     async def reply_text(self, text, **kwargs):
+        reply = FakeMessage(text)
+        self.last_reply_message = reply
         self.replies.append((text, kwargs))
-        return SimpleNamespace(edit_text=AsyncMock())
+        return reply
 
 
 class FakeCallbackQuery:
@@ -78,6 +82,16 @@ def first_callback_data(update, text_part: str) -> str:
     raise AssertionError(f"No inline button containing {text_part!r}")
 
 
+def edited_callback_data(context, text_part: str) -> str:
+    flow_message = context.user_data["natal_flow_message"]
+    keyboard = flow_message.edit_text.await_args.kwargs["reply_markup"].inline_keyboard
+    for row in keyboard:
+        for button in row:
+            if text_part in button.text:
+                return button.callback_data
+    raise AssertionError(f"No edited inline button containing {text_part!r}")
+
+
 def fake_natal_report(url: str) -> NatalReport:
     return NatalReport(
         report_id=url.rsplit("/", 1)[-1],
@@ -115,6 +129,7 @@ async def test_natal_command_sends_mode_selection(monkeypatch):
 
     assert state == "NATAL_MODE"
     assert "Натальная карта строится" in update.message.replies[0][0]
+    assert "natal_flow_message" in context.user_data
 
 
 @pytest.mark.asyncio
@@ -128,6 +143,43 @@ async def test_natal_command_does_not_collect_birth_data_when_reports_disabled(m
     assert state == -1
     assert "временно недоступны" in update.message.replies[0][0]
     assert context.user_data == {}
+
+
+@pytest.mark.asyncio
+async def test_step_flow_edits_single_prompt_message_for_text_steps(monkeypatch):
+    monkeypatch.setattr("app.handlers.natal_chart._natal_reports_enabled_for_handler", lambda: True)
+    context = make_context()
+    start_update = make_update()
+
+    assert await natal_command(start_update, context) == "NATAL_MODE"
+    flow_message = context.user_data["natal_flow_message"]
+
+    assert await on_mode(make_callback_update("natal_mode:step"), context) == NATAL_DATE
+    assert await on_date(make_update("14.02.1995"), context) == "NATAL_TIME_PRECISION"
+
+    flow_message.edit_text.assert_awaited()
+    assert "Время рождения" in flow_message.edit_text.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_step_flow_uses_buttons_for_time_precision_and_focus():
+    context = make_context()
+
+    update = make_update("14.02.1995")
+    await on_date(update, context)
+    _, kwargs = update.message.replies[-1]
+    keyboard = kwargs["reply_markup"].inline_keyboard
+    assert any(button.callback_data == "natal_time_precision:unknown" for row in keyboard for button in row)
+
+    from app.natal.city_catalog import search_cities
+
+    city = search_cities("Оде", limit=1, country_code="UA")[0]
+    place_update = make_callback_update(f"natal_place:{city.geoname_id}")
+    context.user_data["natal_country_code"] = "UA"
+
+    assert await on_place_selected(place_update, context) == NATAL_FOCUS
+    focus_keyboard = place_update.callback_query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard
+    assert any(button.callback_data == "natal_focus:relationships" for row in focus_keyboard for button in row)
 
 
 @pytest.mark.asyncio
@@ -259,12 +311,12 @@ async def test_step_flow_exact_time_city_selection_generates_hosted_report(monke
 
     update = make_update("У")
     assert await on_country(update, context) == NATAL_COUNTRY
-    update = make_callback_update(first_callback_data(update, "UA"))
+    update = make_callback_update(edited_callback_data(context, "UA"))
     assert await on_country_selected(update, context) == NATAL_PLACE
 
     update = make_update("Оде")
     assert await on_place(update, context) == NATAL_PLACE
-    update = make_callback_update(first_callback_data(update, "Odesa"))
+    update = make_callback_update(edited_callback_data(context, "Odesa"))
     assert await on_place_selected(update, context) == NATAL_FOCUS
 
     update = make_update("отношения")
@@ -282,7 +334,7 @@ async def test_step_flow_exact_time_city_selection_generates_hosted_report(monke
     assert captured["chat_id"] == 456
     assert captured["webhook_url"] == "https://bot.example.com"
     assert captured["birth_input"].birth_place_latitude is not None
-    assert update.callback_query.message.replies[-1][0] == "Готово: https://bot.example.com/reports/natal/exact-report-id"
+    assert update.callback_query.edit_message_text.await_args.args[0] == "Готово: https://bot.example.com/reports/natal/exact-report-id"
     assert context.user_data == {}
 
 
@@ -303,15 +355,15 @@ async def test_step_flow_unknown_time_city_selection_generates_limited_report(mo
 
     country_update = make_update("У")
     assert await on_country(country_update, context) == NATAL_COUNTRY
-    assert await on_country_selected(make_callback_update(first_callback_data(country_update, "UA")), context) == NATAL_PLACE
+    assert await on_country_selected(make_callback_update(edited_callback_data(context, "UA")), context) == NATAL_PLACE
 
     city_update = make_update("Оде")
     assert await on_place(city_update, context) == NATAL_PLACE
-    assert await on_place_selected(make_callback_update(first_callback_data(city_update, "Odesa")), context) == NATAL_FOCUS
+    assert await on_place_selected(make_callback_update(edited_callback_data(context, "Odesa")), context) == NATAL_FOCUS
 
     focus_update = make_update("общий")
     assert await on_focus(focus_update, context) == NATAL_CONFIRM
-    confirmation_text = focus_update.message.replies[-1][0]
+    confirmation_text = context.user_data["natal_flow_message"].edit_text.await_args.args[0]
     assert "Без точного времени" in confirmation_text
 
     confirm_update = make_callback_update("natal_confirm:yes")
@@ -321,7 +373,7 @@ async def test_step_flow_unknown_time_city_selection_generates_limited_report(mo
     assert birth_input.time_precision == TimePrecision.UNKNOWN
     assert birth_input.birth_time is None
     assert birth_input.birth_place_timezone == "Europe/Kyiv"
-    assert confirm_update.callback_query.message.replies[-1][0].endswith("/reports/natal/unknown-report-id")
+    assert confirm_update.callback_query.edit_message_text.await_args.args[0].endswith("/reports/natal/unknown-report-id")
 
 
 def test_cancel_clears_natal_keys_from_user_data():
@@ -351,7 +403,9 @@ async def test_invalid_time_precision_does_not_default_to_range():
     state = await on_time_precision(update, context)
 
     assert state == "NATAL_TIME_PRECISION"
-    assert "точное / примерное / диапазон / неизвестно" in update.message.replies[0][0]
+    assert "Время рождения известно?" in update.message.replies[0][0]
+    keyboard = update.message.replies[0][1]["reply_markup"].inline_keyboard
+    assert any(button.callback_data == "natal_time_precision:range" for row in keyboard for button in row)
     assert "natal_time_precision" not in context.user_data
 
 
