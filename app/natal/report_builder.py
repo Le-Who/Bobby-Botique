@@ -11,6 +11,19 @@ _GEONAMES_ATTRIBUTION_HTML = (
 )
 _GEONAMES_ATTRIBUTION_MARKDOWN = "City data: GeoNames (https://www.geonames.org/), CC BY 4.0."
 
+_POINT_MEANINGS = {
+    "sun": "Ядро личности",
+    "moon": "Эмоции и потребности",
+    "mercury": "Мышление и речь",
+    "venus": "Любовь и ценности",
+    "mars": "Энергия и действие",
+    "jupiter": "Рост и возможности",
+    "saturn": "Границы и ответственность",
+    "uranus": "Свобода и перемены",
+    "neptune": "Интуиция и мечты",
+    "pluto": "Глубина и трансформация",
+}
+
 
 def build_hosted_report_html(report: NatalReport) -> str:
     full_sections = []
@@ -61,15 +74,15 @@ def build_hosted_report_html(report: NatalReport) -> str:
         '<section class="hero">'
         '<p class="eyebrow">Pastel cosmic reading</p>'
         "<h1>Натальная карта</h1>"
-        '<p class="lead">Сначала карта как визуальный центр, затем главные акценты, позиции и полный разбор по пунктам.</p>'
+        '<p class="lead">Сначала карта как визуальный центр, затем главные акценты, полный разбор и справочные расчетные позиции.</p>'
         f'<div class="chart-stage">{_sanitize_hosted_svg(report.svg)}</div>'
         "</section>"
         '<section class="highlights-wrap"><div class="section-head"><h2>Главные акценты</h2><p>Самые важные и интересные мотивы вынесены первыми, чтобы отчет читался как цельная история.</p></div>'
         f'<div class="highlights">{highlights}</div></section>'
-        '<section><div class="section-head"><h2>Позиции</h2><p>Быстрая навигация по расчетным точкам карты и связанным интерпретациям.</p></div>'
-        f'<div class="positions-grid">{positions}</div></section>'
         '<section><div class="section-head"><h2>Полный разбор</h2><p>Подробные интерпретации сгруппированы по смысловым категориям.</p></div>'
         f'<div class="full-reading">{"".join(full_sections)}</div></section>'
+        '<section><div class="section-head"><h2>Расчетные позиции</h2><p>Справочный слой карты: где находятся точки расчета и за какие темы они обычно отвечают.</p></div>'
+        f'<div class="positions-grid">{positions}</div></section>'
         f'<footer class="footer">{telegraph}'
         '<p class="privacy">Privacy: LLM receives only derived chart data, not raw birth date or place.</p>'
         f'<p class="attribution">{_GEONAMES_ATTRIBUTION_HTML}</p></footer>'
@@ -97,15 +110,26 @@ def _position_cards(report: NatalReport) -> list[str]:
         detail = f"{planet.sign} {planet.degree_in_sign:.1f}°"
         if planet.house:
             detail += f", дом {planet.house}"
-        cards.append(_position_card(_target_section(f"section-{planet.key}", section_ids), "Планеты", planet.label, detail))
+        cards.append(
+            _position_card(
+                _target_section(f"section-{planet.key}", section_ids),
+                _point_meaning(planet.key),
+                planet.label,
+                detail,
+            )
+        )
     if report.chart.aspects:
         aspect_text = ", ".join(f"{aspect.point_a}-{aspect.point_b} {aspect.aspect}" for aspect in report.chart.aspects[:3])
-        cards.append(_position_card(_target_section("section-aspects", section_ids), "Аспекты", "Главные аспекты", aspect_text))
+        cards.append(
+            _position_card(_target_section("section-aspects", section_ids), "Внутренние связи", "Главные аспекты", aspect_text)
+        )
     if report.chart.houses:
         house_text = ", ".join(f"{house.number}: {house.sign}" for house in report.chart.houses[:4])
-        cards.append(_position_card(_target_section("section-houses", section_ids), "Дома", "Дома карты", house_text))
+        cards.append(_position_card(_target_section("section-houses", section_ids), "Сферы жизни", "Дома карты", house_text))
     if not cards:
-        cards.append(_position_card("section-summary", "Позиции", "Расчетные данные", "Позиции будут доступны в полном разборе."))
+        cards.append(
+            _position_card("section-summary", "Расчетные данные", "Карта", "Расчетные точки будут доступны в полном разборе.")
+        )
     return cards
 
 
@@ -128,12 +152,17 @@ def _section_category(section: ReportSection) -> str:
     section_id = section.id.lower()
     title = section.title.lower()
     if "aspect" in section_id or "аспект" in title:
-        return "Аспекты"
+        return "Внутренние связи"
     if "house" in section_id or "дом" in title or "asc" in section_id or "mc" in section_id:
-        return "Дома и углы"
+        return "Сферы жизни"
     if "summary" in section_id or "резюме" in title:
         return "Главное"
-    return "Планеты"
+    point_key = section_id.removeprefix("section-")
+    return _point_meaning(point_key)
+
+
+def _point_meaning(point_key: str) -> str:
+    return _POINT_MEANINGS.get(point_key.lower(), "Личная динамика")
 
 
 def _excerpt(markdown: str, limit: int = 220) -> str:

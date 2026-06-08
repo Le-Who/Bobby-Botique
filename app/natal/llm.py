@@ -4,10 +4,24 @@ import re
 
 from app.natal.models import ChartData, ReportSection
 
+_POINT_TITLE_HINTS = {
+    "sun": "Солнце — ядро личности",
+    "moon": "Луна — эмоции и потребности",
+    "mercury": "Меркурий — мышление и речь",
+    "venus": "Венера — любовь и ценности",
+    "mars": "Марс — энергия и действие",
+    "jupiter": "Юпитер — рост и возможности",
+    "saturn": "Сатурн — границы и ответственность",
+    "uranus": "Уран — свобода и перемены",
+    "neptune": "Нептун — интуиция и мечты",
+    "pluto": "Плутон — глубина и трансформация",
+}
+
 
 def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> str:
     prompt_chart = _chart_for_prompt(chart)
     section_ids = ["section-summary", *(f"section-{planet.key}" for planet in chart.planets), "section-aspects"]
+    title_guidance = "\n".join(f"- {hint}" for hint in _title_hints_for_chart(chart))
     confidence_rule = ""
     if not chart.input_quality.houses_available:
         confidence_rule = "Время неизвестно: не трактуй дома, Асцендент или MC как достоверные факты."
@@ -28,6 +42,8 @@ def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> 
         f"{quality_block}\n"
         "Запрещены фаталистичные формулировки, медицинская, финансовая или юридическая определенность.\n"
         "Верни markdown-секции. Каждая секция должна начинаться заголовком вида `## section-id | Заголовок`.\n"
+        "Для секций планет не используй односложные заголовки: добавляй рядом человеческую роль точки.\n"
+        f"Ориентиры для заголовков:\n{title_guidance}\n"
         f"Обязательные stable ids: {', '.join(section_ids)}.\n"
         "Для русского языка пиши кратко, глубоко и бережно.\n"
         "ChartData JSON:\n"
@@ -98,13 +114,13 @@ def _fallback_sections(chart: ChartData) -> list[ReportSection]:
         ),
         ReportSection(
             id="section-sun",
-            title="Солнце",
+            title=_point_title("sun", "Солнце"),
             body_markdown=_planet_fact(sun, unavailable),
             chart_refs=["sun"],
         ),
         ReportSection(
             id="section-moon",
-            title="Луна",
+            title=_point_title("moon", "Луна"),
             body_markdown=_planet_fact(moon, unavailable),
             chart_refs=["moon"],
         ),
@@ -120,6 +136,20 @@ def _planet_fact(planet, unavailable: str) -> str:
     if planet is None:
         return unavailable
     return f"{unavailable}\n\n{planet.label}: {planet.sign} {planet.degree_in_sign:.1f}°."
+
+
+def _title_hints_for_chart(chart: ChartData) -> list[str]:
+    hints = ["Краткое резюме — главные темы карты"]
+    for planet in chart.planets:
+        hints.append(_point_title(planet.key, planet.label))
+    hints.append("Аспекты — внутренние связи и напряжения")
+    if chart.houses or chart.input_quality.houses_available:
+        hints.append("Дома — сферы жизни")
+    return hints
+
+
+def _point_title(point_key: str, fallback_label: str) -> str:
+    return _POINT_TITLE_HINTS.get(point_key.lower(), fallback_label)
 
 
 def _quality_note(chart: ChartData) -> str:

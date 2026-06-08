@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import html
+import logging
 import os
-from typing import Final
+from pathlib import Path
+from typing import Any, Final
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
+from telegram.constants import ParseMode
+from telegram.error import TelegramError
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -18,6 +23,8 @@ from app.natal.intent import NATAL_INTENT_RE
 from app.natal.models import BirthInput, TimePrecision
 from app.natal.parser import BirthInputParseError, parse_birth_table
 from app.natal.service import create_natal_report
+
+logger = logging.getLogger(__name__)
 
 NATAL_MODE: Final = "NATAL_MODE"
 NATAL_TABLE: Final = "NATAL_TABLE"
@@ -43,6 +50,10 @@ _NATAL_KEYS = {
     "natal_flow_message",
 }
 
+_NATAL_COVER_FILE_ID_KEY: Final = "natal_cover_file_id"
+_NATAL_COVER_PATH: Final = Path(__file__).resolve().parents[2] / "artifacts" / "natal_cover_provided.png"
+_natal_cover_file_id_cache = ""
+
 _TIME_PRECISION_LABELS: Final[dict[str, tuple[TimePrecision, str]]] = {
     "exact": (TimePrecision.EXACT, "точное"),
     "approximate": (TimePrecision.APPROXIMATE, "примерное"),
@@ -56,6 +67,21 @@ _FOCUS_LABELS: Final[dict[str, str]] = {
     "career": "карьера",
     "psychology": "психология",
     "brief": "кратко",
+}
+
+_FOCUS_RESULT_LABELS: Final[dict[str, str]] = {
+    "general": "общий разбор",
+    "relationships": "отношения",
+    "career": "карьера",
+    "psychology": "психология",
+    "brief": "краткий разбор",
+}
+
+_TIME_PRECISION_RESULT_LABELS: Final[dict[TimePrecision, str]] = {
+    TimePrecision.EXACT: "точное время",
+    TimePrecision.APPROXIMATE: "примерное время",
+    TimePrecision.RANGE: "диапазон времени",
+    TimePrecision.UNKNOWN: "время неизвестно",
 }
 
 
@@ -107,8 +133,10 @@ async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
 async def on_table_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     if not update.message or not update.message.text:
         return NATAL_TABLE
+    raw_text = update.message.text
+    await _delete_user_message(update)
     try:
-        birth_input = parse_birth_table(update.message.text)
+        birth_input = parse_birth_table(raw_text)
     except BirthInputParseError as exc:
         await _show_flow_prompt(update, context, f"Не удалось разобрать данные: {exc}")
         return NATAL_TABLE
@@ -122,7 +150,10 @@ async def on_table_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def on_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    if not update.message or not update.message.text:
+        return NATAL_DATE
     context.user_data["natal_date"] = update.message.text.strip()
+    await _delete_user_message(update)
     await _show_flow_prompt(update, context, "Время рождения известно?", reply_markup=_time_precision_keyboard())
     return NATAL_TIME_PRECISION
 
@@ -134,7 +165,10 @@ async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         raw = query.data.replace("natal_time_precision:", "")
         precision, _label = _TIME_PRECISION_LABELS.get(raw, (TimePrecision.UNKNOWN, "неизвестно"))
     else:
+        if not update.message or not update.message.text:
+            return NATAL_TIME_PRECISION
         raw = (update.message.text or "").strip().lower()
+        await _delete_user_message(update)
         if raw in {"неизвестно", "unknown", "не знаю"}:
             precision = TimePrecision.UNKNOWN
         elif raw in {"точное", "exact"}:
@@ -156,13 +190,19 @@ async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def on_time_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    if not update.message or not update.message.text:
+        return NATAL_TIME_VALUE
     context.user_data["natal_time_value"] = update.message.text.strip()
+    await _delete_user_message(update)
     await _show_flow_prompt(update, context, "Страна рождения?", reply_markup=_input_keyboard("country"))
     return NATAL_COUNTRY
 
 
 async def on_country(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    if not update.message or not update.message.text:
+        return NATAL_COUNTRY
     query = update.message.text.strip()
+    await _delete_user_message(update)
     matches = search_countries(query, limit=8)
     if not matches:
         await _show_flow_prompt(update, context, "Страна не найдена. Введите больше букв.", reply_markup=_input_keyboard("country"))
@@ -196,7 +236,10 @@ async def on_country_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def on_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    if not update.message or not update.message.text:
+        return NATAL_PLACE
     query = update.message.text.strip()
+    await _delete_user_message(update)
     country_code = context.user_data.get("natal_country_code")
     if not isinstance(country_code, str) or not country_code:
         await _show_flow_prompt(update, context, "Сначала выберите страну рождения.", reply_markup=_input_keyboard("country"))
@@ -275,7 +318,10 @@ async def on_focus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
         focus_key = query.data.replace("natal_focus:", "")
         context.user_data["natal_focus"] = _FOCUS_LABELS.get(focus_key, "общий")
     else:
+        if not update.message or not update.message.text:
+            return NATAL_FOCUS
         context.user_data["natal_focus"] = update.message.text.strip() or "общий"
+        await _delete_user_message(update)
     try:
         birth_input = _birth_input_from_steps(context.user_data)
     except BirthInputParseError as exc:
@@ -313,11 +359,10 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
     except Exception as exc:
         await _show_flow_prompt(update, context, f"Не удалось построить карту: {exc}")
+        clear_natal_user_data(context.user_data)
         return ConversationHandler.END
-    lines = [f"Готово: {report.hosted_url}"]
-    if report.telegraph_url:
-        lines.append(f"Telegraph: {report.telegraph_url}")
-    await _show_flow_prompt(update, context, "\n".join(lines))
+    await _send_natal_result_card(update, context, report, birth_input)
+    await _show_flow_prompt(update, context, "Карта готова. Полный разбор отправлен карточкой ниже.")
     clear_natal_user_data(context.user_data)
     return ConversationHandler.END
 
@@ -326,7 +371,7 @@ async def on_input_hint(update: Update, context: ContextTypes.DEFAULT_TYPE) -> s
     query = update.callback_query
     if not query:
         return NATAL_DATE
-    await query.answer("Введите значение сообщением в чат.")
+    await query.answer("Введите значение сообщением. Я удалю его после обработки.")
     target = query.data.replace("natal_input:", "")
     if target == "country":
         return NATAL_COUNTRY
@@ -350,6 +395,7 @@ async def _show_flow_prompt(
     text: str,
     reply_markup: InlineKeyboardMarkup | None = None,
 ) -> None:
+    text = _format_flow_prompt(context.user_data, text)
     query = getattr(update, "callback_query", None)
     if query:
         await query.edit_message_text(text, reply_markup=reply_markup)
@@ -364,6 +410,163 @@ async def _show_flow_prompt(
 
     if update.message:
         context.user_data["natal_flow_message"] = await update.message.reply_text(text, reply_markup=reply_markup)
+
+
+async def _delete_user_message(update: Update) -> None:
+    message = getattr(update, "message", None)
+    if message is None or not hasattr(message, "delete"):
+        return
+    try:
+        await message.delete()
+    except Exception as exc:
+        logger.debug("natal flow could not delete user input message: %s", exc)
+
+
+async def _get_natal_cover_photo(*, force_upload: bool = False) -> str | InputFile | None:
+    global _natal_cover_file_id_cache  # noqa: PLW0603
+    if not force_upload:
+        if not _natal_cover_file_id_cache:
+            from app.repos.settings_repo import get_global_setting
+
+            _natal_cover_file_id_cache = await get_global_setting(_NATAL_COVER_FILE_ID_KEY, "")
+        if _natal_cover_file_id_cache:
+            return _natal_cover_file_id_cache
+    if not _NATAL_COVER_PATH.exists():
+        return None
+    return InputFile(_NATAL_COVER_PATH.read_bytes(), filename=_NATAL_COVER_PATH.name)
+
+
+async def _remember_natal_cover_file_id(message: Any) -> None:
+    global _natal_cover_file_id_cache  # noqa: PLW0603
+    photos = getattr(message, "photo", None) or []
+    if not photos:
+        return
+    file_id = getattr(photos[-1], "file_id", "")
+    if not file_id or file_id == _natal_cover_file_id_cache:
+        return
+    from app.repos.settings_repo import set_global_setting
+
+    _natal_cover_file_id_cache = file_id
+    await set_global_setting(_NATAL_COVER_FILE_ID_KEY, file_id)
+
+
+async def _send_natal_result_card(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    report,
+    birth_input: BirthInput,
+) -> None:
+    caption = _result_caption(report, birth_input)
+    keyboard = _result_keyboard(report)
+    chat_id = getattr(getattr(update, "effective_chat", None), "id", None)
+    bot = getattr(context, "bot", None)
+    cover = await _get_natal_cover_photo()
+
+    if bot is not None and chat_id is not None and cover is not None:
+        try:
+            message = await bot.send_photo(
+                chat_id=chat_id,
+                photo=cover,
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+            await _remember_natal_cover_file_id(message)
+            return
+        except (OSError, TelegramError) as exc:
+            logger.warning("natal result cover send failed chat=%s: %s", chat_id, exc)
+
+    if bot is not None and chat_id is not None:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=caption,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+            disable_web_page_preview=True,
+        )
+        return
+
+    query = getattr(update, "callback_query", None)
+    if query and query.message:
+        await query.message.reply_text(
+            caption,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+            disable_web_page_preview=True,
+        )
+
+
+def _result_caption(report, birth_input: BirthInput) -> str:
+    del report
+    focus = html.escape(_FOCUS_RESULT_LABELS.get(birth_input.focus, birth_input.focus or "общий разбор"))
+    precision = html.escape(_TIME_PRECISION_RESULT_LABELS.get(birth_input.time_precision, birth_input.time_precision.value))
+    limitation = ""
+    if birth_input.time_precision == TimePrecision.UNKNOWN:
+        limitation = "\nБез точного времени: дома и асцендент не трактуются как достоверные."
+    elif birth_input.time_precision in {TimePrecision.APPROXIMATE, TimePrecision.RANGE}:
+        limitation = "\nВремя не абсолютно точное: дома и углы отмечены с осторожностью."
+    return (
+        "<b>Натальная карта готова</b>\n\n"
+        "Полный разбор собран на отдельной странице: сначала главные акценты, затем подробные секции и справочные расчетные позиции.\n\n"
+        f"<b>Фокус:</b> {focus}\n"
+        f"<b>Точность времени:</b> {precision}{html.escape(limitation)}\n\n"
+        "Откройте отчет кнопкой ниже."
+    )
+
+
+def _result_keyboard(report) -> InlineKeyboardMarkup | None:
+    rows: list[list[InlineKeyboardButton]] = []
+    if report.hosted_url and _is_safe_button_url(report.hosted_url):
+        rows.append([InlineKeyboardButton("Открыть полный разбор", url=report.hosted_url)])
+    if report.telegraph_url and _is_safe_button_url(report.telegraph_url):
+        rows.append([InlineKeyboardButton("Telegraph mirror", url=report.telegraph_url)])
+    if not rows:
+        return None
+    return InlineKeyboardMarkup(rows)
+
+
+def _is_safe_button_url(value: str) -> bool:
+    normalized = value.strip().lower()
+    return normalized.startswith(("https://", "http://localhost", "http://127.0.0.1"))
+
+
+def _format_flow_prompt(user_data: dict, text: str) -> str:
+    if _is_terminal_flow_text(text):
+        return text
+    summary = "\n".join(_draft_lines(user_data))
+    return (
+        f"{text}\n\n"
+        "Черновик:\n"
+        f"{summary}\n\n"
+        "Сообщения с датой, временем и местом я удаляю из чата после обработки."
+    )
+
+
+def _is_terminal_flow_text(text: str) -> bool:
+    return text.startswith(("Считаю карту", "Карта готова", "Отменено.", "Данные не найдены", "Не удалось построить"))
+
+
+def _draft_lines(user_data: dict) -> list[str]:
+    date = str(user_data.get("natal_date") or "—")
+    precision = user_data.get("natal_time_precision")
+    time_value = str(user_data.get("natal_time_value") or "")
+    time_text = "—"
+    if isinstance(precision, TimePrecision):
+        time_text = _TIME_PRECISION_RESULT_LABELS.get(precision, precision.value)
+        if time_value:
+            time_text = f"{time_text}, {time_value}"
+    elif precision:
+        time_text = str(precision)
+    country = str(user_data.get("natal_country") or user_data.get("natal_country_code") or "—")
+    place = str(user_data.get("natal_place") or "—")
+    focus = str(user_data.get("natal_focus") or "—")
+    return [
+        f"Дата: {date}",
+        f"Время: {time_text}",
+        f"Страна: {country}",
+        f"Город: {place}",
+        f"Фокус: {focus}",
+    ]
 
 
 def build_natal_chart_handler() -> ConversationHandler:

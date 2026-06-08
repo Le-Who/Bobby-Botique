@@ -58,7 +58,7 @@ def test_hosted_report_credits_geonames_city_data(sample_natal_report: NatalRepo
     assert "https://www.geonames.org/" in html
 
 
-def test_hosted_report_groups_positions_before_full_interpretation(sample_natal_report: NatalReport):
+def test_hosted_report_places_full_interpretation_before_reference_positions(sample_natal_report: NatalReport):
     sample_natal_report.sections.extend(
         [
             ReportSection(
@@ -78,13 +78,30 @@ def test_hosted_report_groups_positions_before_full_interpretation(sample_natal_
 
     html = build_hosted_report_html(sample_natal_report)
 
-    assert html.index('class="highlights"') < html.index('class="positions-grid"')
-    assert html.index('class="positions-grid"') < html.index('class="full-reading"')
+    assert html.index('class="highlights"') < html.index('class="full-reading"')
+    assert html.index('class="full-reading"') < html.index('class="positions-grid"')
     assert "Главные акценты" in html
-    assert "Позиции" in html
+    assert "Расчетные позиции" in html
     assert "Полный разбор" in html
-    assert "Планеты" in html
     assert "Аспекты" in html
+
+
+def test_hosted_report_labels_positions_with_user_facing_meaning(sample_natal_report: NatalReport):
+    sample_natal_report.chart.planets.append(
+        PlanetPosition(
+            key="moon",
+            label="Луна",
+            longitude=120,
+            sign="Лев",
+            degree_in_sign=0,
+        )
+    )
+
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert "Ядро личности" in html
+    assert "Эмоции и потребности" in html
+    assert "Планеты" not in html
 
 
 def test_hosted_report_strips_javascript_urls_from_section_body(sample_natal_report: NatalReport):

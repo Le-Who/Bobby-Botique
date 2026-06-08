@@ -30,6 +30,39 @@ def test_prompt_contains_confidence_rules_and_no_raw_birth_place():
     assert "1995" not in prompt
 
 
+def test_prompt_requests_personality_domain_titles_for_planet_sections():
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.EXACT,
+            houses_available=True,
+            angles_available=True,
+        ),
+        planets=[
+            PlanetPosition(
+                key="sun",
+                label="Солнце",
+                longitude=325,
+                sign="Водолей",
+                degree_in_sign=25,
+            ),
+            PlanetPosition(
+                key="mercury",
+                label="Меркурий",
+                longitude=310,
+                sign="Водолей",
+                degree_in_sign=10,
+            ),
+        ],
+        aspects=[],
+    )
+
+    prompt = build_interpretation_prompt(chart=chart, language="ru", focus="general")
+
+    assert "Солнце — ядро личности" in prompt
+    assert "Меркурий — мышление и речь" in prompt
+    assert "не используй односложные заголовки" in prompt
+
+
 def test_prompt_surfaces_quality_warnings_for_exact_time_heuristic_houses():
     chart = ChartData(
         input_quality=InputQuality(
@@ -113,3 +146,35 @@ def test_fallback_sections_include_quality_warnings():
     sections = _fallback_sections(chart)
 
     assert "Дома рассчитаны эвристически" in sections[0].body_markdown
+
+
+def test_fallback_sections_use_user_facing_planet_titles():
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.UNKNOWN,
+            houses_available=False,
+            angles_available=False,
+        ),
+        planets=[
+            PlanetPosition(
+                key="sun",
+                label="Солнце",
+                longitude=325,
+                sign="Водолей",
+                degree_in_sign=25,
+            ),
+            PlanetPosition(
+                key="moon",
+                label="Луна",
+                longitude=120,
+                sign="Лев",
+                degree_in_sign=0,
+            ),
+        ],
+        aspects=[],
+    )
+
+    sections = _fallback_sections(chart)
+
+    assert sections[1].title == "Солнце — ядро личности"
+    assert sections[2].title == "Луна — эмоции и потребности"

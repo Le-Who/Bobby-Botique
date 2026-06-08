@@ -2,8 +2,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from PIL import Image
 
 from app.handlers.natal_chart import (
+    _NATAL_COVER_PATH,
     NATAL_CONFIRM,
     NATAL_COUNTRY,
     NATAL_DATE,
@@ -30,11 +32,19 @@ from app.handlers.natal_chart import (
 from app.natal.models import ChartData, InputQuality, NatalReport, PlanetPosition, ReportSection, TimePrecision
 
 
+def test_natal_cover_asset_exists():
+    assert _NATAL_COVER_PATH.exists()
+    assert _NATAL_COVER_PATH.stat().st_size > 2_000_000
+    with Image.open(_NATAL_COVER_PATH) as image:
+        assert image.size == (1448, 1086)
+
+
 class FakeMessage:
     def __init__(self, text: str = "") -> None:
         self.text = text
         self.replies = []
         self.edit_text = AsyncMock()
+        self.delete = AsyncMock()
         self.last_reply_message = None
 
     async def reply_text(self, text, **kwargs):
@@ -69,8 +79,10 @@ def make_callback_update(data: str):
     )
 
 
-def make_context():
-    return SimpleNamespace(user_data={})
+def make_context(bot=None):
+    if bot is None:
+        bot = SimpleNamespace(send_photo=AsyncMock(), send_message=AsyncMock())
+    return SimpleNamespace(user_data={}, bot=bot)
 
 
 def first_callback_data(update, text_part: str) -> str:
@@ -162,6 +174,20 @@ async def test_step_flow_edits_single_prompt_message_for_text_steps(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_step_flow_deletes_raw_text_inputs_after_processing(monkeypatch):
+    monkeypatch.setattr("app.handlers.natal_chart._natal_reports_enabled_for_handler", lambda: True)
+    context = make_context()
+
+    date_update = make_update("14.02.1995")
+    assert await on_date(date_update, context) == "NATAL_TIME_PRECISION"
+
+    date_update.message.delete.assert_awaited_once()
+    assert context.user_data["natal_date"] == "14.02.1995"
+    assert "14.02.1995" in date_update.message.replies[-1][0]
+    assert "удаляю" in date_update.message.replies[-1][0]
+
+
+@pytest.mark.asyncio
 async def test_step_flow_uses_buttons_for_time_precision_and_focus():
     context = make_context()
 
@@ -199,6 +225,7 @@ async def test_table_mode_stores_parsed_birth_input():
     assert state == NATAL_CONFIRM
     assert context.user_data["natal_birth_input"].time_precision == TimePrecision.UNKNOWN
     assert context.user_data["natal_birth_input"].birth_place_country_code == "UA"
+    update.message.delete.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -295,6 +322,8 @@ async def test_step_flow_exact_time_city_selection_generates_hosted_report(monke
 
     monkeypatch.setenv("WEBHOOK_URL", "https://bot.example.com")
     monkeypatch.setattr("app.handlers.natal_chart.create_natal_report", fake_create_natal_report)
+    monkeypatch.setattr("app.handlers.natal_chart._get_natal_cover_photo", AsyncMock(return_value="natal-cover-file-id"))
+    monkeypatch.setattr("app.handlers.natal_chart._remember_natal_cover_file_id", AsyncMock())
 
     context = make_context()
     update = make_callback_update("natal_mode:step")
@@ -334,7 +363,14 @@ async def test_step_flow_exact_time_city_selection_generates_hosted_report(monke
     assert captured["chat_id"] == 456
     assert captured["webhook_url"] == "https://bot.example.com"
     assert captured["birth_input"].birth_place_latitude is not None
-    assert update.callback_query.edit_message_text.await_args.args[0] == "Готово: https://bot.example.com/reports/natal/exact-report-id"
+    context.bot.send_photo.assert_awaited_once()
+    sent = context.bot.send_photo.await_args.kwargs
+    assert sent["photo"] == "natal-cover-file-id"
+    assert "Натальная карта готова" in sent["caption"]
+    assert "1995-02-14" not in sent["caption"]
+    assert "Odesa" not in sent["caption"]
+    buttons = [button for row in sent["reply_markup"].inline_keyboard for button in row]
+    assert any(button.text == "Открыть полный разбор" for button in buttons)
     assert context.user_data == {}
 
 
@@ -348,6 +384,8 @@ async def test_step_flow_unknown_time_city_selection_generates_limited_report(mo
 
     monkeypatch.setenv("WEBHOOK_URL", "https://bot.example.com")
     monkeypatch.setattr("app.handlers.natal_chart.create_natal_report", fake_create_natal_report)
+    monkeypatch.setattr("app.handlers.natal_chart._get_natal_cover_photo", AsyncMock(return_value="natal-cover-file-id"))
+    monkeypatch.setattr("app.handlers.natal_chart._remember_natal_cover_file_id", AsyncMock())
 
     context = make_context()
     assert await on_date(make_update("14.02.1995"), context) == "NATAL_TIME_PRECISION"
@@ -373,7 +411,9 @@ async def test_step_flow_unknown_time_city_selection_generates_limited_report(mo
     assert birth_input.time_precision == TimePrecision.UNKNOWN
     assert birth_input.birth_time is None
     assert birth_input.birth_place_timezone == "Europe/Kyiv"
-    assert confirm_update.callback_query.edit_message_text.await_args.args[0].endswith("/reports/natal/unknown-report-id")
+    sent = context.bot.send_photo.await_args.kwargs
+    assert "Без точного времени" in sent["caption"]
+    assert "unknown-report-id" not in sent["caption"]
 
 
 def test_cancel_clears_natal_keys_from_user_data():
