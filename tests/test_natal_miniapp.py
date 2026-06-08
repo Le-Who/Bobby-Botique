@@ -79,6 +79,11 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert 'data-api="/webapp/api/natal/submit"' in body
     assert "Дата рождения" in body
     assert "Фокус разбора" in body
+    assert "Создаём натальную карту" in body
+    assert "Окно можно закрывать." in body
+    assert "Ответ будет отправлен новым сообщением" in body
+    assert ".layout[hidden]" in body
+    assert body.index("const response = await fetch") < body.index("showAcceptedState();")
 
 
 @pytest.mark.asyncio
@@ -91,8 +96,9 @@ async def test_natal_submit_requires_webapp_auth():
 
 
 @pytest.mark.asyncio
-async def test_natal_submit_creates_report_and_sends_result_to_user_chat(monkeypatch):
+async def test_natal_submit_accepts_form_before_report_is_ready(monkeypatch):
     sent = {}
+    scheduled = {}
 
     async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url):
         assert isinstance(birth_input, BirthInput)
@@ -102,9 +108,14 @@ async def test_natal_submit_creates_report_and_sends_result_to_user_chat(monkeyp
         sent["webhook_url"] = webhook_url
         return _fake_report(f"{webhook_url}/reports/natal/webapp-report-id")
 
+    def fake_submit_task(coro):
+        scheduled["coro"] = coro
+        return SimpleNamespace(done=lambda: False)
+
     bot = SimpleNamespace(send_photo=AsyncMock(), send_message=AsyncMock())
 
     monkeypatch.setattr("app.web_miniapp.create_natal_report", fake_create_natal_report)
+    monkeypatch.setattr("app.web_miniapp.submit_task", fake_submit_task, raising=False)
     monkeypatch.setattr("app.web_miniapp.get_bot", lambda: bot)
     monkeypatch.setattr("app.web_miniapp.get_natal_cover_photo", AsyncMock(return_value=None))
 
@@ -125,7 +136,13 @@ async def test_natal_submit_creates_report_and_sends_result_to_user_chat(monkeyp
     assert response.status_code == 200
     payload = await response.get_json()
     assert payload["ok"] is True
-    assert payload["hosted_url"] == "https://bot.example.com/reports/natal/webapp-report-id"
+    assert payload["status"] == "accepted"
+    assert "hosted_url" not in payload
+    assert "coro" in scheduled
+    bot.send_message.assert_not_awaited()
+
+    await scheduled["coro"]
+
     assert sent["user_id"] == 777
     assert sent["chat_id"] == 777
     assert sent["webhook_url"] == "https://bot.example.com"

@@ -65,7 +65,7 @@ def build_hosted_report_html(report: NatalReport) -> str:
         "svg{position:relative;z-index:1;max-width:100%;height:auto;display:block;margin:0 auto}"
         ".section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:64px 0 18px}.section-head h2{margin:0;font-family:Georgia,serif;font-size:clamp(28px,4vw,44px);font-weight:500}.section-head p{max-width:480px;margin:0;color:var(--muted)}"
         ".highlights{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.highlight-card,.position-card,.reading-card{border:1px solid var(--line);background:var(--glass);backdrop-filter:blur(18px);box-shadow:0 18px 52px rgba(118,91,143,.12)}"
-        ".highlight-card{min-height:180px;padding:22px;border-radius:24px}.highlight-card span,.reading-card span,.position-card span{display:block;margin-bottom:10px;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.highlight-card h3,.reading-card h3{margin:0 0 10px;font-family:Georgia,serif;font-size:24px;font-weight:500}.highlight-card div{color:var(--muted)}"
+        ".highlight-card{display:block;min-height:180px;padding:22px;border-radius:24px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.highlight-card:hover{transform:translateY(-3px);box-shadow:0 22px 60px rgba(118,91,143,.18)}.highlight-card span,.reading-card span,.position-card span{display:block;margin-bottom:10px;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.highlight-card h3,.reading-card h3{margin:0 0 10px;font-family:Georgia,serif;font-size:24px;font-weight:500}.highlight-excerpt{margin:0;color:var(--muted)}"
         ".positions-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.position-card{display:block;min-height:138px;padding:18px;border-radius:20px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.position-card:hover{transform:translateY(-3px);box-shadow:0 22px 60px rgba(118,91,143,.18)}.position-card strong{display:block;margin-bottom:6px;font-family:Georgia,serif;font-size:22px;font-weight:500}.position-card p{margin:0;color:var(--muted)}"
         ".full-reading{display:grid;gap:18px}.reading-card{padding:clamp(20px,3vw,30px);border-radius:24px}.reading-card div{max-width:78ch}.reading-card p{margin:0 0 12px}.reading-card ul{padding-left:22px}"
         ".footer{display:flex;flex-wrap:wrap;gap:14px;margin:44px 0 0;color:var(--muted);font-size:14px}.mirror-link{color:#6f5b95;font-weight:700}.privacy,.attribution{margin:0}"
@@ -98,8 +98,11 @@ def _highlight_cards(sections: list[ReportSection]) -> list[str]:
     for section in source:
         title = html.escape(section.title)
         section_id = html.escape(section.id, quote=True)
-        body = _sanitize_hosted_body(markdown_to_html(_excerpt(section.body_markdown)))
-        cards.append(f'<a class="highlight-card" href="#{section_id}"><span>{html.escape(_section_category(section))}</span><h3>{title}</h3><div>{body}</div></a>')
+        body = html.escape(_plain_text_excerpt(section.body_markdown))
+        cards.append(
+            f'<a class="highlight-card" href="#{section_id}"><span>{html.escape(_section_category(section))}</span>'
+            f'<h3>{title}</h3><p class="highlight-excerpt">{body}</p></a>'
+        )
     return cards
 
 
@@ -170,6 +173,19 @@ def _excerpt(markdown: str, limit: int = 220) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 1].rstrip() + "…"
+
+
+def _plain_text_excerpt(markdown: str, limit: int = 220) -> str:
+    text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", markdown)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"`([^`]*)`", r"\1", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"__([^_]+)__", r"\1", text)
+    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    text = re.sub(r"_([^_]+)_", r"\1", text)
+    text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"<[^>]+>", "", text)
+    return _excerpt(html.unescape(text), limit)
 
 
 def build_telegraph_markdown(report: NatalReport) -> str:

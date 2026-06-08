@@ -34,6 +34,7 @@ from app.games import crocodile_runtime as _croc_runtime
 from app.natal.city_catalog import find_city_by_id, search_cities, search_countries
 from app.natal.models import BirthInput, TimePrecision
 from app.natal.service import create_natal_report
+from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
@@ -429,6 +430,11 @@ async def api_natal_submit(user_id: int):
     if not webhook_url:
         return jsonify({"error": "server_misconfiguration", "detail": "WEBAPP_BASE_URL or WEBHOOK_URL is required."}), 500
 
+    submit_task(_build_and_send_natal_report(bot, user_id, birth_input, webhook_url))
+    return jsonify({"ok": True, "status": "accepted"})
+
+
+async def _build_and_send_natal_report(bot: Any, user_id: int, birth_input: BirthInput, webhook_url: str) -> None:
     try:
         report = await create_natal_report(
             birth_input=birth_input,
@@ -438,16 +444,17 @@ async def api_natal_submit(user_id: int):
         )
         await _send_natal_report_to_private_chat(bot, user_id, report, birth_input)
     except Exception as exc:
-        logger.error("Mini App natal submit failed user=%s: %s", user_id, exc, exc_info=True)
-        return jsonify({"error": "natal_report_failed", "detail": str(exc)}), 500
-
-    return jsonify(
-        {
-            "ok": True,
-            "hosted_url": report.hosted_url,
-            "telegraph_url": report.telegraph_url,
-        }
-    )
+        logger.error("Mini App natal background task failed user=%s: %s", user_id, exc, exc_info=True)
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "Не удалось построить натальную карту по отправленной анкете. "
+                    "Попробуйте открыть анкету и отправить данные ещё раз."
+                ),
+            )
+        except TelegramError as notify_error:
+            logger.warning("Failed to notify user %s about natal report failure: %s", user_id, notify_error)
 
 
 def _natal_form_options() -> dict[str, Any]:

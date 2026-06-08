@@ -104,6 +104,23 @@ def test_hosted_report_labels_positions_with_user_facing_meaning(sample_natal_re
     assert "Планеты" not in html
 
 
+def test_hosted_report_highlight_cards_use_readable_plain_text_previews(sample_natal_report: NatalReport):
+    sample_natal_report.sections[0].body_markdown = (
+        "**Солнце в Водолее** раскрывает [личный ритм](https://example.com) "
+        "и помогает читать карту как цельную историю."
+    )
+
+    html = build_hosted_report_html(sample_natal_report)
+    highlights_html = html.split('class="highlights"', 1)[1].split('class="full-reading"', 1)[0]
+
+    assert ".highlight-card{display:block" in html
+    assert "text-decoration:none" in html
+    assert 'class="highlight-excerpt"' in highlights_html
+    assert "<strong>Солнце в Водолее</strong>" not in highlights_html
+    assert '<a href="https://example.com"' not in highlights_html
+    assert "Солнце в Водолее раскрывает личный ритм" in highlights_html
+
+
 def test_hosted_report_strips_javascript_urls_from_section_body(sample_natal_report: NatalReport):
     sample_natal_report.sections[0].body_markdown = "[опасная ссылка](javascript:alert(1))"
 

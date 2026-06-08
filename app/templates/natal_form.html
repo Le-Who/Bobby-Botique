@@ -94,7 +94,7 @@ input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); 
   background: var(--accent);
   color: var(--accent-text);
 }
-.time-block[hidden], .manual-block[hidden], .done[hidden], .error[hidden] { display: none; }
+.time-block[hidden], .manual-block[hidden], .layout[hidden], .done[hidden], .error[hidden] { display: none; }
 .summary {
   display: grid;
   gap: 8px;
@@ -120,13 +120,26 @@ input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); 
 }
 .done {
   margin-top: 10px;
-  padding: 12px;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 22px 18px;
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  text-align: center;
 }
-.done-title { margin: 0 0 4px; font-weight: 720; }
-.done-text { margin: 0; color: var(--muted); font-size: 14px; }
+.done-mark {
+  width: 38px;
+  height: 38px;
+  border: 2px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: spin .9s linear infinite;
+}
+.done-title { margin: 0; font-size: 19px; line-height: 1.2; font-weight: 760; letter-spacing: 0; }
+.done-text { display: grid; gap: 4px; margin: 0; color: var(--muted); font-size: 15px; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .submit {
   position: fixed;
   left: 14px;
@@ -157,7 +170,7 @@ input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); 
   </div>
 
   <form id="natal-form" data-api="/webapp/api/natal/submit" novalidate>
-    <div class="layout">
+    <div class="layout" id="form-layout">
       <section class="panel">
         <div class="panel-head">
           <h2 class="panel-title">Дата и время</h2>
@@ -236,9 +249,13 @@ input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); 
     </div>
 
     <div class="error" id="error-box" hidden></div>
-    <div class="done" id="done-box" hidden>
-      <p class="done-title">Анкета отправлена</p>
-      <p class="done-text">Результат придёт сообщением в чат с ботом. Эту страницу можно закрыть.</p>
+    <div class="done" id="done-box" data-state="processing" hidden>
+      <div class="done-mark" aria-hidden="true"></div>
+      <p class="done-title" id="done-title">Создаём натальную карту</p>
+      <p class="done-text" id="done-text">
+        <span>Окно можно закрывать.</span>
+        <span>Ответ будет отправлен новым сообщением в чат с ботом.</span>
+      </p>
     </div>
 
     <button class="submit" id="submit-button" type="submit">Построить карту</button>
@@ -258,10 +275,55 @@ const state = {
 };
 
 const form = document.getElementById('natal-form');
+const formLayout = document.getElementById('form-layout');
 const errorBox = document.getElementById('error-box');
 const doneBox = document.getElementById('done-box');
+const doneTitle = document.getElementById('done-title');
+const doneText = document.getElementById('done-text');
 const submitButton = document.getElementById('submit-button');
 const statusPill = document.getElementById('status-pill');
+let closeOnSubmit = false;
+
+function setDoneMessage(title, lines) {
+  doneTitle.textContent = title;
+  doneText.textContent = '';
+  lines.forEach((line) => {
+    const row = document.createElement('span');
+    row.textContent = line;
+    doneText.appendChild(row);
+  });
+}
+
+function showSubmittingState() {
+  submitButton.disabled = true;
+  submitButton.textContent = 'Отправляю...';
+  statusPill.textContent = 'Отправка';
+}
+
+function showAcceptedState() {
+  formLayout.hidden = true;
+  doneBox.dataset.state = 'processing';
+  setDoneMessage('Создаём натальную карту', [
+    'Окно можно закрывать.',
+    'Ответ будет отправлен новым сообщением в чат с ботом.',
+  ]);
+  doneBox.hidden = false;
+  statusPill.textContent = 'Создаём';
+  submitButton.disabled = false;
+  submitButton.textContent = 'Закрыть';
+  closeOnSubmit = true;
+}
+
+function restoreFormState(message) {
+  closeOnSubmit = false;
+  formLayout.hidden = false;
+  doneBox.hidden = true;
+  errorBox.textContent = message;
+  errorBox.hidden = false;
+  submitButton.disabled = false;
+  submitButton.textContent = 'Построить карту';
+  statusPill.textContent = 'Анкета';
+}
 
 function setGroup(container, value) {
   container.querySelectorAll('.chip').forEach((button) => {
@@ -438,6 +500,10 @@ function validateBeforeSubmit(payload) {
 
 async function submitNatal(event) {
   event.preventDefault();
+  if (closeOnSubmit) {
+    tg?.close();
+    return;
+  }
   errorBox.hidden = true;
   const payload = buildPayload();
   const validationError = validateBeforeSubmit(payload);
@@ -446,9 +512,7 @@ async function submitNatal(event) {
     errorBox.hidden = false;
     return;
   }
-  submitButton.disabled = true;
-  submitButton.textContent = 'Считаю карту...';
-  statusPill.textContent = 'Расчёт';
+  showSubmittingState();
   try {
     const response = await fetch(form.dataset.api, {
       method: 'POST',
@@ -462,21 +526,9 @@ async function submitNatal(event) {
     if (!response.ok || !result.ok) {
       throw new Error(result.detail || result.error || 'Не удалось отправить анкету.');
     }
-    doneBox.hidden = false;
-    statusPill.textContent = 'Готово';
-    submitButton.textContent = 'Закрыть';
-    submitButton.disabled = false;
-    form.removeEventListener('submit', submitNatal);
-    form.addEventListener('submit', (closeEvent) => {
-      closeEvent.preventDefault();
-      tg?.close();
-    });
+    showAcceptedState();
   } catch (error) {
-    errorBox.textContent = error.message;
-    errorBox.hidden = false;
-    submitButton.disabled = false;
-    submitButton.textContent = 'Построить карту';
-    statusPill.textContent = 'Анкета';
+    restoreFormState(error.message);
   }
 }
 
