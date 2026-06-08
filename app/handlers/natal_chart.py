@@ -21,7 +21,7 @@ from telegram.ext import (
 )
 
 from app.natal.city_catalog import CityRecord, CountryRecord, find_city_by_id, search_cities, search_countries
-from app.natal.intent import NATAL_INTENT_RE
+from app.natal.intent import NATAL_INTENT_RE, NATAL_SLASH_ALIAS_RE
 from app.natal.models import BirthInput, TimePrecision
 from app.natal.parser import BirthInputParseError, parse_birth_table
 from app.natal.service import create_natal_report
@@ -715,6 +715,7 @@ def build_natal_chart_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[
             CommandHandler("natal", natal_command),
+            MessageHandler(filters.TEXT & filters.Regex(NATAL_SLASH_ALIAS_RE), natal_command),
             MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(NATAL_INTENT_RE), natal_command),
         ],
         states={

@@ -670,6 +670,14 @@ def test_conversation_handler_accepts_text_intent_entrypoint():
     assert len(handler.entry_points) >= 2
 
 
+def test_conversation_handler_accepts_natal_command_aliases():
+    handler = build_natal_chart_handler()
+    command_sets = [set(getattr(entry, "commands", set()) or set()) for entry in handler.entry_points]
+
+    assert any({"natal"}.issubset(commands) for commands in command_sets)
+    assert len(handler.entry_points) >= 3
+
+
 @pytest.mark.asyncio
 async def test_step_flow_embeds_selected_country_code_in_birth_input():
     from app.natal.city_catalog import search_cities

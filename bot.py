@@ -533,6 +533,21 @@ async def run_bot_with_retry():
         except Exception as e:
             logging.warning("Failed to register Daily Crocodile scheduler: %s", e)
 
+        # Schedule prepared inline Tarot card-of-day generation (hourly gate, PT evening only)
+        try:
+            from app.handlers.tarot_daily import check_tarot_daily_jobs
+
+            if application.job_queue:
+                application.job_queue.run_repeating(
+                    check_tarot_daily_jobs,
+                    interval=3600,
+                    first=150,
+                    name="tarot_daily_preparation",
+                )
+                logging.info("Tarot daily preparation job registered")
+        except Exception as e:
+            logging.warning("Failed to register Tarot daily preparation job: %s", e)
+
         # Schedule reminder delivery poll (every 60 seconds)
         try:
             from app.handlers.cmd_reminders import check_and_deliver_reminders

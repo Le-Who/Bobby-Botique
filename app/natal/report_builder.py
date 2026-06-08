@@ -27,11 +27,15 @@ _POINT_MEANINGS = {
 
 def build_hosted_report_html(report: NatalReport) -> str:
     full_sections = []
+    footer_notes: list[str] = []
     for section in report.sections:
         section_id = html.escape(section.id, quote=True)
         title = html.escape(section.title)
-        body = _sanitize_hosted_body(markdown_to_html(section.body_markdown))
-        category = html.escape(_section_category(section))
+        category_raw = _section_category(section)
+        body_markdown, notes = _prepare_hosted_section_markdown(section)
+        footer_notes.extend(notes)
+        body = _sanitize_hosted_body(_hosted_markdown_to_html(body_markdown))
+        category = html.escape(category_raw)
         full_sections.append(
             f'<article id="{section_id}" class="reading-card" data-category="{category}">'
             f"<span>{category}</span><h3>{title}</h3><div>{body}</div></article>"
@@ -44,6 +48,7 @@ def build_hosted_report_html(report: NatalReport) -> str:
 
     highlights = "".join(_highlight_cards(report.sections))
     positions = "".join(_position_cards(report))
+    notes_html = "".join(_footer_note_html(note) for note in footer_notes)
 
     return (
         "<!doctype html><html lang=\"ru\"><head>"
@@ -54,8 +59,8 @@ def build_hosted_report_html(report: NatalReport) -> str:
         ":root{color-scheme:light;--ink:#2c2434;--muted:#73667d;--line:rgba(132,105,156,.18);--glass:rgba(255,255,255,.68);--rose:#d99caf;--violet:#8b75bd;--sky:#91b8df}"
         "*{box-sizing:border-box}html{scroll-behavior:smooth}"
         "body{margin:0;font-family:'Aptos','Segoe UI',sans-serif;background:radial-gradient(circle at 18% 8%,#fff8dc 0,#fff8dc 8%,transparent 25%),radial-gradient(circle at 82% 10%,#dceeff 0,transparent 28%),linear-gradient(145deg,#fff9f0 0%,#f7edff 48%,#eaf6ff 100%);color:var(--ink);line-height:1.65}"
-        "body:before{content:'';position:fixed;inset:0;pointer-events:none;background:linear-gradient(120deg,rgba(255,255,255,.42),transparent 36%,rgba(255,255,255,.34));mix-blend-mode:screen}"
-        "main{max-width:1120px;margin:0 auto;padding:clamp(20px,4vw,56px)}"
+        "body:before{content:'';position:fixed;z-index:0;inset:0;pointer-events:none;background:linear-gradient(120deg,rgba(255,255,255,.42),transparent 36%,rgba(255,255,255,.34));mix-blend-mode:screen}"
+        "main{position:relative;z-index:1;max-width:1120px;margin:0 auto;padding:clamp(20px,4vw,56px)}"
         ".hero{min-height:96vh;display:grid;align-content:center;gap:24px}"
         ".eyebrow{margin:0;color:var(--violet);font-size:13px;letter-spacing:.16em;text-transform:uppercase;font-weight:700}"
         "h1{max-width:760px;margin:0;font-family:Georgia,serif;font-size:clamp(42px,8vw,86px);line-height:.98;font-weight:500;color:#30253d}"
@@ -64,11 +69,11 @@ def build_hosted_report_html(report: NatalReport) -> str:
         ".chart-stage:before,.chart-stage:after{content:'';position:absolute;border-radius:999px;background:#fff;filter:blur(10px);opacity:.42}.chart-stage:before{width:110px;height:38px;left:8%;top:9%}.chart-stage:after{width:150px;height:46px;right:8%;bottom:10%}"
         "svg{position:relative;z-index:1;max-width:100%;height:auto;display:block;margin:0 auto}"
         ".section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:64px 0 18px}.section-head h2{margin:0;font-family:Georgia,serif;font-size:clamp(28px,4vw,44px);font-weight:500}.section-head p{max-width:480px;margin:0;color:var(--muted)}"
-        ".highlights{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.highlight-card,.position-card,.reading-card{border:1px solid var(--line);background:var(--glass);backdrop-filter:blur(18px);box-shadow:0 18px 52px rgba(118,91,143,.12)}"
+        ".highlights{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.highlight-card,.position-card,.reading-card{border:1px solid var(--line);background:rgba(255,255,255,.82);box-shadow:0 18px 52px rgba(118,91,143,.12);transform:translateZ(0)}"
         ".highlight-card{display:block;min-height:180px;padding:22px;border-radius:24px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.highlight-card:hover{transform:translateY(-3px);box-shadow:0 22px 60px rgba(118,91,143,.18)}.highlight-card span,.reading-card span,.position-card span{display:block;margin-bottom:10px;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.highlight-card h3,.reading-card h3{margin:0 0 10px;font-family:Georgia,serif;font-size:24px;font-weight:500}.highlight-excerpt{margin:0;color:var(--muted)}"
         ".positions-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.position-card{display:block;min-height:138px;padding:18px;border-radius:20px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.position-card:hover{transform:translateY(-3px);box-shadow:0 22px 60px rgba(118,91,143,.18)}.position-card strong{display:block;margin-bottom:6px;font-family:Georgia,serif;font-size:22px;font-weight:500}.position-card p{margin:0;color:var(--muted)}"
         ".full-reading{display:grid;gap:18px}.reading-card{padding:clamp(20px,3vw,30px);border-radius:24px}.reading-card div{max-width:78ch}.reading-card p{margin:0 0 12px}.reading-card ul{padding-left:22px}"
-        ".footer{display:flex;flex-wrap:wrap;gap:14px;margin:44px 0 0;color:var(--muted);font-size:14px}.mirror-link{color:#6f5b95;font-weight:700}.privacy,.attribution{margin:0}"
+        ".footer{display:flex;flex-wrap:wrap;gap:14px;margin:44px 0 0;color:var(--muted);font-size:14px}.mirror-link{color:#6f5b95;font-weight:700}.privacy,.attribution{margin:0}.report-note{flex-basis:100%;margin:6px 0 0;padding-top:14px;border-top:1px solid var(--line)}.report-note strong{color:var(--ink)}"
         "a{color:#6f5b95}@media(max-width:860px){.hero{min-height:auto}.highlights,.positions-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}.chart-stage{border-radius:24px}}"
         "</style></head><body><main>"
         '<section class="hero">'
@@ -85,9 +90,77 @@ def build_hosted_report_html(report: NatalReport) -> str:
         f'<div class="positions-grid">{positions}</div></section>'
         f'<footer class="footer">{telegraph}'
         '<p class="privacy">Privacy: LLM receives only derived chart data, not raw birth date or place.</p>'
-        f'<p class="attribution">{_GEONAMES_ATTRIBUTION_HTML}</p></footer>'
+        f'<p class="attribution">{_GEONAMES_ATTRIBUTION_HTML}</p>{notes_html}</footer>'
         "</main></body></html>"
     )
+
+
+def _prepare_hosted_section_markdown(section: ReportSection) -> tuple[str, list[str]]:
+    markdown = section.body_markdown
+    if not _is_aspect_section(section):
+        return markdown, []
+
+    markdown, notes = _extract_trailing_notes(markdown)
+    return _separate_bold_blocks(markdown), notes
+
+
+def _is_aspect_section(section: ReportSection) -> bool:
+    section_id = section.id.lower()
+    title = section.title.lower()
+    return "aspect" in section_id or "аспект" in title or "внутренние связи" in title
+
+
+def _extract_trailing_notes(markdown: str) -> tuple[str, list[str]]:
+    match = re.search(
+        r"(?is)(?:^|\s)(?:\*\*)?(?:примечание|note)(?:\*\*)?\s*[:：]\s*(?P<note>.+?)\s*$",
+        markdown.strip(),
+    )
+    if not match:
+        return markdown, []
+    body = markdown[: match.start()].strip()
+    note = match.group("note").strip()
+    return body, [note] if note else []
+
+
+def _separate_bold_blocks(markdown: str) -> str:
+    stripped = markdown.strip()
+    matches = list(re.finditer(r"\*\*[^*\n]{3,120}\*\*", stripped))
+    if len(matches) < 2:
+        return stripped
+
+    blocks: list[str] = []
+    preamble = stripped[: matches[0].start()].strip()
+    if preamble:
+        blocks.append(preamble)
+
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(stripped)
+        block = stripped[match.start() : end].strip()
+        if block:
+            blocks.append(block)
+    return "\n\n".join(blocks)
+
+
+def _hosted_markdown_to_html(markdown: str) -> str:
+    converted = markdown_to_html(markdown).strip()
+    if not converted:
+        return ""
+
+    blocks: list[str] = []
+    for block in re.split(r"\n{2,}", converted):
+        clean = block.strip()
+        if not clean:
+            continue
+        if clean.startswith(("<p", "<pre", "<blockquote", "<ul", "<ol")):
+            blocks.append(clean)
+        else:
+            blocks.append(f"<p>{clean}</p>")
+    return "".join(blocks)
+
+
+def _footer_note_html(note: str) -> str:
+    text = html.escape(_plain_text_excerpt(note, limit=1000))
+    return f'<p class="report-note"><strong>Примечание:</strong> {text}</p>'
 
 
 def _highlight_cards(sections: list[ReportSection]) -> list[str]:

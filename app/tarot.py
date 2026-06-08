@@ -93,6 +93,43 @@ def draw_cards(num_cards: int) -> list[dict]:
 
 # ── Context builders ──────────────────────────────────────────────────────────
 
+def build_card_context(card: dict, orientation: str, position: str = "Карта дня") -> tuple[str, str]:
+    """Build one-card context and display label for a fixed card/orientation."""
+    is_reversed = orientation == "Перевернутая"
+    meanings = card.get("meanings", {}).get("shadow" if is_reversed else "light", [])
+    name = card.get("name", "Unknown Card")
+    keywords = card.get("keywords", [])
+    context_lines = [
+        f"Позиция «{position}»: {name}, {orientation}.",
+        f"Ключевые слова: {', '.join(keywords[:5])}.",
+        f"Значение: {', '.join(meanings[:3])}.",
+        "",
+    ]
+    return "\n".join(context_lines), f"{name} ({orientation})"
+
+
+def iter_daily_card_variants() -> list[dict]:
+    """Return every card/orientation variant needed for prepared card-of-day text."""
+    _load_deck()
+    variants: list[dict] = []
+    for card in _TAROT_DECK:
+        for orientation in ("Прямая", "Перевернутая"):
+            context, label = build_card_context(card, orientation)
+            is_reversed = orientation == "Перевернутая"
+            meanings = card.get("meanings", {}).get("shadow" if is_reversed else "light", [])
+            variants.append(
+                {
+                    "name": card.get("name", "Unknown Card"),
+                    "orientation": orientation,
+                    "is_reversed": is_reversed,
+                    "keywords": card.get("keywords", []),
+                    "meanings": meanings,
+                    "context": context,
+                    "label": label,
+                }
+            )
+    return variants
+
 def get_tarot_context(
     spread: "SpreadType | int" = SpreadType.CLASSIC,
 ) -> tuple[str, list[str]]:

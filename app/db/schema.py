@@ -32,6 +32,7 @@ EXPECTED_TABLES = frozenset(
         "daily_2048_prompt_messages",
         "daily_2048_results",
         "error_logs",
+        "tarot_daily_readings",
         "tavily_api_keys",
         "tavily_key_usage",
         "openrouter_api_keys",

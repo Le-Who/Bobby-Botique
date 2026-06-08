@@ -169,6 +169,55 @@ def test_hosted_report_sanitizes_svg_event_handler_attributes(sample_natal_repor
     assert "<circle" in html
 
 
+def test_hosted_report_formats_aspect_bold_blocks_as_separate_paragraphs(sample_natal_report: NatalReport):
+    sample_natal_report.sections = [
+        ReportSection(
+            id="section-aspects",
+            title="Внутренние связи",
+            body_markdown=(
+                "**Солнце квадрат Луна** напряжение между волей и потребностями. "
+                "**Венера трин Марс** естественный обмен теплом и действием."
+            ),
+            chart_refs=["sun", "moon"],
+        )
+    ]
+
+    html = build_hosted_report_html(sample_natal_report)
+    aspect_html = html.split('id="section-aspects"', 1)[1].split("</article>", 1)[0]
+
+    assert "<p><b>Солнце квадрат Луна</b> напряжение между волей и потребностями.</p>" in aspect_html
+    assert "<p><b>Венера трин Марс</b> естественный обмен теплом и действием.</p>" in aspect_html
+
+
+def test_hosted_report_moves_aspect_note_to_page_footer(sample_natal_report: NatalReport):
+    sample_natal_report.sections = [
+        ReportSection(
+            id="section-aspects",
+            title="Внутренние связи",
+            body_markdown=(
+                "**Солнце квадрат Луна** напряжение между волей и потребностями.\n\n"
+                "Примечание: дома и углы не трактуются без точного времени."
+            ),
+        )
+    ]
+
+    html = build_hosted_report_html(sample_natal_report)
+    aspect_html = html.split('id="section-aspects"', 1)[1].split("</article>", 1)[0]
+
+    assert "Примечание:" not in aspect_html
+    assert html.rfind("дома и углы не трактуются") > html.rfind('class="positions-grid"')
+    assert 'class="report-note"' in html
+
+
+def test_hosted_report_cards_do_not_use_backdrop_filter_for_scroll_stability(sample_natal_report: NatalReport):
+    html = build_hosted_report_html(sample_natal_report)
+    style = html.split("<style>", 1)[1].split("</style>", 1)[0]
+
+    card_rule = next(rule for rule in style.split("}") if ".highlight-card,.position-card,.reading-card" in rule)
+    assert "backdrop-filter" not in card_rule
+    assert "-webkit-backdrop-filter" not in card_rule
+
+
 def test_telegraph_markdown_links_to_hosted_report(sample_natal_report: NatalReport):
     sample_natal_report.hosted_url = "https://example.com/reports/natal/abc"
 

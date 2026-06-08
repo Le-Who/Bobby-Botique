@@ -2050,6 +2050,30 @@ async def _generate_tarot_inline(
             )
         return
 
+    daily_card_key: tuple[str, str] | None = None
+    if spread == SpreadType.DAILY and card_names:
+        from app.tarot_daily import get_prepared_daily_reading, parse_card_label, today_reading_date
+
+        daily_card_key = parse_card_label(card_names[0])
+        if daily_card_key:
+            card_name, orientation = daily_card_key
+            with contextlib.suppress(Exception):
+                prepared = await get_prepared_daily_reading(
+                    reading_date=today_reading_date(),
+                    card_name=card_name,
+                    orientation=orientation,
+                )
+                if prepared:
+                    cards_str = " • ".join(card_names)
+                    final_text = f"🎤 Карта дня\n_Выпала: {cards_str}_\n\n{prepared.body_markdown}"
+                    await bot.edit_message_text(
+                        inline_message_id=inline_message_id,
+                        text=markdown_to_html(final_text)[:4000],
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([]),
+                    )
+                    return
+
     system_instruction = _build_tarot_system_prompt(spread, tarot_ctx, arg)
     prompt = f"Вопрос к Таро: {arg}"
 
@@ -2072,8 +2096,9 @@ async def _generate_tarot_inline(
 
     router = get_provider_router()
     try:
+        preferred_model = "gemini-3.1-flash-lite" if spread == SpreadType.DAILY else "gemini-3.5-flash"
         result, _tokens = await router.get_response(
-            preferred_model="gemini-3.5-flash",
+            preferred_model=preferred_model,
             history=[{"role": "user", "parts": [prompt]}],
             system_instruction=system_instruction,
             user_id=user_id,
@@ -2106,6 +2131,20 @@ async def _generate_tarot_inline(
 
     # Defense-in-depth: strip any surrogate codepoints the LLM may emit
     result = result.strip().encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+
+    if spread == SpreadType.DAILY and daily_card_key:
+        from app.tarot_daily import TAROT_DAILY_MODEL, today_reading_date, upsert_prepared_daily_reading
+
+        card_name, orientation = daily_card_key
+        with contextlib.suppress(Exception):
+            await upsert_prepared_daily_reading(
+                reading_date=today_reading_date(),
+                card_name=card_name,
+                orientation=orientation,
+                language="ru",
+                body_markdown=result,
+                model_name=TAROT_DAILY_MODEL,
+            )
 
     cards_str = " • ".join(card_names)
     # Only show card list for spreads with a meaningful question
