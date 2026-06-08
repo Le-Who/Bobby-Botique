@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 # Copy application code
 COPY . .
+RUN test -f /app/docs/natal-reference-fixture.moira-jpl.json
 
 # Prepare startup script + create non-root user with access to tg-api shared volume
 # GID 101 matches the telegram-bot-api group inside the aiogram/telegram-bot-api container.
