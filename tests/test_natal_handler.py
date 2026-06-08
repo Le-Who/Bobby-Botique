@@ -6,6 +6,7 @@ import pytest
 from app.handlers.natal_chart import (
     NATAL_CONFIRM,
     NATAL_COUNTRY,
+    NATAL_DATE,
     NATAL_FOCUS,
     NATAL_PLACE,
     NATAL_TABLE,
@@ -13,16 +14,20 @@ from app.handlers.natal_chart import (
     build_natal_chart_handler,
     clear_natal_user_data,
     natal_command,
+    on_confirm,
     on_country,
     on_country_selected,
+    on_date,
     on_focus,
+    on_mode,
     on_place,
     on_place_missing,
     on_place_selected,
     on_table_input,
     on_time_precision,
+    on_time_value,
 )
-from app.natal.models import TimePrecision
+from app.natal.models import ChartData, InputQuality, NatalReport, PlanetPosition, ReportSection, TimePrecision
 
 
 class FakeMessage:
@@ -62,6 +67,42 @@ def make_callback_update(data: str):
 
 def make_context():
     return SimpleNamespace(user_data={})
+
+
+def first_callback_data(update, text_part: str) -> str:
+    keyboard = update.message.replies[-1][1]["reply_markup"].inline_keyboard
+    for row in keyboard:
+        for button in row:
+            if text_part in button.text:
+                return button.callback_data
+    raise AssertionError(f"No inline button containing {text_part!r}")
+
+
+def fake_natal_report(url: str) -> NatalReport:
+    return NatalReport(
+        report_id=url.rsplit("/", 1)[-1],
+        user_id=123,
+        chart=ChartData(
+            input_quality=InputQuality(
+                time_precision=TimePrecision.UNKNOWN,
+                houses_available=False,
+                angles_available=False,
+            ),
+            planets=[
+                PlanetPosition(
+                    key="sun",
+                    label="Солнце",
+                    longitude=325.0,
+                    sign="Водолей",
+                    degree_in_sign=25.0,
+                )
+            ],
+            aspects=[],
+        ),
+        svg="<svg></svg>",
+        sections=[ReportSection(id="section-sun", title="Солнце", body_markdown="body")],
+        hosted_url=url,
+    )
 
 
 @pytest.mark.asyncio
@@ -183,6 +224,104 @@ async def test_table_mode_requires_birth_country():
 
     assert state == NATAL_TABLE
     assert "Страна рождения" in update.message.replies[0][0]
+
+
+@pytest.mark.asyncio
+async def test_step_flow_exact_time_city_selection_generates_hosted_report(monkeypatch):
+    captured = {}
+
+    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url):
+        captured.update(
+            {
+                "birth_input": birth_input,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "webhook_url": webhook_url,
+            }
+        )
+        return fake_natal_report(f"{webhook_url}/reports/natal/exact-report-id")
+
+    monkeypatch.setenv("WEBHOOK_URL", "https://bot.example.com")
+    monkeypatch.setattr("app.handlers.natal_chart.create_natal_report", fake_create_natal_report)
+
+    context = make_context()
+    update = make_callback_update("natal_mode:step")
+    assert await on_mode(update, context) == NATAL_DATE
+
+    update = make_update("14.02.1995")
+    assert await on_date(update, context) == "NATAL_TIME_PRECISION"
+
+    update = make_update("точное")
+    assert await on_time_precision(update, context) == NATAL_TIME_VALUE
+
+    update = make_update("06:30")
+    assert await on_time_value(update, context) == NATAL_COUNTRY
+
+    update = make_update("У")
+    assert await on_country(update, context) == NATAL_COUNTRY
+    update = make_callback_update(first_callback_data(update, "UA"))
+    assert await on_country_selected(update, context) == NATAL_PLACE
+
+    update = make_update("Оде")
+    assert await on_place(update, context) == NATAL_PLACE
+    update = make_callback_update(first_callback_data(update, "Odesa"))
+    assert await on_place_selected(update, context) == NATAL_FOCUS
+
+    update = make_update("отношения")
+    assert await on_focus(update, context) == NATAL_CONFIRM
+    birth_input = context.user_data["natal_birth_input"]
+    assert birth_input.time_precision == TimePrecision.EXACT
+    assert birth_input.birth_time == "06:30"
+    assert birth_input.birth_place_display_name == "Odesa, Odesa Oblast, Ukraine"
+    assert birth_input.birth_place_timezone == "Europe/Kyiv"
+
+    update = make_callback_update("natal_confirm:yes")
+    assert await on_confirm(update, context) == -1
+
+    assert captured["user_id"] == 123
+    assert captured["chat_id"] == 456
+    assert captured["webhook_url"] == "https://bot.example.com"
+    assert captured["birth_input"].birth_place_latitude is not None
+    assert update.callback_query.message.replies[-1][0] == "Готово: https://bot.example.com/reports/natal/exact-report-id"
+    assert context.user_data == {}
+
+
+@pytest.mark.asyncio
+async def test_step_flow_unknown_time_city_selection_generates_limited_report(monkeypatch):
+    captured = {}
+
+    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url):
+        captured["birth_input"] = birth_input
+        return fake_natal_report(f"{webhook_url}/reports/natal/unknown-report-id")
+
+    monkeypatch.setenv("WEBHOOK_URL", "https://bot.example.com")
+    monkeypatch.setattr("app.handlers.natal_chart.create_natal_report", fake_create_natal_report)
+
+    context = make_context()
+    assert await on_date(make_update("14.02.1995"), context) == "NATAL_TIME_PRECISION"
+    assert await on_time_precision(make_update("неизвестно"), context) == NATAL_COUNTRY
+
+    country_update = make_update("У")
+    assert await on_country(country_update, context) == NATAL_COUNTRY
+    assert await on_country_selected(make_callback_update(first_callback_data(country_update, "UA")), context) == NATAL_PLACE
+
+    city_update = make_update("Оде")
+    assert await on_place(city_update, context) == NATAL_PLACE
+    assert await on_place_selected(make_callback_update(first_callback_data(city_update, "Odesa")), context) == NATAL_FOCUS
+
+    focus_update = make_update("общий")
+    assert await on_focus(focus_update, context) == NATAL_CONFIRM
+    confirmation_text = focus_update.message.replies[-1][0]
+    assert "Без точного времени" in confirmation_text
+
+    confirm_update = make_callback_update("natal_confirm:yes")
+    assert await on_confirm(confirm_update, context) == -1
+
+    birth_input = captured["birth_input"]
+    assert birth_input.time_precision == TimePrecision.UNKNOWN
+    assert birth_input.birth_time is None
+    assert birth_input.birth_place_timezone == "Europe/Kyiv"
+    assert confirm_update.callback_query.message.replies[-1][0].endswith("/reports/natal/unknown-report-id")
 
 
 def test_cancel_clears_natal_keys_from_user_data():

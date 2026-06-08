@@ -71,7 +71,8 @@ This document tracks the changes required to move natal charts from MVP to produ
 
 ## Current Verification Evidence
 
-- Local Python 3.14 focused suite: `188 passed, 1 warning` for all `tests/test_natal_*.py`.
+- Local Python 3.14 focused suite: `190 passed, 1 warning` for all `tests/test_natal_*.py`.
+- Telegram handler-level flow tests cover step-by-step exact-time and unknown-time paths from mode/date/country/city selection through final hosted report URL reply, with city coordinates/timezone embedded before report generation.
 - Affected existing suite: `43 passed` for `tests/test_horoscope_intent.py`, `tests/test_commands.py`, `tests/test_reader_utils.py`, and `tests/test_web_security.py`.
 - Lint: `ruff check app/natal app/handlers/natal_chart.py tests/test_natal_*.py` passed.
 - Encoding: `scripts/check_encoding.py` passed after documentation and code changes.
