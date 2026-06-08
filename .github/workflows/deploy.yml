@@ -345,6 +345,8 @@ jobs:
               docker exec tg-bot python /app/scripts/natal_readiness.py \
                 --check-config \
                 --check-storage \
+                --require-external \
+                --reference-fixtures /app/docs/natal-reference-fixture.moira-jpl.json \
                 --smoke \
                 --webhook-url "$WEBHOOK_URL" \
                 --min-city-count 30000 \
