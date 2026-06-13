@@ -64,15 +64,18 @@ class GeminiProvider(BaseAIProvider):
 
             # Compute metrics
             try:
-                prompt_length = sum(
-                    len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None
-                )
-                has_images = any(
-                    isinstance(part, (bytes, bytearray, Image.Image))
-                    for item in history
-                    for part in (item.get("parts", []) or [])
-                    if part is not None
-                )
+                prompt_length = 0
+                has_images = False
+                for item in history:
+                    for part in item.get("parts", []) or []:
+                        if part is None:
+                            continue
+                        if isinstance(part, dict) and "text" in part:
+                            prompt_length += len(part["text"])
+                        elif isinstance(part, str):
+                            prompt_length += len(part)
+                        elif isinstance(part, (bytes, bytearray, Image.Image)):
+                            has_images = True
             except Exception as e:
                 logging.warning("Metrics calc error: %s", e)
                 prompt_length = 0
