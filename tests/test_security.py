@@ -140,6 +140,29 @@ class TestSanitizeUrl:
         with pytest.raises(InputSanitizationError, match="IP"):
             self.s.sanitize_url("http://192.168.1.1/admin")
 
+    def test_rejects_domain_resolving_to_localhost(self):
+        with pytest.raises(InputSanitizationError, match="local/private IP"):
+            self.s.sanitize_url("http://127.0.0.1.nip.io/admin")
+
+    def test_rejects_domain_resolving_to_ipv6_localhost(self):
+        # Ensure ipv6 resolution works and catches local IPs
+        with pytest.raises(InputSanitizationError, match="local/private IP"):
+            # Mock getaddrinfo to simulate an IPv6 loopback response
+            import socket
+
+            original_getaddrinfo = socket.getaddrinfo
+            try:
+
+                def mock_getaddrinfo(host, port, *args, **kwargs):
+                    if host == "test-ipv6-loopback.example":
+                        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::1", 80, 0, 0))]
+                    return original_getaddrinfo(host, port, *args, **kwargs)
+
+                socket.getaddrinfo = mock_getaddrinfo
+                self.s.sanitize_url("http://test-ipv6-loopback.example/admin")
+            finally:
+                socket.getaddrinfo = original_getaddrinfo
+
     def test_rejects_too_long_url(self):
         with pytest.raises(InputSanitizationError, match="too long"):
             self.s.sanitize_url("https://example.com/" + "a" * 10000)
