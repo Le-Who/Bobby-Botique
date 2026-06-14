@@ -8,6 +8,7 @@ import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -209,7 +210,18 @@ class InputSanitizer:
         if hostname.lower() == "localhost":
             raise InputSanitizationError("Localhost URLs not allowed")
 
-        # Check for IP addresses
+        # Check for IP addresses and perform DNS resolution to prevent SSRF
+        try:
+            # Get all IP addresses for the hostname
+            addresses = socket.getaddrinfo(hostname, None)
+            for _, _, _, _, sockaddr in addresses:
+                ip_str = sockaddr[0]
+                ip = ipaddress.ip_address(ip_str)
+                if ip.is_private or ip.is_loopback or ip.is_link_local:
+                    raise InputSanitizationError(f"Resolved IP address is not allowed: {ip_str}")
+        except socket.gaierror as e:
+            raise InputSanitizationError(f"Could not resolve hostname: {hostname}") from e
+
         try:
             # This handles both IPv4 and IPv6
             ipaddress.ip_address(hostname)
