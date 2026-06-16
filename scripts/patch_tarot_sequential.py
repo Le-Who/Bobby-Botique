@@ -9,8 +9,8 @@ Rationale (per user feedback):
 - ProviderRouter.get_response() already does this with max_key_retries=3 and
   health-aware key selection (DB-backed KeyStatusManager)
 """
-import sys
 import re
+import sys
 
 TARGET = "app/handlers/inline.py"
 
@@ -87,7 +87,7 @@ NEW_DOCSTRING_FRAGMENT = (
     "    daily quota.\n"
 )
 
-with open(TARGET, "r", encoding="utf-8") as f:
+with open(TARGET, encoding="utf-8") as f:
     content = f.read()
 
 # 1. Patch the docstring
@@ -106,7 +106,7 @@ with open(TARGET, "w", encoding="utf-8") as f:
     f.write(content)
 
 # 3. Add _TAROT_MODEL constant near _INLINE_FALLBACK_MODEL if not already there
-with open(TARGET, "r", encoding="utf-8") as f:
+with open(TARGET, encoding="utf-8") as f:
     content = f.read()
 
 if "_TAROT_MODEL" not in content:
@@ -131,7 +131,7 @@ if "_TAROT_MODEL" not in content:
         f.write(content)
 
 # Verify
-with open(TARGET, "r", encoding="utf-8") as f:
+with open(TARGET, encoding="utf-8") as f:
     content = f.read()
 
 checks = [

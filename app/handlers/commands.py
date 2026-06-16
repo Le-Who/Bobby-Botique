@@ -653,6 +653,9 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("mydata", mydata_command))
     application.add_handler(CommandHandler("deleteme", deleteme_command))
     application.add_handler(CommandHandler("clearmemory", clearmemory_command))
+    
+    from app.handlers.cmd_tarot import tarot_command
+    application.add_handler(CommandHandler("tarot", tarot_command))
 
     # Image generation commands (/draw, /img, /image, /generate)
     from app.handlers.cmd_image import draw_command

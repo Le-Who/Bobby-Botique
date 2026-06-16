@@ -16,7 +16,7 @@ htmlcov/
 .pytest_cache/
 .pytest_tmp/
 tests_output.log
-
+output/
 # ── Linter / Type Checker Caches ──────────────────────────────
 .ruff_cache/
 .mypy_cache/
@@ -52,7 +52,7 @@ implementation_plan.md
 skills-lock.json
 walkthrough.md
 
-# Crocodile game � local judgement cache
+# Crocodile game � local judgement cache
 app/games/data/*.json
 
 

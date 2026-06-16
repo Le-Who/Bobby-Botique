@@ -788,6 +788,10 @@ def register(application: Application) -> None:
     # NEW messages only — explicit UpdateType.MESSAGE guard prevents
     # edited_message / channel_post from leaking into these handlers.
     _msg = filters.UpdateType.MESSAGE
+    # Tarot Mode Interceptor
+    from app.handlers.tarot_chat import handle_tarot_message, is_tarot_mode_filter
+    application.add_handler(MessageHandler(_msg & filters.TEXT & is_tarot_mode_filter, handle_tarot_message, block=False))
+
     application.add_handler(MessageHandler(_msg & filters.TEXT & ~filters.COMMAND, handle_request, block=False))
     application.add_handler(MessageHandler(_msg & filters.PHOTO, handle_request, block=False))
     application.add_handler(MessageHandler(_msg & filters.Document.ALL, handle_request, block=False))
