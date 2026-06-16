@@ -655,7 +655,8 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("clearmemory", clearmemory_command))
     
     from app.handlers.cmd_tarot import tarot_command
-    application.add_handler(CommandHandler(["tarot", "таро", "расклад"], tarot_command))
+    application.add_handler(CommandHandler("tarot", tarot_command))
+    application.add_handler(MessageHandler(filters.Regex(r'^(?i)/(?:таро|расклад)(?:\s+|$)'), tarot_command))
 
     # Image generation commands (/draw, /img, /image, /generate)
     from app.handlers.cmd_image import draw_command
