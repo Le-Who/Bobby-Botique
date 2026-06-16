@@ -656,7 +656,7 @@ def register(application: Application) -> None:
     
     from app.handlers.cmd_tarot import tarot_command
     application.add_handler(CommandHandler("tarot", tarot_command))
-    application.add_handler(MessageHandler(filters.Regex(r'^(?i)/(?:таро|расклад)(?:\s+|$)'), tarot_command))
+    application.add_handler(MessageHandler(filters.Regex(r'(?i)^/(?:таро|расклад)(?:\s+|$)'), tarot_command))
 
     # Image generation commands (/draw, /img, /image, /generate)
     from app.handlers.cmd_image import draw_command

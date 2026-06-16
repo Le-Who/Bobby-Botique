@@ -13,9 +13,9 @@ from app.natal.accuracy import format_accuracy_results, load_golden_cases_from_j
 from app.natal.city_readiness import check_city_catalog_readiness, format_city_readiness
 from app.natal.config_readiness import check_natal_config_readiness, format_natal_config_readiness
 from app.natal.horizons_accuracy import format_horizons_results, validate_planets_against_horizons
+from app.database import db_manager
 from app.natal.smoke import run_natal_smoke
 from app.natal.storage import check_storage_ready
-
 
 async def _main(
     *,
@@ -37,6 +37,10 @@ async def _main(
         return 1
     exit_code = 0
     cases = load_golden_cases_from_json(fixture_path) if fixture_path else None
+
+    # Initialize DB pool for storage/smoke checks to prevent auto-reconnect warnings
+    if check_storage or run_smoke:
+        await db_manager.create_pool()
 
     city_result = check_city_catalog_readiness(
         max_warmup_ms=max_city_warmup_ms,
