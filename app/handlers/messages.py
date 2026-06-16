@@ -792,6 +792,13 @@ def register(application: Application) -> None:
     from app.handlers.tarot_chat import handle_tarot_message, is_tarot_mode_filter
     application.add_handler(MessageHandler(_msg & filters.TEXT & is_tarot_mode_filter, handle_tarot_message, block=False))
 
+    # Tarot Single-word Intent Interceptor
+    import re
+
+    from app.handlers.cmd_tarot import tarot_command
+    tarot_intent_filter = filters.Regex(re.compile(r'^\s*(таро|расклад)\s*[?!.]*\s*$', re.IGNORECASE))
+    application.add_handler(MessageHandler(_msg & filters.TEXT & tarot_intent_filter, tarot_command, block=False))
+
     application.add_handler(MessageHandler(_msg & filters.TEXT & ~filters.COMMAND, handle_request, block=False))
     application.add_handler(MessageHandler(_msg & filters.PHOTO, handle_request, block=False))
     application.add_handler(MessageHandler(_msg & filters.Document.ALL, handle_request, block=False))
