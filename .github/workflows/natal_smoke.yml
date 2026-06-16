@@ -1,0 +1,38 @@
+name: Natal Smoke Test
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # Every day at 3:00 AM UTC
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Natal Smoke Test on VPS
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          NATAL_REPORTS_ENABLED: ${{ secrets.NATAL_REPORTS_ENABLED || 'false' }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: NATAL_REPORTS_ENABLED, WEBHOOK_URL
+          script: |
+            set -e
+            if [ "$(printf '%s' "$NATAL_REPORTS_ENABLED" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
+              echo ">>> Running natal chart live readiness smoke..."
+              docker exec tg-bot python /app/scripts/natal_readiness.py \
+                --check-config \
+                --check-storage \
+                --require-external \
+                --reference-fixtures /app/docs/natal-reference-fixture.moira-jpl.json \
+                --smoke \
+                --webhook-url "$WEBHOOK_URL" \
+                --min-city-count 30000 \
+                --max-city-warmup-ms 3000 \
+                --max-city-search-ms 300
+            else
+              echo "Natal reports disabled, skipping smoke test."
+            fi

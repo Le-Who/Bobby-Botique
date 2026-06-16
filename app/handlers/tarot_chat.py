@@ -79,7 +79,9 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
         history.append({"role": "user", "parts": [f"[SYSTEM: {system_update}]. Прокомментируй её появление и свяжи с предыдущими."]})
         set_tarot_session(user_id, session)
         
-        status_msg = await update.message.reply_text("🔮 Таролог вглядывается в карты...")
+        status_text = "⏳ **Таролог вглядывается в новую карту... Пожалуйста, подождите.**"
+        f_text, p_mode = TelegramFormatter.format_text(status_text)
+        status_msg = await update.message.reply_text(f_text, parse_mode=p_mode)
     else:
         is_first_question = session.get("waiting_for_question", False)
         history.append({"role": "user", "parts": [text]})
@@ -90,17 +92,17 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
             session["waiting_for_question"] = False
             
             card_names = ", ".join([c["name"] for c in cards])
-            status_text = f"🔮 Я вытянул карты на ваш вопрос:\n**{card_names}**\n\nТаролог вглядывается в них..."
+            status_text = f"⏳ **Таролог вглядывается в карты... Пожалуйста, подождите.**\n\n🔮 *Вытянутые карты:*\n{card_names}"
             
-            reply_markup = ReplyKeyboardMarkup(keyboard_full, resize_keyboard=True)
             formatted_text, parse_mode = TelegramFormatter.format_text(status_text)
             status_msg = await update.message.reply_text(
                 formatted_text, 
-                parse_mode=parse_mode, 
-                reply_markup=reply_markup
+                parse_mode=parse_mode
             )
         else:
-            status_msg = await update.message.reply_text("🔮 Таролог вглядывается в карты...")
+            status_text = "⏳ **Таролог обдумывает ваш вопрос... Пожалуйста, подождите.**"
+            f_text, p_mode = TelegramFormatter.format_text(status_text)
+            status_msg = await update.message.reply_text(f_text, parse_mode=p_mode)
             
         set_tarot_session(user_id, session)
 
@@ -125,7 +127,16 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
         set_tarot_session(user_id, session)
         
         formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
-        await status_msg.edit_text(formatted_text, parse_mode=parse_mode)
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+        reply_markup = ReplyKeyboardMarkup(keyboard_full, resize_keyboard=True)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
     except Exception as e:
         logging.error("Tarot processing error: %s", e)
-        await status_msg.edit_text("Извините, карты затуманены. Попробуйте снова.")
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+        await update.message.reply_text("Извините, карты затуманены. Попробуйте снова.")
