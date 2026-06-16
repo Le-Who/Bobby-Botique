@@ -21,32 +21,30 @@ async def tarot_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # 1. Enable tarot mode
     set_tarot_mode(user_id, True)
     
-    # 2. Draw initial cards (3 card spread default)
+    # 2. Setup session without drawing cards yet
     spread = SpreadType.CLASSIC
-    cards = draw_cards(3)
     
+    from typing import Any
     # 3. Create session
-    session_data = {
+    session_data: dict[str, Any] = {
         "spread_type": spread.value,
-        "drawn_cards": cards,
-        "history": []
+        "drawn_cards": [],
+        "history": [],
+        "waiting_for_question": True
     }
     set_tarot_session(user_id, session_data)
     
     # 4. Show UI (Reply Keyboard)
     keyboard = [
-        ["🃏 Достать 1 карту", "🔄 Новый расклад"],
         ["🛑 Завершить сеанс Таро"]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
     # 5. Format welcome message
-    card_names = ", ".join([c["name"] for c in cards])
     text = (
         f"🔮 **Сеанс Таро начат**\n\n"
-        f"Расклад (Классический - 3 карты):\n"
-        f"**{card_names}**\n\n"
-        "Задайте мне свой вопрос по этому раскладу."
+        "Пожалуйста, сосредоточьтесь на вашей ситуации и **задайте свой вопрос**.\n"
+        "Как только вы напишете вопрос, я вытяну карты для расклада."
     )
     
     formatted_text, parse_mode = TelegramFormatter.format_text(text)

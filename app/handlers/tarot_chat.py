@@ -48,29 +48,29 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
     history = session.get("history", [])
 
-    keyboard = [
+    keyboard_full = [
         ["🃏 Достать 1 карту", "🔄 Новый расклад"],
         ["🛑 Завершить сеанс Таро"]
     ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    keyboard_wait = [
+        ["🛑 Завершить сеанс Таро"]
+    ]
 
     if text == "🔄 Новый расклад":
-        spread = SpreadType.CLASSIC
-        cards = draw_cards(3)
-        
-        session["spread_type"] = spread.value
-        session["drawn_cards"] = cards
+        session["spread_type"] = SpreadType.CLASSIC.value
+        session["drawn_cards"] = []
         session["history"] = []
+        session["waiting_for_question"] = True
         set_tarot_session(user_id, session)
         
-        card_names = ", ".join([c["name"] for c in cards])
+        reply_markup = ReplyKeyboardMarkup(keyboard_wait, resize_keyboard=True)
         await update.message.reply_text(
-            f"🔮 Я вытянул новый расклад:\n**{card_names}**\n\nСпрашивайте.",
+            "🔄 Расклад сброшен. Пожалуйста, задайте ваш новый вопрос, и я вытяну карты.",
             reply_markup=reply_markup
         )
         return
         
-    if text == "🃏 Достать 1 карту":
+    if text == "🃏 Достать 1 карту" and not session.get("waiting_for_question"):
         cards = draw_cards(1)
         new_card = cards[0]
         session["drawn_cards"].append(new_card)
@@ -78,12 +78,31 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
         system_update = f"Вы вытянули дополнительную уточняющую карту: {new_card['name']} ({new_card['orientation']}). Значение: {', '.join(new_card.get('meanings', [])[:3])}"
         history.append({"role": "user", "parts": [f"[SYSTEM: {system_update}]. Прокомментируй её появление и свяжи с предыдущими."]})
         set_tarot_session(user_id, session)
+        
+        status_msg = await update.message.reply_text("🔮 Таролог вглядывается в карты...")
     else:
+        is_first_question = session.get("waiting_for_question", False)
         history.append({"role": "user", "parts": [text]})
+        
+        if is_first_question:
+            cards = draw_cards(3)
+            session["drawn_cards"] = cards
+            session["waiting_for_question"] = False
+            
+            card_names = ", ".join([c["name"] for c in cards])
+            status_text = f"🔮 Я вытянул карты на ваш вопрос:\n**{card_names}**\n\nТаролог вглядывается в них..."
+            
+            reply_markup = ReplyKeyboardMarkup(keyboard_full, resize_keyboard=True)
+            formatted_text, parse_mode = TelegramFormatter.format_text(status_text)
+            status_msg = await update.message.reply_text(
+                formatted_text, 
+                parse_mode=parse_mode, 
+                reply_markup=reply_markup
+            )
+        else:
+            status_msg = await update.message.reply_text("🔮 Таролог вглядывается в карты...")
+            
         set_tarot_session(user_id, session)
-
-    # Status message
-    status_msg = await update.message.reply_text("🔮 Таролог вглядывается в карты...")
 
     try:
         tarot_ctx = ""
