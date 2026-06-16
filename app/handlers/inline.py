@@ -2147,11 +2147,19 @@ async def _generate_tarot_inline(
             )
 
     cards_str = " • ".join(card_names)
+    has_question = bool(arg and arg != "Общий прогноз")
+
     # Only show card list for spreads with a meaningful question
     if spread == SpreadType.DAILY or spread == SpreadType.YES_NO:
-        final_text = f"{header}\n_Выпала: {cards_str}_\n\n{result}"
+        if has_question:
+            final_text = f"{header}\n> {arg}\n_Выпала: {cards_str}_\n\n{result}"
+        else:
+            final_text = f"{header}\n_Выпала: {cards_str}_\n\n{result}"
     else:
-        final_text = f"{header}: **{arg}**\n_Выпали: {cards_str}_\n\n{result}"
+        if has_question:
+            final_text = f"{header}\n> {arg}\n_Выпали: {cards_str}_\n\n{result}"
+        else:
+            final_text = f"{header}: **Общий прогноз**\n_Выпали: {cards_str}_\n\n{result}"
     html = markdown_to_html(final_text)
 
     try:
