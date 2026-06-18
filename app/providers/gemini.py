@@ -64,8 +64,19 @@ class GeminiProvider(BaseAIProvider):
 
             # Compute metrics
             try:
+                # ⚡ Bolt Optimization: Avoid len(str(part)) on binary data and Image objects.
+                # Stringifying large byte arrays spikes memory and blocks the main thread.
+                def _get_len(p):
+                    if isinstance(p, str):
+                        return len(p)
+                    if isinstance(p, dict) and "text" in p:
+                        return len(str(p["text"]))
+                    if isinstance(p, (bytes, bytearray, Image.Image)):
+                        return 0
+                    return len(str(p))
+
                 prompt_length = sum(
-                    len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None
+                    _get_len(part) for item in history for part in (item.get("parts", []) or []) if part is not None
                 )
                 has_images = any(
                     isinstance(part, (bytes, bytearray, Image.Image))
