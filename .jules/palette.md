@@ -1,3 +1,6 @@
 ## 2024-05-18 - Missing ARIA States on Custom Navigation Tabs
 **Learning:** Found a recurring pattern where custom-built tab navigations (like the one in `dashboard.html`) only toggle visual states (e.g., CSS `.active` classes) without signaling state changes to screen readers via `aria-selected` and `aria-controls` properties, preventing users from tracking active tabs correctly.
 **Action:** When building custom tab components or enhancing existing ones, ensure the parent element has `role="tablist"`, each child button has `role="tab"`, and Javascript click handlers toggle `aria-selected` attributes identically to the visual classes. Add `role="tabpanel"` to the corresponding panel elements.
+## $(date +%Y-%m-%d) - Adding ARIA and Keyboard Navigation to Custom Tabs
+**Learning:** Found custom tab implementation in `miniapp.html` built using generic `div` tags that only relied on visual CSS classes (`active`). They lacked semantics (`role="tab"`) and keyboard operability, making them completely inaccessible.
+**Action:** Always ensure that custom-built interactive components (like tabs using `<div>` instead of native `<button>`) receive explicit WAI-ARIA roles (`tablist`, `tab`, `tabpanel`), `aria-controls`/`aria-selected` bindings, `tabindex="0"` for focusability, and `onkeydown` handlers to respond to 'Enter' and 'Space' keys.
