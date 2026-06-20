@@ -127,12 +127,17 @@ def _confirm_keyboard() -> InlineKeyboardMarkup:
 # ── Entry: deep link /start subscribe_horoscope_{sign} ───────────────────────
 
 async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
-    """Called from /start handler when payload starts with 'subscribe_horoscope_'."""
-    if not update.message:
+    """Called from /start handler when payload starts with 'subscribe_horoscope_' or via callback."""
+    if not update.effective_message:
         return ConversationHandler.END
 
     payload: str = context.user_data.get("horo_payload", "")
     sign = payload.replace("subscribe_horoscope_", "").lower().strip()
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+        if update.callback_query.data == "start_horoscope":
+            sign = ""
 
     if sign not in SIGNS:
         sign = ""  # Ask user to pick
@@ -140,16 +145,24 @@ async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAUL
     context.user_data["horo_sign"] = sign
 
     if sign:
-        await update.message.reply_text(
+        text = (
             f"✨ <b>Подписка на гороскоп</b>\n\n"
             f"Вы хотите получать гороскоп для знака <b>{SIGNS[sign]}</b>?\n\n"
-            f"Подтвердите или выберите другой знак:",
+            f"Подтвердите или выберите другой знак:"
+        )
+    else:
+        text = "✨ <b>Подписка на гороскоп</b>\n\nВыберите ваш знак зодиака:"
+        
+    if update.callback_query:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text,
             parse_mode="HTML",
             reply_markup=_sign_keyboard(),
         )
     else:
         await update.message.reply_text(
-            "✨ <b>Подписка на гороскоп</b>\n\nВыберите ваш знак зодиака:",
+            text,
             parse_mode="HTML",
             reply_markup=_sign_keyboard(),
         )
@@ -463,6 +476,7 @@ def build_horoscope_subscription_handler() -> ConversationHandler:
         entry_points=[
             # Deep link entry — called programmatically from start_command
             CommandHandler("horoscope_settings", horoscope_settings_command),
+            CallbackQueryHandler(start_subscribe_horoscope, pattern="^start_horoscope$"),
         ],
         states={
             CHOOSE_SIGN: [

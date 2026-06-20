@@ -49,8 +49,9 @@ async def tarot_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     
-    await update.message.reply_text(
-        formatted_text,
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=formatted_text,
         parse_mode=parse_mode,
         reply_markup=reply_markup
     )

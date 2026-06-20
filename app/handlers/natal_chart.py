@@ -717,6 +717,7 @@ def build_natal_chart_handler() -> ConversationHandler:
             CommandHandler("natal", natal_command),
             MessageHandler(filters.TEXT & filters.Regex(NATAL_SLASH_ALIAS_RE), natal_command),
             MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(NATAL_INTENT_RE), natal_command),
+            CallbackQueryHandler(natal_command, pattern=r"^start_natal$"),
         ],
         states={
             NATAL_MODE: [CallbackQueryHandler(on_mode, pattern=r"^natal_mode:")],

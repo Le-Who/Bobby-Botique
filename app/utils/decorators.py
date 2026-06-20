@@ -69,9 +69,9 @@ def authorized_only(func):
             )
 
             if update.message:
-                await update.message.reply_text("❌ У вас нет доступа к этому боту.")
+                await update.message.reply_text("⏳ У вас пока нет доступа к этому боту. Ваша заявка отправлена администратору на рассмотрение. Пожалуйста, ожидайте.")
             elif update.callback_query:
-                await update.callback_query.answer("❌ У вас нет доступа к этому боту.", show_alert=True)
+                await update.callback_query.answer("⏳ Заявка на рассмотрении. Ожидайте.", show_alert=True)
             return
         return await func(update, context, *args, **kwargs)
 

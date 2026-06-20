@@ -302,6 +302,42 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"Ошибка: {e}")
 
 
+async def _send_welcome_to_new_user(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    welcome_text = (
+        "🎉 <b>Доступ разрешён!</b>\n"
+        "Администратор одобрил вашу заявку. Теперь вы можете полноценно пользоваться ботом.\n\n"
+        "<b>Популярные функции:</b>\n"
+        "🔮 Нажмите кнопку ниже или напишите «таро», чтобы запустить режим расклада Таро.\n"
+        "🌟 Нажмите кнопку ниже или напишите «натальная карта», чтобы составить свою натальную карту.\n"
+        "✨ Нажмите кнопку ниже или отправьте /subscribe, чтобы подписаться на гороскоп.\n\n"
+        "<b>Основные команды:</b>\n"
+        "/start — начать работу и настроить бота\n"
+        "/newchat — очистить контекст текущей беседы\n"
+        "/settings — открыть настройки (модель, поиск, память)\n\n"
+        "Чтобы ознакомиться с более полным списком команд, нажмите кнопку помощи или отправьте /help."
+    )
+    keyboard = [
+        [
+            InlineKeyboardButton("🔮 Расклад Таро", callback_data="start_tarot"),
+            InlineKeyboardButton("🌟 Натальная карта", callback_data="start_natal"),
+        ],
+        [
+            InlineKeyboardButton("✨ Гороскоп", callback_data="start_horoscope"),
+            InlineKeyboardButton("ℹ️ Помощь", callback_data="help_cmd"),
+        ]
+    ]
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=welcome_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logging.error("Failed to send welcome message to %s: %s", user_id, e)
+
+
 @admin_only
 async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for получения argumentов команды
@@ -313,6 +349,7 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await authorize_user(user_to_add)
         await invalidate_user_auth_cache(user_to_add)
         await update.message.reply_text(f"Пользователь {user_to_add} добавлен.")
+        await _send_welcome_to_new_user(user_to_add, context)
     except (IndexError, ValueError):
         await update.message.reply_text("Использование: /adduser <user_id>")
 
@@ -359,6 +396,7 @@ async def unauthorized_add_callback(update: Update, context: ContextTypes.DEFAUL
         text = query.message.text_html if query.message else ""
         text += f"\n\n✅ <b>Пользователь {user_id} добавлен в whitelist!</b>"
         await query.edit_message_text(text, parse_mode="HTML")
+        await _send_welcome_to_new_user(user_id, context)
     except Exception as e:
         await query.answer(f"Ошибка: {e}", show_alert=True)
 

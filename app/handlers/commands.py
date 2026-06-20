@@ -9,7 +9,15 @@ import logging
 import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
-from telegram.ext import Application, ApplicationHandlerStop, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    ApplicationHandlerStop,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from app.handlers import menus
 from app.i18n import t
@@ -54,7 +62,29 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user_id = update.effective_user.id
     logging.info("Help command from user %s", user_id)
 
-    formatted_text, parse_mode = TelegramFormatter.format_text(t("help.title"))
+    help_text = (
+        "🤖 <b>Справка и список команд</b>\n\n"
+        "<b>🔮 Развлечения и сервисы:</b>\n"
+        "• <code>таро</code> — начать расклад Таро\n"
+        "• <code>натальная карта</code> — составить натальную карту\n"
+        "• <code>/subscribe</code> — ежедневный гороскоп\n"
+        "• <code>/games</code> — каталог мини-игр\n"
+        "• <code>/draw</code> — сгенерировать изображение\n\n"
+        "<b>🧠 Управление ботом:</b>\n"
+        "• <code>/model</code> — сменить AI-модель\n"
+        "• <code>/roles</code> — выбрать роль (личность бота)\n"
+        "• <code>/thinking</code> — настройка уровня размышления\n"
+        "• <code>/res</code> — вкл/выкл режим веб-поиска\n"
+        "• <code>/settings</code> — единая панель настроек\n\n"
+        "<b>💬 Общение и память:</b>\n"
+        "• <code>/newchat</code> — очистить текущий контекст\n"
+        "• <code>/save</code> — сохранить текущую беседу\n"
+        "• <code>/switch</code> — переключиться на сохранённую беседу\n"
+        "• <code>/export</code> — экспортировать чат в документ\n"
+        "• <code>/stats</code> — ваша статистика использования\n\n"
+        "<i>Для получения справки по другим темам используйте кнопки ниже:</i>"
+    )
+    formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
     keyboard = [
         [
             InlineKeyboardButton(t("help.btn_chat"), callback_data="help_topic:chat"),
@@ -65,8 +95,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             InlineKeyboardButton(t("help.btn_roles"), callback_data="help_topic:roles"),
         ],
     ]
-    await update.message.reply_text(
-        formatted_text,
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+        
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=formatted_text,
         parse_mode=parse_mode,
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -640,6 +675,7 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("dailycroc", dailycroc_command))
     application.add_handler(CommandHandler("daily2048", daily2048_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CallbackQueryHandler(help_command, pattern=r"^help_cmd$"))
     application.add_handler(CommandHandler("newchat", new_chat_command))
     application.add_handler(CommandHandler("model", model_command))
     application.add_handler(CommandHandler("setprompt", set_prompt_command))
@@ -657,6 +693,7 @@ def register(application: Application) -> None:
     from app.handlers.cmd_tarot import tarot_command
     application.add_handler(CommandHandler("tarot", tarot_command))
     application.add_handler(MessageHandler(filters.Regex(r'(?i)^/(?:таро|расклад)(?:\s+|$)'), tarot_command))
+    application.add_handler(CallbackQueryHandler(tarot_command, pattern=r"^start_tarot$"))
 
     # Image generation commands (/draw, /img, /image, /generate)
     from app.handlers.cmd_image import draw_command
@@ -726,7 +763,7 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("set_inline_tabs", set_inline_tabs_command))
     application.add_handler(CommandHandler("set_provider", set_provider_command))
     application.add_handler(CommandHandler("wordbank", wordbank_command))
-    from telegram.ext import CallbackQueryHandler
+
 
     application.add_handler(CallbackQueryHandler(wb_callback, pattern=r"^wb:"))
 
