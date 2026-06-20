@@ -463,12 +463,17 @@ async def horoscope_stop_command(update: Update, context: ContextTypes.DEFAULT_T
 
 # ── Build ConversationHandler ─────────────────────────────────────────────────
 
+import re
+
+HOROSCOPE_INTENT_RE = re.compile(r"^\s*(?:гороскоп|настройка гороскопа|подписка на гороскоп)\s*[?!.]*$", re.IGNORECASE)
+
 def build_horoscope_subscription_handler() -> ConversationHandler:
     """Return a ConversationHandler for the horoscope subscription wizard.
 
     The conversation is entered via:
       - start_subscribe_horoscope() called from the /start deep link handler
       - /horoscope_settings command (opens existing sub settings)
+      - text intent "гороскоп"
 
     It also registers standalone /horoscope_stop and horo_settings:* callbacks.
     """
@@ -476,6 +481,7 @@ def build_horoscope_subscription_handler() -> ConversationHandler:
         entry_points=[
             # Deep link entry — called programmatically from start_command
             CommandHandler("horoscope_settings", horoscope_settings_command),
+            MessageHandler(filters.TEXT & filters.Regex(HOROSCOPE_INTENT_RE), start_subscribe_horoscope),
             CallbackQueryHandler(start_subscribe_horoscope, pattern="^start_horoscope$"),
         ],
         states={
