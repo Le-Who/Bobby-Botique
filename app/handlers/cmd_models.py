@@ -230,5 +230,6 @@ def build_models_conversation_handler() -> ConversationHandler:
         ],
         per_user=True,
         per_chat=True,
+        per_message=False,
         name="models_wizard",
     )

@@ -758,8 +758,18 @@ async def startup_health_check():
         try:
             import httpx
 
+            # When a local Bot API server is configured the token is logged out
+            # from the cloud, so api.telegram.org/getMe returns 400.  Hit the
+            # local server instead.  Its base_url is like "http://tg-api:8081/bot"
+            # so we append "{token}/getMe" to form the full URL.
+            local_server = settings.TELEGRAM_LOCAL_SERVER_URL or ""
+            if local_server:
+                get_me_url = f"{local_server.rstrip('/')}{settings.TELEGRAM_BOT_TOKEN}/getMe"
+            else:
+                get_me_url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/getMe"
+
             async with httpx.AsyncClient() as client:
-                response = await client.get(f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/getMe")
+                response = await client.get(get_me_url)
                 if response.status_code == 200:
                     bot_info = response.json()
                     if bot_info.get("ok"):

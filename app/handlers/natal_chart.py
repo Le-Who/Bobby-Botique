@@ -753,6 +753,7 @@ def build_natal_chart_handler() -> ConversationHandler:
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
+        per_message=False,
         name="natal_chart",
         persistent=False,
     )

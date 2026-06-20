@@ -487,6 +487,7 @@ def build_horoscope_subscription_handler() -> ConversationHandler:
             CommandHandler("horoscope_stop", horoscope_stop_command),
         ],
         allow_reentry=True,
+        per_message=False,
         name="horoscope_subscription",
         persistent=False,
     )
