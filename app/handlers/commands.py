@@ -84,7 +84,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• <code>/stats</code> — ваша статистика использования\n\n"
         "<i>Для получения справки по другим темам используйте кнопки ниже:</i>"
     )
-    formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
     keyboard = [
         [
             InlineKeyboardButton(t("help.btn_chat"), callback_data="help_topic:chat"),
@@ -101,8 +100,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         
     await context.bot.send_message(
         chat_id=user_id,
-        text=formatted_text,
-        parse_mode=parse_mode,
+        text=help_text,
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
     logging.info("Help command completed successfully for user %s", user_id)
