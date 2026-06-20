@@ -372,7 +372,7 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if success:
         await update.message.reply_text(
             t("brief.subscribed", type=sub_type, hour=str(preferred_hour)),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
     else:
         await update.message.reply_text(t("brief.subscribe_error"))
@@ -392,7 +392,7 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if success:
         await update.message.reply_text(
             t("brief.unsubscribed", type=sub_type),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
     else:
         await update.message.reply_text(t("brief.unsubscribe_error"))

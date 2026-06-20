@@ -931,16 +931,16 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "📬 **Morning Brief**\n\n{summary}",
     },
     "brief.subscribed": {
-        "ru": "✅ Подписка на **{type}** активирована!\n📬 Вы будете получать рассылки в {hour}:00 UTC.",
-        "en": "✅ Subscribed to **{type}**!\n📬 You will receive briefs at {hour}:00 UTC.",
+        "ru": "✅ Подписка на <b>{type}</b> активирована!\n📬 Вы будете получать рассылки в {hour}:00 UTC.",
+        "en": "✅ Subscribed to <b>{type}</b>!\n📬 You will receive briefs at {hour}:00 UTC.",
     },
     "brief.subscribe_error": {
         "ru": "❌ Ошибка при создании подписки. Попробуйте позже.",
         "en": "❌ Error creating subscription. Please try later.",
     },
     "brief.unsubscribed": {
-        "ru": "🔕 Подписка на **{type}** деактивирована.",
-        "en": "🔕 Unsubscribed from **{type}**.",
+        "ru": "🔕 Подписка на <b>{type}</b> деактивирована.",
+        "en": "🔕 Unsubscribed from <b>{type}</b>.",
     },
     "brief.unsubscribe_error": {
         "ru": "❌ Ошибка при отмене подписки.",
