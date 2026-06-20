@@ -504,8 +504,10 @@ async def horoscope_settings_command(update: Update, context: ContextTypes.DEFAU
     else:
         await update.message.reply_text(
             "У вас нет активной подписки на гороскоп.\n\n"
-            "Чтобы подписаться, отправьте гороскоп через инлайн-режим (@bot гороскоп Овен) "
-            "и нажмите кнопку 🔔 под сообщением.",
+            "Вы можете оформить её прямо сейчас, чтобы получать ежедневные прогнозы в удобное время.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✨ Оформить подписку", callback_data="start_horoscope")]
+            ])
         )
     return ConversationHandler.END
 
