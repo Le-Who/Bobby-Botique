@@ -74,6 +74,7 @@ async def test_unauthorized_user_rejected():
 
     with (
         patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
+        patch("app.handlers.messages.settings") as mock_settings,
         patch(
             "app.handlers.messages.is_authorized",
             new_callable=AsyncMock,
@@ -84,7 +85,12 @@ async def test_unauthorized_user_rejected():
             new_callable=AsyncMock,
             return_value=True,
         ),
+        patch(
+            "app.handlers.messages.alert_admin_unauthorized_user",
+            new_callable=AsyncMock,
+        ),
     ):
+        mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         from app.handlers.messages import handle_request
 
         await handle_request(update, context)

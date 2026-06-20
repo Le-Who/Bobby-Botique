@@ -15,6 +15,9 @@ _env_path = Path(__file__).resolve().parent.parent / ".env"
 if _env_path.exists():
     load_dotenv(_env_path, override=False)
 
+import os
+os.environ.setdefault("GEMINI_API_KEYS", "dummy_key_for_tests")
+
 
 def _quiet_exception_handler(loop, context):
     """Suppress asyncpg 'connection was closed' noise during test teardown.

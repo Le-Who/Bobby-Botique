@@ -13,6 +13,7 @@ class MockUser:
         self.username = username
         self.first_name = first_name
         self.is_bot = False
+        self.language_code = "en"
 
 
 class MockChat:
@@ -52,6 +53,7 @@ class DummyContext:
         self.bot.send_message = AsyncMock()
         self.user_data = {}
         self.chat_data = {}
+        self.application = MagicMock()
 
 
 # --- Tests for handle_request ---
