@@ -22,9 +22,18 @@ from __future__ import annotations
 import html
 import logging
 import re
+from datetime import datetime
 from typing import Final
+from zoneinfo import ZoneInfo
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
+)
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -34,6 +43,7 @@ from telegram.ext import (
     filters,
 )
 
+from app.natal.city_catalog import nearest_city_timezone, search_cities
 from app.repos.horoscope_subscriptions import (
     delete_horoscope_subscription,
     get_horoscope_subscription,
@@ -96,6 +106,25 @@ def _tz_keyboard() -> InlineKeyboardMarkup:
         chunk = offsets[i : i + 3]
         rows.append([InlineKeyboardButton(label, callback_data=f"horo_tz:{off}") for label, off in chunk])
     return InlineKeyboardMarkup(rows)
+
+
+def _location_request_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("📍 Отправить локацию", request_location=True)],
+            [KeyboardButton("⌨️ Выбрать вручную из списка")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def _get_utc_offset_from_tz(tz_name: str) -> int:
+    try:
+        now = datetime.now(ZoneInfo(tz_name))
+        return int(now.utcoffset().total_seconds() / 3600)
+    except Exception:
+        return 0
 
 
 def _summary_text(sign: str, time_today: str | None, time_tomorrow: str | None, utc_offset: int) -> str:
@@ -243,9 +272,18 @@ async def on_time_tomorrow_btn(update: Update, context: ContextTypes.DEFAULT_TYP
     value = query.data.replace("horo_time_tomorrow:", "")
     context.user_data["horo_time_tomorrow"] = None if value == "skip" else value
 
-    await query.edit_message_text(
-        "🌍 Укажите ваш часовой пояс (UTC-смещение):",
-        reply_markup=_tz_keyboard(),
+    text = (
+        "🌍 <b>Настройка часового пояса</b>\n\n"
+        "Напишите <b>название вашего города</b> (например, Москва, Киев) "
+        "или нажмите кнопку «Отправить локацию».\n\n"
+        "Бот автоматически рассчитает смещение UTC."
+    )
+    await query.message.delete()
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=text,
+        reply_markup=_location_request_keyboard(),
+        parse_mode="HTML",
     )
     return CHOOSE_TZ
 
@@ -262,14 +300,74 @@ async def on_time_tomorrow_text(update: Update, context: ContextTypes.DEFAULT_TY
         return CHOOSE_TIME_TOMORROW
 
     context.user_data["horo_time_tomorrow"] = raw
+    text = (
+        "🌍 <b>Настройка часового пояса</b>\n\n"
+        "Напишите <b>название вашего города</b> (например, Москва, Киев) "
+        "или нажмите кнопку «Отправить локацию».\n\n"
+        "Бот автоматически рассчитает смещение UTC."
+    )
     await update.message.reply_text(
-        "🌍 Укажите ваш часовой пояс (UTC-смещение):",
-        reply_markup=_tz_keyboard(),
+        text,
+        reply_markup=_location_request_keyboard(),
+        parse_mode="HTML",
     )
     return CHOOSE_TZ
 
 
 # ── State: CHOOSE_TZ ──────────────────────────────────────────────────────────
+
+async def _show_summary(message, context: ContextTypes.DEFAULT_TYPE) -> str:
+    sign = context.user_data.get("horo_sign", "aries")
+    time_today = context.user_data.get("horo_time_today")
+    time_tomorrow = context.user_data.get("horo_time_tomorrow")
+    utc_offset = context.user_data.get("horo_utc_offset", 3)
+
+    dummy = await message.reply_text("⏳", reply_markup=ReplyKeyboardRemove())
+    await dummy.delete()
+
+    await message.reply_text(
+        _summary_text(sign, time_today, time_tomorrow, utc_offset),
+        parse_mode="HTML",
+        reply_markup=_confirm_keyboard(),
+    )
+    return CONFIRM
+
+
+async def on_tz_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    if not update.message or not update.message.location:
+        return CHOOSE_TZ
+    lat = update.message.location.latitude
+    lon = update.message.location.longitude
+    tz_name = nearest_city_timezone(lat, lon)
+    if not tz_name:
+        await update.message.reply_text("Не удалось определить часовой пояс. Выберите из списка:", reply_markup=_tz_keyboard())
+        return CHOOSE_TZ
+    utc_offset = _get_utc_offset_from_tz(tz_name)
+    context.user_data["horo_utc_offset"] = utc_offset
+    return await _show_summary(update.message, context)
+
+
+async def on_tz_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    if not update.message or not update.message.text:
+        return CHOOSE_TZ
+    query = update.message.text.strip()
+    cities = search_cities(query)
+    if not cities:
+        await update.message.reply_text("Город не найден. Попробуйте написать по-другому или выберите из списка:", reply_markup=_tz_keyboard())
+        return CHOOSE_TZ
+    city = cities[0]
+    utc_offset = _get_utc_offset_from_tz(city.timezone)
+    context.user_data["horo_utc_offset"] = utc_offset
+    await update.message.reply_text(f"Определен город: <b>{city.name}</b>", parse_mode="HTML")
+    return await _show_summary(update.message, context)
+
+
+async def on_tz_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    if not update.message:
+        return CHOOSE_TZ
+    await update.message.reply_text("🌍 Укажите ваш часовой пояс (UTC-смещение):", reply_markup=_tz_keyboard())
+    return CHOOSE_TZ
+
 
 async def on_tz_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     query = update.callback_query
@@ -485,23 +583,22 @@ def build_horoscope_subscription_handler() -> ConversationHandler:
             CallbackQueryHandler(start_subscribe_horoscope, pattern="^start_horoscope$"),
         ],
         states={
-            CHOOSE_SIGN: [
-                CallbackQueryHandler(on_sign_chosen, pattern=r"^horo_sign:"),
-            ],
+            CHOOSE_SIGN: [CallbackQueryHandler(on_sign_chosen, pattern="^horo_sign:")],
             CHOOSE_TIME_TODAY: [
-                CallbackQueryHandler(on_time_today_btn, pattern=r"^horo_time_today:"),
+                CallbackQueryHandler(on_time_today_btn, pattern="^horo_time_today:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_today_text),
             ],
             CHOOSE_TIME_TOMORROW: [
-                CallbackQueryHandler(on_time_tomorrow_btn, pattern=r"^horo_time_tomorrow:"),
+                CallbackQueryHandler(on_time_tomorrow_btn, pattern="^horo_time_tomorrow:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_tomorrow_text),
             ],
             CHOOSE_TZ: [
-                CallbackQueryHandler(on_tz_chosen, pattern=r"^horo_tz:"),
+                MessageHandler(filters.LOCATION, on_tz_location),
+                MessageHandler(filters.Regex("^⌨️ Выбрать вручную из списка$"), on_tz_manual),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, on_tz_text),
+                CallbackQueryHandler(on_tz_chosen, pattern="^horo_tz:"),
             ],
-            CONFIRM: [
-                CallbackQueryHandler(on_confirm, pattern=r"^horo_confirm:"),
-            ],
+            CONFIRM: [CallbackQueryHandler(on_confirm, pattern="^horo_confirm:")],
         },
         fallbacks=[
             CommandHandler("horoscope_stop", horoscope_stop_command),

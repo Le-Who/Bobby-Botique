@@ -42,9 +42,10 @@ async def upsert_horoscope_subscription(
     Passing ``time_today=None`` or ``time_tomorrow=None`` explicitly disables
     that delivery slot while preserving the other.
     """
+    insert_sign = sign or "aries"
     sets: list[str] = []
-    params: list[Any] = [user_id]
-    idx = 2
+    params: list[Any] = [user_id, insert_sign]
+    idx = 3
 
     if sign is not None:
         sets.append(f"sign = ${idx}")
@@ -74,7 +75,6 @@ async def upsert_horoscope_subscription(
     sets.append("updated_at = CURRENT_TIMESTAMP")
 
     try:
-        insert_sign = sign or "aries"
         if len(sets) == 1:
             # Only updated_at — just ensure row exists
             await db_query(
@@ -93,7 +93,7 @@ async def upsert_horoscope_subscription(
                 VALUES ($1, $2)
                 ON CONFLICT (user_id) DO UPDATE SET {set_clause}
                 """,
-                tuple([user_id, insert_sign] + params[1:]),
+                tuple(params),
             )
         return True
     except Exception as e:

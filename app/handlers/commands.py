@@ -782,9 +782,10 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("delete", delete_conversation_command))
 
     # Scheduled briefs commands (from scheduled_briefs)
+    from app.handlers.horoscope_subscription import horoscope_settings_command
     from app.handlers.scheduled_briefs import subscribe_command, unsubscribe_command
 
-    application.add_handler(CommandHandler("subscribe", subscribe_command))
+    application.add_handler(CommandHandler("subscribe", horoscope_settings_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
 
     # Horoscope subscription wizard (from horoscope_subscription)

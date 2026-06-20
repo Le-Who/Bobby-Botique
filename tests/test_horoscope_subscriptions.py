@@ -11,7 +11,7 @@ from app.repos.horoscope_subscriptions import (
 
 
 @pytest.mark.asyncio
-async def test_upsert_and_get_subscription(db_conn):
+async def test_upsert_and_get_subscription(postgres_container):
     # This assumes db_conn fixture clears DB and gives us a clean slate
     user_id = 9999123
     
@@ -48,7 +48,7 @@ async def test_upsert_and_get_subscription(db_conn):
     assert sub["sign"] == "aries" # untouched
 
 @pytest.mark.asyncio
-async def test_get_due_subscriptions(db_conn):
+async def test_get_due_subscriptions(postgres_container):
     user_id = 9999124
     await db_query("INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING", (user_id,))
     
