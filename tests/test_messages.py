@@ -135,6 +135,7 @@ async def test_handle_request_unauthorized():
         patch("app.handlers.messages.settings") as mock_settings,
         patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock) as mock_rate_limit,
         patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
+        patch("app.admin_alerts.alert_admin_unauthorized_user", new_callable=AsyncMock) as mock_alert,
         patch("app.handlers.messages.api_logger") as _mock_logger,
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
@@ -145,6 +146,7 @@ async def test_handle_request_unauthorized():
         await messages.handle_request(update, context)
 
         mock_is_auth.assert_awaited_once_with(123)
+        mock_alert.assert_awaited_once()
         # Should return without doing anything else
         message.reply_text.assert_not_awaited()
 

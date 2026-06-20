@@ -4,6 +4,7 @@ Settings object for tests that import the production modules directly.
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -15,7 +16,6 @@ _env_path = Path(__file__).resolve().parent.parent / ".env"
 if _env_path.exists():
     load_dotenv(_env_path, override=False)
 
-import os
 os.environ.setdefault("GEMINI_API_KEYS", "dummy_key_for_tests")
 
 

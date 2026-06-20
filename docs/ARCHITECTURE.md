@@ -49,50 +49,57 @@ gemaibotv2/
 │   │   ├── repository.py        ←   Document DB CRUD (11KB)
 │   │   └── parsers.py           ←   PDF/DOCX extraction (1KB)
 │   │
-│   ├── ── Handlers (Telegram) ───────────────────────────────────
-│   ├── handlers/                 ← 41 handler modules, organized by domain:
-│   │   ├── __init__.py
-│   │   ├── messages.py          ←   Main message router + debounce integration (37KB)
-│   │   ├── commands.py          ←   /start, /help, /settings, /model, etc. (32KB)
-│   │   ├── callbacks.py         ←   Inline keyboard callback dispatcher (16KB)
-│   │   ├── inline.py            ←   Inline mode — 5-mode smart image routing (78KB)
-│   │   ├── ai_chat.py           ←   Text → AI with LTM recall (33KB)
-│   │   ├── ai_core.py           ←   AI response error handling (4KB)
-│   │   ├── ai_document.py       ←   Document Q&A (11KB)
-│   │   ├── ai_photo.py          ←   Image analysis (Shannon entropy adaptive resize, 25KB)
-│   │   ├── ai_search.py         ←   Quick search (Google Grounding) + deep search (27KB)
-│   │   ├── agent.py             ←   Agentic research handler (9KB)
-│   │   ├── chat_logic.py        ←   Shared chat processing utilities (5KB)
-│   │   ├── board_handler.py     ←   Collaborative AI-Notes board handler (16KB)
-│   │   ├── msg_document.py      ←   Document upload handler (10KB)
-│   │   ├── msg_media.py         ←   Media group handler (photos, video, 12KB)
-│   │   ├── msg_voice.py         ←   Voice message ASR + intent routing (22KB)
-│   │   ├── msg_roles.py         ←   Role-related message handling (17KB)
-│   │   ├── msg_reactions.py     ←   Telegram reactions handler (7KB)
-│   │   ├── menus.py             ←   Menu generation (30KB)
-│   │   ├── cb_ai_actions.py     ←   AI action callbacks (continue, regenerate, 16KB)
-│   │   ├── cb_branches.py       ←   Conversation branching callbacks (3KB)
-│   │   ├── cb_conversations.py  ←   Conversation management callbacks (11KB)
-│   │   ├── cb_documents.py      ←   Document callbacks (12KB)
-│   │   ├── cb_feedback.py       ←   User feedback callbacks (8KB)
-│   │   ├── cb_fwd_save.py       ←   Forwarded message save-to-memory (3KB)
-│   │   ├── cb_image.py          ←   Image generation callbacks (14KB)
-│   │   ├── cb_models.py         ←   Model selection callbacks (6KB)
-│   │   ├── cb_navigation.py     ←   Navigation callbacks (settings, back, 14KB)
-│   │   ├── cb_roles.py          ←   Role CRUD callbacks (36KB)
-│   │   ├── cb_smart_actions.py  ←   Smart action callbacks (11KB)
-│   │   ├── cb_voice.py          ←   Voice callbacks (TTS, retranscribe, 14KB)
-│   │   ├── cmd_admin.py         ←   Admin-only commands (69KB)
-│   │   ├── cmd_asr_test.py      ←   /asr developer ASR testing (2KB)
-│   │   ├── cmd_conversations.py ←   Conversation commands (6KB)
-│   │   ├── cmd_image.py         ←   /draw, /img image generation commands (36KB)
-│   │   ├── cmd_keys.py          ←   /keys admin wizard for API key management (13KB)
-│   │   ├── cmd_models.py        ←   /model selection commands (10KB)
-│   │   ├── cmd_reminders.py     ←   /remind system (24KB, full reminder pipeline)
-│   │   ├── daily_crocodile.py   ←   Daily Crocodile game handlers (15KB)
-│   │   ├── memory_commands.py   ←   /memory, /clearmemory (5KB)
-│   │   └── scheduled_briefs.py  ←   Intelligence brief subscriptions (15KB)
-│   │
+    ├── ── Handlers (Telegram) ───────────────────────────────────
+    ├── handlers/                 ← 48 handler modules, organized by domain:
+    │   ├── __init__.py
+    │   ├── messages.py          ←   Main message router + debounce integration (37KB)
+    │   ├── commands.py          ←   /start, /help, /settings, /model, etc. (32KB)
+    │   ├── callbacks.py         ←   Inline keyboard callback dispatcher (16KB)
+    │   ├── inline.py            ←   Inline mode — 5-mode smart image routing (78KB)
+    │   ├── ai_chat.py           ←   Text → AI with LTM recall (33KB)
+    │   ├── ai_core.py           ←   AI response error handling (4KB)
+    │   ├── ai_document.py       ←   Document Q&A (11KB)
+    │   ├── ai_photo.py          ←   Image analysis (Shannon entropy adaptive resize, 25KB)
+    │   ├── ai_search.py         ←   Quick search (Google Grounding) + deep search (27KB)
+    │   ├── agent.py             ←   Agentic research handler (9KB)
+    │   ├── chat_logic.py        ←   Shared chat processing utilities (5KB)
+    │   ├── board_handler.py     ←   Collaborative AI-Notes board handler (16KB)
+    │   ├── msg_document.py      ←   Document upload handler (10KB)
+    │   ├── msg_media.py         ←   Media group handler (photos, video, 12KB)
+    │   ├── msg_voice.py         ←   Voice message ASR + intent routing (22KB)
+    │   ├── msg_roles.py         ←   Role-related message handling (17KB)
+    │   ├── msg_reactions.py     ←   Telegram reactions handler (7KB)
+    │   ├── menus.py             ←   Menu generation (30KB)
+    │   ├── cb_ai_actions.py     ←   AI action callbacks (continue, regenerate, 16KB)
+    │   ├── cb_branches.py       ←   Conversation branching callbacks (3KB)
+    │   ├── cb_conversations.py  ←   Conversation management callbacks (11KB)
+    │   ├── cb_documents.py      ←   Document callbacks (12KB)
+    │   ├── cb_feedback.py       ←   User feedback callbacks (8KB)
+    │   ├── cb_fwd_save.py       ←   Forwarded message save-to-memory (3KB)
+    │   ├── cb_image.py          ←   Image generation callbacks (14KB)
+    │   ├── cb_models.py         ←   Model selection callbacks (6KB)
+    │   ├── cb_navigation.py     ←   Navigation callbacks (settings, back, 14KB)
+    │   ├── cb_roles.py          ←   Role CRUD callbacks (36KB)
+    │   ├── cb_smart_actions.py  ←   Smart action callbacks (11KB)
+    │   ├── cb_voice.py          ←   Voice callbacks (TTS, retranscribe, 14KB)
+    │   ├── cmd_admin.py         ←   Admin-only commands (69KB)
+    │   ├── cmd_asr_test.py      ←   /asr developer ASR testing (2KB)
+    │   ├── cmd_conversations.py ←   Conversation commands (6KB)
+    │   ├── cmd_image.py         ←   /draw, /img image generation commands (36KB)
+    │   ├── cmd_keys.py          ←   /keys admin wizard for API key management (13KB)
+    │   ├── cmd_models.py        ←   /model selection commands (10KB)
+    │   ├── cmd_reminders.py     ←   /remind system (24KB, full reminder pipeline)
+    │   ├── daily_crocodile.py   ←   Daily Crocodile game handlers (15KB)
+    │   ├── daily_2048.py        ←   Daily 2048 game handlers (9KB)
+    │   ├── natal_chart.py       ←   Natal chart wizard & interactive report (53KB)
+    │   ├── tarot_chat.py        ←   Tarot interactive chat handler (6KB)
+    │   ├── tarot_daily.py       ←   Tarot daily readings coordinator (1KB)
+    │   ├── cmd_tarot.py         ←   /tarot command handler (1KB)
+    │   ├── horoscope_subscription.py ← Horoscope subscription & settings menu (20KB)
+    │   ├── scheduled_horoscopes.py  ← Scheduled daily horoscope deliveries (4KB)
+    │   ├── memory_commands.py   ←   /memory, /clearmemory (5KB)
+    │   └── scheduled_briefs.py  ←   Intelligence brief subscriptions (15KB)
+    │
 │   ├── ── Data Layer ────────────────────────────────────────────
 │   ├── database.py              ← DatabaseManager singleton (asyncpg pool, retry/reconnect, 19KB)
 │   ├── db/
@@ -101,31 +108,33 @@ gemaibotv2/
 │   │   ├── migrations.py        ←   Sequential migration runner (schema_migrations table, 9KB)
 │   │   ├── rls.py               ←   Row-Level Security policies (8KB)
 │   │   └── seed.py              ←   Seed data (admin user, API keys, indexes, 2KB)
-│   ├── repos/                    ← Repository pattern — 24 modules, per-domain SQL
-│   │   ├── __init__.py          ←   Re-exports
-│   │   ├── users.py             ←   User CRUD (7KB)
-│   │   ├── keys.py              ←   API key management, rotation, health scoring (24KB)
-│   │   ├── chats.py             ←   Chat state + message history (15KB)
-│   │   ├── conversations.py     ←   Named conversation storage (9KB)
-│   │   ├── branches.py          ←   Conversation branching (snapshot/restore, 3KB)
-│   │   ├── memory.py            ←   LTM: pgvector storage, RRF search, graph traversal (44KB)
-│   │   ├── memory_consolidation.py ← GraphRAG consolidation (entity/relation extraction, 33KB)
-│   │   ├── memory_extraction.py ←   Real-time streaming extraction (32KB)
-│   │   ├── memory_autosave.py   ←   Background memory auto-save (5KB)
-│   │   ├── memory_config.py     ←   Memory system configuration (4KB)
-│   │   ├── memory_tools.py      ←   Memory tool declarations for agentic RAG (3KB)
-│   │   ├── roles.py             ←   Custom AI roles (2KB)
-│   │   ├── reminders.py         ←   Reminder persistence (3KB)
-│   │   ├── analytics.py         ←   Usage analytics (11KB)
-│   │   ├── metrics_repo.py      ←   Metrics persistence (delta-based increments, 6KB)
-│   │   ├── models_repo.py       ←   Model configuration persistence (8KB)
-│   │   ├── boards_repo.py       ←   Inline boards CRUD (8KB)
-│   │   ├── crocodile_daily.py   ←   Daily Crocodile puzzle persistence (41KB)
-│   │   ├── provider_keys.py     ←   Provider key resolution (3KB)
-│   │   ├── settings_repo.py     ←   Global settings CRUD (4KB)
-│   │   ├── admin.py             ←   Admin queries (1KB)
-│   │   ├── user_stats.py        ←   User statistics (1KB)
-│   │   └── db_helpers.py        ←   Shared DB helpers (141B)
+    ├── repos/                    ← Repository pattern — 26 modules, per-domain SQL
+    │   ├── __init__.py          ←   Re-exports
+    │   ├── users.py             ←   User CRUD (7KB)
+    │   ├── keys.py              ←   API key management, rotation, health scoring (24KB)
+    │   ├── chats.py             ←   Chat state + message history (15KB)
+    │   ├── conversations.py     ←   Named conversation storage (9KB)
+    │   ├── branches.py          ←   Conversation branching (snapshot/restore, 3KB)
+    │   ├── memory.py            ←   LTM: pgvector storage, RRF search, graph traversal (44KB)
+    │   ├── memory_consolidation.py ← GraphRAG consolidation (entity/relation extraction, 33KB)
+    │   ├── memory_extraction.py ←   Real-time streaming extraction (32KB)
+    │   ├── memory_autosave.py   ←   Background memory auto-save (5KB)
+    │   ├── memory_config.py     ←   Memory system configuration (4KB)
+    │   ├── memory_tools.py      ←   Memory tool declarations for agentic RAG (3KB)
+    │   ├── roles.py             ←   Custom AI roles (2KB)
+    │   ├── reminders.py         ←   Reminder persistence (3KB)
+    │   ├── analytics.py         ←   Usage analytics (11KB)
+    │   ├── metrics_repo.py      ←   Metrics persistence (delta-based increments, 6KB)
+    │   ├── models_repo.py       ←   Model configuration persistence (8KB)
+    │   ├── boards_repo.py       ←   Inline boards CRUD (8KB)
+    │   ├── crocodile_daily.py   ←   Daily Crocodile puzzle persistence (41KB)
+    │   ├── daily_2048.py        ←   Daily 2048 puzzle/run persistence (23KB)
+    │   ├── horoscope_subscriptions.py ← Horoscope subscriptions DB queries (6KB)
+    │   ├── provider_keys.py     ←   Provider key resolution (3KB)
+    │   ├── settings_repo.py     ←   Global settings CRUD (4KB)
+    │   ├── admin.py             ←   Admin queries (1KB)
+    │   ├── user_stats.py        ←   User statistics (1KB)
+    │   └── db_helpers.py        ←   Shared DB helpers (141B)
 │   │
 │   ├── ── Middleware & Adapters ──────────────────────────────────
 │   ├── middleware/
@@ -135,7 +144,6 @@ gemaibotv2/
 │   │   ├── concurrency.py       ←   Redis-backed distributed semaphores (5KB)
 │   │   └── ui_adapter.py        ←   StreamingUIAdapter for message editing (3KB)
 │   │
-│   ├── ── Games ─────────────────────────────────────────────────
 │   ├── games/                    ← Crocodile (Charades) game engine — 12 modules
 │   │   ├── __init__.py
 │   │   ├── crocodile.py         ←   State machine (19KB)
@@ -150,6 +158,11 @@ gemaibotv2/
 │   │   ├── hinting.py           ←   Progressive hints (11KB)
 │   │   ├── ai_budget.py         ←   AI load-shedding coordinator (9KB)
 │   │   └── data/                ←   Runtime cache directory (.gitkeep)
+│   │
+│   ├── ── Esoteric & Astrology ──────────────────────────────────
+│   ├── natal/                    ←   Natal chart calculations, city catalog, astronomy — 19 modules
+│   ├── tarot.py                  ←   Core Tarot card/spread engine (7KB)
+│   ├── tarot_daily.py            ←   Daily Tarot reading coordinator (9KB)
 │   │
 │   ├── ── Infrastructure ────────────────────────────────────────
 │   ├── security.py              ← RateLimiter (async), SyncRateLimiter, InputSanitizer (22KB)
@@ -218,18 +231,21 @@ gemaibotv2/
 │   ├── prompts.py               ← Backward-compat facade → prompt_registry (966B)
 │   │
 │   ├── static/                   ← CSS and JS assets for web templates
-│   └── templates/                ← Jinja2 HTML templates (9 files):
+│   └── templates/                ← Jinja2 HTML templates (11 files):
 │       ├── dashboard.html       ←   Admin dashboard (32KB)
 │       ├── miniapp.html         ←   Telegram Mini App (78KB)
 │       ├── crocodile.html       ←   Crocodile game Mini App (48KB)
 │       ├── live_audio.html      ←   Live Audio Mini App (43KB)
 │       ├── reader.html          ←   Reader Mini App (37KB)
 │       ├── admin_dailycroc.html ←   Daily Crocodile admin (15KB)
+│       ├── admin_daily2048.html ←   Daily 2048 admin (15KB)
+│       ├── daily_2048.html      ←   Daily 2048 game Mini App (58KB)
+│       ├── natal_form.html      ←   Natal Form Mini App (19KB)
 │       ├── login.html           ←   Dashboard login (5KB)
 │       └── status.html          ←   Status page (4KB)
 │
-├── scripts/migrations/           ← 50 numbered SQL migration files (000–046)
-├── tests/                        ← 171 test files (pytest + pytest-xdist)
+├── scripts/migrations/           ← 56 SQL migration files (000–052)
+├── tests/                        ← 208 test files (pytest + pytest-xdist)
 ├── docs/                         ← This file + extended documentation
 ├── .github/workflows/ci.yml     ← CI: lint (Ruff) → type-check (Mypy) → unit → integration
 ├── Dockerfile                    ← Production container (Python 3.14-slim, non-root)
@@ -344,16 +360,17 @@ logging_config.py   →  JSON/text logging (auto-detected from LOG_FORMAT env)
 
 ```mermaid
 graph TD
-    BOT[bot.py] --> HANDLERS["handlers/ — 41 modules"]
+    BOT[bot.py] --> HANDLERS["handlers/ — 48 modules"]
     BOT --> WEB["web.py + web_miniapp.py — Quart"]
     BOT --> QUEUE[queue.py — background tasks]
 
     HANDLERS --> PROVIDERS["providers/ — 13 modules"]
     HANDLERS --> CTX["context/ — assembler, summarizer, compression"]
     HANDLERS --> DOCS[documents/ — chunking, parsers]
-    HANDLERS --> MEMORY["repos/memory*.py — LTM + graph"]
+    HANDLERS --> REPOS["repos/ — 26 modules"]
     HANDLERS --> MIDDLEWARE["middleware/ — debounce, dedup"]
     HANDLERS --> GAMES["games/ — Crocodile engine"]
+    HANDLERS --> ESOTERIC["natal/ + tarot.py + tarot_daily.py — Esoteric Suite"]
 
     PROVIDERS --> KEYS[repos/keys.py — key rotation]
     PROVIDERS --> DB[database.py — asyncpg pool]
@@ -361,9 +378,12 @@ graph TD
     CTX --> PROMPTS[prompt_registry.py]
     CTX --> I18N[i18n.py]
     DOCS --> DB
-    MEMORY --> DB
+    REPOS --> DB
     GAMES --> PROVIDERS
     GAMES --> DB
+    ESOTERIC --> PROVIDERS
+    ESOTERIC --> REPOS
+    ESOTERIC --> DB
 
     WEB --> DB
     WEB --> METRICS[metrics.py + prometheus.py]
@@ -377,6 +397,7 @@ graph TD
     style DB fill:#336633,color:#fff
     style PROVIDERS fill:#8b4513,color:#fff
     style GAMES fill:#8a4a6a,color:#fff
+    style ESOTERIC fill:#4b0082,color:#fff
 ```
 
 ## CI Pipeline
@@ -397,8 +418,8 @@ Push to main/TEST_gemaibotv2 ─→ Lint (Ruff check + format) ─→ Type Check
 
 | Metric | Value |
 |--------|-------|
-| Test files | 171 |
-| LOC (tests/) | ~32,800 |
+| Test files | 208 |
+| LOC (tests/) | ~31,500 |
 | Parallelism | `pytest-xdist` (`-n auto`) |
 | Timeout | 30s per test |
 | Async mode | `auto` (`pytest-asyncio`) |

@@ -3,6 +3,28 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-06-20 - Esoteric Suite, Admin Alerts & Core Ops
+
+### 🔮 Esoteric & Astrology Suite
+- **Natal Charts (`app/handlers/natal_chart.py`, `app/natal/`):** Implemented a complete natal chart generation and interpretation system. Features a step-by-step chat wizard, interactive WebApp birth form (`app/templates/natal_form.html`), GeoNames-based city autocomplete, and detailed hosted results reporting. Backed by `scripts/migrations/050_add_natal_reports.sql`.
+- **Tarot Readings (`app/handlers/tarot_chat.py`, `app/handlers/tarot_daily.py`, `app/handlers/cmd_tarot.py`, `app/tarot.py`):** Added support for multi-spread interactive Tarot readings including Classic spread, Card of the Day, Yes/No spread, Career/Finance, Relationships, and Personal Growth. Includes live session state management in Redis and additional card draws. Backed by `scripts/migrations/051_add_tarot_daily_readings.sql` and `052_add_tarot_sessions.sql`.
+- **Horoscope Subscriptions (`app/handlers/horoscope_subscription.py`, `app/handlers/scheduled_horoscopes.py`, `app/repos/horoscope_subscriptions.py`):** Added a Daily Horoscope subscription service featuring Morning (today) and Evening (tomorrow) automated deliveries in DM according to zodiac signs and user timezones (UTC offset). Backed by `scripts/migrations/047_add_horoscope_subscriptions.sql`.
+
+### 🛡️ Core Ops & Admin Tools
+- **Admin Alerts for Unauthorized Users (`app/admin_alerts.py`, `app/handlers/messages.py`, `app/handlers/callbacks.py`):** Integrated real-time admin notification system. When an unauthorized user attempts to access the bot, an alert with user details is broadcast to admins with inline buttons (`[Разрешить]`, `[Отклонить]`) to control access permissions on-the-fly.
+- **Token Count Logging (`app/streaming.py`):** Enabled token count logging for both streaming and non-streaming Gemini responses to allow cost tracking and logging observability.
+
+### 🐛 Bug Fixes & Mocks
+- **Test Suite Mocks (`tests/test_messages.py`):** Fixed missing `application` attribute in `DummyContext` and `language_code` in `MockUser` to resolve test execution failures.
+- **API Keys Configuration Safeguard (`tests/conftest.py`):** Added fallback environment setup for `GEMINI_API_KEYS` in tests configuration to prevent crashes during test runners initialization when environment keys are absent.
+
+### ✅ Verification
+- `python -m pytest tests/test_messages.py -q` → **Passed**
+- `ruff check .` → **Passed**
+- `python scripts/check_encoding.py` → **Passed**
+
+---
+
 ## [Unreleased] - 2026-06-02 - Daily 2048 Sprint
 
 ### 🎲 Daily Games
