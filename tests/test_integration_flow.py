@@ -86,7 +86,7 @@ async def test_unauthorized_user_rejected():
             return_value=True,
         ),
         patch(
-            "app.handlers.messages.alert_admin_unauthorized_user",
+            "app.admin_alerts.alert_admin_unauthorized_user",
             new_callable=AsyncMock,
         ),
     ):

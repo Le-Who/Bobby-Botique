@@ -586,7 +586,7 @@ def get_settings_safe() -> Settings | None:
 # --- SINGLETON INSTANCE ---
 # Create the one and only settings object for the app.
 # Use lazy loading to prevent import errors
-settings = get_settings_safe()
+settings: Settings = get_settings_safe()  # type: ignore
 
 
 class ConfigManager:

@@ -234,5 +234,5 @@ new_lines = lines[:1947] + [NEW_BLOCK]
 with open(INLINE_PY, "w", encoding="utf-8") as f:
     f.writelines(new_lines)
 
-print(f"Total lines after: {sum(l.count(chr(10)) for l in new_lines)}")
+print(f"Total lines after: {sum(line.count(chr(10)) for line in new_lines)}")
 print("Patch 2 applied successfully.")
