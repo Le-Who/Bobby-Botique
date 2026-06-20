@@ -22,3 +22,7 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+## 2025-06-20 - [XSS] Missing HTML Escaping in Dashboard UI
+**Vulnerability:** The dashboard UI injected dynamic server responses (e.g. key hashes, statuses, error messages) directly into the DOM using `.innerHTML` without escaping the content. This opens up a Cross-Site Scripting (XSS) vulnerability.
+**Learning:** Modern frontends or dashboards often use vanilla JavaScript template literals without an implicit sanitization framework (like React or Vue), which makes it very easy to miss `innerHTML` sinks.
+**Prevention:** Always use `document.createElement("div").textContent` to sanitize strings before concatenating them into HTML strings that are later injected via `.innerHTML`.
