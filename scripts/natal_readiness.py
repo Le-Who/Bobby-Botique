@@ -9,13 +9,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config import settings
+from app.database import db_manager
 from app.natal.accuracy import format_accuracy_results, load_golden_cases_from_json, validate_golden_cases
 from app.natal.city_readiness import check_city_catalog_readiness, format_city_readiness
 from app.natal.config_readiness import check_natal_config_readiness, format_natal_config_readiness
 from app.natal.horizons_accuracy import format_horizons_results, validate_planets_against_horizons
-from app.database import db_manager
 from app.natal.smoke import run_natal_smoke
 from app.natal.storage import check_storage_ready
+
 
 async def _main(
     *,

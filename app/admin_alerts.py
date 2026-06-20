@@ -47,6 +47,24 @@ def _record_alert() -> None:
     _alert_timestamps.append(time.monotonic())
 
 
+# ── Unauthorized user alert cooldown ─────────────────────────────────────────
+# Per-user cooldown prevents alert spam when a user writes multiple messages.
+
+_unauthorized_last_alerted: dict[int, float] = {}
+_UNAUTHORIZED_COOLDOWN_S = 600.0  # 10 minutes per user
+
+
+def _can_alert_unauthorized(user_id: int) -> bool:
+    """Return True if enough time has passed since last alert for this user."""
+    now = time.monotonic()
+    last = _unauthorized_last_alerted.get(user_id, 0.0)
+    return (now - last) >= _UNAUTHORIZED_COOLDOWN_S
+
+
+def _record_unauthorized_alert(user_id: int) -> None:
+    _unauthorized_last_alerted[user_id] = time.monotonic()
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 
@@ -203,3 +221,67 @@ async def alert_admin_raw(
         logger.info("Admin alert (raw) sent: %s", message[:80])
     except Exception as send_err:
         logger.warning("Failed to send raw admin alert: %s", send_err)
+
+
+async def alert_admin_unauthorized_user(
+    app: Application,
+    user_id: int,
+    username: str | None,
+    first_name: str | None,
+    language_code: str | None,
+    chat_type: str,
+    message_text: str | None,
+) -> None:
+    """Send an alert to the admin about an unauthorized user attempt."""
+    if not _can_alert_unauthorized(user_id):
+        return
+
+    from app.config import settings
+
+    admin_id = settings.ADMIN_ID
+    if not admin_id:
+        return
+
+    import html
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    name = html.escape(first_name or "Unknown")
+    user_handle = f"@{html.escape(username)}" if username else "No username"
+    lang = html.escape(language_code or "unknown")
+    text_preview = html.escape((message_text or "")[:100])
+    if message_text and len(message_text) > 100:
+        text_preview += "..."
+
+    message = (
+        f"🚨 <b>Попытка доступа от неавторизованного пользователя</b>\n\n"
+        f"<b>ID:</b> <code>{user_id}</code>\n"
+        f"<b>Имя:</b> {name}\n"
+        f"<b>Username:</b> {user_handle}\n"
+        f"<b>Язык:</b> {lang}\n"
+        f"<b>Тип чата:</b> {chat_type}\n\n"
+        f"<b>Сообщение:</b>\n<i>{text_preview}</i>"
+    )
+
+    # Note: url="tg://user?id=USER_ID" opens the user's profile in Telegram clients
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Добавить в whitelist", callback_data=f"unauthorized_add:{user_id}"),
+        ],
+        [
+            InlineKeyboardButton("👤 Профиль", url=f"tg://user?id={user_id}"),
+            InlineKeyboardButton("🚫 Игнорировать", callback_data=f"unauthorized_dismiss:{user_id}"),
+        ]
+    ])
+
+    try:
+        await app.bot.send_message(
+            chat_id=admin_id,
+            text=message,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+        _record_unauthorized_alert(user_id)
+        logger.info("Admin alert sent for unauthorized user %s", user_id)
+    except Exception as send_err:
+        logger.warning("Failed to send unauthorized user alert: %s", send_err)

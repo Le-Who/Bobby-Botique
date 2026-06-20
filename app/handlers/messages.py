@@ -226,6 +226,18 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         if not is_auth_ok:
             logging.warning("Unauthorized user %s attempted to use bot", user_id)
+            from app.admin_alerts import alert_admin_unauthorized_user
+
+            _user = update.effective_user
+            await alert_admin_unauthorized_user(
+                app=context.application,
+                user_id=user_id,
+                username=_user.username if _user else None,
+                first_name=_user.first_name if _user else None,
+                language_code=_user.language_code if _user else None,
+                chat_type=effective_msg.chat.type,
+                message_text=message_text,
+            )
             return
 
         # ── 4. Document uploads ──────────────────────────────────────────────

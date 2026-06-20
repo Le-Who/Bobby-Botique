@@ -342,6 +342,41 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text("Авторизованные пользователи:\n" + "\n".join(str(uid) for uid in user_ids))
 
 
+async def unauthorized_add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    # Check admin privileges directly (admin_only decorator is for messages, not callbacks)
+    if update.effective_user.id != settings.ADMIN_ID:
+        await query.answer("Только администратор может использовать эту кнопку", show_alert=True)
+        return
+
+    try:
+        user_id = int(query.data.split(":")[1])
+        await authorize_user(user_id)
+        await invalidate_user_auth_cache(user_id)
+        await query.answer(f"Пользователь {user_id} добавлен в белый список!")
+        
+        # Remove buttons, append success message
+        text = query.message.text_html if query.message else ""
+        text += f"\n\n✅ <b>Пользователь {user_id} добавлен в whitelist!</b>"
+        await query.edit_message_text(text, parse_mode="HTML")
+    except Exception as e:
+        await query.answer(f"Ошибка: {e}", show_alert=True)
+
+
+async def unauthorized_dismiss_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if update.effective_user.id != settings.ADMIN_ID:
+        await query.answer("Только администратор может использовать эту кнопку", show_alert=True)
+        return
+
+    try:
+        # Just remove the buttons
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.answer("Алерт проигнорирован")
+    except Exception:
+        await query.answer("Ошибка при обновлении сообщения")
+
+
 @admin_only
 async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами

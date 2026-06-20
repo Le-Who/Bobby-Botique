@@ -42,7 +42,7 @@ async def tarot_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     
     # 5. Format welcome message
     text = (
-        f"🔮 **Сеанс Таро начат**\n\n"
+        "🔮 **Сеанс Таро начат**\n\n"
         "Пожалуйста, сосредоточьтесь на вашей ситуации и **задайте свой вопрос**.\n"
         "Как только вы напишете вопрос, я вытяну карты для расклада."
     )
