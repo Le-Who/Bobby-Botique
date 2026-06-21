@@ -659,7 +659,7 @@ def _result_caption(report, birth_input: BirthInput) -> str:
 def _result_keyboard(report) -> InlineKeyboardMarkup | None:
     rows: list[list[InlineKeyboardButton]] = []
     if report.hosted_url and _is_safe_button_url(report.hosted_url):
-        rows.append([InlineKeyboardButton("Открыть полный разбор", url=report.hosted_url)])
+        rows.append([InlineKeyboardButton("Открыть полный разбор", web_app=WebAppInfo(url=report.hosted_url))])
     if report.telegraph_url and _is_safe_button_url(report.telegraph_url):
         rows.append([InlineKeyboardButton("Telegraph mirror", url=report.telegraph_url)])
     if not rows:
