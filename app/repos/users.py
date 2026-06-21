@@ -90,7 +90,7 @@ async def load_user_state(user_id: int) -> dict[str, Any] | None:
                     "document_mode": row.get("document_mode", False) or False,
                     "selected_document_id": row.get("selected_document_id"),
                     "awaiting_custom_role_input": row.get("awaiting_custom_role_input", False) or False,
-                    "generated_role": row.get("generated_role"),  # JSONB → dict
+                    "generated_role": row.get("generated_role"),
                     "last_custom_role_prompt": row.get("last_custom_role_prompt"),
                     "generating_custom_role": row.get("generating_custom_role", False) or False,
                     "last_sent_message_text": row.get("last_sent_message_text"),
@@ -127,11 +127,6 @@ async def save_user_state(
 ) -> None:
     """Persist user state to the database using UPSERT."""
     try:
-        role_json = json.dumps(generated_role) if generated_role else None
-        diaries_json = json.dumps(role_diaries or {}, ensure_ascii=False)
-
-        tarot_json = json.dumps(tarot_session) if tarot_session else None
-
         await db_query(
             """
             INSERT INTO user_state (
@@ -166,7 +161,7 @@ async def save_user_state(
                 document_mode,
                 selected_document_id,
                 awaiting_custom_role_input,
-                role_json,
+                generated_role,
                 last_custom_role_prompt,
                 generating_custom_role,
                 last_sent_message_text,
@@ -174,9 +169,9 @@ async def save_user_state(
                 awaiting_manual_role_prompt,
                 manual_role_title,
                 manual_role_prompt,
-                diaries_json,
+                role_diaries or {},
                 tarot_mode,
-                tarot_json,
+                tarot_session,
             ),
         )
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:

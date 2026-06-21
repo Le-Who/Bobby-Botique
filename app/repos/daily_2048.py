@@ -361,10 +361,10 @@ async def upsert_puzzle(
         """,
         (
             puzzle_date,
-            json.dumps(normalized_board, ensure_ascii=False),
+            normalized_board,
             normalized_goal,
             max(8, int(goal_value)),
-            json.dumps(normalized_sequence, ensure_ascii=False),
+            normalized_sequence,
             seed,
             max(1, int(par_moves)),
             max(30, int(target_seconds)),
@@ -432,7 +432,7 @@ async def get_or_create_result(user_id: int, puzzle: Daily2048Puzzle) -> Daily20
         RETURNING user_id, puzzle_date, status, board, spawn_index, moves, merge_score,
                   final_score, elapsed_ms, started_at, won_at, finished_at, recordable
         """,
-        (user_id, puzzle.puzzle_date, json.dumps(normalize_board(puzzle.board), ensure_ascii=False)),
+        (user_id, puzzle.puzzle_date, normalize_board(puzzle.board)),
     )
     return _row_to_result(rows[0])
 
@@ -485,7 +485,7 @@ async def update_result_after_move(
             user_id,
             puzzle_date,
             status,
-            json.dumps(normalize_board(board), ensure_ascii=False),
+            normalize_board(board),
             max(0, int(spawn_index)),
             max(0, int(moves)),
             max(0, int(merge_score)),

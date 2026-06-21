@@ -12,7 +12,6 @@ import logging
 from typing import Any
 
 from app.database import db_query
-from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ async def create_branch(user_id: int, history: list[dict[str, Any]], *, label: s
             VALUES ($1, $2, $3, NOW())
             RETURNING id
             """,
-            (user_id, label, json.dumps(history, ensure_ascii=False)),
+            (user_id, label, history),
         )
         if result:
             branch_id = result[0]["id"]
@@ -54,7 +53,11 @@ async def restore_branch(user_id: int, branch_id: int) -> list[dict[str, Any]] |
             (branch_id, user_id),
         )
         if result:
-            history = json.loads(result[0]["snapshot_history"])
+            history = result[0]["snapshot_history"]
+            if isinstance(history, str):
+                # Fallback: old double-encoded row still in DB — parse it once
+                import json as _json
+                history = _json.loads(history)
             logger.info("Branch restored: user=%s branch_id=%d msgs=%d", user_id, branch_id, len(history))
             return history
         return None

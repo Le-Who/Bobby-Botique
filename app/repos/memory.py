@@ -285,7 +285,7 @@ async def store_memory(
                     db_text_content,
                     f"[{','.join(str(v) for v in embedding)}]",
                     source_type,
-                    json.dumps(metadata or {}),
+                    metadata or {},
                     expires_at,
                 ]
 

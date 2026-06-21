@@ -491,7 +491,7 @@ async def set_puzzle_hints(puzzle_date: date, hints: list[str], *, difficulty: s
             prepared_at = NULL
         WHERE puzzle_date = $1 AND difficulty = $2
         """,
-        (puzzle_date, difficulty, json.dumps(hints, ensure_ascii=False)),
+        (puzzle_date, difficulty, hints),
     )
 
 
@@ -680,7 +680,7 @@ async def append_attempt_and_maybe_finish(
             puzzle_date,
             difficulty,
             status,
-            json.dumps(attempts, ensure_ascii=False),
+            attempts,
             best_score,
             won,
             finished,
