@@ -209,16 +209,41 @@ class InputSanitizer:
         if hostname.lower() == "localhost":
             raise InputSanitizationError("Localhost URLs not allowed")
 
-        # Check for IP addresses
+        # Check for IP addresses (direct inputs)
         try:
-            # This handles both IPv4 and IPv6
             ipaddress.ip_address(hostname)
-            # If we are here, it IS an IP address.
             # Current policy: Block ALL IP addresses.
             raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
         except ValueError:
             # Not an IP address, continue
             pass
+
+        # Resolve hostname to mitigate wildcard DNS SSRF pointing to internal IPs
+        # Note: This does not prevent TOCTOU DNS rebinding, which requires HTTP client pinning.
+        try:
+            import socket
+
+            addr_info = socket.getaddrinfo(hostname, None)
+            for info in addr_info:
+                ip_str = info[4][0]
+                # Extract the IP string, stripping scope IDs for IPv6 (e.g. %eth0) if present
+                ip_str_clean = ip_str.split("%")[0] if "%" in ip_str else ip_str
+                try:
+                    ip = ipaddress.ip_address(ip_str_clean)
+                    if (
+                        ip.is_private
+                        or ip.is_loopback
+                        or ip.is_link_local
+                        or ip.is_multicast
+                        or ip.is_reserved
+                        or ip.is_unspecified
+                    ):
+                        raise InputSanitizationError(f"Hostname resolves to a forbidden internal IP: {hostname}")
+                except ValueError:
+                    # Ignore invalid IP strings from resolution
+                    pass
+        except socket.gaierror as e:
+            raise InputSanitizationError(f"Could not resolve hostname: {hostname}") from e
 
         return url
 
