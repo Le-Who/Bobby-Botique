@@ -140,6 +140,23 @@ class TestSanitizeUrl:
         with pytest.raises(InputSanitizationError, match="IP"):
             self.s.sanitize_url("http://192.168.1.1/admin")
 
+    def test_rejects_ssrf_dns_rebinding(self):
+        import socket
+
+        original_getaddrinfo = socket.getaddrinfo
+
+        def mock_getaddrinfo(host, port, *args, **kwargs):
+            if host == "127.0.0.1.nip.io":
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+            return original_getaddrinfo(host, port, *args, **kwargs)
+
+        socket.getaddrinfo = mock_getaddrinfo
+        try:
+            with pytest.raises(InputSanitizationError, match="private/local IP"):
+                self.s.sanitize_url("http://127.0.0.1.nip.io/admin")
+        finally:
+            socket.getaddrinfo = original_getaddrinfo
+
     def test_rejects_too_long_url(self):
         with pytest.raises(InputSanitizationError, match="too long"):
             self.s.sanitize_url("https://example.com/" + "a" * 10000)

@@ -1,3 +1,8 @@
+## 2025-05-22 - [Security Enhancement] SSRF Prevention via DNS Resolution
+**Vulnerability:** The `sanitize_url` function relied solely on string matching (localhost) and `ipaddress.ip_address` to detect and block internal IP targets. This failed to catch Server-Side Request Forgery (SSRF) bypasses where a custom DNS entry (like `127.0.0.1.nip.io`) or an obfuscated IP literal (like octal `0177.0000.0000.0001` or hex `0x7f000001` not caught by strict `ipaddress` parsing depending on python version) resolves to a loopback/private IP.
+**Learning:** Checking hostnames strictly as strings or literal IPs is insufficient against SSRF. Attackers can control DNS to point arbitrary domains to internal services.
+**Prevention:** Always use `socket.getaddrinfo` to proactively resolve the hostname to its actual routing IP addresses *before* fetching the URL, and validate those resolved IPs against private/loopback/link-local boundaries.
+
 ## 2025-05-22 - [Security Enhancement] Robust URL Sanitization
 **Vulnerability:** The `sanitize_url` function relied on a regex that only matched IPv4 addresses in exact dot-decimal notation, failing to block `localhost`, IPv6 loopbacks, and URLs with ports (e.g., `http://127.0.0.1:8080`).
 **Learning:** Regex-based validation for URLs is brittle. `urllib.parse` splits the URL, but `netloc` includes the port, which breaks regexes expecting only an IP. `ipaddress` module is robust for IP validation.
