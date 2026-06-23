@@ -144,6 +144,19 @@ class TestSanitizeUrl:
         with pytest.raises(InputSanitizationError, match="too long"):
             self.s.sanitize_url("https://example.com/" + "a" * 10000)
 
+    def test_rejects_dns_rebinding_ssrf(self, monkeypatch):
+        # Mock getaddrinfo to return a private IP for a seemingly external hostname
+        def mock_getaddrinfo(host, port, *args, **kwargs):
+            import socket
+
+            if host == "malicious.com":
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+            raise socket.gaierror(-2, "Name or service not known")
+
+        monkeypatch.setattr("socket.getaddrinfo", mock_getaddrinfo)
+        with pytest.raises(InputSanitizationError, match="non-public IP"):
+            self.s.sanitize_url("http://malicious.com/admin")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # InputSanitizer.sanitize_query
