@@ -209,15 +209,27 @@ class InputSanitizer:
         if hostname.lower() == "localhost":
             raise InputSanitizationError("Localhost URLs not allowed")
 
-        # Check for IP addresses
+        # Check for IP addresses and resolve hostname to prevent DNS-based SSRF
+        import socket
+
         try:
-            # This handles both IPv4 and IPv6
+            # Get IP addresses for the hostname
+            addr_info = socket.getaddrinfo(hostname, None)
+            for info in addr_info:
+                ip_str = info[4][0]
+                ip_obj = ipaddress.ip_address(ip_str)
+                # Block private, loopback, and link-local IP addresses
+                if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+                    raise InputSanitizationError(f"URL resolves to an internal/private IP address: {hostname}")
+        except socket.gaierror:
+            # Could not resolve hostname, let it through as it might be a valid but currently unreachable domain
+            pass
+
+        # We also preserve the previous behavior of blocking any explicit IP address literal
+        try:
             ipaddress.ip_address(hostname)
-            # If we are here, it IS an IP address.
-            # Current policy: Block ALL IP addresses.
             raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
         except ValueError:
-            # Not an IP address, continue
             pass
 
         return url
