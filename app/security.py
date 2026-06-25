@@ -8,6 +8,7 @@ import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -209,16 +210,33 @@ class InputSanitizer:
         if hostname.lower() == "localhost":
             raise InputSanitizationError("Localhost URLs not allowed")
 
-        # Check for IP addresses
+        # Check for IP addresses and resolve hostnames to block private/loopback IPs (SSRF mitigation)
         try:
-            # This handles both IPv4 and IPv6
-            ipaddress.ip_address(hostname)
-            # If we are here, it IS an IP address.
-            # Current policy: Block ALL IP addresses.
-            raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
-        except ValueError:
-            # Not an IP address, continue
-            pass
+            # First, check if it's already an explicit IP string
+            try:
+                ip_obj = ipaddress.ip_address(hostname)
+                if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+                    raise InputSanitizationError(f"Private IP addresses not allowed in URLs: {hostname}")
+                # Optional: Block all explicit IP addresses depending on policy
+                raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
+            except ValueError:
+                pass
+
+            # Resolve hostname to catch DNS rebinding/SSRF via external wildcards like nip.io
+            try:
+                resolved_info = socket.getaddrinfo(hostname, None)
+                for info in resolved_info:
+                    ip_str = info[4][0]
+                    ip = ipaddress.ip_address(ip_str)
+                    if ip.is_loopback or ip.is_private or ip.is_link_local:
+                        raise InputSanitizationError(f"Hostname resolves to private/loopback IP: {hostname}")
+            except socket.gaierror:
+                pass  # DNS resolution failed, let it through or block based on strictness. We let it through for now as it won't resolve.
+
+        except InputSanitizationError:
+            raise
+        except Exception as e:
+            raise InputSanitizationError(f"URL validation failed: {e}") from e
 
         return url
 
