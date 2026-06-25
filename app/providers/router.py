@@ -291,20 +291,25 @@ class ProviderRouter:
                 if error_category != "permanent":
                     all_permanent = False
 
-                if error_category != "transient":
-                    try:
-                        if not is_opencode_model(model_used) and not is_freetheai_model(model_used):  # type: ignore[arg-type]
-                            await status_mgr.suspend_key(
-                                key_data["key_hash"],
-                                model_used,  # type: ignore[arg-type]  # asserted above
-                                error_category,
-                                response_text[:200],
-                            )
-                    except Exception as e:
-                        logging.warning(
-                            "Non-critical: failed to suspend key: %s",
-                            e,
+                # Suspend the key for ALL error categories including transient (503/OVERLOADED).
+                # Previously the "!= transient" guard skipped suspension, leaving keys marked
+                # healthy in DB. The next card then resolved the same overloaded keys again.
+                # _PENALTY_DURATIONS["transient"] = 15s already existed but was never reached.
+                # get_fresh_available_key() SQL filters suspended keys (suspended_until < NOW())
+                # so recovery is automatic after the cooldown expires.
+                try:
+                    if not is_opencode_model(model_used) and not is_freetheai_model(model_used):  # type: ignore[arg-type]
+                        await status_mgr.suspend_key(
+                            key_data["key_hash"],
+                            model_used,  # type: ignore[arg-type]  # asserted above
+                            error_category,
+                            response_text[:200],
                         )
+                except Exception as e:
+                    logging.warning(
+                        "Non-critical: failed to suspend key: %s",
+                        e,
+                    )
 
                 logging.warning(
                     "Key %s… failed (category=%s, attempt %d/%d). Error: %s",

@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime
 from app import database as db
 from app.errors import is_error_message
 from app.providers import get_provider_router
+from app.repos.keys import count_gemini_keys
 from app.tarot import iter_daily_card_variants
 from app.utils.time import get_pacific_tz
 
@@ -150,6 +151,23 @@ async def prepare_daily_readings(
         try:
             variants = list(iter_daily_card_variants())
             router = get_provider_router()
+
+            # Dynamic retry count: use the full Gemini key pool so the router
+            # can spread load across all available keys instead of a hardcoded
+            # cap. Previously max_key_retries=4 meant only 4 of 12 keys were
+            # ever tried per card. Falls back to 4 if the DB count returns 0.
+            pool_size = await count_gemini_keys()
+            max_key_retries = max(pool_size, 4)
+            logger.info(
+                "Tarot prep: using max_key_retries=%d (pool_size=%d)",
+                max_key_retries,
+                pool_size,
+            )
+
+            _consecutive_failures = 0
+            _CONSECUTIVE_FAILURE_THRESHOLD = 3
+            _FAILURE_BACKOFF_SECONDS = 30.0
+
             for index, variant in enumerate(variants):
                 requested_generation = False
                 card_name = str(variant["name"])
@@ -181,14 +199,27 @@ async def prepare_daily_readings(
                     ],
                     system_instruction=_build_daily_system_instruction(str(variant["context"])),
                     use_openrouter=False,
-                    max_key_retries=4,
+                    max_key_retries=max_key_retries,
                     thinking_level="low",
                     timeout=45,
                 )
                 if not result or not result.strip() or is_error_message(result):
                     failed += 1
+                    _consecutive_failures += 1
                     logger.warning("Prepared tarot daily failed date=%s card=%s", target, variant["label"])
+                    # Adaptive backoff: if the API is in a sustained overload storm,
+                    # pause long enough for 15s-suspended keys to recover before
+                    # the next card tries to acquire a key from the pool again.
+                    if _consecutive_failures >= _CONSECUTIVE_FAILURE_THRESHOLD:
+                        logger.warning(
+                            "Tarot prep: %d consecutive failures — pausing %.0fs for API recovery",
+                            _consecutive_failures,
+                            _FAILURE_BACKOFF_SECONDS,
+                        )
+                        await sleep(_FAILURE_BACKOFF_SECONDS)
+                        _consecutive_failures = 0
                 else:
+                    _consecutive_failures = 0
                     await upsert_prepared_daily_reading(
                         reading_date=target,
                         card_name=card_name,

@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-06-25 - Unified Daily Admin & Tarot Broadcast
+
+### 🛠️ Unified Admin Interface
+- **Daily Broadcast Center (`/admin_daily`):** Combined the previously fragmented `/admin_dailycroc` and `/admin_daily2048` pages into a single SPA-like interface (`app/templates/admin_daily.html`) with hash-based routing (`#broadcast`, `#croc`, `#2048`, `#horoscope`, `#tarot`). Legacy routes now perform 301 redirects to the new unified panel.
+- **Global Broadcast Management (`app/web.py`):** Centralized the global delivery kill-switches and subscriber metrics for Crocodile, Horoscope, and Tarot under new `/api/admin/broadcast/*` endpoints.
+
+### 🔮 Esoteric & Astrology Suite
+- **Tarot Daily Broadcast (`scripts/migrations/054_add_tarot_daily_subscriptions.sql`, `app/repos/tarot_daily_subscriptions.py`):** Added subscription persistence and scheduler helpers for the "Карта дня" (Daily Tarot Card) broadcast. Supports personalized timezone scheduling mimicking the existing Horoscope subscription system.
+- **Tarot Ops Controls:** Exposed Tarot daily preparation status and forced regeneration triggers (`/api/admin/tarot/status`, `/api/admin/tarot/regenerate`) directly within the new Daily Admin panel.
+
+---
+
 ## [Unreleased] - 2026-06-20 - Esoteric Suite, Admin Alerts & Core Ops
 
 ### 🔮 Esoteric & Astrology Suite

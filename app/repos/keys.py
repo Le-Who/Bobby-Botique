@@ -301,6 +301,16 @@ async def get_current_active_gemini_key(model_name: str) -> dict[str, Any] | Non
     return await _gemini_km.get_fresh_available_key(model_name, daily_limit)
 
 
+async def count_gemini_keys() -> int:
+    """Return the total number of Gemini API keys currently in the pool.
+
+    Used to dynamically size max_key_retries in batch generation tasks so
+    the router can spread load across the full pool instead of a hardcoded cap.
+    """
+    rows = await db_query("SELECT COUNT(*) AS cnt FROM api_keys", ())
+    return int(rows[0]["cnt"]) if rows else 0
+
+
 async def increment_gemini_key_usage(key_hash: str, model_name: str) -> None:
     result = await _gemini_km.increment_usage(key_hash, model_name)
     current_usage = result[0]["request_count"] if result else 0
