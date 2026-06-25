@@ -1,45 +1,60 @@
-# ── Secrets ────────────────────────────────────────────────────
+# ── Secrets ───────────────────────────────────────────────────
 .env
 .env.*
 
-# ── Python ────────────────────────────────────────────────────
+# ── Python Caches & Virtual Environments ──────────────────────
 __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
 .venv/
 venv/
+uv.lock
 
 # ── Test & Coverage Artifacts ─────────────────────────────────
 .coverage
 htmlcov/
 .pytest_cache/
 .pytest_tmp/
+pytest*.log
+pytest_output.txt
 tests_output.log
-output/
+test_keys_out.txt
+
 # ── Linter / Type Checker Caches ──────────────────────────────
 .ruff_cache/
 .mypy_cache/
 
-# ── IDE & Editor Configs ──────────────────────────────────────
+# ── IDE, Editor & Agent Configs ───────────────────────────────
 .vscode/
 .cursor/
 .Jules/
 .idea/
+.vs/
+.codex/
 .roomodes
 *.swp
 *.swo
 skills/
 .agents/
+skills-lock.json
+implementation_plan.md
+walkthrough.md
+task.md
+.playwright-cli/
 
-# ── Dev artifacts ─────────────────────────────────────────────
+# ── App Data & Caches ─────────────────────────────────────────
+# Crocodile game local judgement cache
+app/games/data/*.json
+
+# ── Logs & Output ─────────────────────────────────────────────
+output/
+out.log
+out*.log
+
+# ── Dev Artifacts & Scripts ───────────────────────────────────
 verification/
 data/
-
-# ── OS files ──────────────────────────────────────────────────
-Thumbs.db
-Desktop.ini
-.DS_Store
 test_script.py
 test_sim.py
 test_perf.py
@@ -47,37 +62,18 @@ test_size.py
 test_stream.py
 load_test.py
 benchmark*.py
-pytest*.log
-implementation_plan.md
-skills-lock.json
-walkthrough.md
-
-# Crocodile game � local judgement cache
-app/games/data/*.json
-
-
-# Environment secrets
-.env
+_patch_*.py
+_test_*.py
+scratch*.py
+script.py
 
 # Perf profiling scratch output (keep bench_*.py, ignore everything else)
 artifacts/perf/*.log
 artifacts/perf/*.json
 artifacts/perf/parse_*.py
 artifacts/perf/out*.log
-# Dev scratch & debug scripts
-_patch_*.py
-_test_*.py
-scratch*.py
-script.py
 
-# IDE configs
-.vs/
-.codex/
-
-# Log & output files
-out.log
-pytest_output.txt
-test_keys_out.txt
-
-# UV lock (not used)
-uv.lock
+# ── OS Files ──────────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+.DS_Store

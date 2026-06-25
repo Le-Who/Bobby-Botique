@@ -33,7 +33,12 @@ DELIVERY_SETTING_KEY = "tarot_daily_delivery_enabled"
 async def get_tarot_subscription(user_id: int) -> dict | None:
     """Return the subscription row for a user, or None if not found."""
     rows = await db_query(
-        f"SELECT * FROM {TABLE} WHERE user_id = $1",
+        f"""
+        SELECT user_id, is_subscribed, timezone, preferred_local_hour,
+               last_sent_date, discovery_last_sent_at, created_at, updated_at
+        FROM {TABLE}
+        WHERE user_id = $1
+        """,
         (user_id,),
     )
     return dict(rows[0]) if rows else None
@@ -178,3 +183,57 @@ async def get_due_for_current_hour(now: datetime | None = None) -> list[dict]:
     current = now or datetime.now(tz=UTC)
     today = current.date()
     return await get_due_tarot_subscriptions(today)
+
+
+async def mark_tarot_discovery_sent(user_id: int) -> None:
+    """Record that the user received a tarot subscription offer right now."""
+    try:
+        await db_query(
+            f"""
+            INSERT INTO {TABLE} (user_id, discovery_last_sent_at)
+            VALUES ($1, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id) DO UPDATE
+                SET discovery_last_sent_at = CURRENT_TIMESTAMP,
+                    updated_at = NOW()
+            """,
+            (user_id,),
+        )
+    except Exception as e:
+        logger.error("mark_tarot_discovery_sent failed for user %s: %s", user_id, e)
+
+
+async def get_tarot_discovery_candidates(
+    *,
+    min_days_since_last_offer: int = 14,
+    limit: int = 200,
+) -> list[dict]:
+    """Return users who should receive a tarot subscription offer.
+
+    Candidates = users with is_authorized=1 who are not yet subscribed AND
+    either never received an offer OR received one 14+ days ago.
+    """
+    from app.database import db_query as _db_query
+
+    try:
+        rows = await _db_query(
+            f"""
+            SELECT u.user_id,
+                   ts.is_subscribed,
+                   ts.discovery_last_sent_at
+            FROM public.users u
+            LEFT JOIN {TABLE} ts ON ts.user_id = u.user_id
+            WHERE u.is_authorized = 1
+              AND COALESCE(ts.is_subscribed, FALSE) = FALSE
+              AND (
+                  ts.discovery_last_sent_at IS NULL
+                  OR ts.discovery_last_sent_at <= NOW() - ($1 || ' days')::INTERVAL
+              )
+            ORDER BY u.user_id
+            LIMIT $2
+            """,
+            (min_days_since_last_offer, limit),
+        )
+        return [dict(r) for r in rows] if rows else []
+    except Exception as e:
+        logger.error("get_tarot_discovery_candidates failed: %s", e, exc_info=True)
+        return []

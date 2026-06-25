@@ -444,6 +444,9 @@ input:checked + .slider:before { transform: translateX(16px); }
 .btn-row { display: flex; gap: 8px; }
 .btn-row .btn { flex: 1; }
 .btn-refresh { font-size: 0.8rem; font-weight: 600; padding: 6px 12px; height: 32px; border-radius: 6px; width: auto; }
+.btn-primary { background: rgba(139,92,246,0.18); color: var(--violet); border-color: rgba(139,92,246,0.35); font-weight: 600; }
+.btn-primary:hover:not(:disabled) { background: rgba(139,92,246,0.3); border-color: var(--violet); }
+.btn-sm { font-size: 0.72rem; padding: 3px 9px; height: 26px; border-radius: 5px; }
 .loading-container { padding: 60px 0; text-align: center; color: var(--text-muted); font-size: 0.9rem; }
 .badge-missing { display: inline-block; font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; background: rgba(244,63,94,0.15); color: var(--rose); font-weight: 700; border: 1px solid rgba(244,63,94,0.25); text-transform: uppercase; }
 .edit-hidden { display: none; }
@@ -732,6 +735,90 @@ input:checked + .slider:before { transform: translateX(16px); }
         <button class="btn btn-refresh" id="sub-next" disabled>Далее →</button>
       </div>
     </div>
+
+    <!-- ═══ OFFER HISTORY & MANUAL SEND ═══════════════════════════════════ -->
+    <h2 class="section-title" style="margin-top:32px;">📬 История офферов и ручная отправка</h2>
+
+    <!-- Quick send form -->
+    <div class="card" style="margin-bottom:18px;padding:18px 20px;">
+      <div style="font-size:0.82rem;font-weight:600;color:var(--text-muted);margin-bottom:12px;letter-spacing:.05em;text-transform:uppercase;">🎯 Отправить оффер по User ID</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <input type="text" class="filter-input" id="offer-quick-uid" placeholder="User ID…" style="width:160px;">
+        <select class="filter-select" id="offer-quick-channel">
+          <option value="daily_challenge">🎮 Daily Challenge</option>
+          <option value="horoscope">⭐ Horoscope</option>
+          <option value="tarot">🔮 Tarot</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--text-muted);cursor:pointer;">
+          <input type="checkbox" id="offer-quick-force"> Отправить даже если подписан
+        </label>
+        <button class="btn btn-primary" id="btn-offer-quick-send">✈️ Отправить</button>
+      </div>
+    </div>
+
+    <!-- Offer history filters -->
+    <div class="table-wrap">
+      <div class="table-filters">
+        <select class="filter-select" id="offer-filter-channel">
+          <option value="all">Все каналы</option>
+          <option value="daily_challenge">🎮 Daily Challenge</option>
+          <option value="horoscope">⭐ Horoscope</option>
+          <option value="tarot">🔮 Tarot</option>
+        </select>
+        <select class="filter-select" id="offer-filter-status">
+          <option value="">Все статусы</option>
+          <option value="subscribed">✅ Подписан</option>
+          <option value="not_subscribed">❌ Не подписан</option>
+          <option value="snoozed">💤 Snoozed</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--text-muted);cursor:pointer;white-space:nowrap;">
+          <input type="checkbox" id="offer-filter-never"> Только никогда не получали
+        </label>
+        <input type="text" class="filter-input" id="offer-filter-uid" placeholder="User ID…" style="width:120px;">
+        <button class="btn btn-refresh" id="btn-load-offers" style="margin-left:auto;">🔍 Найти</button>
+        <span style="font-size:0.72rem;color:var(--text-muted);" id="offer-count-label"></span>
+      </div>
+
+      <!-- Batch controls (visible when rows are checked) -->
+      <div id="offer-batch-bar" style="display:none;align-items:center;gap:10px;padding:10px 14px;background:rgba(139,92,246,.08);border-bottom:1px solid var(--border);">
+        <span style="font-size:0.82rem;color:var(--violet);font-weight:600;" id="offer-batch-count">0 выбрано</span>
+        <select class="filter-select" id="offer-batch-channel" style="width:auto;">
+          <option value="daily_challenge">🎮 Daily Challenge</option>
+          <option value="horoscope">⭐ Horoscope</option>
+          <option value="tarot">🔮 Tarot</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.77rem;color:var(--text-muted);cursor:pointer;">
+          <input type="checkbox" id="offer-batch-force"> force
+        </label>
+        <button class="btn btn-primary" id="btn-offer-batch-send" style="margin-left:auto;">✈️ Отправить выбранным</button>
+        <button class="btn" id="btn-offer-batch-clear" style="background:none;border:1px solid var(--border);color:var(--text-muted);">✕ Снять выбор</button>
+      </div>
+
+      <div style="overflow-x:auto;">
+        <table class="sub-table" id="offer-table">
+          <thead>
+            <tr>
+              <th style="width:32px;"><input type="checkbox" id="offer-select-all" title="Выбрать все"></th>
+              <th>User ID</th>
+              <th>Имя / username</th>
+              <th>Канал</th>
+              <th>Оффер отправлен</th>
+              <th>Снуз до</th>
+              <th>Подписан</th>
+              <th>Действие</th>
+            </tr>
+          </thead>
+          <tbody id="offer-tbody">
+            <tr><td colspan="8" class="empty-state">Нажмите «Найти» для загрузки</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:8px;padding:10px;border-top:1px solid var(--border);">
+        <button class="btn btn-refresh" id="offer-prev" disabled>← Назад</button>
+        <button class="btn btn-refresh" id="offer-next" disabled>Далее →</button>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -1028,8 +1115,11 @@ const TabRouter = (() => {
 const BroadcastModule = (() => {
   let initialized = false;
   let subOffset = 0;
+  let offerOffset = 0;
   const SUB_LIMIT = 50;
+  const OFFER_LIMIT = 50;
 
+  // ── Channel overview ──────────────────────────────────────────────────────
   async function loadOverview() {
     const container = document.getElementById('channel-cards');
     try {
@@ -1109,6 +1199,7 @@ const BroadcastModule = (() => {
     });
   }
 
+  // ── Subscribers table ─────────────────────────────────────────────────────
   async function loadSubscribers(offset = 0) {
     subOffset = offset;
     const channel = document.getElementById('sub-filter-channel').value;
@@ -1152,17 +1243,236 @@ const BroadcastModule = (() => {
     }
   }
 
+  // ── Offer history ─────────────────────────────────────────────────────────
+  let _selectedUids = new Set();
+
+  function _updateBatchBar() {
+    const bar = document.getElementById('offer-batch-bar');
+    const countEl = document.getElementById('offer-batch-count');
+    const n = _selectedUids.size;
+    bar.style.display = n > 0 ? 'flex' : 'none';
+    countEl.textContent = `${n} выбрано`;
+  }
+
+  async function loadOfferHistory(offset = 0) {
+    offerOffset = offset;
+    const channel = document.getElementById('offer-filter-channel').value;
+    const status  = document.getElementById('offer-filter-status').value;
+    const never   = document.getElementById('offer-filter-never').checked;
+    const uid     = document.getElementById('offer-filter-uid').value.trim();
+    const params  = new URLSearchParams({ limit: OFFER_LIMIT, offset });
+    if (channel && channel !== 'all') params.set('channel', channel);
+    if (status) params.set('status', status);
+    if (never) params.set('never_sent', '1');
+    if (uid) params.set('user_id', uid);
+
+    const tbody = document.getElementById('offer-tbody');
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="image-spinner" style="margin:0 auto 8px;"></div>Загрузка...</td></tr>';
+    _selectedUids.clear();
+    _updateBatchBar();
+    document.getElementById('offer-select-all').checked = false;
+
+    try {
+      const res = await fetch('/api/admin/broadcast/offer-history?' + params, { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      const rows = data.rows || [];
+      document.getElementById('offer-count-label').textContent = `Всего: ${data.total}`;
+
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Нет данных</td></tr>';
+      } else {
+        tbody.innerHTML = rows.map((r, i) => {
+          const offerAt  = r.offer_sent_at  ? new Date(r.offer_sent_at).toLocaleString('ru-RU', {dateStyle:'short',timeStyle:'short'}) : '—';
+          const snoozedUntil = r.snoozed_until ? new Date(r.snoozed_until).toLocaleString('ru-RU', {dateStyle:'short',timeStyle:'short'}) : '—';
+          const snoozCls = r.snoozed_active ? 'status-snoozed' : '';
+          const subBadge = r.is_subscribed
+            ? '<span style="color:var(--green);font-size:.8rem;">✅ Да</span>'
+            : '<span style="color:var(--rose);font-size:.8rem;">❌ Нет</span>';
+          const nameStr = [r.first_name, r.username ? `@${r.username}` : null].filter(Boolean).join(' ');
+          return `<tr data-uid="${r.user_id}" data-channel="${r.channel}">
+            <td style="text-align:center;"><input type="checkbox" class="offer-row-chk" value="${r.user_id}"></td>
+            <td class="mono">${r.user_id}</td>
+            <td style="font-size:0.78rem;color:var(--text-muted);">${nameStr || '—'}</td>
+            <td><span class="badge-channel">${r.channel_emoji} ${r.channel}</span></td>
+            <td class="mono" style="font-size:0.75rem;">${offerAt}</td>
+            <td class="mono ${snoozCls}" style="font-size:0.75rem;">${snoozedUntil}</td>
+            <td>${subBadge}</td>
+            <td>
+              <button class="btn btn-sm offer-send-btn"
+                data-uid="${r.user_id}"
+                data-channel="${r.channel}"
+                data-subscribed="${r.is_subscribed}"
+                title="Отправить оффер"
+                style="padding:4px 10px;font-size:0.72rem;">✈️</button>
+            </td>
+          </tr>`;
+        }).join('');
+
+        // Bind row checkboxes
+        tbody.querySelectorAll('.offer-row-chk').forEach(chk => {
+          chk.addEventListener('change', () => {
+            const uid = parseInt(chk.value);
+            chk.checked ? _selectedUids.add(uid) : _selectedUids.delete(uid);
+            _updateBatchBar();
+          });
+        });
+
+        // Bind send buttons
+        tbody.querySelectorAll('.offer-send-btn').forEach(btn => {
+          btn.addEventListener('click', () => _sendOfferConfirm(
+            parseInt(btn.dataset.uid),
+            btn.dataset.channel,
+            btn.dataset.subscribed === 'true',
+            btn
+          ));
+        });
+      }
+      document.getElementById('offer-prev').disabled = offset <= 0;
+      document.getElementById('offer-next').disabled = rows.length < OFFER_LIMIT;
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="8" class="empty-state error-text">Ошибка: ${e.message}</td></tr>`;
+    }
+  }
+
+  async function _sendOfferConfirm(uid, channel, isSubscribed, btnEl) {
+    const chLabel = { daily_challenge: '🎮 Daily Challenge', horoscope: '⭐ Horoscope', tarot: '🔮 Tarot' }[channel] || channel;
+    const subNote = isSubscribed ? '\n⚠️ Пользователь уже подписан.' : '';
+    const confirmed = await showConfirm(
+      'Отправить оффер',
+      `Отправить оффер «${chLabel}» пользователю ${uid}?${subNote}`
+    );
+    if (!confirmed) return;
+    if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
+    try {
+      const res = await fetch('/api/admin/broadcast/send-offer', {
+        method: 'POST', headers: apiHeaders,
+        body: JSON.stringify({ user_id: uid, channel, force: isSubscribed })
+      });
+      const d = await res.json();
+      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
+      if (d.warning) {
+        showToast(`⚠️ ${d.warning}`, 'info');
+      } else {
+        showToast(`✅ Оффер отправлен пользователю ${uid}`, 'success');
+        // Refresh the row's offer_sent_at visually
+        const tr = document.querySelector(`#offer-tbody tr[data-uid="${uid}"]`);
+        if (tr) {
+          const cells = tr.querySelectorAll('td');
+          if (cells[4]) cells[4].textContent = new Date().toLocaleString('ru-RU', {dateStyle:'short',timeStyle:'short'});
+        }
+      }
+    } catch (e) {
+      showToast(`Ошибка: ${e.message}`, 'error');
+    } finally {
+      if (btnEl) { btnEl.disabled = false; btnEl.textContent = '✈️'; }
+    }
+  }
+
+  async function _sendBatch() {
+    const uids = [..._selectedUids];
+    const channel = document.getElementById('offer-batch-channel').value;
+    const force = document.getElementById('offer-batch-force').checked;
+    const chLabel = { daily_challenge: '🎮 Daily Challenge', horoscope: '⭐ Horoscope', tarot: '🔮 Tarot' }[channel] || channel;
+    const confirmed = await showConfirm(
+      'Batch-отправка',
+      `Отправить оффер «${chLabel}» для ${uids.length} пользователей?`
+    );
+    if (!confirmed) return;
+    const btn = document.getElementById('btn-offer-batch-send');
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const res = await fetch('/api/admin/broadcast/send-offer-batch', {
+        method: 'POST', headers: apiHeaders,
+        body: JSON.stringify({ user_ids: uids, channel, force })
+      });
+      const d = await res.json();
+      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
+      const s = d.summary || {};
+      showToast(`✅ Отправлено: ${s.sent} · Пропущено: ${s.skipped} · Ошибок: ${s.errors}`, 'success');
+      _selectedUids.clear();
+      _updateBatchBar();
+      document.getElementById('offer-select-all').checked = false;
+      document.querySelectorAll('.offer-row-chk').forEach(c => { c.checked = false; });
+    } catch (e) {
+      showToast(`Ошибка: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '✈️ Отправить выбранным';
+    }
+  }
+
+  async function _quickSend() {
+    const uid = parseInt(document.getElementById('offer-quick-uid').value.trim());
+    const channel = document.getElementById('offer-quick-channel').value;
+    const force = document.getElementById('offer-quick-force').checked;
+    if (!uid) { showToast('Введите User ID', 'error'); return; }
+    const chLabel = { daily_challenge: '🎮 Daily Challenge', horoscope: '⭐ Horoscope', tarot: '🔮 Tarot' }[channel] || channel;
+    const confirmed = await showConfirm('Отправить оффер', `Отправить оффер «${chLabel}» пользователю ${uid}?`);
+    if (!confirmed) return;
+    const btn = document.getElementById('btn-offer-quick-send');
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/admin/broadcast/send-offer', {
+        method: 'POST', headers: apiHeaders,
+        body: JSON.stringify({ user_id: uid, channel, force })
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+      if (d.error) throw new Error(d.error);
+      if (d.warning) showToast(`⚠️ ${d.warning}`, 'info');
+      else showToast(`✅ Оффер отправлен пользователю ${uid}`, 'success');
+      document.getElementById('offer-quick-uid').value = '';
+    } catch (e) {
+      showToast(`Ошибка: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ── init ──────────────────────────────────────────────────────────────────
   function init() {
     if (initialized) return;
     initialized = true;
     loadOverview();
+
     document.getElementById('btn-refresh-broadcast').addEventListener('click', () => {
       initialized = false;
       init();
     });
+    // Subscribers
     document.getElementById('btn-load-subs').addEventListener('click', () => loadSubscribers(0));
     document.getElementById('sub-prev').addEventListener('click', () => loadSubscribers(Math.max(0, subOffset - SUB_LIMIT)));
     document.getElementById('sub-next').addEventListener('click', () => loadSubscribers(subOffset + SUB_LIMIT));
+
+    // Offer history
+    document.getElementById('btn-load-offers').addEventListener('click', () => loadOfferHistory(0));
+    document.getElementById('offer-prev').addEventListener('click', () => loadOfferHistory(Math.max(0, offerOffset - OFFER_LIMIT)));
+    document.getElementById('offer-next').addEventListener('click', () => loadOfferHistory(offerOffset + OFFER_LIMIT));
+
+    // Select all checkbox
+    document.getElementById('offer-select-all').addEventListener('change', e => {
+      document.querySelectorAll('.offer-row-chk').forEach(chk => {
+        chk.checked = e.target.checked;
+        const uid = parseInt(chk.value);
+        e.target.checked ? _selectedUids.add(uid) : _selectedUids.delete(uid);
+      });
+      _updateBatchBar();
+    });
+
+    // Batch send
+    document.getElementById('btn-offer-batch-send').addEventListener('click', _sendBatch);
+    document.getElementById('btn-offer-batch-clear').addEventListener('click', () => {
+      _selectedUids.clear();
+      _updateBatchBar();
+      document.getElementById('offer-select-all').checked = false;
+      document.querySelectorAll('.offer-row-chk').forEach(c => { c.checked = false; });
+    });
+
+    // Quick send
+    document.getElementById('btn-offer-quick-send').addEventListener('click', _quickSend);
   }
 
   return { init };

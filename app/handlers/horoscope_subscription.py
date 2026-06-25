@@ -523,6 +523,14 @@ async def horoscope_settings_callback(update: Update, context: ContextTypes.DEFA
     user_id = update.effective_user.id
     action = query.data.replace("horo_settings:", "")
 
+    if action == "start":
+        # Triggered from admin-sent discovery invite — open sign selection wizard
+        await query.edit_message_text(
+            "✨ Выберите ваш знак зодиака:",
+            reply_markup=_sign_keyboard(),
+        )
+        return CHOOSE_SIGN
+
     if action == "edit":
         sub = await get_horoscope_subscription(user_id)
         if sub:
@@ -532,6 +540,14 @@ async def horoscope_settings_callback(update: Update, context: ContextTypes.DEFA
             reply_markup=_sign_keyboard(),
         )
         return CHOOSE_SIGN
+
+    if action == "dismiss":
+        # User declined the invite — quietly close the keyboard
+        await query.edit_message_text(
+            "Хорошо, больше не буду предлагать 🙏",
+            reply_markup=InlineKeyboardMarkup([]),
+        )
+        return ConversationHandler.END
 
     if action == "toggle":
         sub = await get_horoscope_subscription(user_id)
@@ -610,3 +626,38 @@ def build_horoscope_subscription_handler() -> ConversationHandler:
         name="horoscope_subscription",
         persistent=False,
     )
+
+
+async def send_horoscope_invite(bot, user_id: int) -> bool:
+    """Send a horoscope subscription invite DM to a user.
+
+    Used by the admin manual offer-send flow (/api/admin/broadcast/send-offer).
+    Mirrors the pattern of send_discovery_intro in daily_crocodile.py.
+    Does NOT mark discovery_last_sent_at — the caller in web.py does that.
+
+    Returns True on success, False on Telegram error.
+    """
+    from telegram.constants import ParseMode
+
+    text = (
+        "⭐ <b>Гороскоп по подписке</b>\n\n"
+        "Получайте персональный гороскоп каждое утро и/или вечер — "
+        "прямо в этот чат, точно в выбранное время.\n\n"
+        "Выберите свой знак зодиака и настройте расписание."
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⭐ Настроить подписку", callback_data="horo_settings:start")],
+        [InlineKeyboardButton("❌ Не интересует", callback_data="horo_settings:dismiss")],
+    ])
+    try:
+        await bot.send_message(
+            chat_id=user_id,
+            text=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+        return True
+    except Exception as exc:
+        logger.warning("send_horoscope_invite failed for user=%s: %s", user_id, exc)
+        return False
+

@@ -799,6 +799,10 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("horoscope_stop", horoscope_stop_command))
     application.add_handler(CallbackQueryHandler(horoscope_settings_callback, pattern=r"^horo_settings:"))
 
+    # Tarot Daily callbacks
+    from app.handlers.tarot_daily import tarot_daily_callback
+    application.add_handler(CallbackQueryHandler(tarot_daily_callback, pattern=r"^tarot_daily:"))
+
     # Reminder command (from cmd_reminders)
     from app.handlers.cmd_reminders import remind_command
 

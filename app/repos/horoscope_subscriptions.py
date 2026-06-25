@@ -107,7 +107,8 @@ async def get_horoscope_subscription(user_id: int) -> dict[str, Any] | None:
         rows = await db_query(
             """
             SELECT user_id, sign, time_today, time_tomorrow, utc_offset,
-                   is_active, last_today_sent, last_tomorrow_sent
+                   is_active, last_today_sent, last_tomorrow_sent,
+                   discovery_last_sent_at
             FROM horoscope_subscriptions
             WHERE user_id = $1
             """,
@@ -175,6 +176,59 @@ async def mark_horoscope_sent(user_id: int, kind: str) -> None:
         )
     except Exception as e:
         logger.error("mark_horoscope_sent failed for user %s kind=%s: %s", user_id, kind, e)
+
+
+async def mark_horoscope_discovery_sent(user_id: int) -> None:
+    """Record that the user received a horoscope subscription offer right now."""
+    try:
+        await db_query(
+            """
+            INSERT INTO horoscope_subscriptions (user_id, sign, discovery_last_sent_at)
+            VALUES ($1, 'aries', CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id) DO UPDATE
+                SET discovery_last_sent_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id,),
+        )
+    except Exception as e:
+        logger.error("mark_horoscope_discovery_sent failed for user %s: %s", user_id, e)
+
+
+async def get_horoscope_discovery_candidates(
+    *,
+    min_days_since_last_offer: int = 14,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """Return users who should receive a horoscope subscription offer.
+
+    Candidates = users who have interacted with the bot (present in `users`
+    table with is_authorized=1) but are not yet subscribed to horoscope AND
+    either never received an offer OR received one 14+ days ago.
+    """
+    try:
+        rows = await db_query(
+            """
+            SELECT u.user_id,
+                   hs.is_active,
+                   hs.discovery_last_sent_at
+            FROM public.users u
+            LEFT JOIN horoscope_subscriptions hs ON hs.user_id = u.user_id
+            WHERE u.is_authorized = 1
+              AND COALESCE(hs.is_active, FALSE) = FALSE
+              AND (
+                  hs.discovery_last_sent_at IS NULL
+                  OR hs.discovery_last_sent_at <= NOW() - ($1 || ' days')::INTERVAL
+              )
+            ORDER BY u.user_id
+            LIMIT $2
+            """,
+            (min_days_since_last_offer, limit),
+        )
+        return [dict(r) for r in rows] if rows else []
+    except Exception as e:
+        logger.error("get_horoscope_discovery_candidates failed: %s", e, exc_info=True)
+        return []
 
 
 async def delete_horoscope_subscription(user_id: int) -> None:

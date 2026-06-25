@@ -1452,6 +1452,463 @@ async def api_admin_broadcast_errors():
     })
 
 
+# ── Broadcast Offer History & Manual Send ─────────────────────────────────────
+
+
+@quart_app.route("/api/admin/broadcast/offer-history", methods=["GET"])
+@require_auth
+async def api_admin_broadcast_offer_history():
+    """Unified offer history across all broadcast channels.
+
+    Returns all reachable users with their offer/subscription state per channel.
+    Supports filtering by channel, subscription status, and "never offered" flag.
+
+    Query params:
+      channel     – "daily_challenge" | "horoscope" | "tarot" | "all" (default)
+      status      – "subscribed" | "not_subscribed" | "snoozed" | "" (all)
+      never_sent  – "1" → only users who never received any offer
+      user_id     – exact user_id filter
+      limit       – 1..200 (default 50)
+      offset      – pagination offset (default 0)
+    """
+    from app.repos.horoscope_subscriptions import get_horoscope_subscription
+    from app.repos.tarot_daily_subscriptions import get_tarot_subscription
+
+    channel = request.args.get("channel", "all").strip()
+    status_filter = request.args.get("status", "").strip()
+    never_sent = request.args.get("never_sent", "").strip() == "1"
+    user_id_raw = request.args.get("user_id", "").strip()
+    try:
+        limit = max(1, min(200, int(request.args.get("limit", 50))))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except ValueError:
+        limit, offset = 50, 0
+
+    try:
+        now = datetime.datetime.now(datetime.UTC)
+        rows_out: list[dict] = []
+
+        # ── Daily Challenge (Croc / 2048) ────────────────────────────────────
+        if channel in ("daily_challenge", "all"):
+            where: list[str] = []
+            params: list = []
+            idx = 1
+
+            if user_id_raw:
+                try:
+                    where.append(f"u.user_id = ${idx}")
+                    params.append(int(user_id_raw))
+                    idx += 1
+                except ValueError:
+                    pass
+
+            if never_sent:
+                where.append("pref.discovery_last_sent_at IS NULL")
+
+            if status_filter == "subscribed":
+                where.append("COALESCE(pref.is_subscribed, FALSE) = TRUE")
+            elif status_filter == "not_subscribed":
+                where.append("COALESCE(pref.is_subscribed, FALSE) = FALSE")
+            elif status_filter == "snoozed":
+                where.append("pref.discovery_snoozed_until > NOW()")
+
+            where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+            params.extend([limit, offset])
+
+            croc_rows = await database.db_query(
+                f"""
+                SELECT u.user_id,
+                       u.username,
+                       u.first_name,
+                       COALESCE(pref.is_subscribed, FALSE)     AS is_subscribed,
+                       pref.discovery_last_sent_at,
+                       pref.discovery_snoozed_until,
+                       pref.last_sent_puzzle_date
+                FROM public.users u
+                LEFT JOIN public.crocodile_daily_preferences pref ON pref.user_id = u.user_id
+                {where_sql}
+                ORDER BY u.user_id
+                LIMIT ${idx} OFFSET ${idx + 1}
+                """,
+                tuple(params),
+            )
+            for r in croc_rows:
+                snoozed = r.get("discovery_snoozed_until")
+                rows_out.append({
+                    "user_id": r["user_id"],
+                    "username": r.get("username"),
+                    "first_name": r.get("first_name"),
+                    "channel": "daily_challenge",
+                    "channel_emoji": "🎮",
+                    "is_subscribed": bool(r.get("is_subscribed")),
+                    "offer_sent_at": r["discovery_last_sent_at"].isoformat()
+                        if r.get("discovery_last_sent_at") else None,
+                    "snoozed_until": snoozed.isoformat() if snoozed else None,
+                    "snoozed_active": bool(snoozed and snoozed > now),
+                    "last_delivery": r["last_sent_puzzle_date"].isoformat()
+                        if r.get("last_sent_puzzle_date") else None,
+                })
+
+        # ── Horoscope ────────────────────────────────────────────────────────
+        if channel in ("horoscope", "all"):
+            where_h: list[str] = []
+            params_h: list = []
+            idx_h = 1
+
+            if user_id_raw:
+                try:
+                    where_h.append(f"u.user_id = ${idx_h}")
+                    params_h.append(int(user_id_raw))
+                    idx_h += 1
+                except ValueError:
+                    pass
+
+            if never_sent:
+                where_h.append("hs.discovery_last_sent_at IS NULL")
+
+            if status_filter == "subscribed":
+                where_h.append("COALESCE(hs.is_active, FALSE) = TRUE")
+            elif status_filter == "not_subscribed":
+                where_h.append("COALESCE(hs.is_active, FALSE) = FALSE")
+
+            where_h_sql = ("WHERE " + " AND ".join(where_h)) if where_h else ""
+            params_h.extend([limit, offset])
+
+            horo_rows = await database.db_query(
+                f"""
+                SELECT u.user_id,
+                       u.username,
+                       u.first_name,
+                       COALESCE(hs.is_active, FALSE)       AS is_subscribed,
+                       hs.discovery_last_sent_at,
+                       hs.sign,
+                       hs.last_today_sent
+                FROM public.users u
+                LEFT JOIN horoscope_subscriptions hs ON hs.user_id = u.user_id
+                {where_h_sql}
+                ORDER BY u.user_id
+                LIMIT ${idx_h} OFFSET ${idx_h + 1}
+                """,
+                tuple(params_h),
+            )
+            existing_ids = {r["user_id"] for r in rows_out}
+            for r in horo_rows:
+                uid = r["user_id"]
+                entry = {
+                    "user_id": uid,
+                    "username": r.get("username"),
+                    "first_name": r.get("first_name"),
+                    "channel": "horoscope",
+                    "channel_emoji": "⭐",
+                    "is_subscribed": bool(r.get("is_subscribed")),
+                    "offer_sent_at": r["discovery_last_sent_at"].isoformat()
+                        if r.get("discovery_last_sent_at") else None,
+                    "snoozed_until": None,
+                    "snoozed_active": False,
+                    "last_delivery": r["last_today_sent"].isoformat()
+                        if r.get("last_today_sent") else None,
+                }
+                if uid not in existing_ids:
+                    rows_out.append(entry)
+
+        # ── Tarot ────────────────────────────────────────────────────────────
+        if channel in ("tarot", "all"):
+            where_t: list[str] = []
+            params_t: list = []
+            idx_t = 1
+
+            if user_id_raw:
+                try:
+                    where_t.append(f"u.user_id = ${idx_t}")
+                    params_t.append(int(user_id_raw))
+                    idx_t += 1
+                except ValueError:
+                    pass
+
+            if never_sent:
+                where_t.append("ts.discovery_last_sent_at IS NULL")
+
+            if status_filter == "subscribed":
+                where_t.append("COALESCE(ts.is_subscribed, FALSE) = TRUE")
+            elif status_filter == "not_subscribed":
+                where_t.append("COALESCE(ts.is_subscribed, FALSE) = FALSE")
+
+            where_t_sql = ("WHERE " + " AND ".join(where_t)) if where_t else ""
+            params_t.extend([limit, offset])
+
+            tarot_rows = await database.db_query(
+                f"""
+                SELECT u.user_id,
+                       u.username,
+                       u.first_name,
+                       COALESCE(ts.is_subscribed, FALSE)    AS is_subscribed,
+                       ts.discovery_last_sent_at,
+                       ts.last_sent_date
+                FROM public.users u
+                LEFT JOIN public.tarot_daily_subscriptions ts ON ts.user_id = u.user_id
+                {where_t_sql}
+                ORDER BY u.user_id
+                LIMIT ${idx_t} OFFSET ${idx_t + 1}
+                """,
+                tuple(params_t),
+            )
+            existing_ids_2 = {r["user_id"] for r in rows_out}
+            for r in tarot_rows:
+                uid = r["user_id"]
+                entry = {
+                    "user_id": uid,
+                    "username": r.get("username"),
+                    "first_name": r.get("first_name"),
+                    "channel": "tarot",
+                    "channel_emoji": "🔮",
+                    "is_subscribed": bool(r.get("is_subscribed")),
+                    "offer_sent_at": r["discovery_last_sent_at"].isoformat()
+                        if r.get("discovery_last_sent_at") else None,
+                    "snoozed_until": None,
+                    "snoozed_active": False,
+                    "last_delivery": r["last_sent_date"].isoformat()
+                        if r.get("last_sent_date") else None,
+                }
+                if uid not in existing_ids_2:
+                    rows_out.append(entry)
+
+        return jsonify({"total": len(rows_out), "rows": rows_out})
+    except Exception as exc:
+        logging.error("Broadcast offer-history error: %s", exc, exc_info=True)
+        return jsonify({"error": str(exc)}), 500
+
+
+@quart_app.route("/api/admin/broadcast/send-offer", methods=["POST"])
+@require_auth
+@rate_limit_api
+async def api_admin_broadcast_send_offer():
+    """Send a subscription offer to a specific user for a given channel.
+
+    Body: { user_id: int, channel: "daily_challenge"|"horoscope"|"tarot", force: bool }
+
+    The user must exist in public.users (bot can only message users who initiated
+    a conversation). If the user is already subscribed and force != true, returns
+    a warning without sending.
+    """
+    try:
+        data = await request.get_json() or {}
+        try:
+            target_user_id = int(data.get("user_id") or 0)
+        except (ValueError, TypeError):
+            return jsonify({"error": "user_id must be an integer"}), 400
+
+        channel = str(data.get("channel") or "").strip()
+        force = bool(data.get("force", False))
+
+        if not target_user_id:
+            return jsonify({"error": "user_id is required"}), 400
+        if channel not in ("daily_challenge", "horoscope", "tarot"):
+            return jsonify({"error": f"unknown channel: {channel!r}"}), 400
+
+        # Verify user is reachable (exists in users table)
+        user_rows = await database.db_query(
+            "SELECT user_id, username, first_name FROM public.users WHERE user_id = $1",
+            (target_user_id,),
+        )
+        if not user_rows:
+            return jsonify({
+                "success": False,
+                "error": "User not found. Bot can only message users who have started a conversation.",
+            }), 404
+
+        from app.bot_instance import get_bot
+        bot = get_bot()
+        if bot is None:
+            return jsonify({"error": "Bot not available"}), 503
+
+        # Channel-specific send logic
+        if channel == "daily_challenge":
+            from app.repos import crocodile_daily as croc_repo
+            from app.repos.daily_2048 import get_active_daily_game_mode
+
+            pref = await croc_repo.get_preference(target_user_id)
+            already_subscribed = bool(pref and pref.get("is_subscribed"))
+            if already_subscribed and not force:
+                return jsonify({
+                    "success": False,
+                    "warning": "User is already subscribed. Pass force=true to send anyway.",
+                    "already_subscribed": True,
+                })
+
+            game_mode = await get_active_daily_game_mode()
+            if game_mode == "2048":
+                from app.handlers.daily_2048 import send_discovery_intro as send_2048_intro
+                await send_2048_intro(bot, target_user_id)
+            else:
+                from app.handlers.daily_crocodile import send_discovery_intro as send_croc_intro
+                await send_croc_intro(bot, target_user_id)
+
+        elif channel == "horoscope":
+            from app.repos.horoscope_subscriptions import (
+                get_horoscope_subscription,
+                mark_horoscope_discovery_sent,
+            )
+
+            sub = await get_horoscope_subscription(target_user_id)
+            already_subscribed = bool(sub and sub.get("is_active"))
+            if already_subscribed and not force:
+                return jsonify({
+                    "success": False,
+                    "warning": "User is already subscribed to horoscope. Pass force=true to send anyway.",
+                    "already_subscribed": True,
+                })
+
+            from app.handlers.horoscope_subscription import send_horoscope_invite
+            await send_horoscope_invite(bot, target_user_id)
+            await mark_horoscope_discovery_sent(target_user_id)
+
+        elif channel == "tarot":
+            from app.repos.tarot_daily_subscriptions import (
+                get_tarot_subscription,
+                mark_tarot_discovery_sent,
+            )
+
+            sub = await get_tarot_subscription(target_user_id)
+            already_subscribed = bool(sub and sub.get("is_subscribed"))
+            if already_subscribed and not force:
+                return jsonify({
+                    "success": False,
+                    "warning": "User is already subscribed to tarot. Pass force=true to send anyway.",
+                    "already_subscribed": True,
+                })
+
+            from app.handlers.cmd_tarot import send_tarot_invite
+            await send_tarot_invite(bot, target_user_id)
+            await mark_tarot_discovery_sent(target_user_id)
+
+        return jsonify({
+            "success": True,
+            "user_id": target_user_id,
+            "channel": channel,
+            "message": "Offer sent successfully.",
+        })
+    except Exception as exc:
+        logging.error("Broadcast send-offer error: %s", exc, exc_info=True)
+        return jsonify({"error": str(exc)}), 500
+
+
+@quart_app.route("/api/admin/broadcast/send-offer-batch", methods=["POST"])
+@require_auth
+@rate_limit_api
+async def api_admin_broadcast_send_offer_batch():
+    """Send subscription offers to multiple users for a given channel.
+
+    Body: {
+      user_ids: [int, ...],   (max 100)
+      channel: "daily_challenge"|"horoscope"|"tarot",
+      force: bool             (send even if already subscribed)
+    }
+
+    Uses asyncio.Semaphore(5) to avoid flooding Telegram.
+    Returns per-user results with success/skip/error per entry.
+    """
+    try:
+        data = await request.get_json() or {}
+        raw_ids = data.get("user_ids") or []
+        channel = str(data.get("channel") or "").strip()
+        force = bool(data.get("force", False))
+
+        if not isinstance(raw_ids, list) or not raw_ids:
+            return jsonify({"error": "user_ids must be a non-empty list"}), 400
+        if len(raw_ids) > 100:
+            return jsonify({"error": "Batch size limit is 100 users per request"}), 400
+        if channel not in ("daily_challenge", "horoscope", "tarot"):
+            return jsonify({"error": f"unknown channel: {channel!r}"}), 400
+
+        try:
+            user_ids = [int(uid) for uid in raw_ids]
+        except (ValueError, TypeError):
+            return jsonify({"error": "All user_ids must be integers"}), 400
+
+        from app.bot_instance import get_bot
+        bot = get_bot()
+        if bot is None:
+            return jsonify({"error": "Bot not available"}), 503
+
+        # Verify all user IDs exist (reachable)
+        placeholders = ", ".join(f"${i + 1}" for i in range(len(user_ids)))
+        reachable_rows = await database.db_query(
+            f"SELECT user_id FROM public.users WHERE user_id IN ({placeholders})",
+            tuple(user_ids),
+        )
+        reachable_set = {r["user_id"] for r in reachable_rows}
+
+        results: list[dict] = []
+        sem = asyncio.Semaphore(5)
+
+        async def _send_one(uid: int) -> dict:
+            if uid not in reachable_set:
+                return {"user_id": uid, "status": "error", "message": "User not found"}
+
+            async with sem:
+                try:
+                    if channel == "daily_challenge":
+                        from app.repos import crocodile_daily as croc_repo
+                        from app.repos.daily_2048 import get_active_daily_game_mode
+
+                        pref = await croc_repo.get_preference(uid)
+                        if bool(pref and pref.get("is_subscribed")) and not force:
+                            return {"user_id": uid, "status": "skipped", "message": "Already subscribed"}
+
+                        game_mode = await get_active_daily_game_mode()
+                        if game_mode == "2048":
+                            from app.handlers.daily_2048 import send_discovery_intro as send_2048_intro
+                            await send_2048_intro(bot, uid)
+                        else:
+                            from app.handlers.daily_crocodile import send_discovery_intro as send_croc_intro
+                            await send_croc_intro(bot, uid)
+
+                    elif channel == "horoscope":
+                        from app.repos.horoscope_subscriptions import (
+                            get_horoscope_subscription,
+                            mark_horoscope_discovery_sent,
+                        )
+                        sub = await get_horoscope_subscription(uid)
+                        if bool(sub and sub.get("is_active")) and not force:
+                            return {"user_id": uid, "status": "skipped", "message": "Already subscribed"}
+                        from app.handlers.horoscope_subscription import send_horoscope_invite
+                        await send_horoscope_invite(bot, uid)
+                        await mark_horoscope_discovery_sent(uid)
+
+                    elif channel == "tarot":
+                        from app.repos.tarot_daily_subscriptions import (
+                            get_tarot_subscription,
+                            mark_tarot_discovery_sent,
+                        )
+                        sub = await get_tarot_subscription(uid)
+                        if bool(sub and sub.get("is_subscribed")) and not force:
+                            return {"user_id": uid, "status": "skipped", "message": "Already subscribed"}
+                        from app.handlers.cmd_tarot import send_tarot_invite
+                        await send_tarot_invite(bot, uid)
+                        await mark_tarot_discovery_sent(uid)
+
+                    return {"user_id": uid, "status": "sent", "message": "Offer sent"}
+                except Exception as send_exc:
+                    logging.warning("Batch offer send failed user=%s: %s", uid, send_exc)
+                    return {"user_id": uid, "status": "error", "message": str(send_exc)}
+
+        results = list(await asyncio.gather(*[_send_one(uid) for uid in user_ids]))
+
+        sent = sum(1 for r in results if r["status"] == "sent")
+        skipped = sum(1 for r in results if r["status"] == "skipped")
+        errors = sum(1 for r in results if r["status"] == "error")
+
+        return jsonify({
+            "success": True,
+            "channel": channel,
+            "summary": {"sent": sent, "skipped": skipped, "errors": errors},
+            "results": results,
+        })
+    except Exception as exc:
+        logging.error("Broadcast send-offer-batch error: %s", exc, exc_info=True)
+        return jsonify({"error": str(exc)}), 500
+
+
 # ── Horoscope Admin API ───────────────────────────────────────────────────────
 
 
