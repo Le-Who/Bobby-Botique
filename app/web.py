@@ -1518,8 +1518,7 @@ async def api_admin_broadcast_offer_history():
             croc_rows = await database.db_query(
                 f"""
                 SELECT u.user_id,
-                       u.username,
-                       u.first_name,
+                       u.display_name,
                        COALESCE(pref.is_subscribed, FALSE)     AS is_subscribed,
                        pref.discovery_last_sent_at,
                        pref.discovery_snoozed_until,
@@ -1536,8 +1535,7 @@ async def api_admin_broadcast_offer_history():
                 snoozed = r.get("discovery_snoozed_until")
                 rows_out.append({
                     "user_id": r["user_id"],
-                    "username": r.get("username"),
-                    "first_name": r.get("first_name"),
+                    "display_name": r.get("display_name"),
                     "channel": "daily_challenge",
                     "channel_emoji": "🎮",
                     "is_subscribed": bool(r.get("is_subscribed")),
@@ -1577,8 +1575,7 @@ async def api_admin_broadcast_offer_history():
             horo_rows = await database.db_query(
                 f"""
                 SELECT u.user_id,
-                       u.username,
-                       u.first_name,
+                       u.display_name,
                        COALESCE(hs.is_active, FALSE)       AS is_subscribed,
                        hs.discovery_last_sent_at,
                        hs.sign,
@@ -1596,8 +1593,7 @@ async def api_admin_broadcast_offer_history():
                 uid = r["user_id"]
                 entry = {
                     "user_id": uid,
-                    "username": r.get("username"),
-                    "first_name": r.get("first_name"),
+                    "display_name": r.get("display_name"),
                     "channel": "horoscope",
                     "channel_emoji": "⭐",
                     "is_subscribed": bool(r.get("is_subscribed")),
@@ -1639,8 +1635,7 @@ async def api_admin_broadcast_offer_history():
             tarot_rows = await database.db_query(
                 f"""
                 SELECT u.user_id,
-                       u.username,
-                       u.first_name,
+                       u.display_name,
                        COALESCE(ts.is_subscribed, FALSE)    AS is_subscribed,
                        ts.discovery_last_sent_at,
                        ts.last_sent_date
@@ -1657,8 +1652,7 @@ async def api_admin_broadcast_offer_history():
                 uid = r["user_id"]
                 entry = {
                     "user_id": uid,
-                    "username": r.get("username"),
-                    "first_name": r.get("first_name"),
+                    "display_name": r.get("display_name"),
                     "channel": "tarot",
                     "channel_emoji": "🔮",
                     "is_subscribed": bool(r.get("is_subscribed")),

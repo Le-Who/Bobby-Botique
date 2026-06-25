@@ -331,8 +331,9 @@ input:checked + .slider:before { transform: translateX(16px); }
   border-collapse: collapse;
   font-size: 0.78rem;
 }
+.sub-table thead { position: sticky; top: 0; z-index: 5; background: var(--bg-surface); }
 .sub-table th {
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -342,35 +343,68 @@ input:checked + .slider:before { transform: translateX(16px); }
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
+.sub-table th.th-r { text-align: right; }
 .sub-table td {
-  padding: 7px 12px;
+  padding: 9px 12px;
   border-bottom: 1px solid rgba(255,255,255,0.03);
   color: var(--text);
   vertical-align: middle;
+  white-space: nowrap;
 }
+.sub-table td.td-r { text-align: right; }
 .sub-table tr:last-child td { border-bottom: none; }
 .sub-table tr:hover td { background: var(--surface-hover); }
+.sub-table tr.row-inactive td { opacity: 0.5; }
+.sub-table tr.row-inactive:hover td { opacity: 0.75; background: var(--surface-hover); }
 .mono { font-family: "JetBrains Mono", monospace; font-size: 0.75rem; }
+/* User cell: name on top, mono ID below */
+.cell-user { display: flex; flex-direction: column; gap: 1px; }
+.cell-user-name { font-size: 0.8rem; font-weight: 500; color: var(--text); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.cell-user-id { font-family: "JetBrains Mono", monospace; font-size: 0.68rem; color: var(--text-dim); }
+/* Time cell: hour on top, tz below */
+.cell-time { display: flex; flex-direction: column; gap: 1px; text-align: right; }
+.cell-time-hour { font-family: "JetBrains Mono", monospace; font-size: 0.82rem; color: var(--text); font-weight: 600; }
+.cell-time-tz { font-size: 0.62rem; color: var(--text-dim); }
+/* Date cell */
+.cell-date-never { font-size: 0.72rem; color: var(--text-dim); font-style: italic; }
+.cell-date-val { font-family: "JetBrains Mono", monospace; font-size: 0.72rem; color: var(--text-muted); }
+/* Badge channel */
 .badge-channel {
   display: inline-block;
-  font-size: 0.65rem;
-  padding: 1px 5px;
+  font-size: 0.63rem;
+  padding: 2px 6px;
   border-radius: 4px;
   background: var(--accent-glow);
   color: var(--accent);
   border: 1px solid rgba(6, 182, 212, 0.25);
   margin: 1px 2px 1px 0;
   font-weight: 600;
+  white-space: nowrap;
 }
-.status-active { color: var(--green); }
-.status-snoozed { color: var(--amber); }
-.status-error { color: var(--rose); }
+/* Status badges */
+.badge-status {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.65rem; font-weight: 600;
+  padding: 2px 7px; border-radius: 20px;
+  white-space: nowrap; border: 1px solid;
+}
+.badge-status-active { background: rgba(16,185,129,0.1); color: var(--green); border-color: rgba(16,185,129,0.25); }
+.badge-status-snoozed { background: rgba(245,158,11,0.1); color: var(--amber); border-color: rgba(245,158,11,0.25); }
+.badge-status-inactive { background: rgba(255,255,255,0.05); color: var(--text-dim); border-color: rgba(255,255,255,0.08); }
+.badge-status-yes { background: rgba(16,185,129,0.1); color: var(--green); border-color: rgba(16,185,129,0.25); }
+.badge-status-no { background: rgba(244,63,94,0.08); color: var(--rose); border-color: rgba(244,63,94,0.18); }
+/* Empty / error states */
 .empty-state {
-  padding: 40px;
+  padding: 48px 20px;
   text-align: center;
   color: var(--text-muted);
   font-size: 0.85rem;
+  line-height: 1.6;
 }
+.empty-state-icon { font-size: 2rem; margin-bottom: 8px; display: block; }
+.error-state { padding: 32px 20px; text-align: center; }
+.error-state-icon { font-size: 1.6rem; margin-bottom: 6px; }
+.error-state-msg { color: var(--rose); font-size: 0.82rem; }
 
 /* ==========================================
    CROC: PUZZLE GRID (ported from admin_dailycroc.html)
@@ -717,16 +751,15 @@ input:checked + .slider:before { transform: translateX(16px); }
         <table class="sub-table">
           <thead>
             <tr>
-              <th>User ID</th>
+              <th>Пользователь</th>
               <th>Каналы</th>
-              <th>Timezone</th>
-              <th>Предпочт. час</th>
-              <th>Последняя отправка</th>
+              <th class="th-r">Час · Таймзона</th>
+              <th class="th-r">Последняя рассылка</th>
               <th>Статус</th>
             </tr>
           </thead>
           <tbody id="sub-tbody">
-            <tr><td colspan="6" class="empty-state">Нажмите «Найти» для загрузки</td></tr>
+            <tr><td colspan="5" class="empty-state"><span class="empty-state-icon">🔍</span>Нажмите «Найти» для загрузки</td></tr>
           </tbody>
         </table>
       </div>
@@ -799,17 +832,16 @@ input:checked + .slider:before { transform: translateX(16px); }
           <thead>
             <tr>
               <th style="width:32px;"><input type="checkbox" id="offer-select-all" title="Выбрать все"></th>
-              <th>User ID</th>
-              <th>Имя / username</th>
+              <th>Пользователь</th>
               <th>Канал</th>
-              <th>Оффер отправлен</th>
-              <th>Снуз до</th>
+              <th class="th-r">Оффер отправлен</th>
+              <th class="th-r">Снуз до</th>
               <th>Подписан</th>
-              <th>Действие</th>
+              <th style="width:48px;"></th>
             </tr>
           </thead>
           <tbody id="offer-tbody">
-            <tr><td colspan="8" class="empty-state">Нажмите «Найти» для загрузки</td></tr>
+            <tr><td colspan="8" class="empty-state"><span class="empty-state-icon">🔍</span>Нажмите «Найти» для загрузки</td></tr>
           </tbody>
         </table>
       </div>
@@ -1211,7 +1243,7 @@ const BroadcastModule = (() => {
     if (uid) params.set('user_id', uid);
 
     const tbody = document.getElementById('sub-tbody');
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-state"><div class="image-spinner" style="margin:0 auto 8px;"></div>Загрузка...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-state"><div class="image-spinner" style="margin:0 auto 8px;"></div>Загрузка...</td></tr>';
     try {
       const res = await fetch('/api/admin/broadcast/subscribers?' + params, { headers: getHeaders });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1220,26 +1252,48 @@ const BroadcastModule = (() => {
       const rows = data.rows || [];
       document.getElementById('sub-count-label').textContent = `Всего: ${data.total}`;
       if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Нет подписчиков</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state"><span class="empty-state-icon">🙅</span>Подписчиков не найдено</td></tr>';
       } else {
         tbody.innerHTML = rows.map(r => {
-          const statusCls = r.status === 'active' ? 'status-active' : r.status === 'snoozed' ? 'status-snoozed' : 'status-error';
+          const isActive = r.status === 'active';
+          const isSnoozed = r.status === 'snoozed';
+          const rowCls = isActive ? '' : 'row-inactive';
+          let statusBadge;
+          if (isActive) statusBadge = '<span class="badge-status badge-status-active">✦ active</span>';
+          else if (isSnoozed) statusBadge = '<span class="badge-status badge-status-snoozed">⏸ snoozed</span>';
+          else statusBadge = '<span class="badge-status badge-status-inactive">— inactive</span>';
           const channels = (r.channels || []).map(c => `<span class="badge-channel">${c}</span>`).join('');
-          const lastSent = r.last_sent ? new Date(r.last_sent).toLocaleDateString('ru-RU') : '—';
-          return `<tr>
-            <td class="mono">${r.user_id}</td>
-            <td>${channels}</td>
-            <td class="mono" style="font-size:0.7rem;">${r.timezone || '—'}</td>
-            <td class="mono">${r.preferred_hour != null ? r.preferred_hour + ':00' : '—'}</td>
-            <td class="mono" style="font-size:0.7rem;">${lastSent}</td>
-            <td class="${statusCls}">${r.status}</td>
+          const lastSent = r.last_sent
+            ? new Date(r.last_sent).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
+            : null;
+          const nameStr = r.display_name || '';
+          const hourStr = r.preferred_hour != null ? String(r.preferred_hour).padStart(2,'0') + ':00' : '—';
+          const tzStr = r.timezone || '—';
+          return `<tr class="${rowCls}">
+            <td>
+              <div class="cell-user">
+                <span class="cell-user-name">${nameStr || 'Без имени'}</span>
+                <span class="cell-user-id">${r.user_id}</span>
+              </div>
+            </td>
+            <td>${channels || '<span class="cell-date-never">нет</span>'}</td>
+            <td class="td-r">
+              <div class="cell-time">
+                <span class="cell-time-hour">${hourStr}</span>
+                <span class="cell-time-tz">${tzStr}</span>
+              </div>
+            </td>
+            <td class="td-r">${lastSent
+              ? `<span class="cell-date-val">${lastSent}</span>`
+              : '<span class="cell-date-never">никогда</span>'}</td>
+            <td>${statusBadge}</td>
           </tr>`;
         }).join('');
       }
       document.getElementById('sub-prev').disabled = offset <= 0;
       document.getElementById('sub-next').disabled = rows.length < SUB_LIMIT;
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="6" class="empty-state error-text">Ошибка: ${e.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="error-state"><div class="error-state-icon">🚨</div><div class="error-state-msg">${e.message}</div></td></tr>`;
     }
   }
 
@@ -1281,36 +1335,46 @@ const BroadcastModule = (() => {
       document.getElementById('offer-count-label').textContent = `Всего: ${data.total}`;
 
       if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Нет данных</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><span class="empty-state-icon">🙅</span>Нет данных по выбранным фильтрам</td></tr>';
       } else {
-        tbody.innerHTML = rows.map((r, i) => {
-          const offerAt  = r.offer_sent_at  ? new Date(r.offer_sent_at).toLocaleString('ru-RU', {dateStyle:'short',timeStyle:'short'}) : '—';
-          const snoozedUntil = r.snoozed_until ? new Date(r.snoozed_until).toLocaleString('ru-RU', {dateStyle:'short',timeStyle:'short'}) : '—';
-          const snoozCls = r.snoozed_active ? 'status-snoozed' : '';
+        tbody.innerHTML = rows.map((r) => {
+          const offerAt = r.offer_sent_at
+            ? new Date(r.offer_sent_at).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
+            : null;
+          const snoozedUntil = r.snoozed_until
+            ? new Date(r.snoozed_until).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
+            : null;
           const subBadge = r.is_subscribed
-            ? '<span style="color:var(--green);font-size:.8rem;">✅ Да</span>'
-            : '<span style="color:var(--rose);font-size:.8rem;">❌ Нет</span>';
-          const nameStr = [r.first_name, r.username ? `@${r.username}` : null].filter(Boolean).join(' ');
-          return `<tr data-uid="${r.user_id}" data-channel="${r.channel}">
-            <td style="text-align:center;"><input type="checkbox" class="offer-row-chk" value="${r.user_id}"></td>
-            <td class="mono">${r.user_id}</td>
-            <td style="font-size:0.78rem;color:var(--text-muted);">${nameStr || '—'}</td>
+            ? '<span class="badge-status badge-status-yes">✦ подписан</span>'
+            : '<span class="badge-status badge-status-no">— нет</span>';
+          const nameStr = r.display_name || '';
+          const rowCls = r.is_subscribed ? '' : 'row-inactive';
+          return `<tr class="${rowCls}" data-uid="${r.user_id}" data-channel="${r.channel}">
+            <td style="text-align:center;padding:9px 8px;"><input type="checkbox" class="offer-row-chk" value="${r.user_id}"></td>
+            <td>
+              <div class="cell-user">
+                <span class="cell-user-name">${nameStr || 'Без имени'}</span>
+                <span class="cell-user-id">${r.user_id}</span>
+              </div>
+            </td>
             <td><span class="badge-channel">${r.channel_emoji} ${r.channel}</span></td>
-            <td class="mono" style="font-size:0.75rem;">${offerAt}</td>
-            <td class="mono ${snoozCls}" style="font-size:0.75rem;">${snoozedUntil}</td>
+            <td class="td-r">${offerAt
+              ? `<span class="cell-date-val">${offerAt}</span>`
+              : '<span class="cell-date-never">никогда</span>'}</td>
+            <td class="td-r">${snoozedUntil
+              ? `<span class="badge-status badge-status-snoozed">⏸ ${snoozedUntil}</span>`
+              : '<span class="cell-date-never">—</span>'}</td>
             <td>${subBadge}</td>
             <td>
               <button class="btn btn-sm offer-send-btn"
                 data-uid="${r.user_id}"
                 data-channel="${r.channel}"
                 data-subscribed="${r.is_subscribed}"
-                title="Отправить оффер"
-                style="padding:4px 10px;font-size:0.72rem;">✈️</button>
+                title="Отправить оффер">✈️</button>
             </td>
           </tr>`;
         }).join('');
 
-        // Bind row checkboxes
         tbody.querySelectorAll('.offer-row-chk').forEach(chk => {
           chk.addEventListener('change', () => {
             const uid = parseInt(chk.value);
@@ -1319,7 +1383,6 @@ const BroadcastModule = (() => {
           });
         });
 
-        // Bind send buttons
         tbody.querySelectorAll('.offer-send-btn').forEach(btn => {
           btn.addEventListener('click', () => _sendOfferConfirm(
             parseInt(btn.dataset.uid),
@@ -1332,7 +1395,7 @@ const BroadcastModule = (() => {
       document.getElementById('offer-prev').disabled = offset <= 0;
       document.getElementById('offer-next').disabled = rows.length < OFFER_LIMIT;
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="8" class="empty-state error-text">Ошибка: ${e.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="error-state"><div class="error-state-icon">🚨</div><div class="error-state-msg">${e.message}</div></td></tr>`;
     }
   }
 
