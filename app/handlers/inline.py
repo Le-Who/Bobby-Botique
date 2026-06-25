@@ -2087,19 +2087,38 @@ async def _generate_tarot_inline(
     }
     header = _HEADER_MAP.get(spread, "🔮 Таро")
 
-    # ── Sequential key rotation via ProviderRouter.get_response() ──
-    # gemini-3.5-flash is stable enough that parallel racing
-    # would only waste daily quota. ProviderRouter tries one key at a time,
-    # rotating to the next on 503/UNAVAILABLE, with health-aware key selection.
+    # ── Generation: primary (flash-3.5) + parallel hot-standby (flash-lite) ────
+    # For non-DAILY spreads the primary is gemini-3.5-flash. A gemini-3.1-flash-lite
+    # task is launched *immediately* in parallel as a hot standby. Its result is
+    # consumed only when the primary exhausts all 3 key retries (KEYS_EXHAUSTED) or
+    # raises. On success the lite task is cancelled — zero wasted quota in happy path.
     from app.errors import is_error_message
     from app.providers.router import get_provider_router
 
     router = get_provider_router()
+    _history = [{"role": "user", "parts": [prompt]}]
+    preferred_model = "gemini-3.1-flash-lite" if spread == SpreadType.DAILY else "gemini-3.5-flash"
+
+    # Start hot-standby only when the primary is flash-3.5 (not for DAILY which already uses lite)
+    _lite_task: asyncio.Task | None = None
+    if preferred_model == "gemini-3.5-flash":
+        _lite_task = asyncio.create_task(
+            router.get_response(
+                preferred_model="gemini-3.1-flash-lite",
+                history=_history,
+                system_instruction=system_instruction,
+                user_id=user_id,
+                use_openrouter=False,
+                max_key_retries=3,
+            )
+        )
+
+    result: str | None = None
+    _primary_failed_exc = False
     try:
-        preferred_model = "gemini-3.1-flash-lite" if spread == SpreadType.DAILY else "gemini-3.5-flash"
         result, _tokens = await router.get_response(
             preferred_model=preferred_model,
-            history=[{"role": "user", "parts": [prompt]}],
+            history=_history,
             system_instruction=system_instruction,
             user_id=user_id,
             use_openrouter=False,
@@ -2112,6 +2131,37 @@ async def _generate_tarot_inline(
             exc,
             exc_info=True,
         )
+        _primary_failed_exc = True
+
+    # ── Hot-standby fallback decision ────────────────────────────────────────
+    # Trigger if: (a) primary raised, or (b) primary returned a tagged error.
+    # Note: we check BEFORE cancelling _lite_task so it's still running.
+    _used_fallback = False
+    _need_lite = _lite_task is not None and (
+        _primary_failed_exc or (result is not None and is_error_message(result))
+    )
+
+    if _need_lite and _lite_task is not None:
+        try:
+            lite_result, _tokens = await asyncio.wait_for(_lite_task, timeout=30.0)
+            _lite_task = None  # consumed — skip cancel below
+            if lite_result and lite_result.strip() and not is_error_message(lite_result):
+                logging.info(
+                    "Tarot: primary overloaded, using flash-lite fallback (spread=%s)", spread_type
+                )
+                result = lite_result
+                _used_fallback = True
+        except Exception as _lite_exc:
+            logging.warning(
+                "Tarot: flash-lite fallback also failed (spread=%s): %s", spread_type, _lite_exc
+            )
+
+    # Cancel the lite task if it was never consumed (primary succeeded or we already awaited it)
+    if _lite_task is not None and not _lite_task.done():
+        _lite_task.cancel()
+
+    # Primary raised AND lite fallback didn't save us
+    if _primary_failed_exc and not _used_fallback:
         await _edit_failure("ошибка генерации. Попробуйте ещё раз.")
         return
 
