@@ -17,7 +17,7 @@ from app.repos import crocodile_daily as repo
 from app.web import quart_app
 from tests.factories import make_valid_init_data
 
-ADMIN_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app" / "templates" / "admin_dailycroc.html"
+ADMIN_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app" / "templates" / "admin_daily.html"
 
 
 def test_daily_score_formula() -> None:

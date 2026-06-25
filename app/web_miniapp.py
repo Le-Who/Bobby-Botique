@@ -1317,17 +1317,16 @@ async def daily2048_page():
 
 @miniapp_blueprint.route("/admin_dailycroc")
 async def webapp_admin_dailycroc_page():
-    """Serve the Daily Crocodile Admin Dashboard to Telegram Mini App."""
-    from quart import render_template
-    return await render_template("admin_dailycroc.html")
+    """Legacy redirect -> /admin_daily#croc."""
+    from quart import redirect
+    return redirect("/admin_daily#croc", code=301)
 
 
 @miniapp_blueprint.route("/admin_daily2048")
 async def webapp_admin_daily2048_page():
-    """Serve the Daily 2048 Sprint Admin Dashboard to Telegram Mini App."""
-    from quart import render_template
-
-    return await render_template("admin_daily2048.html")
+    """Legacy redirect -> /admin_daily#2048."""
+    from quart import redirect
+    return redirect("/admin_daily#2048", code=301)
 
 
 def _build_daily_word_mask(word: str) -> str:

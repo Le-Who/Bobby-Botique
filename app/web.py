@@ -807,14 +807,28 @@ async def api_events():
     }
 
 
-# ── Admin Daily Crocodile Dashboard ───────────────────────────────────
+# ── Unified Admin Daily & Broadcast Center ───────────────────────────────────
+
+
+@quart_app.route("/admin_daily")
+@require_auth
+async def admin_daily_page():
+    """Unified Daily Admin: Broadcast, Croc, 2048, Horoscope, Tarot."""
+    return await render_template("admin_daily.html")
 
 
 @quart_app.route("/admin_dailycroc")
 @require_auth
 async def admin_dailycroc_page():
-    """Serve the Daily Crocodile Admin Dashboard."""
-    return await render_template("admin_dailycroc.html")
+    """Legacy redirect → /admin_daily#croc."""
+    return redirect("/admin_daily#croc", code=301)
+
+
+@quart_app.route("/admin_daily2048")
+@require_auth
+async def admin_daily2048_page():
+    """Legacy redirect → /admin_daily#2048."""
+    return redirect("/admin_daily#2048", code=301)
 
 
 @quart_app.route("/api/admin/dailycroc", methods=["GET"])
@@ -1099,13 +1113,6 @@ def _serialize_daily2048_puzzle(puzzle: daily_2048_repo.Daily2048Puzzle) -> dict
     }
 
 
-@quart_app.route("/admin_daily2048")
-@require_auth
-async def admin_daily2048_page():
-    """Serve the Daily 2048 Sprint Admin Dashboard."""
-    return await render_template("admin_daily2048.html")
-
-
 @quart_app.route("/api/admin/daily2048", methods=["GET"])
 @require_auth
 async def api_admin_daily2048_list():
@@ -1182,3 +1189,403 @@ async def api_admin_daily_mode():
         return jsonify({"error": "invalid mode"}), 400
     await set_global_setting(daily_2048_repo.DAILY_GAME_MODE_SETTING_KEY, mode)
     return jsonify({"success": True, "mode": mode})
+
+
+# ── Broadcast Center API ──────────────────────────────────────────────────────
+
+
+@quart_app.route("/api/admin/broadcast/overview", methods=["GET"])
+@require_auth
+async def api_admin_broadcast_overview():
+    """Aggregate delivery stats across all channels for the Broadcast tab."""
+    from app.repos import crocodile_daily as croc_repo
+    from app.repos.settings_repo import get_global_setting
+
+    try:
+        now = datetime.datetime.now(datetime.UTC)
+        today = croc_repo.today_puzzle_date(now)
+
+        # --- Daily Challenge (Croc + 2048 unified subscription) ---
+        delivery_on_raw = await get_global_setting(croc_repo.DAILY_DELIVERY_SETTING_KEY, "on")
+        croc_enabled = delivery_on_raw.strip().lower() != "off"
+
+        game_mode = await daily_2048_repo.get_active_daily_game_mode()
+        mode_emoji = "🎲" if game_mode == daily_2048_repo.DAILY_GAME_MODE_2048 else "🐊"
+        mode_label = f"Daily {game_mode.upper() if game_mode == '2048' else 'Croc'}"
+
+        # Count total + pending for daily challenge
+        total_subs_rows = await database.db_query(
+            "SELECT COUNT(*) AS cnt FROM public.crocodile_daily_preferences WHERE is_subscribed = TRUE"
+        )
+        total_challenge_subs = int(total_subs_rows[0]["cnt"] if total_subs_rows else 0)
+
+        pending_rows = await database.db_query(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM public.crocodile_daily_preferences
+            WHERE is_subscribed = TRUE
+              AND (last_sent_puzzle_date IS NULL OR last_sent_puzzle_date < $1)
+            """,
+            (today,),
+        )
+        pending_challenge = int(pending_rows[0]["cnt"] if pending_rows else 0)
+
+        sent_challenge = total_challenge_subs - pending_challenge
+
+        challenge_channel = {
+            "id": "daily_challenge",
+            "name": f"{mode_label} ({mode_emoji} {game_mode})",
+            "emoji": "🎮",
+            "active_game": game_mode,
+            "subscribers": total_challenge_subs,
+            "pending_today": pending_challenge,
+            "sent_today": max(0, sent_challenge),
+            "delivery_enabled": croc_enabled,
+            "last_sent_at": None,
+        }
+
+        # --- Horoscope ---
+        horo_enabled_raw = await get_global_setting("horoscope_delivery_enabled", "on")
+        horo_enabled = horo_enabled_raw.strip().lower() != "off"
+
+        horo_total_rows = await database.db_query(
+            "SELECT COUNT(*) AS cnt FROM horoscope_subscriptions WHERE is_active = TRUE"
+        )
+        horo_total = int(horo_total_rows[0]["cnt"] if horo_total_rows else 0)
+
+        horo_channel = {
+            "id": "horoscope",
+            "name": "Гороскоп",
+            "emoji": "⭐",
+            "active_game": None,
+            "subscribers": horo_total,
+            "pending_today": None,
+            "sent_today": None,
+            "delivery_enabled": horo_enabled,
+            "last_sent_at": None,
+        }
+
+        # --- Tarot ---
+        tarot_enabled_raw = await get_global_setting("tarot_daily_delivery_enabled", "off")
+        tarot_enabled = tarot_enabled_raw.strip().lower() != "off"
+
+        tarot_total_rows = await database.db_query(
+            """
+            SELECT COUNT(*) AS cnt FROM public.tarot_daily_subscriptions WHERE is_subscribed = TRUE
+            """
+        )
+        tarot_total = int(tarot_total_rows[0]["cnt"] if tarot_total_rows else 0) if tarot_total_rows else 0
+
+        tarot_channel = {
+            "id": "tarot",
+            "name": "Карта дня (Таро)",
+            "emoji": "🔮",
+            "active_game": None,
+            "subscribers": tarot_total,
+            "pending_today": None,
+            "sent_today": None,
+            "delivery_enabled": tarot_enabled,
+            "last_sent_at": None,
+        }
+
+        return jsonify({"channels": [challenge_channel, horo_channel, tarot_channel]})
+    except Exception as exc:
+        logging.error("Broadcast overview error: %s", exc, exc_info=True)
+        return jsonify({"error": str(exc)}), 500
+
+
+@quart_app.route("/api/admin/broadcast/subscribers", methods=["GET"])
+@require_auth
+async def api_admin_broadcast_subscribers():
+    """Unified subscriber list across all channels with filters."""
+    from app.repos import crocodile_daily as croc_repo
+
+    channel = request.args.get("channel", "")  # croc, horoscope, all
+    status_filter = request.args.get("status", "")  # active, snoozed, error
+    tz_filter = request.args.get("timezone", "")
+    user_id_filter = request.args.get("user_id", "")
+    try:
+        limit = max(1, min(200, int(request.args.get("limit", 50))))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except ValueError:
+        limit, offset = 50, 0
+
+    try:
+        now = datetime.datetime.now(datetime.UTC)
+        today = croc_repo.today_puzzle_date(now)
+        rows_out: list[dict] = []
+
+        # --- Daily Challenge subscribers ---
+        if not channel or channel in ("croc", "daily_challenge", "all"):
+            where_clauses = ["p.is_subscribed = TRUE"]
+            params: list = []
+            idx = 1
+
+            if tz_filter:
+                where_clauses.append(f"p.timezone = ${idx}")
+                params.append(tz_filter)
+                idx += 1
+            if user_id_filter:
+                try:
+                    where_clauses.append(f"p.user_id = ${idx}")
+                    params.append(int(user_id_filter))
+                    idx += 1
+                except ValueError:
+                    pass
+            if status_filter == "snoozed":
+                where_clauses.append("p.discovery_snoozed_until > NOW()")
+            elif status_filter == "active":
+                where_clauses.append(
+                    f"(p.last_sent_puzzle_date IS NULL OR p.last_sent_puzzle_date < ${idx})"
+                )
+                params.append(today)
+                idx += 1
+
+            where_sql = " AND ".join(where_clauses)
+            params.extend([limit, offset])
+            croc_rows = await database.db_query(
+                f"""
+                SELECT p.user_id,
+                       p.timezone,
+                       p.preferred_local_hour,
+                       p.last_sent_puzzle_date AS last_sent,
+                       p.discovery_snoozed_until
+                FROM public.crocodile_daily_preferences p
+                WHERE {where_sql}
+                ORDER BY p.user_id
+                LIMIT ${idx} OFFSET ${idx + 1}
+                """,
+                tuple(params),
+            )
+            for r in croc_rows:
+                snoozed = r.get("discovery_snoozed_until")
+                status = "snoozed" if snoozed and snoozed > now else "active"
+                last_sent = r.get("last_sent")
+                rows_out.append({
+                    "user_id": r["user_id"],
+                    "channels": ["🎮 Daily Challenge"],
+                    "timezone": r.get("timezone") or "—",
+                    "preferred_hour": r.get("preferred_local_hour"),
+                    "last_sent": last_sent.isoformat() if last_sent else None,
+                    "status": status,
+                })
+
+        # --- Horoscope subscribers ---
+        if not channel or channel in ("horoscope", "all"):
+            horo_rows = await database.db_query(
+                """
+                SELECT user_id, utc_offset, sign,
+                       last_today_sent, last_tomorrow_sent
+                FROM horoscope_subscriptions
+                WHERE is_active = TRUE
+                ORDER BY user_id
+                LIMIT $1 OFFSET $2
+                """,
+                (limit, offset),
+            )
+            croc_user_ids = {r["user_id"] for r in rows_out}
+            for r in horo_rows:
+                uid = r["user_id"]
+                badge = "⭐ Horoscope"
+                last_sent_val = r.get("last_today_sent") or r.get("last_tomorrow_sent")
+                if uid in croc_user_ids:
+                    # Merge: update existing entry's channels list
+                    for entry in rows_out:
+                        if entry["user_id"] == uid:
+                            entry["channels"].append(badge)
+                            break
+                else:
+                    rows_out.append({
+                        "user_id": uid,
+                        "channels": [badge],
+                        "timezone": f"UTC{r['utc_offset']:+d}" if r.get("utc_offset") is not None else "—",
+                        "preferred_hour": None,
+                        "last_sent": last_sent_val.isoformat() if last_sent_val else None,
+                        "status": "active",
+                    })
+
+        return jsonify({"total": len(rows_out), "rows": rows_out})
+    except Exception as exc:
+        logging.error("Broadcast subscribers error: %s", exc, exc_info=True)
+        return jsonify({"error": str(exc)}), 500
+
+
+@quart_app.route("/api/admin/broadcast/toggle", methods=["POST"])
+@require_auth
+async def api_admin_broadcast_toggle():
+    """Enable/disable delivery for a specific broadcast channel."""
+    from app.repos import crocodile_daily as croc_repo
+    from app.repos.settings_repo import set_global_setting
+
+    try:
+        data = await request.get_json()
+        if not data:
+            return jsonify({"error": "invalid json"}), 400
+        channel = str(data.get("channel") or "").strip()
+        enabled = bool(data.get("enabled"))
+
+        if channel == "daily_challenge":
+            value = "on" if enabled else "off"
+            await set_global_setting(croc_repo.DAILY_DELIVERY_SETTING_KEY, value)
+        elif channel == "horoscope":
+            await set_global_setting("horoscope_delivery_enabled", "on" if enabled else "off")
+        elif channel == "tarot":
+            await set_global_setting("tarot_daily_delivery_enabled", "on" if enabled else "off")
+        else:
+            return jsonify({"error": f"unknown channel: {channel}"}), 400
+
+        return jsonify({"success": True, "channel": channel, "enabled": enabled})
+    except Exception as exc:
+        logging.error("Broadcast toggle error: %s", exc, exc_info=True)
+        return jsonify({"error": str(exc)}), 500
+
+
+@quart_app.route("/api/admin/broadcast/errors", methods=["GET"])
+@require_auth
+async def api_admin_broadcast_errors():
+    """Return users with known delivery errors (stub: uses last_sent heuristic)."""
+    # Full implementation requires broadcast_events table (future migration).
+    # v1: return empty list with informative message.
+    return jsonify({
+        "errors": [],
+        "note": "Detailed error log requires broadcast_events table (planned migration).",
+    })
+
+
+# ── Horoscope Admin API ───────────────────────────────────────────────────────
+
+
+@quart_app.route("/api/admin/horoscope/stats", methods=["GET"])
+@require_auth
+async def api_admin_horoscope_stats():
+    """Horoscope subscription statistics."""
+    try:
+        rows = await database.db_query(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE is_active = TRUE) AS total_active,
+                COUNT(*) FILTER (WHERE is_active = TRUE AND time_today IS NOT NULL AND time_tomorrow IS NOT NULL) AS both_slots,
+                COUNT(*) FILTER (WHERE is_active = TRUE AND time_today IS NOT NULL AND time_tomorrow IS NULL) AS today_only,
+                COUNT(*) FILTER (WHERE is_active = TRUE AND time_today IS NULL AND time_tomorrow IS NOT NULL) AS tomorrow_only,
+                COUNT(*) FILTER (WHERE is_active = FALSE) AS total_inactive
+            FROM horoscope_subscriptions
+            """
+        )
+        stats = dict(rows[0]) if rows else {}
+
+        # Per-sign breakdown
+        sign_rows = await database.db_query(
+            """
+            SELECT sign, COUNT(*) AS cnt
+            FROM horoscope_subscriptions
+            WHERE is_active = TRUE
+            GROUP BY sign
+            ORDER BY cnt DESC
+            """
+        )
+        by_sign = {r["sign"]: int(r["cnt"]) for r in sign_rows}
+
+        return jsonify({
+            "total_active": int(stats.get("total_active", 0)),
+            "breakdown": {
+                "today_only": int(stats.get("today_only", 0)),
+                "tomorrow_only": int(stats.get("tomorrow_only", 0)),
+                "both": int(stats.get("both_slots", 0)),
+            },
+            "total_inactive": int(stats.get("total_inactive", 0)),
+            "by_sign": by_sign,
+        })
+    except Exception as exc:
+        logging.error("Horoscope stats error: %s", exc, exc_info=True)
+        return jsonify({"error": str(exc)}), 500
+
+
+# ── Tarot Admin API ───────────────────────────────────────────────────────────
+
+
+@quart_app.route("/api/admin/tarot/status", methods=["GET"])
+@require_auth
+async def api_admin_tarot_status():
+    """Status of prepared daily tarot readings for today and tomorrow."""
+    try:
+        from app.tarot_daily import today_reading_date
+
+        today = today_reading_date()
+        tomorrow = today + datetime.timedelta(days=1)
+
+        async def _reading_counts(target_date) -> dict:
+            rows = await database.db_query(
+                """
+                SELECT card_name, orientation,
+                       body_markdown IS NOT NULL AND body_markdown <> '' AS ready
+                FROM public.tarot_daily_readings
+                WHERE reading_date = $1
+                """,
+                (target_date,),
+            )
+            total = len(rows)
+            ready = sum(1 for r in rows if r.get("ready"))
+            return {
+                "date": target_date.isoformat(),
+                "ready_count": ready,
+                "total": total,
+                "cards": [
+                    {
+                        "label": f"{r['card_name']} ({r['orientation']})",
+                        "ready": bool(r.get("ready")),
+                    }
+                    for r in rows
+                ],
+            }
+
+        today_status, tomorrow_status = await asyncio.gather(
+            _reading_counts(today),
+            _reading_counts(tomorrow),
+        )
+
+        # Tarot subscriber count
+        try:
+            sub_rows = await database.db_query(
+                "SELECT COUNT(*) AS cnt FROM public.tarot_daily_subscriptions WHERE is_subscribed = TRUE"
+            )
+            subscriber_count = int(sub_rows[0]["cnt"] if sub_rows else 0)
+        except Exception:
+            subscriber_count = 0
+
+        return jsonify({
+            "today": today_status,
+            "tomorrow": tomorrow_status,
+            "subscribers": subscriber_count,
+        })
+    except Exception as exc:
+        logging.error("Tarot status error: %s", exc, exc_info=True)
+        return jsonify({"error": str(exc)}), 500
+
+
+@quart_app.route("/api/admin/tarot/regenerate", methods=["POST"])
+@require_auth
+@rate_limit_api
+async def api_admin_tarot_regenerate():
+    """Force regeneration of tarot daily readings for a given date."""
+    try:
+        from app.tarot_daily import prepare_daily_readings
+
+        data = await request.get_json() or {}
+        date_str = str(data.get("date") or "")
+        try:
+            target_date = datetime.date.fromisoformat(date_str)
+        except ValueError:
+            return jsonify({"error": "invalid date"}), 400
+
+        result = await prepare_daily_readings(target_date=target_date)
+        return jsonify({
+            "success": True,
+            "date": target_date.isoformat(),
+            "generated": result.generated,
+            "skipped": result.skipped,
+            "failed": result.failed,
+            "locked": result.locked,
+        })
+    except Exception as exc:
+        logging.error("Tarot regenerate error: %s", exc, exc_info=True)
+        return jsonify({"error": str(exc)}), 500

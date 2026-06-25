@@ -1,6 +1,6 @@
 # Architecture Overview — GemAI Bot v2
 
-> **Last updated**: 2026-05-23
+> **Last updated**: 2026-06-25
 
 ## Project Map
 
@@ -108,7 +108,7 @@ gemaibotv2/
 │   │   ├── migrations.py        ←   Sequential migration runner (schema_migrations table, 9KB)
 │   │   ├── rls.py               ←   Row-Level Security policies (8KB)
 │   │   └── seed.py              ←   Seed data (admin user, API keys, indexes, 2KB)
-    ├── repos/                    ← Repository pattern — 26 modules, per-domain SQL
+    ├── repos/                    ← Repository pattern — 27 modules, per-domain SQL
     │   ├── __init__.py          ←   Re-exports
     │   ├── users.py             ←   User CRUD (7KB)
     │   ├── keys.py              ←   API key management, rotation, health scoring (24KB)
@@ -130,6 +130,7 @@ gemaibotv2/
     │   ├── crocodile_daily.py   ←   Daily Crocodile puzzle persistence (41KB)
     │   ├── daily_2048.py        ←   Daily 2048 puzzle/run persistence (23KB)
     │   ├── horoscope_subscriptions.py ← Horoscope subscriptions DB queries (6KB)
+    │   ├── tarot_daily_subscriptions.py ← Tarot daily card subscriptions (4KB)
     │   ├── provider_keys.py     ←   Provider key resolution (3KB)
     │   ├── settings_repo.py     ←   Global settings CRUD (4KB)
     │   ├── admin.py             ←   Admin queries (1KB)
@@ -237,14 +238,13 @@ gemaibotv2/
 │       ├── crocodile.html       ←   Crocodile game Mini App (48KB)
 │       ├── live_audio.html      ←   Live Audio Mini App (43KB)
 │       ├── reader.html          ←   Reader Mini App (37KB)
-│       ├── admin_dailycroc.html ←   Daily Crocodile admin (15KB)
-│       ├── admin_daily2048.html ←   Daily 2048 admin (15KB)
+│       ├── admin_daily.html     ←   Unified Daily Admin (Broadcast, Croc, 2048, Horoscope, Tarot tabs)
 │       ├── daily_2048.html      ←   Daily 2048 game Mini App (58KB)
 │       ├── natal_form.html      ←   Natal Form Mini App (19KB)
 │       ├── login.html           ←   Dashboard login (5KB)
 │       └── status.html          ←   Status page (4KB)
 │
-├── scripts/migrations/           ← 56 SQL migration files (000–052)
+├── scripts/migrations/           ← 57 SQL migration files (000–054)
 ├── tests/                        ← 208 test files (pytest + pytest-xdist)
 ├── docs/                         ← This file + extended documentation
 ├── .github/workflows/ci.yml     ← CI: lint (Ruff) → type-check (Mypy) → unit → integration
