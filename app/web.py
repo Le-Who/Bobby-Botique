@@ -138,7 +138,7 @@ async def add_security_headers(response):
         csp = (
             "default-src 'self'; "
             f"script-src 'self' 'nonce-{nonce}'; "
-            f"style-src 'self' 'nonce-{nonce}' https://fonts.googleapis.com; "
+            f"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data: blob:; "
             "connect-src 'self'; "
@@ -1771,7 +1771,7 @@ async def api_admin_broadcast_send_offer():
                     "already_subscribed": True,
                 })
 
-            from app.handlers.cmd_tarot import send_tarot_invite
+            from app.handlers.tarot_daily import send_tarot_invite
             await send_tarot_invite(bot, target_user_id)
             await mark_tarot_discovery_sent(target_user_id)
 
