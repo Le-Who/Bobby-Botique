@@ -8,11 +8,12 @@ import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from app.errors import InputSanitizationError
 
@@ -209,16 +210,37 @@ class InputSanitizer:
         if hostname.lower() == "localhost":
             raise InputSanitizationError("Localhost URLs not allowed")
 
-        # Check for IP addresses
+        # Resolve hostname to block IP addresses and prevent DNS rebinding/SSRF
         try:
-            # This handles both IPv4 and IPv6
-            ipaddress.ip_address(hostname)
-            # If we are here, it IS an IP address.
-            # Current policy: Block ALL IP addresses.
-            raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
-        except ValueError:
-            # Not an IP address, continue
-            pass
+            # Set a timeout for DNS resolution to prevent DoS attacks
+            socket.setdefaulttimeout(3.0)
+            addresses = socket.getaddrinfo(hostname, None)
+
+            for _, _, _, _, sockaddr in addresses:
+                ip = sockaddr[0]
+                ip_obj = ipaddress.ip_address(ip)
+                # Block all internal, loopback, link-local, unspecified, and multicast addresses
+                if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_unspecified or ip_obj.is_multicast:
+                    raise InputSanitizationError(f"Local or internal IP addresses not allowed: {hostname}")
+
+                # Current policy: Block ALL IP addresses, even public ones.
+                raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
+
+            # If we wanted to allow public IPs, we'd do this:
+            # valid_ip = addresses[0][4][0]
+            #
+            # Rebuild URL with validated IP to prevent TOCTOU and DNS rebinding
+            # new_netloc = valid_ip
+            # if parsed.port:
+            #     new_netloc = f"{valid_ip}:{parsed.port}"
+            # url = urlunparse(parsed._replace(netloc=new_netloc))
+
+        except TimeoutError as e:
+            raise InputSanitizationError(f"Hostname resolution timed out: {e}") from e
+        except socket.gaierror as e:
+            raise InputSanitizationError(f"Hostname resolution failed: {e}") from e
+        finally:
+            socket.setdefaulttimeout(None)
 
         return url
 
