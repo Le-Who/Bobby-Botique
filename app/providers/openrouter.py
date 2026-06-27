@@ -277,7 +277,9 @@ class OpenRouterProvider(BaseAIProvider):
         thinking_level: str | None = None,
         timeout: float = 120.0,
         enable_web_search: bool = False,
+        force_grounding: bool = False,  # no-op: OpenRouter has no native Search grounding
     ):
+
         """
         Stream response from OpenRouter API using Server-Sent Events (SSE).
         Yields text chunks.

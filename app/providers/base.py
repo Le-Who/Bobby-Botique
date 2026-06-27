@@ -263,6 +263,7 @@ class BaseAIProvider(ABC):
         thinking_level: str | None = None,
         timeout: float = 120.0,
         enable_web_search: bool = False,
+        force_grounding: bool = False,
     ) -> None:  # type: ignore[override]  # subclasses yield — AsyncGenerator[Any, None]
         """
         Stream response from AI provider. Must be implemented by subclasses.
@@ -271,7 +272,11 @@ class BaseAIProvider(ABC):
         Args:
             enable_web_search: If True, enable native web search grounding
                 (Google Search for Gemini, ignored by other providers).
+            force_grounding: If True, use DynamicRetrievalConfig with threshold=0.0
+                so the model ALWAYS performs a web search instead of relying on
+                dynamic retrieval heuristics. Use for inline / real-time queries.
         """
+
 
 
 # Known FreeTheAI routing prefixes — checked BEFORE the generic "/" detection

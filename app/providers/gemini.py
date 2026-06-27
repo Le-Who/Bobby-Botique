@@ -198,12 +198,13 @@ class GeminiProvider(BaseAIProvider):
         self,
         history: list[dict[str, Any]],
         model_name: str,
-        system_instruction: str | None,
-        user_id: int | None,
-        chat_id: int | None,
-        timeout: float,
+        system_instruction: str | None = None,
         thinking_level: str | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
+        timeout: float = 90.0,
         enable_web_search: bool = False,
+        force_grounding: bool = False,
     ) -> AIResponse:
         start_time = None
 
@@ -249,7 +250,24 @@ class GeminiProvider(BaseAIProvider):
             config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]  # Pydantic coerces dicts→SafetySetting
             # Apply Google Search Grounding if requested
             if enable_web_search:
-                config.tools = [types.Tool(google_search=types.GoogleSearch())]
+                if force_grounding:
+                    # Force search on every request (inline use-case): the model's training
+                    # data may confidently answer time-sensitive questions (e.g. live sports
+                    # scores, ongoing tournaments) without calling Search.  threshold=0.0
+                    # bypasses Dynamic Retrieval heuristics and always retrieves.
+                    config.tools = [
+                        types.Tool(
+                            google_search_retrieval=types.GoogleSearchRetrieval(
+                                dynamic_retrieval_config=types.DynamicRetrievalConfig(
+                                    mode=types.DynamicRetrievalConfigMode.MODE_DYNAMIC,
+                                    dynamic_threshold=0.0,
+                                )
+                            )
+                        )
+                    ]
+                else:
+                    config.tools = [types.Tool(google_search=types.GoogleSearch())]
+
             # Apply thinking config if user requested a specific level
             tc = _build_thinking_config(model_name, thinking_level)
             if tc:
@@ -414,6 +432,7 @@ class GeminiProvider(BaseAIProvider):
         thinking_level: str | None = None,
         timeout: float = 120.0,
         enable_web_search: bool = False,
+        force_grounding: bool = False,
     ):
         """
         Stream response from Gemini API.
@@ -435,7 +454,23 @@ class GeminiProvider(BaseAIProvider):
         config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]
         # Apply Google Search Grounding if requested
         if enable_web_search:
-            config.tools = [types.Tool(google_search=types.GoogleSearch())]
+            if force_grounding:
+                # Force search on every request (inline real-time queries): use
+                # google_search_retrieval with dynamic_threshold=0.0 so the model
+                # always retrieves instead of relying on confidence heuristics.
+                config.tools = [
+                    types.Tool(
+                        google_search_retrieval=types.GoogleSearchRetrieval(
+                            dynamic_retrieval_config=types.DynamicRetrievalConfig(
+                                mode=types.DynamicRetrievalConfigMode.MODE_DYNAMIC,
+                                dynamic_threshold=0.0,
+                            )
+                        )
+                    )
+                ]
+            else:
+                config.tools = [types.Tool(google_search=types.GoogleSearch())]
+
         tc = _build_thinking_config(model_name, thinking_level)
         if tc:
             config.thinking_config = tc

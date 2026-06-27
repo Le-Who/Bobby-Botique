@@ -396,9 +396,11 @@ class ProviderRouter:
         max_key_retries: int = 3,
         thinking_level: str | None = None,
         enable_web_search: bool = False,
+        force_grounding: bool = False,
         *,
         _is_fallback: bool = False,
     ):
+
         """
         Stream AI response with Race Requests and automatic key rotation.
 
@@ -490,7 +492,9 @@ class ProviderRouter:
                         max_key_retries=max_key_retries,
                         thinking_level=thinking_level,
                         enable_web_search=enable_web_search,
+                        force_grounding=force_grounding,
                         _is_fallback=True,
+
                     ):
                         yield chunk
                     return
@@ -544,7 +548,9 @@ class ProviderRouter:
                         system_instruction=system_instruction,
                         thinking_level=thinking_level,
                         enable_web_search=enable_web_search,
+                        force_grounding=force_grounding,
                     ):
+
                         # Guard: provider may yield a tagged error string instead of
                         # raising an exception (e.g. OpenRouter 429 → RATE_LIMIT tag).
                         # Treat that as a stream-level failure so key rotation kicks in.
@@ -647,7 +653,9 @@ class ProviderRouter:
                             system_instruction=system_instruction,
                             thinking_level=thinking_level,
                             enable_web_search=enable_web_search,
+                            force_grounding=force_grounding,
                         ):
+
                             # Guard: provider may yield a tagged error string instead of
                             # raising an exception — treat it as a race failure so the
                             # partner key can win the race and serve the user.
@@ -829,7 +837,9 @@ class ProviderRouter:
                     max_key_retries=2,  # Fewer retries for fallback
                     thinking_level=thinking_level,
                     enable_web_search=enable_web_search,
+                    force_grounding=force_grounding,
                     _is_fallback=True,
+
                 ):
                     yield chunk
                 return

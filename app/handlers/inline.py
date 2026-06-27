@@ -1263,7 +1263,9 @@ async def _stream_inline_fast(
                     thinking_level=_tl,
                     timeout=45.0,
                     enable_web_search=enable_web_search,
+                    force_grounding=enable_web_search,  # inline always forces Search when grounding is on
                 ):
+
                     # Intercept _GroundingMeta sentinel — don't put in queue as text chunk
                     if isinstance(chunk, _GroundingMeta):
                         await _q.put((kh, chunk, None))
@@ -1417,8 +1419,16 @@ async def _stream_inline_fast(
                 if kh != winner_kh:
                     continue  # Stale item from cancelled loser — discard
                 if exc is not None:
-                    logging.warning("Inline: winner stream failed mid-flight: %s", exc)
-                    break
+                    logging.warning(
+                        "Inline: winner stream failed mid-flight: %s — discarding partial chunks, retrying next round",
+                        exc,
+                    )
+                    # Mark winner key as failed so the next round picks a fresh key.
+                    # Clear accumulated chunks so we don't return a truncated response.
+                    failed_keys.add(winner_kh)
+                    chunks = []
+                    break  # → finally cancels tasks → result="" → outer loop continues
+
                 if isinstance(chunk, _End):
                     break  # Clean completion
                 # Capture grounding sources from winner's _GroundingMeta sentinel
@@ -1520,12 +1530,16 @@ async def _generate_and_edit_inline(
     _grounding_sources: list[tuple[str, str]] = []  # Grounding Citations (url, title)
     _gen_timed_out = False
     _progress_shown = False
+    _inline_req_id = f"inline-{user_id}-{uuid.uuid4().hex[:8]}"
     _log_start = api_logger.log_request(
         "gemini_inline",
+        request_id=_inline_req_id,
+        user_id=user_id,
         model=await get_inline_model(),
         query_length=len(user_query),
         tone=tone_id,
     )
+
 
     async def _delayed_progress_edit() -> None:
         """At _GEN_PROGRESS_AFTER_S seconds, edit placeholder to show delay notice."""

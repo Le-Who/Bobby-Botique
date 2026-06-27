@@ -385,6 +385,7 @@ class OpencodeGoProvider(OpenRouterProvider):
         thinking_level: str | None = None,
         timeout: float = 120.0,
         enable_web_search: bool = False,
+        force_grounding: bool = False,  # no-op: Opencode has no native Search grounding
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict | None = None,
     ):
