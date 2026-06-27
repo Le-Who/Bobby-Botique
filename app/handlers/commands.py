@@ -41,6 +41,52 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     # ── Deep link routing ────────────────────────────────────────────────────
     payload = (context.args[0] if context.args else "").strip()
+    
+    if payload.startswith("ctx_"):
+        import html as _html
+
+        from app.cache import get_inline_context
+        from app.repos.chats import get_user_chat, update_user_chat
+
+        token = payload[4:]  # strip "ctx_" prefix
+        ctx = await get_inline_context(token)
+
+        if ctx is None:
+            await update.message.reply_text(
+                "⏰ <b>Ссылка устарела.</b>\n"
+                "Контекст хранится 24 часа. Задай вопрос боту напрямую.",
+                parse_mode="HTML",
+            )
+            return
+
+        chat_state = await get_user_chat(user_id)
+        # Prepend inline exchange to existing history (or start fresh if empty)
+        inline_history = [
+            {"role": "user", "parts": [ctx["q"]]},
+            {"role": "model", "parts": [ctx["a"]]},
+        ]
+        # Merge: inline seed first, then existing history (max 20 most recent msgs kept)
+        chat_state.history = inline_history + chat_state.history[-20:]
+        await update_user_chat(user_id, chat_state)
+
+        tone_hint = ""
+        if ctx.get("tone") == "formal":
+            tone_hint = " (официальный тон)"
+        elif ctx.get("tone") == "friendly":
+            tone_hint = " (дружеский тон)"
+        elif ctx.get("tone") == "sarcastic":
+            tone_hint = " (саркастический тон)"
+
+        preview_q = ctx["q"][:80] + ("…" if len(ctx["q"]) > 80 else "")
+
+        await update.message.reply_text(
+            f"📎 <b>Контекст загружен</b>{tone_hint}\n\n"
+            f"<i>Исходный вопрос:</i> <code>{_html.escape(preview_q)}</code>\n\n"
+            "Можешь продолжать — я помню этот разговор.",
+            parse_mode="HTML",
+        )
+        return
+        
     if payload.startswith("subscribe_horoscope_"):
         from app.handlers.horoscope_subscription import start_subscribe_horoscope
 

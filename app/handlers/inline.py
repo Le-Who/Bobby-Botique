@@ -51,6 +51,7 @@ from telegram import (
 )
 from telegram.ext import ContextTypes
 
+from app.cache import get_inline_context, store_inline_context
 from app.config import settings
 from app.errors import is_error_message
 from app.i18n import t
@@ -1603,7 +1604,18 @@ async def _generate_and_edit_inline(
                     btn_row.append(
                         InlineKeyboardButton("🔗 Источники", callback_data=f"inl_tab:sources:{inline_message_id}")
                     )
-                reply_markup = InlineKeyboardMarkup([btn_row])
+                
+                # Append continue buttons
+                continue_kb = await _build_continue_keyboard(
+                    bot_username=getattr(bot, "username", "") or "",
+                    user_query=user_query,
+                    final_answer=segments.get("details", final_answer), # Use parsed details instead of raw XML
+                    tone_id=tone_id,
+                    lang=lang,
+                    user_id=user_id,
+                )
+                rows = [btn_row] + list(continue_kb.inline_keyboard)
+                reply_markup = InlineKeyboardMarkup(rows)
                 try:
                     await bot.edit_message_text(
                         inline_message_id=inline_message_id,
@@ -1669,7 +1681,14 @@ async def _generate_and_edit_inline(
             [[InlineKeyboardButton("🔄 Повторить", callback_data=f"inl_retry:{retry_id}")]]
         )
     else:
-        reply_markup_out = InlineKeyboardMarkup([])  # strip loading indicator
+        reply_markup_out = await _build_continue_keyboard(
+            bot_username=getattr(bot, "username", "") or "",
+            user_query=user_query,
+            final_answer=final_answer,
+            tone_id=tone_id,
+            lang=lang,
+            user_id=user_id,
+        )
 
     try:
         await bot.edit_message_text(
@@ -1696,6 +1715,48 @@ async def _generate_and_edit_inline(
             )
         except Exception as fallback_err:
             logging.error("Inline: Plain-text fallback also failed: %s", fallback_err)
+
+
+async def _build_continue_keyboard(
+    bot_username: str,
+    user_query: str,
+    final_answer: str,
+    tone_id: str,
+    lang: str,
+    user_id: int | None,
+) -> InlineKeyboardMarkup:
+    """Build 2-button keyboard: «💬 Продолжить» (deep link) + «🔄 Ещё вопрос» (switch inline).
+
+    Falls back to empty keyboard or 'Ask more' only if Redis is unavailable.
+    """
+    btn_ask_more = InlineKeyboardButton(
+        t("inline.btn_ask_more", lang),
+        switch_inline_query_current_chat=user_query[:50],
+    )
+    
+    if not bot_username:
+        # Cannot build deep link without bot username
+        return InlineKeyboardMarkup([[btn_ask_more]])
+
+    token = uuid.uuid4().hex[:16]
+    stored = await store_inline_context(
+        token=token,
+        payload={
+            "q": user_query[:500],
+            "a": final_answer[:2000],
+            "tone": tone_id,
+        },
+        user_id=user_id
+    )
+
+    if stored:
+        btn_continue = InlineKeyboardButton(
+            t("inline.btn_continue", lang),
+            url=f"https://t.me/{bot_username}?start=ctx_{token}",
+        )
+        return InlineKeyboardMarkup([[btn_continue, btn_ask_more]])
+    else:
+        return InlineKeyboardMarkup([[btn_ask_more]])
 
 
 # ── Retry store helpers ───────────────────────────────────────────────────────

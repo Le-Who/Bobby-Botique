@@ -206,6 +206,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "⌛ Ссылка на повтор устарела. Введите запрос заново.",
         "en": "⌛ Retry link has expired. Please send the query again.",
     },
+    "inline.btn_continue": {
+        "ru": "💬 Продолжить",
+        "en": "💬 Continue",
+    },
+    "inline.btn_ask_more": {
+        "ru": "🔄 Ещё вопрос",
+        "en": "🔄 Ask more",
+    },
 
     # ── Voice Handler ────────────────────────────────────────────────────
     "voice.processing": {

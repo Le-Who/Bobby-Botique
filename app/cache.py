@@ -386,3 +386,77 @@ async def get_telegraph_url(uid: str) -> str | None:
     except Exception as e:
         logging.warning("Failed to get telegraph URL uid=%s: %s", uid, e)
         return None
+
+
+# ── Inline Context Store (for «Продолжить» deep-link button) ─────────────────
+_INLINE_CTX_PREFIX = "inline_ctx:"
+_INLINE_CTX_ZSET_PREFIX = "inline_ctx_zset:"
+_INLINE_CTX_TTL = 86_400  # 24 hours
+_INLINE_CTX_MAX_PER_USER = 10
+
+
+async def store_inline_context(token: str, payload: dict, user_id: int | None = None) -> bool:
+    """Store inline Q&A context for deep-link continuation with a rolling cap per user.
+    Returns False if Redis unavailable."""
+    if not redis_client:
+        return False
+    try:
+        import time
+        now = time.time()
+        key = f"{_INLINE_CTX_PREFIX}{token}"
+        data = json.dumps(payload, ensure_ascii=False)
+        
+        async with redis_client.pipeline(transaction=True) as pipe:
+            pipe.setex(key, _INLINE_CTX_TTL, data.encode("utf-8"))
+            
+            if user_id:
+                zset_key = f"{_INLINE_CTX_ZSET_PREFIX}{user_id}"
+                # Add current token to user's history zset, scored by timestamp
+                pipe.zadd(zset_key, {token: now})
+                # Get the number of elements
+                pipe.zcard(zset_key)
+                # Keep the zset from lingering forever if the user stops using the bot
+                pipe.expire(zset_key, _INLINE_CTX_TTL)
+                
+            results = await pipe.execute()
+            
+            # If user_id is provided, check if we need to evict old items
+            if user_id:
+                cardinality = results[2]
+                if cardinality > _INLINE_CTX_MAX_PER_USER:
+                    num_to_remove = cardinality - _INLINE_CTX_MAX_PER_USER
+                    zset_key = f"{_INLINE_CTX_ZSET_PREFIX}{user_id}"
+                    # Retrieve the oldest N tokens
+                    oldest_tokens = await redis_client.zrange(zset_key, 0, num_to_remove - 1)
+                    if oldest_tokens:
+                        # Decode bytes if necessary
+                        tokens_str = [t.decode("utf-8") if isinstance(t, bytes) else t for t in oldest_tokens]
+                        keys_to_del = [f"{_INLINE_CTX_PREFIX}{t}" for t in tokens_str]
+                        
+                        # Pipeline deletion of old keys and removing them from the zset
+                        async with redis_client.pipeline(transaction=True) as del_pipe:
+                            del_pipe.delete(*keys_to_del)
+                            del_pipe.zrem(zset_key, *oldest_tokens)
+                            await del_pipe.execute()
+                            
+        logging.debug("Stored inline ctx token=%s for user=%s", token, user_id)
+        return True
+    except Exception as e:
+        logging.warning("Failed to store inline ctx token=%s: %s", token, e)
+        return False
+
+
+async def get_inline_context(token: str) -> dict | None:
+    """Retrieve inline Q&A context by token. Returns None if missing/expired."""
+    if not redis_client:
+        return None
+    try:
+        key = f"{_INLINE_CTX_PREFIX}{token}"
+        data = await redis_client.get(key)
+        if data is None:
+            return None
+        raw = data.decode("utf-8") if isinstance(data, bytes) else data
+        return json.loads(raw)
+    except Exception as e:
+        logging.warning("Failed to get inline ctx token=%s: %s", token, e)
+        return None
