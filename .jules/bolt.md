@@ -5,3 +5,6 @@
 ## 2025-05-18 - Consolidating N+1 User Stats Queries
 **Learning:** Fetching user documents entirely (`await get_user_documents(user_id)`) just to determine `len(docs)` creates a massive memory overhead and blocks the thread during `/start` menu rendering, especially for users with many large documents. Coupled with multiple distinct `await db_query()` calls for requests and conversations, this increases latency.
 **Action:** Always consolidate aggregate counts into a single atomic SQL query using subqueries (`SELECT (SELECT COUNT(*)...), (SELECT COUNT(*)...)`), and never fetch full records into Python memory if only `COUNT(*)` is required.
+## 2025-05-19 - Using explicit DB COUNTs instead of loading lists
+**Learning:** Checking the number of documents via `len(await get_user_documents(user_id))` pulls all user documents into memory as dictionaries every time the stats command is run, wasting massive memory overhead on larger user profiles.
+**Action:** Always create and use a dedicated `COUNT(*)` SQL query wrapped in a specific repository method (e.g., `get_user_document_count(user_id)`) rather than fetching entire object lists.
