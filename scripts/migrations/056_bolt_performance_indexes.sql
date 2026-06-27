@@ -1,4 +1,4 @@
-﻿-- 056_bolt_performance_indexes.sql
+-- 056_bolt_performance_indexes.sql
 -- Bolt: add missing indexes for two high-traffic query patterns.
 -- Idempotency: all statements use IF NOT EXISTS -- safe to re-run.
 
