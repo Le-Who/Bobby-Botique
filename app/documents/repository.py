@@ -269,6 +269,19 @@ async def get_document_stats() -> dict[str, Any]:
         }
 
 
+async def get_user_document_count(user_id: int) -> int:
+    """Return the number of documents a user has uploaded."""
+    try:
+        result = await database.db_query(
+            "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = $1",
+            (user_id,),
+        )
+        return result[0]["doc_count"] if result else 0
+    except Exception as e:
+        logging.error("Failed to get user document count: %s", e)
+        return 0
+
+
 async def get_user_document_stats(user_id: int) -> dict[str, Any]:
     """Per-user document statistics."""
     try:

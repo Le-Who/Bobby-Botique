@@ -211,10 +211,9 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     week_res = await get_user_weekly_stats(user_id)
     model_res = await get_user_model_usage_today(user_id)
 
-    from app.document_processor import get_user_documents
+    from app.document_processor import get_user_document_count
 
-    docs = await get_user_documents(user_id)
-    doc_count = len(docs) if docs else 0
+    doc_count = await get_user_document_count(user_id)
     conv_count = await get_conversation_count(user_id)
 
     text_parts = ["📊 **Ваша статистика**\n\n"]

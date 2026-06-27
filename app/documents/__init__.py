@@ -21,6 +21,7 @@ from app.documents.repository import (  # noqa: F401
     get_document_by_id,
     get_document_content,
     get_document_stats,
+    get_user_document_count,
     get_user_document_stats,
     get_user_documents,
     save_document_content,
