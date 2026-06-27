@@ -53,6 +53,16 @@ class TestTelegramMessageAdapter:
         await adapter.edit_message("Hello", "HTML")
 
     @pytest.mark.asyncio
+    async def test_edit_message_telegram_error_caught(self, adapter, mock_message):
+        from telegram.error import TelegramError
+
+        mock_message.edit_text.side_effect = TelegramError("Message is not modified")
+        try:
+            await adapter.edit_message("Hello", "HTML")
+        except TelegramError:
+            pytest.fail("TelegramError was not caught")
+
+    @pytest.mark.asyncio
     async def test_edit_message_raises_other_errors(self, adapter, mock_message):
         from telegram.error import TelegramError
 

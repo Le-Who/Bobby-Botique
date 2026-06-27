@@ -113,15 +113,33 @@ class TestCheckSystemHealthExceptions:
         """Test fallback when database health check raises an exception."""
         import asyncio
         import sys
-        from unittest.mock import MagicMock
+        from unittest.mock import AsyncMock, MagicMock
 
         # The correct robust way to patch inside a function that lazily imports a module
         # is to mock sys.modules for the lazy imported module
         with patch.dict(sys.modules, {"app.database": MagicMock()}):
-            with patch("app.database.check_database_health", side_effect=Exception("DB connection timeout")):
+            with patch(
+                "app.database.check_database_health",
+                new_callable=AsyncMock,
+                side_effect=Exception("DB connection timeout"),
+            ):
                 health = asyncio.run(check_system_health())
                 assert health.database == ServiceStatus.UNAVAILABLE
                 assert health.details.get("database_error") == "DB connection timeout"
+
+    def test_database_health_false_fallback(self):
+        """Test fallback when database health check returns False."""
+        import asyncio
+        import sys
+        from unittest.mock import AsyncMock, MagicMock
+
+        # The correct robust way to patch inside a function that lazily imports a module
+        # is to mock sys.modules for the lazy imported module
+        with patch.dict(sys.modules, {"app.database": MagicMock()}):
+            with patch("app.database.check_database_health", new_callable=AsyncMock, return_value=False):
+                health = asyncio.run(check_system_health())
+                assert health.database == ServiceStatus.UNAVAILABLE
+                assert "database_error" not in health.details
 
 
 class TestToDict:
