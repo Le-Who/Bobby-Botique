@@ -60,13 +60,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
         chat_state = await get_user_chat(user_id)
-        # Prepend inline exchange to existing history (or start fresh if empty)
+        # Append inline exchange to existing history (it's the most recent interaction)
         inline_history = [
             {"role": "user", "parts": [ctx["q"]]},
             {"role": "model", "parts": [ctx["a"]]},
         ]
-        # Merge: inline seed first, then existing history (max 20 most recent msgs kept)
-        chat_state.history = inline_history + chat_state.history[-20:]
+        # Keep up to 20 previous messages, then append the new 2 inline messages
+        chat_state.history = chat_state.history[-20:] + inline_history
+        # Force a full rewrite in the DB because we replaced the list 
+        # (bypasses the bolt optimization that assumes only append-only changes)
+        chat_state._original_length = 0
         await update_user_chat(user_id, chat_state)
 
         tone_hint = ""
