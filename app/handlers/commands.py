@@ -46,7 +46,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         import html as _html
 
         from app.cache import get_inline_context
-        from app.repos.chats import get_user_chat, update_user_chat
 
         token = payload[4:]  # strip "ctx_" prefix
         ctx = await get_inline_context(token)
@@ -114,23 +113,34 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     help_text = (
         "🤖 <b>Справка и список команд</b>\n\n"
         "<b>🔮 Развлечения и сервисы:</b>\n"
-        "• <code>таро</code> — начать расклад Таро\n"
+        "• <code>/tarot</code> (или <code>таро</code>) — начать расклад Таро\n"
         "• <code>натальная карта</code> — составить натальную карту\n"
-        "• <code>/subscribe</code> — ежедневный гороскоп\n"
+        "• <code>/subscribe</code> / <code>/unsubscribe</code> — гороскоп\n"
         "• <code>/games</code> — каталог мини-игр\n"
-        "• <code>/draw</code> — сгенерировать изображение\n\n"
+        "• <code>/draw</code> — сгенерировать изображение\n"
+        "• <code>/remind</code> — установить напоминание\n"
+        "• <code>/live</code> — начать Live Audio звонок\n\n"
         "<b>🧠 Управление ботом:</b>\n"
         "• <code>/model</code> — сменить AI-модель\n"
         "• <code>/roles</code> — выбрать роль (личность бота)\n"
+        "• <code>/setprompt</code> — задать системную инструкцию\n"
         "• <code>/thinking</code> — настройка уровня размышления\n"
         "• <code>/res</code> — вкл/выкл режим веб-поиска\n"
+        "• <code>/documents</code> — управление вашими документами\n"
         "• <code>/settings</code> — единая панель настроек\n\n"
-        "<b>💬 Общение и память:</b>\n"
+        "<b>💬 Общение и история:</b>\n"
         "• <code>/newchat</code> — очистить текущий контекст\n"
         "• <code>/save</code> — сохранить текущую беседу\n"
         "• <code>/switch</code> — переключиться на сохранённую беседу\n"
+        "• <code>/conversations</code> — список сохранённых бесед\n"
+        "• <code>/rename</code> / <code>/delete</code> — управление беседами\n"
         "• <code>/export</code> — экспортировать чат в документ\n"
         "• <code>/stats</code> — ваша статистика использования\n\n"
+        "<b>📚 Память и данные:</b>\n"
+        "• <code>/memory</code> — просмотр и управление памятью\n"
+        "• <code>/clearmemory</code> — очистить долгосрочную память\n"
+        "• <code>/mydata</code> — экспорт всех ваших данных (GDPR)\n"
+        "• <code>/deleteme</code> — полное удаление аккаунта\n\n"
         "<i>Для получения справки по другим темам используйте кнопки ниже:</i>"
     )
     keyboard = [
