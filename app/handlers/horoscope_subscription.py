@@ -155,7 +155,7 @@ def _confirm_keyboard() -> InlineKeyboardMarkup:
 
 # ── Entry: deep link /start subscribe_horoscope_{sign} ───────────────────────
 
-async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     """Called from /start handler when payload starts with 'subscribe_horoscope_' or via callback."""
     if not update.effective_message:
         return ConversationHandler.END
@@ -200,7 +200,7 @@ async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAUL
 
 # ── State: CHOOSE_SIGN ────────────────────────────────────────────────────────
 
-async def on_sign_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_sign_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
     if not query:
         return CHOOSE_SIGN
@@ -221,7 +221,7 @@ async def on_sign_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 # ── State: CHOOSE_TIME_TODAY ──────────────────────────────────────────────────
 
-async def on_time_today_btn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_time_today_btn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
     if not query:
         return CHOOSE_TIME_TODAY
@@ -239,7 +239,7 @@ async def on_time_today_btn(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return CHOOSE_TIME_TOMORROW
 
 
-async def on_time_today_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_time_today_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     """Handle free-text time input like '09:30'."""
     if not update.message or not update.message.text:
         return CHOOSE_TIME_TODAY
@@ -263,7 +263,7 @@ async def on_time_today_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # ── State: CHOOSE_TIME_TOMORROW ───────────────────────────────────────────────
 
-async def on_time_tomorrow_btn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_time_tomorrow_btn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
     if not query:
         return CHOOSE_TIME_TOMORROW
@@ -288,7 +288,7 @@ async def on_time_tomorrow_btn(update: Update, context: ContextTypes.DEFAULT_TYP
     return CHOOSE_TZ
 
 
-async def on_time_tomorrow_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_time_tomorrow_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.text:
         return CHOOSE_TIME_TOMORROW
     raw = update.message.text.strip()
@@ -333,7 +333,7 @@ async def _show_summary(message, context: ContextTypes.DEFAULT_TYPE) -> str:
     return CONFIRM
 
 
-async def on_tz_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_tz_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.location:
         return CHOOSE_TZ
     lat = update.message.location.latitude
@@ -347,7 +347,7 @@ async def on_tz_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return await _show_summary(update.message, context)
 
 
-async def on_tz_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_tz_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.text:
         return CHOOSE_TZ
     query = update.message.text.strip()
@@ -362,14 +362,14 @@ async def on_tz_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     return await _show_summary(update.message, context)
 
 
-async def on_tz_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_tz_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message:
         return CHOOSE_TZ
     await update.message.reply_text("🌍 Укажите ваш часовой пояс (UTC-смещение):", reply_markup=_tz_keyboard())
     return CHOOSE_TZ
 
 
-async def on_tz_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_tz_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
     if not query:
         return CHOOSE_TZ
@@ -392,7 +392,7 @@ async def on_tz_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> st
 
 # ── State: CONFIRM ────────────────────────────────────────────────────────────
 
-async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
     if not query:
         return CONFIRM
@@ -457,7 +457,7 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 # ── /horoscope_settings command ───────────────────────────────────────────────
 
-async def horoscope_settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def horoscope_settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     """Re-open the subscription wizard from any state."""
     if not update.message or not update.effective_user:
         return ConversationHandler.END
@@ -514,7 +514,7 @@ async def horoscope_settings_command(update: Update, context: ContextTypes.DEFAU
 
 # ── /horoscope_settings callbacks ────────────────────────────────────────────
 
-async def horoscope_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def horoscope_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
     if not query or not update.effective_user:
         return ConversationHandler.END
@@ -568,7 +568,7 @@ async def horoscope_settings_callback(update: Update, context: ContextTypes.DEFA
 
 # ── /horoscope_stop command ───────────────────────────────────────────────────
 
-async def horoscope_stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def horoscope_stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.effective_user:
         return ConversationHandler.END
     user_id = update.effective_user.id

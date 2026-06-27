@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-06-27 - Inline Context Continuity & Type Safety
+
+### 🔗 Inline Q&A Continuity
+- **Deep Link Context Loading (`app/handlers/commands.py`):** Inline interactions now generate a `?start=ctx_<token>` deep link attached to a "💬 Продолжить" button. Clicking it loads the specific inline question and answer directly into the bot's private chat history as the most recent interaction, allowing seamless follow-up questions.
+- **Rolling Context Store (`app/cache.py`):** Implemented a Redis-backed rolling token store (`store_inline_context`) with a 24-hour TTL and a strict per-user limit of 10 contexts (enforced via Redis ZSET).
+- **History Sync Fix:** Bypassed the bolt optimization in `update_user_chat` by resetting `_original_length` to `0` when loading inline context, ensuring the prepended/appended history is guaranteed to sync to Postgres regardless of array length.
+
+### 🐛 Type Safety & Bug Fixes
+- **Comprehensive Mypy Fixes:** Resolved 30+ strict typing errors across the codebase.
+  - Fixed ConversationHandler state return types (`-> int | str`) in `horoscope_subscription.py` and `natal_chart.py`.
+  - Fixed variable scoping issues and assignment types in `city_readiness.py` and `cmd_keys.py`.
+  - Added strict `None` checks for `elapsed_ms` and integer type casting in `web_miniapp.py`.
+  - Fixed import of `send_tarot_invite` in `web.py`.
+
+---
+
 ## [Unreleased] - 2026-06-25 - Unified Daily Admin & Tarot Broadcast
 
 ### 🛠️ Unified Admin Interface

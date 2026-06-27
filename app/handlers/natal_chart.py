@@ -147,7 +147,7 @@ _FAST_CITIES: Final[dict[str, tuple[tuple[str, str], ...]]] = {
 }
 
 
-async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message:
         return ConversationHandler.END
     clear_natal_user_data(context.user_data)
@@ -163,7 +163,7 @@ async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> s
     return NATAL_MODE
 
 
-async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = getattr(update, "callback_query", None)
     if not query:
         return NATAL_MODE
@@ -192,7 +192,7 @@ async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     return NATAL_DATE
 
 
-async def on_table_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_table_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.text:
         return NATAL_TABLE
     raw_text = update.message.text
@@ -202,16 +202,16 @@ async def on_table_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except BirthInputParseError as exc:
         await _show_flow_prompt(update, context, f"Не удалось разобрать данные: {exc}")
         return NATAL_TABLE
-    birth_input = _birth_input_with_local_city(birth_input)
-    if birth_input is None:
+    local_birth_input = _birth_input_with_local_city(birth_input)
+    if local_birth_input is None:
         await _show_flow_prompt(update, context, "Город не найден в выбранной стране. Введите ближайший крупный город.")
         return NATAL_TABLE
-    context.user_data["natal_birth_input"] = birth_input
-    await _show_flow_prompt(update, context, _confirmation_text(birth_input), reply_markup=_confirm_keyboard())
+    context.user_data["natal_birth_input"] = local_birth_input  # type: ignore[index]
+    await _show_flow_prompt(update, context, _confirmation_text(local_birth_input), reply_markup=_confirm_keyboard())
     return NATAL_CONFIRM
 
 
-async def on_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.text:
         return NATAL_DATE
     context.user_data["natal_date"] = update.message.text.strip()
@@ -220,7 +220,7 @@ async def on_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     return NATAL_TIME_PRECISION
 
 
-async def on_date_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_date_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = getattr(update, "callback_query", None)
     if not query:
         return NATAL_DATE
@@ -263,7 +263,7 @@ async def on_date_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return NATAL_DATE
 
 
-async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = getattr(update, "callback_query", None)
     if query:
         await query.answer()
@@ -294,7 +294,7 @@ async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return NATAL_TIME_VALUE
 
 
-async def on_time_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_time_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = getattr(update, "callback_query", None)
     if not query:
         return NATAL_TIME_VALUE
@@ -331,7 +331,7 @@ async def on_time_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return NATAL_TIME_VALUE
 
 
-async def on_time_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_time_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.text:
         return NATAL_TIME_VALUE
     context.user_data["natal_time_value"] = update.message.text.strip()
@@ -340,7 +340,7 @@ async def on_time_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> s
     return NATAL_COUNTRY
 
 
-async def on_country(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_country(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.text:
         return NATAL_COUNTRY
     query = update.message.text.strip()
@@ -358,7 +358,7 @@ async def on_country(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     return NATAL_COUNTRY
 
 
-async def on_country_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_country_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = getattr(update, "callback_query", None)
     if not query:
         return NATAL_COUNTRY
@@ -377,7 +377,7 @@ async def on_country_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     return NATAL_PLACE
 
 
-async def on_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.message.text:
         return NATAL_PLACE
     query = update.message.text.strip()
@@ -404,7 +404,7 @@ async def on_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     return NATAL_PLACE
 
 
-async def on_place_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_place_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
     if not query:
         return NATAL_PLACE
@@ -438,7 +438,7 @@ async def on_place_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return NATAL_FOCUS
 
 
-async def on_place_missing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_place_missing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
     if not query:
         return NATAL_PLACE
@@ -453,7 +453,7 @@ async def on_place_missing(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return NATAL_PLACE
 
 
-async def on_focus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_focus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = getattr(update, "callback_query", None)
     if query:
         await query.answer()
@@ -476,7 +476,7 @@ async def on_focus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     return NATAL_CONFIRM
 
 
-async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
     if not query:
         return NATAL_CONFIRM
@@ -509,7 +509,7 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
-async def on_input_hint(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def on_input_hint(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
     if not query:
         return NATAL_DATE
@@ -524,7 +524,7 @@ async def on_input_hint(update: Update, context: ContextTypes.DEFAULT_TYPE) -> s
     return NATAL_DATE
 
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     clear_natal_user_data(context.user_data)
     if update.message:
         await update.message.reply_text("Отменено.")
@@ -541,8 +541,8 @@ async def _show_flow_prompt(
     query = getattr(update, "callback_query", None)
     if query:
         await query.edit_message_text(text, reply_markup=reply_markup)
-        if query.message and "natal_flow_message" not in context.user_data:
-            context.user_data["natal_flow_message"] = query.message
+        if query.message and "natal_flow_message" not in context.user_data:  # type: ignore[operator]
+            context.user_data["natal_flow_message"] = query.message  # type: ignore[index]
         return
 
     flow_message = context.user_data.get("natal_flow_message")

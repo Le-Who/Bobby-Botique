@@ -1877,7 +1877,7 @@ async def api_admin_broadcast_send_offer_batch():
                         sub = await get_tarot_subscription(uid)
                         if bool(sub and sub.get("is_subscribed")) and not force:
                             return {"user_id": uid, "status": "skipped", "message": "Already subscribed"}
-                        from app.handlers.cmd_tarot import send_tarot_invite
+                        from app.handlers.tarot_daily import send_tarot_invite
                         await send_tarot_invite(bot, uid)
                         await mark_tarot_discovery_sent(uid)
 

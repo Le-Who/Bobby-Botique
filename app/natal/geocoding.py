@@ -169,7 +169,7 @@ def _build_local_datetime(birth: BirthInput, local_zone: ZoneInfo) -> datetime:
     elif birth.time_precision == TimePrecision.APPROXIMATE:
         raise GeocodingError("Укажите примерное время рождения.")
     else:
-        birth_time = time(12, 0)
+        birth_time = time(12, 0)  # type: ignore[unreachable]
     return datetime.combine(birth_date, birth_time, tzinfo=local_zone)
 
 

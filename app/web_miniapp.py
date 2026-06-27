@@ -1409,16 +1409,21 @@ async def daily2048_ws():
         status: str = "practice",
     ) -> daily2048_repo.Daily2048Result:
         finished_at = fallback.finished_at or datetime.now(tz=UTC)
+        
+        def _get_int(key: str, default: int) -> int:
+            val = event.get(key)
+            return int(val) if val is not None else default
+
         return daily2048_repo.Daily2048Result(
             user_id=user_id,
             puzzle_date=puzzle.puzzle_date,
             status=status,
             board=event.get("board") or fallback.board,
-            spawn_index=int(event.get("spawn_index") if event.get("spawn_index") is not None else fallback.spawn_index),
-            moves=int(event.get("moves") if event.get("moves") is not None else fallback.moves),
-            merge_score=int(event.get("merge_score") if event.get("merge_score") is not None else fallback.merge_score),
-            final_score=int(event.get("final_score") if event.get("final_score") is not None else fallback.final_score),
-            elapsed_ms=int(event.get("elapsed_ms") if event.get("elapsed_ms") is not None else fallback.elapsed_ms),
+            spawn_index=_get_int("spawn_index", fallback.spawn_index),
+            moves=_get_int("moves", fallback.moves),
+            merge_score=_get_int("merge_score", fallback.merge_score),
+            final_score=_get_int("final_score", fallback.final_score),
+            elapsed_ms=_get_int("elapsed_ms", fallback.elapsed_ms),
             started_at=fallback.started_at,
             won_at=fallback.won_at or finished_at,
             finished_at=finished_at,
@@ -1427,7 +1432,10 @@ async def daily2048_ws():
 
     def _client_elapsed_ms(payload: dict[str, Any]) -> int | None:
         try:
-            value = int(payload.get("client_elapsed_ms"))
+            val = payload.get("client_elapsed_ms")
+            if val is None:
+                return None
+            value = int(val)
         except (TypeError, ValueError):
             return None
         return max(0, min(value, 24 * 60 * 60 * 1000))

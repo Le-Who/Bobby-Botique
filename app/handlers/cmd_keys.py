@@ -289,10 +289,10 @@ async def run_all_health_checks(context: ContextTypes.DEFAULT_TYPE) -> None:
     
     results: dict[str, bool | None] = {}
     for provider, res in zip(providers, results_list, strict=False):
-        if isinstance(res, Exception):
+        if isinstance(res, Exception):  # return_exceptions=True can yield exceptions
             results[provider] = False
         else:
-            results[provider] = res
+            results[provider] = res  # type: ignore[assignment]  # bool | None from check_single_provider_health
 
     failures = []
     for provider, healthy in results.items():

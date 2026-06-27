@@ -219,7 +219,8 @@ async def monthly_champions_callback(update: Update, context: ContextTypes.DEFAU
 
     champions = await repo.get_monthly_champions(year, month)
     await query.answer("Загружаю лучших за месяц")
-    if not query.message:
+    from telegram import Message
+    if not isinstance(query.message, Message):
         return
     lines = [f"🏆 <b>Лучшие игроки {month:02d}.{year}</b>", ""]
     if not champions:

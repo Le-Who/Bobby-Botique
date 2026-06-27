@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.natal.city_catalog import search_cities, warm_city_catalog
 
@@ -89,7 +89,7 @@ def check_city_catalog_readiness(
     cases: Sequence[tuple[str, str]] = RELEASE_CITY_CASES,
     autocomplete_cases: Sequence[tuple[str, str, str, str]] = RELEASE_AUTOCOMPLETE_CASES,
     disambiguation_cases: Sequence[tuple[str, str, str]] = RELEASE_DISAMBIGUATION_CASES,
-    search_cities_fn: Callable[[str, int, str | None], Sequence[CityLike]] = search_cities,
+    search_cities_fn: Callable[[str, int, str | None], Any] = search_cities,
     warm_city_catalog_fn: Callable[[], int] = warm_city_catalog,
     max_warmup_ms: float | None = None,
     max_search_ms: float | None = None,
@@ -213,13 +213,13 @@ def format_city_readiness(result: CityReadinessResult) -> str:
             f"  {check.query} -> {check.matched_display_name} "
             f"({check.latitude:.5f}, {check.longitude:.5f}, {check.timezone})"
         )
-    for check in result.autocomplete_checks:
+    for ac_check in result.autocomplete_checks:
         lines.append(
-            f"  autocomplete {check.country_code} {check.broad_query}->{check.narrow_query}: "
-            f"{check.expected_name} broad={check.broad_count} narrow={check.narrow_count}"
+            f"  autocomplete {ac_check.country_code} {ac_check.broad_query}->{ac_check.narrow_query}: "
+            f"{ac_check.expected_name} broad={ac_check.broad_count} narrow={ac_check.narrow_count}"
         )
-    for check in result.disambiguation_checks:
-        lines.append(f"  disambiguation {check.country_code} {check.query}: {check.matched_display_name}")
+    for d_check in result.disambiguation_checks:
+        lines.append(f"  disambiguation {d_check.country_code} {d_check.query}: {d_check.matched_display_name}")
     for failure in result.failures:
         lines.append(f"  - {failure}")
     return "\n".join(lines)
