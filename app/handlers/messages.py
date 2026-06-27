@@ -69,31 +69,34 @@ def chunk_message(text: str, max_length: int = 4096) -> list[str]:
         return []
 
     chunks: list[str] = []
-    remaining = text
-    while remaining:
-        if len(remaining) <= max_length:
-            chunk = remaining.strip()
+    text_length = len(text)
+    start_idx = 0
+
+    while start_idx < text_length:
+        remaining_length = text_length - start_idx
+        if remaining_length <= max_length:
+            chunk = text[start_idx:].strip()
             if chunk:
                 chunks.append(chunk)
             break
 
-        window = remaining[:max_length]
+        window = text[start_idx : start_idx + max_length]
 
         # 1. Try newline split
         nl_pos = window.rfind("\n")
         if nl_pos > 0:
-            chunk = remaining[:nl_pos].strip()
-            remaining = remaining[nl_pos + 1:]
+            chunk = text[start_idx : start_idx + nl_pos].strip()
+            start_idx += nl_pos + 1
         else:
             # 2. Try space split
             sp_pos = window.rfind(" ")
             if sp_pos > 0:
-                chunk = remaining[:sp_pos].strip()
-                remaining = remaining[sp_pos + 1:]
+                chunk = text[start_idx : start_idx + sp_pos].strip()
+                start_idx += sp_pos + 1
             else:
                 # 3. Hard cut
-                chunk = remaining[:max_length].strip()
-                remaining = remaining[max_length:]
+                chunk = window.strip()
+                start_idx += max_length
 
         if chunk:
             chunks.append(chunk)

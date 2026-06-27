@@ -3,7 +3,6 @@
 
 import asyncio
 import html
-import json
 import logging
 from datetime import UTC, datetime
 
@@ -38,6 +37,10 @@ from app.repos.users import invalidate_user_auth_cache
 from app.utils import time as time_utils
 from app.utils.decorators import admin_only, authorized_only
 from app.utils.formatting import TelegramFormatter
+
+# ⚡ Perf: json_compat wraps orjson for 2-6× faster JSON encode/decode than stdlib.
+# json.loads, json.dumps, and json.JSONDecodeError are all supported.
+from app.utils.json_compat import json
 
 _DAILYCROC_STATUS_REFRESH = "dailycroc_status:refresh"
 _DAILYCROC_STATUS_CHECK = "dailycroc_status:check"

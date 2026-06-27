@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import hashlib
 import inspect
 import logging
@@ -163,6 +164,7 @@ def _load_daily_limits() -> dict[str, int]:
         return default_limits
 
 
+@functools.lru_cache(maxsize=32)
 def get_model_hash(model_name: str) -> str:
     """
     Генерирует короткий хэш models (8 символов) for использования в callback_data.

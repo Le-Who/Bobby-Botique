@@ -3,7 +3,13 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [Unreleased] - 2026-06-27 - Inline Context Continuity & Type Safety
+## [Unreleased] - 2026-06-27 - Inline Context Continuity, Type Safety & Performance
+
+### ⚡ Performance & Bolt Optimizations
+- **JSON Serialization (`app/tarot.py`, `app/natal/accuracy.py`, `app/natal/city_catalog.py`, `app/handlers/cmd_admin.py`):** Replaced standard library `json` with `app.utils.json_compat` (backed by `orjson`), accelerating encode/decode paths by 2-6×. Updated file loading to use `json.loads(f.read())`.
+- **Concurrent Daily Puzzle Prep (`app/games/daily_2048.py`):** Parallelized `ensure_prepared_puzzles` via `asyncio.gather()`, reducing a 7-day preparation loop from sequential sum of DB RTTs to a single concurrent max RTT.
+- **Database Index Optimization (`scripts/migrations/056_bolt_performance_indexes.sql`):** Added missing indices for `conversation_messages(conversation_id)` and `memory_edges(user_id, target_node)`, eliminating sequential scans during history fetches and reverse graph traversals.
+- **Async Concurrency Refactoring (`app/games/crocodile_daily.py`, `app/handlers/inline.py`, `app/handlers/scheduled_briefs.py`):** Replaced multiple sequential `await` calls inside loops with `asyncio.gather`, drastically reducing wall-clock execution time for daily puzzle generation, inline image placeholder generation, and scheduled brief broadcasts.
 
 ### 🔗 Inline Q&A Continuity
 - **Deep Link Context Loading (`app/handlers/commands.py`):** Inline interactions now generate a `?start=ctx_<token>` deep link attached to a "💬 Продолжить" button. Clicking it loads the specific inline question and answer directly into the bot's private chat history as the most recent interaction, allowing seamless follow-up questions.

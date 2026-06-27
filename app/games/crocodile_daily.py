@@ -68,10 +68,12 @@ async def ensure_today_puzzle(now: datetime | None = None, *, difficulty: str = 
 
 async def ensure_today_puzzles(now: datetime | None = None) -> dict[str, repo.DailyPuzzle]:
     puzzle_date = repo.today_puzzle_date(now)
-    puzzles: dict[str, repo.DailyPuzzle] = {}
-    for difficulty in await active_daily_difficulties():
-        puzzles[difficulty] = await repo.create_puzzle_if_missing(puzzle_date, difficulty=difficulty)
-    return puzzles
+    difficulties = await active_daily_difficulties()
+    # ⚡ Bolt: parallel DB calls — one round-trip instead of N sequential awaits
+    puzzles_list = await asyncio.gather(
+        *[repo.create_puzzle_if_missing(puzzle_date, difficulty=d) for d in difficulties]
+    )
+    return dict(zip(difficulties, puzzles_list))
 
 
 async def get_daily_overview(
@@ -81,14 +83,23 @@ async def get_daily_overview(
 ) -> tuple[date, dict[str, repo.DailyPuzzle], dict[str, repo.DailyResult]]:
     await repo.record_player_activity(user_id, event="daily_played")
     puzzle_date = repo.today_puzzle_date(now)
-    puzzles: dict[str, repo.DailyPuzzle] = {}
-    results: dict[str, repo.DailyResult] = {}
+    difficulties = await active_daily_difficulties()
 
-    for difficulty in await active_daily_difficulties():
-        puzzle = await repo.create_puzzle_if_missing(puzzle_date, difficulty=difficulty)
-        result = await repo.get_or_create_result(user_id, puzzle_date, difficulty=difficulty)
-        puzzles[difficulty] = puzzle
-        results[difficulty] = result
+    # ⚡ Bolt: fetch puzzles and results for all difficulties in parallel.
+    # Previously each difficulty triggered two sequential DB round-trips;
+    # now all 2×N calls are dispatched concurrently, reducing wall-clock
+    # latency by ~N× (typically ~3× for easy/medium/hard).
+    puzzle_tasks = [repo.create_puzzle_if_missing(puzzle_date, difficulty=d) for d in difficulties]
+    result_tasks = [repo.get_or_create_result(user_id, puzzle_date, difficulty=d) for d in difficulties]
+    puzzles_list, results_list = await asyncio.gather(
+        asyncio.gather(*puzzle_tasks),
+        asyncio.gather(*result_tasks),
+    )
+
+    puzzles: dict[str, repo.DailyPuzzle] = dict(zip(difficulties, puzzles_list))
+    results: dict[str, repo.DailyResult] = dict(zip(difficulties, results_list))
+
+    for puzzle in puzzles.values():
         _queue_daily_puzzle_preparation_if_needed(puzzle)
 
     return puzzle_date, puzzles, results

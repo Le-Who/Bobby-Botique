@@ -43,7 +43,7 @@ def detect_language(text: str | None) -> str:
     #         (2) a second full iteration via sum(1 for ch in text if ch.isalpha()).
     cyrillic_count = 0
     alpha_count = 0
-    for ch in text:
+    for ch in text[:500]:
         if ch.isalpha():
             alpha_count += 1
             # Cyrillic Basic (U+0400–U+04FF) covers Russian, Ukrainian, etc.

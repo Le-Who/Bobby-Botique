@@ -99,3 +99,11 @@
 **Learning:** All previous Bolt audits hoisted inline regex from module-level helper functions and formatters, but the early-return guard inside `_handle_weather()` was overlooked. This function fires on every message matching `_WEATHER_PATTERNS` or `_WEATHER_COLLOQUIAL_RE`. The inline `re.search(r"(завтра|...)", text, re.IGNORECASE)` compiled fresh on every invocation (2-4 µs/compile + re._cache lookup overhead).
 
 **Action:** When auditing for inline regex, do NOT stop at top-level helpers — scan ALL inner functions and early-return guards inside async handlers. The bail-out pattern "guard check at function top" is a common location for accidentally-inline patterns that escape grep for `re.compile(` (because `re.search(r"...` is harder to spot).
+
+## 2026-06-27 - FK columns without indexes trigger Seq Scan even with asyncpg pool
+**Learning:** `conversation_messages.conversation_id` and `memory_edges.target_node` both had FKs but no covering indexes. This caused full sequential scans on every history fetch and reverse graph traversal. The migration system is file-based glob discovery — new SQL files in `scripts/migrations/` are auto-applied on startup, no registration needed.
+**Action:** Always add an index alongside any FK column that will be used in WHERE clauses. Check for this pattern in future migrations.
+
+## 2026-06-27 - Pillow imports were inside the for-loop, causing repeated attr lookups
+**Learning:** `from PIL import ImageFont` was inside the per-image loop in `_ensure_placeholders`. Moving it to the top of the enclosing block (alongside `Image, ImageDraw`) avoids repeated module attribute resolution and makes the two-phase refactor (build-then-gather) cleaner.
+**Action:** Always hoist repeated `from X import Y` statements out of loops.

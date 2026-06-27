@@ -3,10 +3,11 @@ Local Tarot engine.
 Loads tarot.json dataset, selects cards, and formats prompts for each spread type.
 """
 
-import json
 import random
 from enum import Enum
 from pathlib import Path
+
+from app.utils.json_compat import json
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
 
@@ -22,7 +23,9 @@ def _load_deck() -> None:
         return
     try:
         with open(_TAROT_DATA_PATH, encoding="utf-8") as f:
-            data = json.load(f)
+            # ⚡ Perf: json_compat (orjson) has no load(f), use loads(f.read()) instead.
+            # orjson is 2-6× faster than stdlib json for both decode and encode.
+            data = json.loads(f.read())
         _TAROT_DECK = data.get("tarot_interpretations", [])
     except Exception as e:
         import logging

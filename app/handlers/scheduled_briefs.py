@@ -15,6 +15,7 @@ Scheduling:
 - Runs once per hour, checks which subscriptions need delivery.
 """
 
+import asyncio
 import logging
 import time
 from datetime import UTC, datetime
@@ -402,7 +403,13 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def check_and_send_briefs(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Hourly job: check for due subscriptions and send briefs."""
+    """Hourly job: check for due subscriptions and send briefs.
+
+    ⚡ Bolt: previously iterated sequentially — each LLM+Tavily call blocked the
+    next user. Now all deliveries run concurrently, bounded by a semaphore of 10
+    to avoid hammering provider APIs. Wall-clock time drops from O(n * t_brief)
+    to roughly O(t_brief) regardless of subscriber count.
+    """
     current_hour = datetime.now(tz=UTC).hour
 
     due_subs = await get_due_subscriptions(current_hour)
@@ -411,8 +418,14 @@ async def check_and_send_briefs(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     logger.info("Found %d due subscriptions for hour %d UTC", len(due_subs), current_hour)
 
-    for sub in due_subs:
-        try:
-            await generate_and_send_brief(sub["user_id"], context.bot)
-        except Exception as e:
-            logger.error("Failed to process brief for user %s: %s", sub["user_id"], e)
+    # Concurrency cap: 10 simultaneous LLM+search chains prevent provider overload.
+    sem = asyncio.Semaphore(10)
+
+    async def _send_one(sub: dict) -> None:
+        async with sem:
+            try:
+                await generate_and_send_brief(sub["user_id"], context.bot)
+            except Exception as e:
+                logger.error("Failed to process brief for user %s: %s", sub["user_id"], e)
+
+    await asyncio.gather(*[_send_one(sub) for sub in due_subs])

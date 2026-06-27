@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import unicodedata
 from collections.abc import Iterable
@@ -12,6 +11,9 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import geonamescache
+
+# ⚡ Perf: json_compat wraps orjson for 2-6× faster JSON decode than stdlib.
+from app.utils.json_compat import json
 
 _COUNTRY_ALIASES: dict[str, tuple[str, ...]] = {
     "AM": ("Армения", "Armenia"),

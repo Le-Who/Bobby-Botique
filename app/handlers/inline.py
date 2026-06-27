@@ -249,10 +249,12 @@ async def _ensure_placeholders(bot) -> None:
         if _placeholder_file_ids:
             return
 
-        from PIL import Image, ImageDraw
+        from PIL import Image, ImageDraw, ImageFont
 
         all_ids = [m[0] for m in _IMAGE_MODELS_IDS] + [_IMG_KLEIN_ID]
 
+        # ── Build all image buffers synchronously (CPU-bound, no I/O) ─────
+        pending: list[tuple[str, io.BytesIO]] = []
         for result_id in all_ids:
             style = _PLACEHOLDER_STYLES.get(result_id)
             if not style:
@@ -267,8 +269,6 @@ async def _ensure_placeholders(bot) -> None:
 
             # Load the largest available built-in font.
             # load_default(size=N) requires Pillow ≥ 10.1; fall back for older builds.
-            from PIL import ImageFont
-
             try:
                 font_large = ImageFont.load_default(size=56)
                 font_small = ImageFont.load_default(size=28)
@@ -297,7 +297,13 @@ async def _ensure_placeholders(bot) -> None:
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=75)
             buf.seek(0)
+            pending.append((result_id, buf))
 
+        # ⚡ Bolt: upload all placeholders to Telegram concurrently.
+        # Previously each send_photo + delete_message was awaited in sequence;
+        # now all N uploads happen in parallel, cutting first-inline-query
+        # initialisation from O(N × telegram_rtt) to O(telegram_rtt).
+        async def _mint_one(result_id: str, buf: io.BytesIO) -> None:
             try:
                 msg = await bot.send_photo(
                     chat_id=settings.ADMIN_ID,
@@ -311,6 +317,8 @@ async def _ensure_placeholders(bot) -> None:
                     )
             except Exception:
                 logging.exception("Failed to mint placeholder file_id for %s", result_id)
+
+        await asyncio.gather(*[_mint_one(rid, buf) for rid, buf in pending])
 
         logging.info(
             "Minted %d/%d inline placeholder file_ids",

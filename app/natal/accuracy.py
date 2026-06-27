@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.natal.astronomy import angular_distance
 from app.natal.calculator import calculate_chart
 from app.natal.models import BirthInput, ResolvedBirthData, TimePrecision
+
+# ⚡ Perf: json_compat wraps orjson for 2-6× faster JSON encode/decode than stdlib.
+from app.utils.json_compat import json
 
 LONGITUDE_TOLERANCE_DEGREES = 0.05
 ANGLE_TOLERANCE_DEGREES = 0.1
