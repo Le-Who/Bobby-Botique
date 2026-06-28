@@ -205,20 +205,35 @@ class InputSanitizer:
             if hostname.startswith("[") and hostname.endswith("]"):
                 hostname = hostname[1:-1]
 
+        import socket
+
         # Check for localhost
         if hostname.lower() == "localhost":
             raise InputSanitizationError("Localhost URLs not allowed")
 
-        # Check for IP addresses
+        # Resolve hostname to prevent SSRF and check IP ranges
         try:
-            # This handles both IPv4 and IPv6
-            ipaddress.ip_address(hostname)
-            # If we are here, it IS an IP address.
-            # Current policy: Block ALL IP addresses.
-            raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
-        except ValueError:
-            # Not an IP address, continue
-            pass
+            # Use getaddrinfo to resolve hostname, catching gaierror
+            addr_info = socket.getaddrinfo(hostname, None)
+        except socket.gaierror as e:
+            raise InputSanitizationError(f"Could not resolve hostname: {e}") from e
+
+        validated_ip = None
+        for info in addr_info:
+            ip_str = info[4][0]
+            try:
+                ip = ipaddress.ip_address(ip_str)
+            except ValueError:
+                continue
+
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
+                raise InputSanitizationError(f"Forbidden IP address range: {ip_str}")
+
+            if not validated_ip:
+                validated_ip = ip_str
+
+        if not validated_ip:
+            raise InputSanitizationError("No valid IP found for hostname")
 
         return url
 
