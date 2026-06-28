@@ -84,9 +84,7 @@ def _empty_matrix_chart(matrix) -> ChartData:
             houses_available=False,
             angles_available=False,
             calculation_engine="destiny-matrix-local",
-            warnings=[
-                "Построена только матрица судьбы: место и время рождения не использовались."
-            ],
+            warnings=[],
         ),
         planets=[],
         aspects=[],

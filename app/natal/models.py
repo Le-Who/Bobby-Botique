@@ -86,14 +86,34 @@ class DestinyMatrixPosition(BaseModel):
     arcana: int
     arcana_label: str
     theme: str
+    interpretation: str = ""
+    shadow: str = ""
     x: float
     y: float
+
+
+class DestinyMatrixLine(BaseModel):
+    key: str
+    label: str
+    position_keys: list[str]
+    summary: str
+
+
+class DestinyMatrixLifePeriod(BaseModel):
+    start_age: int
+    end_age: int
+    arcana: int
+    arcana_label: str
+    theme: str
+    focus: str
 
 
 class DestinyMatrixData(BaseModel):
     birth_date: str
     system: str = "destiny-matrix-22"
     positions: list[DestinyMatrixPosition]
+    lines: list[DestinyMatrixLine] = Field(default_factory=list)
+    life_periods: list[DestinyMatrixLifePeriod] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
 

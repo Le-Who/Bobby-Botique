@@ -66,16 +66,14 @@ def build_hosted_report_html(report: NatalReport) -> str:
         "*{box-sizing:border-box}html{scroll-behavior:smooth}"
         "body{margin:0;font-family:'Aptos','Segoe UI',sans-serif;background:#f4f7f5;color:var(--ink);line-height:1.62}"
         "main{position:relative;max-width:1160px;margin:0 auto;padding:clamp(16px,4vw,48px)}"
-        ".result-shell{display:grid;grid-template-columns:minmax(0,1.02fr) minmax(320px,.78fr);gap:18px;align-items:start;margin:0 0 34px}"
-        ".result-copy,.result-panel,.chart-stage,.matrix-stage,.highlight-card,.position-card,.reading-card{border:1px solid var(--line);border-radius:8px;background:var(--surface);box-shadow:0 16px 42px rgba(33,45,42,.08)}"
-        ".result-copy{padding:clamp(20px,4vw,34px);display:grid;gap:18px}.result-panel{padding:18px;display:grid;gap:16px}"
+        ".result-shell{display:grid;gap:18px;margin:0 0 34px}"
+        ".result-copy,.chart-stage,.matrix-stage,.highlight-card,.position-card,.reading-card{border:1px solid var(--line);border-radius:8px;background:var(--surface);box-shadow:0 16px 42px rgba(33,45,42,.08)}"
+        ".result-copy{padding:clamp(20px,4vw,34px);display:grid;gap:18px}"
         ".eyebrow{margin:0;color:var(--teal);font-size:12px;letter-spacing:.12em;text-transform:uppercase;font-weight:800}"
         "h1{max-width:780px;margin:0;font-family:Georgia,serif;font-size:clamp(36px,6vw,68px);line-height:1;font-weight:500;color:#1e2d29}"
         ".lead{max-width:720px;margin:0;color:var(--muted);font-size:clamp(16px,2vw,20px)}"
         ".reading-path{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.path-card{padding:12px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:inherit;background:var(--soft)}.path-card span{display:block;color:var(--teal);font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.path-card strong{display:block;margin-top:4px;font-size:15px}.path-card em{display:block;margin-top:4px;color:var(--muted);font-size:13px;font-style:normal}"
-        ".panel-title{margin:0;font-size:18px;font-weight:760}.trust-box{padding:12px;border-left:4px solid var(--teal);background:var(--soft);border-radius:8px}.trust-box strong{display:block;margin-bottom:4px}.trust-box p{margin:0;color:var(--muted);font-size:14px}"
-        ".natal-snapshot-grid,.matrix-insight-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.snapshot-card,.matrix-card{min-height:104px;padding:12px;border:1px solid var(--line);border-radius:8px;background:#fbfcfb}.snapshot-card span,.matrix-card span{display:block;color:var(--muted);font-size:12px;font-weight:750;letter-spacing:.08em;text-transform:uppercase}.snapshot-card strong,.matrix-card strong{display:block;margin-top:5px;font-size:18px}.snapshot-card p,.matrix-card p{margin:5px 0 0;color:var(--muted);font-size:13px}.matrix-note{grid-column:1/-1;margin:0;padding:10px 12px;border-radius:8px;background:#f7f1e8;color:#6b4a17;font-size:14px}"
-        ".visual-stack{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:14px;align-items:start}"
+        ".visual-stack{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:14px;align-items:start}"
         ".chart-stage,.matrix-stage{position:relative;width:100%;padding:clamp(12px,3vw,22px);overflow:hidden}"
         "svg{position:relative;z-index:1;max-width:100%;height:auto;display:block;margin:0 auto}"
         ".section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:64px 0 18px}.section-head h2{margin:0;font-family:Georgia,serif;font-size:clamp(28px,4vw,44px);font-weight:500}.section-head p{max-width:480px;margin:0;color:var(--muted)}"
@@ -83,7 +81,7 @@ def build_hosted_report_html(report: NatalReport) -> str:
         ".positions-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.position-card{display:block;min-height:132px;padding:16px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.position-card strong{display:block;margin-bottom:6px;font-family:Georgia,serif;font-size:21px;font-weight:500}.position-card p{margin:0;color:var(--muted)}"
         ".full-reading{display:grid;gap:14px}.reading-card{padding:clamp(18px,3vw,28px)}.reading-card div{max-width:78ch}.reading-card p{margin:0 0 12px}.reading-card ul{padding-left:22px}"
         ".footer{display:flex;flex-wrap:wrap;gap:14px;margin:44px 0 0;color:var(--muted);font-size:14px}.mirror-link{color:var(--blue);font-weight:700}.privacy,.attribution{margin:0}.report-note{flex-basis:100%;margin:6px 0 0;padding-top:14px;border-top:1px solid var(--line)}.report-note strong{color:var(--ink)}"
-        "a{color:var(--blue)}@media(max-width:900px){.result-shell{grid-template-columns:1fr}.reading-path,.highlights,.positions-grid,.natal-snapshot-grid,.matrix-insight-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}}"
+        "a{color:var(--blue)}@media(max-width:900px){.reading-path,.highlights,.positions-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}}"
         "</style></head><body><main>"
         f"{result_shell}"
         '<section class="highlights-wrap" id="highlights"><div class="section-head"><h2>Главные акценты</h2><p>Самые важные и интересные мотивы вынесены первыми, чтобы отчет читался как цельная история.</p></div>'
@@ -169,8 +167,6 @@ def _footer_note_html(note: str) -> str:
 
 def _result_shell(report: NatalReport, title: str, lead: str, visual_layers: str) -> str:
     visual_html = f'<div class="visual-stack">{visual_layers}</div>' if visual_layers else ""
-    natal_snapshot = _natal_snapshot_grid(report)
-    matrix_insights = _matrix_insight_grid(report)
     return (
         '<section class="result-shell">'
         '<div class="result-copy">'
@@ -179,12 +175,6 @@ def _result_shell(report: NatalReport, title: str, lead: str, visual_layers: str
         f'<p class="lead">{html.escape(lead)}</p>'
         f"{_reading_path_html(report)}"
         "</div>"
-        '<aside class="result-panel">'
-        '<h2 class="panel-title">Снимок разбора</h2>'
-        f"{_quality_box(report)}"
-        f"{natal_snapshot}"
-        f"{matrix_insights}"
-        "</aside>"
         f"{visual_html}"
         "</section>"
     )
@@ -192,7 +182,7 @@ def _result_shell(report: NatalReport, title: str, lead: str, visual_layers: str
 
 def _reading_path_html(report: NatalReport) -> str:
     has_matrix = report.chart.destiny_matrix is not None
-    third_label = "Матрица и позиции" if has_matrix else "Расчетные позиции"
+    third_label = "Матрица и периоды" if has_matrix else "Расчетные позиции"
     return (
         '<nav class="reading-path" aria-label="Что читать первым">'
         '<a class="path-card" href="#highlights"><span>1 шаг</span><strong>Что читать первым</strong>'
@@ -203,70 +193,6 @@ def _reading_path_html(report: NatalReport) -> str:
         "<em>Проверить расчетные точки и связать их с текстом.</em></a>"
         "</nav>"
     )
-
-
-def _quality_box(report: NatalReport) -> str:
-    quality = report.chart.input_quality
-    if report.chart.destiny_matrix is not None and not report.chart.planets:
-        text = "Матрица рассчитана по дате рождения; время и место в этом режиме не используются."
-    elif not quality.houses_available or quality.time_precision == "unknown":
-        text = "Время рождения неизвестно: планеты рассчитаны, но дома, Асцендент и MC не подаются как точные факты."
-    elif quality.time_precision in {"approximate", "range"}:
-        text = "Время задано не идеально точно: планеты устойчивы, а дома и углы читаются с пометкой о точности."
-    else:
-        text = "Дата, время и место позволяют читать планеты, аспекты, дома и углы как единый расчетный слой."
-    if quality.warnings:
-        text = f"{text} {_plain_text_excerpt(quality.warnings[0], limit=120)}"
-    return f'<div class="trust-box"><strong>Надёжность расчёта</strong><p>{html.escape(text)}</p></div>'
-
-
-def _natal_snapshot_grid(report: NatalReport) -> str:
-    if not report.chart.planets:
-        return ""
-    cards: list[str] = []
-    for planet in report.chart.planets[:4]:
-        meaning = html.escape(_point_meaning(planet.key))
-        title = html.escape(planet.label)
-        detail = html.escape(f"{planet.sign} {planet.degree_in_sign:.1f}°")
-        if planet.house:
-            detail = f"{detail}, дом {planet.house}"
-        cards.append(
-            '<article class="snapshot-card">'
-            f"<span>{meaning}</span><strong>{title}</strong><p>{detail}</p>"
-            "</article>"
-        )
-    return f'<div class="natal-snapshot-grid">{"".join(cards)}</div>'
-
-
-def _matrix_insight_grid(report: NatalReport) -> str:
-    matrix = report.chart.destiny_matrix
-    if matrix is None:
-        return ""
-    label_by_key = {
-        "center": "Центр матрицы",
-        "relationship": "Линия отношений",
-        "money": "Денежный канал",
-        "talent": "Таланты",
-        "mission": "Предназначение",
-    }
-    by_key = {position.key: position for position in matrix.positions}
-    cards: list[str] = []
-    for key, label in label_by_key.items():
-        position = by_key.get(key)
-        if position is None:
-            continue
-        cards.append(
-            '<article class="matrix-card">'
-            f"<span>{html.escape(label)}</span>"
-            f"<strong>{position.arcana}. {html.escape(position.arcana_label)}</strong>"
-            f"<p>{html.escape(position.theme)}</p>"
-            "</article>"
-        )
-    cards.append(
-        '<p class="matrix-note">Архетипы показывают паттерны, а не фиксированную судьбу: '
-        "этот слой лучше читать как язык выбора, ресурса и повторяющихся сценариев.</p>"
-    )
-    return f'<div class="matrix-insight-grid">{"".join(cards)}</div>'
 
 
 def _highlight_cards(sections: list[ReportSection]) -> list[str]:
@@ -436,11 +362,11 @@ def _report_lead(report: NatalReport) -> str:
     if has_natal and has_matrix:
         return (
             "Сначала две визуальные карты: астрономический слой натала и архетипический слой матрицы. "
-            "Дальше — главные акценты, полный разбор и справочные расчетные позиции."
+            "Дальше — главные акценты, разбор линий, денег, отношений, рода и возрастных периодов."
         )
     if has_matrix:
         return (
-            "Архетипическая матрица по дате рождения: визуальный центр, главные акценты и расшифровка позиций без жестких предсказаний."
+            "Архетипическая матрица по дате рождения: центр, родовые линии, денежный канал, отношения и возрастные периоды."
         )
     return "Сначала карта как визуальный центр, затем главные акценты, полный разбор и справочные расчетные позиции."
 
@@ -459,14 +385,15 @@ def _visual_layers(report: NatalReport) -> str:
 
 def _destiny_target_section(position_key: str, section_ids: set[str]) -> str:
     target_by_position = {
-        "day": "section-destiny-matrix",
-        "month": "section-destiny-matrix",
-        "year": "section-destiny-matrix",
         "center": "section-destiny-matrix",
-        "relationship": "section-destiny-relationship",
-        "money": "section-destiny-money",
-        "talent": "section-destiny-talents",
-        "mission": "section-destiny-talents",
+        "portrait": "section-destiny-matrix",
+        "higher_self": "section-destiny-matrix",
+        "soul_task": "section-destiny-matrix",
+        "comfort": "section-destiny-matrix",
+        "female_talent": "section-destiny-relationships",
+        "money_channel": "section-destiny-money",
+        "male_talent": "section-destiny-lineage",
+        "karmic_tail": "section-destiny-lineage",
     }
     target = target_by_position.get(position_key, "section-destiny-matrix")
     if target in section_ids:

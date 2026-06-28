@@ -1,6 +1,6 @@
 import pytest
 
-from app.natal.destiny_matrix import calculate_destiny_matrix
+from app.natal.destiny_matrix import build_destiny_matrix_sections, calculate_destiny_matrix
 from app.natal.models import ChartData, InputQuality, NatalReport, PlanetPosition, ReportSection, TimePrecision
 from app.natal.report_builder import build_hosted_report_html, build_telegraph_markdown
 
@@ -48,10 +48,12 @@ def test_hosted_report_contains_svg_and_section_ids(sample_natal_report: NatalRe
     assert "Натальная карта" in html
     assert 'class="chart-stage"' in html
     assert 'class="result-shell"' in html
-    assert "Снимок разбора" in html
     assert "Что читать первым" in html
-    assert "Надёжность расчёта" in html
     assert "Ваш результат уже готов" in html
+    assert "Снимок разбора" not in html
+    assert "Надёжность расчёта" not in html
+    assert 'class="trust-box"' not in html
+    assert 'class="natal-snapshot-grid"' not in html
     assert '<link rel="icon" href="data:,">' in html
     assert html.index('class="result-shell"') < html.index('class="chart-stage"')
     assert 'class="highlights"' in html
@@ -81,28 +83,22 @@ def test_hosted_report_explains_destiny_matrix_positions_as_result_cards(sample_
     sample_natal_report.chart.planets = []
     sample_natal_report.svg = ""
     sample_natal_report.chart.destiny_matrix = calculate_destiny_matrix("1997-11-09")
-    sample_natal_report.sections = [
-        ReportSection(
-            id="section-destiny-matrix",
-            title="Матрица судьбы",
-            body_markdown="Матрица судьбы показывает архетипы даты рождения.",
-        )
-    ]
+    sample_natal_report.sections = build_destiny_matrix_sections(sample_natal_report.chart.destiny_matrix)
 
     html = build_hosted_report_html(sample_natal_report)
+    full_reading = html.split('class="full-reading"', 1)[1]
 
     assert "Матрица судьбы" in html
-    assert 'class="matrix-insight-grid"' in html
-    assert "Центр матрицы" in html
-    assert "Линия отношений" in html
+    assert 'class="matrix-insight-grid"' not in html
+    assert "Снимок разбора" not in html
+    assert "Ваша центральная энергия" in full_reading
+    assert "портрет —" in full_reading
     assert "Денежный канал" in html
-    assert "Таланты" in html
-    assert "Предназначение" in html
-    assert "Архетипы показывают паттерны, а не фиксированную судьбу" in html
-    assert html.index('class="matrix-insight-grid"') < html.index('class="full-reading"')
+    assert "кармический хвост" in html
+    assert "Архетипы показывают паттерны, а не фиксированную судьбу" not in html
 
 
-def test_hosted_report_surfaces_natal_snapshot_without_forcing_full_text(sample_natal_report: NatalReport):
+def test_hosted_report_does_not_duplicate_natal_snapshot_before_full_text(sample_natal_report: NatalReport):
     sample_natal_report.chart.planets.append(
         PlanetPosition(
             key="moon",
@@ -115,12 +111,10 @@ def test_hosted_report_surfaces_natal_snapshot_without_forcing_full_text(sample_
 
     html = build_hosted_report_html(sample_natal_report)
 
-    assert 'class="natal-snapshot-grid"' in html
+    assert 'class="natal-snapshot-grid"' not in html
+    assert "Снимок разбора" not in html
     assert "Солнце" in html
-    assert "Водолей 25.0°" in html
     assert "Луна" in html
-    assert "Лев 0.0°" in html
-    assert html.index('class="natal-snapshot-grid"') < html.index('class="full-reading"')
 
 
 def test_hosted_report_credits_geonames_city_data(sample_natal_report: NatalReport):
