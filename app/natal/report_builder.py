@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import re
 
+from app.natal.destiny_matrix import render_destiny_matrix_svg
 from app.natal.models import NatalReport, ReportSection
 from app.utils.text_format import markdown_to_html
 
@@ -49,44 +50,47 @@ def build_hosted_report_html(report: NatalReport) -> str:
     highlights = "".join(_highlight_cards(report.sections))
     positions = "".join(_position_cards(report))
     notes_html = "".join(_footer_note_html(note) for note in footer_notes)
+    title = _report_title(report)
+    lead = _report_lead(report)
+    visual_layers = _visual_layers(report)
+    result_shell = _result_shell(report, title, lead, visual_layers)
 
     return (
         "<!doctype html><html lang=\"ru\"><head>"
         '<meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        "<title>Натальная карта</title>"
+        f"<title>{html.escape(title)}</title>"
+        '<link rel="icon" href="data:,">'
         "<style>"
-        ":root{color-scheme:light;--ink:#2c2434;--muted:#73667d;--line:rgba(132,105,156,.18);--glass:rgba(255,255,255,.68);--rose:#d99caf;--violet:#8b75bd;--sky:#91b8df}"
+        ":root{color-scheme:light;--ink:#22302c;--muted:#66706c;--line:rgba(34,48,44,.14);--surface:#ffffff;--soft:#edf3f1;--teal:#0f766e;--blue:#285f9c;--amber:#b45309;--violet:#7557a6}"
         "*{box-sizing:border-box}html{scroll-behavior:smooth}"
-        "body{margin:0;font-family:'Aptos','Segoe UI',sans-serif;background:radial-gradient(circle at 18% 8%,#fff8dc 0,#fff8dc 8%,transparent 25%),radial-gradient(circle at 82% 10%,#dceeff 0,transparent 28%),linear-gradient(145deg,#fff9f0 0%,#f7edff 48%,#eaf6ff 100%);color:var(--ink);line-height:1.65}"
-        "body:before{content:'';position:fixed;z-index:0;inset:0;pointer-events:none;background:linear-gradient(120deg,rgba(255,255,255,.42),transparent 36%,rgba(255,255,255,.34));mix-blend-mode:screen}"
-        "main{position:relative;z-index:1;max-width:1120px;margin:0 auto;padding:clamp(20px,4vw,56px)}"
-        ".hero{min-height:96vh;display:grid;align-content:center;gap:24px}"
-        ".eyebrow{margin:0;color:var(--violet);font-size:13px;letter-spacing:.16em;text-transform:uppercase;font-weight:700}"
-        "h1{max-width:760px;margin:0;font-family:Georgia,serif;font-size:clamp(42px,8vw,86px);line-height:.98;font-weight:500;color:#30253d}"
-        ".lead{max-width:680px;margin:0;color:var(--muted);font-size:clamp(17px,2vw,21px)}"
-        ".chart-stage{position:relative;margin:10px auto 0;width:min(760px,100%);padding:clamp(14px,3vw,28px);border:1px solid rgba(255,255,255,.78);border-radius:32px;background:linear-gradient(145deg,rgba(255,255,255,.72),rgba(255,255,255,.34));box-shadow:0 28px 80px rgba(107,83,139,.18),inset 0 1px 0 rgba(255,255,255,.9)}"
-        ".chart-stage:before,.chart-stage:after{content:'';position:absolute;border-radius:999px;background:#fff;filter:blur(10px);opacity:.42}.chart-stage:before{width:110px;height:38px;left:8%;top:9%}.chart-stage:after{width:150px;height:46px;right:8%;bottom:10%}"
+        "body{margin:0;font-family:'Aptos','Segoe UI',sans-serif;background:#f4f7f5;color:var(--ink);line-height:1.62}"
+        "main{position:relative;max-width:1160px;margin:0 auto;padding:clamp(16px,4vw,48px)}"
+        ".result-shell{display:grid;grid-template-columns:minmax(0,1.02fr) minmax(320px,.78fr);gap:18px;align-items:start;margin:0 0 34px}"
+        ".result-copy,.result-panel,.chart-stage,.matrix-stage,.highlight-card,.position-card,.reading-card{border:1px solid var(--line);border-radius:8px;background:var(--surface);box-shadow:0 16px 42px rgba(33,45,42,.08)}"
+        ".result-copy{padding:clamp(20px,4vw,34px);display:grid;gap:18px}.result-panel{padding:18px;display:grid;gap:16px}"
+        ".eyebrow{margin:0;color:var(--teal);font-size:12px;letter-spacing:.12em;text-transform:uppercase;font-weight:800}"
+        "h1{max-width:780px;margin:0;font-family:Georgia,serif;font-size:clamp(36px,6vw,68px);line-height:1;font-weight:500;color:#1e2d29}"
+        ".lead{max-width:720px;margin:0;color:var(--muted);font-size:clamp(16px,2vw,20px)}"
+        ".reading-path{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.path-card{padding:12px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:inherit;background:var(--soft)}.path-card span{display:block;color:var(--teal);font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.path-card strong{display:block;margin-top:4px;font-size:15px}.path-card em{display:block;margin-top:4px;color:var(--muted);font-size:13px;font-style:normal}"
+        ".panel-title{margin:0;font-size:18px;font-weight:760}.trust-box{padding:12px;border-left:4px solid var(--teal);background:var(--soft);border-radius:8px}.trust-box strong{display:block;margin-bottom:4px}.trust-box p{margin:0;color:var(--muted);font-size:14px}"
+        ".natal-snapshot-grid,.matrix-insight-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.snapshot-card,.matrix-card{min-height:104px;padding:12px;border:1px solid var(--line);border-radius:8px;background:#fbfcfb}.snapshot-card span,.matrix-card span{display:block;color:var(--muted);font-size:12px;font-weight:750;letter-spacing:.08em;text-transform:uppercase}.snapshot-card strong,.matrix-card strong{display:block;margin-top:5px;font-size:18px}.snapshot-card p,.matrix-card p{margin:5px 0 0;color:var(--muted);font-size:13px}.matrix-note{grid-column:1/-1;margin:0;padding:10px 12px;border-radius:8px;background:#f7f1e8;color:#6b4a17;font-size:14px}"
+        ".visual-stack{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:14px;align-items:start}"
+        ".chart-stage,.matrix-stage{position:relative;width:100%;padding:clamp(12px,3vw,22px);overflow:hidden}"
         "svg{position:relative;z-index:1;max-width:100%;height:auto;display:block;margin:0 auto}"
         ".section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:64px 0 18px}.section-head h2{margin:0;font-family:Georgia,serif;font-size:clamp(28px,4vw,44px);font-weight:500}.section-head p{max-width:480px;margin:0;color:var(--muted)}"
-        ".highlights{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.highlight-card,.position-card,.reading-card{border:1px solid var(--line);background:rgba(255,255,255,.82);box-shadow:0 18px 52px rgba(118,91,143,.12);transform:translateZ(0)}"
-        ".highlight-card{display:block;min-height:180px;padding:22px;border-radius:24px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.highlight-card:hover{transform:translateY(-3px);box-shadow:0 22px 60px rgba(118,91,143,.18)}.highlight-card span,.reading-card span,.position-card span{display:block;margin-bottom:10px;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.highlight-card h3,.reading-card h3{margin:0 0 10px;font-family:Georgia,serif;font-size:24px;font-weight:500}.highlight-excerpt{margin:0;color:var(--muted)}"
-        ".positions-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.position-card{display:block;min-height:138px;padding:18px;border-radius:20px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.position-card:hover{transform:translateY(-3px);box-shadow:0 22px 60px rgba(118,91,143,.18)}.position-card strong{display:block;margin-bottom:6px;font-family:Georgia,serif;font-size:22px;font-weight:500}.position-card p{margin:0;color:var(--muted)}"
-        ".full-reading{display:grid;gap:18px}.reading-card{padding:clamp(20px,3vw,30px);border-radius:24px}.reading-card div{max-width:78ch}.reading-card p{margin:0 0 12px}.reading-card ul{padding-left:22px}"
-        ".footer{display:flex;flex-wrap:wrap;gap:14px;margin:44px 0 0;color:var(--muted);font-size:14px}.mirror-link{color:#6f5b95;font-weight:700}.privacy,.attribution{margin:0}.report-note{flex-basis:100%;margin:6px 0 0;padding-top:14px;border-top:1px solid var(--line)}.report-note strong{color:var(--ink)}"
-        "a{color:#6f5b95}@media(max-width:860px){.hero{min-height:auto}.highlights,.positions-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}.chart-stage{border-radius:24px}}"
+        ".highlights{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.highlight-card{display:block;min-height:170px;padding:18px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.highlight-card:hover,.position-card:hover{transform:translateY(-2px);box-shadow:0 18px 52px rgba(33,45,42,.12)}.highlight-card span,.reading-card span,.position-card span{display:block;margin-bottom:10px;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.highlight-card h3,.reading-card h3{margin:0 0 10px;font-family:Georgia,serif;font-size:23px;font-weight:500}.highlight-excerpt{margin:0;color:var(--muted)}"
+        ".positions-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.position-card{display:block;min-height:132px;padding:16px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.position-card strong{display:block;margin-bottom:6px;font-family:Georgia,serif;font-size:21px;font-weight:500}.position-card p{margin:0;color:var(--muted)}"
+        ".full-reading{display:grid;gap:14px}.reading-card{padding:clamp(18px,3vw,28px)}.reading-card div{max-width:78ch}.reading-card p{margin:0 0 12px}.reading-card ul{padding-left:22px}"
+        ".footer{display:flex;flex-wrap:wrap;gap:14px;margin:44px 0 0;color:var(--muted);font-size:14px}.mirror-link{color:var(--blue);font-weight:700}.privacy,.attribution{margin:0}.report-note{flex-basis:100%;margin:6px 0 0;padding-top:14px;border-top:1px solid var(--line)}.report-note strong{color:var(--ink)}"
+        "a{color:var(--blue)}@media(max-width:900px){.result-shell{grid-template-columns:1fr}.reading-path,.highlights,.positions-grid,.natal-snapshot-grid,.matrix-insight-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}}"
         "</style></head><body><main>"
-        '<section class="hero">'
-        '<p class="eyebrow">Pastel cosmic reading</p>'
-        "<h1>Натальная карта</h1>"
-        '<p class="lead">Сначала карта как визуальный центр, затем главные акценты, полный разбор и справочные расчетные позиции.</p>'
-        f'<div class="chart-stage">{_sanitize_hosted_svg(report.svg)}</div>'
-        "</section>"
-        '<section class="highlights-wrap"><div class="section-head"><h2>Главные акценты</h2><p>Самые важные и интересные мотивы вынесены первыми, чтобы отчет читался как цельная история.</p></div>'
+        f"{result_shell}"
+        '<section class="highlights-wrap" id="highlights"><div class="section-head"><h2>Главные акценты</h2><p>Самые важные и интересные мотивы вынесены первыми, чтобы отчет читался как цельная история.</p></div>'
         f'<div class="highlights">{highlights}</div></section>'
-        '<section><div class="section-head"><h2>Полный разбор</h2><p>Подробные интерпретации сгруппированы по смысловым категориям.</p></div>'
+        '<section id="full-reading"><div class="section-head"><h2>Полный разбор</h2><p>Подробные интерпретации сгруппированы по смысловым категориям.</p></div>'
         f'<div class="full-reading">{"".join(full_sections)}</div></section>'
-        '<section><div class="section-head"><h2>Расчетные позиции</h2><p>Справочный слой карты: где находятся точки расчета и за какие темы они обычно отвечают.</p></div>'
+        '<section id="positions"><div class="section-head"><h2>Расчетные позиции</h2><p>Справочный слой карты: где находятся точки расчета и за какие темы они обычно отвечают.</p></div>'
         f'<div class="positions-grid">{positions}</div></section>'
         f'<footer class="footer">{telegraph}'
         '<p class="privacy">Privacy: LLM receives only derived chart data, not raw birth date or place.</p>'
@@ -163,6 +167,108 @@ def _footer_note_html(note: str) -> str:
     return f'<p class="report-note"><strong>Примечание:</strong> {text}</p>'
 
 
+def _result_shell(report: NatalReport, title: str, lead: str, visual_layers: str) -> str:
+    visual_html = f'<div class="visual-stack">{visual_layers}</div>' if visual_layers else ""
+    natal_snapshot = _natal_snapshot_grid(report)
+    matrix_insights = _matrix_insight_grid(report)
+    return (
+        '<section class="result-shell">'
+        '<div class="result-copy">'
+        '<p class="eyebrow">Ваш результат уже готов</p>'
+        f"<h1>{html.escape(title)}</h1>"
+        f'<p class="lead">{html.escape(lead)}</p>'
+        f"{_reading_path_html(report)}"
+        "</div>"
+        '<aside class="result-panel">'
+        '<h2 class="panel-title">Снимок разбора</h2>'
+        f"{_quality_box(report)}"
+        f"{natal_snapshot}"
+        f"{matrix_insights}"
+        "</aside>"
+        f"{visual_html}"
+        "</section>"
+    )
+
+
+def _reading_path_html(report: NatalReport) -> str:
+    has_matrix = report.chart.destiny_matrix is not None
+    third_label = "Матрица и позиции" if has_matrix else "Расчетные позиции"
+    return (
+        '<nav class="reading-path" aria-label="Что читать первым">'
+        '<a class="path-card" href="#highlights"><span>1 шаг</span><strong>Что читать первым</strong>'
+        "<em>Коротко увидеть главные акценты отчета.</em></a>"
+        '<a class="path-card" href="#full-reading"><span>2 шаг</span><strong>Полный разбор</strong>'
+        "<em>Развернуть темы без потери контекста.</em></a>"
+        f'<a class="path-card" href="#positions"><span>3 шаг</span><strong>{html.escape(third_label)}</strong>'
+        "<em>Проверить расчетные точки и связать их с текстом.</em></a>"
+        "</nav>"
+    )
+
+
+def _quality_box(report: NatalReport) -> str:
+    quality = report.chart.input_quality
+    if report.chart.destiny_matrix is not None and not report.chart.planets:
+        text = "Матрица рассчитана по дате рождения; время и место в этом режиме не используются."
+    elif not quality.houses_available or quality.time_precision == "unknown":
+        text = "Время рождения неизвестно: планеты рассчитаны, но дома, Асцендент и MC не подаются как точные факты."
+    elif quality.time_precision in {"approximate", "range"}:
+        text = "Время задано не идеально точно: планеты устойчивы, а дома и углы читаются с пометкой о точности."
+    else:
+        text = "Дата, время и место позволяют читать планеты, аспекты, дома и углы как единый расчетный слой."
+    if quality.warnings:
+        text = f"{text} {_plain_text_excerpt(quality.warnings[0], limit=120)}"
+    return f'<div class="trust-box"><strong>Надёжность расчёта</strong><p>{html.escape(text)}</p></div>'
+
+
+def _natal_snapshot_grid(report: NatalReport) -> str:
+    if not report.chart.planets:
+        return ""
+    cards: list[str] = []
+    for planet in report.chart.planets[:4]:
+        meaning = html.escape(_point_meaning(planet.key))
+        title = html.escape(planet.label)
+        detail = html.escape(f"{planet.sign} {planet.degree_in_sign:.1f}°")
+        if planet.house:
+            detail = f"{detail}, дом {planet.house}"
+        cards.append(
+            '<article class="snapshot-card">'
+            f"<span>{meaning}</span><strong>{title}</strong><p>{detail}</p>"
+            "</article>"
+        )
+    return f'<div class="natal-snapshot-grid">{"".join(cards)}</div>'
+
+
+def _matrix_insight_grid(report: NatalReport) -> str:
+    matrix = report.chart.destiny_matrix
+    if matrix is None:
+        return ""
+    label_by_key = {
+        "center": "Центр матрицы",
+        "relationship": "Линия отношений",
+        "money": "Денежный канал",
+        "talent": "Таланты",
+        "mission": "Предназначение",
+    }
+    by_key = {position.key: position for position in matrix.positions}
+    cards: list[str] = []
+    for key, label in label_by_key.items():
+        position = by_key.get(key)
+        if position is None:
+            continue
+        cards.append(
+            '<article class="matrix-card">'
+            f"<span>{html.escape(label)}</span>"
+            f"<strong>{position.arcana}. {html.escape(position.arcana_label)}</strong>"
+            f"<p>{html.escape(position.theme)}</p>"
+            "</article>"
+        )
+    cards.append(
+        '<p class="matrix-note">Архетипы показывают паттерны, а не фиксированную судьбу: '
+        "этот слой лучше читать как язык выбора, ресурса и повторяющихся сценариев.</p>"
+    )
+    return f'<div class="matrix-insight-grid">{"".join(cards)}</div>'
+
+
 def _highlight_cards(sections: list[ReportSection]) -> list[str]:
     source = sections[:3] or [
         ReportSection(id="section-summary", title="Краткое резюме", body_markdown="Разбор будет доступен ниже.")
@@ -202,6 +308,16 @@ def _position_cards(report: NatalReport) -> list[str]:
     if report.chart.houses:
         house_text = ", ".join(f"{house.number}: {house.sign}" for house in report.chart.houses[:4])
         cards.append(_position_card(_target_section("section-houses", section_ids), "Сферы жизни", "Дома карты", house_text))
+    if report.chart.destiny_matrix:
+        for position in report.chart.destiny_matrix.positions:
+            cards.append(
+                _position_card(
+                    _destiny_target_section(position.key, section_ids),
+                    "Матрица судьбы",
+                    position.label,
+                    f"{position.arcana}. {position.arcana_label}",
+                )
+            )
     if not cards:
         cards.append(
             _position_card("section-summary", "Расчетные данные", "Карта", "Расчетные точки будут доступны в полном разборе.")
@@ -227,6 +343,8 @@ def _position_card(section_id: str, category: str, title: str, detail: str) -> s
 def _section_category(section: ReportSection) -> str:
     section_id = section.id.lower()
     title = section.title.lower()
+    if "destiny" in section_id or "матриц" in title:
+        return "Матрица судьбы"
     if "aspect" in section_id or "аспект" in title:
         return "Внутренние связи"
     if "house" in section_id or "дом" in title or "asc" in section_id or "mc" in section_id:
@@ -262,16 +380,21 @@ def _plain_text_excerpt(markdown: str, limit: int = 220) -> str:
 
 
 def build_telegraph_markdown(report: NatalReport) -> str:
-    lines = ["# Натальная карта", ""]
+    lines = [f"# {_report_title(report)}", ""]
     if report.hosted_url:
         lines.extend([f"Интерактивная версия: {report.hosted_url}", ""])
-    lines.extend(["## Планеты", "", "| Точка | Знак | Градус |", "|---|---:|---:|"])
-    for planet in report.chart.planets:
-        lines.append(f"| {planet.label} | {planet.sign} | {planet.degree_in_sign:.1f}° |")
+    if report.chart.planets:
+        lines.extend(["## Планеты", "", "| Точка | Знак | Градус |", "|---|---:|---:|"])
+        for planet in report.chart.planets:
+            lines.append(f"| {planet.label} | {planet.sign} | {planet.degree_in_sign:.1f}° |")
     if report.chart.aspects:
         lines.extend(["", "## Аспекты", "", "| Точки | Аспект | Орб |", "|---|---:|---:|"])
         for aspect in report.chart.aspects:
             lines.append(f"| {aspect.point_a} - {aspect.point_b} | {aspect.aspect} | {aspect.orb:.1f}° |")
+    if report.chart.destiny_matrix:
+        lines.extend(["", "## Матрица судьбы", "", "| Позиция | Аркан | Тема |", "|---|---:|---|"])
+        for position in report.chart.destiny_matrix.positions:
+            lines.append(f"| {position.label} | {position.arcana}. {position.arcana_label} | {position.theme} |")
     for section in report.sections:
         lines.extend(["", f"## {section.title}", "", section.body_markdown])
     lines.extend(["", _GEONAMES_ATTRIBUTION_MARKDOWN])
@@ -295,3 +418,57 @@ def _sanitize_hosted_svg(value: str) -> str:
 def _is_safe_external_url(value: str) -> bool:
     normalized = value.strip().lower()
     return normalized.startswith("https://")
+
+
+def _report_title(report: NatalReport) -> str:
+    has_natal = bool(report.chart.planets)
+    has_matrix = report.chart.destiny_matrix is not None
+    if has_natal and has_matrix:
+        return "Натальная карта и матрица судьбы"
+    if has_matrix:
+        return "Матрица судьбы"
+    return "Натальная карта"
+
+
+def _report_lead(report: NatalReport) -> str:
+    has_natal = bool(report.chart.planets)
+    has_matrix = report.chart.destiny_matrix is not None
+    if has_natal and has_matrix:
+        return (
+            "Сначала две визуальные карты: астрономический слой натала и архетипический слой матрицы. "
+            "Дальше — главные акценты, полный разбор и справочные расчетные позиции."
+        )
+    if has_matrix:
+        return (
+            "Архетипическая матрица по дате рождения: визуальный центр, главные акценты и расшифровка позиций без жестких предсказаний."
+        )
+    return "Сначала карта как визуальный центр, затем главные акценты, полный разбор и справочные расчетные позиции."
+
+
+def _visual_layers(report: NatalReport) -> str:
+    layers: list[str] = []
+    if report.svg.strip() and report.chart.planets:
+        layers.append(f'<div class="chart-stage">{_sanitize_hosted_svg(report.svg)}</div>')
+    if report.chart.destiny_matrix is not None:
+        matrix_svg = render_destiny_matrix_svg(report.chart.destiny_matrix)
+        layers.append(f'<div class="matrix-stage">{_sanitize_hosted_svg(matrix_svg)}</div>')
+    if not layers and report.svg.strip():
+        layers.append(f'<div class="chart-stage">{_sanitize_hosted_svg(report.svg)}</div>')
+    return "".join(layers)
+
+
+def _destiny_target_section(position_key: str, section_ids: set[str]) -> str:
+    target_by_position = {
+        "day": "section-destiny-matrix",
+        "month": "section-destiny-matrix",
+        "year": "section-destiny-matrix",
+        "center": "section-destiny-matrix",
+        "relationship": "section-destiny-relationship",
+        "money": "section-destiny-money",
+        "talent": "section-destiny-talents",
+        "mission": "section-destiny-talents",
+    }
+    target = target_by_position.get(position_key, "section-destiny-matrix")
+    if target in section_ids:
+        return target
+    return _target_section(target, section_ids)

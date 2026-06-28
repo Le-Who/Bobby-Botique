@@ -4,9 +4,10 @@ import os
 import secrets
 
 from app.natal.calculator import calculate_chart
+from app.natal.destiny_matrix import build_destiny_matrix_sections, calculate_destiny_matrix, render_destiny_matrix_svg
 from app.natal.geocoding import resolve_birth_data
 from app.natal.llm import generate_interpretation
-from app.natal.models import BirthInput, NatalReport
+from app.natal.models import BirthInput, ChartData, InputQuality, NatalReport, ReportType, TimePrecision
 from app.natal.report_builder import build_telegraph_markdown
 from app.natal.storage import save_report
 from app.natal.svg_renderer import render_chart_svg
@@ -30,16 +31,26 @@ async def create_natal_report(
     if not _natal_reports_enabled():
         raise NatalConfigurationError("Natal reports are disabled.")
     _validate_webhook_url(webhook_url)
-    resolved = await resolve_birth_data(birth_input, geocoder_provider=_natal_geocoder_provider())
-    chart = await calculate_chart(resolved)
-    svg = render_chart_svg(chart)
-    sections = await generate_interpretation(
-        chart,
-        user_id=user_id,
-        chat_id=chat_id,
-        language=birth_input.language,
-        focus=birth_input.focus,
-    )
+    report_type = birth_input.report_type
+    matrix = calculate_destiny_matrix(birth_input.birth_date) if _includes_destiny_matrix(report_type) else None
+    if _requires_natal_chart(report_type):
+        resolved = await resolve_birth_data(birth_input, geocoder_provider=_natal_geocoder_provider())
+        chart = await calculate_chart(resolved)
+        chart.destiny_matrix = matrix
+        svg = render_chart_svg(chart)
+        sections = await generate_interpretation(
+            chart,
+            user_id=user_id,
+            chat_id=chat_id,
+            language=birth_input.language,
+            focus=birth_input.focus,
+        )
+    else:
+        chart = _empty_matrix_chart(matrix)
+        svg = render_destiny_matrix_svg(matrix) if matrix is not None else ""
+        sections = []
+    if matrix is not None:
+        sections.extend(build_destiny_matrix_sections(matrix))
     report_id = secrets.token_urlsafe(16)
     hosted_url = f"{webhook_url.rstrip('/')}/reports/natal/{report_id}"
     report = NatalReport(
@@ -56,6 +67,31 @@ async def create_natal_report(
         report.telegraph_url = telegraph_url
         await save_report(report)
     return report
+
+
+def _requires_natal_chart(report_type: ReportType) -> bool:
+    return report_type in {ReportType.NATAL, ReportType.COMBINED}
+
+
+def _includes_destiny_matrix(report_type: ReportType) -> bool:
+    return report_type in {ReportType.DESTINY_MATRIX, ReportType.COMBINED}
+
+
+def _empty_matrix_chart(matrix) -> ChartData:
+    return ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.UNKNOWN,
+            houses_available=False,
+            angles_available=False,
+            calculation_engine="destiny-matrix-local",
+            warnings=[
+                "Построена только матрица судьбы: место и время рождения не использовались."
+            ],
+        ),
+        planets=[],
+        aspects=[],
+        destiny_matrix=matrix,
+    )
 
 
 def _validate_webhook_url(webhook_url: str) -> None:

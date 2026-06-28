@@ -1,5 +1,6 @@
 import pytest
 
+from app.natal.destiny_matrix import calculate_destiny_matrix
 from app.natal.models import ChartData, InputQuality, NatalReport, PlanetPosition, ReportSection, TimePrecision
 from app.natal.report_builder import build_hosted_report_html, build_telegraph_markdown
 
@@ -46,8 +47,80 @@ def test_hosted_report_contains_svg_and_section_ids(sample_natal_report: NatalRe
     assert 'id="section-sun"' in html
     assert "Натальная карта" in html
     assert 'class="chart-stage"' in html
+    assert 'class="result-shell"' in html
+    assert "Снимок разбора" in html
+    assert "Что читать первым" in html
+    assert "Надёжность расчёта" in html
+    assert "Ваш результат уже готов" in html
+    assert '<link rel="icon" href="data:,">' in html
+    assert html.index('class="result-shell"') < html.index('class="chart-stage"')
     assert 'class="highlights"' in html
     assert 'class="positions-grid"' in html
+
+
+def test_hosted_report_renders_destiny_matrix_as_second_visual_layer(sample_natal_report: NatalReport):
+    sample_natal_report.chart.destiny_matrix = calculate_destiny_matrix("1997-11-09")
+    sample_natal_report.sections.append(
+        ReportSection(
+            id="section-destiny-matrix",
+            title="Матрица судьбы",
+            body_markdown="Матрица судьбы показывает архетипы даты рождения.",
+        )
+    )
+
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert "Натальная карта и матрица судьбы" in html
+    assert 'class="matrix-stage"' in html
+    assert "Матрица судьбы" in html
+    assert 'data-position="center"' in html
+    assert html.index('class="chart-stage"') < html.index('class="matrix-stage"')
+
+
+def test_hosted_report_explains_destiny_matrix_positions_as_result_cards(sample_natal_report: NatalReport):
+    sample_natal_report.chart.planets = []
+    sample_natal_report.svg = ""
+    sample_natal_report.chart.destiny_matrix = calculate_destiny_matrix("1997-11-09")
+    sample_natal_report.sections = [
+        ReportSection(
+            id="section-destiny-matrix",
+            title="Матрица судьбы",
+            body_markdown="Матрица судьбы показывает архетипы даты рождения.",
+        )
+    ]
+
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert "Матрица судьбы" in html
+    assert 'class="matrix-insight-grid"' in html
+    assert "Центр матрицы" in html
+    assert "Линия отношений" in html
+    assert "Денежный канал" in html
+    assert "Таланты" in html
+    assert "Предназначение" in html
+    assert "Архетипы показывают паттерны, а не фиксированную судьбу" in html
+    assert html.index('class="matrix-insight-grid"') < html.index('class="full-reading"')
+
+
+def test_hosted_report_surfaces_natal_snapshot_without_forcing_full_text(sample_natal_report: NatalReport):
+    sample_natal_report.chart.planets.append(
+        PlanetPosition(
+            key="moon",
+            label="Луна",
+            longitude=120,
+            sign="Лев",
+            degree_in_sign=0,
+        )
+    )
+
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert 'class="natal-snapshot-grid"' in html
+    assert "Солнце" in html
+    assert "Водолей 25.0°" in html
+    assert "Луна" in html
+    assert "Лев 0.0°" in html
+    assert html.index('class="natal-snapshot-grid"') < html.index('class="full-reading"')
 
 
 def test_hosted_report_credits_geonames_city_data(sample_natal_report: NatalReport):

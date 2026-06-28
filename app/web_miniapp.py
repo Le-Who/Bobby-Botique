@@ -32,7 +32,7 @@ from app.bot_instance import get_bot
 from app.config import GEMINI_LIVE_VOICE_NAME, settings
 from app.games import crocodile_runtime as _croc_runtime
 from app.natal.city_catalog import find_city_by_id, search_cities, search_countries
-from app.natal.models import BirthInput, TimePrecision
+from app.natal.models import BirthInput, ReportType, TimePrecision
 from app.natal.service import create_natal_report
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
@@ -401,6 +401,29 @@ _NATAL_FORM_FOCUS_LABELS: dict[str, str] = {
     "psychology": "Психология",
     "brief": "Кратко",
 }
+_NATAL_FORM_REPORT_TYPES: tuple[dict[str, Any], ...] = (
+    {
+        "id": ReportType.COMBINED.value,
+        "label": "Натал + матрица",
+        "badge": "Рекомендуем",
+        "summary": "Лучший выбор для первого разбора",
+        "detail": "Астрологическая карта, архетипы матрицы и общий смысловой вывод в одном отчёте.",
+    },
+    {
+        "id": ReportType.NATAL.value,
+        "label": "Только натал",
+        "badge": "",
+        "summary": "Максимум астрологических деталей",
+        "detail": "Планеты, аспекты, дома, Асцендент и MC, если время рождения известно.",
+    },
+    {
+        "id": ReportType.DESTINY_MATRIX.value,
+        "label": "Только матрица",
+        "badge": "",
+        "summary": "Быстрый архетипический слой по дате",
+        "detail": "Матрице достаточно даты: без времени, города и лишних вопросов.",
+    },
+)
 
 
 @miniapp_blueprint.route("/natal-form")
@@ -459,6 +482,7 @@ async def _build_and_send_natal_report(bot: Any, user_id: int, birth_input: Birt
 
 def _natal_form_options() -> dict[str, Any]:
     return {
+        "report_types": list(_NATAL_FORM_REPORT_TYPES),
         "countries": [{"code": code, "label": label} for code, label in _NATAL_FORM_COUNTRIES],
         "cities": {
             code: [
@@ -482,12 +506,23 @@ def _birth_input_from_natal_payload(payload: dict[str, Any]) -> BirthInput:
 
     birth_date = _required_str(payload, "birth_date")
     _validate_iso_date(birth_date)
-    precision = _parse_time_precision(_required_str(payload, "time_precision"))
-    country_code = _resolve_country_code(payload)
-    city = _resolve_natal_city(payload, country_code)
+    report_type = _parse_report_type(str(payload.get("report_type") or ReportType.NATAL.value))
     focus = str(payload.get("focus") or "general").strip() or "general"
     if focus not in _NATAL_FORM_FOCUS_LABELS:
         focus = "general"
+    if report_type == ReportType.DESTINY_MATRIX:
+        return BirthInput(
+            birth_date=birth_date,
+            time_precision=TimePrecision.UNKNOWN,
+            birth_place="",
+            focus=focus,
+            language="ru",
+            report_type=report_type,
+        )
+
+    precision = _parse_time_precision(_required_str(payload, "time_precision"))
+    country_code = _resolve_country_code(payload)
+    city = _resolve_natal_city(payload, country_code)
 
     time_kwargs: dict[str, str | None] = {
         "birth_time": None,
@@ -516,6 +551,7 @@ def _birth_input_from_natal_payload(payload: dict[str, Any]) -> BirthInput:
         birth_place_display_name=city.display_name,
         focus=focus,
         language="ru",
+        report_type=report_type,
         **time_kwargs,
     )
 
@@ -541,6 +577,13 @@ def _parse_time_precision(value: str) -> TimePrecision:
         return TimePrecision(value)
     except ValueError as exc:
         raise ValueError("Выберите точность времени рождения.") from exc
+
+
+def _parse_report_type(value: str) -> ReportType:
+    try:
+        return ReportType(value)
+    except ValueError as exc:
+        raise ValueError("Выберите тип разбора.") from exc
 
 
 def _resolve_country_code(payload: dict[str, Any]) -> str:

@@ -12,13 +12,19 @@ class TimePrecision(StrEnum):
     UNKNOWN = "unknown"
 
 
+class ReportType(StrEnum):
+    NATAL = "natal"
+    DESTINY_MATRIX = "destiny_matrix"
+    COMBINED = "combined"
+
+
 class BirthInput(BaseModel):
     birth_date: str
     time_precision: TimePrecision
     birth_time: str | None = None
     birth_time_range_start: str | None = None
     birth_time_range_end: str | None = None
-    birth_place: str
+    birth_place: str = ""
     birth_place_country_code: str | None = None
     birth_place_geoname_id: str | None = None
     birth_place_latitude: float | None = None
@@ -27,6 +33,7 @@ class BirthInput(BaseModel):
     birth_place_display_name: str | None = None
     language: str = "ru"
     focus: str = "general"
+    report_type: ReportType = ReportType.NATAL
 
 
 class ResolvedBirthData(BaseModel):
@@ -73,12 +80,30 @@ class House(BaseModel):
     sign: str
 
 
+class DestinyMatrixPosition(BaseModel):
+    key: str
+    label: str
+    arcana: int
+    arcana_label: str
+    theme: str
+    x: float
+    y: float
+
+
+class DestinyMatrixData(BaseModel):
+    birth_date: str
+    system: str = "destiny-matrix-22"
+    positions: list[DestinyMatrixPosition]
+    warnings: list[str] = Field(default_factory=list)
+
+
 class ChartData(BaseModel):
     input_quality: InputQuality
     planets: list[PlanetPosition]
     aspects: list[Aspect]
     houses: list[House] = Field(default_factory=list)
     angles: dict[str, float] = Field(default_factory=dict)
+    destiny_matrix: DestinyMatrixData | None = None
 
 
 class ReportSection(BaseModel):

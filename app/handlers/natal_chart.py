@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import logging
 import os
+import re
 from calendar import monthrange
 from datetime import date
 from pathlib import Path
@@ -22,7 +23,7 @@ from telegram.ext import (
 
 from app.natal.city_catalog import CityRecord, CountryRecord, find_city_by_id, search_cities, search_countries
 from app.natal.intent import NATAL_INTENT_RE, NATAL_SLASH_ALIAS_RE
-from app.natal.models import BirthInput, TimePrecision
+from app.natal.models import BirthInput, ReportType, TimePrecision
 from app.natal.parser import BirthInputParseError, parse_birth_table
 from app.natal.service import create_natal_report
 
@@ -63,6 +64,7 @@ _NATAL_KEYS = {
     "natal_place_data",
     "natal_focus",
     "natal_mode",
+    "natal_report_type",
     "natal_flow_message",
 }
 
@@ -175,6 +177,7 @@ async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | s
         return ConversationHandler.END
     context.user_data["natal_mode"] = mode
     if mode == "table":
+        context.user_data["natal_report_type"] = ReportType.NATAL
         await _show_flow_prompt(
             update,
             context,
@@ -188,6 +191,10 @@ async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | s
             "Фокус разбора: общий / отношения / карьера / психология / кратко"
         )
         return NATAL_TABLE
+    if mode == "matrix":
+        context.user_data["natal_report_type"] = ReportType.DESTINY_MATRIX
+    else:
+        context.user_data["natal_report_type"] = ReportType.NATAL
     await _show_date_picker(update, context)
     return NATAL_DATE
 
@@ -216,6 +223,9 @@ async def on_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | s
         return NATAL_DATE
     context.user_data["natal_date"] = update.message.text.strip()
     await _delete_user_message(update)
+    if _is_matrix_only_flow(context.user_data):
+        await _show_flow_prompt(update, context, "Выберите фокус матрицы судьбы.", reply_markup=_focus_keyboard())
+        return NATAL_FOCUS
     await _show_flow_prompt(update, context, "Время рождения известно?", reply_markup=_time_precision_keyboard())
     return NATAL_TIME_PRECISION
 
@@ -236,6 +246,9 @@ async def on_date_picker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return NATAL_DATE
         await query.answer()
         context.user_data["natal_date"] = selected.isoformat()
+        if _is_matrix_only_flow(context.user_data):
+            await _show_flow_prompt(update, context, "Выберите фокус матрицы судьбы.", reply_markup=_focus_keyboard())
+            return NATAL_FOCUS
         await _show_flow_prompt(update, context, "Время рождения известно?", reply_markup=_time_precision_keyboard())
         return NATAL_TIME_PRECISION
 
@@ -640,20 +653,35 @@ async def _send_natal_result_card(
 
 def _result_caption(report, birth_input: BirthInput) -> str:
     del report
+    ready_heading = _report_ready_heading(birth_input.report_type)
     focus = html.escape(_FOCUS_RESULT_LABELS.get(birth_input.focus, birth_input.focus or "общий разбор"))
     precision = html.escape(_TIME_PRECISION_RESULT_LABELS.get(birth_input.time_precision, birth_input.time_precision.value))
     limitation = ""
-    if birth_input.time_precision == TimePrecision.UNKNOWN:
+    if birth_input.report_type == ReportType.DESTINY_MATRIX:
+        precision_line = "<b>Данные:</b> дата рождения; время и место не нужны для матрицы.\n\n"
+    elif birth_input.time_precision == TimePrecision.UNKNOWN:
         limitation = "\nБез точного времени: дома и асцендент не трактуются как достоверные."
+        precision_line = f"<b>Точность времени:</b> {precision}{html.escape(limitation)}\n\n"
     elif birth_input.time_precision in {TimePrecision.APPROXIMATE, TimePrecision.RANGE}:
         limitation = "\nВремя не абсолютно точное: дома и углы отмечены с осторожностью."
+        precision_line = f"<b>Точность времени:</b> {precision}{html.escape(limitation)}\n\n"
+    else:
+        precision_line = f"<b>Точность времени:</b> {precision}\n\n"
     return (
-        "<b>Натальная карта готова</b>\n\n"
-        "Полный разбор собран на отдельной странице: сначала главные акценты, затем подробные секции и справочные расчетные позиции.\n\n"
+        f"<b>{html.escape(ready_heading)}</b>\n\n"
+        "Полный разбор собран на отдельной странице: сначала визуальная карта, затем главные акценты, подробные секции и расчетные позиции.\n\n"
         f"<b>Фокус:</b> {focus}\n"
-        f"<b>Точность времени:</b> {precision}{html.escape(limitation)}\n\n"
+        f"{precision_line}"
         "Откройте отчет кнопкой ниже."
     )
+
+
+def _report_ready_heading(report_type: ReportType) -> str:
+    if report_type == ReportType.COMBINED:
+        return "Натальная карта и матрица судьбы готовы"
+    if report_type == ReportType.DESTINY_MATRIX:
+        return "Матрица судьбы готова"
+    return "Натальная карта готова"
 
 
 def _result_keyboard(report) -> InlineKeyboardMarkup | None:
@@ -690,6 +718,14 @@ def _is_terminal_flow_text(text: str) -> bool:
 
 def _draft_lines(user_data: dict) -> list[str]:
     date_text = _draft_date_text(user_data)
+    if _is_matrix_only_flow(user_data):
+        focus = str(user_data.get("natal_focus") or "—")
+        return [
+            "Тип: матрица судьбы",
+            f"Дата: {date_text}",
+            "Время и место: не используются",
+            f"Фокус: {focus}",
+        ]
     precision = user_data.get("natal_time_precision")
     time_value = str(user_data.get("natal_time_value") or "")
     time_text = "—"
@@ -782,6 +818,7 @@ def _mode_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("Заполнить пошагово", callback_data="natal_mode:step")],
+            [InlineKeyboardButton("Только матрица по дате", callback_data="natal_mode:matrix")],
             input_row,
             [InlineKeyboardButton("Отмена", callback_data="natal_mode:cancel")],
         ]
@@ -1269,6 +1306,15 @@ def _local_city_queries(place: str) -> list[str]:
 
 
 def _confirmation_text(birth_input: BirthInput) -> str:
+    if birth_input.report_type == ReportType.DESTINY_MATRIX:
+        return (
+            "Проверьте данные:\n\n"
+            "Тип: матрица судьбы\n"
+            f"Дата: {_format_birth_date_for_confirmation(birth_input.birth_date)}\n"
+            "Время и место: не используются\n"
+            f"Фокус: {birth_input.focus}\n"
+            "Ограничения: это архетипическая модель по дате рождения, не астрономический расчет."
+        )
     time_text = birth_input.birth_time or birth_input.time_precision.value
     limitations = ""
     if birth_input.time_precision == TimePrecision.UNKNOWN:
@@ -1294,6 +1340,14 @@ def _format_birth_date_for_confirmation(value: str) -> str:
 
 
 def _birth_input_from_steps(user_data: dict) -> BirthInput:
+    if _is_matrix_only_flow(user_data):
+        return BirthInput(
+            birth_date=_normalize_step_birth_date(str(user_data.get("natal_date") or "")),
+            time_precision=TimePrecision.UNKNOWN,
+            birth_place="",
+            focus=_normalize_step_focus(str(user_data.get("natal_focus") or "general")),
+            report_type=ReportType.DESTINY_MATRIX,
+        )
     precision = user_data.get("natal_time_precision", TimePrecision.UNKNOWN)
     time_value = user_data.get("natal_time_value")
     table = (
@@ -1319,3 +1373,28 @@ def _birth_input_from_steps(user_data: dict) -> BirthInput:
             }
         )
     return birth_input
+
+
+def _is_matrix_only_flow(user_data: dict) -> bool:
+    return user_data.get("natal_report_type") == ReportType.DESTINY_MATRIX
+
+
+def _normalize_step_birth_date(value: str) -> str:
+    stripped = value.strip()
+    try:
+        return date.fromisoformat(stripped).isoformat()
+    except ValueError:
+        pass
+    match = re.match(r"^\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s*$", stripped)
+    if not match:
+        raise BirthInputParseError("Дата рождения должна быть в формате ДД.ММ.ГГГГ или YYYY-MM-DD.")
+    day, month, year = (int(part) for part in match.groups())
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError as exc:
+        raise BirthInputParseError("Дата рождения некорректна.") from exc
+
+
+def _normalize_step_focus(value: str) -> str:
+    normalized = value.strip().lower()
+    return next((key for key, label in _FOCUS_LABELS.items() if normalized in {key, label}), normalized or "general")

@@ -40,6 +40,7 @@ from app.natal.models import (
     NatalReport,
     PlanetPosition,
     ReportSection,
+    ReportType,
     TimePrecision,
 )
 
@@ -542,6 +543,33 @@ async def test_step_flow_unknown_time_city_selection_generates_limited_report(mo
     sent = context.bot.send_photo.await_args.kwargs
     assert "Без точного времени" in sent["caption"]
     assert "unknown-report-id" not in sent["caption"]
+
+
+@pytest.mark.asyncio
+async def test_matrix_only_mode_uses_date_and_focus_without_place(monkeypatch):
+    captured = {}
+
+    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url):
+        captured["birth_input"] = birth_input
+        return fake_natal_report(f"{webhook_url}/reports/natal/matrix-report-id")
+
+    monkeypatch.setenv("WEBHOOK_URL", "https://bot.example.com")
+    monkeypatch.setattr("app.handlers.natal_chart.create_natal_report", fake_create_natal_report)
+    monkeypatch.setattr("app.handlers.natal_chart._get_natal_cover_photo", AsyncMock(return_value=None))
+
+    context = make_context()
+
+    assert await on_mode(make_callback_update("natal_mode:matrix"), context) == NATAL_DATE
+    assert await on_date(make_update("1997-11-09"), context) == NATAL_FOCUS
+    assert await on_focus(make_update("психология"), context) == NATAL_CONFIRM
+    assert await on_confirm(make_callback_update("natal_confirm:yes"), context) == -1
+
+    birth_input = captured["birth_input"]
+    assert birth_input.report_type == ReportType.DESTINY_MATRIX
+    assert birth_input.time_precision == TimePrecision.UNKNOWN
+    assert birth_input.birth_place == ""
+    sent = context.bot.send_message.await_args.kwargs
+    assert "Матрица судьбы готова" in sent["text"]
 
 
 def test_cancel_clears_natal_keys_from_user_data():

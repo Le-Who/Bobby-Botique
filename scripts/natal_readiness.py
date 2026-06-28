@@ -39,10 +39,6 @@ async def _main(
     exit_code = 0
     cases = load_golden_cases_from_json(fixture_path) if fixture_path else None
 
-    # Initialize DB pool for storage/smoke checks to prevent auto-reconnect warnings
-    if check_storage or run_smoke:
-        await db_manager.create_pool()
-
     city_result = check_city_catalog_readiness(
         max_warmup_ms=max_city_warmup_ms,
         max_search_ms=max_city_search_ms,
@@ -83,6 +79,10 @@ async def _main(
         if not config_result.passed:
             return 1
 
+    # Initialize DB pool only for real storage/smoke checks, after cheap gates have passed.
+    if (check_storage and _uses_real_storage_check()) or (run_smoke and _uses_real_smoke_check()):
+        await db_manager.create_pool()
+
     if check_storage:
         await check_storage_ready()
         sys.stdout.write("storage=ready\n")
@@ -101,6 +101,14 @@ async def _main(
         )
 
     return exit_code
+
+
+def _uses_real_storage_check() -> bool:
+    return getattr(check_storage_ready, "__module__", "") == "app.natal.storage"
+
+
+def _uses_real_smoke_check() -> bool:
+    return getattr(run_natal_smoke, "__module__", "") == "app.natal.smoke"
 
 
 def main(argv: list[str] | None = None) -> int:

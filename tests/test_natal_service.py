@@ -7,6 +7,7 @@ from app.natal.models import (
     InputQuality,
     PlanetPosition,
     ReportSection,
+    ReportType,
     ResolvedBirthData,
     TimePrecision,
 )
@@ -143,3 +144,27 @@ def test_natal_reports_enabled_fails_closed_when_setting_is_missing(monkeypatch)
     monkeypatch.setattr("app.config.settings", SettingsWithoutNatalFlag())
 
     assert service._natal_reports_enabled() is False
+
+
+@pytest.mark.asyncio
+async def test_create_natal_report_can_include_destiny_matrix_without_extra_storage(monkeypatch):
+    birth = BirthInput(
+        birth_date="1997-11-09",
+        time_precision=TimePrecision.UNKNOWN,
+        birth_place="Kyiv, Ukraine",
+        report_type=ReportType.COMBINED,
+    )
+    saved_reports = []
+    patch_report_dependencies(monkeypatch, saved_reports=saved_reports)
+
+    report = await create_natal_report(
+        birth_input=birth,
+        user_id=123,
+        chat_id=456,
+        webhook_url="https://bot.example.com",
+    )
+
+    assert report.chart.destiny_matrix is not None
+    assert report.chart.destiny_matrix.birth_date == "1997-11-09"
+    assert any(section.id == "section-destiny-matrix" for section in report.sections)
+    assert saved_reports[0].chart.destiny_matrix is not None

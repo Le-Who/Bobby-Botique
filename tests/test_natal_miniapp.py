@@ -12,6 +12,7 @@ from app.natal.models import (
     NatalReport,
     PlanetPosition,
     ReportSection,
+    ReportType,
     TimePrecision,
 )
 from app.web import quart_app
@@ -78,12 +79,36 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert 'id="natal-form"' in body
     assert 'data-api="/webapp/api/natal/submit"' in body
     assert "Дата рождения" in body
+    assert 'data-group="report_type"' in body
+    assert "Натал + матрица" in body
+    assert "Только матрица" in body
+    assert "Рекомендуем" in body
+    assert "Лучший выбор для первого разбора" in body
+    assert 'id="progress-meter"' in body
+    assert 'id="progress-text"' in body
+    assert "Шаг 1 из 4" in body
+    assert "Ваш разбор" in body
+    assert "Осталось заполнить" in body
     assert "Фокус разбора" in body
-    assert "Создаём натальную карту" in body
+    assert "Создаём разбор рождения" in body
     assert "Окно можно закрывать." in body
     assert "Ответ будет отправлен новым сообщением" in body
     assert ".layout[hidden]" in body
     assert body.index("const response = await fetch") < body.index("showAcceptedState();")
+
+
+@pytest.mark.asyncio
+async def test_natal_form_keeps_questionnaire_lightweight():
+    client = quart_app.test_client()
+
+    response = await client.get("/webapp/natal-form")
+
+    assert response.status_code == 200
+    body = await response.get_data(as_text=True)
+    assert "Что будет в отчёте" not in body
+    assert "Расчёт строится локально" not in body
+    assert "Выберите формат и дату рождения" in body
+    assert body.index("Тип разбора") < body.index("Дата рождения")
 
 
 @pytest.mark.asyncio
@@ -152,3 +177,50 @@ async def test_natal_submit_accepts_form_before_report_is_ready(monkeypatch):
     bot.send_message.assert_awaited_once()
     assert bot.send_message.await_args.kwargs["chat_id"] == 777
     assert "Натальная карта готова" in bot.send_message.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_natal_submit_matrix_only_requires_only_birth_date(monkeypatch):
+    sent = {}
+    scheduled = {}
+
+    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url):
+        sent["birth_input"] = birth_input
+        sent["user_id"] = user_id
+        sent["chat_id"] = chat_id
+        return _fake_report(f"{webhook_url}/reports/natal/matrix-report-id")
+
+    def fake_submit_task(coro):
+        scheduled["coro"] = coro
+        return SimpleNamespace(done=lambda: False)
+
+    bot = SimpleNamespace(send_photo=AsyncMock(), send_message=AsyncMock())
+
+    monkeypatch.setattr("app.web_miniapp.create_natal_report", fake_create_natal_report)
+    monkeypatch.setattr("app.web_miniapp.submit_task", fake_submit_task, raising=False)
+    monkeypatch.setattr("app.web_miniapp.get_bot", lambda: bot)
+    monkeypatch.setattr("app.web_miniapp.get_natal_cover_photo", AsyncMock(return_value=None))
+
+    client = quart_app.test_client()
+    response = await client.post(
+        "/webapp/api/natal/submit",
+        headers=_auth_headers(user_id=777),
+        json={
+            "birth_date": "1997-11-09",
+            "report_type": "destiny_matrix",
+            "focus": "psychology",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = await response.get_json()
+    assert payload["ok"] is True
+    assert "coro" in scheduled
+
+    await scheduled["coro"]
+
+    assert sent["birth_input"].report_type == ReportType.DESTINY_MATRIX
+    assert sent["birth_input"].birth_date == "1997-11-09"
+    assert sent["birth_input"].birth_place == ""
+    assert bot.send_message.await_args.kwargs["chat_id"] == 777
+    assert "Матрица судьбы готова" in bot.send_message.await_args.kwargs["text"]
