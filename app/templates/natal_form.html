@@ -25,7 +25,7 @@
 * { box-sizing: border-box; }
 html, body { min-height: 100%; margin: 0; background: var(--bg); color: var(--text); }
 body { font-size: 16px; line-height: 1.35; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 .page {
   width: min(680px, 100%);
   margin: 0 auto;
@@ -123,7 +123,8 @@ label { color: var(--muted); font-size: 13px; }
   color: var(--muted);
   font-size: 13px;
 }
-input {
+input,
+select {
   width: 100%;
   min-height: 44px;
   padding: 10px 12px;
@@ -133,7 +134,12 @@ input {
   color: var(--text);
   outline: none;
 }
-input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); }
+input:focus,
+select:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); }
+.field-label { margin: 0; color: var(--muted); font-size: 13px; }
+.date-grid { display: grid; grid-template-columns: minmax(76px, .78fr) minmax(124px, 1.28fr) minmax(92px, .94fr); gap: 8px; }
+.date-part { display: grid; gap: 6px; min-width: 0; }
+.date-part label { white-space: nowrap; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
@@ -311,9 +317,22 @@ input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); 
         </div>
         <div class="fields">
           <div class="field">
-            <label for="birth-date">Дата рождения</label>
-            <p class="hint" id="birth-date-hint">Матрице достаточно даты.</p>
-            <input id="birth-date" name="birth_date" type="date" aria-describedby="birth-date-hint" required>
+            <p class="field-label" id="birth-date-label">Дата рождения</p>
+            <p class="hint" id="birth-date-hint">Выберите день, месяц и год рождения.</p>
+            <div class="date-grid" id="birth-date-parts" role="group" aria-labelledby="birth-date-label" aria-describedby="birth-date-hint">
+              <div class="date-part">
+                <label for="birth-day">День</label>
+                <select id="birth-day" name="birth_day" required></select>
+              </div>
+              <div class="date-part date-part-month">
+                <label for="birth-month">Месяц</label>
+                <select id="birth-month" name="birth_month" required></select>
+              </div>
+              <div class="date-part">
+                <label for="birth-year">Год</label>
+                <select id="birth-year" name="birth_year" required></select>
+              </div>
+            </div>
           </div>
           <div class="field natal-only">
             <label>Точность времени</label>
@@ -449,6 +468,24 @@ const datetimeStepNote = document.getElementById('datetime-step-note');
 const placeStepNote = document.getElementById('place-step-note');
 const focusStepNote = document.getElementById('focus-step-note');
 const reportTypeStepNote = document.getElementById('report-type-step-note');
+const birthDay = document.getElementById('birth-day');
+const birthMonth = document.getElementById('birth-month');
+const birthYear = document.getElementById('birth-year');
+const birthDateParts = [birthDay, birthMonth, birthYear];
+const MONTHS = [
+  ['01', 'Январь'],
+  ['02', 'Февраль'],
+  ['03', 'Март'],
+  ['04', 'Апрель'],
+  ['05', 'Май'],
+  ['06', 'Июнь'],
+  ['07', 'Июль'],
+  ['08', 'Август'],
+  ['09', 'Сентябрь'],
+  ['10', 'Октябрь'],
+  ['11', 'Ноябрь'],
+  ['12', 'Декабрь'],
+];
 let closeOnSubmit = false;
 
 function setDoneMessage(title, lines) {
@@ -642,6 +679,62 @@ function selectedText(selector) {
   return selected ? selected.dataset.label || selected.textContent : '—';
 }
 
+function selectOption(value, label) {
+  const option = document.createElement('option');
+  option.value = value;
+  option.textContent = label;
+  return option;
+}
+
+function renderBirthDateSelectors() {
+  birthMonth.textContent = '';
+  birthMonth.appendChild(selectOption('', 'Месяц'));
+  MONTHS.forEach(([value, label]) => birthMonth.appendChild(selectOption(value, label)));
+
+  birthYear.textContent = '';
+  birthYear.appendChild(selectOption('', 'Год'));
+  const currentYear = new Date().getFullYear();
+  for (let year = currentYear; year >= currentYear - 120; year -= 1) {
+    birthYear.appendChild(selectOption(String(year), String(year)));
+  }
+
+  renderBirthDayOptions();
+}
+
+function daysInBirthMonth() {
+  const month = Number(birthMonth.value || 1);
+  const year = Number(birthYear.value || 2000);
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function renderBirthDayOptions() {
+  const selectedDay = birthDay.value;
+  const maxDay = daysInBirthMonth();
+  birthDay.textContent = '';
+  birthDay.appendChild(selectOption('', 'День'));
+  for (let day = 1; day <= maxDay; day += 1) {
+    const value = String(day).padStart(2, '0');
+    birthDay.appendChild(selectOption(value, String(day)));
+  }
+  if (selectedDay && Number(selectedDay) <= maxDay) {
+    birthDay.value = selectedDay;
+  }
+}
+
+function buildBirthDate() {
+  if (!birthDay.value || !birthMonth.value || !birthYear.value) return '';
+  return `${birthYear.value}-${birthMonth.value}-${birthDay.value}`;
+}
+
+function formatBirthDateForSummary() {
+  if (!birthDay.value && !birthMonth.value && !birthYear.value) return '—';
+  const monthName = MONTHS.find(([value]) => value === birthMonth.value)?.[1]?.toLowerCase();
+  if (birthDay.value && monthName && birthYear.value) {
+    return `${Number(birthDay.value)} ${monthName} ${birthYear.value}`;
+  }
+  return [birthDay.value && `${Number(birthDay.value)} число`, monthName, birthYear.value].filter(Boolean).join(', ');
+}
+
 function isMatrixOnly() {
   return state.report_type === 'destiny_matrix';
 }
@@ -660,7 +753,7 @@ function updateStepNotes() {
 }
 
 function isDateComplete() {
-  return Boolean(document.getElementById('birth-date').value);
+  return Boolean(buildBirthDate());
 }
 
 function isTimeComplete() {
@@ -711,7 +804,7 @@ function updateProgress() {
 }
 
 function renderSummary() {
-  const date = document.getElementById('birth-date').value || '—';
+  const date = formatBirthDateForSummary();
   const reportType = selectedText('#report-type-chips');
   const precision = selectedText('[data-group="time_precision"]');
   const time = state.time_precision === 'unknown'
@@ -785,8 +878,16 @@ document.querySelector('[data-group="time_precision"]').addEventListener('click'
   }
 });
 
-document.getElementById('birth-date').addEventListener('change', () => {
-  if (!isDateComplete()) return;
+let lastAdvancedBirthDate = '';
+
+function advanceFromBirthDateIfComplete() {
+  const normalized = buildBirthDate();
+  if (!normalized) {
+    lastAdvancedBirthDate = '';
+    return;
+  }
+  if (normalized === lastAdvancedBirthDate) return;
+  lastAdvancedBirthDate = normalized;
   if (state.time_precision === 'range') {
     advanceToNextItem('birth-time-start');
   } else if (state.time_precision === 'unknown') {
@@ -794,6 +895,16 @@ document.getElementById('birth-date').addEventListener('change', () => {
   } else {
     advanceToNextItem('birth-time');
   }
+}
+
+birthDateParts.forEach((element) => {
+  element.addEventListener('change', () => {
+    if (element === birthMonth || element === birthYear) {
+      renderBirthDayOptions();
+    }
+    renderSummary();
+    advanceFromBirthDateIfComplete();
+  });
 });
 
 document.getElementById('birth-time').addEventListener('change', () => {
@@ -816,13 +927,13 @@ document.getElementById('manual-city').addEventListener('change', () => {
   if (document.getElementById('manual-city').value.trim()) advanceToNextItem('focus-panel');
 });
 
-['birth-date', 'birth-time', 'birth-time-start', 'birth-time-end', 'manual-country', 'manual-city'].forEach((id) => {
+['birth-time', 'birth-time-start', 'birth-time-end', 'manual-country', 'manual-city'].forEach((id) => {
   document.getElementById(id).addEventListener('input', renderSummary);
 });
 
 function buildPayload() {
   const payload = {
-    birth_date: document.getElementById('birth-date').value,
+    birth_date: buildBirthDate(),
     report_type: state.report_type,
     time_precision: state.time_precision,
     country_code: state.country_code,
@@ -841,7 +952,8 @@ function buildPayload() {
 }
 
 function validateBeforeSubmit(payload) {
-  if (!payload.birth_date) return 'Укажите дату рождения.';
+  if (!birthDateParts.some((element) => element.value)) return 'Укажите дату рождения.';
+  if (!payload.birth_date) return 'Выберите день, месяц и год рождения.';
   if (!payload.report_type) return 'Выберите, что построить.';
   if (payload.report_type === 'destiny_matrix') return '';
   if (!payload.country_code && !payload.country) return 'Выберите или введите страну рождения.';
@@ -895,6 +1007,7 @@ document.getElementById('cancel-button').addEventListener('click', () => {
 });
 tg?.ready();
 tg?.expand();
+renderBirthDateSelectors();
 renderCountries();
 renderCities();
 renderReportTypes();

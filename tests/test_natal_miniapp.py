@@ -122,6 +122,28 @@ async def test_natal_form_keeps_questionnaire_lightweight():
 
 
 @pytest.mark.asyncio
+async def test_natal_form_uses_explicit_birth_date_selects_to_avoid_native_today_autofill():
+    client = quart_app.test_client()
+
+    response = await client.get("/webapp/natal-form")
+
+    assert response.status_code == 200
+    body = await response.get_data(as_text=True)
+    assert 'id="birth-date"' not in body
+    assert 'type="date"' not in body
+    assert 'id="birth-day"' in body
+    assert 'id="birth-month"' in body
+    assert 'id="birth-year"' in body
+    assert "День" in body
+    assert "Месяц" in body
+    assert "Год" in body
+    assert "function buildBirthDate" in body
+    assert "birth_date: buildBirthDate()" in body
+    assert "advanceFromBirthDateIfComplete" in body
+    assert "birthDateParts.forEach" in body
+
+
+@pytest.mark.asyncio
 async def test_natal_submit_requires_webapp_auth():
     client = quart_app.test_client()
 
