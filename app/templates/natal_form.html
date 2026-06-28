@@ -239,25 +239,37 @@ input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); 
 .done-title { margin: 0; font-size: 19px; line-height: 1.2; font-weight: 760; letter-spacing: 0; }
 .done-text { display: grid; gap: 4px; margin: 0; color: var(--muted); font-size: 15px; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.submit {
+.action-bar {
   position: fixed;
   left: 14px;
   right: 14px;
   bottom: calc(14px + env(safe-area-inset-bottom));
   max-width: 652px;
   margin: 0 auto;
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(96px, .42fr) minmax(0, 1fr);
+  gap: 8px;
+}
+.submit,
+.cancel {
   min-height: 48px;
-  border: 0;
   border-radius: var(--radius);
+  font-weight: 720;
+}
+.submit {
+  border: 0;
   background: var(--accent);
   color: var(--accent-text);
-  font-weight: 720;
+}
+.cancel {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
 }
 .submit:disabled { opacity: .55; }
 @media (min-width: 720px) {
   .page { padding-inline: 0; }
-  .submit { left: 50%; right: auto; width: 652px; transform: translateX(-50%); }
+  .action-bar { left: 50%; right: auto; width: 652px; transform: translateX(-50%); }
 }
 @media (max-width: 430px) {
   .topbar { display: grid; }
@@ -275,7 +287,7 @@ input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); 
     <div>
       <p class="eyebrow">Натал + матрица судьбы</p>
       <h1>Разбор рождения</h1>
-      <p class="intro-lead">Выберите формат и дату рождения. Для натала добавьте время и место.</p>
+      <p class="intro-lead">Введите дату, время и место. В конце выберите, что построить.</p>
     </div>
     <div class="status-pill" id="status-pill">Анкета</div>
   </div>
@@ -292,25 +304,10 @@ input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); 
     </div>
 
     <div class="layout" id="form-layout">
-      <section class="panel">
-        <div class="panel-head">
-          <h2 class="panel-title">Тип разбора</h2>
-          <span class="panel-note" id="type-step-note">1 из 4</span>
-        </div>
-        <div class="fields">
-          <div class="field">
-            <label>Что построить</label>
-            <p class="hint">По умолчанию выбран самый полный сценарий.</p>
-            <p class="hint">Варианты: Натал + матрица (Рекомендуем, Лучший выбор для первого разбора), Только натал, Только матрица.</p>
-            <div class="option-grid" id="report-type-chips" data-group="report_type"></div>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel">
+      <section class="panel" id="datetime-panel">
         <div class="panel-head">
           <h2 class="panel-title" id="datetime-panel-title">Дата и время</h2>
-          <span class="panel-note" id="datetime-step-note">2 из 4</span>
+          <span class="panel-note" id="datetime-step-note">1 из 4</span>
         </div>
         <div class="fields">
           <div class="field">
@@ -353,7 +350,7 @@ input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); 
       <section class="panel natal-only" id="place-panel">
         <div class="panel-head">
           <h2 class="panel-title">Место рождения</h2>
-          <span class="panel-note" id="place-step-note">3 из 4</span>
+          <span class="panel-note" id="place-step-note">2 из 4</span>
         </div>
         <div class="fields">
           <div class="field">
@@ -376,14 +373,26 @@ input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); 
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="focus-panel">
         <div class="panel-head">
           <h2 class="panel-title">Фокус разбора</h2>
-          <span class="panel-note" id="focus-step-note">4 из 4</span>
+          <span class="panel-note" id="focus-step-note">3 из 4</span>
         </div>
         <div class="fields">
           <p class="hint">Фокус не урезает отчёт, а помогает поставить самые важные акценты выше.</p>
           <div class="chips" id="focus-chips"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="report-type-panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Что построить</h2>
+          <span class="panel-note" id="report-type-step-note">4 из 4</span>
+        </div>
+        <div class="fields">
+          <p class="hint">Выберите формат перед отправкой анкеты.</p>
+          <p class="hint">Варианты: Натал + матрица (Рекомендуем, Лучший выбор для первого разбора), Только натал, Только матрица.</p>
+          <div class="option-grid" id="report-type-chips" data-group="report_type"></div>
         </div>
         <div class="summary" id="summary">
           <div class="summary-head">
@@ -404,7 +413,10 @@ input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); 
       </p>
     </div>
 
-    <button class="submit" id="submit-button" type="submit">Построить разбор</button>
+    <div class="action-bar" id="action-bar">
+      <button class="cancel" id="cancel-button" type="button">Отменить</button>
+      <button class="submit" id="submit-button" type="submit">Построить разбор</button>
+    </div>
   </form>
 </main>
 
@@ -412,7 +424,7 @@ input:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); 
 const tg = window.Telegram?.WebApp;
 const OPTIONS = {{ natal_form_options|tojson }};
 const state = {
-  report_type: 'combined',
+  report_type: '',
   time_precision: 'exact',
   country_code: OPTIONS.countries[0]?.code || '',
   country_label: OPTIONS.countries[0]?.label || '',
@@ -433,10 +445,10 @@ const progressText = document.getElementById('progress-text');
 const progressStatus = document.getElementById('progress-status');
 const progressMeter = document.getElementById('progress-meter');
 const datetimePanelTitle = document.getElementById('datetime-panel-title');
-const typeStepNote = document.getElementById('type-step-note');
 const datetimeStepNote = document.getElementById('datetime-step-note');
 const placeStepNote = document.getElementById('place-step-note');
 const focusStepNote = document.getElementById('focus-step-note');
+const reportTypeStepNote = document.getElementById('report-type-step-note');
 let closeOnSubmit = false;
 
 function setDoneMessage(title, lines) {
@@ -478,6 +490,20 @@ function restoreFormState(message) {
   submitButton.disabled = false;
   submitButton.textContent = 'Построить разбор';
   statusPill.textContent = 'Анкета';
+}
+
+function advanceToNextItem(target) {
+  const element = typeof target === 'string' ? document.getElementById(target) : target;
+  if (!element) return;
+  window.setTimeout(() => {
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (element.matches('input, button')) {
+      element.focus({ preventScroll: true });
+      return;
+    }
+    const focusable = element.querySelector('input:not([hidden]), button:not([hidden])');
+    focusable?.focus({ preventScroll: true });
+  }, 140);
 }
 
 function setGroup(container, value) {
@@ -542,6 +568,7 @@ function renderCountries() {
       renderCountries();
       renderCities();
       renderSummary();
+      advanceToNextItem('city-chips');
     }));
   });
   container.appendChild(chip('Другая страна', 'manual', !state.country_code, () => {
@@ -567,6 +594,7 @@ function renderReportTypes() {
       renderReportTypes();
       updateProductVisibility();
       renderSummary();
+      advanceToNextItem('action-bar');
     }));
   });
 }
@@ -582,6 +610,7 @@ function renderCities() {
       document.getElementById('manual-city').value = '';
       renderCities();
       renderSummary();
+      advanceToNextItem('focus-panel');
     }));
   });
   container.appendChild(chip('Другой город', 'manual', !state.city_geoname_id, () => {
@@ -603,6 +632,7 @@ function renderFocuses() {
       state.focus = focus.id;
       renderFocuses();
       renderSummary();
+      advanceToNextItem('report-type-panel');
     }));
   });
 }
@@ -617,20 +647,16 @@ function isMatrixOnly() {
 }
 
 function updateProductVisibility() {
-  document.querySelectorAll('.natal-only').forEach((element) => {
-    element.hidden = isMatrixOnly();
-  });
   updateStepNotes();
   showTimeBlocks();
 }
 
 function updateStepNotes() {
-  const total = isMatrixOnly() ? 3 : 4;
-  datetimePanelTitle.textContent = isMatrixOnly() ? 'Дата рождения' : 'Дата и время';
-  typeStepNote.textContent = `1 из ${total}`;
-  datetimeStepNote.textContent = `2 из ${total}`;
-  placeStepNote.textContent = '3 из 4';
-  focusStepNote.textContent = `${isMatrixOnly() ? 3 : 4} из ${total}`;
+  datetimePanelTitle.textContent = 'Дата и время';
+  datetimeStepNote.textContent = '1 из 4';
+  placeStepNote.textContent = '2 из 4';
+  focusStepNote.textContent = '3 из 4';
+  reportTypeStepNote.textContent = '4 из 4';
 }
 
 function isDateComplete() {
@@ -638,7 +664,6 @@ function isDateComplete() {
 }
 
 function isTimeComplete() {
-  if (isMatrixOnly()) return true;
   if (state.time_precision === 'unknown') return true;
   if (state.time_precision === 'range') {
     return Boolean(document.getElementById('birth-time-start').value && document.getElementById('birth-time-end').value);
@@ -647,7 +672,6 @@ function isTimeComplete() {
 }
 
 function isPlaceComplete() {
-  if (isMatrixOnly()) return true;
   const manualCountry = document.getElementById('manual-country').value.trim();
   const manualCity = document.getElementById('manual-city').value.trim();
   return Boolean((state.country_code || manualCountry) && (state.city_geoname_id || manualCity));
@@ -661,13 +685,11 @@ function progressItems() {
       ? 'дату и время рождения'
       : 'время рождения';
   const items = [
-    { label: 'тип разбора', done: Boolean(state.report_type) },
-    { label: isMatrixOnly() ? 'дату рождения' : dateTimeLabel, done: isMatrixOnly() ? isDateComplete() : dateTimeDone },
+    { label: dateTimeLabel, done: dateTimeDone },
+    { label: 'место рождения', done: isPlaceComplete() },
+    { label: 'фокус разбора', done: Boolean(state.focus) },
+    { label: 'что построить', done: Boolean(state.report_type) },
   ];
-  if (!isMatrixOnly()) {
-    items.push({ label: 'место рождения', done: isPlaceComplete() });
-  }
-  items.push({ label: 'фокус разбора', done: Boolean(state.focus) });
   return items;
 }
 
@@ -743,8 +765,8 @@ function renderSummary() {
 function showTimeBlocks() {
   const single = document.querySelector('[data-time-block="single"]');
   const range = document.querySelector('[data-time-block="range"]');
-  single.hidden = isMatrixOnly() || state.time_precision === 'unknown' || state.time_precision === 'range';
-  range.hidden = isMatrixOnly() || state.time_precision !== 'range';
+  single.hidden = state.time_precision === 'unknown' || state.time_precision === 'range';
+  range.hidden = state.time_precision !== 'range';
   renderSummary();
 }
 
@@ -754,6 +776,44 @@ document.querySelector('[data-group="time_precision"]').addEventListener('click'
   state.time_precision = button.dataset.value;
   setGroup(event.currentTarget, state.time_precision);
   showTimeBlocks();
+  if (state.time_precision === 'range') {
+    advanceToNextItem('birth-time-start');
+  } else if (state.time_precision === 'unknown') {
+    advanceToNextItem('place-panel');
+  } else {
+    advanceToNextItem('birth-time');
+  }
+});
+
+document.getElementById('birth-date').addEventListener('change', () => {
+  if (!isDateComplete()) return;
+  if (state.time_precision === 'range') {
+    advanceToNextItem('birth-time-start');
+  } else if (state.time_precision === 'unknown') {
+    advanceToNextItem('place-panel');
+  } else {
+    advanceToNextItem('birth-time');
+  }
+});
+
+document.getElementById('birth-time').addEventListener('change', () => {
+  if (document.getElementById('birth-time').value) advanceToNextItem('place-panel');
+});
+
+document.getElementById('birth-time-start').addEventListener('change', () => {
+  if (document.getElementById('birth-time-start').value) advanceToNextItem('birth-time-end');
+});
+
+document.getElementById('birth-time-end').addEventListener('change', () => {
+  if (document.getElementById('birth-time-end').value) advanceToNextItem('place-panel');
+});
+
+document.getElementById('manual-country').addEventListener('change', () => {
+  if (document.getElementById('manual-country').value.trim()) advanceToNextItem('manual-city');
+});
+
+document.getElementById('manual-city').addEventListener('change', () => {
+  if (document.getElementById('manual-city').value.trim()) advanceToNextItem('focus-panel');
 });
 
 ['birth-date', 'birth-time', 'birth-time-start', 'birth-time-end', 'manual-country', 'manual-city'].forEach((id) => {
@@ -782,6 +842,7 @@ function buildPayload() {
 
 function validateBeforeSubmit(payload) {
   if (!payload.birth_date) return 'Укажите дату рождения.';
+  if (!payload.report_type) return 'Выберите, что построить.';
   if (payload.report_type === 'destiny_matrix') return '';
   if (!payload.country_code && !payload.country) return 'Выберите или введите страну рождения.';
   if (!payload.city_geoname_id && !payload.birth_place) return 'Выберите город или введите другой.';
@@ -829,6 +890,9 @@ async function submitNatal(event) {
 }
 
 form.addEventListener('submit', submitNatal);
+document.getElementById('cancel-button').addEventListener('click', () => {
+  tg?.close();
+});
 tg?.ready();
 tg?.expand();
 renderCountries();

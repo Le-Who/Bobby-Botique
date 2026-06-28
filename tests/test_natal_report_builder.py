@@ -48,7 +48,6 @@ def test_hosted_report_contains_svg_and_section_ids(sample_natal_report: NatalRe
     assert "Натальная карта" in html
     assert 'class="chart-stage"' in html
     assert 'class="result-shell"' in html
-    assert "Что читать первым" in html
     assert "Ваш результат уже готов" in html
     assert "Снимок разбора" not in html
     assert "Надёжность расчёта" not in html
@@ -56,7 +55,9 @@ def test_hosted_report_contains_svg_and_section_ids(sample_natal_report: NatalRe
     assert 'class="natal-snapshot-grid"' not in html
     assert '<link rel="icon" href="data:,">' in html
     assert html.index('class="result-shell"') < html.index('class="chart-stage"')
-    assert 'class="highlights"' in html
+    assert 'class="highlights"' not in html
+    assert "Главные акценты" not in html
+    assert "главные акценты" not in html.lower()
     assert 'class="positions-grid"' in html
 
 
@@ -77,6 +78,23 @@ def test_hosted_report_renders_destiny_matrix_as_second_visual_layer(sample_nata
     assert "Матрица судьбы" in html
     assert 'data-position="center"' in html
     assert html.index('class="chart-stage"') < html.index('class="matrix-stage"')
+
+
+def test_hosted_report_path_links_to_natal_matrix_and_age_periods(sample_natal_report: NatalReport):
+    sample_natal_report.chart.destiny_matrix = calculate_destiny_matrix("1997-11-09")
+    sample_natal_report.sections.extend(build_destiny_matrix_sections(sample_natal_report.chart.destiny_matrix))
+
+    html = build_hosted_report_html(sample_natal_report)
+    path_html = html.split('class="reading-path"', 1)[1].split("</nav>", 1)[0]
+
+    assert 'href="#section-sun"' in path_html
+    assert "Натальная карта" in path_html
+    assert 'href="#section-destiny-matrix"' in path_html
+    assert "Матрица судьбы" in path_html
+    assert 'href="#section-destiny-periods"' in path_html
+    assert "Возрастные периоды" in path_html
+    assert "Что читать первым" not in path_html
+    assert "Главные акценты" not in path_html
 
 
 def test_hosted_report_explains_destiny_matrix_positions_as_result_cards(sample_natal_report: NatalReport):
@@ -145,9 +163,9 @@ def test_hosted_report_places_full_interpretation_before_reference_positions(sam
 
     html = build_hosted_report_html(sample_natal_report)
 
-    assert html.index('class="highlights"') < html.index('class="full-reading"')
     assert html.index('class="full-reading"') < html.index('class="positions-grid"')
-    assert "Главные акценты" in html
+    assert "Главные акценты" not in html
+    assert "главные акценты" not in html.lower()
     assert "Расчетные позиции" in html
     assert "Полный разбор" in html
     assert "Аспекты" in html
@@ -171,21 +189,20 @@ def test_hosted_report_labels_positions_with_user_facing_meaning(sample_natal_re
     assert "Планеты" not in html
 
 
-def test_hosted_report_highlight_cards_use_readable_plain_text_previews(sample_natal_report: NatalReport):
+def test_hosted_report_does_not_duplicate_full_text_as_highlight_previews(sample_natal_report: NatalReport):
     sample_natal_report.sections[0].body_markdown = (
         "**Солнце в Водолее** раскрывает [личный ритм](https://example.com) "
         "и помогает читать карту как цельную историю."
     )
 
     html = build_hosted_report_html(sample_natal_report)
-    highlights_html = html.split('class="highlights"', 1)[1].split('class="full-reading"', 1)[0]
 
-    assert ".highlight-card{display:block" in html
-    assert "text-decoration:none" in html
-    assert 'class="highlight-excerpt"' in highlights_html
-    assert "<strong>Солнце в Водолее</strong>" not in highlights_html
-    assert '<a href="https://example.com"' not in highlights_html
-    assert "Солнце в Водолее раскрывает личный ритм" in highlights_html
+    assert "Главные акценты" not in html
+    assert "главные акценты" not in html.lower()
+    assert 'class="highlights"' not in html
+    assert 'class="highlight-excerpt"' not in html
+    assert "Солнце в Водолее раскрывает личный ритм" not in html
+    assert "<b>Солнце в Водолее</b>" in html
 
 
 def test_hosted_report_strips_javascript_urls_from_section_body(sample_natal_report: NatalReport):
@@ -280,7 +297,7 @@ def test_hosted_report_cards_do_not_use_backdrop_filter_for_scroll_stability(sam
     html = build_hosted_report_html(sample_natal_report)
     style = html.split("<style>", 1)[1].split("</style>", 1)[0]
 
-    card_rule = next(rule for rule in style.split("}") if ".highlight-card,.position-card,.reading-card" in rule)
+    card_rule = next(rule for rule in style.split("}") if ".position-card,.reading-card" in rule)
     assert "backdrop-filter" not in card_rule
     assert "-webkit-backdrop-filter" not in card_rule
 

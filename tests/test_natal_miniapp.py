@@ -84,6 +84,8 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert "Только матрица" in body
     assert "Рекомендуем" in body
     assert "Лучший выбор для первого разбора" in body
+    assert 'id="report-type-panel"' in body
+    assert 'id="cancel-button"' in body
     assert 'id="progress-meter"' in body
     assert 'id="progress-text"' in body
     assert "Шаг 1 из 4" in body
@@ -94,6 +96,12 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert "Окно можно закрывать." in body
     assert "Ответ будет отправлен новым сообщением" in body
     assert ".layout[hidden]" in body
+    assert "scrollIntoView({ behavior: 'smooth'" in body
+    assert "advanceToNextItem" in body
+    assert body.index("Дата рождения") < body.index("Место рождения")
+    assert body.index("Место рождения") < body.index("Фокус разбора")
+    assert body.index("Фокус разбора") < body.index("Что построить")
+    assert body.index("Что построить") < body.index('data-group="report_type"')
     assert body.index("const response = await fetch") < body.index("showAcceptedState();")
 
 
@@ -107,8 +115,10 @@ async def test_natal_form_keeps_questionnaire_lightweight():
     body = await response.get_data(as_text=True)
     assert "Что будет в отчёте" not in body
     assert "Расчёт строится локально" not in body
-    assert "Выберите формат и дату рождения" in body
-    assert body.index("Тип разбора") < body.index("Дата рождения")
+    assert "Выберите формат и дату рождения" not in body
+    assert "Введите дату, время и место" in body
+    assert "Тип разбора" not in body
+    assert body.index("Дата рождения") < body.index("Что построить")
 
 
 @pytest.mark.asyncio

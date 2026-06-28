@@ -47,7 +47,6 @@ def build_hosted_report_html(report: NatalReport) -> str:
         url = html.escape(report.telegraph_url, quote=True)
         telegraph = f'<a class="mirror-link" href="{url}" rel="noopener noreferrer">Telegraph mirror</a>'
 
-    highlights = "".join(_highlight_cards(report.sections))
     positions = "".join(_position_cards(report))
     notes_html = "".join(_footer_note_html(note) for note in footer_notes)
     title = _report_title(report)
@@ -67,7 +66,7 @@ def build_hosted_report_html(report: NatalReport) -> str:
         "body{margin:0;font-family:'Aptos','Segoe UI',sans-serif;background:#f4f7f5;color:var(--ink);line-height:1.62}"
         "main{position:relative;max-width:1160px;margin:0 auto;padding:clamp(16px,4vw,48px)}"
         ".result-shell{display:grid;gap:18px;margin:0 0 34px}"
-        ".result-copy,.chart-stage,.matrix-stage,.highlight-card,.position-card,.reading-card{border:1px solid var(--line);border-radius:8px;background:var(--surface);box-shadow:0 16px 42px rgba(33,45,42,.08)}"
+        ".result-copy,.chart-stage,.matrix-stage,.position-card,.reading-card{border:1px solid var(--line);border-radius:8px;background:var(--surface);box-shadow:0 16px 42px rgba(33,45,42,.08)}"
         ".result-copy{padding:clamp(20px,4vw,34px);display:grid;gap:18px}"
         ".eyebrow{margin:0;color:var(--teal);font-size:12px;letter-spacing:.12em;text-transform:uppercase;font-weight:800}"
         "h1{max-width:780px;margin:0;font-family:Georgia,serif;font-size:clamp(36px,6vw,68px);line-height:1;font-weight:500;color:#1e2d29}"
@@ -77,15 +76,13 @@ def build_hosted_report_html(report: NatalReport) -> str:
         ".chart-stage,.matrix-stage{position:relative;width:100%;padding:clamp(12px,3vw,22px);overflow:hidden}"
         "svg{position:relative;z-index:1;max-width:100%;height:auto;display:block;margin:0 auto}"
         ".section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:64px 0 18px}.section-head h2{margin:0;font-family:Georgia,serif;font-size:clamp(28px,4vw,44px);font-weight:500}.section-head p{max-width:480px;margin:0;color:var(--muted)}"
-        ".highlights{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.highlight-card{display:block;min-height:170px;padding:18px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.highlight-card:hover,.position-card:hover{transform:translateY(-2px);box-shadow:0 18px 52px rgba(33,45,42,.12)}.highlight-card span,.reading-card span,.position-card span{display:block;margin-bottom:10px;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.highlight-card h3,.reading-card h3{margin:0 0 10px;font-family:Georgia,serif;font-size:23px;font-weight:500}.highlight-excerpt{margin:0;color:var(--muted)}"
+        ".position-card:hover{transform:translateY(-2px);box-shadow:0 18px 52px rgba(33,45,42,.12)}.reading-card span,.position-card span{display:block;margin-bottom:10px;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.reading-card h3{margin:0 0 10px;font-family:Georgia,serif;font-size:23px;font-weight:500}"
         ".positions-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.position-card{display:block;min-height:132px;padding:16px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.position-card strong{display:block;margin-bottom:6px;font-family:Georgia,serif;font-size:21px;font-weight:500}.position-card p{margin:0;color:var(--muted)}"
         ".full-reading{display:grid;gap:14px}.reading-card{padding:clamp(18px,3vw,28px)}.reading-card div{max-width:78ch}.reading-card p{margin:0 0 12px}.reading-card ul{padding-left:22px}"
         ".footer{display:flex;flex-wrap:wrap;gap:14px;margin:44px 0 0;color:var(--muted);font-size:14px}.mirror-link{color:var(--blue);font-weight:700}.privacy,.attribution{margin:0}.report-note{flex-basis:100%;margin:6px 0 0;padding-top:14px;border-top:1px solid var(--line)}.report-note strong{color:var(--ink)}"
-        "a{color:var(--blue)}@media(max-width:900px){.reading-path,.highlights,.positions-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}}"
+        "a{color:var(--blue)}@media(max-width:900px){.reading-path,.positions-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}}"
         "</style></head><body><main>"
         f"{result_shell}"
-        '<section class="highlights-wrap" id="highlights"><div class="section-head"><h2>Главные акценты</h2><p>Самые важные и интересные мотивы вынесены первыми, чтобы отчет читался как цельная история.</p></div>'
-        f'<div class="highlights">{highlights}</div></section>'
         '<section id="full-reading"><div class="section-head"><h2>Полный разбор</h2><p>Подробные интерпретации сгруппированы по смысловым категориям.</p></div>'
         f'<div class="full-reading">{"".join(full_sections)}</div></section>'
         '<section id="positions"><div class="section-head"><h2>Расчетные позиции</h2><p>Справочный слой карты: где находятся точки расчета и за какие темы они обычно отвечают.</p></div>'
@@ -181,34 +178,45 @@ def _result_shell(report: NatalReport, title: str, lead: str, visual_layers: str
 
 
 def _reading_path_html(report: NatalReport) -> str:
+    has_natal = bool(report.chart.planets)
     has_matrix = report.chart.destiny_matrix is not None
-    third_label = "Матрица и периоды" if has_matrix else "Расчетные позиции"
+    section_ids = {section.id for section in report.sections}
+    natal_target = _first_natal_section_id(report.sections)
+    matrix_target = "section-destiny-matrix" if "section-destiny-matrix" in section_ids else "full-reading"
+    periods_target = "section-destiny-periods" if "section-destiny-periods" in section_ids else "positions"
+    if has_natal and has_matrix:
+        cards = [
+            _path_card("1 шаг", natal_target, "Натальная карта", "Перейти к началу астрологического разбора."),
+            _path_card("2 шаг", matrix_target, "Матрица судьбы", "Перейти к началу разбора матрицы."),
+            _path_card("3 шаг", periods_target, "Возрастные периоды", "Посмотреть десятилетние акценты матрицы."),
+        ]
+    elif has_matrix:
+        cards = [
+            _path_card("1 шаг", matrix_target, "Матрица судьбы", "Перейти к началу разбора матрицы."),
+            _path_card("2 шаг", _target_section("section-destiny-money", section_ids), "Денежный канал", "Открыть практическую линию реализации."),
+            _path_card("3 шаг", periods_target, "Возрастные периоды", "Посмотреть десятилетние акценты матрицы."),
+        ]
+    else:
+        cards = [
+            _path_card("1 шаг", natal_target, "Натальная карта", "Перейти к началу астрологического разбора."),
+            _path_card("2 шаг", "full-reading", "Полный разбор", "Развернуть темы без потери контекста."),
+            _path_card("3 шаг", "positions", "Расчетные позиции", "Проверить справочный слой карты."),
+        ]
+    return f'<nav class="reading-path" aria-label="Быстрые переходы">{"".join(cards)}</nav>'
+
+
+def _path_card(step: str, target: str, title: str, subtitle: str) -> str:
     return (
-        '<nav class="reading-path" aria-label="Что читать первым">'
-        '<a class="path-card" href="#highlights"><span>1 шаг</span><strong>Что читать первым</strong>'
-        "<em>Коротко увидеть главные акценты отчета.</em></a>"
-        '<a class="path-card" href="#full-reading"><span>2 шаг</span><strong>Полный разбор</strong>'
-        "<em>Развернуть темы без потери контекста.</em></a>"
-        f'<a class="path-card" href="#positions"><span>3 шаг</span><strong>{html.escape(third_label)}</strong>'
-        "<em>Проверить расчетные точки и связать их с текстом.</em></a>"
-        "</nav>"
+        f'<a class="path-card" href="#{html.escape(target, quote=True)}"><span>{html.escape(step)}</span>'
+        f"<strong>{html.escape(title)}</strong><em>{html.escape(subtitle)}</em></a>"
     )
 
 
-def _highlight_cards(sections: list[ReportSection]) -> list[str]:
-    source = sections[:3] or [
-        ReportSection(id="section-summary", title="Краткое резюме", body_markdown="Разбор будет доступен ниже.")
-    ]
-    cards = []
-    for section in source:
-        title = html.escape(section.title)
-        section_id = html.escape(section.id, quote=True)
-        body = html.escape(_plain_text_excerpt(section.body_markdown))
-        cards.append(
-            f'<a class="highlight-card" href="#{section_id}"><span>{html.escape(_section_category(section))}</span>'
-            f'<h3>{title}</h3><p class="highlight-excerpt">{body}</p></a>'
-        )
-    return cards
+def _first_natal_section_id(sections: list[ReportSection]) -> str:
+    for section in sections:
+        if not section.id.lower().startswith("section-destiny"):
+            return section.id
+    return "full-reading"
 
 
 def _position_cards(report: NatalReport) -> list[str]:
@@ -362,13 +370,13 @@ def _report_lead(report: NatalReport) -> str:
     if has_natal and has_matrix:
         return (
             "Сначала две визуальные карты: астрономический слой натала и архетипический слой матрицы. "
-            "Дальше — главные акценты, разбор линий, денег, отношений, рода и возрастных периодов."
+            "Дальше — разбор натальной карты, линий матрицы, денег, отношений, рода и возрастных периодов."
         )
     if has_matrix:
         return (
             "Архетипическая матрица по дате рождения: центр, родовые линии, денежный канал, отношения и возрастные периоды."
         )
-    return "Сначала карта как визуальный центр, затем главные акценты, полный разбор и справочные расчетные позиции."
+    return "Сначала карта как визуальный центр, затем полный разбор и справочные расчетные позиции."
 
 
 def _visual_layers(report: NatalReport) -> str:

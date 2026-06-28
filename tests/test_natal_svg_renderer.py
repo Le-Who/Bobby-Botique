@@ -52,6 +52,18 @@ def test_render_svg_uses_readable_zodiac_and_no_internal_text_legend():
     assert 'data-house="1"' in svg
 
 
+def test_render_svg_uses_light_base_and_contrast_safe_chart_lines():
+    svg = render_chart_svg(sample_chart())
+
+    assert 'fill="#000' not in svg.lower()
+    assert 'fill="black"' not in svg.lower()
+    assert 'fill-opacity="0.92"' in svg
+    assert 'stroke="#8a6ed0" stroke-width="3.2"' in svg
+    assert 'stroke="#7d68a8" stroke-width="1.4"' in svg
+    assert 'stroke-width="1.8" opacity="0.72"' in svg
+    assert 'stroke="#6e5597" stroke-width="2.2"' in svg
+
+
 def test_render_svg_does_not_emit_script_tags():
     svg = render_chart_svg(sample_chart())
 

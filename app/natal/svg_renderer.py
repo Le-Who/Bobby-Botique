@@ -53,9 +53,9 @@ def render_chart_svg(chart: ChartData) -> str:
         '<rect width="800" height="800" rx="36" fill="url(#natal-bg)"/>',
         '<circle cx="224" cy="158" r="74" fill="#ffffff" opacity="0.28"/>',
         '<circle cx="602" cy="642" r="96" fill="#ffffff" opacity="0.22"/>',
-        f'<circle cx="{center}" cy="{center}" r="{radius}" fill="#fffdfc" fill-opacity="0.72" stroke="#cab7ef" stroke-width="2.4"/>',
-        f'<circle cx="{center}" cy="{center}" r="{planet_radius}" fill="none" stroke="#e0d5f4" stroke-width="1.2"/>',
-        f'<circle cx="{center}" cy="{center}" r="{radius - 42}" fill="none" stroke="#f0d8df" stroke-width="1"/>',
+        f'<circle cx="{center}" cy="{center}" r="{radius}" fill="#fffdfc" fill-opacity="0.92" stroke="#8a6ed0" stroke-width="3.2"/>',
+        f'<circle cx="{center}" cy="{center}" r="{planet_radius}" fill="none" stroke="#9b87c9" stroke-width="1.8"/>',
+        f'<circle cx="{center}" cy="{center}" r="{radius - 42}" fill="none" stroke="#d79aae" stroke-width="1.4"/>',
     ]
     parts.extend(_render_zodiac_ticks(center, radius))
     if chart.houses:
@@ -84,10 +84,13 @@ def _render_zodiac_ticks(center: int, radius: int) -> list[str]:
         label_x = center + math.cos(label_angle) * (radius + 34)
         label_y = center + math.sin(label_angle) * (radius + 34)
         sign_name, sign_symbol = _ZODIAC_SIGNS[index]
-        parts.append(f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="#b8a6d8"/>')
+        parts.append(
+            f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
+            'stroke="#7d68a8" stroke-width="1.4"/>'
+        )
         parts.append(
             f'<text x="{label_x:.1f}" y="{label_y:.1f}" text-anchor="middle" dominant-baseline="middle" '
-            'font-family="Georgia, serif" font-size="20" fill="#6f5b95">'
+            'font-family="Georgia, serif" font-size="22" fill="#4d3a75">'
             f"<title>{html.escape(sign_name)}</title>{html.escape(sign_symbol)}</text>"
         )
     return parts
@@ -101,7 +104,7 @@ def _render_houses(chart: ChartData, center: int, radius: int) -> list[str]:
         y = center + math.sin(angle) * radius
         parts.append(
             f'<line data-house="{house.number}" x1="{center}" y1="{center}" x2="{x:.1f}" y2="{y:.1f}" '
-            'stroke="#e7dcec" stroke-width="1"/>'
+            'stroke="#d4c6e2" stroke-width="1.1"/>'
         )
     return parts
 
@@ -119,7 +122,7 @@ def _render_aspects(chart: ChartData, center: int, radius: int) -> list[str]:
         color = "#7da7d9" if aspect.aspect in {"trine", "sextile"} else "#d58cab"
         parts.append(
             f'<line data-aspect="{html.escape(aspect.aspect, quote=True)}" x1="{x1:.1f}" y1="{y1:.1f}" '
-            f'x2="{x2:.1f}" y2="{y2:.1f}" stroke="{color}" stroke-width="1.4" opacity="0.48"/>'
+            f'x2="{x2:.1f}" y2="{y2:.1f}" stroke="{color}" stroke-width="1.8" opacity="0.72"/>'
         )
     return parts
 
@@ -132,10 +135,13 @@ def _render_planets(chart: ChartData, center: int, radius: int) -> list[str]:
         section_id = html.escape(f"#section-{planet.key}", quote=True)
         symbol = html.escape(_PLANET_SYMBOLS.get(planet.key, planet.key[:2].upper()))
         parts.append(f'<a href="{section_id}">')
-        parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="17" fill="#fffaf7" stroke="#8d78b6" stroke-width="1.8" filter="url(#soft-glow)"/>')
+        parts.append(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="17" fill="#ffffff" '
+            'stroke="#6e5597" stroke-width="2.2" filter="url(#soft-glow)"/>'
+        )
         parts.append(
             f'<text x="{x:.1f}" y="{y + 1:.1f}" text-anchor="middle" dominant-baseline="middle" '
-            f'font-family="Georgia, serif" font-size="18" fill="#59436f">{symbol}</text>'
+            f'font-family="Georgia, serif" font-size="18" fill="#3f2e5c">{symbol}</text>'
         )
         parts.append(f'<title>{label} в знаке {html.escape(planet.sign)}</title></a>')
     return parts
