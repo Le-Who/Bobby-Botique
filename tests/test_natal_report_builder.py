@@ -80,7 +80,8 @@ def test_hosted_report_uses_expandable_thematic_sections_without_input_or_sales(
     html = build_hosted_report_html(sample_natal_report)
 
     assert '<details id="section-sun"' in html
-    assert '<summary><span>Ядро личности</span><strong>Солнце</strong></summary>' in html
+    assert '<span class="summary-kicker">Ядро личности</span>' in html
+    assert '<span class="summary-title"><strong>Солнце</strong></span>' in html
     assert 'class="reading-body"' in html
     assert 'open data-default-open="true"' in html
     assert "Работа, деньги и реализация" in html
@@ -89,6 +90,59 @@ def test_hosted_report_uses_expandable_thematic_sections_without_input_or_sales(
     assert "Тариф" not in html
     assert "оплат" not in html.lower()
     assert "бесплат" not in html.lower()
+
+
+def test_hosted_report_formats_destiny_periods_as_separate_cards(sample_natal_report: NatalReport):
+    sample_natal_report.chart.planets = []
+    sample_natal_report.svg = ""
+    sample_natal_report.chart.destiny_matrix = calculate_destiny_matrix("2003-06-30")
+    sample_natal_report.sections = build_destiny_matrix_sections(sample_natal_report.chart.destiny_matrix)
+
+    html = build_hosted_report_html(sample_natal_report)
+    period_html = html.split('id="section-destiny-periods"', 1)[1].split("</details>", 1)[0]
+
+    assert 'class="period-list"' in period_html
+    assert period_html.count('class="period-card"') == 8
+    assert "<span>0-9 лет</span><strong>3. Императрица</strong>" in period_html
+    assert "<dt>Возможные события</dt>" in period_html
+    assert "<dt>Фокус десятилетия</dt>" in period_html
+    assert "<dt>Стратегия роста</dt>" in period_html
+    assert "- <b>0-9 лет" not in period_html
+
+
+def test_hosted_report_merges_planet_sections_into_matching_life_topics(sample_natal_report: NatalReport):
+    sample_natal_report.sections = [
+        ReportSection(
+            id="section-mercury",
+            title="Меркурий — мышление и речь (Эмпатичный интеллект)",
+            body_markdown="Меркурий в Раке дает эмоциональную память.",
+            chart_refs=["mercury"],
+        ),
+        ReportSection(
+            id="section-thinking",
+            title="Мышление, речь и решения",
+            body_markdown="Практичный блок про решения и разговоры.",
+        ),
+    ]
+
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert '<details id="section-thinking"' in html
+    assert '<details id="section-mercury"' not in html
+    assert '<span id="section-mercury" class="section-anchor"></span>' in html
+    assert "Расчетная опора: Меркурий — мышление и речь" in html
+    assert "Эмпатичный интеллект" not in html.split("<summary>", 1)[1].split("</summary>", 1)[0]
+    assert html.count("<summary>") == 1
+
+
+def test_hosted_report_summary_has_stable_label_area_for_alignment(sample_natal_report: NatalReport):
+    html = build_hosted_report_html(sample_natal_report)
+    style = html.split("<style>", 1)[1].split("</style>", 1)[0]
+
+    assert 'class="summary-kicker"' in html
+    assert 'class="summary-title"' in html
+    assert "grid-template-columns:minmax(112px,156px) minmax(0,1fr) 36px" in style
+    assert ".summary-kicker{min-height:44px" in style
 
 
 def test_hosted_report_renders_destiny_matrix_as_second_visual_layer(sample_natal_report: NatalReport):

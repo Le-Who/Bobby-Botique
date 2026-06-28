@@ -50,7 +50,6 @@ def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> 
     section_ids = [
         "section-summary",
         *(section_id for section_id, _title in _PRACTICAL_SECTION_HINTS),
-        *(f"section-{planet.key}" for planet in chart.planets),
         "section-aspects",
     ]
     title_guidance = "\n".join(f"- {hint}" for hint in _title_hints_for_chart(chart))
@@ -79,7 +78,9 @@ def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> 
         "понятный пример. Используй жизненные примеры, когда они помогают узнать ситуацию в себе.\n"
         "Пиши честно: можно освещать негативные стороны, но без приговора, без лести и без запугивания.\n"
         "не упоминай оплату, тарифы, личный кабинет или форму ввода; не пиши, что разбор бесплатный.\n"
-        "Для секций планет не используй односложные заголовки: добавляй рядом человеческую роль точки.\n"
+        "Не создавай отдельные секции по каждой планете, если та же тема уже есть в практичном блоке. "
+        "Планеты используй внутри жизненных тем как расчетную опору.\n"
+        "Заголовки делай короткими и смысловыми: сначала тема жизни, а планету и образ переноси в текст блока.\n"
         f"Ориентиры для заголовков:\n{title_guidance}\n"
         f"Обязательные stable ids: {', '.join(section_ids)}.\n"
         "Для русского языка пиши кратко, глубоко и бережно.\n"
@@ -203,23 +204,6 @@ def _fallback_sections(chart: ChartData) -> list[ReportSection]:
                 + "\n".join(planet_lines[:10])
             ),
         ),
-        ReportSection(
-            id="section-sun",
-            title=_point_title("sun", "Солнце"),
-            body_markdown=_planet_fact(sun, unavailable),
-            chart_refs=["sun"],
-        ),
-        ReportSection(
-            id="section-moon",
-            title=_point_title("moon", "Луна"),
-            body_markdown=_planet_fact(moon, unavailable),
-            chart_refs=["moon"],
-        ),
-        ReportSection(
-            id="section-aspects",
-            title="Аспекты",
-            body_markdown=f"{unavailable}\n\n" + ("\n".join(aspect_lines) if aspect_lines else "Мажорные аспекты не выделены."),
-        ),
     ]
     sections.extend(
         [
@@ -332,6 +316,13 @@ def _fallback_sections(chart: ChartData) -> list[ReportSection]:
             ),
         ]
     )
+    sections.append(
+        ReportSection(
+            id="section-aspects",
+            title="Аспекты",
+            body_markdown=f"{unavailable}\n\n" + ("\n".join(aspect_lines) if aspect_lines else "Мажорные аспекты не выделены."),
+        )
+    )
     return sections
 
 
@@ -345,7 +336,7 @@ def _title_hints_for_chart(chart: ChartData) -> list[str]:
     hints = ["Краткое резюме — главные темы карты"]
     hints.extend(f"{title} — practical section id `{section_id}`" for section_id, title in _PRACTICAL_SECTION_HINTS)
     for planet in chart.planets:
-        hints.append(_point_title(planet.key, planet.label))
+        hints.append(f"Расчетная опора внутри тем: {planet.label} — {_point_meaning_for_prompt(planet.key)}")
     hints.append("Аспекты — внутренние связи и напряжения")
     if chart.houses or chart.input_quality.houses_available:
         hints.append("Дома — сферы жизни")
@@ -354,6 +345,13 @@ def _title_hints_for_chart(chart: ChartData) -> list[str]:
 
 def _point_title(point_key: str, fallback_label: str) -> str:
     return _POINT_TITLE_HINTS.get(point_key.lower(), fallback_label)
+
+
+def _point_meaning_for_prompt(point_key: str) -> str:
+    title = _POINT_TITLE_HINTS.get(point_key.lower())
+    if not title or "—" not in title:
+        return point_key
+    return title.split("—", 1)[1].strip()
 
 
 def _placement_sentence(planet, label: str) -> str:

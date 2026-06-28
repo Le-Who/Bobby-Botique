@@ -25,23 +25,48 @@ _POINT_MEANINGS = {
     "pluto": "Глубина и трансформация",
 }
 
+_PLANET_SECTION_TARGETS = {
+    "section-sun": "section-identity",
+    "section-moon": "section-emotions",
+    "section-mercury": "section-thinking",
+    "section-venus": "section-love",
+    "section-mars": "section-action",
+    "section-jupiter": "section-growth",
+    "section-saturn": "section-work-money",
+    "section-uranus": "section-shadow-patterns",
+    "section-neptune": "section-shadow-patterns",
+    "section-pluto": "section-shadow-patterns",
+}
+
+_PERIOD_LINE_RE = re.compile(
+    r"^-\s+\*\*(?P<age>[^—*]+?)\s+—\s+(?P<arcana>[^*]+)\*\*\.\s+"
+    r"Возможные события периода:\s+(?P<events>.*?)\.\s+"
+    r"Фокус десятилетия:\s+(?P<focus>.*?)\.\s+"
+    r"Повторяющийся сюжет\s+—\s+(?P<theme>.*?);\s+"
+    r"полезная стратегия\s+—\s+(?P<growth>.*?)\.?$"
+)
+
 
 def build_hosted_report_html(report: NatalReport) -> str:
+    display_sections = _merge_related_sections(report.sections)
+    display_section_ids = {section.id for section in display_sections}
     full_sections = []
     footer_notes: list[str] = []
-    for index, section in enumerate(report.sections):
+    for index, section in enumerate(display_sections):
         section_id = html.escape(section.id, quote=True)
         title = html.escape(section.title)
         category_raw = _section_category(section)
         body_markdown, notes = _prepare_hosted_section_markdown(section)
         footer_notes.extend(notes)
-        body = _sanitize_hosted_body(_hosted_markdown_to_html(body_markdown))
+        body = _sanitize_hosted_body(_hosted_section_body_html(section, body_markdown))
         category = html.escape(category_raw)
         default_open = ' open data-default-open="true"' if index == 0 else ""
+        aliases = "".join(_section_anchor(alias) for alias in _section_aliases(section.id, display_section_ids))
         full_sections.append(
-            f'<details id="{section_id}" class="reading-card reading-disclosure" '
+            f'{aliases}<details id="{section_id}" class="reading-card reading-disclosure" '
             f'data-category="{category}"{default_open}>'
-            f"<summary><span>{category}</span><strong>{title}</strong></summary>"
+            f'<summary><span class="summary-kicker">{category}</span>'
+            f'<span class="summary-title"><strong>{title}</strong></span></summary>'
             f'<div class="reading-body">{body}</div></details>'
         )
 
@@ -50,12 +75,12 @@ def build_hosted_report_html(report: NatalReport) -> str:
         url = html.escape(report.telegraph_url, quote=True)
         telegraph = f'<a class="mirror-link" href="{url}" rel="noopener noreferrer">Telegraph mirror</a>'
 
-    positions = "".join(_position_cards(report))
+    positions = "".join(_position_cards(report, display_sections))
     notes_html = "".join(_footer_note_html(note) for note in footer_notes)
     title = _report_title(report)
     lead = _report_lead(report)
     visual_layers = _visual_layers(report)
-    result_shell = _result_shell(report, title, lead, visual_layers)
+    result_shell = _result_shell(report, title, lead, visual_layers, display_sections)
 
     return (
         "<!doctype html><html lang=\"ru\"><head>"
@@ -79,11 +104,12 @@ def build_hosted_report_html(report: NatalReport) -> str:
         ".chart-stage,.matrix-stage{position:relative;width:100%;padding:clamp(12px,3vw,22px);overflow:hidden}"
         "svg{position:relative;z-index:1;max-width:100%;height:auto;display:block;margin:0 auto}"
         ".section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:64px 0 18px}.section-head h2{margin:0;font-family:Georgia,serif;font-size:clamp(28px,4vw,44px);font-weight:500}.section-head p{max-width:480px;margin:0;color:var(--muted)}"
-        ".position-card:hover{transform:translateY(-2px);box-shadow:0 18px 52px rgba(33,45,42,.12)}.reading-card span,.position-card span{display:block;margin-bottom:10px;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.reading-card summary{list-style:none;cursor:pointer;padding:clamp(18px,3vw,26px);display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}.reading-card summary::-webkit-details-marker{display:none}.reading-card summary:after{content:'+';width:32px;height:32px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);font-size:22px;line-height:1;color:var(--teal);background:var(--soft)}.reading-card[open] summary:after{content:'−'}.reading-card strong{font-family:Georgia,serif;font-size:23px;font-weight:500;color:var(--ink)}"
+        ".position-card:hover{transform:translateY(-2px);box-shadow:0 18px 52px rgba(33,45,42,.12)}.summary-kicker,.position-card span{display:block;margin-bottom:0;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}.reading-card summary{list-style:none;cursor:pointer;padding:clamp(18px,3vw,26px);display:grid;grid-template-columns:minmax(112px,156px) minmax(0,1fr) 36px;gap:16px;align-items:center;min-height:116px}.reading-card summary::-webkit-details-marker{display:none}.reading-card summary:after{content:'+';width:36px;height:36px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);font-size:24px;line-height:1;color:var(--teal);background:var(--soft);justify-self:end}.reading-card[open] summary:after{content:'−'}.summary-kicker{min-height:44px;display:flex;align-items:center;overflow-wrap:anywhere}.summary-title{display:block;min-width:0}.summary-title strong{font-family:Georgia,serif;font-size:clamp(23px,3vw,31px);line-height:1.18;font-weight:500;color:var(--ink)}"
         ".positions-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.position-card{display:block;min-height:132px;padding:16px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.position-card strong{display:block;margin-bottom:6px;font-family:Georgia,serif;font-size:21px;font-weight:500}.position-card p{margin:0;color:var(--muted)}"
         ".full-reading{display:grid;gap:14px}.reading-body{max-width:78ch;padding:0 clamp(18px,3vw,26px) clamp(18px,3vw,26px)}.reading-card p{margin:0 0 12px}.reading-card ul{padding-left:22px}"
+        ".period-list{display:grid;gap:12px;margin-top:16px}.period-card{border:1px solid var(--line);border-radius:8px;background:var(--soft);padding:14px}.period-card header{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:baseline;margin:0 0 10px}.period-card header span{color:var(--teal);font-size:13px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.period-card header strong{font-family:Georgia,serif;font-size:22px;font-weight:500;color:var(--ink)}.period-card dl{display:grid;gap:9px;margin:0}.period-card dl div{display:grid;gap:2px}.period-card dt{color:var(--violet);font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}.period-card dd{margin:0;color:var(--ink)}.section-anchor{position:relative;top:-12px;display:block;height:0;overflow:hidden}"
         ".footer{display:flex;flex-wrap:wrap;gap:14px;margin:44px 0 0;color:var(--muted);font-size:14px}.mirror-link{color:var(--blue);font-weight:700}.privacy,.attribution{margin:0}.report-note{flex-basis:100%;margin:6px 0 0;padding-top:14px;border-top:1px solid var(--line)}.report-note strong{color:var(--ink)}"
-        "a{color:var(--blue)}@media(max-width:900px){.reading-path,.positions-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}}"
+        "a{color:var(--blue)}@media(max-width:900px){.reading-path,.positions-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}}@media(max-width:640px){main{padding:14px}.reading-card summary{grid-template-columns:minmax(96px,124px) minmax(0,1fr) 34px;gap:10px;min-height:104px}.summary-kicker{font-size:11px;letter-spacing:.13em;min-height:40px}.summary-title strong{font-size:clamp(21px,5vw,27px)}.reading-card summary:after{width:34px;height:34px;font-size:22px}}"
         "</style></head><body><main>"
         f"{result_shell}"
         '<section id="full-reading"><div class="section-head"><h2>Полный разбор</h2><p>Подробные интерпретации сгруппированы по смысловым категориям.</p></div>'
@@ -160,12 +186,109 @@ def _hosted_markdown_to_html(markdown: str) -> str:
     return "".join(blocks)
 
 
+def _hosted_section_body_html(section: ReportSection, markdown: str) -> str:
+    if section.id == "section-destiny-periods":
+        return _destiny_periods_to_html(markdown)
+    return _hosted_markdown_to_html(markdown)
+
+
+def _destiny_periods_to_html(markdown: str) -> str:
+    intro_lines: list[str] = []
+    cards: list[str] = []
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = _PERIOD_LINE_RE.match(line)
+        if not match:
+            intro_lines.append(line)
+            continue
+        cards.append(_period_card_html(match.groupdict()))
+
+    if not cards:
+        return _hosted_markdown_to_html(markdown)
+
+    intro_html = _hosted_markdown_to_html(" ".join(intro_lines))
+    return f'{intro_html}<div class="period-list">{"".join(cards)}</div>'
+
+
+def _period_card_html(parts: dict[str, str]) -> str:
+    age = html.escape(parts["age"].strip())
+    arcana = html.escape(parts["arcana"].strip())
+    events = html.escape(parts["events"].strip())
+    focus = html.escape(parts["focus"].strip())
+    theme = html.escape(parts["theme"].strip())
+    growth = html.escape(parts["growth"].strip())
+    return (
+        '<article class="period-card">'
+        f"<header><span>{age}</span><strong>{arcana}</strong></header>"
+        "<dl>"
+        f"<div><dt>Возможные события</dt><dd>{events}</dd></div>"
+        f"<div><dt>Фокус десятилетия</dt><dd>{focus}</dd></div>"
+        f"<div><dt>Повторяющийся сюжет</dt><dd>{theme}</dd></div>"
+        f"<div><dt>Стратегия роста</dt><dd>{growth}</dd></div>"
+        "</dl></article>"
+    )
+
+
+def _merge_related_sections(sections: list[ReportSection]) -> list[ReportSection]:
+    by_id = {section.id: section for section in sections}
+    merged: list[ReportSection] = []
+    for section in sections:
+        target_id = _PLANET_SECTION_TARGETS.get(section.id)
+        if target_id and target_id in by_id:
+            continue
+
+        support_sections = [
+            source
+            for source_id, merge_target_id in _PLANET_SECTION_TARGETS.items()
+            if merge_target_id == section.id and (source := by_id.get(source_id)) is not None
+        ]
+        if not support_sections:
+            merged.append(section)
+            continue
+
+        support_markdown = "".join(_support_section_markdown(support) for support in support_sections)
+        chart_refs = list(dict.fromkeys([*section.chart_refs, *(ref for support in support_sections for ref in support.chart_refs)]))
+        merged.append(
+            ReportSection(
+                id=section.id,
+                title=section.title,
+                body_markdown=f"{section.body_markdown.rstrip()}{support_markdown}",
+                chart_refs=chart_refs,
+            )
+        )
+    return merged
+
+
+def _support_section_markdown(section: ReportSection) -> str:
+    title = _compact_support_title(section.title)
+    return f"\n\n**Расчетная опора: {title}**\n\n{section.body_markdown.strip()}"
+
+
+def _compact_support_title(title: str) -> str:
+    return re.sub(r"\s*\([^)]*\)\s*$", "", title).strip()
+
+
+def _section_aliases(section_id: str, display_section_ids: set[str]) -> list[str]:
+    aliases = [
+        source_id
+        for source_id, target_id in _PLANET_SECTION_TARGETS.items()
+        if target_id == section_id and source_id not in display_section_ids
+    ]
+    return aliases
+
+
+def _section_anchor(section_id: str) -> str:
+    return f'<span id="{html.escape(section_id, quote=True)}" class="section-anchor"></span>'
+
+
 def _footer_note_html(note: str) -> str:
     text = html.escape(_plain_text_excerpt(note, limit=1000))
     return f'<p class="report-note"><strong>Примечание:</strong> {text}</p>'
 
 
-def _result_shell(report: NatalReport, title: str, lead: str, visual_layers: str) -> str:
+def _result_shell(report: NatalReport, title: str, lead: str, visual_layers: str, sections: list[ReportSection]) -> str:
     visual_html = f'<div class="visual-stack">{visual_layers}</div>' if visual_layers else ""
     return (
         '<section class="result-shell">'
@@ -173,18 +296,18 @@ def _result_shell(report: NatalReport, title: str, lead: str, visual_layers: str
         '<p class="eyebrow">Ваш результат уже готов</p>'
         f"<h1>{html.escape(title)}</h1>"
         f'<p class="lead">{html.escape(lead)}</p>'
-        f"{_reading_path_html(report)}"
+        f"{_reading_path_html(report, sections)}"
         "</div>"
         f"{visual_html}"
         "</section>"
     )
 
 
-def _reading_path_html(report: NatalReport) -> str:
+def _reading_path_html(report: NatalReport, sections: list[ReportSection]) -> str:
     has_natal = bool(report.chart.planets)
     has_matrix = report.chart.destiny_matrix is not None
-    section_ids = {section.id for section in report.sections}
-    natal_target = _first_natal_section_id(report.sections)
+    section_ids = {section.id for section in sections}
+    natal_target = _first_natal_section_id(sections)
     matrix_target = "section-destiny-matrix" if "section-destiny-matrix" in section_ids else "full-reading"
     periods_target = "section-destiny-periods" if "section-destiny-periods" in section_ids else "positions"
     if has_natal and has_matrix:
@@ -222,16 +345,16 @@ def _first_natal_section_id(sections: list[ReportSection]) -> str:
     return "full-reading"
 
 
-def _position_cards(report: NatalReport) -> list[str]:
+def _position_cards(report: NatalReport, sections: list[ReportSection]) -> list[str]:
     cards: list[str] = []
-    section_ids = {section.id for section in report.sections}
+    section_ids = {section.id for section in sections}
     for planet in report.chart.planets:
         detail = f"{planet.sign} {planet.degree_in_sign:.1f}°"
         if planet.house:
             detail += f", дом {planet.house}"
         cards.append(
             _position_card(
-                _target_section(f"section-{planet.key}", section_ids),
+                _planet_target_section(planet.key, section_ids),
                 _point_meaning(planet.key),
                 planet.label,
                 detail,
@@ -277,6 +400,14 @@ def _position_card(section_id: str, category: str, title: str, detail: str) -> s
         f'<a class="position-card" href="#{html.escape(section_id, quote=True)}">'
         f"<span>{html.escape(category)}</span><strong>{html.escape(title)}</strong><p>{html.escape(detail)}</p></a>"
     )
+
+
+def _planet_target_section(planet_key: str, section_ids: set[str]) -> str:
+    raw_section_id = f"section-{planet_key.lower()}"
+    target = _PLANET_SECTION_TARGETS.get(raw_section_id, raw_section_id)
+    if target in section_ids:
+        return target
+    return _target_section(raw_section_id, section_ids)
 
 
 def _section_category(section: ReportSection) -> str:
@@ -335,6 +466,7 @@ def _plain_text_excerpt(markdown: str, limit: int = 220) -> str:
 
 
 def build_telegraph_markdown(report: NatalReport) -> str:
+    display_sections = _merge_related_sections(report.sections)
     lines = [f"# {_report_title(report)}", ""]
     if report.hosted_url:
         lines.extend([f"Интерактивная версия: {report.hosted_url}", ""])
@@ -352,7 +484,7 @@ def build_telegraph_markdown(report: NatalReport) -> str:
             if position.kind != "primary":
                 continue
             lines.append(f"| {position.label} | {position.arcana}. {position.arcana_label} | {position.theme} |")
-    for section in report.sections:
+    for section in display_sections:
         lines.extend(["", f"## {section.title}", "", section.body_markdown])
     lines.extend(["", _GEONAMES_ATTRIBUTION_MARKDOWN])
     markdown = "\n".join(lines)

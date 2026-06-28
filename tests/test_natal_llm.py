@@ -29,12 +29,12 @@ def test_prompt_contains_confidence_rules_and_no_raw_birth_place():
     prompt = build_interpretation_prompt(chart=chart, language="ru", focus="general")
 
     assert "не трактуй дома" in prompt.lower()
-    assert "section-moon" in prompt
+    assert "section-emotions" in prompt
     assert "Kyiv" not in prompt
     assert "1995" not in prompt
 
 
-def test_prompt_requests_personality_domain_titles_for_planet_sections():
+def test_prompt_uses_planets_as_context_without_duplicate_planet_sections():
     chart = ChartData(
         input_quality=InputQuality(
             time_precision=TimePrecision.EXACT,
@@ -62,9 +62,12 @@ def test_prompt_requests_personality_domain_titles_for_planet_sections():
 
     prompt = build_interpretation_prompt(chart=chart, language="ru", focus="general")
 
-    assert "Солнце — ядро личности" in prompt
-    assert "Меркурий — мышление и речь" in prompt
-    assert "не используй односложные заголовки" in prompt
+    assert "section-identity" in prompt
+    assert "section-thinking" in prompt
+    assert "section-sun" not in prompt
+    assert "section-mercury" not in prompt
+    assert "Не создавай отдельные секции по каждой планете" in prompt
+    assert "Планеты используй внутри жизненных тем" in prompt
 
 
 def test_prompt_requests_practical_expandable_life_topics_and_examples():
@@ -218,9 +221,13 @@ def test_fallback_sections_use_user_facing_planet_titles():
     )
 
     sections = _fallback_sections(chart)
+    ids = {section.id for section in sections}
+    titles = [section.title for section in sections]
 
-    assert sections[1].title == "Солнце — ядро личности"
-    assert sections[2].title == "Луна — эмоции и потребности"
+    assert "section-sun" not in ids
+    assert "section-moon" not in ids
+    assert "Ядро личности и способ проявляться" in titles
+    assert "Эмоциональные потребности и восстановление" in titles
 
 
 def test_fallback_sections_include_practical_topics_with_examples_and_shadow_language():
