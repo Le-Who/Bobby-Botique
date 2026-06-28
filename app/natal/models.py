@@ -90,6 +90,7 @@ class DestinyMatrixPosition(BaseModel):
     shadow: str = ""
     x: float
     y: float
+    kind: str = "primary"
 
 
 class DestinyMatrixLine(BaseModel):

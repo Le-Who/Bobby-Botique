@@ -67,6 +67,45 @@ def test_prompt_requests_personality_domain_titles_for_planet_sections():
     assert "не используй односложные заголовки" in prompt
 
 
+def test_prompt_requests_practical_expandable_life_topics_and_examples():
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.EXACT,
+            houses_available=True,
+            angles_available=True,
+        ),
+        planets=[
+            PlanetPosition(
+                key="sun",
+                label="Солнце",
+                longitude=325,
+                sign="Водолей",
+                degree_in_sign=25,
+            ),
+            PlanetPosition(
+                key="venus",
+                label="Венера",
+                longitude=18,
+                sign="Овен",
+                degree_in_sign=18,
+            ),
+        ],
+        aspects=[],
+    )
+
+    prompt = build_interpretation_prompt(chart=chart, language="ru", focus="general")
+
+    assert "section-work-money" in prompt
+    assert "section-shadow-patterns" in prompt
+    assert "section-relationships" in prompt
+    assert "практичные темы, которые человек может открывать по интересу" in prompt
+    assert "жизненные примеры" in prompt
+    assert "негативные стороны" in prompt
+    assert "без лести" in prompt
+    assert "не упоминай оплату" in prompt
+    assert "не пиши, что разбор бесплатный" in prompt
+
+
 def test_prompt_surfaces_quality_warnings_for_exact_time_heuristic_houses():
     chart = ChartData(
         input_quality=InputQuality(
@@ -184,6 +223,58 @@ def test_fallback_sections_use_user_facing_planet_titles():
     assert sections[2].title == "Луна — эмоции и потребности"
 
 
+def test_fallback_sections_include_practical_topics_with_examples_and_shadow_language():
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.UNKNOWN,
+            houses_available=False,
+            angles_available=False,
+        ),
+        planets=[
+            PlanetPosition(
+                key="sun",
+                label="Солнце",
+                longitude=325,
+                sign="Водолей",
+                degree_in_sign=25,
+            ),
+            PlanetPosition(
+                key="moon",
+                label="Луна",
+                longitude=120,
+                sign="Лев",
+                degree_in_sign=0,
+            ),
+            PlanetPosition(
+                key="venus",
+                label="Венера",
+                longitude=18,
+                sign="Овен",
+                degree_in_sign=18,
+            ),
+            PlanetPosition(
+                key="mars",
+                label="Марс",
+                longitude=185,
+                sign="Весы",
+                degree_in_sign=5,
+            ),
+        ],
+        aspects=[],
+    )
+
+    sections = _fallback_sections(chart)
+    ids = {section.id for section in sections}
+    text = "\n".join(section.body_markdown for section in sections).lower()
+
+    assert "section-work-money" in ids
+    assert "section-shadow-patterns" in ids
+    assert "section-relationships" in ids
+    assert "например" in text
+    assert "тен" in text
+    assert "без точного времени" in text
+
+
 @pytest.mark.asyncio
 async def test_generate_interpretation_falls_back_when_llm_contradicts_calculated_sign(monkeypatch):
     chart = ChartData(
@@ -223,3 +314,139 @@ async def test_generate_interpretation_falls_back_when_llm_contradicts_calculate
     bodies = "\n".join(section.body_markdown for section in sections)
     assert "Деве" not in bodies
     assert "Скорпион" in bodies
+
+
+@pytest.mark.asyncio
+async def test_generate_interpretation_repairs_incomplete_practical_structure(monkeypatch):
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.EXACT,
+            houses_available=True,
+            angles_available=True,
+        ),
+        planets=[
+            PlanetPosition(
+                key="sun",
+                label="Солнце",
+                longitude=325,
+                sign="Водолей",
+                degree_in_sign=25,
+            )
+        ],
+        aspects=[],
+    )
+
+    complete_response = (
+        "## section-summary | Краткое резюме\n"
+        "Есть общий вектор и живой пример.\n\n"
+        "## section-identity | Ядро личности и способ проявляться\n"
+        "Солнце в Водолее проявляется через независимость. Например, человек легче включается в проект, "
+        "когда понимает его смысл. Теневая сторона — спорить с правилами только ради свободы.\n\n"
+        "## section-emotions | Эмоциональные потребности и восстановление\n"
+        "Например, восстановление требует честного ритма. Теневая сторона — игнорировать усталость.\n\n"
+        "## section-thinking | Мышление, речь и решения\n"
+        "Например, мысль быстрее собирается через систему. Теневая сторона — спорить вместо уточнения.\n\n"
+        "## section-love | Любовь, симпатия и личные ценности\n"
+        "Например, симпатия растет через уважение свободы. Теневая сторона — холодность.\n\n"
+        "## section-action | Действие, конфликт и энергия\n"
+        "Например, энергия включается через ясную цель. Теневая сторона — резкость.\n\n"
+        "## section-work-money | Работа, деньги и реализация\n"
+        "Например, деньги держатся там, где есть роль и критерий результата. Теневая сторона — распыление.\n\n"
+        "## section-shadow-patterns | Тени и повторяющиеся сценарии\n"
+        "Например, защита может выглядеть как независимость любой ценой. Теневая сторона становится видимой.\n\n"
+        "## section-relationships | Отношения и близость\n"
+        "Например, близость крепче, когда потребности названы словами. Теневая сторона — проверять молчанием.\n\n"
+        "## section-growth | Вектор роста и практичные шаги\n"
+        "Например, один честный разговор полезнее идеального плана. Теневая сторона — откладывать."
+    )
+
+    class FakeRouter:
+        def __init__(self):
+            self.calls = 0
+
+        async def get_response(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return (
+                    "## section-summary | Краткое резюме\n"
+                    "Сухой ответ.\n\n"
+                    "## section-sun | Солнце — ядро личности\n"
+                    "Солнце в Водолее.",
+                    0,
+                )
+            assert "улучши структуру" in kwargs["history"][0]["parts"][0].lower()
+            return complete_response, 0
+
+    router = FakeRouter()
+    monkeypatch.setattr("app.config.settings", SimpleNamespace(RESEARCH_MODEL="test-model", DEFAULT_MODEL=""))
+    monkeypatch.setattr("app.providers.get_provider_router", lambda: router)
+
+    sections = await generate_interpretation(chart, user_id=123, chat_id=456)
+
+    ids = {section.id for section in sections}
+    assert router.calls == 2
+    assert "section-work-money" in ids
+    assert "section-shadow-patterns" in ids
+    assert "section-relationships" in ids
+    assert "Сухой ответ" not in "\n".join(section.body_markdown for section in sections)
+
+
+@pytest.mark.asyncio
+async def test_generate_interpretation_does_not_repair_complete_practical_structure(monkeypatch):
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.EXACT,
+            houses_available=True,
+            angles_available=True,
+        ),
+        planets=[
+            PlanetPosition(
+                key="sun",
+                label="Солнце",
+                longitude=325,
+                sign="Водолей",
+                degree_in_sign=25,
+            )
+        ],
+        aspects=[],
+    )
+    response = (
+        "## section-summary | Краткое резюме\n"
+        "Например, карта показывает живой вектор. Теневая сторона тоже названа.\n\n"
+        "## section-identity | Ядро личности и способ проявляться\n"
+        "Солнце в Водолее. Например, человек ищет смысл. Теневая сторона — спор ради свободы.\n\n"
+        "## section-emotions | Эмоциональные потребности и восстановление\n"
+        "Например, нужен ритм. Теневая сторона — игнорировать усталость.\n\n"
+        "## section-thinking | Мышление, речь и решения\n"
+        "Например, помогает структура. Теневая сторона — застревать в спорах.\n\n"
+        "## section-love | Любовь, симпатия и личные ценности\n"
+        "Например, важна честность. Теневая сторона — холодность.\n\n"
+        "## section-action | Действие, конфликт и энергия\n"
+        "Например, нужна цель. Теневая сторона — резкость.\n\n"
+        "## section-work-money | Работа, деньги и реализация\n"
+        "Например, результат держится на роли. Теневая сторона — распыление.\n\n"
+        "## section-shadow-patterns | Тени и повторяющиеся сценарии\n"
+        "Например, защита может стать привычкой. Теневая сторона видна в повторе.\n\n"
+        "## section-relationships | Отношения и близость\n"
+        "Например, важен прямой разговор. Теневая сторона — молчаливые проверки.\n\n"
+        "## section-growth | Вектор роста и практичные шаги\n"
+        "Например, помогает один шаг. Теневая сторона — ждать идеала."
+    )
+
+    class FakeRouter:
+        def __init__(self):
+            self.calls = 0
+
+        async def get_response(self, **kwargs):
+            del kwargs
+            self.calls += 1
+            return response, 0
+
+    router = FakeRouter()
+    monkeypatch.setattr("app.config.settings", SimpleNamespace(RESEARCH_MODEL="test-model", DEFAULT_MODEL=""))
+    monkeypatch.setattr("app.providers.get_provider_router", lambda: router)
+
+    sections = await generate_interpretation(chart, user_id=123, chat_id=456)
+
+    assert router.calls == 1
+    assert {section.id for section in sections} >= {"section-work-money", "section-shadow-patterns", "section-relationships"}

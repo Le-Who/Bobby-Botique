@@ -61,6 +61,36 @@ def test_hosted_report_contains_svg_and_section_ids(sample_natal_report: NatalRe
     assert 'class="positions-grid"' in html
 
 
+def test_hosted_report_uses_expandable_thematic_sections_without_input_or_sales(sample_natal_report: NatalReport):
+    sample_natal_report.sections.extend(
+        [
+            ReportSection(
+                id="section-work-money",
+                title="Работа, деньги и реализация",
+                body_markdown="Практичный блок про выбор проектов и границы нагрузки.",
+            ),
+            ReportSection(
+                id="section-shadow-patterns",
+                title="Тени и повторяющиеся сценарии",
+                body_markdown="Где человек может застревать и как это заметить без самобичевания.",
+            ),
+        ]
+    )
+
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert '<details id="section-sun"' in html
+    assert '<summary><span>Ядро личности</span><strong>Солнце</strong></summary>' in html
+    assert 'class="reading-body"' in html
+    assert 'open data-default-open="true"' in html
+    assert "Работа, деньги и реализация" in html
+    assert "Тени и повторяющиеся сценарии" in html
+    assert "Введите дату рождения" not in html
+    assert "Тариф" not in html
+    assert "оплат" not in html.lower()
+    assert "бесплат" not in html.lower()
+
+
 def test_hosted_report_renders_destiny_matrix_as_second_visual_layer(sample_natal_report: NatalReport):
     sample_natal_report.chart.destiny_matrix = calculate_destiny_matrix("1997-11-09")
     sample_natal_report.sections.append(
@@ -267,7 +297,7 @@ def test_hosted_report_formats_aspect_bold_blocks_as_separate_paragraphs(sample_
     ]
 
     html = build_hosted_report_html(sample_natal_report)
-    aspect_html = html.split('id="section-aspects"', 1)[1].split("</article>", 1)[0]
+    aspect_html = html.split('id="section-aspects"', 1)[1].split("</details>", 1)[0]
 
     assert "<p><b>Солнце квадрат Луна</b> напряжение между волей и потребностями.</p>" in aspect_html
     assert "<p><b>Венера трин Марс</b> естественный обмен теплом и действием.</p>" in aspect_html
@@ -286,7 +316,7 @@ def test_hosted_report_moves_aspect_note_to_page_footer(sample_natal_report: Nat
     ]
 
     html = build_hosted_report_html(sample_natal_report)
-    aspect_html = html.split('id="section-aspects"', 1)[1].split("</article>", 1)[0]
+    aspect_html = html.split('id="section-aspects"', 1)[1].split("</details>", 1)[0]
 
     assert "Примечание:" not in aspect_html
     assert html.rfind("дома и углы не трактуются") > html.rfind('class="positions-grid"')

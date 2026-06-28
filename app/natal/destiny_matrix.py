@@ -112,16 +112,41 @@ _ARCANA_GROWTH: dict[int, str] = {
     22: "не бросать начатое при первом сопротивлении, а оставлять свободе опору",
 }
 
+_ARCANA_PERIOD_EVENTS: dict[int, str] = {
+    1: "первый самостоятельный запуск, новая учеба, первые деньги за навык, важный разговор или документ",
+    2: "периоды тишины и наблюдения, скрытые семейные темы, усиление интуиции, обучение через наставницу или близкую женщину",
+    3: "события вокруг семьи, тела, дома, творчества, заботы, рождения проекта или расширения ресурсов",
+    4: "переход к правилам и ответственности: должность, имущество, ремонт, структура работы, жесткие договоренности",
+    5: "экзамены, обучение, наставники, официальные решения, оформление отношений, выбор ценностей и правил семьи",
+    6: "яркий выбор в любви или партнерстве, примирение, расставание, союз, решение между двумя сценариями жизни",
+    7: "переезд, дорога, спорт, транспорт, рывок в карьере, конкуренция или необходимость взять управление на себя",
+    8: "проверка силы и влияния: деньги, власть, тело, самообладание, переговоры с сильными людьми",
+    9: "уход в учебу, одиночный поиск, смена круга общения, терапия, наставничество, глубокая специализация",
+    10: "поворот цикла: смена работы, места, статуса или расписания, внезапный шанс, повторная попытка",
+    11: "юридические вопросы, договоры, экзамены, честный разговор, оформление или пересмотр обязательств",
+    12: "пауза, ожидание, забота о близком, временное ограничение, смена взгляда на прежнюю роль",
+    13: "завершение старого этапа, расставание с лишним, переезд, ремонт, обновление тела или профессии",
+    14: "восстановление режима, лечение, примирение, спокойная настройка быта, поиск устойчивого темпа",
+    15: "сильные желания, деньги, сексуальность, зависимые связи, соблазн быстрых решений и проверка границ",
+    16: "резкая перестройка: слом старой конструкции, внезапная смена планов, переезд, конфликт с правилами",
+    17: "публичность, творчество, мечта, дальняя цель, медиа, помощь друзей и появление вдохновляющего ориентира",
+    18: "неясность, сны, тревоги, тайны, эмоциональные качели, работа с доверием и семейными страхами",
+    19: "проявленность, дети, признание, праздник, сцена, личный бренд, теплый период роста и видимости",
+    20: "родовые события, возвращение к семье, призвание, большой выбор, завершение давнего сценария",
+    21: "путешествие, переезд, иностранная тема, большой проект, завершение цикла и выход на более широкий уровень",
+    22: "новый старт с нуля, эксперимент, свобода, нестандартная поездка, смена окружения или формата жизни",
+}
+
 _POSITION_LAYOUT: tuple[tuple[str, str, str, float, float, str], ...] = (
     ("higher_self", "Высшая суть", "вдохновение, связь с высшим, внутренний ориентир", 460, 130, "month"),
     ("female_talent", "Таланты женского рода", "поддержка, принятие, способы создавать отношения и среду", 693, 227, "derived"),
     ("soul_task", "Задача души", "социальная задача, зрелый выбор и направление усилий", 790, 460, "year"),
     ("money_channel", "Денежный канал", "вход в материальный результат, обмен и ценность", 693, 693, "derived"),
-    ("comfort", "Характер и зона комфорта", "личная сила, привычный стиль восстановления и опоры", 460, 790, "derived"),
+    ("comfort", "Характер и земная опора", "личная сила, привычный стиль восстановления и опоры", 460, 790, "derived"),
     ("karmic_tail", "Кармический хвост", "главный урок, повторяющийся сценарий и слабая зона", 227, 693, "derived"),
     ("portrait", "Портрет и ресурс", "визитная карточка, как считывают люди и мир", 130, 460, "day"),
     ("male_talent", "Таланты мужского рода", "воля, действие, стратегия и родовая линия отца", 227, 227, "derived"),
-    ("center", "Центр личности", "главная сборка матрицы и зона личной силы", 460, 460, "derived"),
+    ("center", "Центр и зона комфорта", "главная сборка матрицы и зона личной силы", 460, 460, "derived"),
 )
 
 _PERIOD_KEYS: tuple[tuple[int, int, str, str], ...] = (
@@ -153,11 +178,12 @@ def calculate_destiny_matrix(birth_date: str) -> DestinyMatrixData:
         "money_channel": _reduce_arcana(soul_task + comfort),
         "karmic_tail": _reduce_arcana(portrait + comfort),
     }
-    positions = [
+    primary_positions = [
         _build_position(key, label, theme, values[key], x, y)
         for key, label, theme, x, y, _source in _POSITION_LAYOUT
     ]
-    by_key = {position.key: position for position in positions}
+    positions = [*primary_positions, *_build_intermediate_positions(values)]
+    by_key = {position.key: position for position in primary_positions}
     return DestinyMatrixData(
         birth_date=parsed.isoformat(),
         positions=positions,
@@ -254,10 +280,23 @@ def build_destiny_matrix_sections(matrix: DestinyMatrixData) -> list[ReportSecti
                 f"{portrait.interpretation}. Высшая суть — **{_arcana(higher_self)}** добавляет внутренний ориентир: "
                 f"{higher_self.interpretation}. Задача души — **{_arcana(soul_task)}** переводит это в действие: "
                 f"{soul_task.interpretation}.\n\n"
-                f"Зона комфорта — **{_arcana(comfort)}** показывает, где легче восстанавливаться и возвращать себе опору: "
-                f"{comfort.interpretation}."
+                "Например, этот блок заметен в момент выбора: человек либо повторяет привычную защиту, либо собирает "
+                "центр и действует взрослее, чем раньше. Тень центра включается, когда сильное качество становится "
+                "единственным способом реагировать."
             ),
             chart_refs=["destiny:center", "destiny:portrait", "destiny:higher_self", "destiny:soul_task"],
+        ),
+        ReportSection(
+            id="section-destiny-comfort",
+            title="Характер, зона комфорта и земная опора",
+            body_markdown=(
+                f"Зона комфорта — **{_arcana(comfort)}** показывает, где легче восстанавливаться и возвращать себе опору: "
+                f"{comfort.interpretation}. Это не про пассивный отдых, а про способ снова стать собранным человеком.\n\n"
+                f"Например, когда день разваливается, эта энергия показывает, что помогает вернуться в рабочий ритм: "
+                f"порядок, разговор, движение, тишина, творчество или честное завершение лишнего. Теневая сторона — "
+                f"{comfort.shadow}; тогда комфорт превращается не в ресурс, а в привычную клетку."
+            ),
+            chart_refs=["destiny:comfort", "destiny:center"],
         ),
         ReportSection(
             id="section-destiny-relationships",
@@ -268,7 +307,8 @@ def build_destiny_matrix_sections(matrix: DestinyMatrixData) -> list[ReportSecti
                 f"(**{karmic.arcana_label}**) и зрелую позицию центра (**{center.arcana_label}**). "
                 f"Женская линия добавляет качество **{female.arcana_label}**: {female.interpretation}.\n\n"
                 f"Практически это значит: отношения становятся сильнее, когда в фокусе задача — {center.shadow}, "
-                "и меньше включается автоматическая защита или молчаливое ожидание."
+                "и меньше включается автоматическая защита или молчаливое ожидание. Например, вместо проверки "
+                "партнера холодом проще прямо назвать, что именно задело и какой реакции хочется."
             ),
             chart_refs=["destiny:karmic_tail", "destiny:center", "destiny:female_talent"],
         ),
@@ -281,7 +321,9 @@ def build_destiny_matrix_sections(matrix: DestinyMatrixData) -> list[ReportSecti
                 f"Связка с задачей души **{_arcana(soul_task)}** показывает, что деньги лучше держатся там, "
                 f"где есть структура, понятная ответственность и видимый результат.\n\n"
                 f"Слабая точка денежной линии — {money.shadow}. Если держать этот фокус, канал становится не абстрактной "
-                "темой про удачу, а конкретным способом выбирать проекты, партнерства и формат работы."
+                "темой про удачу, а конкретным способом выбирать проекты, партнерства и формат работы. Например, "
+                "если проект обещает быстрый выигрыш, но требует нарушить свои правила, матрица скорее просит не "
+                "героизма, а ясной проверки условий."
             ),
             chart_refs=["destiny:money_channel", "destiny:soul_task", "destiny:comfort"],
         ),
@@ -295,9 +337,64 @@ def build_destiny_matrix_sections(matrix: DestinyMatrixData) -> list[ReportSecti
                 f"ее ресурс — {female.interpretation}.\n\n"
                 f"Кармический хвост — **{_arcana(karmic)}**. Это повторяющийся урок матрицы: {karmic.theme}. "
                 f"В вашем случае он просит {karmic.shadow}. Когда этот сценарий замечен, он становится источником "
-                "зрелости, а не фоновым повтором."
+                "зрелости, а не фоновым повтором. Тень родовой темы часто проявляется не драматично, а бытово: "
+                "например, как привычка спорить с авторитетом даже там, где выгоднее спокойно договориться."
             ),
             chart_refs=["destiny:male_talent", "destiny:female_talent", "destiny:karmic_tail"],
+        ),
+        ReportSection(
+            id="section-destiny-self-search",
+            title="Поиск себя: способности, навыки и внутренний союз",
+            body_markdown=(
+                f"Поиск себя в этой матрице собирается через портрет **{_arcana(portrait)}**, мужскую линию "
+                f"**{_arcana(male)}**, женскую линию **{_arcana(female)}** и центр **{_arcana(center)}**. "
+                "Это блок про соединение действия и принятия: где вы умеете проявляться, чему учитесь и как собираете "
+                "внутренний союз вместо постоянного спора с собой.\n\n"
+                f"Например, человек может иметь сильный навык {portrait.interpretation}, но обесценивать его, потому "
+                f"что ждет более красивого момента. Тень поиска себя — бесконечно готовиться к жизни, вместо того "
+                f"чтобы проверять способности в реальных делах."
+            ),
+            chart_refs=["destiny:portrait", "destiny:male_talent", "destiny:female_talent", "destiny:center"],
+        ),
+        ReportSection(
+            id="section-destiny-socialization",
+            title="Социализация: признание, роли и результат",
+            body_markdown=(
+                f"Социализация показывает, как личная энергия выходит в систему: работу, сообщество, семью, команду. "
+                f"Задача души **{_arcana(soul_task)}** задает видимый вектор, а денежный канал **{_arcana(money)}** "
+                "показывает, за что миру проще возвращать вам ресурс.\n\n"
+                f"В вашем случае важна не только яркость, но и форма: когда результат понятен другим, признание "
+                f"приходит устойчивее. Например, талант может быть очевиден близким, но социальный результат появляется "
+                f"только после упаковки: договоренности, срока, цены, роли, публичного примера работы."
+            ),
+            chart_refs=["destiny:soul_task", "destiny:money_channel", "destiny:center"],
+        ),
+        ReportSection(
+            id="section-destiny-spiritual",
+            title="Духовная гармония и планетарная задача",
+            body_markdown=(
+                f"Духовная гармония здесь читается через связку высшей сути **{_arcana(higher_self)}**, центра "
+                f"**{_arcana(center)}** и задачи души **{_arcana(soul_task)}**. Это не отвлеченная возвышенность, "
+                "а вопрос: ради чего вы собираете силу, знания и опыт.\n\n"
+                f"Планетарная задача проявляется там, где личная история начинает приносить пользу шире личного круга. "
+                f"Например, пережитый кризис может стать не поводом закрыться, а языком, на котором вы позже объясните "
+                f"другим сложную тему. Тень духовного блока — говорить о смыслах, но избегать конкретного выбора."
+            ),
+            chart_refs=["destiny:higher_self", "destiny:center", "destiny:soul_task"],
+        ),
+        ReportSection(
+            id="section-destiny-energy",
+            title="Энергетический ритм и восстановление",
+            body_markdown=(
+                f"Энергетический ритм матрицы показывает не медицинскую картину, а то, как человек расходует внимание, "
+                f"волю и эмоциональный ресурс. Нижняя опора **{_arcana(comfort)}** отвечает за восстановление, "
+                f"центр **{_arcana(center)}** — за сборку, а денежный канал **{_arcana(money)}** — за обмен энергии "
+                "на результат.\n\n"
+                f"Например, если вы долго держите лицо и не признаете усталость, тень может проявиться резким отказом "
+                f"от всего сразу. Более зрелый вариант — заранее замечать, какой ритм сохраняет продуктивность без "
+                f"постоянного внутреннего долга."
+            ),
+            chart_refs=["destiny:comfort", "destiny:center", "destiny:money_channel"],
         ),
         ReportSection(
             id="section-destiny-periods",
@@ -319,11 +416,20 @@ def _reduce_arcana(value: int) -> int:
     if value <= 0:
         return 22
     while value > 22:
-        value -= 22
+        value = sum(int(char) for char in str(value))
     return value or 22
 
 
-def _build_position(key: str, label: str, theme: str, arcana: int, x: float, y: float) -> DestinyMatrixPosition:
+def _build_position(
+    key: str,
+    label: str,
+    theme: str,
+    arcana: int,
+    x: float,
+    y: float,
+    *,
+    kind: str = "primary",
+) -> DestinyMatrixPosition:
     return DestinyMatrixPosition(
         key=key,
         label=label,
@@ -334,7 +440,56 @@ def _build_position(key: str, label: str, theme: str, arcana: int, x: float, y: 
         shadow=_ARCANA_GROWTH[arcana],
         x=x,
         y=y,
+        kind=kind,
     )
+
+
+def _build_intermediate_positions(values: dict[str, int]) -> list[DestinyMatrixPosition]:
+    center = values["center"]
+    axis_specs = (
+        ("axis_top", "Промежуточные значения верхнего луча", "higher_self", 460, 238, 460, 186, 460, 350),
+        ("axis_right", "Промежуточные значения правого луча", "soul_task", 682, 460, 734, 460, 570, 460),
+        ("axis_bottom", "Промежуточные значения нижнего луча", "comfort", 460, 682, 460, 734, 460, 570),
+        ("axis_left", "Промежуточные значения левого луча", "portrait", 238, 460, 186, 460, 350, 460),
+    )
+    positions: list[DestinyMatrixPosition] = []
+    for prefix, label, outer_key, mid_x, mid_y, outer_x, outer_y, inner_x, inner_y in axis_specs:
+        outer = values[outer_key]
+        mid = _reduce_arcana(outer + center)
+        outer_mid = _reduce_arcana(outer + mid)
+        inner = _reduce_arcana(center + mid)
+        positions.extend(
+            [
+                _build_position(
+                    f"{prefix}_outer",
+                    f"{label}: внешний узел",
+                    "дополнительный расчет между опорной точкой и центром",
+                    outer_mid,
+                    outer_x,
+                    outer_y,
+                    kind="intermediate",
+                ),
+                _build_position(
+                    f"{prefix}_mid",
+                    f"{label}: средний узел",
+                    "промежуточная сумма опорной точки и центра",
+                    mid,
+                    mid_x,
+                    mid_y,
+                    kind="intermediate",
+                ),
+                _build_position(
+                    f"{prefix}_inner",
+                    f"{label}: внутренний узел",
+                    "внутренний ресурс луча рядом с центром",
+                    inner,
+                    inner_x,
+                    inner_y,
+                    kind="intermediate",
+                ),
+            ]
+        )
+    return positions
 
 
 def _build_lines(by_key: dict[str, DestinyMatrixPosition]) -> list[DestinyMatrixLine]:
@@ -445,7 +600,7 @@ def _line_label(x: float, y: float, label: str, color: str) -> str:
 
 
 def _matrix_node(position: DestinyMatrixPosition) -> str:
-    radius = 55 if position.key == "center" else 45 if position.key in {
+    radius = 24 if position.kind == "intermediate" else 55 if position.key == "center" else 45 if position.key in {
         "higher_self",
         "soul_task",
         "comfort",
@@ -462,15 +617,26 @@ def _matrix_node(position: DestinyMatrixPosition) -> str:
         "male_talent": "#eff6ff",
         "female_talent": "#fff1f2",
     }
-    fill = fill_by_key.get(position.key, "#fffefa")
+    if position.kind == "intermediate":
+        if position.key.endswith("_inner"):
+            fill = "#a8dc62"
+        elif position.key.endswith("_outer"):
+            fill = "#5f7ff0"
+        else:
+            fill = "#e9f7ff"
+    else:
+        fill = fill_by_key.get(position.key, "#fffefa")
     title = html.escape(f"{position.label}: {position.arcana}. {position.arcana_label} — {position.theme}")
+    font_size = 22 if position.kind == "intermediate" else 34
+    text_y = position.y + (7 if position.kind == "intermediate" else 10)
     return (
-        f'<g data-position="{html.escape(position.key, quote=True)}" filter="url(#matrix-shadow)">'
+        f'<g data-position="{html.escape(position.key, quote=True)}" '
+        f'data-kind="{html.escape(position.kind, quote=True)}" filter="url(#matrix-shadow)">'
         f"<title>{title}</title>"
         f'<circle cx="{position.x:.1f}" cy="{position.y:.1f}" r="{radius}" fill="{fill}" '
         'stroke="#1f332c" stroke-width="2.2"/>'
-        f'<text x="{position.x:.1f}" y="{position.y + 10:.1f}" text-anchor="middle" '
-        'font-family="Georgia, serif" font-size="34" font-weight="700" fill="#16251f">'
+        f'<text x="{position.x:.1f}" y="{text_y:.1f}" text-anchor="middle" '
+        f'font-family="Georgia, serif" font-size="{font_size}" font-weight="700" fill="#16251f">'
         f"{position.arcana}</text>"
         "</g>"
     )
@@ -490,14 +656,17 @@ def _callout(x: float, y: float, lines: list[str], color: str, anchor: str) -> s
 
 def _periods_markdown(periods: list[DestinyMatrixLifePeriod]) -> str:
     lines = [
-        "Возрастной контур матрицы читается как последовательность акцентов: какие качества чаще требуют внимания "
-        "в разные десятилетия жизни.",
+        "Возрастной контур матрицы читается как цепочка жизненных сюжетов: в каждом десятилетии один аркан чаще "
+        "подсвечивает события, выборы, людей и повторяющиеся сценарии.",
         "",
     ]
     for period in periods:
+        events = _ARCANA_PERIOD_EVENTS[period.arcana]
+        growth = _ARCANA_GROWTH[period.arcana]
         lines.append(
-            f"- **{period.start_age}-{period.end_age} лет — {period.arcana}. {period.arcana_label}**: "
-            f"{period.focus}. Основной мотив периода — {period.theme}."
+            f"- **{period.start_age}-{period.end_age} лет — {period.arcana}. {period.arcana_label}**. "
+            f"Возможные события периода: {events}. Фокус десятилетия: {period.focus}. "
+            f"Повторяющийся сюжет — {period.theme}; полезная стратегия — {growth}."
         )
     return "\n".join(lines)
 

@@ -29,7 +29,7 @@ _POINT_MEANINGS = {
 def build_hosted_report_html(report: NatalReport) -> str:
     full_sections = []
     footer_notes: list[str] = []
-    for section in report.sections:
+    for index, section in enumerate(report.sections):
         section_id = html.escape(section.id, quote=True)
         title = html.escape(section.title)
         category_raw = _section_category(section)
@@ -37,9 +37,12 @@ def build_hosted_report_html(report: NatalReport) -> str:
         footer_notes.extend(notes)
         body = _sanitize_hosted_body(_hosted_markdown_to_html(body_markdown))
         category = html.escape(category_raw)
+        default_open = ' open data-default-open="true"' if index == 0 else ""
         full_sections.append(
-            f'<article id="{section_id}" class="reading-card" data-category="{category}">'
-            f"<span>{category}</span><h3>{title}</h3><div>{body}</div></article>"
+            f'<details id="{section_id}" class="reading-card reading-disclosure" '
+            f'data-category="{category}"{default_open}>'
+            f"<summary><span>{category}</span><strong>{title}</strong></summary>"
+            f'<div class="reading-body">{body}</div></details>'
         )
 
     telegraph = ""
@@ -76,9 +79,9 @@ def build_hosted_report_html(report: NatalReport) -> str:
         ".chart-stage,.matrix-stage{position:relative;width:100%;padding:clamp(12px,3vw,22px);overflow:hidden}"
         "svg{position:relative;z-index:1;max-width:100%;height:auto;display:block;margin:0 auto}"
         ".section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:64px 0 18px}.section-head h2{margin:0;font-family:Georgia,serif;font-size:clamp(28px,4vw,44px);font-weight:500}.section-head p{max-width:480px;margin:0;color:var(--muted)}"
-        ".position-card:hover{transform:translateY(-2px);box-shadow:0 18px 52px rgba(33,45,42,.12)}.reading-card span,.position-card span{display:block;margin-bottom:10px;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.reading-card h3{margin:0 0 10px;font-family:Georgia,serif;font-size:23px;font-weight:500}"
+        ".position-card:hover{transform:translateY(-2px);box-shadow:0 18px 52px rgba(33,45,42,.12)}.reading-card span,.position-card span{display:block;margin-bottom:10px;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.reading-card summary{list-style:none;cursor:pointer;padding:clamp(18px,3vw,26px);display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}.reading-card summary::-webkit-details-marker{display:none}.reading-card summary:after{content:'+';width:32px;height:32px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);font-size:22px;line-height:1;color:var(--teal);background:var(--soft)}.reading-card[open] summary:after{content:'−'}.reading-card strong{font-family:Georgia,serif;font-size:23px;font-weight:500;color:var(--ink)}"
         ".positions-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.position-card{display:block;min-height:132px;padding:16px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.position-card strong{display:block;margin-bottom:6px;font-family:Georgia,serif;font-size:21px;font-weight:500}.position-card p{margin:0;color:var(--muted)}"
-        ".full-reading{display:grid;gap:14px}.reading-card{padding:clamp(18px,3vw,28px)}.reading-card div{max-width:78ch}.reading-card p{margin:0 0 12px}.reading-card ul{padding-left:22px}"
+        ".full-reading{display:grid;gap:14px}.reading-body{max-width:78ch;padding:0 clamp(18px,3vw,26px) clamp(18px,3vw,26px)}.reading-card p{margin:0 0 12px}.reading-card ul{padding-left:22px}"
         ".footer{display:flex;flex-wrap:wrap;gap:14px;margin:44px 0 0;color:var(--muted);font-size:14px}.mirror-link{color:var(--blue);font-weight:700}.privacy,.attribution{margin:0}.report-note{flex-basis:100%;margin:6px 0 0;padding-top:14px;border-top:1px solid var(--line)}.report-note strong{color:var(--ink)}"
         "a{color:var(--blue)}@media(max-width:900px){.reading-path,.positions-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}}"
         "</style></head><body><main>"
@@ -244,6 +247,8 @@ def _position_cards(report: NatalReport) -> list[str]:
         cards.append(_position_card(_target_section("section-houses", section_ids), "Сферы жизни", "Дома карты", house_text))
     if report.chart.destiny_matrix:
         for position in report.chart.destiny_matrix.positions:
+            if position.kind != "primary":
+                continue
             cards.append(
                 _position_card(
                     _destiny_target_section(position.key, section_ids),
@@ -279,6 +284,22 @@ def _section_category(section: ReportSection) -> str:
     title = section.title.lower()
     if "destiny" in section_id or "матриц" in title:
         return "Матрица судьбы"
+    if "work-money" in section_id or "деньг" in title or "работ" in title or "реализац" in title:
+        return "Реализация"
+    if "relationship" in section_id or "отнош" in title or "близост" in title:
+        return "Отношения"
+    if "shadow" in section_id or "тен" in title or "сценари" in title:
+        return "Тени и рост"
+    if "emotion" in section_id or "эмоци" in title or "восстанов" in title:
+        return "Эмоции"
+    if "thinking" in section_id or "мышлен" in title or "реч" in title:
+        return "Мышление"
+    if "love" in section_id or "любов" in title or "ценност" in title:
+        return "Ценности"
+    if "action" in section_id or "действ" in title or "конфликт" in title:
+        return "Действие"
+    if "growth" in section_id or "рост" in title:
+        return "Практика"
     if "aspect" in section_id or "аспект" in title:
         return "Внутренние связи"
     if "house" in section_id or "дом" in title or "asc" in section_id or "mc" in section_id:
@@ -328,6 +349,8 @@ def build_telegraph_markdown(report: NatalReport) -> str:
     if report.chart.destiny_matrix:
         lines.extend(["", "## Матрица судьбы", "", "| Позиция | Аркан | Тема |", "|---|---:|---|"])
         for position in report.chart.destiny_matrix.positions:
+            if position.kind != "primary":
+                continue
             lines.append(f"| {position.label} | {position.arcana}. {position.arcana_label} | {position.theme} |")
     for section in report.sections:
         lines.extend(["", f"## {section.title}", "", section.body_markdown])
@@ -395,9 +418,9 @@ def _destiny_target_section(position_key: str, section_ids: set[str]) -> str:
     target_by_position = {
         "center": "section-destiny-matrix",
         "portrait": "section-destiny-matrix",
-        "higher_self": "section-destiny-matrix",
-        "soul_task": "section-destiny-matrix",
-        "comfort": "section-destiny-matrix",
+        "higher_self": "section-destiny-spiritual",
+        "soul_task": "section-destiny-socialization",
+        "comfort": "section-destiny-comfort",
         "female_talent": "section-destiny-relationships",
         "money_channel": "section-destiny-money",
         "male_talent": "section-destiny-lineage",
