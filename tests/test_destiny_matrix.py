@@ -111,3 +111,14 @@ def test_build_destiny_matrix_sections_returns_user_facing_interpretation():
     assert "не прогноз" not in lowered
     assert "не заменяет" not in lowered
     assert "фат" not in lowered
+
+
+def test_destiny_matrix_sections_speak_directly_without_distant_person_language():
+    matrix = calculate_destiny_matrix("2003-06-30")
+
+    sections = build_destiny_matrix_sections(matrix)
+    lowered = "\n".join(section.body_markdown for section in sections).lower()
+
+    assert "вы можете" in lowered
+    assert "человек либо" not in lowered
+    assert "человек может" not in lowered

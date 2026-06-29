@@ -109,6 +109,33 @@ def test_prompt_requests_practical_expandable_life_topics_and_examples():
     assert "не пиши, что разбор бесплатный" in prompt
 
 
+def test_prompt_requests_personal_direct_non_mechanical_voice():
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.EXACT,
+            houses_available=True,
+            angles_available=True,
+        ),
+        planets=[
+            PlanetPosition(
+                key="sun",
+                label="Солнце",
+                longitude=325,
+                sign="Водолей",
+                degree_in_sign=25,
+            )
+        ],
+        aspects=[],
+    )
+
+    prompt = build_interpretation_prompt(chart=chart, language="ru", focus="psychology")
+
+    assert "обращайся к человеку напрямую" in prompt.lower()
+    assert "на «вы»" in prompt.lower()
+    assert "не звучать как справочник" in prompt.lower()
+    assert "живой разбор конкретного человека" in prompt.lower()
+
+
 def test_prompt_surfaces_quality_warnings_for_exact_time_heuristic_houses():
     chart = ChartData(
         input_quality=InputQuality(

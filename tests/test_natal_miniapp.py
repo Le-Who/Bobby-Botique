@@ -98,6 +98,16 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert ".layout[hidden]" in body
     assert "scrollIntoView({ behavior: 'smooth'" in body
     assert "advanceToNextItem" in body
+    assert 'class="step-card"' in body
+    assert 'class="sticky-summary"' in body
+    assert 'data-step="date"' in body
+    assert 'data-step="place"' in body
+    assert 'data-step="review"' in body
+    assert "Сначала дата" in body
+    assert "Место и часовой пояс" in body
+    assert "Проверка перед отправкой" in body
+    assert "Начните с даты рождения" in body
+    assert "Начните с типа разбора" not in body
     assert body.index("Дата рождения") < body.index("Место рождения")
     assert body.index("Место рождения") < body.index("Фокус разбора")
     assert body.index("Фокус разбора") < body.index("Что построить")

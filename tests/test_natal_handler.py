@@ -76,12 +76,16 @@ def test_mode_keyboard_uses_miniapp_form_when_https_base_is_configured(monkeypat
 
     keyboard = _mode_keyboard()
     buttons = [button for row in keyboard.inline_keyboard for button in row]
-    webapp_button = next(button for button in buttons if "на сайте" in button.text)
+    labels = [button.text for button in buttons]
+    webapp_button = next(button for button in buttons if button.text == "Заполнить в приложении")
 
+    assert labels == ["Заполнить в приложении", "Заполнить пошагово", "Отмена"]
     assert webapp_button.web_app is not None
     assert webapp_button.web_app.url == "https://bot.example.com/webapp/natal-form"
     assert webapp_button.callback_data is None
     assert all(button.text != "Отправить таблицей" for button in buttons)
+    assert all("Только матрица" not in button.text for button in buttons)
+    assert all("на сайте" not in button.text for button in buttons)
 
 
 class FakeMessage:
@@ -185,7 +189,8 @@ async def test_natal_command_sends_mode_selection(monkeypatch):
     state = await natal_command(update, context)
 
     assert state == "NATAL_MODE"
-    assert "Натальная карта строится" in update.message.replies[0][0]
+    assert "Можно заполнить данные в приложении или пройти пошагово здесь" in update.message.replies[0][0]
+    assert "Натальная карта строится" not in update.message.replies[0][0]
     assert "natal_flow_message" in context.user_data
 
 

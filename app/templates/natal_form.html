@@ -98,7 +98,7 @@ h1 { margin: 0; font-size: 24px; line-height: 1.1; font-weight: 760; letter-spac
   background: var(--accent);
   transition: width .18s ease;
 }
-.panel {
+.step-card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -192,7 +192,7 @@ select:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
 .option-summary { color: var(--text); font-size: 14px; font-weight: 650; }
 .option-detail { color: var(--muted); font-size: 13px; }
 .time-block[hidden], .manual-block[hidden], .layout[hidden], .done[hidden], .error[hidden], .natal-only[hidden] { display: none; }
-.summary {
+.sticky-summary {
   display: grid;
   gap: 8px;
   padding: 14px;
@@ -302,7 +302,7 @@ select:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
     <div class="progress-shell" aria-label="Прогресс заполнения">
       <div class="progress-copy">
         <span id="progress-text">Шаг 1 из 4</span>
-        <strong id="progress-status">Начните с типа разбора</strong>
+        <strong id="progress-status">Начните с даты рождения</strong>
       </div>
       <div class="progress-track" aria-hidden="true">
         <span class="progress-meter" id="progress-meter"></span>
@@ -310,9 +310,9 @@ select:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
     </div>
 
     <div class="layout" id="form-layout">
-      <section class="panel" id="datetime-panel">
+      <section class="step-card" id="datetime-panel" data-step="date">
         <div class="panel-head">
-          <h2 class="panel-title" id="datetime-panel-title">Дата и время</h2>
+          <h2 class="panel-title" id="datetime-panel-title">Сначала дата</h2>
           <span class="panel-note" id="datetime-step-note">1 из 4</span>
         </div>
         <div class="fields">
@@ -366,12 +366,13 @@ select:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
         </div>
       </section>
 
-      <section class="panel natal-only" id="place-panel">
+      <section class="step-card natal-only" id="place-panel" data-step="place">
         <div class="panel-head">
-          <h2 class="panel-title">Место рождения</h2>
+          <h2 class="panel-title">Место и часовой пояс</h2>
           <span class="panel-note" id="place-step-note">2 из 4</span>
         </div>
         <div class="fields">
+          <p class="hint">Место рождения нужно для координат и часового пояса.</p>
           <div class="field">
             <label>Страна рождения</label>
             <p class="hint">Для координат и часового пояса.</p>
@@ -392,7 +393,7 @@ select:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
         </div>
       </section>
 
-      <section class="panel" id="focus-panel">
+      <section class="step-card" id="focus-panel" data-step="focus">
         <div class="panel-head">
           <h2 class="panel-title">Фокус разбора</h2>
           <span class="panel-note" id="focus-step-note">3 из 4</span>
@@ -403,17 +404,17 @@ select:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
         </div>
       </section>
 
-      <section class="panel" id="report-type-panel">
+      <section class="step-card" id="report-type-panel" data-step="review">
         <div class="panel-head">
-          <h2 class="panel-title">Что построить</h2>
+          <h2 class="panel-title">Проверка перед отправкой</h2>
           <span class="panel-note" id="report-type-step-note">4 из 4</span>
         </div>
         <div class="fields">
-          <p class="hint">Выберите формат перед отправкой анкеты.</p>
+          <p class="hint">Что построить: выберите формат перед отправкой анкеты.</p>
           <p class="hint">Варианты: Натал + матрица (Рекомендуем, Лучший выбор для первого разбора), Только натал, Только матрица.</p>
           <div class="option-grid" id="report-type-chips" data-group="report_type"></div>
         </div>
-        <div class="summary" id="summary">
+        <div class="sticky-summary" id="summary">
           <div class="summary-head">
             <p class="summary-title">Ваш разбор</p>
             <span class="summary-status">Осталось заполнить: дату рождения</span>
@@ -745,7 +746,7 @@ function updateProductVisibility() {
 }
 
 function updateStepNotes() {
-  datetimePanelTitle.textContent = 'Дата и время';
+  datetimePanelTitle.textContent = 'Сначала дата';
   datetimeStepNote.textContent = '1 из 4';
   placeStepNote.textContent = '2 из 4';
   focusStepNote.textContent = '3 из 4';

@@ -132,7 +132,7 @@ def test_hosted_report_merges_planet_sections_into_matching_life_topics(sample_n
     assert '<span id="section-mercury" class="section-anchor"></span>' in html
     assert "Расчетная опора: Меркурий — мышление и речь" in html
     assert "Эмпатичный интеллект" not in html.split("<summary>", 1)[1].split("</summary>", 1)[0]
-    assert html.count("<summary>") == 1
+    assert html.count('class="reading-card reading-disclosure"') == 1
 
 
 def test_hosted_report_summary_has_stable_label_area_for_alignment(sample_natal_report: NatalReport):
@@ -179,6 +179,36 @@ def test_hosted_report_path_links_to_natal_matrix_and_age_periods(sample_natal_r
     assert "Возрастные периоды" in path_html
     assert "Что читать первым" not in path_html
     assert "Главные акценты" not in path_html
+
+
+def test_hosted_report_visually_groups_natal_and_destiny_reading_blocks(sample_natal_report: NatalReport):
+    sample_natal_report.chart.destiny_matrix = calculate_destiny_matrix("1997-11-09")
+    sample_natal_report.sections.extend(build_destiny_matrix_sections(sample_natal_report.chart.destiny_matrix))
+
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert 'class="reading-group reading-group-natal"' in html
+    assert 'class="reading-group reading-group-destiny"' in html
+    assert "Разбор натальной карты" in html
+    assert "Разбор матрицы судьбы" in html
+    assert html.index('class="reading-group reading-group-natal"') < html.index('class="reading-group reading-group-destiny"')
+    natal_group = html.split('class="reading-group reading-group-natal"', 1)[1].split("</section>", 1)[0]
+    destiny_group = html.split('class="reading-group reading-group-destiny"', 1)[1].split("</section>", 1)[0]
+    assert 'id="section-sun"' in natal_group
+    assert 'id="section-destiny-matrix"' not in natal_group
+    assert 'id="section-destiny-matrix"' in destiny_group
+
+
+def test_hosted_report_hides_calculated_positions_in_expandable_reference_menu(sample_natal_report: NatalReport):
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert '<details id="positions"' in html
+    assert 'class="reference-disclosure' in html
+    assert '<summary><span class="summary-kicker">Справочный слой</span>' in html
+    assert "Расчетные позиции" in html
+    positions_html = html.split('<details id="positions"', 1)[1].split("</details>", 1)[0]
+    assert 'class="positions-grid"' in positions_html
+    assert '<section id="positions"' not in html
 
 
 def test_hosted_report_explains_destiny_matrix_positions_as_result_cards(sample_natal_report: NatalReport):

@@ -50,7 +50,7 @@ _PERIOD_LINE_RE = re.compile(
 def build_hosted_report_html(report: NatalReport) -> str:
     display_sections = _merge_related_sections(report.sections)
     display_section_ids = {section.id for section in display_sections}
-    full_sections = []
+    full_sections: list[tuple[ReportSection, str]] = []
     footer_notes: list[str] = []
     for index, section in enumerate(display_sections):
         section_id = html.escape(section.id, quote=True)
@@ -63,11 +63,14 @@ def build_hosted_report_html(report: NatalReport) -> str:
         default_open = ' open data-default-open="true"' if index == 0 else ""
         aliases = "".join(_section_anchor(alias) for alias in _section_aliases(section.id, display_section_ids))
         full_sections.append(
-            f'{aliases}<details id="{section_id}" class="reading-card reading-disclosure" '
-            f'data-category="{category}"{default_open}>'
-            f'<summary><span class="summary-kicker">{category}</span>'
-            f'<span class="summary-title"><strong>{title}</strong></span></summary>'
-            f'<div class="reading-body">{body}</div></details>'
+            (
+                section,
+                f'{aliases}<details id="{section_id}" class="reading-card reading-disclosure" '
+                f'data-category="{category}"{default_open}>'
+                f'<summary><span class="summary-kicker">{category}</span>'
+                f'<span class="summary-title"><strong>{title}</strong></span></summary>'
+                f'<div class="reading-body">{body}</div></details>',
+            )
         )
 
     telegraph = ""
@@ -81,6 +84,8 @@ def build_hosted_report_html(report: NatalReport) -> str:
     lead = _report_lead(report)
     visual_layers = _visual_layers(report)
     result_shell = _result_shell(report, title, lead, visual_layers, display_sections)
+    reading_html = _full_reading_html(full_sections)
+    positions_html = _positions_reference_html(positions)
 
     return (
         "<!doctype html><html lang=\"ru\"><head>"
@@ -106,20 +111,76 @@ def build_hosted_report_html(report: NatalReport) -> str:
         ".section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:64px 0 18px}.section-head h2{margin:0;font-family:Georgia,serif;font-size:clamp(28px,4vw,44px);font-weight:500}.section-head p{max-width:480px;margin:0;color:var(--muted)}"
         ".position-card:hover{transform:translateY(-2px);box-shadow:0 18px 52px rgba(33,45,42,.12)}.summary-kicker,.position-card span{display:block;margin-bottom:0;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}.reading-card summary{list-style:none;cursor:pointer;padding:clamp(18px,3vw,26px);display:grid;grid-template-columns:minmax(112px,156px) minmax(0,1fr) 36px;gap:16px;align-items:center;min-height:116px}.reading-card summary::-webkit-details-marker{display:none}.reading-card summary:after{content:'+';width:36px;height:36px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);font-size:24px;line-height:1;color:var(--teal);background:var(--soft);justify-self:end}.reading-card[open] summary:after{content:'−'}.summary-kicker{min-height:44px;display:flex;align-items:center;overflow-wrap:anywhere}.summary-title{display:block;min-width:0}.summary-title strong{font-family:Georgia,serif;font-size:clamp(23px,3vw,31px);line-height:1.18;font-weight:500;color:var(--ink)}"
         ".positions-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.position-card{display:block;min-height:132px;padding:16px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.position-card strong{display:block;margin-bottom:6px;font-family:Georgia,serif;font-size:21px;font-weight:500}.position-card p{margin:0;color:var(--muted)}"
-        ".full-reading{display:grid;gap:14px}.reading-body{max-width:78ch;padding:0 clamp(18px,3vw,26px) clamp(18px,3vw,26px)}.reading-card p{margin:0 0 12px}.reading-card ul{padding-left:22px}"
+        ".full-reading{display:grid;gap:28px}.reading-group{display:grid;gap:14px;padding-left:16px;border-left:4px solid var(--teal)}.reading-group-destiny{border-left-color:var(--violet)}.reading-group-head{display:grid;gap:4px;margin:0 0 2px}.reading-group-head span{color:var(--teal);font-size:12px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}.reading-group-destiny .reading-group-head span{color:var(--violet)}.reading-group-head h3{margin:0;font-family:Georgia,serif;font-size:clamp(24px,3vw,34px);font-weight:500;color:var(--ink)}.reading-group-head p{max-width:620px;margin:0;color:var(--muted)}.reading-body{max-width:78ch;padding:0 clamp(18px,3vw,26px) clamp(18px,3vw,26px)}.reference-disclosure{margin-top:64px}.reference-body{max-width:none}.reading-card p{margin:0 0 12px}.reading-card ul{padding-left:22px}"
         ".period-list{display:grid;gap:12px;margin-top:16px}.period-card{border:1px solid var(--line);border-radius:8px;background:var(--soft);padding:14px}.period-card header{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:baseline;margin:0 0 10px}.period-card header span{color:var(--teal);font-size:13px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.period-card header strong{font-family:Georgia,serif;font-size:22px;font-weight:500;color:var(--ink)}.period-card dl{display:grid;gap:9px;margin:0}.period-card dl div{display:grid;gap:2px}.period-card dt{color:var(--violet);font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}.period-card dd{margin:0;color:var(--ink)}.section-anchor{position:relative;top:-12px;display:block;height:0;overflow:hidden}"
         ".footer{display:flex;flex-wrap:wrap;gap:14px;margin:44px 0 0;color:var(--muted);font-size:14px}.mirror-link{color:var(--blue);font-weight:700}.privacy,.attribution{margin:0}.report-note{flex-basis:100%;margin:6px 0 0;padding-top:14px;border-top:1px solid var(--line)}.report-note strong{color:var(--ink)}"
         "a{color:var(--blue)}@media(max-width:900px){.reading-path,.positions-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}}@media(max-width:640px){main{padding:14px}.reading-card summary{grid-template-columns:minmax(96px,124px) minmax(0,1fr) 34px;gap:10px;min-height:104px}.summary-kicker{font-size:11px;letter-spacing:.13em;min-height:40px}.summary-title strong{font-size:clamp(21px,5vw,27px)}.reading-card summary:after{width:34px;height:34px;font-size:22px}}"
         "</style></head><body><main>"
         f"{result_shell}"
         '<section id="full-reading"><div class="section-head"><h2>Полный разбор</h2><p>Подробные интерпретации сгруппированы по смысловым категориям.</p></div>'
-        f'<div class="full-reading">{"".join(full_sections)}</div></section>'
-        '<section id="positions"><div class="section-head"><h2>Расчетные позиции</h2><p>Справочный слой карты: где находятся точки расчета и за какие темы они обычно отвечают.</p></div>'
-        f'<div class="positions-grid">{positions}</div></section>'
+        f"{reading_html}</section>"
+        f"{positions_html}"
         f'<footer class="footer">{telegraph}'
         '<p class="privacy">Privacy: LLM receives only derived chart data, not raw birth date or place.</p>'
         f'<p class="attribution">{_GEONAMES_ATTRIBUTION_HTML}</p>{notes_html}</footer>'
         "</main></body></html>"
+    )
+
+
+def _full_reading_html(full_sections: list[tuple[ReportSection, str]]) -> str:
+    natal_sections = [section_html for section, section_html in full_sections if not _is_destiny_reading_section(section)]
+    destiny_sections = [section_html for section, section_html in full_sections if _is_destiny_reading_section(section)]
+    groups: list[str] = []
+    if natal_sections:
+        groups.append(
+            _reading_group_html(
+                "natal",
+                "Натальная карта",
+                "Разбор натальной карты",
+                "Астрологические точки, аспекты и жизненные темы: как устроены реакции, выборы, близость и реализация.",
+                natal_sections,
+            )
+        )
+    if destiny_sections:
+        groups.append(
+            _reading_group_html(
+                "destiny",
+                "Матрица судьбы",
+                "Разбор матрицы судьбы",
+                "Архетипы даты рождения: центр, линии отношений и денег, родовые темы и возрастные периоды.",
+                destiny_sections,
+            )
+        )
+    return f'<div class="full-reading">{"".join(groups)}</div>'
+
+
+def _reading_group_html(kind: str, kicker: str, title: str, description: str, sections: list[str]) -> str:
+    escaped_kind = html.escape(kind, quote=True)
+    heading_id = f"reading-group-{escaped_kind}-title"
+    return (
+        f'<section class="reading-group reading-group-{escaped_kind}" aria-labelledby="{heading_id}">'
+        '<div class="reading-group-head">'
+        f"<span>{html.escape(kicker)}</span>"
+        f'<h3 id="{heading_id}">{html.escape(title)}</h3>'
+        f"<p>{html.escape(description)}</p>"
+        "</div>"
+        f'{"".join(sections)}</section>'
+    )
+
+
+def _is_destiny_reading_section(section: ReportSection) -> bool:
+    return section.id.lower().startswith("section-destiny") or "матриц" in section.title.lower()
+
+
+def _positions_reference_html(positions: str) -> str:
+    return (
+        '<details id="positions" class="reference-disclosure reading-card">'
+        '<summary><span class="summary-kicker">Справочный слой</span>'
+        '<span class="summary-title"><strong>Расчетные позиции</strong></span></summary>'
+        '<div class="reading-body reference-body">'
+        "<p>Здесь собраны расчетные точки карты и матрицы. Это навигационный слой: его удобно открыть, "
+        "когда хочется проверить, откуда взят конкретный вывод в разборе.</p>"
+        f'<div class="positions-grid">{positions}</div></div></details>'
     )
 
 

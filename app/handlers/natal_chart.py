@@ -157,8 +157,9 @@ async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_text("Натальные карты временно недоступны.")
         return ConversationHandler.END
     flow_message = await update.message.reply_text(
-        "Натальная карта строится по дате, месту и, если известно, времени рождения.\n"
-        "Если точного времени нет, я построю карту без домов и асцендента и явно отмечу ограничения.",
+        "Можно заполнить данные в приложении или пройти пошагово здесь.\n\n"
+        "Для натальной карты важны дата, место и время рождения. Если точного времени нет, "
+        "я построю разбор без домов и асцендента и явно отмечу ограничения.",
         reply_markup=_mode_keyboard(),
     )
     context.user_data["natal_flow_message"] = flow_message
@@ -810,19 +811,16 @@ def _natal_reports_enabled_for_handler() -> bool:
 
 def _mode_keyboard() -> InlineKeyboardMarkup:
     webapp_url = _natal_form_webapp_url()
-    input_row = (
-        [InlineKeyboardButton("Заполнить на сайте", web_app=WebAppInfo(url=webapp_url))]
-        if webapp_url
-        else [InlineKeyboardButton("Отправить таблицей", callback_data="natal_mode:table")]
-    )
-    return InlineKeyboardMarkup(
+    rows: list[list[InlineKeyboardButton]] = []
+    if webapp_url:
+        rows.append([InlineKeyboardButton("Заполнить в приложении", web_app=WebAppInfo(url=webapp_url))])
+    rows.extend(
         [
             [InlineKeyboardButton("Заполнить пошагово", callback_data="natal_mode:step")],
-            [InlineKeyboardButton("Только матрица по дате", callback_data="natal_mode:matrix")],
-            input_row,
             [InlineKeyboardButton("Отмена", callback_data="natal_mode:cancel")],
         ]
     )
+    return InlineKeyboardMarkup(rows)
 
 
 def _natal_form_webapp_url() -> str:
