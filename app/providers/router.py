@@ -18,6 +18,7 @@ from app.errors import (
     is_key_related_error,
     is_retryable_error,
     tag_error,
+    user_friendly_error,
 )
 from app.providers.base import is_freetheai_model, is_opencode_model
 from app.providers.openrouter import _has_multimodal_content
@@ -269,17 +270,43 @@ class ProviderRouter:
 
             # Execute the request
             assert model_used is not None  # guaranteed by _resolve_ai_request
-            response_text, token_count = await use_case.get_ai_response(
-                key_data["api_key"],
-                history,
-                model_used,
-                system_instruction,
-                user_id,
-                chat_id,
-                use_openrouter,
-                thinking_level=thinking_level,
-                timeout=timeout,
-            )
+            try:
+                response_text, token_count = await use_case.get_ai_response(
+                    key_data["api_key"],
+                    history,
+                    model_used,
+                    system_instruction,
+                    user_id,
+                    chat_id,
+                    use_openrouter,
+                    thinking_level=thinking_level,
+                    timeout=timeout,
+                )
+            except Exception as exc:
+                failed_keys.add(key_data["key_hash"])
+                response_text = user_friendly_error(exc)
+                error_category = classify_key_error(response_text)
+                if error_category != "permanent":
+                    all_permanent = False
+                try:
+                    if not is_opencode_model(model_used) and not is_freetheai_model(model_used):
+                        await status_mgr.suspend_key(
+                            key_data["key_hash"],
+                            model_used,
+                            error_category,
+                            str(exc)[:200] or type(exc).__name__,
+                        )
+                except Exception as suspend_exc:
+                    logging.warning("Non-critical: failed to suspend key after exception: %s", suspend_exc)
+                logging.warning(
+                    "Key %s… raised %s (category=%s, attempt %d/%d). Retrying with another key.",
+                    key_data["key_hash"][:8],
+                    type(exc).__name__,
+                    error_category,
+                    attempt + 1,
+                    max_key_retries,
+                )
+                continue
 
             # Track health based on response
             if response_text and is_error_message(response_text) and (

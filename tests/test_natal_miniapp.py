@@ -88,7 +88,7 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert 'id="cancel-button"' in body
     assert 'id="progress-meter"' in body
     assert 'id="progress-text"' in body
-    assert "Шаг 1 из 4" in body
+    assert "Шаг 1 из 5" in body
     assert "Ваш разбор" in body
     assert "Осталось заполнить" in body
     assert "Фокус разбора" in body
@@ -98,6 +98,20 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert ".layout[hidden]" in body
     assert "scrollIntoView({ behavior: 'smooth'" in body
     assert "advanceToNextItem" in body
+    assert 'class="slide-track"' in body
+    assert 'class="form-slide"' in body
+    assert 'data-slide="date"' in body
+    assert 'data-slide="time"' in body
+    assert 'data-slide="place"' in body
+    assert 'data-slide="report"' in body
+    assert 'data-slide="review"' in body
+    assert 'id="next-button"' in body
+    assert ">Далее<" in body
+    assert "function goToSlide" in body
+    assert "currentSlideIndex" in body
+    assert "translateX(calc(var(--slide-index) * -100%))" in body
+    assert "nextButton.disabled = !isCurrentSlideComplete()" in body
+    assert "Построить разбор" in body
     assert 'class="step-card"' in body
     assert 'class="sticky-summary"' in body
     assert 'data-step="date"' in body
@@ -113,6 +127,28 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert body.index("Фокус разбора") < body.index("Что построить")
     assert body.index("Что построить") < body.index('data-group="report_type"')
     assert body.index("const response = await fetch") < body.index("showAcceptedState();")
+
+
+@pytest.mark.asyncio
+async def test_natal_form_uses_slide_order_without_single_long_questionnaire():
+    client = quart_app.test_client()
+
+    response = await client.get("/webapp/natal-form")
+
+    assert response.status_code == 200
+    body = await response.get_data(as_text=True)
+    slide_order = [
+        'data-slide="date"',
+        'data-slide="time"',
+        'data-slide="place"',
+        'data-slide="report"',
+        'data-slide="review"',
+    ]
+    assert [body.index(marker) for marker in slide_order] == sorted(body.index(marker) for marker in slide_order)
+    assert body.count('class="form-slide"') == 5
+    assert "Проверить данные" in body
+    assert "submitButton.hidden = currentSlide.id !== 'review-slide'" in body
+    assert "nextButton.hidden = currentSlide.id === 'review-slide'" in body
 
 
 @pytest.mark.asyncio

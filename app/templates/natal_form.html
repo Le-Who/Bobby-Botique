@@ -62,7 +62,22 @@ h1 { margin: 0; font-size: 24px; line-height: 1.1; font-weight: 760; letter-spac
   font-size: 13px;
   white-space: nowrap;
 }
-.layout { display: grid; gap: 10px; }
+.layout {
+  overflow: hidden;
+  border-radius: var(--radius);
+}
+.slide-track {
+  --slide-index: 0;
+  display: flex;
+  width: 100%;
+  transform: translateX(calc(var(--slide-index) * -100%));
+  transition: transform .28s ease;
+}
+.form-slide {
+  flex: 0 0 100%;
+  min-width: 100%;
+  padding-right: 1px;
+}
 .progress-shell {
   display: grid;
   gap: 8px;
@@ -99,6 +114,7 @@ h1 { margin: 0; font-size: 24px; line-height: 1.1; font-weight: 760; letter-spac
   transition: width .18s ease;
 }
 .step-card {
+  min-height: min(520px, calc(100vh - 220px));
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -253,26 +269,32 @@ select:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
   max-width: 652px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(96px, .42fr) minmax(0, 1fr);
+  grid-template-columns: minmax(82px, .32fr) minmax(82px, .32fr) minmax(0, 1fr);
   gap: 8px;
 }
 .submit,
-.cancel {
+.cancel,
+.back,
+.next {
   min-height: 48px;
   border-radius: var(--radius);
   font-weight: 720;
 }
-.submit {
+.submit,
+.next {
   border: 0;
   background: var(--accent);
   color: var(--accent-text);
 }
-.cancel {
+.cancel,
+.back {
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--muted);
 }
-.submit:disabled { opacity: .55; }
+.submit:disabled,
+.next:disabled,
+.back:disabled { opacity: .55; }
 @media (min-width: 720px) {
   .page { padding-inline: 0; }
   .action-bar { left: 50%; right: auto; width: 652px; transform: translateX(-50%); }
@@ -301,7 +323,7 @@ select:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
   <form id="natal-form" data-api="/webapp/api/natal/submit" novalidate>
     <div class="progress-shell" aria-label="Прогресс заполнения">
       <div class="progress-copy">
-        <span id="progress-text">Шаг 1 из 4</span>
+        <span id="progress-text">Шаг 1 из 5</span>
         <strong id="progress-status">Начните с даты рождения</strong>
       </div>
       <div class="progress-track" aria-hidden="true">
@@ -309,118 +331,145 @@ select:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
       </div>
     </div>
 
-    <div class="layout" id="form-layout">
-      <section class="step-card" id="datetime-panel" data-step="date">
-        <div class="panel-head">
-          <h2 class="panel-title" id="datetime-panel-title">Сначала дата</h2>
-          <span class="panel-note" id="datetime-step-note">1 из 4</span>
-        </div>
-        <div class="fields">
-          <div class="field">
-            <p class="field-label" id="birth-date-label">Дата рождения</p>
-            <p class="hint" id="birth-date-hint">Выберите день, месяц и год рождения.</p>
-            <div class="date-grid" id="birth-date-parts" role="group" aria-labelledby="birth-date-label" aria-describedby="birth-date-hint">
-              <div class="date-part">
-                <label for="birth-day">День</label>
-                <select id="birth-day" name="birth_day" required></select>
-              </div>
-              <div class="date-part date-part-month">
-                <label for="birth-month">Месяц</label>
-                <select id="birth-month" name="birth_month" required></select>
-              </div>
-              <div class="date-part">
-                <label for="birth-year">Год</label>
-                <select id="birth-year" name="birth_year" required></select>
-              </div>
+    <div class="layout slide-viewport" id="form-layout">
+      <div class="slide-track" id="slide-track">
+        <section class="form-slide" id="date-slide" data-slide="date">
+          <div class="step-card" id="datetime-panel" data-step="date">
+            <div class="panel-head">
+              <h2 class="panel-title" id="datetime-panel-title">Сначала дата</h2>
+              <span class="panel-note" id="datetime-step-note">1 из 5</span>
             </div>
-          </div>
-          <div class="field natal-only">
-            <label>Точность времени</label>
-            <p class="hint">Если не знаете время, выберите «Не знаю».</p>
-            <div class="chips" data-group="time_precision">
-              <button class="chip" type="button" data-value="exact" aria-pressed="true">Точное</button>
-              <button class="chip" type="button" data-value="approximate" aria-pressed="false">Примерное</button>
-              <button class="chip" type="button" data-value="range" aria-pressed="false">Диапазон</button>
-              <button class="chip" type="button" data-value="unknown" aria-pressed="false">Не знаю</button>
-            </div>
-          </div>
-          <div class="time-block natal-only" data-time-block="single">
-            <div class="field">
-              <label for="birth-time">Время рождения</label>
-              <p class="hint" id="birth-time-hint">Укажите как в свидетельстве или со слов близких.</p>
-              <input id="birth-time" name="birth_time" type="time" value="12:00" aria-describedby="birth-time-hint">
-            </div>
-          </div>
-          <div class="time-block natal-only" data-time-block="range" hidden>
-            <div class="grid-2">
+            <div class="fields">
               <div class="field">
-                <label for="birth-time-start">С</label>
-                <input id="birth-time-start" name="birth_time_range_start" type="time" value="10:00">
-              </div>
-              <div class="field">
-                <label for="birth-time-end">До</label>
-                <input id="birth-time-end" name="birth_time_range_end" type="time" value="12:00">
+                <p class="field-label" id="birth-date-label">Дата рождения</p>
+                <p class="hint" id="birth-date-hint">Выберите день, месяц и год рождения.</p>
+                <div class="date-grid" id="birth-date-parts" role="group" aria-labelledby="birth-date-label" aria-describedby="birth-date-hint">
+                  <div class="date-part">
+                    <label for="birth-day">День</label>
+                    <select id="birth-day" name="birth_day" required></select>
+                  </div>
+                  <div class="date-part date-part-month">
+                    <label for="birth-month">Месяц</label>
+                    <select id="birth-month" name="birth_month" required></select>
+                  </div>
+                  <div class="date-part">
+                    <label for="birth-year">Год</label>
+                    <select id="birth-year" name="birth_year" required></select>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section class="step-card natal-only" id="place-panel" data-step="place">
-        <div class="panel-head">
-          <h2 class="panel-title">Место и часовой пояс</h2>
-          <span class="panel-note" id="place-step-note">2 из 4</span>
-        </div>
-        <div class="fields">
-          <p class="hint">Место рождения нужно для координат и часового пояса.</p>
-          <div class="field">
-            <label>Страна рождения</label>
-            <p class="hint">Для координат и часового пояса.</p>
-            <div class="chips" id="country-chips"></div>
+        <section class="form-slide" id="time-slide" data-slide="time">
+          <div class="step-card" id="time-panel" data-step="time">
+            <div class="panel-head">
+              <h2 class="panel-title">Время рождения</h2>
+              <span class="panel-note" id="time-step-note">2 из 5</span>
+            </div>
+            <div class="fields">
+              <div class="field natal-only">
+                <label>Точность времени</label>
+                <p class="hint">Не ставим время по умолчанию: выберите точность сами или отметьте «Не знаю».</p>
+                <div class="chips" data-group="time_precision">
+                  <button class="chip" type="button" data-value="exact" aria-pressed="false">Точное</button>
+                  <button class="chip" type="button" data-value="approximate" aria-pressed="false">Примерное</button>
+                  <button class="chip" type="button" data-value="range" aria-pressed="false">Диапазон</button>
+                  <button class="chip" type="button" data-value="unknown" aria-pressed="false">Не знаю</button>
+                </div>
+              </div>
+              <div class="time-block natal-only" data-time-block="single" hidden>
+                <div class="field">
+                  <label for="birth-time">Время рождения</label>
+                  <p class="hint" id="birth-time-hint">Укажите как в свидетельстве или со слов близких.</p>
+                  <input id="birth-time" name="birth_time" type="time" aria-describedby="birth-time-hint">
+                </div>
+              </div>
+              <div class="time-block natal-only" data-time-block="range" hidden>
+                <div class="grid-2">
+                  <div class="field">
+                    <label for="birth-time-start">С</label>
+                    <input id="birth-time-start" name="birth_time_range_start" type="time">
+                  </div>
+                  <div class="field">
+                    <label for="birth-time-end">До</label>
+                    <input id="birth-time-end" name="birth_time_range_end" type="time">
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="field manual-block" id="manual-country-block" hidden>
-            <label for="manual-country">Другая страна</label>
-            <input id="manual-country" name="manual_country" type="text" inputmode="text" autocomplete="country-name">
-          </div>
-          <div class="field">
-            <label>Город рождения</label>
-            <div class="chips" id="city-chips"></div>
-          </div>
-          <div class="field manual-block" id="manual-city-block" hidden>
-            <label for="manual-city">Другой город</label>
-            <input id="manual-city" name="manual_city" type="text" inputmode="text" autocomplete="address-level2">
-          </div>
-        </div>
-      </section>
+        </section>
 
-      <section class="step-card" id="focus-panel" data-step="focus">
-        <div class="panel-head">
-          <h2 class="panel-title">Фокус разбора</h2>
-          <span class="panel-note" id="focus-step-note">3 из 4</span>
-        </div>
-        <div class="fields">
-          <p class="hint">Фокус не урезает отчёт, а помогает поставить самые важные акценты выше.</p>
-          <div class="chips" id="focus-chips"></div>
-        </div>
-      </section>
-
-      <section class="step-card" id="report-type-panel" data-step="review">
-        <div class="panel-head">
-          <h2 class="panel-title">Проверка перед отправкой</h2>
-          <span class="panel-note" id="report-type-step-note">4 из 4</span>
-        </div>
-        <div class="fields">
-          <p class="hint">Что построить: выберите формат перед отправкой анкеты.</p>
-          <p class="hint">Варианты: Натал + матрица (Рекомендуем, Лучший выбор для первого разбора), Только натал, Только матрица.</p>
-          <div class="option-grid" id="report-type-chips" data-group="report_type"></div>
-        </div>
-        <div class="sticky-summary" id="summary">
-          <div class="summary-head">
-            <p class="summary-title">Ваш разбор</p>
-            <span class="summary-status">Осталось заполнить: дату рождения</span>
+        <section class="form-slide" id="place-slide" data-slide="place">
+          <div class="step-card natal-only" id="place-panel" data-step="place">
+            <div class="panel-head">
+              <h2 class="panel-title">Место и часовой пояс</h2>
+              <span class="panel-note" id="place-step-note">3 из 5</span>
+            </div>
+            <div class="fields">
+              <p class="hint">Место рождения нужно для координат и часового пояса.</p>
+              <div class="field">
+                <label>Страна рождения</label>
+                <p class="hint">Для координат и часового пояса.</p>
+                <div class="chips" id="country-chips"></div>
+              </div>
+              <div class="field manual-block" id="manual-country-block" hidden>
+                <label for="manual-country">Другая страна</label>
+                <input id="manual-country" name="manual_country" type="text" inputmode="text" autocomplete="country-name">
+              </div>
+              <div class="field">
+                <label>Город рождения</label>
+                <div class="chips" id="city-chips"></div>
+              </div>
+              <div class="field manual-block" id="manual-city-block" hidden>
+                <label for="manual-city">Другой город</label>
+                <input id="manual-city" name="manual_city" type="text" inputmode="text" autocomplete="address-level2">
+              </div>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+
+        <section class="form-slide" id="report-slide" data-slide="report">
+          <div class="step-card" id="report-type-panel" data-step="report">
+            <div class="panel-head">
+              <h2 class="panel-title">Фокус и формат</h2>
+              <span class="panel-note" id="report-type-step-note">4 из 5</span>
+            </div>
+            <div class="fields">
+              <div class="field">
+                <label>Фокус разбора</label>
+                <p class="hint">Фокус не урезает отчёт, а помогает поставить самые важные акценты выше.</p>
+                <div class="chips" id="focus-chips"></div>
+              </div>
+              <div class="field">
+                <p class="field-label">Что построить</p>
+                <p class="hint">Варианты: Натал + матрица (Рекомендуем, Лучший выбор для первого разбора), Только натал, Только матрица.</p>
+                <div class="option-grid" id="report-type-chips" data-group="report_type"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="form-slide" id="review-slide" data-slide="review">
+          <div class="step-card" id="review-panel" data-step="review">
+            <div class="panel-head">
+              <h2 class="panel-title">Проверить данные</h2>
+              <span class="panel-note" id="review-step-note">5 из 5</span>
+            </div>
+            <div class="fields">
+              <p class="hint">Проверка перед отправкой: дата, время, место и формат расчёта должны совпадать с тем, что вы хотите получить.</p>
+            </div>
+            <div class="sticky-summary" id="summary">
+              <div class="summary-head">
+                <p class="summary-title">Ваш разбор</p>
+                <span class="summary-status">Осталось заполнить: дату рождения</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
     </div>
 
     <div class="error" id="error-box" hidden></div>
@@ -435,7 +484,9 @@ select:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line));
 
     <div class="action-bar" id="action-bar">
       <button class="cancel" id="cancel-button" type="button">Отменить</button>
-      <button class="submit" id="submit-button" type="submit">Построить разбор</button>
+      <button class="back" id="back-button" type="button">Назад</button>
+      <button class="next" id="next-button" type="button" disabled>Далее</button>
+      <button class="submit" id="submit-button" type="submit" hidden>Построить разбор</button>
     </div>
   </form>
 </main>
@@ -445,7 +496,7 @@ const tg = window.Telegram?.WebApp;
 const OPTIONS = {{ natal_form_options|tojson }};
 const state = {
   report_type: '',
-  time_precision: 'exact',
+  time_precision: '',
   country_code: OPTIONS.countries[0]?.code || '',
   country_label: OPTIONS.countries[0]?.label || '',
   city_geoname_id: '',
@@ -460,15 +511,20 @@ const doneBox = document.getElementById('done-box');
 const doneTitle = document.getElementById('done-title');
 const doneText = document.getElementById('done-text');
 const submitButton = document.getElementById('submit-button');
+const nextButton = document.getElementById('next-button');
+const backButton = document.getElementById('back-button');
 const statusPill = document.getElementById('status-pill');
 const progressText = document.getElementById('progress-text');
 const progressStatus = document.getElementById('progress-status');
 const progressMeter = document.getElementById('progress-meter');
+const slideTrack = document.getElementById('slide-track');
+const slides = Array.from(document.querySelectorAll('.form-slide'));
 const datetimePanelTitle = document.getElementById('datetime-panel-title');
 const datetimeStepNote = document.getElementById('datetime-step-note');
+const timeStepNote = document.getElementById('time-step-note');
 const placeStepNote = document.getElementById('place-step-note');
-const focusStepNote = document.getElementById('focus-step-note');
 const reportTypeStepNote = document.getElementById('report-type-step-note');
+const reviewStepNote = document.getElementById('review-step-note');
 const birthDay = document.getElementById('birth-day');
 const birthMonth = document.getElementById('birth-month');
 const birthYear = document.getElementById('birth-year');
@@ -488,6 +544,7 @@ const MONTHS = [
   ['12', 'Декабрь'],
 ];
 let closeOnSubmit = false;
+let currentSlideIndex = 0;
 
 function setDoneMessage(title, lines) {
   doneTitle.textContent = title;
@@ -514,7 +571,10 @@ function showAcceptedState() {
   ]);
   doneBox.hidden = false;
   statusPill.textContent = 'Создаём';
+  nextButton.hidden = true;
+  backButton.hidden = true;
   submitButton.disabled = false;
+  submitButton.hidden = false;
   submitButton.textContent = 'Закрыть';
   closeOnSubmit = true;
 }
@@ -528,6 +588,7 @@ function restoreFormState(message) {
   submitButton.disabled = false;
   submitButton.textContent = 'Построить разбор';
   statusPill.textContent = 'Анкета';
+  updateSlideControls();
 }
 
 function advanceToNextItem(target) {
@@ -542,6 +603,38 @@ function advanceToNextItem(target) {
     const focusable = element.querySelector('input:not([hidden]), button:not([hidden])');
     focusable?.focus({ preventScroll: true });
   }, 140);
+}
+
+function currentSlide() {
+  return slides[currentSlideIndex] || slides[0];
+}
+
+function goToSlide(index) {
+  currentSlideIndex = Math.max(0, Math.min(index, slides.length - 1));
+  slideTrack.style.setProperty('--slide-index', String(currentSlideIndex));
+  updateProgress();
+  updateSlideControls();
+}
+
+function isCurrentSlideComplete() {
+  const slide = currentSlide();
+  if (!slide) return false;
+  if (slide.id === 'date-slide') return isDateComplete();
+  if (slide.id === 'time-slide') return isTimeComplete();
+  if (slide.id === 'place-slide') return isPlaceComplete();
+  if (slide.id === 'report-slide') return Boolean(state.focus && state.report_type);
+  if (slide.id === 'review-slide') return !validateBeforeSubmit(buildPayload());
+  return false;
+}
+
+function updateSlideControls() {
+  const currentSlide = slides[currentSlideIndex] || slides[0];
+  backButton.disabled = currentSlideIndex === 0;
+  backButton.hidden = false;
+  nextButton.hidden = currentSlide.id === 'review-slide';
+  submitButton.hidden = currentSlide.id !== 'review-slide';
+  nextButton.disabled = !isCurrentSlideComplete();
+  submitButton.disabled = currentSlide.id === 'review-slide' ? Boolean(validateBeforeSubmit(buildPayload())) : false;
 }
 
 function setGroup(container, value) {
@@ -747,10 +840,11 @@ function updateProductVisibility() {
 
 function updateStepNotes() {
   datetimePanelTitle.textContent = 'Сначала дата';
-  datetimeStepNote.textContent = '1 из 4';
-  placeStepNote.textContent = '2 из 4';
-  focusStepNote.textContent = '3 из 4';
-  reportTypeStepNote.textContent = '4 из 4';
+  datetimeStepNote.textContent = '1 из 5';
+  timeStepNote.textContent = '2 из 5';
+  placeStepNote.textContent = '3 из 5';
+  reportTypeStepNote.textContent = '4 из 5';
+  reviewStepNote.textContent = '5 из 5';
 }
 
 function isDateComplete() {
@@ -758,6 +852,7 @@ function isDateComplete() {
 }
 
 function isTimeComplete() {
+  if (!state.time_precision) return false;
   if (state.time_precision === 'unknown') return true;
   if (state.time_precision === 'range') {
     return Boolean(document.getElementById('birth-time-start').value && document.getElementById('birth-time-end').value);
@@ -772,17 +867,12 @@ function isPlaceComplete() {
 }
 
 function progressItems() {
-  const dateTimeDone = isDateComplete() && isTimeComplete();
-  const dateTimeLabel = !isDateComplete()
-    ? 'дату рождения'
-    : isTimeComplete()
-      ? 'дату и время рождения'
-      : 'время рождения';
   const items = [
-    { label: dateTimeLabel, done: dateTimeDone },
+    { label: 'дату рождения', done: isDateComplete() },
+    { label: 'время рождения', done: isTimeComplete() },
     { label: 'место рождения', done: isPlaceComplete() },
-    { label: 'фокус разбора', done: Boolean(state.focus) },
-    { label: 'что построить', done: Boolean(state.report_type) },
+    { label: 'что построить', done: Boolean(state.focus && state.report_type) },
+    { label: 'проверку данных', done: !validateBeforeSubmit(buildPayload()) },
   ];
   return items;
 }
@@ -796,9 +886,9 @@ function updateProgress() {
   const items = progressItems();
   const firstMissingIndex = items.findIndex((item) => !item.done);
   const total = items.length;
-  const current = firstMissingIndex === -1 ? total : firstMissingIndex + 1;
-  const completedBeforeGap = firstMissingIndex === -1 ? total : firstMissingIndex;
-  const percent = Math.max(18, Math.round((completedBeforeGap / total) * 100));
+  const current = currentSlideIndex + 1;
+  const completed = items.filter((item) => item.done).length;
+  const percent = Math.max(18, Math.round((completed / total) * 100));
   progressText.textContent = firstMissingIndex === -1 ? 'Готово к отправке' : `Шаг ${current} из ${total}`;
   progressStatus.textContent = firstMissingIndex === -1 ? 'Можно строить разбор' : `Осталось заполнить: ${items[firstMissingIndex].label}`;
   progressMeter.style.width = `${percent}%`;
@@ -854,12 +944,13 @@ function renderSummary() {
     summary.appendChild(row);
   });
   updateProgress();
+  updateSlideControls();
 }
 
 function showTimeBlocks() {
   const single = document.querySelector('[data-time-block="single"]');
   const range = document.querySelector('[data-time-block="range"]');
-  single.hidden = state.time_precision === 'unknown' || state.time_precision === 'range';
+  single.hidden = !['exact', 'approximate'].includes(state.time_precision);
   range.hidden = state.time_precision !== 'range';
   renderSummary();
 }
@@ -885,17 +976,12 @@ function advanceFromBirthDateIfComplete() {
   const normalized = buildBirthDate();
   if (!normalized) {
     lastAdvancedBirthDate = '';
+    updateSlideControls();
     return;
   }
   if (normalized === lastAdvancedBirthDate) return;
   lastAdvancedBirthDate = normalized;
-  if (state.time_precision === 'range') {
-    advanceToNextItem('birth-time-start');
-  } else if (state.time_precision === 'unknown') {
-    advanceToNextItem('place-panel');
-  } else {
-    advanceToNextItem('birth-time');
-  }
+  updateSlideControls();
 }
 
 birthDateParts.forEach((element) => {
@@ -909,15 +995,15 @@ birthDateParts.forEach((element) => {
 });
 
 document.getElementById('birth-time').addEventListener('change', () => {
-  if (document.getElementById('birth-time').value) advanceToNextItem('place-panel');
+  renderSummary();
 });
 
 document.getElementById('birth-time-start').addEventListener('change', () => {
-  if (document.getElementById('birth-time-start').value) advanceToNextItem('birth-time-end');
+  renderSummary();
 });
 
 document.getElementById('birth-time-end').addEventListener('change', () => {
-  if (document.getElementById('birth-time-end').value) advanceToNextItem('place-panel');
+  renderSummary();
 });
 
 document.getElementById('manual-country').addEventListener('change', () => {
@@ -957,6 +1043,7 @@ function validateBeforeSubmit(payload) {
   if (!payload.birth_date) return 'Выберите день, месяц и год рождения.';
   if (!payload.report_type) return 'Выберите, что построить.';
   if (payload.report_type === 'destiny_matrix') return '';
+  if (!payload.time_precision) return 'Выберите точность времени рождения.';
   if (!payload.country_code && !payload.country) return 'Выберите или введите страну рождения.';
   if (!payload.city_geoname_id && !payload.birth_place) return 'Выберите город или введите другой.';
   if (payload.time_precision !== 'unknown' && payload.time_precision !== 'range' && !payload.birth_time) {
@@ -967,6 +1054,15 @@ function validateBeforeSubmit(payload) {
   }
   return '';
 }
+
+nextButton.addEventListener('click', () => {
+  if (!isCurrentSlideComplete()) return;
+  goToSlide(currentSlideIndex + 1);
+});
+
+backButton.addEventListener('click', () => {
+  goToSlide(currentSlideIndex - 1);
+});
 
 async function submitNatal(event) {
   event.preventDefault();

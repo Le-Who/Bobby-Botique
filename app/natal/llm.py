@@ -44,6 +44,9 @@ _SIGN_ALIASES = {
     "Рыбы": ("рыбы", "рыбах", "рыб"),
 }
 
+_NATAL_LLM_TIMEOUT_SECONDS = 45
+_NATAL_LLM_MAX_KEY_RETRIES = 2
+
 
 def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> str:
     prompt_chart = _chart_for_prompt(chart)
@@ -114,7 +117,8 @@ async def generate_interpretation(
             history=[{"role": "user", "parts": [prompt]}],
             user_id=user_id,
             chat_id=chat_id,
-            timeout=60,
+            max_key_retries=_NATAL_LLM_MAX_KEY_RETRIES,
+            timeout=_NATAL_LLM_TIMEOUT_SECONDS,
         )
         sections = _parse_sections(response or "")
         if sections and _sections_contradict_calculated_signs(chart, sections):
@@ -126,7 +130,8 @@ async def generate_interpretation(
                 history=[{"role": "user", "parts": [repair_prompt]}],
                 user_id=user_id,
                 chat_id=chat_id,
-                timeout=60,
+                max_key_retries=_NATAL_LLM_MAX_KEY_RETRIES,
+                timeout=_NATAL_LLM_TIMEOUT_SECONDS,
             )
             repaired_sections = _parse_sections(repaired_response or "")
             if repaired_sections and not _sections_contradict_calculated_signs(chart, repaired_sections):
