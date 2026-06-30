@@ -1,5 +1,7 @@
 """Tests for app.security — InputSanitizer and RateLimiter (pure logic, zero DB)."""
 
+import socket
+
 import pytest
 
 from app.errors import InputSanitizationError
@@ -143,6 +145,19 @@ class TestSanitizeUrl:
     def test_rejects_too_long_url(self):
         with pytest.raises(InputSanitizationError, match="too long"):
             self.s.sanitize_url("https://example.com/" + "a" * 10000)
+
+    def test_rejects_ssrf_bypass(self, monkeypatch):
+        def mock_getaddrinfo(host, port, *args, **kwargs):
+            if host == "malicious.com":
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 0))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", mock_getaddrinfo)
+
+        with pytest.raises(InputSanitizationError, match="Resolved IP address is blocked"):
+            self.s.sanitize_url("http://malicious.com/admin")
+
+        assert self.s.sanitize_url("https://example.com") == "https://example.com"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

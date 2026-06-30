@@ -8,6 +8,7 @@ import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -217,8 +218,24 @@ class InputSanitizer:
             # Current policy: Block ALL IP addresses.
             raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
         except ValueError:
-            # Not an IP address, continue
-            pass
+            # Not an IP address, check DNS resolution to prevent SSRF bypass (e.g. nip.io)
+            try:
+                # Resolve hostname using getaddrinfo for both IPv4 and IPv6
+                addresses = socket.getaddrinfo(hostname, None)
+                for addr_info in addresses:
+                    ip_str = addr_info[4][0]
+                    ip_obj = ipaddress.ip_address(ip_str)
+                    if (
+                        ip_obj.is_private
+                        or ip_obj.is_loopback
+                        or ip_obj.is_link_local
+                        or ip_obj.is_unspecified
+                        or ip_obj.is_multicast
+                    ):
+                        raise InputSanitizationError(f"Resolved IP address is blocked: {ip_str} for {hostname}")
+            except socket.gaierror:
+                # DNS resolution failed, skip blocking as it might be an internal service mock or unreachable
+                pass
 
         return url
 
