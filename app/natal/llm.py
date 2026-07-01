@@ -55,6 +55,17 @@ _SIGN_ALIASES = {
 _NATAL_LLM_TIMEOUT_SECONDS = 45
 _NATAL_LLM_MAX_KEY_RETRIES = 2
 _NATAL_INTERPRETATION_MODEL = GEMINI_PRIMARY_MODEL
+_ABSTRACT_STYLE_RE = re.compile(
+    "|".join(
+        (
+            r"астрологическ\w*\s+сетка",
+            r"проецир\w*\s+на\s+сфер",
+            r"\bнатив\b",
+            r"сфер[ау]\s+ваших\s+личных\s+ресурсов",
+        )
+    ),
+    re.IGNORECASE,
+)
 
 
 def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> str:
@@ -181,6 +192,8 @@ def _sections_need_quality_repair(sections: list[ReportSection]) -> bool:
 
     joined = "\n".join(f"{section.title}\n{section.body_markdown}" for section in sections).lower()
     if contains_user_facing_blocked_language(joined):
+        return True
+    if _ABSTRACT_STYLE_RE.search(joined):
         return True
     has_example = "например" in joined or "пример" in joined
     has_shadow = "тен" in joined or "слаб" in joined or "риск" in joined

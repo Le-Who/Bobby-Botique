@@ -674,6 +674,77 @@ async def test_generate_interpretation_repairs_technical_and_overly_abstract_lan
 
 
 @pytest.mark.asyncio
+async def test_generate_interpretation_repairs_abstract_language_without_technical_note(monkeypatch):
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.EXACT,
+            houses_available=True,
+            angles_available=True,
+        ),
+        planets=[
+            PlanetPosition(
+                key="sun",
+                label="Солнце",
+                longitude=226.7,
+                sign="Скорпион",
+                degree_in_sign=16.7,
+            )
+        ],
+        aspects=[],
+    )
+    abstract_response = (
+        "## section-summary | Краткое резюме\n"
+        "Например, карта показывает важную внутреннюю тему. Теневая сторона названа.\n\n"
+        "## section-identity | Ядро личности и способ проявляться\n"
+        "Солнце в Скорпионе. Астрологическая сетка указывает, что это ядро проецируется на сферу "
+        "ваших личных ресурсов и ценностей. Например, вы копите опыт. Теневая сторона — закрываться.\n\n"
+        "## section-emotions | Эмоциональные потребности и восстановление\n"
+        "Например, вам нужен мягкий ритм. Теневая сторона — уходить в молчание.\n\n"
+        "## section-thinking | Мышление, речь и решения\n"
+        "Например, помогает честный вопрос. Теневая сторона — подозревать лишнее.\n\n"
+        "## section-love | Любовь, симпатия и личные ценности\n"
+        "Например, важна верность. Теневая сторона — проверять чувства.\n\n"
+        "## section-action | Действие, конфликт и энергия\n"
+        "Например, вы действуете глубоко. Теневая сторона — давить.\n\n"
+        "## section-work-money | Работа, деньги и реализация\n"
+        "Например, работа требует смысла. Теневая сторона — перегружаться.\n\n"
+        "## section-shadow-patterns | Тени и повторяющиеся сценарии\n"
+        "Например, защита становится контролем. Теневая сторона видна в повторе.\n\n"
+        "## section-relationships | Отношения и близость\n"
+        "Например, близость крепче через честный разговор. Теневая сторона — молчаливые проверки.\n\n"
+        "## section-growth | Вектор роста и практичные шаги\n"
+        "Например, помогает один ясный шаг. Теневая сторона — ждать идеала."
+    )
+    repaired_response = abstract_response.replace(
+        "Астрологическая сетка указывает, что это ядро проецируется на сферу ваших личных ресурсов и ценностей.",
+        "Вы быстро чувствуете, где стоит вкладываться, а где лучше не отдавать силы просто из привычки.",
+    )
+
+    class FakeRouter:
+        def __init__(self):
+            self.calls = 0
+
+        async def get_response(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return abstract_response, 0
+            repair_prompt = kwargs["history"][0]["parts"][0].lower()
+            assert "простым русским языком" in repair_prompt
+            return repaired_response, 0
+
+    router = FakeRouter()
+    monkeypatch.setattr("app.config.settings", SimpleNamespace(RESEARCH_MODEL="test-model", DEFAULT_MODEL=""))
+    monkeypatch.setattr("app.providers.get_provider_router", lambda: router)
+
+    sections = await generate_interpretation(chart, user_id=123, chat_id=456)
+
+    bodies = "\n".join(section.body_markdown for section in sections).lower()
+    assert router.calls == 2
+    assert "астрологическая сетка" not in bodies
+    assert "проецируется" not in bodies
+
+
+@pytest.mark.asyncio
 async def test_generate_interpretation_repairs_incomplete_practical_structure(monkeypatch):
     chart = ChartData(
         input_quality=InputQuality(
