@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 
@@ -12,6 +13,10 @@ from app.natal.report_builder import build_telegraph_markdown
 from app.natal.storage import save_report
 from app.natal.svg_renderer import render_chart_svg
 from app.utils.telegraph import create_telegraph_page_from_markdown
+
+logger = logging.getLogger(__name__)
+
+_TELEGRAPH_MARKDOWN_MAX_CHARS = 60_000
 
 
 class NatalReportError(RuntimeError):
@@ -113,8 +118,18 @@ def _natal_geocoder_provider() -> str:
 
 
 async def _try_publish_telegraph(report: NatalReport) -> str | None:
-    markdown = build_telegraph_markdown(report)
-    return await create_telegraph_page_from_markdown("Натальная карта", markdown)
+    try:
+        markdown = build_telegraph_markdown(report)
+        if len(markdown) > _TELEGRAPH_MARKDOWN_MAX_CHARS:
+            logger.info(
+                "Skipping natal Telegraph mirror: markdown is too large (%d chars)",
+                len(markdown),
+            )
+            return None
+        return await create_telegraph_page_from_markdown("Натальная карта", markdown)
+    except Exception as exc:
+        logger.warning("Natal Telegraph mirror creation failed: %s", exc)
+        return None
 
 
 def _is_safe_telegraph_url(value: str | None) -> bool:

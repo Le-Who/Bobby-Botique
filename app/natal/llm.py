@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from app.config import GEMINI_PRIMARY_MODEL
 from app.natal.models import ChartData, ReportSection
 
 _POINT_TITLE_HINTS = {
@@ -46,6 +47,7 @@ _SIGN_ALIASES = {
 
 _NATAL_LLM_TIMEOUT_SECONDS = 45
 _NATAL_LLM_MAX_KEY_RETRIES = 2
+_NATAL_INTERPRETATION_MODEL = GEMINI_PRIMARY_MODEL
 
 
 def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> str:
@@ -105,15 +107,11 @@ async def generate_interpretation(
 ) -> list[ReportSection]:
     prompt = build_interpretation_prompt(chart, language, focus)
     try:
-        from app.config import settings
         from app.providers import get_provider_router
 
-        model = getattr(settings, "RESEARCH_MODEL", None) or getattr(settings, "DEFAULT_MODEL", "")
-        if not model:
-            return _fallback_sections(chart)
         router = get_provider_router()
         response, _tokens = await router.get_response(
-            preferred_model=model,
+            preferred_model=_NATAL_INTERPRETATION_MODEL,
             history=[{"role": "user", "parts": [prompt]}],
             user_id=user_id,
             chat_id=chat_id,
@@ -126,7 +124,7 @@ async def generate_interpretation(
         if sections and _sections_need_quality_repair(sections):
             repair_prompt = _build_interpretation_repair_prompt(chart, language, focus, response or "")
             repaired_response, _repair_tokens = await router.get_response(
-                preferred_model=model,
+                preferred_model=_NATAL_INTERPRETATION_MODEL,
                 history=[{"role": "user", "parts": [repair_prompt]}],
                 user_id=user_id,
                 chat_id=chat_id,

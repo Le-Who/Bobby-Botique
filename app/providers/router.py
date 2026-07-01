@@ -10,7 +10,14 @@ import asyncio
 import logging
 from typing import Any
 
-from app.config import DEFAULT_GEMINI_MODELS, GEMINI_ECONOMY_MODEL, GEMINI_PRIMARY_MODEL, settings
+from app.config import (
+    CURRENT_GEMINI_MODELS,
+    DEFAULT_GEMINI_MODELS,
+    GEMINI_ECONOMY_MODEL,
+    GEMINI_PRIMARY_MODEL,
+    normalize_gemini_chat_model,
+    settings,
+)
 from app.errors import (
     ErrorCode,
     classify_key_error,
@@ -29,6 +36,10 @@ def _setting(name: str, fallback: str) -> str:
     return value if isinstance(value, str) and value.strip() else fallback
 
 
+def _gemini_setting(name: str, fallback: str) -> str:
+    return normalize_gemini_chat_model(_setting(name, fallback), fallback=fallback)
+
+
 def _available_models() -> list[str]:
     value = getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else None
     return value if isinstance(value, list) and value else DEFAULT_GEMINI_MODELS
@@ -45,27 +56,27 @@ def _get_opencode_gemini_fallback() -> dict[str, str]:
     """
     return {
         # GLM family
-        "opencode-go/glm-5": _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
-        "opencode-go/glm-5.1": _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/glm-5": _gemini_setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/glm-5.1": _gemini_setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
         # Kimi family
-        "opencode-go/kimi-k2.5": _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
-        "opencode-go/kimi-k2.6": _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/kimi-k2.5": _gemini_setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/kimi-k2.6": _gemini_setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
         # MiMo family (V2 + V2.5)
-        "opencode-go/mimo-v2-pro": _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/mimo-v2-pro": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
         "opencode-go/mimo-v2-omni": GEMINI_PRIMARY_MODEL,  # vision-capable fallback
-        "opencode-go/mimo-v2.5-pro": _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
-        "opencode-go/mimo-v2.5": _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/mimo-v2.5-pro": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/mimo-v2.5": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
         # MiniMax family
-        "opencode-go/minimax-m2.5": _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
-        "opencode-go/minimax-m2.7": _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/minimax-m2.5": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/minimax-m2.7": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
         # Qwen family
-        "opencode-go/qwen3.5-plus": _setting("QNA_MODEL", GEMINI_ECONOMY_MODEL),
-        "opencode-go/qwen3.6-plus": _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/qwen3.5-plus": _gemini_setting("QNA_MODEL", GEMINI_ECONOMY_MODEL),
+        "opencode-go/qwen3.6-plus": _gemini_setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
         # DeepSeek family
-        "opencode-go/deepseek-v4-pro": _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
-        "opencode-go/deepseek-v4-flash": _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/deepseek-v4-pro": _gemini_setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/deepseek-v4-flash": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
         # Legacy / routing alias
-        "opencode-go/big-pickle": _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/big-pickle": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
     }
 
 
@@ -85,8 +96,13 @@ def _dedupe_models(models: list[str | None], *, exclude: str | None = None) -> l
 
 def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
     """Return configured Gemini fallbacks with 3.5 Flash → 3.1 Flash Lite first."""
-    available = list(getattr(settings, "AVAILABLE_MODELS", []) or []) if settings is not None else []
+    available = [
+        model
+        for model in (list(getattr(settings, "AVAILABLE_MODELS", []) or []) if settings is not None else [])
+        if model in CURRENT_GEMINI_MODELS
+    ]
     available_set = set(available)
+    failed_model = normalize_gemini_chat_model(failed_model)
     preferred: list[str | None] = []
     if failed_model == GEMINI_PRIMARY_MODEL:
         preferred.append(GEMINI_ECONOMY_MODEL)
@@ -100,7 +116,11 @@ def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
             _setting("INLINE_MODEL", GEMINI_ECONOMY_MODEL),
         ]
     )
-    ordered = [model for model in _dedupe_models(preferred, exclude=failed_model) if model in available_set]
+    ordered = [
+        model
+        for model in _dedupe_models(preferred, exclude=failed_model)
+        if model in available_set and model in CURRENT_GEMINI_MODELS
+    ]
     ordered.extend(model for model in available if model != failed_model and model not in ordered)
     return ordered
 
@@ -166,6 +186,7 @@ class ProviderRouter:
         status_mgr = get_key_status_manager()
         failed_keys: set[str] = set()
         all_permanent: bool = True  # Track if ALL failures are permanent (model-level)
+        had_transient: bool = False
 
         for attempt in range(max_key_retries):
             key_data, model_used, resolution = await use_case.resolve_ai_request(
@@ -286,6 +307,8 @@ class ProviderRouter:
                 failed_keys.add(key_data["key_hash"])
                 response_text = user_friendly_error(exc)
                 error_category = classify_key_error(response_text)
+                if error_category == "transient":
+                    had_transient = True
                 if error_category != "permanent":
                     all_permanent = False
                 try:
@@ -315,6 +338,8 @@ class ProviderRouter:
                 failed_keys.add(key_data["key_hash"])
                 error_category = classify_key_error(response_text)
 
+                if error_category == "transient":
+                    had_transient = True
                 if error_category != "permanent":
                     all_permanent = False
 
@@ -369,6 +394,27 @@ class ProviderRouter:
             return response_text, token_count
 
         # ── Model-level fallback ─────────────────────────────────────────
+        if not _is_fallback and had_transient:
+            fallback_model = self._pick_transient_fallback_model(preferred_model, use_openrouter)
+            if fallback_model:
+                logging.info(
+                    "Cascade fallback: %s → %s (all keys returned transient errors)",
+                    preferred_model,
+                    fallback_model,
+                )
+                return await self.get_response(
+                    fallback_model,
+                    history,
+                    system_instruction=system_instruction,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    use_openrouter=use_openrouter,
+                    max_key_retries=2,
+                    thinking_level=thinking_level,
+                    timeout=timeout,
+                    _is_fallback=True,
+                )
+
         # All keys failed for the preferred model. If every failure was
         # "permanent" (API_KEY_INVALID — Google rejects the key for this
         # specific model), try alternative models before giving up.
@@ -944,12 +990,9 @@ class ProviderRouter:
         Maps heavy models to their lite counterparts. Returns None if
         the failed model is already the lightest available.
         """
-        # Gemini cascade: heavy → lite (canonical model list only)
+        # Gemini cascade: current primary → current economy only.
         _GEMINI_CASCADE = {
             GEMINI_PRIMARY_MODEL: GEMINI_ECONOMY_MODEL,
-            "gemini-3-flash-preview": GEMINI_ECONOMY_MODEL,
-            "gemini-2.5-flash": GEMINI_ECONOMY_MODEL,
-            GEMINI_ECONOMY_MODEL: "gemini-2.5-flash-lite",
         }
 
         # Opencode Go: cascade to Gemini via the cross-provider fallback map
@@ -970,16 +1013,13 @@ class ProviderRouter:
         if is_or:
             return None  # OpenRouter handles its own fallbacks
 
-        fallback = _GEMINI_CASCADE.get(failed_model)
+        gemini_failed_model = normalize_gemini_chat_model(failed_model)
+        fallback = _GEMINI_CASCADE.get(gemini_failed_model)
         if fallback:
             # Verify the fallback model is actually in our available models list
-            available = _available_models()
+            available = [model for model in _available_models() if model in CURRENT_GEMINI_MODELS]
             if fallback in available:
                 return fallback
-            # If the exact match isn't configured, try any lite model in the list
-            for m in available:
-                if m != failed_model and ("lite" in m or "8b" in m):
-                    return m
 
         return None
 

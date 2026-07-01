@@ -73,7 +73,7 @@ class TestOpencodeGetResponseCascade:
         # Second call (Gemini fallback after re-entering get_response):
         resolve_effects = [
             (None, None, "all_exhausted"),  # opencode → exhausted
-            ({"api_key": "gk1", "key_hash": "ghash1"}, "gemini-2.5-flash", None),  # gemini ok
+            ({"api_key": "gk1", "key_hash": "ghash1"}, "gemini-3.5-flash", None),  # gemini ok
         ]
         response_effects = [
             ("Fallback answer!", 42),
@@ -82,10 +82,10 @@ class TestOpencodeGetResponseCascade:
         use_case = _make_use_case(resolve_effects, response_effects)
 
         mock_settings = MagicMock()
-        mock_settings.DEFAULT_MODEL = "gemini-2.5-flash"
-        mock_settings.RESEARCH_MODEL = "gemini-2.5-flash"
-        mock_settings.QNA_MODEL = "gemini-2.5-flash"
-        mock_settings.AVAILABLE_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+        mock_settings.DEFAULT_MODEL = "gemini-3.5-flash"
+        mock_settings.RESEARCH_MODEL = "gemini-3.5-flash"
+        mock_settings.QNA_MODEL = "gemini-3.1-flash-lite"
+        mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=use_case),
@@ -121,10 +121,10 @@ class TestOpencodeGetResponseCascade:
         use_case = _make_use_case(resolve_effects, response_effects)
 
         mock_settings = MagicMock()
-        mock_settings.DEFAULT_MODEL = "gemini-2.5-flash"
-        mock_settings.RESEARCH_MODEL = "gemini-2.5-flash"
-        mock_settings.QNA_MODEL = "gemini-2.5-flash"
-        mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash"]
+        mock_settings.DEFAULT_MODEL = "gemini-3.5-flash"
+        mock_settings.RESEARCH_MODEL = "gemini-3.5-flash"
+        mock_settings.QNA_MODEL = "gemini-3.1-flash-lite"
+        mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
 
         captured_fallback_model: list[str] = []
 
@@ -162,10 +162,10 @@ class TestOpencodeGetResponseCascade:
         use_case = _make_use_case(resolve_effects, [])
 
         mock_settings = MagicMock()
-        mock_settings.DEFAULT_MODEL = "gemini-2.5-flash"
-        mock_settings.RESEARCH_MODEL = "gemini-2.5-flash"
-        mock_settings.QNA_MODEL = "gemini-2.5-flash"
-        mock_settings.AVAILABLE_MODELS = ["gemini-2.5-flash"]
+        mock_settings.DEFAULT_MODEL = "gemini-3.5-flash"
+        mock_settings.RESEARCH_MODEL = "gemini-3.5-flash"
+        mock_settings.QNA_MODEL = "gemini-3.1-flash-lite"
+        mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash"]
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=use_case),
@@ -202,7 +202,7 @@ class TestOpencodeGetResponseCascade:
         ):
             router = ProviderRouter()
             text, tokens = await router.get_response(
-                "gemini-2.5-flash",
+                "gemini-3.5-flash",
                 [{"role": "user", "parts": ["hi"]}],
                 max_key_retries=1,
             )
@@ -223,10 +223,10 @@ class TestOpencodeGetResponseCascade:
         use_case = _make_use_case(resolve_effects, [])
 
         mock_settings = MagicMock()
-        mock_settings.DEFAULT_MODEL = "gemini-2.5-flash"
-        mock_settings.RESEARCH_MODEL = "gemini-2.5-flash"
-        mock_settings.QNA_MODEL = "gemini-2.5-flash"
-        mock_settings.AVAILABLE_MODELS = ["gemini-2.5-flash"]
+        mock_settings.DEFAULT_MODEL = "gemini-3.5-flash"
+        mock_settings.RESEARCH_MODEL = "gemini-3.5-flash"
+        mock_settings.QNA_MODEL = "gemini-3.1-flash-lite"
+        mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=use_case),
@@ -263,10 +263,10 @@ class TestOpencodeStreamCascade:
         use_case = _make_use_case(resolve_effects, [])
 
         mock_settings = MagicMock()
-        mock_settings.DEFAULT_MODEL = "gemini-2.5-flash"
-        mock_settings.RESEARCH_MODEL = "gemini-2.5-flash"
-        mock_settings.QNA_MODEL = "gemini-2.5-flash"
-        mock_settings.AVAILABLE_MODELS = ["gemini-2.5-flash"]
+        mock_settings.DEFAULT_MODEL = "gemini-3.5-flash"
+        mock_settings.RESEARCH_MODEL = "gemini-3.5-flash"
+        mock_settings.QNA_MODEL = "gemini-3.1-flash-lite"
+        mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
 
         # Capture which models are streamed
         streamed_models: list[str] = []

@@ -15,10 +15,10 @@ def usecase():
 @pytest.fixture
 def mock_settings():
     s = MagicMock()
-    s.DEFAULT_MODEL = "gemini-2.5-flash"
-    s.QNA_MODEL = "gemini-2.5-flash-lite"
-    s.RESEARCH_MODEL = "gemini-2.5-flash"
-    s.URL_SELECTION_MODEL = "gemini-2.5-flash"
+    s.DEFAULT_MODEL = "gemini-3.5-flash"
+    s.QNA_MODEL = "gemini-3.1-flash-lite"
+    s.RESEARCH_MODEL = "gemini-3.5-flash"
+    s.URL_SELECTION_MODEL = "gemini-3.1-flash-lite"
     s.OPENROUTER_DEFAULT_MODEL = "stepfun/step-3.5-flash:free"
     s.OPENROUTER_QNA_MODEL = "stepfun/step-3.5-flash:free"
     s.OPENROUTER_RESEARCH_MODEL = "stepfun/step-3.5-flash:free"
@@ -46,10 +46,10 @@ class TestResolveAiRequest:
                 return_value=fake_key,
             ),
         ):
-            key, model, status = await usecase.resolve_ai_request("gemini-2.5-flash")
+            key, model, status = await usecase.resolve_ai_request("gemini-3.5-flash")
 
         assert key == fake_key
-        assert model == "gemini-2.5-flash"
+        assert model == "gemini-3.5-flash"
         assert status is None
 
     @pytest.mark.asyncio
@@ -58,7 +58,7 @@ class TestResolveAiRequest:
         fallback_key = {"api_key": "fallback_key", "key_hash": "fallback_hash"}
 
         async def mock_get_key(model, excluded_hashes=None):
-            if model == "gemini-2.5-flash":
+            if model == "gemini-3.5-flash":
                 return None  # Exhausted
             return fallback_key
 
@@ -68,9 +68,10 @@ class TestResolveAiRequest:
             patch("app.agent_use_cases.get_available_gemini_key", side_effect=mock_get_key),
             patch("app.agent_use_cases.invalidate_key_cache", new_callable=AsyncMock),
         ):
-            key, model, status = await usecase.resolve_ai_request("gemini-2.5-flash")
+            key, model, status = await usecase.resolve_ai_request("gemini-3.5-flash")
 
         assert key == fallback_key
+        assert model == "gemini-3.1-flash-lite"
         assert status == "confirm_fallback"
 
     @pytest.mark.asyncio
@@ -114,7 +115,7 @@ class TestResolveAiRequest:
             ),
             patch("app.agent_use_cases.invalidate_key_cache", new_callable=AsyncMock),
         ):
-            key, model, status = await usecase.resolve_ai_request("gemini-2.5-flash")
+            key, model, status = await usecase.resolve_ai_request("gemini-3.5-flash")
 
         assert key is None
         assert status == "all_exhausted"
@@ -133,7 +134,7 @@ class TestResolveAiRequest:
                 side_effect=DecryptionError("bad secret"),
             ),
         ):
-            key, model, status = await usecase.resolve_ai_request("gemini-2.5-flash")
+            key, model, status = await usecase.resolve_ai_request("gemini-3.5-flash")
 
         assert key is None
         assert status == "decryption_failed"
@@ -182,8 +183,8 @@ class TestIncrementKeyUsage:
             patch("app.agent_use_cases.get_use_openrouter", return_value=False),
             patch("app.agent_use_cases.increment_gemini_key_usage", new_callable=AsyncMock) as mock_inc,
         ):
-            await usecase.increment_key_usage("hash1", "gemini-2.5-flash")
-            mock_inc.assert_called_once_with("hash1", "gemini-2.5-flash")
+            await usecase.increment_key_usage("hash1", "gemini-3.5-flash")
+            mock_inc.assert_called_once_with("hash1", "gemini-3.5-flash")
 
     @pytest.mark.asyncio
     async def test_openrouter_model_increments_openrouter(self, usecase):

@@ -85,7 +85,7 @@ async def models_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         label = _PROVIDERS.get(provider, provider)
         await query.edit_message_text(
             f"➕ Введите точное название модели для **{label}**.\n\n"
-            "_Например:_ `gemini-2.5-pro-preview`\n"
+            "_Например:_ `gemini-3.5-flash`\n"
             "_Сообщение будет удалено после сохранения._",
             parse_mode="Markdown",
         )

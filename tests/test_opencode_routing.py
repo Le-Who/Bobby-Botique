@@ -41,8 +41,8 @@ class TestIsOpencodeModel:
     def test_gemini_model_returns_false(self):
         from app.providers.base import is_opencode_model
 
-        assert is_opencode_model("gemini-3-flash-preview") is False
-        assert is_opencode_model("gemini-2.5-flash") is False
+        assert is_opencode_model("gemini-3.5-flash") is False
+        assert is_opencode_model("gemini-3.1-flash-lite") is False
 
     def test_openrouter_model_returns_false(self):
         from app.providers.base import is_opencode_model
@@ -105,7 +105,7 @@ class TestOpencodeGoProvider:
     def test_strip_model_prefix_passthrough_unknown(self):
         p = self._make_provider()
         # Unknown format should pass through unchanged
-        assert p._strip_model_prefix("gemini-2.5-flash") == "gemini-2.5-flash"
+        assert p._strip_model_prefix("gemini-3.5-flash") == "gemini-3.5-flash"
 
     def test_minimax_uses_messages_transport(self):
         p = self._make_provider()
@@ -243,7 +243,7 @@ class TestGetProviderForModel:
         from app.providers.base import get_provider_for_model
         from app.providers.gemini import GeminiProvider
 
-        provider = get_provider_for_model("gemini-3-flash-preview", "key")
+        provider = get_provider_for_model("gemini-3.5-flash", "key")
         assert isinstance(provider, GeminiProvider)
 
     def test_slash_model_returns_openrouter_provider(self):
@@ -481,9 +481,6 @@ class TestMultimodalGuard:
         _CANONICAL_GEMINI = {
             "gemini-3.5-flash",
             "gemini-3.1-flash-lite",
-            "gemini-3-flash-preview",
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
         }
         for opencode_model, gemini_fallback in _get_opencode_gemini_fallback().items():
             # Values are settings.DEFAULT_MODEL etc. — resolved fresh each call
@@ -519,7 +516,7 @@ class TestModelSelectorOpencodeSkip:
         # A complex coding query with a lite model should potentially suggest an upgrade
         result = select_model(
             "Создай сложный класс на Python с множественным наследованием и метаклассами",
-            current_model="gemini-2.5-flash-lite",
+            current_model="gemini-3.1-flash-lite",
         )
         # Result may be None if only one Gemini model is configured — that's fine
         if result is not None:

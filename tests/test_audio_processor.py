@@ -1,5 +1,7 @@
 """Tests for app.utils.multimodal_processor — constants and configuration validation."""
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 
@@ -58,6 +60,33 @@ class TestMultimodalProcessorConstants:
 
         result = await transcribe_voice(b"", "fake-key")
         assert result == (None, "conversational", None)
+
+    @pytest.mark.asyncio
+    async def test_transcribe_voice_normalizes_legacy_model_override(self, monkeypatch):
+        """Manual ASR model overrides must not send deprecated Gemini chat model IDs upstream."""
+        from app.utils import multimodal_processor as mp
+        from app.utils.multimodal_processor import TRANSCRIPTION_MODEL, transcribe_voice
+
+        fake_pollinations = type(
+            "FakePollinations",
+            (),
+            {"transcribe_audio": AsyncMock(return_value=None)},
+        )()
+        monkeypatch.setattr(
+            "app.providers.pollinations.get_pollinations_provider",
+            lambda: fake_pollinations,
+        )
+        generate_mock = AsyncMock(return_value="hello\nINTENT:CONVERSATIONAL")
+        monkeypatch.setattr(mp, "_generate_with_resilience", generate_mock)
+
+        result = await transcribe_voice(
+            b"voice-bytes",
+            "fake-key",
+            model="gemini-2.5-pro",
+        )
+
+        assert result == ("hello", "conversational", None)
+        assert generate_mock.await_args.kwargs["model"] == TRANSCRIPTION_MODEL
 
     @pytest.mark.asyncio
     async def test_describe_image_rejects_empty_bytes(self):

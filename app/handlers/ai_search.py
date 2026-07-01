@@ -61,7 +61,7 @@ async def _handle_qna_search(
     - Opencode Go (PRIMARY_PROVIDER='opencode'): JINA Search grounding injected
       into the system prompt; uses ``settings.OPENCODE_QNA_MODEL``.
     - Gemini (default): Google Search Grounding via ``enable_web_search=True``;
-      uses the existing gemini-2.5-flash-lite fallback chain.
+      uses the current Gemini Flash-Lite model.
 
     If user has a custom model set and it's an Opencode Go model, the Opencode
     path is also used respectively.
@@ -114,9 +114,8 @@ async def _handle_qna_search(
             f"{role_extra}"
         )
         # QnA ALWAYS uses grounding-capable models — user's chat model preference
-        # is ignored since arbitrary models may not support Google Search Grounding
-        # (gemini-3.x has 0 grounding quota on free tier).
-        fallback_chain = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
+        # is ignored since arbitrary models may not support Google Search Grounding.
+        fallback_chain = [GEMINI_ECONOMY_MODEL, GEMINI_PRIMARY_MODEL]
         enable_web_search = True
 
     history = [{"role": "user", "parts": [actual_search_query]}]

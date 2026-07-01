@@ -119,6 +119,34 @@ async def test_create_natal_report_ignores_insecure_telegraph_url(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_create_natal_report_skips_oversized_telegraph_mirror(monkeypatch):
+    birth = BirthInput(
+        birth_date="1995-02-14",
+        time_precision=TimePrecision.UNKNOWN,
+        birth_place="Kyiv, Ukraine",
+    )
+    saved_reports = []
+    patch_report_dependencies(monkeypatch, saved_reports=saved_reports)
+    monkeypatch.setattr("app.natal.service.build_telegraph_markdown", lambda report: "x" * 100_000)
+
+    async def fail_if_called(title, markdown_content):
+        raise AssertionError("Oversized Telegraph mirror should not be published")
+
+    monkeypatch.setattr("app.natal.service.create_telegraph_page_from_markdown", fail_if_called)
+
+    report = await create_natal_report(
+        birth_input=birth,
+        user_id=123,
+        chat_id=456,
+        webhook_url="https://bot.example.com",
+    )
+
+    assert report.hosted_url.startswith("https://bot.example.com/reports/natal/")
+    assert report.telegraph_url is None
+    assert len(saved_reports) == 1
+
+
+@pytest.mark.asyncio
 async def test_create_natal_report_respects_disabled_feature_flag(monkeypatch):
     birth = BirthInput(
         birth_date="1995-02-14",

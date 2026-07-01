@@ -3,7 +3,7 @@
 
 Analyzes user input characteristics to recommend the optimal model:
 - Short queries → fast models (e.g. gemini-3.1-flash-lite)
-- Complex reasoning → thinking models (e.g. gemini-2.5-flash)
+- Complex reasoning → primary capable models (e.g. gemini-3.5-flash)
 - Image analysis → multimodal models
 - Code tasks → code-optimized models
 
@@ -35,10 +35,7 @@ class SelectionResult:
 _MODEL_TIER = {
     # Gemini tiers
     "3.5-flash": 5,  # stable primary
-    "3-flash-preview": 3,  # legacy preview, below current stable 3.5
-    "3.1-flash-lite": 4,  # excellent performance, better than 2.5
-    "2.5-flash": 3,  # standard
-    "2.5-flash-lite": 1,  # low latency fallback
+    "3.1-flash-lite": 4,  # fast economy model
     # Opencode Go tiers (relative to each other) — canonical model list only
     "minimax-m2.7": 5,  # flagship
     "kimi-k2.5": 5,  # flagship alternative
@@ -62,10 +59,6 @@ def _get_tier(model_name: str) -> int:
         return 1
     if "3.5-flash" in name:
         return 5
-    if "3-flash-preview" in name:
-        return 3
-    if "2.5-flash" in name:
-        return 3
     return 2  # Unknown models get middle tier
 
 
@@ -102,7 +95,7 @@ _CREATIVE_PATTERNS = re.compile(
 # Performance: single shared tuple used by all three _find_model() calls in
 # select_model(). Eliminates 3 separate 3-element list allocations per call
 # and gives the preference order a single source of truth.
-_UPGRADE_PREFERENCE: tuple[str, ...] = ("3.5-flash", "3.1-flash-lite", "2.5-flash", "3-flash-preview")
+_UPGRADE_PREFERENCE: tuple[str, ...] = ("3.5-flash", "3.1-flash-lite")
 
 
 def select_model(

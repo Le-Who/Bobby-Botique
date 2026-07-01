@@ -197,6 +197,69 @@ async def test_generate_interpretation_requests_key_retry_budget(monkeypatch):
     assert router.calls[0]["timeout"] <= 45
 
 
+@pytest.mark.asyncio
+async def test_generate_interpretation_uses_current_primary_model_even_when_research_env_is_legacy(monkeypatch):
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.EXACT,
+            houses_available=True,
+            angles_available=True,
+        ),
+        planets=[
+            PlanetPosition(
+                key="sun",
+                label="Солнце",
+                longitude=325,
+                sign="Водолей",
+                degree_in_sign=25,
+            )
+        ],
+        aspects=[],
+    )
+
+    class FakeRouter:
+        def __init__(self):
+            self.calls = []
+
+        async def get_response(self, **kwargs):
+            self.calls.append(kwargs)
+            return (
+                "## section-summary | Краткое резюме\n"
+                "Например, есть живой вектор. Теневая сторона названа.\n\n"
+                "## section-identity | Ядро личности и способ проявляться\n"
+                "Солнце в Водолее. Например, вы включаетесь через смысл. Теневая сторона — спор ради свободы.\n\n"
+                "## section-emotions | Эмоциональные потребности и восстановление\n"
+                "Например, нужен ритм. Теневая сторона — игнорировать усталость.\n\n"
+                "## section-thinking | Мышление, речь и решения\n"
+                "Например, помогает структура. Теневая сторона — спорить вместо уточнения.\n\n"
+                "## section-love | Любовь, симпатия и личные ценности\n"
+                "Например, важна честность. Теневая сторона — холодность.\n\n"
+                "## section-action | Действие, конфликт и энергия\n"
+                "Например, нужна цель. Теневая сторона — резкость.\n\n"
+                "## section-work-money | Работа, деньги и реализация\n"
+                "Например, результат держится на роли. Теневая сторона — распыление.\n\n"
+                "## section-shadow-patterns | Тени и повторяющиеся сценарии\n"
+                "Например, защита может стать привычкой. Теневая сторона видна в повторе.\n\n"
+                "## section-relationships | Отношения и близость\n"
+                "Например, важен прямой разговор. Теневая сторона — молчаливые проверки.\n\n"
+                "## section-growth | Вектор роста и практичные шаги\n"
+                "Например, помогает один шаг. Теневая сторона — ждать идеала.",
+                0,
+            )
+
+    router = FakeRouter()
+    monkeypatch.setattr(
+        "app.config.settings",
+        SimpleNamespace(RESEARCH_MODEL="gemini-3-flash-preview", DEFAULT_MODEL="gemini-3-flash-preview"),
+    )
+    monkeypatch.setattr("app.providers.get_provider_router", lambda: router)
+
+    sections = await generate_interpretation(chart, user_id=123, chat_id=456)
+
+    assert sections
+    assert router.calls[0]["preferred_model"] == "gemini-3.5-flash"
+
+
 def test_prompt_surfaces_quality_warnings_for_exact_time_heuristic_houses():
     chart = ChartData(
         input_quality=InputQuality(

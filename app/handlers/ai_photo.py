@@ -13,8 +13,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from app.config import (
     DEFAULT_GEMINI_MODELS,
     GEMINI_ECONOMY_MODEL,
-    GEMINI_LEGACY_PREVIEW_MODEL,
     GEMINI_PRIMARY_MODEL,
+    normalize_gemini_chat_model,
     settings,
 )
 from app.database import ChatState
@@ -140,19 +140,17 @@ def _build_ocr_prompt(user_caption: str | None) -> str:
 def _pick_ocr_model() -> str:
     """Pick the best model for OCR tasks based on availability.
 
-    Prefers gemini-3.5-flash -> gemini-3.1-flash-lite -> gemini-2.5-flash -> preview.
+    Prefers gemini-3.5-flash -> gemini-3.1-flash-lite.
     """
     available = _available_models()
     preferred = [
         GEMINI_PRIMARY_MODEL,
         GEMINI_ECONOMY_MODEL,
-        "gemini-2.5-flash",
-        GEMINI_LEGACY_PREVIEW_MODEL,
     ]
     for pref in preferred:
         if pref in available:
             return pref
-    return _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL)
+    return normalize_gemini_chat_model(_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL))
 
 
 async def _send_vision_response(

@@ -124,6 +124,12 @@ async def _get_api_key_for_media(
 _MAX_KEY_ROTATIONS = 3
 
 
+def _normalize_media_model(model: str | None, fallback: str) -> str:
+    from app.config import normalize_gemini_chat_model
+
+    return normalize_gemini_chat_model(model, fallback=fallback)
+
+
 async def _generate_with_resilience(
     *,
     parts: list[types.Part],
@@ -368,6 +374,8 @@ async def transcribe_voice(
         logging.warning("transcribe_voice called with empty audio_bytes")
         return None, "conversational", None
 
+    model = _normalize_media_model(model, TRANSCRIPTION_MODEL)
+
     from app.providers.pollinations import get_pollinations_provider
 
     pollinations_provider = get_pollinations_provider()
@@ -482,6 +490,8 @@ async def describe_image(
         logging.warning("describe_image called with empty image_bytes")
         return None
 
+    model = _normalize_media_model(model, IMAGE_DESCRIPTION_MODEL)
+
     parts: list[types.Part] = [
         types.Part(inline_data=types.Blob(mime_type=mime_type, data=image_bytes)),
     ]
@@ -519,6 +529,8 @@ async def summarize_document_text(
     if not text or len(text.strip()) < 50:
         logging.warning("summarize_document_text called with insufficient text")
         return None
+
+    model = _normalize_media_model(model, TRANSCRIPTION_MODEL)
 
     # Truncate to avoid exceeding model context
     truncated = text[:30_000]
@@ -700,6 +712,8 @@ async def _transcribe_voice_for_ltm(
     """
     if not audio_bytes:
         return None
+
+    model = _normalize_media_model(model, TRANSCRIPTION_MODEL)
 
     audio_part = types.Part(
         inline_data=types.Blob(mime_type=mime_type, data=audio_bytes),

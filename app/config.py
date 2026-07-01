@@ -18,21 +18,15 @@ from app.utils.json_compat import json
 # Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().
 GEMINI_PRIMARY_MODEL: str = "gemini-3.5-flash"
 GEMINI_ECONOMY_MODEL: str = "gemini-3.1-flash-lite"
-GEMINI_LEGACY_PREVIEW_MODEL: str = "gemini-3-flash-preview"
 DEFAULT_GEMINI_MODELS: list[str] = [
     GEMINI_PRIMARY_MODEL,
     GEMINI_ECONOMY_MODEL,
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    GEMINI_LEGACY_PREVIEW_MODEL,
 ]
+CURRENT_GEMINI_MODELS: tuple[str, ...] = (GEMINI_PRIMARY_MODEL, GEMINI_ECONOMY_MODEL)
 DEFAULT_DAILY_LIMIT_PER_MODEL: int = 15
 DEFAULT_DAILY_LIMITS_BY_MODEL: dict[str, int] = {
     GEMINI_PRIMARY_MODEL: DEFAULT_DAILY_LIMIT_PER_MODEL,
     GEMINI_ECONOMY_MODEL: 400,
-    "gemini-2.5-flash": DEFAULT_DAILY_LIMIT_PER_MODEL,
-    "gemini-2.5-flash-lite": 250,
-    GEMINI_LEGACY_PREVIEW_MODEL: 5,
 }
 
 # --- Imagen 4 model identifiers (AI Studio / Gemini API) ---
@@ -114,15 +108,42 @@ def _load_single_model(env_var_name: str, fallback: str) -> str:
     return fallback
 
 
+def _filter_current_gemini_models(models: list[str], *, include_defaults: bool = True) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    allowed = set(CURRENT_GEMINI_MODELS)
+    for model in models:
+        normalized = model.strip()
+        if normalized in allowed and normalized not in seen:
+            result.append(normalized)
+            seen.add(normalized)
+    if include_defaults:
+        for model in CURRENT_GEMINI_MODELS:
+            if model not in seen:
+                result.append(model)
+                seen.add(model)
+    return result
+
+
+def normalize_gemini_chat_model(model_name: str | None, fallback: str = GEMINI_PRIMARY_MODEL) -> str:
+    if isinstance(model_name, str) and model_name.strip() in CURRENT_GEMINI_MODELS:
+        return model_name.strip()
+    return fallback
+
+
+def _load_gemini_role_model(env_var_name: str, fallback: str) -> str:
+    return normalize_gemini_chat_model(_load_single_model(env_var_name, fallback), fallback=fallback)
+
+
 def _load_daily_limits() -> dict[str, int]:
     """
     Загружает DAILY_LIMITS from env переменной to formatе JSON or компактном формате.
 
     Формат в env (JSON, рекомендуется):
-    DAILY_LIMITS='{"gemini-2.5-flash": 250, "gemini-2.5-flash-lite": 15}'
+    DAILY_LIMITS='{"gemini-3.5-flash": 15, "gemini-3.1-flash-lite": 400}'
 
     Или компактный формат:
-    DAILY_LIMITS='gemini-2.5-flash:250,gemini-2.5-flash-lite:15'
+    DAILY_LIMITS='gemini-3.5-flash:15,gemini-3.1-flash-lite:400'
 
     Returns:
         Dict[str, int]: Словарь с limitами for моделей
@@ -343,8 +364,8 @@ class Settings(BaseModel):
     # flash-lite: lighter architecture, faster degradation → conservative 32K.
     # flash:      good quality up to ~128K (validated sweet spot for reasoning).
     MODEL_CONTEXT_BUDGETS: dict[str, int] = {
-        "flash-lite": 32_000,  # gemini-2.5-flash-lite, gemini-3.1-flash-lite
-        "flash": 128_000,  # gemini-2.5-flash, gemini-3.5-flash, gemini-3-flash-preview
+        "flash-lite": 32_000,  # gemini-3.1-flash-lite
+        "flash": 128_000,  # gemini-3.5-flash
     }
     DEFAULT_CONTEXT_BUDGET: int = 128_000
 
@@ -369,6 +390,9 @@ def load_settings() -> Settings:
         # Значения by default for моделей
         default_gemini_models = DEFAULT_GEMINI_MODELS.copy()
         default_openrouter_models: list[str] = []
+        configured_gemini_models = _filter_current_gemini_models(
+            _load_and_clean_keys("GEMINI_AVAILABLE_MODELS", required=False) or default_gemini_models
+        )
 
         inline_thinking = os.getenv("INLINE_THINKING_LEVEL", "").strip().lower()
         if not inline_thinking:
@@ -418,16 +442,15 @@ def load_settings() -> Settings:
             "WEATHER_API_KEY": os.getenv("WEATHER_API_KEY", "").strip(),
             "EXCHANGE_RATE_API_KEY": os.getenv("EXCHANGE_RATE_API_KEY", "").strip(),
             # Load models from env or use значения by default
-            "AVAILABLE_MODELS": _load_and_clean_keys("GEMINI_AVAILABLE_MODELS", required=False)
-            or default_gemini_models,
+            "AVAILABLE_MODELS": configured_gemini_models,
             "OPENROUTER_AVAILABLE_MODELS": _load_and_clean_keys("OPENROUTER_AVAILABLE_MODELS", required=False)
             or default_openrouter_models,
-            "DEFAULT_MODEL": _load_single_model("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
-            "QNA_MODEL": _load_single_model("QNA_MODEL", GEMINI_ECONOMY_MODEL),
-            "INLINE_MODEL": _load_single_model("INLINE_MODEL", GEMINI_ECONOMY_MODEL),
-            "RESEARCH_MODEL": _load_single_model("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
-            "URL_SELECTION_MODEL": _load_single_model("URL_SELECTION_MODEL", GEMINI_ECONOMY_MODEL),
-            "TAXONOMY_MODEL": _load_single_model("TAXONOMY_MODEL", GEMINI_ECONOMY_MODEL),
+            "DEFAULT_MODEL": _load_gemini_role_model("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+            "QNA_MODEL": _load_gemini_role_model("QNA_MODEL", GEMINI_ECONOMY_MODEL),
+            "INLINE_MODEL": _load_gemini_role_model("INLINE_MODEL", GEMINI_ECONOMY_MODEL),
+            "RESEARCH_MODEL": _load_gemini_role_model("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+            "URL_SELECTION_MODEL": _load_gemini_role_model("URL_SELECTION_MODEL", GEMINI_ECONOMY_MODEL),
+            "TAXONOMY_MODEL": _load_gemini_role_model("TAXONOMY_MODEL", GEMINI_ECONOMY_MODEL),
             "OPENROUTER_DEFAULT_MODEL": _load_single_model("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_QNA_MODEL": _load_single_model("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_RESEARCH_MODEL": _load_single_model("OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free"),

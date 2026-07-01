@@ -22,7 +22,7 @@ MIN_HISTORY_MESSAGES = 4  # Always keep at least this many recent messages
 LLM_SUMMARY_TOKEN_THRESHOLD = 30_000  # Min dropped tokens to trigger LLM tier
 CHUNK_SIZE = 10_000  # Tokens per chunk for refine-chain summarization
 MAX_CHUNKS = 6  # Max chunks per summarization (cost control)
-SUMMARIZATION_MODEL = "gemini-2.5-flash-lite"  # Cheapest, 84.1% FACTS grounding
+SUMMARIZATION_MODEL = "gemini-3.1-flash-lite"
 
 
 @dataclass

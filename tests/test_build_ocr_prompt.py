@@ -23,7 +23,7 @@ def test_build_ocr_prompt_without_caption():
 def test_pick_ocr_model_prefer_3_5():
     """_pick_ocr_model should prefer gemini-3.5-flash if available."""
     mock_settings = MagicMock()
-    mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]
+    mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
 
     with patch("app.handlers.ai_photo.settings", mock_settings):
         model = _pick_ocr_model()
@@ -33,31 +33,22 @@ def test_pick_ocr_model_prefer_3_5():
 def test_pick_ocr_model_fallback_3_1_lite():
     """_pick_ocr_model should fall back to gemini-3.1-flash-lite if 3.5 is not available."""
     mock_settings = MagicMock()
-    mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-3-flash-preview"]
+    mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite"]
 
     with patch("app.handlers.ai_photo.settings", mock_settings):
         model = _pick_ocr_model()
         assert model == "gemini-3.1-flash-lite"
 
 
-def test_pick_ocr_model_fallback_2_5():
-    """_pick_ocr_model should fall back to gemini-2.5-flash if 3.5 and 3.1-lite are not available."""
+def test_pick_ocr_model_ignores_stale_models_and_uses_primary_default():
+    """_pick_ocr_model should never select stale Gemini chat models."""
     mock_settings = MagicMock()
     mock_settings.AVAILABLE_MODELS = ["gemini-2.5-flash", "gemini-3-flash-preview"]
+    mock_settings.DEFAULT_MODEL = "gemini-2.5-flash"
 
     with patch("app.handlers.ai_photo.settings", mock_settings):
         model = _pick_ocr_model()
-        assert model == "gemini-2.5-flash"
-
-
-def test_pick_ocr_model_fallback_3_preview():
-    """_pick_ocr_model should fall back to preview only after stable models are unavailable."""
-    mock_settings = MagicMock()
-    mock_settings.AVAILABLE_MODELS = ["gemini-3-flash-preview"]
-
-    with patch("app.handlers.ai_photo.settings", mock_settings):
-        model = _pick_ocr_model()
-        assert model == "gemini-3-flash-preview"
+        assert model == "gemini-3.5-flash"
 
 
 def test_pick_ocr_model_final_fallback():

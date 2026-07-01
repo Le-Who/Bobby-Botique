@@ -15,10 +15,8 @@ logger = logging.getLogger(__name__)
 HintGenerationMode = Literal["foreground", "background"]
 
 _AI_STUDIO_FOREGROUND_RPM: dict[str, int] = {
-    "gemini-3-flash-preview": 4,
+    "gemini-3.5-flash": 4,
     "gemini-3.1-flash-lite": 14,
-    "gemini-2.5-flash-lite": 9,
-    "gemini-2.5-flash": 2,
 }
 _AI_STUDIO_BACKGROUND_RPM: dict[str, int] = {
     "gemini-3.1-flash-lite": 2,

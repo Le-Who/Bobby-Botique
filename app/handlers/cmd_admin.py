@@ -892,7 +892,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def _check_single_gemini_key(client: httpx.AsyncClient, key_hash: str, api_key: str) -> str:
     # A fast, lightweight check bypassing the SDK to avoid retry-loops.
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash?key={api_key}"
     try:
         resp = await client.get(url)
         if resp.status_code == 200:

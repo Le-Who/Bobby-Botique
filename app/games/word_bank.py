@@ -1011,7 +1011,7 @@ _TOPIC_ROTATION: dict[str, tuple[str, list[str], int]] = {}
 
 # Gemini models tried in order for word generation
 _GEN_PRIMARY_MODEL = "opencode-go/minimax-m2.7"
-_GEN_FALLBACK_MODEL = "gemini-2.5-flash"
+_GEN_FALLBACK_MODEL = "gemini-3.5-flash"
 _GEN_TIMEOUT_S = 30.0  # Background task: user not waiting, let slow providers finish
 
 _GEN_PROMPT = (

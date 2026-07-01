@@ -163,6 +163,38 @@ def test_load_settings_defaults_to_3_5_primary_and_3_1_lite_economy(monkeypatch)
     assert settings.TAXONOMY_MODEL == "gemini-3.1-flash-lite"
 
 
+def test_default_gemini_models_only_include_current_flash_models():
+    assert DEFAULT_GEMINI_MODELS == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+
+
+def test_load_settings_filters_legacy_gemini_models_from_env(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    monkeypatch.setenv(
+        "GEMINI_AVAILABLE_MODELS",
+        "gemini-3-flash-preview,gemini-2.5-flash,gemini-3.1-flash-lite",
+    )
+    monkeypatch.setenv("DEFAULT_MODEL", "gemini-3-flash-preview")
+    monkeypatch.setenv("RESEARCH_MODEL", "gemini-2.5-flash")
+    monkeypatch.setenv("QNA_MODEL", "gemini-3.1-flash-lite")
+    monkeypatch.setenv("INLINE_MODEL", "gemini-3-flash-preview")
+    monkeypatch.setenv("URL_SELECTION_MODEL", "gemini-2.5-flash-lite")
+    monkeypatch.setenv("TAXONOMY_MODEL", "gemini-3-flash-preview")
+
+    settings = load_settings()
+
+    assert settings.AVAILABLE_MODELS == ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
+    assert settings.DEFAULT_MODEL == "gemini-3.5-flash"
+    assert settings.RESEARCH_MODEL == "gemini-3.5-flash"
+    assert settings.QNA_MODEL == "gemini-3.1-flash-lite"
+    assert settings.INLINE_MODEL == "gemini-3.1-flash-lite"
+    assert settings.URL_SELECTION_MODEL == "gemini-3.1-flash-lite"
+    assert settings.TAXONOMY_MODEL == "gemini-3.1-flash-lite"
+
+
 def test_load_settings_reads_game_hub_envs(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")

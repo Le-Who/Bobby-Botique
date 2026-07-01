@@ -23,8 +23,8 @@ async def test_retry_after_quota_text_maps_to_rate_limit_cooldown():
     assert extract_retry_after_seconds(message) == 57
     assert classify_key_error(message) == "rate_limit"
 
-    await record_result("ai_studio", "gemini-3-flash-preview", "rate_limit", retry_after_seconds=57, reason=message)
-    cooldown = get_model_cooldown("ai_studio", "gemini-3-flash-preview")
+    await record_result("ai_studio", "gemini-3.5-flash", "rate_limit", retry_after_seconds=57, reason=message)
+    cooldown = get_model_cooldown("ai_studio", "gemini-3.5-flash")
 
     assert cooldown is not None
     assert cooldown.last_retry_after_seconds == 57

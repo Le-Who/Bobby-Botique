@@ -9,7 +9,7 @@ Flow:
   4. ``handle_chosen_inline_result`` captures ``inline_message_id`` + query
      + chosen tone, then fires ``_generate_and_edit_inline`` as a background task.
   5. ``_generate_and_edit_inline``:
-       a) Calls ``gemini-2.5-flash-lite`` with Google Search Grounding enabled.
+       a) Calls ``gemini-3.1-flash-lite`` with Google Search Grounding enabled.
        b) Grounding citations (when available) are appended as an expandable
           blockquote below the answer.
        c) Converts the Markdown answer to Telegram HTML and edits the inline
@@ -75,7 +75,7 @@ async def get_inline_model() -> str:
     default = settings.INLINE_MODEL if settings else "gemini-3.1-flash-lite"
     return await get_global_setting("inline_model", default)
 
-_INLINE_FALLBACK_MODEL = "gemini-2.5-flash-lite"
+_INLINE_FALLBACK_MODEL = "gemini-3.1-flash-lite"
 
 # Outer timeout for the entire generation pipeline.
 _GEN_TIMEOUT_S = 55.0
@@ -1230,7 +1230,7 @@ async def _stream_inline_fast(
         keys: list[dict] = []
         resolved_model: str | None = None
         # AI Studio keys race as fallback alongside the primary Vertex slot.
-        # Use _INLINE_FALLBACK_MODEL (gemini-2.5-flash-lite) for AI Studio racers.
+        # Use _INLINE_FALLBACK_MODEL (gemini-3.1-flash-lite) for AI Studio racers.
         _ai_studio_model = _INLINE_FALLBACK_MODEL
         for _ in range(2):
             kd, mdl, _ = await use_case.resolve_ai_request(
@@ -1470,7 +1470,7 @@ async def _generate_and_edit_inline(
     """
     Core async pipeline with progressive UX feedback:
 
-    1. Call ``gemini-2.5-flash-lite`` with **Google Search Grounding** enabled.
+    1. Call ``gemini-3.1-flash-lite`` with **Google Search Grounding** enabled.
        The model searches the web natively for factual/current queries — no
        separate Tavily call needed.  This ensures real-time data (exchange
        rates, weather, news) instead of potentially stale Tavily QnA cache.
@@ -1524,7 +1524,7 @@ async def _generate_and_edit_inline(
 
     # ── Step 2: Generate (3-way Race Requests, up to 4 rounds) ──────────────────
     # Primary: Vertex AI Express (gemini-3.1-flash-lite) with Search Grounding.
-    # Fallback racers: 2x AI Studio keys (gemini-2.5-flash-lite) per round.
+    # Fallback racers: 2x AI Studio keys (gemini-3.1-flash-lite) per round.
     _gen_start = time.monotonic()
     final_answer: str | None = None
     _grounding_sources: list[tuple[str, str]] = []  # Grounding Citations (url, title)
@@ -2085,7 +2085,7 @@ async def _generate_tarot_inline(
 
     Uses ProviderRouter.get_response() for sequential key rotation: tries one
     key at a time and rotates on 503/UNAVAILABLE (max 3 retries). QNA_MODEL
-    (gemini-2.5-flash) is stable enough that parallel racing would only waste
+    uses the current economy Gemini model, so parallel racing would only waste
     daily quota.
     """
     import contextlib

@@ -188,6 +188,42 @@ class TestProviderRouter:
         assert "hash2" in fake_status.successful_keys
 
     @pytest.mark.asyncio
+    async def test_transient_failures_cascade_to_lite_for_non_stream_response(self):
+        router = ProviderRouter()
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[
+                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3.5-flash", None),
+                ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3.5-flash", None),
+                ({"api_key": "k3", "key_hash": "hash3"}, "gemini-3.1-flash-lite", None),
+            ],
+            response_sequence=[
+                asyncio.TimeoutError(),
+                ("⏰ Превышено время ожидания ответа от API.", None),
+                ("Lite fallback response", 9),
+            ],
+        )
+
+        mock_settings = MagicMock()
+        mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
+            patch("app.providers.router.settings", mock_settings),
+        ):
+            text, tokens = await router.get_response(
+                "gemini-3.5-flash",
+                [{"role": "user", "parts": ["hi"]}],
+                max_key_retries=2,
+                timeout=0.1,
+            )
+
+        assert text == "Lite fallback response"
+        assert tokens == 9
+        assert fake_use_case.resolve_calls[2]["preferred_model"] == "gemini-3.1-flash-lite"
+
+    @pytest.mark.asyncio
     async def test_quota_error_suspends_with_quota_category(self):
         """Quota exceeded should suspend with 'quota' category."""
         router = ProviderRouter()
@@ -261,10 +297,10 @@ class TestProviderRouter:
         fake_status = FakeKeyStatusManager()
         fake_use_case = FakeAgentRequestUseCase(
             resolve_sequence=[
-                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3-flash-preview", None),
-                ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3-flash-preview", None),
-                ({"api_key": "k3", "key_hash": "hash3"}, "gemini-3-flash-preview", None),
-                ({"api_key": "k4", "key_hash": "hash4"}, "gemini-2.5-flash", None),
+                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3.5-flash", None),
+                ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3.5-flash", None),
+                ({"api_key": "k3", "key_hash": "hash3"}, "gemini-3.5-flash", None),
+                ({"api_key": "k4", "key_hash": "hash4"}, "gemini-3.1-flash-lite", None),
             ],
             response_sequence=[
                 ("🔑 Неверный API ключ.", None),  # permanent
@@ -276,9 +312,8 @@ class TestProviderRouter:
 
         mock_settings = MagicMock()
         mock_settings.AVAILABLE_MODELS = [
-            "gemini-3-flash-preview",
-            "gemini-2.5-flash",
-            "gemini-flash-latest",
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite",
         ]
 
         with (
@@ -287,7 +322,7 @@ class TestProviderRouter:
             patch("app.providers.router.settings", mock_settings),
         ):
             text, tokens = await router.get_response(
-                "gemini-3-flash-preview", [{"role": "user", "parts": ["hi"]}], max_key_retries=3
+                "gemini-3.5-flash", [{"role": "user", "parts": ["hi"]}], max_key_retries=3
             )
 
         assert text == "Fallback response!"
@@ -324,7 +359,6 @@ class TestProviderRouter:
         mock_settings.AVAILABLE_MODELS = [
             "gemini-3.5-flash",
             "gemini-3.1-flash-lite",
-            "gemini-2.5-flash",
         ]
 
         with (
@@ -347,9 +381,9 @@ class TestProviderRouter:
         fake_status = FakeKeyStatusManager()
         fake_use_case = FakeAgentRequestUseCase(
             resolve_sequence=[
-                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3-flash-preview", None),
-                ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3-flash-preview", None),
-                ({"api_key": "k3", "key_hash": "hash3"}, "gemini-3-flash-preview", None),
+                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3.5-flash", None),
+                ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3.5-flash", None),
+                ({"api_key": "k3", "key_hash": "hash3"}, "gemini-3.5-flash", None),
             ],
             response_sequence=[
                 ("🔑 Неверный API ключ.", None),  # permanent
@@ -363,7 +397,7 @@ class TestProviderRouter:
             patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
         ):
             text, tokens = await router.get_response(
-                "gemini-3-flash-preview", [{"role": "user", "parts": ["hi"]}], max_key_retries=3
+                "gemini-3.5-flash", [{"role": "user", "parts": ["hi"]}], max_key_retries=3
             )
 
         assert "🚫" in text
