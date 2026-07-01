@@ -475,6 +475,88 @@ async def test_generate_interpretation_falls_back_when_llm_contradicts_calculate
 
 
 @pytest.mark.asyncio
+async def test_generate_interpretation_accepts_compact_correct_planet_summary(monkeypatch):
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.EXACT,
+            houses_available=True,
+            angles_available=True,
+        ),
+        planets=[
+            PlanetPosition(
+                key="sun",
+                label="Солнце",
+                longitude=226.7,
+                sign="Скорпион",
+                degree_in_sign=16.7,
+            ),
+            PlanetPosition(
+                key="moon",
+                label="Луна",
+                longitude=331.5,
+                sign="Рыбы",
+                degree_in_sign=1.5,
+            ),
+            PlanetPosition(
+                key="mercury",
+                label="Меркурий",
+                longitude=242.0,
+                sign="Стрелец",
+                degree_in_sign=2.0,
+            ),
+            PlanetPosition(
+                key="mars",
+                label="Марс",
+                longitude=269.9,
+                sign="Стрелец",
+                degree_in_sign=29.9,
+            ),
+        ],
+        aspects=[],
+    )
+
+    response = (
+        "## section-summary | Краткое резюме\n"
+        "Солнце в Скорпионе, Луна в Рыбах, Меркурий в Стрельце и Марс в Стрельце создают "
+        "насыщенный, но расчетно корректный рисунок. Например, глубина сочетается с гибкой "
+        "эмоциональностью. Теневая сторона — реагировать слишком резко.\n\n"
+        "## section-identity | Ядро личности и способ проявляться\n"
+        "Солнце в Скорпионе дает глубину. Например, вы легче включаетесь, когда есть настоящая ставка. "
+        "Теневая сторона — проверять людей на прочность.\n\n"
+        "## section-emotions | Эмоциональные потребности и восстановление\n"
+        "Луна в Рыбах нуждается в мягкости. Например, помогает тишина. Теневая сторона — растворяться в чужих эмоциях.\n\n"
+        "## section-thinking | Мышление, речь и решения\n"
+        "Меркурий в Стрельце мыслит широко. Например, важна большая картина. Теневая сторона — перескакивать детали.\n\n"
+        "## section-love | Любовь, симпатия и личные ценности\n"
+        "Например, ценности проявляются через честность. Теневая сторона — идеализировать.\n\n"
+        "## section-action | Действие, конфликт и энергия\n"
+        "Марс в Стрельце действует прямо. Например, нужна цель. Теневая сторона — горячность.\n\n"
+        "## section-work-money | Работа, деньги и реализация\n"
+        "Например, реализация держится на смысле. Теневая сторона — распыление.\n\n"
+        "## section-shadow-patterns | Тени и повторяющиеся сценарии\n"
+        "Например, защита может выглядеть как контроль. Теневая сторона видна в повторе.\n\n"
+        "## section-relationships | Отношения и близость\n"
+        "Например, близость требует честного разговора. Теневая сторона — молчаливые проверки.\n\n"
+        "## section-growth | Вектор роста и практичные шаги\n"
+        "Например, помогает один конкретный шаг. Теневая сторона — ждать идеального момента."
+    )
+
+    class FakeRouter:
+        async def get_response(self, **kwargs):
+            del kwargs
+            return response, 0
+
+    monkeypatch.setattr("app.config.settings", SimpleNamespace(RESEARCH_MODEL="test-model", DEFAULT_MODEL=""))
+    monkeypatch.setattr("app.providers.get_provider_router", lambda: FakeRouter())
+
+    sections = await generate_interpretation(chart, user_id=123, chat_id=456)
+
+    bodies = "\n".join(section.body_markdown for section in sections)
+    assert "Глубокая LLM-интерпретация временно недоступна" not in bodies
+    assert "Солнце в Скорпионе, Луна в Рыбах" in bodies
+
+
+@pytest.mark.asyncio
 async def test_generate_interpretation_repairs_incomplete_practical_structure(monkeypatch):
     chart = ChartData(
         input_quality=InputQuality(

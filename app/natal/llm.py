@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import re
 
 from app.config import GEMINI_PRIMARY_MODEL
 from app.natal.models import ChartData, ReportSection
+
+logger = logging.getLogger(__name__)
 
 _POINT_TITLE_HINTS = {
     "sun": "Солнце — ядро личности",
@@ -120,6 +123,9 @@ async def generate_interpretation(
         )
         sections = _parse_sections(response or "")
         if sections and _sections_contradict_calculated_signs(chart, sections):
+            logger.warning(
+                "Natal LLM interpretation rejected: response contradicted calculated planet signs",
+            )
             return _fallback_sections(chart)
         if sections and _sections_need_quality_repair(sections):
             repair_prompt = _build_interpretation_repair_prompt(chart, language, focus, response or "")
@@ -134,8 +140,19 @@ async def generate_interpretation(
             repaired_sections = _parse_sections(repaired_response or "")
             if repaired_sections and not _sections_contradict_calculated_signs(chart, repaired_sections):
                 return repaired_sections
+            logger.warning(
+                "Natal LLM repair rejected or unparsable: sections=%d response_len=%d",
+                len(repaired_sections),
+                len(repaired_response or ""),
+            )
+        if not sections:
+            logger.warning(
+                "Natal LLM interpretation was unparsable: response_len=%d",
+                len(response or ""),
+            )
         return sections or _fallback_sections(chart)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Natal LLM interpretation failed: %s", exc, exc_info=True)
         return _fallback_sections(chart)
 
 
@@ -378,22 +395,45 @@ def _sections_contradict_calculated_signs(chart: ChartData, sections: list[Repor
     if not chart.planets:
         return False
     markdown = "\n".join(f"{section.title}\n{section.body_markdown}" for section in sections).lower()
+    planet_labels = [planet.label for planet in chart.planets if planet.label]
     for planet in chart.planets:
         wrong_aliases: list[str] = []
         for sign, aliases in _SIGN_ALIASES.items():
             if sign != planet.sign:
                 wrong_aliases.extend(aliases)
-        if _planet_mentions_any_sign_alias(markdown, planet.label, wrong_aliases):
+        if _planet_mentions_any_sign_alias(markdown, planet.label, wrong_aliases, planet_labels):
             return True
     return False
 
 
-def _planet_mentions_any_sign_alias(markdown: str, planet_label: str, sign_aliases: list[str]) -> bool:
+def _planet_mentions_any_sign_alias(
+    markdown: str,
+    planet_label: str,
+    sign_aliases: list[str],
+    planet_labels: list[str] | None = None,
+) -> bool:
     planet = re.escape(planet_label.lower())
-    for alias in sign_aliases:
-        sign = re.escape(alias)
-        if re.search(rf"\b{planet}\b[^.\n!?;:]{{0,140}}\b(?:в|во)\s+(?:знаке\s+)?{sign}\b", markdown):
-            return True
+    other_planets = [
+        re.escape(label.lower())
+        for label in (planet_labels or [])
+        if label and label.lower() != planet_label.lower()
+    ]
+    for match in re.finditer(rf"\b{planet}\b", markdown):
+        context = markdown[match.end() : match.end() + 180]
+        cut_points: list[int] = []
+        boundary = re.search(r"[.\n!?;:]", context)
+        if boundary:
+            cut_points.append(boundary.start())
+        for other_planet in other_planets:
+            other_match = re.search(rf"\b{other_planet}\b", context)
+            if other_match:
+                cut_points.append(other_match.start())
+        if cut_points:
+            context = context[: min(cut_points)]
+        for alias in sign_aliases:
+            sign = re.escape(alias)
+            if re.search(rf"\b(?:в|во)\s+(?:знаке\s+)?{sign}\b", context):
+                return True
     return False
 
 
