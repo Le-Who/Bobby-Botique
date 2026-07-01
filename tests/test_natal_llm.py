@@ -260,13 +260,16 @@ async def test_generate_interpretation_uses_current_primary_model_even_when_rese
     assert router.calls[0]["preferred_model"] == "gemini-3.5-flash"
 
 
-def test_prompt_surfaces_quality_warnings_for_exact_time_heuristic_houses():
+def test_prompt_keeps_quality_constraints_internal_without_technical_jargon():
     chart = ChartData(
         input_quality=InputQuality(
             time_precision=TimePrecision.EXACT,
             houses_available=True,
             angles_available=True,
-            warnings=["Дома и Асцендент рассчитаны эвристически и требуют reference validation."],
+            warnings=[
+                "Использована equal-house система домов от рассчитанного Асцендента.",
+                "Дома и Асцендент рассчитаны эвристически и требуют reference validation.",
+            ],
         ),
         planets=[
             PlanetPosition(
@@ -282,9 +285,14 @@ def test_prompt_surfaces_quality_warnings_for_exact_time_heuristic_houses():
 
     prompt = build_interpretation_prompt(chart=chart, language="ru", focus="general")
 
-    assert "предупреждения качества" in prompt.lower()
-    assert "эвристически" in prompt.lower()
-    assert "не подавай приблизительные дома" in prompt.lower()
+    prompt_lower = prompt.lower()
+    assert "если используешь дома или углы" in prompt_lower
+    assert "для пользователя не пиши технические примечания" in prompt_lower
+    assert "ephem-local" not in prompt_lower
+    assert "equal-house" not in prompt_lower
+    assert "reference validation" not in prompt_lower
+    assert "движок расчета" not in prompt_lower
+    assert "предупреждения качества" not in prompt_lower
 
 
 def test_prompt_redacts_raw_birth_details_from_quality_warnings():
@@ -320,13 +328,16 @@ def test_prompt_redacts_raw_birth_details_from_quality_warnings():
     assert "[redacted birth data]" in prompt
 
 
-def test_fallback_sections_include_quality_warnings():
+def test_fallback_sections_hide_technical_quality_warnings():
     chart = ChartData(
         input_quality=InputQuality(
             time_precision=TimePrecision.EXACT,
             houses_available=True,
             angles_available=True,
-            warnings=["Дома рассчитаны эвристически."],
+            warnings=[
+                "Использована equal-house система домов от рассчитанного Асцендента.",
+                "Дома рассчитаны эвристически и требуют reference validation.",
+            ],
         ),
         planets=[
             PlanetPosition(
@@ -341,8 +352,13 @@ def test_fallback_sections_include_quality_warnings():
     )
 
     sections = _fallback_sections(chart)
+    text = "\n".join(section.body_markdown for section in sections)
 
-    assert "Дома рассчитаны эвристически" in sections[0].body_markdown
+    assert "Предупреждения качества" not in text
+    assert "equal-house" not in text
+    assert "reference validation" not in text
+    assert "эвристически" not in text
+    assert "Асцендент" not in text
 
 
 def test_fallback_sections_use_user_facing_planet_titles():
@@ -554,6 +570,107 @@ async def test_generate_interpretation_accepts_compact_correct_planet_summary(mo
     bodies = "\n".join(section.body_markdown for section in sections)
     assert "Глубокая LLM-интерпретация временно недоступна" not in bodies
     assert "Солнце в Скорпионе, Луна в Рыбах" in bodies
+
+
+@pytest.mark.asyncio
+async def test_generate_interpretation_repairs_technical_and_overly_abstract_language(monkeypatch):
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.EXACT,
+            houses_available=True,
+            angles_available=True,
+            warnings=["Использована equal-house система домов от рассчитанного Асцендента."],
+        ),
+        planets=[
+            PlanetPosition(
+                key="sun",
+                label="Солнце",
+                longitude=226.7,
+                sign="Скорпион",
+                degree_in_sign=16.7,
+            )
+        ],
+        aspects=[],
+    )
+    dry_response = (
+        "## section-summary | Краткое резюме\n"
+        "Техническое примечание: Этот разбор построен на основе расчетного движка ephem-local "
+        "и использует равнодомную систему от Асцендента. Например, это вводный блок. "
+        "Теневая сторона названа.\n\n"
+        "## section-identity | Ядро личности и способ проявляться\n"
+        "Смысл: Солнце в Скорпионе. Астрологическая сетка указывает на то, что это ядро "
+        "проецируется на сферу ваших личных ресурсов и ценностей. Например, вы копите опыт. "
+        "Теневая сторона — закрываться.\n\n"
+        "## section-emotions | Эмоциональные потребности и восстановление\n"
+        "Например, вам нужен мягкий ритм. Теневая сторона — уходить в молчание.\n\n"
+        "## section-thinking | Мышление, речь и решения\n"
+        "Например, помогает честный вопрос. Теневая сторона — подозревать лишнее.\n\n"
+        "## section-love | Любовь, симпатия и личные ценности\n"
+        "Например, важна верность. Теневая сторона — проверять чувства.\n\n"
+        "## section-action | Действие, конфликт и энергия\n"
+        "Например, вы действуете глубоко. Теневая сторона — давить.\n\n"
+        "## section-work-money | Работа, деньги и реализация\n"
+        "Например, работа требует смысла. Теневая сторона — перегружаться.\n\n"
+        "## section-shadow-patterns | Тени и повторяющиеся сценарии\n"
+        "Например, защита становится контролем. Теневая сторона видна в повторе.\n\n"
+        "## section-relationships | Отношения и близость\n"
+        "Например, близость крепче через честный разговор. Теневая сторона — молчаливые проверки.\n\n"
+        "## section-growth | Вектор роста и практичные шаги\n"
+        "Например, помогает один ясный шаг. Теневая сторона — ждать идеала."
+    )
+    warm_response = (
+        "## section-summary | Краткое резюме\n"
+        "В этой карте много внутренней силы: вам важно не жить на поверхности, а понимать, зачем вы "
+        "что-то выбираете. Например, в работе или отношениях вы быстрее включитесь там, где есть честность. "
+        "Теневая сторона — слишком долго проверять людей и ситуации.\n\n"
+        "## section-identity | Ядро личности и способ проявляться\n"
+        "Солнце в Скорпионе похоже на внутренний фонарь: вы замечаете скрытые мотивы и редко верите красивым "
+        "словам без поступков. Например, если проект выглядит перспективным, но внутри есть фальшь, вы быстро "
+        "это чувствуете. Теневая сторона — держать оборону даже там, где уже можно расслабиться.\n\n"
+        "## section-emotions | Эмоциональные потребности и восстановление\n"
+        "Например, вам помогает тишина и ощущение, что рядом можно быть настоящим. Теневая сторона — уходить в молчание.\n\n"
+        "## section-thinking | Мышление, речь и решения\n"
+        "Например, хороший вопрос для вас сильнее длинной лекции. Теневая сторона — подозревать лишнее.\n\n"
+        "## section-love | Любовь, симпатия и личные ценности\n"
+        "Например, важна верность в мелочах. Теневая сторона — проверять чувства.\n\n"
+        "## section-action | Действие, конфликт и энергия\n"
+        "Например, вы действуете глубоко, когда цель важна. Теневая сторона — давить.\n\n"
+        "## section-work-money | Работа, деньги и реализация\n"
+        "Например, работа требует смысла и честных правил. Теневая сторона — перегружаться.\n\n"
+        "## section-shadow-patterns | Тени и повторяющиеся сценарии\n"
+        "Например, защита становится контролем. Теневая сторона видна в повторе.\n\n"
+        "## section-relationships | Отношения и близость\n"
+        "Например, близость крепче через честный разговор. Теневая сторона — молчаливые проверки.\n\n"
+        "## section-growth | Вектор роста и практичные шаги\n"
+        "Например, помогает один ясный шаг. Теневая сторона — ждать идеала."
+    )
+
+    class FakeRouter:
+        def __init__(self):
+            self.calls = 0
+
+        async def get_response(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return dry_response, 0
+            repair_prompt = kwargs["history"][0]["parts"][0].lower()
+            assert "убери технические примечания" in repair_prompt
+            assert "простым русским языком" in repair_prompt
+            return warm_response, 0
+
+    router = FakeRouter()
+    monkeypatch.setattr("app.config.settings", SimpleNamespace(RESEARCH_MODEL="test-model", DEFAULT_MODEL=""))
+    monkeypatch.setattr("app.providers.get_provider_router", lambda: router)
+
+    sections = await generate_interpretation(chart, user_id=123, chat_id=456)
+
+    bodies = "\n".join(section.body_markdown for section in sections).lower()
+    assert router.calls == 2
+    assert "техническое примечание" not in bodies
+    assert "ephem-local" not in bodies
+    assert "астрологическая сетка" not in bodies
+    assert "проецируется" not in bodies
+    assert "внутренний фонарь" in bodies
 
 
 @pytest.mark.asyncio

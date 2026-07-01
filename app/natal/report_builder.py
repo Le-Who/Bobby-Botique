@@ -5,6 +5,7 @@ import re
 
 from app.natal.destiny_matrix import render_destiny_matrix_svg
 from app.natal.models import NatalReport, ReportSection
+from app.natal.text_safety import strip_user_facing_blocked_notes
 from app.utils.text_format import markdown_to_html
 
 _GEONAMES_ATTRIBUTION_HTML = (
@@ -185,7 +186,7 @@ def _positions_reference_html(positions: str) -> str:
 
 
 def _prepare_hosted_section_markdown(section: ReportSection) -> tuple[str, list[str]]:
-    markdown = section.body_markdown
+    markdown = strip_user_facing_blocked_notes(section.body_markdown)
     if not _is_aspect_section(section):
         return markdown, []
 
@@ -546,7 +547,7 @@ def build_telegraph_markdown(report: NatalReport) -> str:
                 continue
             lines.append(f"| {position.label} | {position.arcana}. {position.arcana_label} | {position.theme} |")
     for section in display_sections:
-        lines.extend(["", f"## {section.title}", "", section.body_markdown])
+        lines.extend(["", f"## {section.title}", "", strip_user_facing_blocked_notes(section.body_markdown)])
     lines.extend(["", _GEONAMES_ATTRIBUTION_MARKDOWN])
     markdown = "\n".join(lines)
     markdown = re.sub(r"<\s*/?\s*svg\b.*?>", "", markdown, flags=re.IGNORECASE | re.DOTALL)

@@ -407,6 +407,29 @@ def test_hosted_report_moves_aspect_note_to_page_footer(sample_natal_report: Nat
     assert 'class="report-note"' in html
 
 
+def test_hosted_and_telegraph_reports_suppress_technical_natal_notes(sample_natal_report: NatalReport):
+    technical_note = (
+        "Техническое примечание: Этот разбор построен на основе расчетного движка ephem-local "
+        "(без ручной валидации источника) и использует равнодомную систему от Асцендента. "
+        "Полученные сетки домов и угловые точки (Асцендент, MC) — это качественные ориентиры."
+    )
+    sample_natal_report.sections[0].body_markdown = (
+        f"{technical_note}\n\n"
+        "Солнце в Водолее проще увидеть в жизни так: вам важно понимать, зачем вы участвуете в деле."
+    )
+
+    html = build_hosted_report_html(sample_natal_report)
+    markdown = build_telegraph_markdown(sample_natal_report)
+    combined = f"{html}\n{markdown}".lower()
+
+    assert "солнце в водолее проще увидеть" in combined
+    assert "техническое примечание" not in combined
+    assert "ephem-local" not in combined
+    assert "ручной валидации" not in combined
+    assert "равнодом" not in combined
+    assert "сетки домов" not in combined
+
+
 def test_hosted_report_cards_do_not_use_backdrop_filter_for_scroll_stability(sample_natal_report: NatalReport):
     html = build_hosted_report_html(sample_natal_report)
     style = html.split("<style>", 1)[1].split("</style>", 1)[0]

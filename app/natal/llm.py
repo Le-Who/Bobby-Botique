@@ -5,6 +5,10 @@ import re
 
 from app.config import GEMINI_PRIMARY_MODEL
 from app.natal.models import ChartData, ReportSection
+from app.natal.text_safety import (
+    contains_user_facing_blocked_language,
+    sanitize_user_facing_sections,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +58,6 @@ _NATAL_INTERPRETATION_MODEL = GEMINI_PRIMARY_MODEL
 
 
 def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> str:
-    prompt_chart = _chart_for_prompt(chart)
     section_ids = [
         "section-summary",
         *(section_id for section_id, _title in _PRACTICAL_SECTION_HINTS),
@@ -64,14 +67,7 @@ def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> 
     confidence_rule = ""
     if not chart.input_quality.houses_available:
         confidence_rule = "Время неизвестно: не трактуй дома, Асцендент или MC как достоверные факты."
-    quality_warnings = "\n".join(f"- {warning}" for warning in prompt_chart.input_quality.warnings)
-    quality_block = (
-        "Предупреждения качества:\n"
-        f"- Движок расчета: {chart.input_quality.calculation_engine}.\n"
-        f"- Reference validation: {chart.input_quality.reference_validated}.\n"
-        f"{quality_warnings}\n"
-        "Не подавай приблизительные дома, Асцендент или MC как полностью проверенные факты."
-    )
+    quality_block = _prompt_quality_constraints(chart)
     return (
         "Ты пишешь текстовую интерпретацию натальной карты по уже рассчитанным данным.\n"
         "Не запрашивай и не восстанавливай сырые дату рождения, место рождения или личные данные.\n"
@@ -86,6 +82,8 @@ def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> 
         "сомнениями, привычками и взрослыми решениями.\n"
         "Тон должен не звучать как справочник, анкета или механический список признаков; это живой разбор "
         "конкретного человека, где расчетные точки объясняют опыт, а не заменяют его.\n"
+        "Не пиши канцелярско-академические обороты вроде «астрологическая сетка указывает», "
+        "«проецируется на сферу», «натив»: переводи расчетные идеи в простой человеческий опыт.\n"
         "В каждой крупной теме: сначала смысл, затем как это проявляется в жизни, затем теневой риск и один "
         "понятный пример. Используй жизненные примеры, когда они помогают узнать ситуацию в себе.\n"
         "Пиши честно: можно освещать негативные стороны, но без приговора, без лести и без запугивания.\n"
@@ -97,7 +95,7 @@ def build_interpretation_prompt(chart: ChartData, language: str, focus: str) -> 
         f"Обязательные stable ids: {', '.join(section_ids)}.\n"
         "Для русского языка пиши кратко, глубоко и бережно.\n"
         "ChartData JSON:\n"
-        f"{prompt_chart.model_dump_json()}"
+        f"{_chart_prompt_json(chart)}"
     )
 
 
@@ -139,7 +137,7 @@ async def generate_interpretation(
             )
             repaired_sections = _parse_sections(repaired_response or "")
             if repaired_sections and not _sections_contradict_calculated_signs(chart, repaired_sections):
-                return repaired_sections
+                return sanitize_user_facing_sections(repaired_sections) or _fallback_sections(chart)
             logger.warning(
                 "Natal LLM repair rejected or unparsable: sections=%d response_len=%d",
                 len(repaired_sections),
@@ -150,7 +148,7 @@ async def generate_interpretation(
                 "Natal LLM interpretation was unparsable: response_len=%d",
                 len(response or ""),
             )
-        return sections or _fallback_sections(chart)
+        return sanitize_user_facing_sections(sections) or _fallback_sections(chart)
     except Exception as exc:
         logger.warning("Natal LLM interpretation failed: %s", exc, exc_info=True)
         return _fallback_sections(chart)
@@ -182,6 +180,8 @@ def _sections_need_quality_repair(sections: list[ReportSection]) -> bool:
         return True
 
     joined = "\n".join(f"{section.title}\n{section.body_markdown}" for section in sections).lower()
+    if contains_user_facing_blocked_language(joined):
+        return True
     has_example = "например" in joined or "пример" in joined
     has_shadow = "тен" in joined or "слаб" in joined or "риск" in joined
     return not (has_example and has_shadow)
@@ -197,11 +197,15 @@ def _build_interpretation_repair_prompt(chart: ChartData, language: str, focus: 
         f"Обязательные stable ids для практичных раскрываемых тем: {required}.\n"
         "Каждая секция должна начинаться `## section-id | Заголовок`.\n"
         "Обращайся к человеку напрямую, на «вы», и убери справочный, механический тон.\n"
+        "Убери технические примечания, названия внутренних расчетных инструментов, инженерные детали домов и "
+        "служебные статусы проверки данных.\n"
+        "Пиши простым русским языком: как внимательный друг или наставник, без академических оборотов "
+        "вроде «астрологическая сетка», «проецируется на сферу» или «натив».\n"
         "В каждой крупной теме добавь: смысл, бытовое проявление, теневую сторону и понятный пример.\n"
         "Пиши честно, без лести, без фатализма, без оплаты, тарифов, личного кабинета и формы ввода.\n"
         "Сохрани рассчитанные знаки планет из ChartData JSON и не противоречь им.\n"
         "ChartData JSON:\n"
-        f"{_chart_for_prompt(chart).model_dump_json()}\n\n"
+        f"{_chart_prompt_json(chart)}\n\n"
         "Первый ответ, который нужно переработать:\n"
         f"{first_response}"
     )
@@ -211,7 +215,6 @@ def _fallback_sections(chart: ChartData) -> list[ReportSection]:
     planet_lines = [f"- {planet.label}: {planet.sign} {planet.degree_in_sign:.1f}°" for planet in chart.planets]
     aspect_lines = [f"- {aspect.point_a} {aspect.aspect} {aspect.point_b}, орб {aspect.orb:.1f}°" for aspect in chart.aspects]
     unavailable = "Глубокая LLM-интерпретация временно недоступна, поэтому ниже приведен базовый разбор по расчетным точкам."
-    quality_note = _quality_note(chart)
     sun = next((planet for planet in chart.planets if planet.key == "sun"), None)
     moon = next((planet for planet in chart.planets if planet.key == "moon"), None)
     mercury = next((planet for planet in chart.planets if planet.key == "mercury"), None)
@@ -223,7 +226,7 @@ def _fallback_sections(chart: ChartData) -> list[ReportSection]:
             id="section-summary",
             title="Краткое резюме",
             body_markdown=(
-                f"{unavailable}{quality_note}\n\n"
+                f"{unavailable}\n\n"
                 f"{_time_context_note(chart)} Ниже — не приговор, а карта акцентов: где проще опереться на себя, "
                 "где могут включаться тени и какие темы стоит наблюдать в обычных ситуациях.\n\n"
                 + "\n".join(planet_lines[:10])
@@ -387,8 +390,8 @@ def _placement_sentence(planet, label: str) -> str:
 
 def _time_context_note(chart: ChartData) -> str:
     if chart.input_quality.houses_available:
-        return "При известном времени рождения можно осторожно подключать дома и углы карты."
-    return "Без точного времени рождения дома, Асцендент и MC не трактуются как надежные факты."
+        return "При известном времени рождения сферы карты можно читать подробнее, но все равно мягко."
+    return "Без точного времени рождения часть сфер карты лучше читать как ориентиры, а не как точные факты."
 
 
 def _sections_contradict_calculated_signs(chart: ChartData, sections: list[ReportSection]) -> bool:
@@ -453,6 +456,34 @@ def _chart_for_prompt(chart: ChartData) -> ChartData:
             )
         },
     )
+
+
+def _chart_prompt_json(chart: ChartData) -> str:
+    return _chart_for_prompt(chart).model_dump_json(
+        exclude={"input_quality": {"calculation_engine", "reference_validated", "warnings"}}
+    )
+
+
+def _prompt_quality_constraints(chart: ChartData) -> str:
+    lines = [
+        "Если используешь дома или углы, подавай их мягко: как ориентиры, а не как полностью проверенные факты.",
+        "Для пользователя не пиши технические примечания: не называй внутренние проверки, библиотеку расчета, "
+        "служебные статусы или инженерную систему домов.",
+    ]
+    safe_notes = _safe_prompt_quality_notes(chart)
+    if safe_notes:
+        lines.append("Внутренние ограничения данных (не выводить пользователю):")
+        lines.extend(f"- {note}" for note in safe_notes)
+    return "\n".join(lines)
+
+
+def _safe_prompt_quality_notes(chart: ChartData) -> list[str]:
+    notes: list[str] = []
+    for warning in chart.input_quality.warnings:
+        redacted = _redact_raw_birth_data(warning)
+        if redacted and not contains_user_facing_blocked_language(redacted):
+            notes.append(redacted)
+    return notes
 
 
 def _redact_raw_birth_data(value: str) -> str:
