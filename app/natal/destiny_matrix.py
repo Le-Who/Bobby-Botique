@@ -160,6 +160,17 @@ _PERIOD_KEYS: tuple[tuple[int, int, str, str], ...] = (
     (70, 79, "karmic_tail", "сбор опыта, отпускание повторов и передача мудрости"),
 )
 
+_PERIOD_STAGE_CONTEXT: dict[int, str] = {
+    0: "дом, семью, телесную безопасность и первые способы просить поддержку",
+    10: "отделение от детской роли, авторитеты, дружбу, учебу и первые самостоятельные решения",
+    20: "маршрут взрослой жизни: учебу, работу, переезды, отношения и поиск собственного направления",
+    30: "близость, дом, выбранную среду, поддержку и умение строить зрелые связи",
+    40: "социальную роль, ответственность, признание и видимый вектор усилий",
+    50: "деньги, обмен, профессиональную ценность и практическую отдачу от накопленного опыта",
+    60: "ритм, восстановление, личные опоры и более честное отношение к своим силам",
+    70: "итоги, передачу опыта, отпускание старых повторов и спокойную сборку прожитого",
+}
+
 
 def calculate_destiny_matrix(birth_date: str) -> DestinyMatrixData:
     parsed = _parse_birth_date(birth_date)
@@ -656,19 +667,64 @@ def _callout(x: float, y: float, lines: list[str], color: str, anchor: str) -> s
 
 def _periods_markdown(periods: list[DestinyMatrixLifePeriod]) -> str:
     lines = [
-        "Возрастной контур матрицы читается как цепочка жизненных сюжетов: в каждом десятилетии один аркан чаще "
-        "подсвечивает события, выборы, людей и повторяющиеся сценарии.",
+        "Возрастной контур матрицы лучше читать как смену жизненных акцентов: в каждом десятилетии один аркан "
+        "чаще подсвечивает события, выборы, людей и повторяющиеся реакции.",
+        "Это не приговор и не жесткое расписание. Смысл блока — заметить, какой навык период просит развить "
+        "и где привычная защита может уступить место более взрослому выбору.",
         "",
     ]
-    for period in periods:
-        events = _ARCANA_PERIOD_EVENTS[period.arcana]
-        growth = _ARCANA_GROWTH[period.arcana]
-        lines.append(
-            f"- **{period.start_age}-{period.end_age} лет — {period.arcana}. {period.arcana_label}**. "
-            f"Возможные события периода: {events}. Фокус десятилетия: {period.focus}. "
-            f"Повторяющийся сюжет — {period.theme}; полезная стратегия — {growth}."
-        )
+    for index, period in enumerate(periods):
+        lines.append(_period_markdown(period))
+        if index < len(periods) - 1:
+            lines.append("")
     return "\n".join(lines)
+
+
+def _period_markdown(period: DestinyMatrixLifePeriod) -> str:
+    age = f"{period.start_age}-{period.end_age} лет"
+    arcana = f"{period.arcana}. {period.arcana_label}"
+    events = _ARCANA_PERIOD_EVENTS[period.arcana]
+    growth = _ARCANA_GROWTH[period.arcana]
+    stage_context = _PERIOD_STAGE_CONTEXT.get(period.start_age, period.focus)
+    return "\n".join(
+        [
+            f"### {age} — {arcana}",
+            "",
+            f"**Главный сюжет.** В этом возрасте аркан **{arcana}** чаще подсвечивает {stage_context}. "
+            f"Внутренний фокус десятилетия — {period.focus}. Повторяющийся сюжет периода связан с темой: "
+            f"{period.theme}.",
+            "",
+            f"**Как это может проявиться.** {_period_manifestation(period, events)}",
+            "",
+            f"**Теневой риск.** {_period_shadow(period)}",
+            "",
+            f"**Практичный ориентир.** Здесь помогает {growth}. Смотрите не только на событие, а на навык, который "
+            "оно просит включить: честнее выбирать, яснее договариваться, вовремя завершать лишнее или спокойнее "
+            "принимать новый этап.",
+        ]
+    )
+
+
+def _period_manifestation(period: DestinyMatrixLifePeriod, events: str) -> str:
+    if period.start_age == 0:
+        return (
+            "В детстве это обычно читается не буквально, а через атмосферу семьи, игру, учебу, телесные привычки "
+            f"и первый способ реагировать на мир. Во взрослом языке аркана рядом стоят темы: {events}. Например, "
+            "ребенок может рано искать уединение, внимание, порядок или тепло — в зависимости от аркана периода."
+        )
+    return (
+        f"В жизни это может быть заметно через такие темы, как {events}. Например, это не обязательно одно большое "
+        "событие: чаще это серия выборов, разговоров или перемен роли, где приходится иначе держать границы и "
+        "ответственность."
+    )
+
+
+def _period_shadow(period: DestinyMatrixLifePeriod) -> str:
+    return (
+        "Риск в том, что привычная защита становится единственным способом реагировать. Тогда тема "
+        f"«{period.theme}» начинает сужать выбор: вы снова делаете знакомое, даже если период уже просит другого "
+        "уровня честности, зрелости или свободы."
+    )
 
 
 def _arcana(position: DestinyMatrixPosition | DestinyMatrixLifePeriod) -> str:

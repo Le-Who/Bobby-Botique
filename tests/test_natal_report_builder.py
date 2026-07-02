@@ -104,9 +104,10 @@ def test_hosted_report_formats_destiny_periods_as_separate_cards(sample_natal_re
     assert 'class="period-list"' in period_html
     assert period_html.count('class="period-card"') == 8
     assert "<span>0-9 лет</span><strong>3. Императрица</strong>" in period_html
-    assert "<dt>Возможные события</dt>" in period_html
-    assert "<dt>Фокус десятилетия</dt>" in period_html
-    assert "<dt>Стратегия роста</dt>" in period_html
+    assert "<dt>Главный сюжет</dt>" in period_html
+    assert "<dt>Как проявляется</dt>" in period_html
+    assert "<dt>Теневой риск</dt>" in period_html
+    assert "<dt>Практичный ориентир</dt>" in period_html
     assert "- <b>0-9 лет" not in period_html
 
 

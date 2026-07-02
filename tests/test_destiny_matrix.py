@@ -99,7 +99,12 @@ def test_build_destiny_matrix_sections_returns_user_facing_interpretation():
     assert "Социализация" in full_text
     assert "Духовная гармония" in full_text
     assert "энергетический ритм" in lowered
-    assert "Возможные события периода" in full_text
+    assert "### 0-9 лет — 9. Отшельник" in full_text
+    assert "**Главный сюжет.**" in full_text
+    assert "**Как это может проявиться.**" in full_text
+    assert "**Теневой риск.**" in full_text
+    assert "**Практичный ориентир.**" in full_text
+    assert "Возможные события периода" not in full_text
     assert "0-9 лет" in full_text
     assert "10-19 лет" in full_text
     assert "смен" in lowered

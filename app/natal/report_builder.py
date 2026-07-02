@@ -39,13 +39,24 @@ _PLANET_SECTION_TARGETS = {
     "section-pluto": "section-shadow-patterns",
 }
 
-_PERIOD_LINE_RE = re.compile(
+_LEGACY_PERIOD_LINE_RE = re.compile(
     r"^-\s+\*\*(?P<age>[^—*]+?)\s+—\s+(?P<arcana>[^*]+)\*\*\.\s+"
     r"Возможные события периода:\s+(?P<events>.*?)\.\s+"
     r"Фокус десятилетия:\s+(?P<focus>.*?)\.\s+"
     r"Повторяющийся сюжет\s+—\s+(?P<theme>.*?);\s+"
     r"полезная стратегия\s+—\s+(?P<growth>.*?)\.?$"
 )
+_PERIOD_HEADING_RE = re.compile(r"^###\s+(?P<age>[^—\n]+?)\s+—\s+(?P<arcana>.+?)\s*$")
+_PERIOD_FIELD_RE = re.compile(
+    r"^\*\*(?P<label>Главный сюжет|Как это может проявиться|Теневой риск|Практичный ориентир)\.\*\*\s*"
+    r"(?P<value>.*)$"
+)
+_PERIOD_FIELD_KEYS = {
+    "Главный сюжет": "story",
+    "Как это может проявиться": "manifestation",
+    "Теневой риск": "shadow",
+    "Практичный ориентир": "guidance",
+}
 
 
 def build_hosted_report_html(report: NatalReport) -> str:
@@ -257,15 +268,56 @@ def _hosted_section_body_html(section: ReportSection, markdown: str) -> str:
 def _destiny_periods_to_html(markdown: str) -> str:
     intro_lines: list[str] = []
     cards: list[str] = []
+    current: dict[str, str] | None = None
+    current_field: str | None = None
+
+    def flush_current() -> None:
+        nonlocal current, current_field
+        if current and _period_card_is_complete(current):
+            cards.append(_period_card_html(current))
+        current = None
+        current_field = None
+
     for raw_line in markdown.splitlines():
         line = raw_line.strip()
         if not line:
             continue
-        match = _PERIOD_LINE_RE.match(line)
-        if not match:
-            intro_lines.append(line)
+
+        heading_match = _PERIOD_HEADING_RE.match(line)
+        if heading_match:
+            flush_current()
+            current = {
+                "age": heading_match.group("age").strip(),
+                "arcana": heading_match.group("arcana").strip(),
+                "story": "",
+                "manifestation": "",
+                "shadow": "",
+                "guidance": "",
+            }
             continue
-        cards.append(_period_card_html(match.groupdict()))
+
+        if current is not None:
+            field_match = _PERIOD_FIELD_RE.match(line)
+            if field_match:
+                current_field = _PERIOD_FIELD_KEYS[field_match.group("label")]
+                current[current_field] = field_match.group("value").strip()
+                continue
+            if current_field:
+                current[current_field] = f"{current[current_field]} {line}".strip()
+                continue
+
+        legacy_match = _LEGACY_PERIOD_LINE_RE.match(line)
+        if legacy_match:
+            flush_current()
+            cards.append(_period_card_html(_legacy_period_parts(legacy_match.groupdict())))
+            continue
+
+        if current is None:
+            intro_lines.append(line)
+        elif current_field:
+            current[current_field] = f"{current[current_field]} {line}".strip()
+
+    flush_current()
 
     if not cards:
         return _hosted_markdown_to_html(markdown)
@@ -277,20 +329,36 @@ def _destiny_periods_to_html(markdown: str) -> str:
 def _period_card_html(parts: dict[str, str]) -> str:
     age = html.escape(parts["age"].strip())
     arcana = html.escape(parts["arcana"].strip())
-    events = html.escape(parts["events"].strip())
-    focus = html.escape(parts["focus"].strip())
-    theme = html.escape(parts["theme"].strip())
-    growth = html.escape(parts["growth"].strip())
+    story = html.escape(parts["story"].strip())
+    manifestation = html.escape(parts["manifestation"].strip())
+    shadow = html.escape(parts["shadow"].strip())
+    guidance = html.escape(parts["guidance"].strip())
     return (
         '<article class="period-card">'
         f"<header><span>{age}</span><strong>{arcana}</strong></header>"
         "<dl>"
-        f"<div><dt>Возможные события</dt><dd>{events}</dd></div>"
-        f"<div><dt>Фокус десятилетия</dt><dd>{focus}</dd></div>"
-        f"<div><dt>Повторяющийся сюжет</dt><dd>{theme}</dd></div>"
-        f"<div><dt>Стратегия роста</dt><dd>{growth}</dd></div>"
+        f"<div><dt>Главный сюжет</dt><dd>{story}</dd></div>"
+        f"<div><dt>Как проявляется</dt><dd>{manifestation}</dd></div>"
+        f"<div><dt>Теневой риск</dt><dd>{shadow}</dd></div>"
+        f"<div><dt>Практичный ориентир</dt><dd>{guidance}</dd></div>"
         "</dl></article>"
     )
+
+
+def _period_card_is_complete(parts: dict[str, str]) -> bool:
+    required = ("age", "arcana", "story", "manifestation", "shadow", "guidance")
+    return all(parts.get(key, "").strip() for key in required)
+
+
+def _legacy_period_parts(parts: dict[str, str]) -> dict[str, str]:
+    return {
+        "age": parts["age"],
+        "arcana": parts["arcana"],
+        "story": parts["theme"],
+        "manifestation": f"{parts['events']} Фокус десятилетия: {parts['focus']}",
+        "shadow": parts["theme"],
+        "guidance": parts["growth"],
+    }
 
 
 def _merge_related_sections(sections: list[ReportSection]) -> list[ReportSection]:

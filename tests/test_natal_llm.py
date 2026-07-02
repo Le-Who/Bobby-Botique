@@ -134,6 +134,9 @@ def test_prompt_requests_personal_direct_non_mechanical_voice():
     assert "на «вы»" in prompt.lower()
     assert "не звучать как справочник" in prompt.lower()
     assert "живой разбор конкретного человека" in prompt.lower()
+    assert "не перечисляй расчетные точки подряд" in prompt.lower()
+    assert "цельный человеческий сюжет" in prompt.lower()
+    assert "спокойный практик" in prompt.lower()
 
 
 @pytest.mark.asyncio
