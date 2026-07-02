@@ -1,8 +1,6 @@
 """
 Tests for the AI provider abstraction layer.
 """
-
-import hashlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -201,7 +199,7 @@ class TestProviders:
         ):
             mock_settings.SAFETY_SETTINGS = []
 
-            wrapper = GeminiProvider("test-key")
+            wrapper = GeminiProvider("AIza123456789")
 
             mock_aio = MagicMock()
             mock_aio.generate_content = AsyncMock(return_value=mock_response)
@@ -220,9 +218,8 @@ class TestProviders:
             assert response.token_count == 15
             assert response.success is True
             assert response.provider == "gemini"
-            key_hash_prefix = hashlib.sha256(b"test-key").hexdigest()[:8]
-            assert mock_api_logger.log_request.call_args.kwargs["key_hash_prefix"] == key_hash_prefix
-            assert mock_api_logger.log_response.call_args.kwargs["key_hash_prefix"] == key_hash_prefix
+            assert mock_api_logger.log_request.call_args.kwargs["key_prefix"] == "AIza1234"
+            assert mock_api_logger.log_response.call_args.kwargs["key_prefix"] == "AIza1234"
 
     @pytest.mark.asyncio
     async def test_gemini_wrapper_error(self):

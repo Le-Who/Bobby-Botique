@@ -88,7 +88,7 @@ class TestProviderRouter:
         fake_status = FakeKeyStatusManager()
         fake_use_case = FakeAgentRequestUseCase(
             resolve_sequence=[
-                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3.1", None),
+                ({"api_key": "AIzaTEST-key-1", "key_hash": "hash1"}, "gemini-3.1", None),
             ],
             response_sequence=[
                 ("Hello!", 10),
@@ -106,8 +106,8 @@ class TestProviderRouter:
         assert tokens == 10
         assert "hash1" in fake_status.successful_keys
         assert fake_use_case.usages_incremented == ["hash1"]
-        assert "KEY_EVENT key_request key=hash1" in caplog.text
-        assert "KEY_EVENT key_answered key=hash1" in caplog.text
+        assert "KEY_EVENT key_request key=AIzaTEST" in caplog.text
+        assert "KEY_EVENT key_answered key=AIzaTEST" in caplog.text
         assert "model=gemini-3.1" in caplog.text
         assert "provider=gemini" in caplog.text
         assert "tokens=10" in caplog.text
