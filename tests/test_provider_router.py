@@ -4,7 +4,7 @@ Tests for ProviderRouter and KeyStatusManager.
 
 from __future__ import annotations
 
-import asyncio
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -47,6 +47,7 @@ class FakeAgentRequestUseCase:
         self.resolves_made = 0
         self.responses_made = 0
         self.resolve_calls: list[dict] = []
+        self.response_calls: list[dict] = []
         self.usages_incremented: list[str] = []
 
     async def resolve_ai_request(
@@ -67,6 +68,7 @@ class FakeAgentRequestUseCase:
 
     async def get_ai_response(self, *args, **kwargs) -> tuple[str, int | None]:
         self.responses_made += 1
+        self.response_calls.append({"args": args, "kwargs": kwargs})
         response = self.response_sequence.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -81,7 +83,7 @@ class FakeAgentRequestUseCase:
 
 class TestProviderRouter:
     @pytest.mark.asyncio
-    async def test_successful_response(self):
+    async def test_successful_response(self, caplog):
         router = ProviderRouter()
         fake_status = FakeKeyStatusManager()
         fake_use_case = FakeAgentRequestUseCase(
@@ -94,6 +96,7 @@ class TestProviderRouter:
         )
 
         with (
+            caplog.at_level(logging.INFO),
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
             patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
         ):
@@ -103,6 +106,12 @@ class TestProviderRouter:
         assert tokens == 10
         assert "hash1" in fake_status.successful_keys
         assert fake_use_case.usages_incremented == ["hash1"]
+        assert "KEY_EVENT key_request key=hash1" in caplog.text
+        assert "KEY_EVENT key_answered key=hash1" in caplog.text
+        assert "model=gemini-3.1" in caplog.text
+        assert "provider=gemini" in caplog.text
+        assert "tokens=10" in caplog.text
+        assert caplog.text.index("KEY_EVENT key_request") < caplog.text.index("KEY_EVENT key_answered")
 
     @pytest.mark.asyncio
     async def test_all_keys_exhausted(self):
@@ -165,7 +174,7 @@ class TestProviderRouter:
                 ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3.1", None),
             ],
             response_sequence=[
-                asyncio.TimeoutError(),
+                TimeoutError(),
                 ("Recovered response", 12),
             ],
         )
@@ -188,6 +197,37 @@ class TestProviderRouter:
         assert "hash2" in fake_status.successful_keys
 
     @pytest.mark.asyncio
+    async def test_router_disables_provider_retries_so_same_model_rotates_keys(self):
+        router = ProviderRouter()
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[
+                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3.5-flash", None),
+                ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3.5-flash", None),
+            ],
+            response_sequence=[
+                TimeoutError(),
+                ("Recovered response", 12),
+            ],
+        )
+
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
+        ):
+            text, tokens = await router.get_response(
+                "gemini-3.5-flash",
+                [{"role": "user", "parts": ["hi"]}],
+                max_key_retries=2,
+            )
+
+        assert text == "Recovered response"
+        assert tokens == 12
+        assert fake_use_case.response_calls[0]["kwargs"]["provider_max_retries"] == 1
+        assert fake_use_case.response_calls[1]["kwargs"]["provider_max_retries"] == 1
+        assert fake_use_case.resolve_calls[1]["excluded_key_hashes"] == {"hash1"}
+
+    @pytest.mark.asyncio
     async def test_transient_failures_cascade_to_lite_for_non_stream_response(self):
         router = ProviderRouter()
         fake_status = FakeKeyStatusManager()
@@ -198,7 +238,7 @@ class TestProviderRouter:
                 ({"api_key": "k3", "key_hash": "hash3"}, "gemini-3.1-flash-lite", None),
             ],
             response_sequence=[
-                asyncio.TimeoutError(),
+                TimeoutError(),
                 ("⏰ Превышено время ожидания ответа от API.", None),
                 ("Lite fallback response", 9),
             ],

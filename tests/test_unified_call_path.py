@@ -108,6 +108,38 @@ class TestUnifiedCallPath:
         assert tokens is None
 
     @pytest.mark.asyncio
+    async def test_provider_retry_limit_is_forwarded_to_provider(self):
+        """Router can disable provider-local retries so key rotation owns retry behavior."""
+        from app.agent_use_cases import AgentRequestUseCase
+
+        use_case = AgentRequestUseCase()
+
+        mock_response = AIResponse(
+            text="Gemini says hi",
+            token_count=42,
+            success=True,
+            provider="gemini",
+            model="gemini-3.1-flash-lite",
+        )
+
+        with patch("app.providers.get_provider_for_model") as mock_factory:
+            mock_provider = MagicMock()
+            mock_provider.get_response = AsyncMock(return_value=mock_response)
+            mock_factory.return_value = mock_provider
+
+            text, tokens = await use_case.get_ai_response(
+                api_key="test-key",
+                history=[{"role": "user", "parts": ["hi"]}],
+                model_name="gemini-3.1-flash-lite",
+                use_openrouter=False,
+                provider_max_retries=1,
+            )
+
+        assert text == "Gemini says hi"
+        assert tokens == 42
+        assert mock_provider.get_response.await_args.kwargs["max_retries"] == 1
+
+    @pytest.mark.asyncio
     async def test_openrouter_no_keys_returns_error(self):
         """Should return error message when OpenRouter has no keys configured."""
         from app.agent_use_cases import AgentRequestUseCase

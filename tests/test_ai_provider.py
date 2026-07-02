@@ -2,6 +2,7 @@
 Tests for the AI provider abstraction layer.
 """
 
+import hashlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -195,7 +196,7 @@ class TestProviders:
         with (
             patch("app.providers.gemini.genai.Client") as MockClient,
             patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
-            patch("app.providers.gemini.api_logger", new_callable=MagicMock),
+            patch("app.providers.gemini.api_logger", new_callable=MagicMock) as mock_api_logger,
             patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
@@ -219,6 +220,9 @@ class TestProviders:
             assert response.token_count == 15
             assert response.success is True
             assert response.provider == "gemini"
+            key_hash_prefix = hashlib.sha256(b"test-key").hexdigest()[:8]
+            assert mock_api_logger.log_request.call_args.kwargs["key_hash_prefix"] == key_hash_prefix
+            assert mock_api_logger.log_response.call_args.kwargs["key_hash_prefix"] == key_hash_prefix
 
     @pytest.mark.asyncio
     async def test_gemini_wrapper_error(self):

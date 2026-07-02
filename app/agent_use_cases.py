@@ -306,6 +306,7 @@ class AgentRequestUseCase:
         use_openrouter: bool | None = None,
         thinking_level: str | None = None,
         timeout: float | None = None,
+        provider_max_retries: int | None = None,
     ) -> tuple[str, int | None]:
         if use_openrouter is None:
             # FreeTheAI models contain '/' but should NOT be treated as OpenRouter
@@ -336,6 +337,9 @@ class AgentRequestUseCase:
         }
         if timeout is not None:
             kwargs["timeout"] = timeout
+        if provider_max_retries is not None:
+            kwargs["max_retries"] = max(1, provider_max_retries)
+        elif timeout is not None:
             kwargs["max_retries"] = 1  # tight budget → no retries
         response = await provider.get_response(**kwargs)
 

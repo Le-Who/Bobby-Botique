@@ -1,6 +1,7 @@
 """Google Gemini AI provider — self-contained execution logic."""
 
 import asyncio
+import hashlib
 import logging
 import os
 from typing import Any
@@ -22,6 +23,12 @@ from app.utils.image_utils import TaggedImage, save_image_as_bytes
 # Global cache for genai.Client instances to reuse connection pools (TLS/TCP)
 # Key: API Key (string), Value: genai.Client
 _gemini_clients_cache: LRUCache = LRUCache(maxsize=50)
+
+
+def _api_key_hash_prefix(api_key: str) -> str:
+    if api_key == "vertex":
+        return "vertex"
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:8]
 
 
 class _GroundingMeta:
@@ -210,6 +217,7 @@ class GeminiProvider(BaseAIProvider):
 
         try:
             await metrics_collector.record_api_call("gemini", model_name)
+            key_hash_prefix = _api_key_hash_prefix(self._client_api_key)
 
             # Compute metrics
             try:
@@ -230,6 +238,7 @@ class GeminiProvider(BaseAIProvider):
             start_time = api_logger.log_request(
                 "gemini",
                 model=model_name,
+                key_hash_prefix=key_hash_prefix,
                 prompt_length=prompt_length,
                 has_images=has_images,
             )
@@ -325,6 +334,7 @@ class GeminiProvider(BaseAIProvider):
                     "gemini",
                     start_time,
                     model=model_name,
+                    key_hash_prefix=key_hash_prefix,
                     response_length=len(response_text),
                     token_count=token_count,
                 )
@@ -771,6 +781,7 @@ class GeminiProvider(BaseAIProvider):
                 "gemini",
                 start_time,
                 model=model,
+                key_hash_prefix=_api_key_hash_prefix(self._client_api_key),
                 response_length=0,
                 success=False,
                 error_message=msg,

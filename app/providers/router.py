@@ -125,6 +125,53 @@ def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
     return ordered
 
 
+def _provider_label(model_name: str | None, use_openrouter: bool | None) -> str:
+    if model_name and is_opencode_model(model_name):
+        return "opencode"
+    if model_name and is_freetheai_model(model_name):
+        return "freetheai"
+    if use_openrouter is True or (use_openrouter is None and isinstance(model_name, str) and "/" in model_name):
+        return "openrouter"
+    return "gemini"
+
+
+def _key_prefix(key_hash: str) -> str:
+    return key_hash[:8]
+
+
+def _log_key_request(
+    key_hash: str,
+    model_name: str | None,
+    use_openrouter: bool | None,
+    *,
+    attempt: int | None = None,
+    max_attempts: int | None = None,
+) -> None:
+    attempt_text = f" attempt={attempt}/{max_attempts}" if attempt is not None and max_attempts is not None else ""
+    logging.info(
+        "KEY_EVENT key_request key=%s… model=%s provider=%s%s",
+        _key_prefix(key_hash),
+        model_name,
+        _provider_label(model_name, use_openrouter),
+        attempt_text,
+    )
+
+
+def _log_key_answered(
+    key_hash: str,
+    model_name: str | None,
+    use_openrouter: bool | None,
+    token_count: int | None,
+) -> None:
+    logging.info(
+        "KEY_EVENT key_answered key=%s… model=%s provider=%s tokens=%s",
+        _key_prefix(key_hash),
+        model_name,
+        _provider_label(model_name, use_openrouter),
+        token_count if token_count is not None else "unknown",
+    )
+
+
 class ProviderRouter:
     """
     Routes AI requests to the right provider with key rotation and health scoring.
@@ -291,6 +338,13 @@ class ProviderRouter:
 
             # Execute the request
             assert model_used is not None  # guaranteed by _resolve_ai_request
+            _log_key_request(
+                key_data["key_hash"],
+                model_used,
+                use_openrouter,
+                attempt=attempt + 1,
+                max_attempts=max_key_retries,
+            )
             try:
                 response_text, token_count = await use_case.get_ai_response(
                     key_data["api_key"],
@@ -302,6 +356,7 @@ class ProviderRouter:
                     use_openrouter,
                     thinking_level=thinking_level,
                     timeout=timeout,
+                    provider_max_retries=1,
                 )
             except Exception as exc:
                 failed_keys.add(key_data["key_hash"])
@@ -390,6 +445,8 @@ class ProviderRouter:
                     await use_case.increment_key_usage(key_data["key_hash"], model_used, use_openrouter)  # type: ignore[arg-type]  # asserted above
                 except Exception as e:
                     logging.warning("Non-critical: failed to increment key usage: %s", e)
+
+                _log_key_answered(key_data["key_hash"], model_used, use_openrouter, token_count)
 
             return response_text, token_count
 
@@ -1067,6 +1124,7 @@ class ProviderRouter:
                 failed_model,
             )
 
+            _log_key_request(key_data["key_hash"], model_used, use_openrouter)
             response_text, token_count = await use_case.get_ai_response(
                 key_data["api_key"],
                 history,
@@ -1075,6 +1133,7 @@ class ProviderRouter:
                 user_id,
                 chat_id,
                 use_openrouter,
+                provider_max_retries=1,
             )
 
             if response_text and not is_error_message(response_text):
@@ -1095,6 +1154,7 @@ class ProviderRouter:
                     )
                 except Exception as e:
                     logging.warning("Non-critical: failed to increment key usage: %s", e)
+                _log_key_answered(key_data["key_hash"], model_used, use_openrouter, token_count)
                 return response_text, token_count
 
             logging.warning(
