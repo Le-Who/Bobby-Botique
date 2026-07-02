@@ -1,5 +1,8 @@
 """Tests for app.security — InputSanitizer and RateLimiter (pure logic, zero DB)."""
 
+import socket
+from unittest.mock import patch
+
 import pytest
 
 from app.errors import InputSanitizationError
@@ -108,39 +111,63 @@ class TestValidateFileExtension:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    if host == "localhost":
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+    elif host == "192.168.1.1":
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.1", 0))]
+    elif host == "169.254.169.254":
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 0))]
+    elif host == "::1":
+        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::1", 0, 0, 0))]
+    elif host == "example.com":
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+    else:
+        raise socket.gaierror(f"DNS resolution failed for hostname {host}")
+
+
+@patch("socket.getaddrinfo", side_effect=mock_getaddrinfo)
 class TestSanitizeUrl:
     def setup_method(self):
         self.s = InputSanitizer()
 
-    def test_valid_https_url(self):
+    def test_valid_https_url(self, mock_getaddrinfo):
         url = "https://example.com/page"
         assert self.s.sanitize_url(url) == url
 
-    def test_valid_http_url(self):
+    def test_valid_http_url(self, mock_getaddrinfo):
         url = "http://example.com"
         assert self.s.sanitize_url(url) == url
 
-    def test_rejects_javascript_protocol(self):
+    def test_rejects_javascript_protocol(self, mock_getaddrinfo):
         with pytest.raises(InputSanitizationError, match="[Dd]angerous protocol"):
             self.s.sanitize_url("javascript:alert(1)")
 
-    def test_rejects_data_protocol(self):
+    def test_rejects_data_protocol(self, mock_getaddrinfo):
         with pytest.raises(InputSanitizationError, match="[Dd]angerous protocol"):
             self.s.sanitize_url("data:text/html,<script>alert(1)</script>")
 
-    def test_rejects_file_protocol(self):
+    def test_rejects_file_protocol(self, mock_getaddrinfo):
         with pytest.raises(InputSanitizationError, match="[Dd]angerous protocol"):
             self.s.sanitize_url("file:///etc/passwd")
 
-    def test_rejects_localhost(self):
-        with pytest.raises(InputSanitizationError, match="[Ll]ocalhost"):
+    def test_rejects_localhost(self, mock_getaddrinfo):
+        with pytest.raises(InputSanitizationError, match="disallowed IP"):
             self.s.sanitize_url("http://localhost/admin")
 
-    def test_rejects_ip_address(self):
-        with pytest.raises(InputSanitizationError, match="IP"):
+    def test_rejects_ip_address(self, mock_getaddrinfo):
+        with pytest.raises(InputSanitizationError, match="disallowed IP"):
             self.s.sanitize_url("http://192.168.1.1/admin")
 
-    def test_rejects_too_long_url(self):
+    def test_rejects_aws_metadata(self, mock_getaddrinfo):
+        with pytest.raises(InputSanitizationError, match="disallowed IP"):
+            self.s.sanitize_url("http://169.254.169.254/latest/meta-data/")
+
+    def test_rejects_ipv6_loopback(self, mock_getaddrinfo):
+        with pytest.raises(InputSanitizationError, match="disallowed IP"):
+            self.s.sanitize_url("http://[::1]/admin")
+
+    def test_rejects_too_long_url(self, mock_getaddrinfo):
         with pytest.raises(InputSanitizationError, match="too long"):
             self.s.sanitize_url("https://example.com/" + "a" * 10000)
 
