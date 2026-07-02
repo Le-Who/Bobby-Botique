@@ -16,6 +16,7 @@ Scheduler query:
 from __future__ import annotations
 
 import logging
+from datetime import time
 from typing import Any
 
 from app.database import db_query
@@ -24,6 +25,14 @@ logger = logging.getLogger(__name__)
 
 # Sentinel to distinguish "not provided" from None (which explicitly disables a slot)
 _MISSING = object()
+
+
+def _normalize_delivery_time(value: Any) -> time | None:
+    if value is None or isinstance(value, time):
+        return value
+    if isinstance(value, str):
+        return time.fromisoformat(value.strip())
+    raise TypeError(f"delivery time must be HH:MM string, datetime.time, or None; got {type(value).__name__}")
 
 
 async def upsert_horoscope_subscription(
@@ -54,12 +63,12 @@ async def upsert_horoscope_subscription(
 
     if time_today is not _MISSING:
         sets.append(f"time_today = ${idx}")
-        params.append(time_today)
+        params.append(_normalize_delivery_time(time_today))
         idx += 1
 
     if time_tomorrow is not _MISSING:
         sets.append(f"time_tomorrow = ${idx}")
-        params.append(time_tomorrow)
+        params.append(_normalize_delivery_time(time_tomorrow))
         idx += 1
 
     if utc_offset is not None:

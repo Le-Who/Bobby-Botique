@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 
 import pytest
 
@@ -8,6 +8,31 @@ from app.repos.horoscope_subscriptions import (
     get_horoscope_subscription,
     upsert_horoscope_subscription,
 )
+
+
+@pytest.mark.asyncio
+async def test_upsert_converts_hhmm_strings_to_time_params(monkeypatch):
+    calls = []
+
+    async def fake_db_query(query, params=(), *args, **kwargs):
+        calls.append((query, params))
+        return []
+
+    monkeypatch.setattr("app.repos.horoscope_subscriptions.db_query", fake_db_query)
+
+    ok = await upsert_horoscope_subscription(
+        user_id=6913772015,
+        sign="scorpio",
+        time_today="07:00",
+        time_tomorrow="21:00",
+        utc_offset=3,
+        is_active=True,
+    )
+
+    assert ok is True
+    params = calls[0][1]
+    assert params[3] == time(7, 0)
+    assert params[4] == time(21, 0)
 
 
 @pytest.mark.asyncio
