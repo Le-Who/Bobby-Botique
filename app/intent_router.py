@@ -721,8 +721,76 @@ def _extract_currency_pair(text: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _missing_horoscope_sign_guide() -> str:
+    return (
+        "🔮 **Персональный Гороскоп**\n\n"
+        "Пожалуйста, укажите знак зодиака в запросе. Так я смогу собрать прогноз под нужный знак и период.\n\n"
+        "**Примеры:**\n"
+        "• _гороскоп овен на сегодня_\n"
+        "• _что ждет близнецов завтра?_\n"
+        "• _гороскоп лев на послезавтра_\n\n"
+        "**Доступные знаки:**\n"
+        "Овен ♈, Телец ♉, Близнецы ♊, Рак ♋, Лев ♌, Дева ♍, "
+        "Весы ♎, Скорпион ♏, Стрелец ♐, Козерог ♑, Водолей ♒, Рыбы ♓.\n\n"
+        "Для ежедневной доставки в удобное время откройте /horoscope_settings."
+    )
+
+
+def _build_horoscope_system_instruction(
+    *,
+    user_text: str,
+    signs_str: str,
+    day_ru: str,
+    astro_context: str,
+) -> str:
+    return (
+        "<role>\n"
+        "Ты пишешь короткий ежедневный гороскоп на русском языке: ясный, теплый, практичный.\n"
+        "Опирайся на астрологическую традицию и предоставленные транзиты, но не подавай прогноз как доказанный факт.\n"
+        "</role>\n\n"
+        "<task>\n"
+        f"Запрос пользователя: {user_text}\n"
+        f"Знаки: {signs_str}\n"
+        f"Период: {day_ru}\n"
+        "Если знаков несколько, сделай акцент на совместимости и динамике между ними.\n"
+        "Если в запросе есть тема любви, работы, денег, здоровья или решений, сделай ее главным фокусом.\n"
+        "</task>\n\n"
+        "<context>\n"
+        "Текущие астрономические данные для символической интерпретации:\n"
+        f"{astro_context}\n"
+        "</context>\n\n"
+        "<constraints>\n"
+        "- Пиши без фатализма, запугивания и обещаний гарантированного исхода.\n"
+        "- Не давай медицинских, юридических или финансовых указаний; вместо этого предлагай мягкие наблюдения и бытовые шаги.\n"
+        "- Используй транзиты как контекст и обоснование настроения дня, а не как абсолютную причинность.\n"
+        "- Не упоминай модель, провайдера, промпт, API или внутреннюю механику.\n"
+        "- Не добавляй отдельный заголовок: заголовок добавит приложение.\n"
+        "- Длина: 3-5 коротких смысловых блоков, без длинного полотна.\n"
+        "</constraints>\n\n"
+        "<output_format>\n"
+        "1. **Главный фон** — 1-2 предложения про тон периода.\n"
+        "2. **Фокус дня** — что лучше выбрать или отложить.\n"
+        "3. **Отношения / дела / ресурс** — короткие практичные подсказки по 2-3 сферам.\n"
+        "4. **Мягкий совет** — одно действие на день без давления.\n"
+        "</output_format>"
+    )
+
+
+def _format_horoscope_response(*, sign_displays: list[str], day_ru: str, body_text: str) -> str:
+    if len(sign_displays) > 1:
+        signs_str = " и ".join(sign_displays) if len(sign_displays) == 2 else ", ".join(sign_displays)
+        title = f"🔮 **Гороскоп: совместимость {signs_str} ({day_ru})**"
+    else:
+        title = f"🔮 **Гороскоп: {sign_displays[0]} ({day_ru})**"
+    return (
+        f"{title}\n\n"
+        f"{body_text.strip()}\n\n"
+        "_Астро-данные: текущие транзиты; интерпретация носит ориентировочный характер._"
+    )
+
+
 async def _handle_horoscope(text: str) -> IntentResult | None:
-    """Detect zodiac sign and target day, then query API Ninjas or fallback to Gemini."""
+    """Detect zodiac sign and target day, then generate an astrology-informed response."""
     lower_text = text.lower()
 
     # 1. Detect zodiac signs
@@ -745,20 +813,8 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
 
     logging.info("Horoscope intent: signs=%s, day_ru=%s", detected_signs, day_ru)
 
-    # If no sign is found, guide the user
     if not detected_signs:
-        guide_text = (
-            "🔮 **Персональный Гороскоп**\n\n"
-            "Пожалуйста, укажите знак зодиака в вашем запросе!\n"
-            "Например:\n"
-            "• _гороскоп овен на сегодня_\n"
-            "• _что ждет близнецов завтра?_\n"
-            "• _гороскоп лев на послезавтра_\n\n"
-            "**Доступные знаки:**\n"
-            "Овен ♈, Телец ♉, Близнецы ♊, Рак ♋, Лев ♌, Дева ♍, "
-            "Весы ♎, Скорпион ♏, Стрелец ♐, Козерог ♑, Водолей ♒, Рыбы ♓."
-        )
-        return IntentResult(guide_text)
+        return IntentResult(_missing_horoscope_sign_guide())
 
     sign_displays = [_ZODIAC_RU_NAMES[s] for s in detected_signs]
     signs_str = " и ".join(sign_displays) if len(sign_displays) == 2 else ", ".join(sign_displays)
@@ -794,17 +850,11 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
     provider = get_provider_for_model(mdl, kd["api_key"])
 
     logging.info("Generating horoscope using local astrological data")
-    system_instruction = (
-        "Ты — профессиональный, вдохновляющий и харизматичный астролог.\n"
-        f"Пользователь запросил: '{text}'.\n"
-        f"Знаки в запросе: {signs_str}. Ответь на запрос пользователя, учитывая указанный период ({day_ru}).\n"
-        "Если запрос касается совместимости (указано несколько знаков), проанализируй их взаимодействие.\n"
-        "Если запрос касается конкретной темы (финансы, любовь и т.д.), сделай акцент именно на ней.\n"
-        "ОБЯЗАТЕЛЬНО используй предоставленные ниже реальные астрономические данные (транзиты планет, фазу Луны) "
-        "чтобы обосновать свой прогноз.\n\n"
-        f"--- ДАННЫЕ О ТРАНЗИТАХ ---\n{astro_context}\n--------------------------\n\n"
-        "Используй красивые эмодзи. Будь дружелюбен и пиши увлекательно.\n"
-        "Ответ должен быть кратким и ёмким (не более 3-4 небольших абзацев)."
+    system_instruction = _build_horoscope_system_instruction(
+        user_text=text,
+        signs_str=signs_str,
+        day_ru=day_ru,
+        astro_context=astro_context,
     )
     prompt = f"Запрос пользователя: {text}"
     try:
@@ -820,19 +870,11 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
         result_text = "".join(chunks).strip()
         if result_text:
             logging.info("Gemini direct generation completed successfully")
-            
-            # Format the output header appropriately based on the number of signs
-            if len(sign_displays) > 1:
-                title = f"🔮 **Гороскоп: Совместимость {signs_str} ({day_ru})**"
-            else:
-                title = f"🔮 **Гороскоп: {signs_str} ({day_ru})**"
-                
-            formatted_response = (
-                f"{title}\n\n"
-                f"{result_text}\n\n"
-                f"_Данные: Эфемериды & Gemini_"
-            )
-            return IntentResult(formatted_response)
+            return IntentResult(_format_horoscope_response(
+                sign_displays=sign_displays,
+                day_ru=day_ru,
+                body_text=result_text,
+            ))
     except Exception as exc:
         logging.error("Failed to generate fallback horoscope: %s", exc)
         return None

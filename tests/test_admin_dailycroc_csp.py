@@ -23,9 +23,16 @@ async def test_admin_dailycroc_csp_allows_blob_image_previews():
         client = quart_app.test_client()
         headers = {"X-Auth-Token": "test_token"}
 
-        for path in ("/admin_dailycroc", "/webapp/admin_dailycroc"):
-            response = await client.get(path, headers=headers)
-            assert response.status_code == 200
-            csp = response.headers.get("Content-Security-Policy", "")
-            assert "img-src" in csp
-            assert "blob:" in csp
+        response = await client.get("/admin_daily", headers=headers)
+        assert response.status_code == 200
+        csp = response.headers.get("Content-Security-Policy", "")
+        assert "img-src" in csp
+        assert "blob:" in csp
+
+        croc_redirect = await client.get("/admin_dailycroc", headers=headers)
+        assert croc_redirect.status_code == 301
+        assert croc_redirect.headers["Location"].endswith("/admin_daily#croc")
+
+        puzzle_redirect = await client.get("/admin_daily2048", headers=headers)
+        assert puzzle_redirect.status_code == 301
+        assert puzzle_redirect.headers["Location"].endswith("/admin_daily#2048")

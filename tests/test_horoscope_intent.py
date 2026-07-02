@@ -10,6 +10,9 @@ from app.intent_router import (
     _DATE_ZAVTRA_RE,
     _HOROSCOPE_PATTERNS,
     _ZODIAC_MAPPING,
+    _build_horoscope_system_instruction,
+    _format_horoscope_response,
+    _missing_horoscope_sign_guide,
     try_direct_intent,
 )
 
@@ -95,6 +98,42 @@ def test_date_target_parsing():
     
     assert _DATE_VCHERA_RE.search("вчера") is not None
     assert _DATE_VCHERA_RE.search("yesterday") is not None
+
+
+def test_horoscope_prompt_uses_structured_safe_contract():
+    prompt = _build_horoscope_system_instruction(
+        user_text="гороскоп овен на завтра",
+        signs_str="Овен ♈",
+        day_ru="завтра",
+        astro_context="Луна в Тельце; Меркурий ретроградный",
+    )
+
+    assert "<role>" in prompt
+    assert "<constraints>" in prompt
+    assert "<output_format>" in prompt
+    assert "без фатализма" in prompt.lower()
+    assert "медицинских, юридических или финансовых указаний" in prompt
+    assert "Луна в Тельце" in prompt
+
+
+def test_horoscope_response_footer_is_product_facing_not_provider_facing():
+    text = _format_horoscope_response(
+        sign_displays=["Овен ♈"],
+        day_ru="сегодня",
+        body_text="Сегодня полезно выбирать один главный фокус.",
+    )
+
+    assert text.startswith("🔮 **Гороскоп: Овен ♈ (сегодня)**")
+    assert "_Астро-данные: текущие транзиты" in text
+    assert "Gemini" not in text
+
+
+def test_missing_horoscope_sign_guide_invites_subscribe_settings():
+    text = _missing_horoscope_sign_guide()
+
+    assert "укажите знак зодиака" in text.lower()
+    assert "/horoscope_settings" in text
+    assert "гороскоп овен на сегодня" in text
 
 
 @pytest.mark.asyncio

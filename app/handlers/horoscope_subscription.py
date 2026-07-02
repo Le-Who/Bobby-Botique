@@ -153,6 +153,16 @@ def _confirm_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def _horoscope_invite_text() -> str:
+    return (
+        "⭐ <b>Ежедневный гороскоп в удобное время</b>\n\n"
+        "Можно получать короткий прогноз утром на сегодня и/или вечером на завтра. "
+        "Я буду учитывать ваш знак, выбранное время и часовой пояс.\n\n"
+        "Это не приговор и не инструкция, а мягкая подсказка на день: общий фон, фокус, отношения, дела и ресурс.\n\n"
+        "Настройки можно изменить в /horoscope_settings, отключить доставку — /horoscope_stop."
+    )
+
+
 # ── Entry: deep link /start subscribe_horoscope_{sign} ───────────────────────
 
 async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
@@ -175,12 +185,17 @@ async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAUL
 
     if sign:
         text = (
-            f"✨ <b>Подписка на гороскоп</b>\n\n"
-            f"Вы хотите получать гороскоп для знака <b>{SIGNS[sign]}</b>?\n\n"
-            f"Подтвердите или выберите другой знак:"
+            f"✨ <b>Настройка гороскопа</b>\n\n"
+            f"Выбран знак <b>{SIGNS[sign]}</b>. Дальше настроим утренний и вечерний слот, "
+            f"а также часовой пояс для точной доставки.\n\n"
+            f"Подтвердите знак или выберите другой:"
         )
     else:
-        text = "✨ <b>Подписка на гороскоп</b>\n\nВыберите ваш знак зодиака:"
+        text = (
+            "✨ <b>Настройка гороскопа</b>\n\n"
+            "Выберите знак зодиака. После этого можно будет включить утренний прогноз на сегодня "
+            "и/или вечерний прогноз на завтра."
+        )
         
     if update.callback_query:
         await context.bot.send_message(
@@ -640,14 +655,11 @@ async def send_horoscope_invite(bot, user_id: int) -> bool:
     from telegram.constants import ParseMode
 
     text = (
-        "⭐ <b>Гороскоп по подписке</b>\n\n"
-        "Получайте персональный гороскоп каждое утро и/или вечер — "
-        "прямо в этот чат, точно в выбранное время.\n\n"
-        "Выберите свой знак зодиака и настройте расписание."
+        _horoscope_invite_text()
     )
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⭐ Настроить подписку", callback_data="horo_settings:start")],
-        [InlineKeyboardButton("❌ Не интересует", callback_data="horo_settings:dismiss")],
+        [InlineKeyboardButton("⭐ Настроить гороскоп", callback_data="horo_settings:start")],
+        [InlineKeyboardButton("Не сейчас", callback_data="horo_settings:dismiss")],
     ])
     try:
         await bot.send_message(

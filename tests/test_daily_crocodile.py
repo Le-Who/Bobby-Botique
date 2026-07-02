@@ -325,8 +325,9 @@ async def test_build_dailycroc_status_snapshot_shows_hint_and_art_breakdown() ->
 @pytest.mark.asyncio
 async def test_admin_dailycroc_dashboard_can_toggle_delivery() -> None:
     template = ADMIN_TEMPLATE_PATH.read_text(encoding="utf-8")
-    assert 'id="delivery-toggle-chk"' in template
-    assert "/api/admin/dailycroc/toggle-delivery" in template
+    assert 'data-tab="broadcast"' in template
+    assert "channel-toggle-chk" in template
+    assert "/api/admin/broadcast/toggle" in template
 
     client = quart_app.test_client()
     headers = {"X-Auth-Token": "admin-secret"}
@@ -347,14 +348,14 @@ async def test_admin_dailycroc_dashboard_can_toggle_delivery() -> None:
         assert stats_payload["delivery_enabled"] is False
 
         toggle_response = await client.post(
-            "/api/admin/dailycroc/toggle-delivery",
+            "/api/admin/broadcast/toggle",
             headers=headers,
-            json={"enabled": True},
+            json={"channel": "daily_challenge", "enabled": True},
         )
         assert toggle_response.status_code == 200
         toggle_payload = await toggle_response.get_json()
 
-    assert toggle_payload == {"enabled": True, "success": True}
+    assert toggle_payload == {"channel": "daily_challenge", "enabled": True, "success": True}
     set_mock.assert_awaited_once_with(repo.DAILY_DELIVERY_SETTING_KEY, "on")
 
 

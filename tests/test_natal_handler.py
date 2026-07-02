@@ -189,7 +189,9 @@ async def test_natal_command_sends_mode_selection(monkeypatch):
     state = await natal_command(update, context)
 
     assert state == "NATAL_MODE"
-    assert "Можно заполнить данные в приложении или пройти пошагово здесь" in update.message.replies[0][0]
+    assert "Натальная карта и матрица судьбы" in update.message.replies[0][0]
+    assert "не приговор" in update.message.replies[0][0].lower()
+    assert "точное время рождения" in update.message.replies[0][0]
     assert "Натальная карта строится" not in update.message.replies[0][0]
     assert "natal_flow_message" in context.user_data
 
@@ -501,6 +503,8 @@ async def test_step_flow_exact_time_city_selection_generates_hosted_report(monke
     sent = context.bot.send_photo.await_args.kwargs
     assert sent["photo"] == "natal-cover-file-id"
     assert "Натальная карта готова" in sent["caption"]
+    assert "ключевые акценты" in sent["caption"]
+    assert "бережная навигация" in sent["caption"]
     assert "1995-02-14" not in sent["caption"]
     assert "Odesa" not in sent["caption"]
     buttons = [button for row in sent["reply_markup"].inline_keyboard for button in row]

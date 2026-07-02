@@ -76,7 +76,10 @@ async def _deliver_horoscope(
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚙️ Настройки подписки", callback_data="horo_settings:edit")],
+        [
+            InlineKeyboardButton("⚙️ Настройки", callback_data="horo_settings:edit"),
+            InlineKeyboardButton("Отключить", callback_data="horo_settings:delete"),
+        ],
     ])
 
     try:
@@ -101,6 +104,17 @@ async def check_and_send_horoscopes(context: ContextTypes.DEFAULT_TYPE) -> None:
     Checks both 'today' and 'tomorrow' delivery slots against the current UTC
     time, then delivers to all due subscribers.
     """
+    from app.repos import settings_repo
+
+    try:
+        enabled_raw = await settings_repo.get_global_setting("horoscope_delivery_enabled", "on")
+    except Exception as exc:
+        logger.error("Horoscope delivery switch lookup failed; skipping delivery tick: %s", exc, exc_info=True)
+        return
+    if str(enabled_raw).strip().lower() == "off":
+        logger.info("Horoscope scheduler skipped: horoscope_delivery_enabled=off")
+        return
+
     now = datetime.now(tz=UTC)
     utc_hour = now.hour
     utc_minute = now.minute

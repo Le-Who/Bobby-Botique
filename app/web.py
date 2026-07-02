@@ -1248,10 +1248,41 @@ async def api_admin_broadcast_overview():
         horo_enabled_raw = await get_global_setting("horoscope_delivery_enabled", "on")
         horo_enabled = horo_enabled_raw.strip().lower() != "off"
 
-        horo_total_rows = await database.db_query(
-            "SELECT COUNT(*) AS cnt FROM horoscope_subscriptions WHERE is_active = TRUE"
+        horo_rows = await database.db_query(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE is_active = TRUE) AS total_active,
+                (
+                    COUNT(*) FILTER (
+                        WHERE is_active = TRUE
+                          AND time_today IS NOT NULL
+                          AND (last_today_sent IS NULL OR last_today_sent::date < CURRENT_DATE)
+                    )
+                    +
+                    COUNT(*) FILTER (
+                        WHERE is_active = TRUE
+                          AND time_tomorrow IS NOT NULL
+                          AND (last_tomorrow_sent IS NULL OR last_tomorrow_sent::date < CURRENT_DATE)
+                    )
+                ) AS pending_deliveries,
+                (
+                    COUNT(*) FILTER (
+                        WHERE is_active = TRUE
+                          AND last_today_sent::date = CURRENT_DATE
+                    )
+                    +
+                    COUNT(*) FILTER (
+                        WHERE is_active = TRUE
+                          AND last_tomorrow_sent::date = CURRENT_DATE
+                    )
+                ) AS sent_deliveries_today
+            FROM horoscope_subscriptions
+            """
         )
-        horo_total = int(horo_total_rows[0]["cnt"] if horo_total_rows else 0)
+        horo_stats = dict(horo_rows[0]) if horo_rows else {}
+        horo_total = int(horo_stats.get("total_active", 0) or 0)
+        horo_pending = int(horo_stats.get("pending_deliveries", 0) or 0)
+        horo_sent_today = int(horo_stats.get("sent_deliveries_today", 0) or 0)
 
         horo_channel = {
             "id": "horoscope",
@@ -1259,8 +1290,8 @@ async def api_admin_broadcast_overview():
             "emoji": "⭐",
             "active_game": None,
             "subscribers": horo_total,
-            "pending_today": None,
-            "sent_today": None,
+            "pending_today": horo_pending,
+            "sent_today": horo_sent_today,
             "delivery_enabled": horo_enabled,
             "last_sent_at": None,
         }
@@ -1753,7 +1784,12 @@ async def api_admin_broadcast_send_offer():
                 })
 
             from app.handlers.horoscope_subscription import send_horoscope_invite
-            await send_horoscope_invite(bot, target_user_id)
+            delivered = await send_horoscope_invite(bot, target_user_id)
+            if not delivered:
+                return jsonify({
+                    "success": False,
+                    "error": "Offer was not delivered by Telegram; discovery timestamp was not updated.",
+                }), 502
             await mark_horoscope_discovery_sent(target_user_id)
 
         elif channel == "tarot":
@@ -1866,7 +1902,9 @@ async def api_admin_broadcast_send_offer_batch():
                         if bool(sub and sub.get("is_active")) and not force:
                             return {"user_id": uid, "status": "skipped", "message": "Already subscribed"}
                         from app.handlers.horoscope_subscription import send_horoscope_invite
-                        await send_horoscope_invite(bot, uid)
+                        delivered = await send_horoscope_invite(bot, uid)
+                        if not delivered:
+                            return {"user_id": uid, "status": "error", "message": "Offer was not delivered"}
                         await mark_horoscope_discovery_sent(uid)
 
                     elif channel == "tarot":
