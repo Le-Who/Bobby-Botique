@@ -8,6 +8,7 @@ import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -205,20 +206,24 @@ class InputSanitizer:
             if hostname.startswith("[") and hostname.endswith("]"):
                 hostname = hostname[1:-1]
 
-        # Check for localhost
-        if hostname.lower() == "localhost":
-            raise InputSanitizationError("Localhost URLs not allowed")
-
-        # Check for IP addresses
+        # Resolve hostname and check all IPs against private/internal ranges (SSRF protection)
         try:
-            # This handles both IPv4 and IPv6
-            ipaddress.ip_address(hostname)
-            # If we are here, it IS an IP address.
-            # Current policy: Block ALL IP addresses.
-            raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
-        except ValueError:
-            # Not an IP address, continue
-            pass
+            # Resolve the hostname. This handles DNS, IPv4, IPv6, and localhost
+            addr_info = socket.getaddrinfo(hostname, None)
+            for result in addr_info:
+                ip_str = result[4][0]
+                ip = ipaddress.ip_address(ip_str)
+
+                # Check for any restricted IP ranges
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+                    raise InputSanitizationError(f"URL resolves to restricted internal IP: {hostname}")
+        except socket.gaierror as e:
+            # If we can't resolve it, we can't be sure it's safe, but usually this means
+            # it's just an invalid domain. For strict security, we reject unresolvable domains.
+            raise InputSanitizationError(f"Could not resolve hostname: {hostname}") from e
+        except ValueError as e:
+            # Invalid IP returned somehow
+            raise InputSanitizationError(f"Invalid IP resolved for hostname: {hostname}") from e
 
         return url
 

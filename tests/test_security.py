@@ -108,9 +108,31 @@ class TestValidateFileExtension:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+from unittest.mock import patch
+
+
 class TestSanitizeUrl:
     def setup_method(self):
         self.s = InputSanitizer()
+
+        # Mock socket.getaddrinfo to avoid real DNS lookups and potential gaierror in CI
+        self.patcher = patch("socket.getaddrinfo")
+        self.mock_getaddrinfo = self.patcher.start()
+
+        def side_effect(host, port, *args, **kwargs):
+            if host == "example.com":
+                return [(2, 1, 6, "", ("93.184.216.34", 0))]
+            elif host == "localhost":
+                return [(2, 1, 6, "", ("127.0.0.1", 0))]
+            elif host == "192.168.1.1":
+                return [(2, 1, 6, "", ("192.168.1.1", 0))]
+            else:
+                return [(2, 1, 6, "", ("8.8.8.8", 0))]
+
+        self.mock_getaddrinfo.side_effect = side_effect
+
+    def teardown_method(self):
+        self.patcher.stop()
 
     def test_valid_https_url(self):
         url = "https://example.com/page"
@@ -133,11 +155,11 @@ class TestSanitizeUrl:
             self.s.sanitize_url("file:///etc/passwd")
 
     def test_rejects_localhost(self):
-        with pytest.raises(InputSanitizationError, match="[Ll]ocalhost"):
+        with pytest.raises(InputSanitizationError, match="restricted internal IP"):
             self.s.sanitize_url("http://localhost/admin")
 
     def test_rejects_ip_address(self):
-        with pytest.raises(InputSanitizationError, match="IP"):
+        with pytest.raises(InputSanitizationError, match="restricted internal IP"):
             self.s.sanitize_url("http://192.168.1.1/admin")
 
     def test_rejects_too_long_url(self):
