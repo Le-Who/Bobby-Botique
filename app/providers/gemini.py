@@ -18,6 +18,7 @@ from app.metrics import metrics_collector
 from app.providers.base import AIResponse, BaseAIProvider, _build_thinking_config
 from app.utils.api_logger import api_logger
 from app.utils.image_utils import TaggedImage, save_image_as_bytes
+from app.utils.text_utils import get_part_length
 
 # Global cache for genai.Client instances to reuse connection pools (TLS/TCP)
 # Key: API Key (string), Value: genai.Client
@@ -64,9 +65,7 @@ class GeminiProvider(BaseAIProvider):
 
             # Compute metrics
             try:
-                prompt_length = sum(
-                    len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None
-                )
+                prompt_length = sum(get_part_length(part) for item in history for part in (item.get("parts", []) or []))
                 has_images = any(
                     isinstance(part, (bytes, bytearray, Image.Image))
                     for item in history
