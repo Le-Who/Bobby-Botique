@@ -1,5 +1,8 @@
 """Tests for app.security — InputSanitizer and RateLimiter (pure logic, zero DB)."""
 
+import socket
+from unittest.mock import patch
+
 import pytest
 
 from app.errors import InputSanitizationError
@@ -143,6 +146,13 @@ class TestSanitizeUrl:
     def test_rejects_too_long_url(self):
         with pytest.raises(InputSanitizationError, match="too long"):
             self.s.sanitize_url("https://example.com/" + "a" * 10000)
+
+    @patch("socket.getaddrinfo")
+    def test_rejects_ssrf_dns_resolution(self, mock_getaddrinfo):
+        # Mock getaddrinfo to return a loopback IP
+        mock_getaddrinfo.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+        with pytest.raises(InputSanitizationError, match="resolves to restricted IP"):
+            self.s.sanitize_url("http://127.0.0.1.nip.io/admin")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
