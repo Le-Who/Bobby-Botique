@@ -8,6 +8,7 @@ unnecessary parallel racing for a stable QNA_MODEL.
 
 These tests verify that:
 1. _generate_tarot_inline delegates to ProviderRouter.get_response()
+   for both the primary model and the flash-lite hot standby.
 2. On total failure (empty or error message), it gracefully edits the message.
 """
 
@@ -21,11 +22,12 @@ def _make_bot(edit_calls: list | None = None) -> MagicMock:
     bot.edit_message_text = AsyncMock(side_effect=lambda **kw: edit_calls.append(kw) if edit_calls is not None else None)
     return bot
 
+
 @pytest.mark.asyncio
 async def test_generate_tarot_inline_uses_provider_router():
     """_generate_tarot_inline must use ProviderRouter.get_response
-    with sequential rotation, instead of _stream_inline_fast or
-    bespoke resolve_ai_request calls.
+    for both primary and hot-standby routes, instead of _stream_inline_fast
+    or bespoke resolve_ai_request calls.
     """
     from app.handlers.inline import _generate_tarot_inline
 
@@ -44,16 +46,21 @@ async def test_generate_tarot_inline_uses_provider_router():
             spread_type="tarot",
         )
 
-    mock_router.get_response.assert_called_once()
-    kwargs = mock_router.get_response.call_args[1]
-    assert kwargs.get("max_key_retries") == 3
-    assert kwargs.get("preferred_model") == "gemini-3.5-flash"
+    assert mock_router.get_response.call_count == 2
+    call_kwargs = [call.kwargs for call in mock_router.get_response.call_args_list]
+    assert [kwargs.get("preferred_model") for kwargs in call_kwargs] == [
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash",
+    ]
+    assert all(kwargs.get("max_key_retries") == 3 for kwargs in call_kwargs)
+    assert all(kwargs.get("use_openrouter") is False for kwargs in call_kwargs)
 
     # The bot must have edited the message with actual content
     bot.edit_message_text.assert_called()
     final_call_kwargs = bot.edit_message_text.call_args_list[-1][1]
     text = final_call_kwargs.get("text", "")
     assert "❌" not in text
+
 
 @pytest.mark.asyncio
 async def test_generate_tarot_inline_shows_error_on_total_failure():
@@ -87,6 +94,7 @@ async def test_generate_tarot_inline_shows_error_on_total_failure():
     assert retry_markup is not None
     retry_button = retry_markup.inline_keyboard[0][0]
     assert retry_button.callback_data.startswith("inl_retry:")
+
 
 @pytest.mark.asyncio
 async def test_generate_tarot_inline_shows_error_on_error_message():

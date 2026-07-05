@@ -53,7 +53,7 @@ from telegram.ext import ContextTypes
 
 from app.cache import get_inline_context, store_inline_context
 from app.config import settings
-from app.errors import is_error_message
+from app.errors import classify_key_error, is_error_message, is_key_related_error, is_retryable_error
 from app.i18n import t
 from app.metrics import metrics_collector
 from app.repos.settings_repo import get_global_setting
@@ -81,6 +81,9 @@ _INLINE_FALLBACK_MODEL = "gemini-3.1-flash-lite"
 _GEN_TIMEOUT_S = 55.0
 # Seconds after which we edit the placeholder to show a progress message.
 _GEN_PROGRESS_AFTER_S = 20.0
+# When inline is configured to a heavier primary model, flash-lite runs as a
+# hot standby and may answer once the primary misses this deadline.
+_INLINE_PRIMARY_GRACE_S = 13.0
 
 # ── Image intent detection ────────────────────────────────────────────────────
 # Matches a broad set of image-generation intents in both Russian and English.
@@ -1215,6 +1218,24 @@ async def _stream_inline_fast(
     status_mgr = get_key_status_manager()
     failed_keys: set[str] = set()
     _winner_sources: list[tuple[str, str]] = []  # Grounding citations from winner
+    _VERTEX_KH = "__vertex_ai__"
+
+    async def _record_stream_error(kh: str, model: str, error_text: str) -> None:
+        """Apply router-equivalent key penalties for tagged stream error chunks."""
+        failed_keys.add(kh)
+        if kh == _VERTEX_KH:
+            return
+        if not (is_key_related_error(error_text) or is_retryable_error(error_text)):
+            return
+        try:
+            await status_mgr.suspend_key(
+                kh,
+                model,
+                classify_key_error(error_text),
+                error_text[:200],
+            )
+        except Exception as suspend_exc:
+            logging.warning("Non-critical: failed to suspend inline key after stream error: %s", suspend_exc)
 
     class _End:
         """Sentinel: producer puts this when its stream finishes or is cancelled."""
@@ -1282,7 +1303,6 @@ async def _stream_inline_fast(
         # gemini-3.1-flash-lite on Vertex supports Search Grounding and
         # races alongside the 3 AI Studio keys. Uses a pseudo-key-hash so the
         # shared queue logic treats it uniformly.
-        _VERTEX_KH = "__vertex_ai__"
         _INLINE_VERTEX_MODEL = "gemini-3.1-flash-lite"
         _vertex_grounding_holder: list[list[tuple[str, str]]] = [[]]  # mutable closure slot
 
@@ -1384,6 +1404,10 @@ async def _stream_inline_fast(
                 # Skip _GroundingMeta sentinels — only text triggers winner
                 if isinstance(chunk, _GroundingMeta):
                     continue
+                if chunk and is_error_message(chunk):
+                    await _record_stream_error(kh, resolved_model, str(chunk))
+                    errors[kh] = RuntimeError(str(chunk)[:200])
+                    continue
                 if chunk and not is_error_message(chunk):
                     winner_kh = kh
                     chunks.append(chunk)
@@ -1435,6 +1459,14 @@ async def _stream_inline_fast(
                 if isinstance(chunk, _GroundingMeta):
                     _winner_sources = chunk.sources
                     continue
+                if chunk and is_error_message(chunk):
+                    logging.warning(
+                        "Inline: winner stream returned tagged error mid-flight: %s",
+                        str(chunk)[:120],
+                    )
+                    await _record_stream_error(kh, resolved_model, str(chunk))
+                    chunks = []
+                    break
                 if chunk:
                     chunks.append(chunk)
         finally:
@@ -1456,6 +1488,163 @@ async def _stream_inline_fast(
     return None, []  # All rounds exhausted
 
 
+def _is_usable_inline_answer(text: str | None) -> bool:
+    return bool(text and text.strip() and not is_error_message(text))
+
+
+def _should_use_inline_primary(user_query: str) -> bool:
+    """Reserve heavier inline primaries for queries that clearly need them."""
+    try:
+        from app.thinking_classifier import classify_thinking_level
+
+        return classify_thinking_level(user_query) == "high"
+    except Exception as exc:
+        logging.debug("Inline primary classifier failed, using flash-lite: %s", exc)
+        return False
+
+
+def _select_inline_generation_model(configured_model: str, user_query: str) -> str:
+    if configured_model == _INLINE_FALLBACK_MODEL:
+        return _INLINE_FALLBACK_MODEL
+    if _should_use_inline_primary(user_query):
+        return configured_model
+    return _INLINE_FALLBACK_MODEL
+
+
+async def _stream_inline_primary(
+    preferred_model: str,
+    history: list,
+    system_instruction: str | None,
+    user_id: int | None,
+    enable_web_search: bool,
+) -> tuple[str | None, list[tuple[str, str]]]:
+    """Collect a ProviderRouter streaming response for a configured primary model."""
+    from app.providers.gemini import _GroundingMeta
+    from app.providers.router import get_provider_router
+
+    thinking_level = await get_global_setting("inline_thinking_level", settings.INLINE_THINKING_LEVEL)
+    router = get_provider_router()
+    chunks: list[str] = []
+    sources: list[tuple[str, str]] = []
+
+    try:
+        async for chunk in router.stream_response(
+            preferred_model=preferred_model,
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            use_openrouter=False,
+            max_key_retries=3,
+            thinking_level=thinking_level,
+            enable_web_search=enable_web_search,
+            force_grounding=enable_web_search,
+        ):
+            if isinstance(chunk, _GroundingMeta):
+                sources = chunk.sources
+                continue
+            if chunk:
+                chunks.append(str(chunk))
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logging.warning("Inline primary stream failed for %s: %s", preferred_model, exc)
+        return None, []
+
+    answer = "".join(chunks)
+    return (answer, sources) if answer.strip() else (None, sources)
+
+
+async def _generate_inline_answer(
+    preferred_model: str,
+    user_query: str,
+    history: list,
+    system_instruction: str | None,
+    user_id: int | None,
+    enable_web_search: bool,
+) -> tuple[str | None, list[tuple[str, str]], str]:
+    """Generate inline text, using flash-lite as a hot standby for heavier primaries."""
+    preferred_model = _select_inline_generation_model(preferred_model, user_query)
+
+    if preferred_model == _INLINE_FALLBACK_MODEL:
+        text, sources = await _stream_inline_fast(
+            preferred_model=_INLINE_FALLBACK_MODEL,
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            max_rounds=4,
+            enable_web_search=enable_web_search,
+        )
+        return text, sources, _INLINE_FALLBACK_MODEL
+
+    primary_task = asyncio.create_task(
+        _stream_inline_primary(
+            preferred_model=preferred_model,
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            enable_web_search=enable_web_search,
+        )
+    )
+    lite_task = asyncio.create_task(
+        _stream_inline_fast(
+            preferred_model=_INLINE_FALLBACK_MODEL,
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            max_rounds=4,
+            enable_web_search=enable_web_search,
+        )
+    )
+
+    primary_result: tuple[str | None, list[tuple[str, str]]] | None = None
+    lite_result: tuple[str | None, list[tuple[str, str]]] | None = None
+
+    try:
+        try:
+            primary_result = await asyncio.wait_for(
+                asyncio.shield(primary_task),
+                timeout=_INLINE_PRIMARY_GRACE_S,
+            )
+            if _is_usable_inline_answer(primary_result[0]):
+                return primary_result[0], primary_result[1], preferred_model
+        except TimeoutError:
+            logging.info(
+                "Inline primary %s missed %.0fs deadline; waiting for %s hot standby",
+                preferred_model,
+                _INLINE_PRIMARY_GRACE_S,
+                _INLINE_FALLBACK_MODEL,
+            )
+        except Exception as exc:
+            logging.warning("Inline primary %s failed before fallback decision: %s", preferred_model, exc)
+
+        try:
+            lite_result = await lite_task
+            if _is_usable_inline_answer(lite_result[0]):
+                return lite_result[0], lite_result[1], _INLINE_FALLBACK_MODEL
+        except Exception as exc:
+            logging.warning("Inline flash-lite hot standby failed: %s", exc)
+
+        if primary_result is None:
+            try:
+                primary_result = await primary_task
+            except Exception as exc:
+                logging.warning("Inline primary %s failed after fallback failure: %s", preferred_model, exc)
+
+        if primary_result and _is_usable_inline_answer(primary_result[0]):
+            return primary_result[0], primary_result[1], preferred_model
+        if lite_result:
+            return lite_result[0], lite_result[1], _INLINE_FALLBACK_MODEL
+        if primary_result:
+            return primary_result[0], primary_result[1], preferred_model
+        return None, [], preferred_model
+    finally:
+        for task in (primary_task, lite_task):
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
+
+
 # ── Background generation ─────────────────────────────────────────────────────
 
 
@@ -1470,7 +1659,9 @@ async def _generate_and_edit_inline(
     """
     Core async pipeline with progressive UX feedback:
 
-    1. Call ``gemini-3.1-flash-lite`` with **Google Search Grounding** enabled.
+    1. Call ``gemini-3.1-flash-lite`` with **Google Search Grounding** enabled
+       by default. If inline is configured to a heavier primary model, use it
+       only for high-complexity prompts and race flash-lite as a hot standby.
        The model searches the web natively for factual/current queries — no
        separate Tavily call needed.  This ensures real-time data (exchange
        rates, weather, news) instead of potentially stale Tavily QnA cache.
@@ -1522,20 +1713,24 @@ async def _generate_and_edit_inline(
 
     history = [{"role": "user", "parts": [user_query]}]
 
-    # ── Step 2: Generate (3-way Race Requests, up to 4 rounds) ──────────────────
-    # Primary: Vertex AI Express (gemini-3.1-flash-lite) with Search Grounding.
-    # Fallback racers: 2x AI Studio keys (gemini-3.1-flash-lite) per round.
+    # ── Step 2: Generate ───────────────────────────────────────────────────────
+    # Default route: flash-lite 2+1 race (Vertex + AI Studio keys).
+    # High-complexity route: configured primary + flash-lite hot standby.
     _gen_start = time.monotonic()
     final_answer: str | None = None
     _grounding_sources: list[tuple[str, str]] = []  # Grounding Citations (url, title)
     _gen_timed_out = False
     _progress_shown = False
     _inline_req_id = f"inline-{user_id}-{uuid.uuid4().hex[:8]}"
+    _requested_inline_model = await get_inline_model()
+    _effective_inline_model = _select_inline_generation_model(_requested_inline_model, user_query)
+    _response_model = _effective_inline_model
     _log_start = api_logger.log_request(
         "gemini_inline",
         request_id=_inline_req_id,
         user_id=user_id,
-        model=await get_inline_model(),
+        model=_effective_inline_model,
+        configured_model=_requested_inline_model,
         query_length=len(user_query),
         tone=tone_id,
     )
@@ -1559,13 +1754,13 @@ async def _generate_and_edit_inline(
     progress_task = asyncio.create_task(_delayed_progress_edit())
 
     try:
-        final_answer, _grounding_sources = await asyncio.wait_for(
-            _stream_inline_fast(
-                preferred_model=await get_inline_model(),
+        final_answer, _grounding_sources, _response_model = await asyncio.wait_for(
+            _generate_inline_answer(
+                preferred_model=_effective_inline_model,
+                user_query=user_query,
                 history=history,
                 system_instruction=system_instruction,
                 user_id=user_id,
-                max_rounds=4,
                 enable_web_search=True,
             ),
             timeout=_GEN_TIMEOUT_S,
@@ -1591,12 +1786,12 @@ async def _generate_and_edit_inline(
             "gemini_inline",
             _log_start,
             success=_gen_success,
-            model=await get_inline_model(),
+            model=_response_model,
             response_length=len(final_answer or ""),
         )
 
     # Record metrics (we're already in a background task — awaiting is safe)
-    await metrics_collector.record_api_call("gemini_inline", await get_inline_model(), user_id=user_id)
+    await metrics_collector.record_api_call("gemini_inline", _response_model, user_id=user_id)
     await metrics_collector.record_request(
         "inline",
         response_time=time.monotonic() - _gen_start,
