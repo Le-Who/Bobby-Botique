@@ -20,7 +20,7 @@ import time
 
 from telegram import Update
 from telegram.error import BadRequest, NetworkError
-from telegram.ext import Application, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from app import state
 from app.config import settings
@@ -804,8 +804,18 @@ def register(application: Application) -> None:
     # edited_message / channel_post from leaking into these handlers.
     _msg = filters.UpdateType.MESSAGE
     # Tarot Mode Interceptor
-    from app.handlers.tarot_chat import handle_tarot_message, is_tarot_mode_filter
+    from app.handlers.tarot_chat import (
+        handle_tarot_end_session_message,
+        handle_tarot_idle_choice_callback,
+        handle_tarot_message,
+        is_tarot_end_session_filter,
+        is_tarot_mode_filter,
+    )
+    application.add_handler(
+        MessageHandler(_msg & filters.TEXT & is_tarot_end_session_filter, handle_tarot_end_session_message, block=False)
+    )
     application.add_handler(MessageHandler(_msg & filters.TEXT & is_tarot_mode_filter, handle_tarot_message, block=False))
+    application.add_handler(CallbackQueryHandler(handle_tarot_idle_choice_callback, pattern=r"^tarot_idle:", block=False))
 
     # Tarot Single-word Intent Interceptor
     import re

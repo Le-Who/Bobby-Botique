@@ -3,10 +3,12 @@ Command to initiate a Tarot session.
 """
 
 import logging
+import time
 
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from app.handlers.tarot_chat import TAROT_END_SESSION_TEXT
 from app.state import set_tarot_mode, set_tarot_session
 from app.tarot import SpreadType, draw_cards
 from app.utils.decorators import authorized_only, safe_handler
@@ -30,13 +32,14 @@ async def tarot_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "spread_type": spread.value,
         "drawn_cards": [],
         "history": [],
-        "waiting_for_question": True
+        "waiting_for_question": True,
+        "last_activity_at": time.time(),
     }
     set_tarot_session(user_id, session_data)
     
     # 4. Show UI (Reply Keyboard)
     keyboard = [
-        ["🛑 Завершить сеанс Таро"]
+        [TAROT_END_SESSION_TEXT]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     

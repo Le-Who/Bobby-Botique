@@ -283,6 +283,7 @@ class Settings(BaseModel):
     # --- CHAT ---
     CHAT_TOKEN_LIMIT: int = 384000
     TELEGRAM_MESSAGE_LIMIT: int = 4096
+    TAROT_IDLE_CONFIRM_AFTER_SECONDS: int = 86_400
 
     # --- MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
@@ -424,6 +425,7 @@ def load_settings() -> Settings:
             "NATAL_SEND_RAW_BIRTH_DATA_TO_LLM": os.getenv("NATAL_SEND_RAW_BIRTH_DATA_TO_LLM", "false").lower()
             == "true",
             "TELEGRAM_LOCAL_SERVER_URL": os.getenv("TELEGRAM_LOCAL_SERVER_URL", "").rstrip("/"),
+            "TAROT_IDLE_CONFIRM_AFTER_SECONDS": int(os.getenv("TAROT_IDLE_CONFIRM_AFTER_SECONDS", "86400")),
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
             "TAVILY_API_KEYS": _load_and_clean_keys("TAVILY_API_KEYS"),
             "OPENROUTER_API_KEYS": _load_and_clean_keys("OPENROUTER_API_KEYS", required=False),
