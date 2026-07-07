@@ -8,6 +8,7 @@ import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -219,6 +220,26 @@ class InputSanitizer:
         except ValueError:
             # Not an IP address, continue
             pass
+
+        try:
+            # Resolve hostname using getaddrinfo for both IPv4 and IPv6
+            addrinfo = socket.getaddrinfo(hostname, None)
+            for info in addrinfo:
+                ip_str = info[4][0]
+                try:
+                    ip_obj = ipaddress.ip_address(ip_str)
+                    if (
+                        ip_obj.is_loopback
+                        or ip_obj.is_private
+                        or ip_obj.is_link_local
+                        or ip_obj.is_unspecified
+                        or ip_obj.is_multicast
+                    ):
+                        raise InputSanitizationError(f"URL resolves to disallowed IP: {ip_str}")
+                except ValueError:
+                    pass
+        except socket.gaierror as e:
+            raise InputSanitizationError(f"Could not resolve hostname: {hostname}") from e
 
         return url
 
