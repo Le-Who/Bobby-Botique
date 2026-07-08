@@ -8,6 +8,7 @@ import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -219,6 +220,19 @@ class InputSanitizer:
         except ValueError:
             # Not an IP address, continue
             pass
+
+        # Check DNS resolution for restricted IPs (SSRF mitigation)
+        try:
+            # Avoid using setdefaulttimeout globally; getaddrinfo might hang slightly but usually quick
+            addr_info = socket.getaddrinfo(hostname, None)
+            for _family, _type, _proto, _canonname, sockaddr in addr_info:
+                ip_str = sockaddr[0]
+                ip = ipaddress.ip_address(ip_str)
+                if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+                    raise InputSanitizationError(f"URL resolves to restricted IP address: {ip_str}")
+        except socket.gaierror as e:
+            # Fail closed on DNS errors to prevent bypass
+            raise InputSanitizationError(f"Could not resolve hostname: {e}") from e
 
         return url
 
