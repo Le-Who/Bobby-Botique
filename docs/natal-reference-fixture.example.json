@@ -1,0 +1,146 @@
+{
+  "cases": [
+    {
+      "case_id": "kyiv-1995-exact",
+      "resolved": {
+        "birth_input": {
+          "birth_date": "1995-02-14",
+          "time_precision": "exact",
+          "birth_time": "06:30",
+          "birth_time_range_start": null,
+          "birth_time_range_end": null,
+          "birth_place": "Kyiv, Ukraine",
+          "birth_place_country_code": null,
+          "birth_place_geoname_id": null,
+          "birth_place_latitude": null,
+          "birth_place_longitude": null,
+          "birth_place_timezone": null,
+          "birth_place_display_name": null,
+          "language": "ru",
+          "focus": "general"
+        },
+        "latitude": 50.4501,
+        "longitude": 30.5234,
+        "timezone": "Europe/Kyiv",
+        "local_datetime": "1995-02-14T06:30:00+02:00",
+        "utc_datetime": "1995-02-14T04:30:00+00:00",
+        "display_place": "Kyiv, Ukraine"
+      },
+      "expected_planet_longitudes": {
+        "sun": 325.0797,
+        "moon": 129.1136,
+        "mercury": 305.9419,
+        "venus": 280.6519,
+        "mars": 142.1335,
+        "jupiter": 252.2866,
+        "saturn": 342.6651,
+        "uranus": 298.0993,
+        "neptune": 294.2672,
+        "pluto": 240.5742
+      },
+      "expected_retrogrades": {
+        "sun": false,
+        "moon": false,
+        "mercury": true,
+        "venus": false,
+        "mars": true,
+        "jupiter": false,
+        "saturn": false,
+        "uranus": false,
+        "neptune": false,
+        "pluto": false
+      },
+      "expected_angles": {
+        "ascendant": 304.6123,
+        "mc": 243.7638
+      },
+      "expected_house_cusps": {
+        "1": 304.6123,
+        "2": 334.6123,
+        "3": 4.612300000000005,
+        "4": 34.612300000000005,
+        "5": 64.6123,
+        "6": 94.6123,
+        "7": 124.6123,
+        "8": 154.6123,
+        "9": 184.6123,
+        "10": 214.6123,
+        "11": 244.6123,
+        "12": 274.6123
+      },
+      "reference_source": "Template only: internal regression values copied from app.natal.accuracy. Replace with independently verified source before setting externally_verified=true.",
+      "externally_verified": false
+    },
+    {
+      "case_id": "reading-1989-exact",
+      "resolved": {
+        "birth_input": {
+          "birth_date": "1989-12-13",
+          "time_precision": "exact",
+          "birth_time": "05:30",
+          "birth_time_range_start": null,
+          "birth_time_range_end": null,
+          "birth_place": "Reading, United States",
+          "birth_place_country_code": null,
+          "birth_place_geoname_id": null,
+          "birth_place_latitude": null,
+          "birth_place_longitude": null,
+          "birth_place_timezone": null,
+          "birth_place_display_name": null,
+          "language": "ru",
+          "focus": "general"
+        },
+        "latitude": 40.3356,
+        "longitude": -75.9269,
+        "timezone": "America/New_York",
+        "local_datetime": "1989-12-13T05:30:00-05:00",
+        "utc_datetime": "1989-12-13T10:30:00+00:00",
+        "display_place": "Reading, Pennsylvania, United States"
+      },
+      "expected_planet_longitudes": {
+        "sun": 261.5416,
+        "moon": 91.7661,
+        "mercury": 278.7933,
+        "venus": 301.9893,
+        "mars": 236.8347,
+        "jupiter": 97.8204,
+        "saturn": 283.5875,
+        "uranus": 274.7872,
+        "neptune": 281.471,
+        "pluto": 226.6386
+      },
+      "expected_retrogrades": {
+        "sun": false,
+        "moon": false,
+        "mercury": false,
+        "venus": false,
+        "mars": false,
+        "jupiter": true,
+        "saturn": false,
+        "uranus": false,
+        "neptune": false,
+        "pluto": false
+      },
+      "expected_angles": {
+        "ascendant": 238.1609,
+        "mc": 162.2794
+      },
+      "expected_house_cusps": {
+        "1": 238.1609,
+        "2": 268.16089999999997,
+        "3": 298.16089999999997,
+        "4": 328.16089999999997,
+        "5": 358.16089999999997,
+        "6": 28.16089999999997,
+        "7": 58.16089999999997,
+        "8": 88.16089999999997,
+        "9": 118.16089999999997,
+        "10": 148.16089999999997,
+        "11": 178.16089999999997,
+        "12": 208.16089999999997
+      },
+      "reference_source": "Template only: internal regression values copied from app.natal.accuracy. Replace with independently verified source before setting externally_verified=true.",
+      "externally_verified": false
+    }
+  ]
+}

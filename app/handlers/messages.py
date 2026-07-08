@@ -16,14 +16,17 @@ Key architectural decisions:
 
 import asyncio
 import logging
+import time
 
 from telegram import Update
 from telegram.error import BadRequest, NetworkError
-from telegram.ext import Application, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from app import state
 from app.config import settings
-from app.handlers.cmd_image import _get_draw_state, _run_generation
+
+# Deferred to avoid heavy startup penalty
+# from app.handlers.cmd_image import _get_draw_state, _run_generation
 from app.handlers.msg_document import handle_document, handle_document_mode_interaction
 from app.handlers.msg_media import (
     process_media_group_update,
@@ -36,56 +39,81 @@ from app.handlers.msg_roles import (
     handle_role_rename,
 )
 from app.handlers.msg_voice import handle_voice_inline
+from app.i18n import detect_language, t
 from app.metrics import metrics_collector
 from app.repos.users import is_authorized
 from app.request_context import set_request_id, set_user_context
 from app.security import check_user_rate_limit
 from app.tracing import bind_request_span
 from app.utils.api_logger import api_logger
+from app.utils.background_tasks import submit_task
 from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
 
 
 def chunk_message(text: str, max_length: int = 4096) -> list[str]:
-    """Splits a message into chunks of maximum max_length."""
-    if not text:
-        return []
+    """Split *text* into chunks of at most *max_length* characters.
+
+    Split priority per chunk boundary: newline → space → hard cut.
+    Each chunk is stripped; empty chunks are silently dropped.
+
+    Args:
+        text: The text to split.
+        max_length: Maximum character count per chunk. Must be > 0.
+
+    Raises:
+        ValueError: If *max_length* is not positive.
+    """
     if max_length <= 0:
         raise ValueError("max_length must be > 0")
+    if not text:
+        return []
 
-    chunks = []
-    while len(text) > max_length:
-        # Try to find a newline to split at
-        split_at = text.rfind("\n", 0, max_length + 1)
-        if split_at == -1 or split_at == 0:
-            # If no newline, find a space
-            split_at = text.rfind(" ", 0, max_length + 1)
+    chunks: list[str] = []
+    text_length = len(text)
+    start_idx = 0
 
-        if split_at == -1 or split_at == 0:
-            # If no space, hard break
-            split_at = max_length
+    while start_idx < text_length:
+        remaining_length = text_length - start_idx
+        if remaining_length <= max_length:
+            chunk = text[start_idx:].strip()
+            if chunk:
+                chunks.append(chunk)
+            break
 
-        chunks.append(text[:split_at].strip())
-        text = text[split_at:].lstrip("\n ")
+        window = text[start_idx : start_idx + max_length]
 
-    if text:
-        chunks.append(text.strip())
+        # 1. Try newline split
+        nl_pos = window.rfind("\n")
+        if nl_pos > 0:
+            chunk = text[start_idx : start_idx + nl_pos].strip()
+            start_idx += nl_pos + 1
+        else:
+            # 2. Try space split
+            sp_pos = window.rfind(" ")
+            if sp_pos > 0:
+                chunk = text[start_idx : start_idx + sp_pos].strip()
+                start_idx += sp_pos + 1
+            else:
+                # 3. Hard cut
+                chunk = window.strip()
+                start_idx += max_length
 
-    return [c for c in chunks if c]
+        if chunk:
+            chunks.append(chunk)
+
+    return chunks
 
 
 async def _send_busy_ephemeral(update: Update) -> None:
     """Send localized busy toast that self-destructs after 4s."""
-    from app.i18n import detect_language as _dl
-    from app.i18n import t as _t
-
     # Use effective_message — works for both new and edited message contexts
     msg_obj = update.effective_message
     text = msg_obj.text if msg_obj else None
-    lang = _dl(text)
+    lang = detect_language(text)
     if not msg_obj:
         return
     try:
-        busy_msg = await msg_obj.reply_text(_t("busy.toast", lang))
+        busy_msg = await msg_obj.reply_text(t("busy.toast", lang))
 
         async def _del() -> None:
             await asyncio.sleep(4)
@@ -93,8 +121,6 @@ async def _send_busy_ephemeral(update: Update) -> None:
                 await busy_msg.delete()
             except Exception:
                 pass
-
-        from app.utils.background_tasks import submit_task
 
         submit_task(_del())
     except Exception as e:
@@ -132,7 +158,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Immediate typing indicator — instant feedback before any processing
     try:
-        await update.effective_chat.send_action(action="typing")
+        submit_task(update.effective_chat.send_action(action="typing"))
     except Exception:
         pass  # Non-critical
 
@@ -166,17 +192,18 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         message_text = effective_msg.text if effective_msg.text else "No text"
         if len(message_text) > settings.TELEGRAM_MESSAGE_LIMIT:
             logging.warning("Message too long from user %s: %d chars", user_id, len(message_text))
-            from app.i18n import t
-
             await effective_msg.reply_text(t("error.message_too_long"))
             return
 
         logging.info("Received message from user %s: %s", user_id, message_text[:100])
 
-        if not await check_user_rate_limit(user_id):
-            logging.warning("Rate limit exceeded for user %s", user_id)
-            from app.i18n import t
+        is_rate_ok, is_auth_ok = await asyncio.gather(
+            check_user_rate_limit(user_id),
+            is_authorized(user_id)
+        )
 
+        if not is_rate_ok:
+            logging.warning("Rate limit exceeded for user %s", user_id)
             await effective_msg.reply_text(t("error.rate_limit"))
             return
 
@@ -200,8 +227,20 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 logging.info("Dedup: skipping duplicate from user %s", user_id)
                 return
 
-        if not await is_authorized(user_id):
+        if not is_auth_ok:
             logging.warning("Unauthorized user %s attempted to use bot", user_id)
+            from app.admin_alerts import alert_admin_unauthorized_user
+
+            _user = update.effective_user
+            await alert_admin_unauthorized_user(
+                app=context.application,
+                user_id=user_id,
+                username=_user.username if _user else None,
+                first_name=_user.first_name if _user else None,
+                language_code=_user.language_code if _user else None,
+                chat_type=effective_msg.chat.type,
+                message_text=message_text,
+            )
             return
 
         # ── 4. Document uploads ──────────────────────────────────────────────
@@ -227,10 +266,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             # Duration guard (skip very short accidental recordings)
             if int(getattr(effective_msg.voice, "duration", 0)) < 1:
-                from app.i18n import detect_language as _dl
-                from app.i18n import t as _t
-
-                await effective_msg.reply_text(_t("voice.too_short", _dl(None)))
+                await effective_msg.reply_text(t("voice.too_short", detect_language(None)))
                 return
 
             user_state = state.get_user_state(user_id)
@@ -239,9 +275,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 return
             user_state.is_processing = True
 
-            from app.i18n import t as _t
-
-            placeholder_message = await effective_msg.reply_text(_t("voice.processing", "ru"))
+            placeholder_message = await effective_msg.reply_text(t("voice.processing", "ru"))
 
             done_event = asyncio.Event()
             register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
@@ -256,9 +290,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         stop_heartbeat(placeholder_message.message_id)
                         logging.info("Completed voice processing for user %s", user_id)
 
-                        import time as _time
-
-                        elapsed = _time.time() - start_time
+                        elapsed = time.time() - start_time
                         api_logger.log_response(
                             "telegram",
                             start_time,
@@ -276,7 +308,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     try:
                         stop_heartbeat(placeholder_message.message_id)
                         from app.errors import build_retry_and_roles_keyboard
-                        from app.i18n import t
 
                         await placeholder_message.edit_text(
                             t("error.generic"),
@@ -285,9 +316,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     except (BadRequest, NetworkError) as edit_error:
                         logging.error("Could not edit placeholder message: %s", edit_error)
 
-                    import time as _time
-
-                    elapsed = _time.time() - start_time
+                    elapsed = time.time() - start_time
                     api_logger.log_response(
                         "telegram",
                         start_time,
@@ -307,8 +336,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     unregister_heartbeat(placeholder_message.message_id)
                     if not done_event.is_set():
                         stop_heartbeat(placeholder_message.message_id)
-
-            from app.utils.background_tasks import submit_task
 
             submit_task(voice_task_wrapper())
             return
@@ -349,6 +376,15 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # ── 6. Document mode ─────────────────────────────────────────────────
         if await handle_document_mode_interaction(update, context, user_id):
             return
+
+        # ── 6b. Natal chart intent ───────────────────────────────────────────
+        if effective_msg.text:
+            from app.handlers.natal_chart import natal_command
+            from app.natal.intent import is_natal_chart_request
+
+            if is_natal_chart_request(message_text):
+                await natal_command(update, context)
+                return
 
         # ── 7. Save last user input for retry button ─────────────────────────
         try:
@@ -429,6 +465,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             ) -> None:
                 try:
                     async with state.get_user_lock(_uid):
+                        from app.handlers.cmd_image import _get_draw_state, _run_generation
                         _ds = _get_draw_state(context)
                         # Temporarily suppress heartbeat — image pipeline sends
                         # its own typing heartbeat via ChatAction.UPLOAD_PHOTO.
@@ -444,16 +481,12 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             aspect_ratio=_ds["aspect_ratio"],
                             enhance=_ds.get("enhance_prompt", False),
                         )
-                        import time as _time
-
-                        elapsed = _time.time() - _st
+                        elapsed = time.time() - _st
                         api_logger.log_response("telegram", _st, method="handle_message")
                         await metrics_collector.record_request("handle_message", elapsed, success=True, user_id=_uid)
                 except Exception as _e:
                     logging.error("Error in draw task wrapper for user %s: %s", _uid, _e, exc_info=True)
-                    import time as _time
-
-                    elapsed = _time.time() - _st
+                    elapsed = time.time() - _st
                     api_logger.log_response(
                         "telegram", _st, method="handle_message", success=False, error_message=str(_e)
                     )
@@ -461,8 +494,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 finally:
                     _us = state.get_user_state(_uid)
                     _us.is_processing = False
-
-            from app.utils.background_tasks import submit_task
 
             submit_task(_draw_task_wrapper())
             return
@@ -524,26 +555,31 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                                 response_text=intent_result.text,
                                 voice=chat_state.voice_id or "Aoede",
                                 tts_temperature=chat_state.tts_temperature,
-                                source_key=build_voice_source_key("direct_intent_tts", chat_id, direct_reply.message_id),
+                                source_key=build_voice_source_key(
+                                    "direct_intent_tts", chat_id, direct_reply.message_id
+                                ),
                             )
                         except Exception as tts_err:
                             logging.debug("Direct intent TTS skipped: %s", tts_err)
                     state.set_last_sent_message(user_id, message_text)
                     logging.info("Intent direct routing handled for user %s", user_id)
                     return
+                elif intent_result and not intent_result.handled and intent_result.context_data:
+                    message_text = (
+                        f"{message_text}\n\n"
+                        f"<live_data>\n{intent_result.context_data}\n</live_data>\n"
+                        f"Используй эти актуальные данные для формирования полноценного ответа."
+                    )
+                    logging.info("Context enriched with live data for user %s", user_id)
             except Exception as e:
                 logging.debug("Intent routing failed (falling back to LLM): %s", e)
 
         if is_photo:
             logging.info("Processing single photo from user %s", user_id)
-            from app.i18n import t as _t
-
-            placeholder_message = await effective_msg.reply_text(_t("msg.processing_image"))
+            placeholder_message = await effective_msg.reply_text(t("msg.processing_image"))
         else:
             logging.info("Processing text message from user %s", user_id)
-            from app.i18n import t as _t
-
-            placeholder_message = await effective_msg.reply_text(_t("msg.thinking"))
+            placeholder_message = await effective_msg.reply_text(t("msg.thinking"))
 
         # Track this placeholder so edited_message handler can reuse it
         state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
@@ -571,8 +607,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         )
                     except ImportError:
                         stop_heartbeat(placeholder_message.message_id)
-                        from app.i18n import t
-
                         await placeholder_message.edit_text(t("processing.simplified"))
 
                     stop_heartbeat(placeholder_message.message_id)
@@ -582,9 +616,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
                     logging.info("Completed task processing for user %s", user_id)
 
-                    import time as _time
-
-                    elapsed = _time.time() - start_time
+                    elapsed = time.time() - start_time
                     api_logger.log_response(
                         "telegram",
                         start_time,
@@ -601,7 +633,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 try:
                     stop_heartbeat(placeholder_message.message_id)
                     from app.errors import build_retry_and_roles_keyboard
-                    from app.i18n import t
 
                     await placeholder_message.edit_text(
                         t("error.generic"),
@@ -610,9 +641,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 except (BadRequest, NetworkError) as edit_error:
                     logging.error("Could not edit placeholder message: %s", edit_error)
 
-                import time as _time
-
-                elapsed = _time.time() - start_time
+                elapsed = time.time() - start_time
                 api_logger.log_response(
                     "telegram",
                     start_time,
@@ -628,8 +657,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 unregister_heartbeat(placeholder_message.message_id)
                 if not done_event.is_set():
                     stop_heartbeat(placeholder_message.message_id)
-
-        from app.utils.background_tasks import submit_task
 
         ai_task = submit_task(task_wrapper())
         state.register_active_task(user_id, ai_task)
@@ -657,15 +684,18 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
     if not edited_msg.text:
         return
 
-    # Re-apply rate-limit & auth guards
-    if not await check_user_rate_limit(user_id):
-        return
-    if not await is_authorized(user_id):
-        return
-
     from app.state import ensure_state_loaded
 
-    await ensure_state_loaded(user_id)
+    is_rate_ok, is_auth_ok, _ = await asyncio.gather(
+        check_user_rate_limit(user_id),
+        is_authorized(user_id),
+        ensure_state_loaded(user_id)
+    )
+
+    if not is_rate_ok:
+        return
+    if not is_auth_ok:
+        return
 
     new_text = edited_msg.text.strip()
     logging.info("edited_message from user %s: %r", user_id, new_text[:80])
@@ -678,8 +708,6 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
         await asyncio.sleep(0.15)
 
     # ── Find or create the placeholder ───────────────────────────────────────
-    from app.i18n import t as _t
-
     last = state.get_last_bot_message(user_id)
     placeholder_message = None
 
@@ -691,7 +719,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
                 _edited = await context.bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=last_msg_id,
-                    text=_t("msg.rethinking"),
+                    text=t("msg.rethinking"),
                 )
                 placeholder_message = None if isinstance(_edited, bool) else _edited
             except (BadRequest, NetworkError) as e:
@@ -699,7 +727,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
 
     if placeholder_message is None:
         # Fallback: send a fresh reply (e.g. old message was deleted by user)
-        placeholder_message = await edited_msg.reply_text(_t("msg.rethinking"))
+        placeholder_message = await edited_msg.reply_text(t("msg.rethinking"))
 
     state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
 
@@ -732,9 +760,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
                 state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
                 logging.info("edit: completed for user %s", user_id)
 
-                import time as _time
-
-                elapsed = _time.time() - start_time
+                elapsed = time.time() - start_time
                 api_logger.log_response("telegram", start_time, method="handle_edited_message")
                 await metrics_collector.record_request("handle_edited_message", elapsed, success=True, user_id=user_id)
 
@@ -747,15 +773,12 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
             try:
                 stop_heartbeat(placeholder_message.message_id)
                 from app.errors import build_retry_and_roles_keyboard
-                from app.i18n import t
 
                 await placeholder_message.edit_text(t("error.generic"), reply_markup=build_retry_and_roles_keyboard())
             except Exception:
                 pass
 
-            import time as _time
-
-            elapsed = _time.time() - start_time
+            elapsed = time.time() - start_time
             api_logger.log_response(
                 "telegram",
                 start_time,
@@ -772,8 +795,6 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
             if not done_event.is_set():
                 stop_heartbeat(placeholder_message.message_id)
 
-    from app.utils.background_tasks import submit_task
-
     edit_ai_task = submit_task(edit_task_wrapper())
     state.register_active_task(user_id, edit_ai_task)
 
@@ -782,6 +803,27 @@ def register(application: Application) -> None:
     # NEW messages only — explicit UpdateType.MESSAGE guard prevents
     # edited_message / channel_post from leaking into these handlers.
     _msg = filters.UpdateType.MESSAGE
+    # Tarot Mode Interceptor
+    from app.handlers.tarot_chat import (
+        handle_tarot_end_session_message,
+        handle_tarot_idle_choice_callback,
+        handle_tarot_message,
+        is_tarot_end_session_filter,
+        is_tarot_mode_filter,
+    )
+    application.add_handler(
+        MessageHandler(_msg & filters.TEXT & is_tarot_end_session_filter, handle_tarot_end_session_message, block=False)
+    )
+    application.add_handler(MessageHandler(_msg & filters.TEXT & is_tarot_mode_filter, handle_tarot_message, block=False))
+    application.add_handler(CallbackQueryHandler(handle_tarot_idle_choice_callback, pattern=r"^tarot_idle:", block=False))
+
+    # Tarot Single-word Intent Interceptor
+    import re
+
+    from app.handlers.cmd_tarot import tarot_command
+    tarot_intent_filter = filters.Regex(re.compile(r'^\s*(таро|расклад)\s*[?!.]*\s*$', re.IGNORECASE))
+    application.add_handler(MessageHandler(_msg & filters.TEXT & tarot_intent_filter, tarot_command, block=False))
+
     application.add_handler(MessageHandler(_msg & filters.TEXT & ~filters.COMMAND, handle_request, block=False))
     application.add_handler(MessageHandler(_msg & filters.PHOTO, handle_request, block=False))
     application.add_handler(MessageHandler(_msg & filters.Document.ALL, handle_request, block=False))

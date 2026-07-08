@@ -13,6 +13,7 @@ async def test_thundering_herd_suspension(monkeypatch):
 
     class MockDbQuery:
         call_count = 0
+
         async def __call__(self, *args, **kwargs):
             MockDbQuery.call_count += 1
             # Mock the return value of SELECT failure_count
@@ -22,10 +23,7 @@ async def test_thundering_herd_suspension(monkeypatch):
     monkeypatch.setattr("app.repos.keys.db_query", mock_db_query)
 
     # Simulate 5 concurrent suspensions
-    tasks = [
-        manager.suspend_key(key_hash, model_name, "quota", "Test")
-        for _ in range(5)
-    ]
+    tasks = [manager.suspend_key(key_hash, model_name, "quota", "Test") for _ in range(5)]
 
     await asyncio.gather(*tasks)
 

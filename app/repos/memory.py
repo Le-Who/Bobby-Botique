@@ -285,7 +285,7 @@ async def store_memory(
                     db_text_content,
                     f"[{','.join(str(v) for v in embedding)}]",
                     source_type,
-                    json.dumps(metadata or {}),
+                    metadata or {},
                     expires_at,
                 ]
 
@@ -423,13 +423,13 @@ async def search_memories(
                     results = await db_query(
                         """
                         SELECT id, content, source_type, metadata, created_at,
-                               COALESCE(rlhf_negative_count, 0) AS rlhf_negative_count,
-                               1 - (embedding <=> $2::halfvec) AS similarity
+                               COALESCE(rlhf_negative_count, 0) AS rlhf_neg,
+                               1 - (embedding <=> $2::halfvec) AS sim
                         FROM long_term_memory
                         WHERE user_id = $1
                           AND (expires_at IS NULL OR expires_at > now())
                           AND 1 - (embedding <=> $2::halfvec) >= $3
-                        ORDER BY similarity DESC
+                        ORDER BY sim DESC
                         LIMIT $4
                         """,
                         (user_id, embedding_str, adaptive_floor, fetch_limit),
@@ -443,30 +443,27 @@ async def search_memories(
                 # Keep only results within 15pp of the best score.
                 # We intentionally do NOT re-apply min_similarity as a hard
                 # floor here — that was already enforced by adaptive_floor in
-                # the SQL WHERE clause.  Using max(min_similarity, ...) was a
+                # the SQL WHERE clause. Using max(min_similarity, ...) was a
                 # logic bug: it discarded valid results that passed the SQL gate
-                # but fell just below the caller's soft threshold.  The gap
+                # but fell just below the caller's soft threshold. The gap
                 # filter's only job is to prune outliers *within* this candidate
                 # set, not to act as a second hard threshold.
                 rows = list(results)
-                top_sim = float(rows[0].get("sim", rows[0].get("similarity", 0)))
-                gap_threshold = max(_adaptive_floor, top_sim - 0.15)
+                top_sim = float(rows[0]["sim"])
+                gap_threshold = max(_adaptive_floor, top_sim - 0.08)
 
-                filtered = [
-                    {
-                        "id": r["id"],
-                        "content": r["content"],
-                        "similarity": max(
-                            0.0,
-                            float(r.get("sim", r.get("similarity", 0)))
-                            - (int(r.get("rlhf_neg", r.get("rlhf_negative_count", 0)) or 0) * 0.03),
-                        ),
-                        "source_type": r["source_type"],
-                        "created_at": r["created_at"],
-                    }
-                    for r in rows
-                    if float(r.get("sim", r.get("similarity", 0))) >= gap_threshold
-                ][:limit]
+                filtered = []
+                for r in rows:
+                    sim = float(r["sim"])
+                    if sim >= gap_threshold:
+                        filtered.append({
+                            "id": r["id"],
+                            "content": r["content"],
+                            "similarity": max(0.0, sim - (int(r["rlhf_neg"] or 0) * 0.03)),
+                            "source_type": r["source_type"],
+                            "created_at": r["created_at"],
+                        })
+                filtered = filtered[:limit]
 
                 if not filtered and rows:
                     logging.debug(
@@ -551,7 +548,7 @@ async def search_memories_with_graph(
                 if not nodes:
                     return memories, graph_triples, {}
 
-                relevant_ids = [n["id"] for n in nodes if float(n.get("sim", 0)) >= 0.4]
+                relevant_ids = [n["id"] for n in nodes if float(n["sim"]) >= 0.4]
                 if not relevant_ids:
                     return memories, graph_triples, {}
 
@@ -626,7 +623,7 @@ async def search_memories_with_graph(
                 # Sort by effective_weight descending (core edges bubble up)
                 edges_sorted = sorted(
                     edges or [],
-                    key=lambda r: float(r.get("effective_weight", 0)),
+                    key=lambda r: float(r["effective_weight"]),
                     reverse=True,
                 )
 

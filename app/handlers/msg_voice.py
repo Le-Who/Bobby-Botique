@@ -457,11 +457,19 @@ async def _auto_route_to_chat(
     formatted, parse_mode = TelegramFormatter.format_text(auto_text)
     await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=None)
 
-    # Spawn a new placeholder for the LLM response so the transcript isn't overwritten
-    new_placeholder = await placeholder.reply_text("⏳ _Анализирую текст..._", parse_mode="Markdown")
+
+    from app.handlers.ai_chat import _handle_regular_chat
+    from app.voice_intent import detect_tts_intent
+
+    # ⚡ Bolt Optimization: Fetch chat state, detect TTS intent, and send placeholder concurrently.
+    # Eliminates sequential I/O waits (Telegram HTTP + DB + LLM).
+    new_placeholder, chat_state, voice_decision = await asyncio.gather(
+        placeholder.reply_text("⏳ _Анализирую текст..._", parse_mode="Markdown"),
+        get_user_chat(user_id),
+        detect_tts_intent(user_text=transcript)
+    )
 
     # Store in history
-    chat_state = await get_user_chat(user_id)
     chat_state.history.append(
         {
             "role": "user",
@@ -470,10 +478,6 @@ async def _auto_route_to_chat(
     )
 
     # Run the chat pipeline inline (we already hold user_lock from caller)
-    from app.handlers.ai_chat import _handle_regular_chat
-    from app.voice_intent import detect_tts_intent
-
-    voice_decision = await detect_tts_intent(user_text=transcript)
     await _handle_regular_chat(
         new_placeholder,
         user_id,
@@ -578,9 +582,12 @@ async def _auto_route_to_search(
     formatted, parse_mode = TelegramFormatter.format_text(auto_text)
     await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=None)
 
-    new_placeholder = await placeholder.reply_text("⏳ _Ищу информацию в сети..._", parse_mode="Markdown")
 
-    chat_state = await get_user_chat(user_id)
+    # ⚡ Bolt Optimization: Fetch chat state and send placeholder concurrently.
+    new_placeholder, chat_state = await asyncio.gather(
+        placeholder.reply_text("⏳ _Ищу информацию в сети..._", parse_mode="Markdown"),
+        get_user_chat(user_id)
+    )
 
     user_message_with_marker = f"{t('voice.history_marker', lang)}\n{transcript}"
 

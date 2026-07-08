@@ -14,7 +14,7 @@ from app.utils.tg_file import get_file_bytes
 @safe_handler("Ошибка при тестировании ASR")
 async def asr_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Hidden developer command to test ASR models.
-    Usage: Reply to a voice message with `/asr gemini-2.5-pro`
+    Usage: Reply to a voice message with `/asr gemini-3.1-flash-lite`
     """
     message = update.message
     if not message.reply_to_message or not message.reply_to_message.voice:
@@ -22,7 +22,7 @@ async def asr_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     if not context.args:
-        await message.reply_text("❌ Укажите модель: `/asr gemini-2.5-pro`", parse_mode="Markdown")
+        await message.reply_text("❌ Укажите модель: `/asr gemini-3.1-flash-lite`", parse_mode="Markdown")
         return
 
     model_name = context.args[0].strip()

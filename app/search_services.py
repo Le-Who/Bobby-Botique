@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any
 
@@ -185,8 +186,6 @@ async def parallel_search(
     """
     if not queries:
         return []
-
-    import asyncio
 
     # Run all searches in parallel
     tasks = [

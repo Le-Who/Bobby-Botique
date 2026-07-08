@@ -15,7 +15,7 @@ DEFAULT_MEMORY_TTL_DAYS = 90
 
 # ── Retrieval ────────────────────────────────────────────────────────────────
 # Model used for multi-query expansion (~200ms cheap call)
-QUERY_EXPANSION_MODEL = "gemini-3.1-flash-lite-preview"
+QUERY_EXPANSION_MODEL = "gemini-3.1-flash-lite"
 
 # ── Consolidation ────────────────────────────────────────────────────────────
 # Approximate tokens per character for mixed Cyrillic/Latin text
@@ -28,13 +28,13 @@ CONSOLIDATION_TEMPORAL_DAYS = 7
 MAX_PERSONA_FACTS = 8
 MIN_PERSONA_FACTS = 5
 # Consolidation model — cheapest available free-tier model
-CONSOLIDATION_MODEL = "gemini-3.1-flash-lite-preview"
+CONSOLIDATION_MODEL = "gemini-3.1-flash-lite"
 
 # ── Real-Time Graph Extraction ───────────────────────────────────────────────
 # Model for real-time entity/relation extraction from user messages.
-# gemini-3-flash-preview: reliable last-stand. flash-lite is often offline.
-# Key rotation in extract_graph_structured() handles per-key 503s automatically.
-GRAPH_EXTRACTION_MODEL = "gemini-3-flash-preview"
+# gemini-3.5-flash is the stable primary; key resolution falls back to
+# gemini-3.1-flash-lite if all 3.5 keys are exhausted.
+GRAPH_EXTRACTION_MODEL = "gemini-3.5-flash"
 # ThinkingConfig level — disabled (only applies to pro/think variants)
 GRAPH_EXTRACTION_THINKING_LEVEL = ""
 # Minimum user message length to qualify for graph extraction
@@ -53,8 +53,8 @@ TAXONOMY_HALL_TYPES = ("fact", "opinion", "event", "plan", "preference", "habit"
 
 # Model for taxonomy classification is admin-configurable via env TAXONOMY_MODEL
 # or runtime via config_manager.update_setting("TAXONOMY_MODEL", "new-model-name").
-# Defaults to gemini-3.1-flash-lite-preview (cheap, fast, sufficient for classification).
-_TAXONOMY_MODEL_FALLBACK = "gemini-3.1-flash-lite-preview"
+# Defaults to gemini-3.1-flash-lite (cheap, fast, sufficient for classification).
+_TAXONOMY_MODEL_FALLBACK = "gemini-3.1-flash-lite"
 
 
 def get_taxonomy_model() -> str:

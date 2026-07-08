@@ -25,6 +25,46 @@ _WEATHER_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+_HOROSCOPE_PATTERNS = re.compile(
+    r"(?:гороскоп|зодиак|\bhoroscope\b|\bzodiac\b)",
+    re.IGNORECASE,
+)
+
+_ZODIAC_MAPPING = {
+    "aries": re.compile(r"\b(?:овен|овна|овну|овном|овне|aries)\b", re.IGNORECASE),
+    "taurus": re.compile(r"\b(?:телец|тельца|тельцу|тельцом|тельце|taurus)\b", re.IGNORECASE),
+    "gemini": re.compile(r"\b(?:близнецы|близнецов|близнецам|близнецами|близнецах|gemini)\b", re.IGNORECASE),
+    "cancer": re.compile(r"\b(?:рак|рака|раку|раком|раке|раки|раков|cancer)\b", re.IGNORECASE),
+    "leo": re.compile(r"\b(?:лев|льва|льву|львом|льве|львы|львов|leo)\b", re.IGNORECASE),
+    "virgo": re.compile(r"\b(?:дева|девы|деве|деву|девой|дев|virgo)\b", re.IGNORECASE),
+    "libra": re.compile(r"\b(?:весы|весов|весам|весами|весах|libra)\b", re.IGNORECASE),
+    "scorpio": re.compile(r"\b(?:скорпион|скорпиона|скорпиону|скорпионом|скорпионе|скорпионы|скорпионов|scorpio)\b", re.IGNORECASE),
+    "sagittarius": re.compile(r"\b(?:стрелец|стрельца|стрельцу|стрельцом|стрельце|стрельцы|стрельцов|sagittarius)\b", re.IGNORECASE),
+    "capricorn": re.compile(r"\b(?:козерог|козерога|козерогу|козерогом|козероге|козероги|козерогов|capricorn)\b", re.IGNORECASE),
+    "aquarius": re.compile(r"\b(?:водолей|водолея|водолею|водолеем|водолее|водолеи|водолеев|aquarius)\b", re.IGNORECASE),
+    "pisces": re.compile(r"\b(?:рыбы|рыбы|рыбе|рыбу|рыбой|рыб|рыбам|рыбами|рыбах|pisces)\b", re.IGNORECASE),
+}
+
+_ZODIAC_RU_NAMES = {
+    "aries": "Овен ♈",
+    "taurus": "Телец ♉",
+    "gemini": "Близнецы ♊",
+    "cancer": "Рак ♋",
+    "leo": "Лев ♌",
+    "virgo": "Дева ♍",
+    "libra": "Весы ♎",
+    "scorpio": "Скорпион ♏",
+    "sagittarius": "Стрелец ♐",
+    "capricorn": "Козерог ♑",
+    "aquarius": "Водолей ♒",
+    "pisces": "Рыбы ♓",
+}
+
+_DATE_SEGODNYA_RE = re.compile(r"\b(?:сегодня|today|сейчас)\b", re.IGNORECASE)
+_DATE_ZAVTRA_RE = re.compile(r"\b(?:завтра|tomorrow)\b", re.IGNORECASE)
+_DATE_POSLEZAVTRA_RE = re.compile(r"\b(?:послезавтра)\b", re.IGNORECASE)
+_DATE_VCHERA_RE = re.compile(r"\b(?:вчера|yesterday)\b", re.IGNORECASE)
+
 # Colloquial/implicit weather queries — ONLY used when message is ≤12 words.
 # City extraction in _handle_weather acts as a second guard (no city → None → LLM).
 _WEATHER_COLLOQUIAL_RE = re.compile(
@@ -138,11 +178,21 @@ _SORTED_CURRENCY_ALIASES: list[tuple[str, str]] = sorted(
     _CURRENCY_CODES.items(), key=lambda kv: len(kv[0]), reverse=True
 )
 
+# Performance: pre-compiled at module level — _handle_weather is called on every
+# weather intent match (per-message). Inline re.search() inside the function body
+# would re-compile this pattern on every call (2–4 µs/compile + cache lookup overhead).
+# Hoisting eliminates that entirely.
+_WEATHER_FUTURE_RE = re.compile(
+    r"(завтра|послезавтра|недел|дней|дня|выходны|tomorrow|week|days"
+    r"|вечер|утр[ао]|ноч[ью]|час|hour|night|evening|morning)",
+    re.IGNORECASE,
+)
+
 # Pattern to extract a city candidate from weather queries.
 _CITY_EXTRACT_PATTERN = re.compile(
-    # Branch A: "погода [сегодня|завтра|сейчас] в <город>" — preposition is required here
-    r"(?:погод[ауеыя]\s+(?:(?:сейчас|сегодня|завтра)\s+)?(?:в\s+|во\s+)"
-    r"|weather\s+(?:(?:today|tomorrow|now)\s+)?(?:in\s+|for\s+)"
+    # Branch A: "погода [сегодня|завтра|сейчас] [в] <город>" — preposition is optional here
+    r"(?:погод[ауеыя]\s+(?:(?:сейчас|сегодня|завтра)\s+)?(?:в\s+|во\s+)?"
+    r"|weather\s+(?:(?:today|tomorrow|now)\s+)?(?:in\s+|for\s+)?"
     # Branch B: bare "в/во" preposition anywhere in the sentence
     r"|(?<![а-яёa-z])в\s+|(?<![а-яёa-z])во\s+)"
     r"([А-ЯЁа-яёa-zA-Z][а-яёa-zA-Z\-]*(?:\s[А-ЯЁа-яёa-zA-Z][а-яёa-zA-Z\-]*)?)(?=[,?!.\s]|$)",
@@ -165,6 +215,23 @@ _TRAILING_TEMPORAL_WORDS = frozenset(
         "evening",
         "пожалуйста",
         "please",
+    }
+)
+
+# Performance: hoisted from _is_complex_query() body — eliminates a list allocation
+# on every call (fired for every message that enters intent routing).
+# frozenset membership test is O(1) vs list's O(n); the allocation savings alone
+# are the primary win since any() short-circuits on the first match anyway.
+_COMPLEX_PHRASES: frozenset[str] = frozenset(
+    {
+        "как одеться",
+        "посоветуй",
+        "что делать",
+        "расскажи",
+        "помоги",
+        "подскажи",
+        "как думаешь",
+        "стоит ли",
     }
 )
 
@@ -202,11 +269,29 @@ async def close_http_client() -> None:
 class IntentResult:
     """Result from a direct intent handler."""
 
-    __slots__ = ("text", "handled")
+    __slots__ = ("text", "handled", "context_data")
 
-    def __init__(self, text: str, handled: bool = True):
+    def __init__(self, text: str, handled: bool = True, context_data: str | None = None):
         self.text = text
         self.handled = handled
+        self.context_data = context_data
+
+
+def _is_complex_query(text: str) -> bool:
+    """Determine if a query is complex and should NOT short-circuit to API cards."""
+    # 1. Length heuristic (long text or article)
+    if len(text.split()) > 20:
+        return True
+
+    # 2. Multiple sentences/questions
+    sentence_enders = sum(text.count(c) for c in "?!.")
+    if sentence_enders > 1:
+        return True
+
+    # 3. Conversational / advisory keywords — checked against module-level frozenset
+    # to avoid per-call list allocation and enable O(1) per-phrase hash lookup.
+    lower_text = text.lower()
+    return any(phrase in lower_text for phrase in _COMPLEX_PHRASES)
 
 
 async def try_direct_intent(message_text: str) -> IntentResult | None:
@@ -218,31 +303,44 @@ async def try_direct_intent(message_text: str) -> IntentResult | None:
     """
     text = message_text.strip()
     word_count = len(text.split())
+    is_complex = _is_complex_query(text)
+
+    def _prepare_result(res: IntentResult | None) -> IntentResult | None:
+        if res and is_complex:
+            res.handled = False
+            res.context_data = res.text
+        return res
 
     # Try weather first (more common)
     if _WEATHER_PATTERNS.search(text):
         result = await _handle_weather(text)
         if result:
-            return result
+            return _prepare_result(result)
 
     # Colloquial weather — only for short messages to avoid false positives
     # (e.g. "жарко спорить о политике" has 5 words but no city → falls through safely)
     if word_count <= _WEATHER_COLLOQUIAL_MAX_WORDS and _WEATHER_COLLOQUIAL_RE.search(text):
         result = await _handle_weather(text)
         if result:
-            return result
+            return _prepare_result(result)
 
     # Then currency / crypto
     if _CURRENCY_PATTERNS.search(text):
         result = await _handle_currency(text)
         if result:
-            return result
+            return _prepare_result(result)
 
     # Colloquial currency — only for short messages; currency-pair extraction is the inner guard
     if word_count <= _CURRENCY_COLLOQUIAL_MAX_WORDS and _CURRENCY_COLLOQUIAL_RE.search(text):
         result = await _handle_currency(text)
         if result:
-            return result
+            return _prepare_result(result)
+
+    # Horoscope
+    if _HOROSCOPE_PATTERNS.search(text):
+        result = await _handle_horoscope(text)
+        if result:
+            return _prepare_result(result)
 
     return None
 
@@ -256,12 +354,10 @@ async def _handle_weather(text: str) -> IntentResult | None:
     Primary:  WeatherAPI.com (1 request, autogeocode, Russian conditions text)
     Fallback: Open-Meteo (2 requests: geocode + forecast)
     """
-    # Bail out for future/multi-day forecasts — LLM with Grounding handles these better
-    if re.search(
-        r"(завтра|послезавтра|недел|дней|дня|выходны|tomorrow|week|days|вечер|утр[ао]|ноч[ью]|час|hour|night|evening|morning)",
-        text,
-        re.IGNORECASE,
-    ):
+    # Bail out for future/multi-day forecasts — LLM with Grounding handles these better.
+    # PERF: uses module-level _WEATHER_FUTURE_RE (pre-compiled once at import) —
+    # avoids re-compiling on every weather intent call.
+    if _WEATHER_FUTURE_RE.search(text):
         return None
 
     # Extract city candidate
@@ -623,3 +719,164 @@ def _extract_currency_pair(text: str) -> tuple[str | None, str | None]:
         return single, "RUB"
 
     return None, None
+
+
+def _missing_horoscope_sign_guide() -> str:
+    return (
+        "🔮 **Персональный Гороскоп**\n\n"
+        "Пожалуйста, укажите знак зодиака в запросе. Так я смогу собрать прогноз под нужный знак и период.\n\n"
+        "**Примеры:**\n"
+        "• _гороскоп овен на сегодня_\n"
+        "• _что ждет близнецов завтра?_\n"
+        "• _гороскоп лев на послезавтра_\n\n"
+        "**Доступные знаки:**\n"
+        "Овен ♈, Телец ♉, Близнецы ♊, Рак ♋, Лев ♌, Дева ♍, "
+        "Весы ♎, Скорпион ♏, Стрелец ♐, Козерог ♑, Водолей ♒, Рыбы ♓.\n\n"
+        "Для ежедневной доставки в удобное время откройте /horoscope_settings."
+    )
+
+
+def _build_horoscope_system_instruction(
+    *,
+    user_text: str,
+    signs_str: str,
+    day_ru: str,
+    astro_context: str,
+) -> str:
+    return (
+        "<role>\n"
+        "Ты пишешь короткий ежедневный гороскоп на русском языке: ясный, теплый, практичный.\n"
+        "Опирайся на астрологическую традицию и предоставленные транзиты, но не подавай прогноз как доказанный факт.\n"
+        "</role>\n\n"
+        "<task>\n"
+        f"Запрос пользователя: {user_text}\n"
+        f"Знаки: {signs_str}\n"
+        f"Период: {day_ru}\n"
+        "Если знаков несколько, сделай акцент на совместимости и динамике между ними.\n"
+        "Если в запросе есть тема любви, работы, денег, здоровья или решений, сделай ее главным фокусом.\n"
+        "</task>\n\n"
+        "<context>\n"
+        "Текущие астрономические данные для символической интерпретации:\n"
+        f"{astro_context}\n"
+        "</context>\n\n"
+        "<constraints>\n"
+        "- Пиши без фатализма, запугивания и обещаний гарантированного исхода.\n"
+        "- Не давай медицинских, юридических или финансовых указаний; вместо этого предлагай мягкие наблюдения и бытовые шаги.\n"
+        "- Используй транзиты как контекст и обоснование настроения дня, а не как абсолютную причинность.\n"
+        "- Не упоминай модель, провайдера, промпт, API или внутреннюю механику.\n"
+        "- Не добавляй отдельный заголовок: заголовок добавит приложение.\n"
+        "- Длина: 3-5 коротких смысловых блоков, без длинного полотна.\n"
+        "</constraints>\n\n"
+        "<output_format>\n"
+        "1. **Главный фон** — 1-2 предложения про тон периода.\n"
+        "2. **Фокус дня** — что лучше выбрать или отложить.\n"
+        "3. **Отношения / дела / ресурс** — короткие практичные подсказки по 2-3 сферам.\n"
+        "4. **Мягкий совет** — одно действие на день без давления.\n"
+        "</output_format>"
+    )
+
+
+def _format_horoscope_response(*, sign_displays: list[str], day_ru: str, body_text: str) -> str:
+    if len(sign_displays) > 1:
+        signs_str = " и ".join(sign_displays) if len(sign_displays) == 2 else ", ".join(sign_displays)
+        title = f"🔮 **Гороскоп: совместимость {signs_str} ({day_ru})**"
+    else:
+        title = f"🔮 **Гороскоп: {sign_displays[0]} ({day_ru})**"
+    return (
+        f"{title}\n\n"
+        f"{body_text.strip()}\n\n"
+        "_Астро-данные: текущие транзиты; интерпретация носит ориентировочный характер._"
+    )
+
+
+async def _handle_horoscope(text: str) -> IntentResult | None:
+    """Detect zodiac sign and target day, then generate an astrology-informed response."""
+    lower_text = text.lower()
+
+    # 1. Detect zodiac signs
+    detected_signs = []
+    for sign, pattern in _ZODIAC_MAPPING.items():
+        if pattern.search(lower_text):
+            detected_signs.append(sign)
+
+    # 2. Parse target day
+    if re.search(r"следующ.*(три|3)\s*дн", lower_text):
+        day_ru = "на следующие три дня"
+    elif _DATE_POSLEZAVTRA_RE.search(lower_text):
+        day_ru = "послезавтра"
+    elif _DATE_ZAVTRA_RE.search(lower_text):
+        day_ru = "завтра"
+    elif _DATE_VCHERA_RE.search(lower_text):
+        day_ru = "вчера"
+    else:
+        day_ru = "сегодня"
+
+    logging.info("Horoscope intent: signs=%s, day_ru=%s", detected_signs, day_ru)
+
+    if not detected_signs:
+        return IntentResult(_missing_horoscope_sign_guide())
+
+    sign_displays = [_ZODIAC_RU_NAMES[s] for s in detected_signs]
+    signs_str = " и ".join(sign_displays) if len(sign_displays) == 2 else ", ".join(sign_displays)
+
+    from datetime import UTC, datetime, timedelta
+
+    from app.astro import get_astro_context
+    
+    # Calculate target date for ephemeris based on day_ru
+    dt = datetime.now(UTC)
+    if day_ru == "завтра":
+        dt += timedelta(days=1)
+    elif day_ru == "послезавтра":
+        dt += timedelta(days=2)
+    elif day_ru == "вчера":
+        dt -= timedelta(days=1)
+    elif day_ru == "на следующие три дня":
+        # Let's base the transit context on tomorrow as the midpoint
+        dt += timedelta(days=1)
+        
+    astro_context = get_astro_context(dt)
+
+    # Resolve a Gemini model dynamically
+    from app.agent_use_cases import AgentRequestUseCase
+    use_case = AgentRequestUseCase()
+
+    kd, mdl, _ = await use_case.resolve_ai_request("gemini-3.5-flash")
+    if not kd or not mdl:
+        logging.error("Failed to resolve Gemini key for horoscope intent")
+        return None
+
+    from app.providers.base import get_provider_for_model
+    provider = get_provider_for_model(mdl, kd["api_key"])
+
+    logging.info("Generating horoscope using local astrological data")
+    system_instruction = _build_horoscope_system_instruction(
+        user_text=text,
+        signs_str=signs_str,
+        day_ru=day_ru,
+        astro_context=astro_context,
+    )
+    prompt = f"Запрос пользователя: {text}"
+    try:
+        chunks = []
+        async for chunk in provider.stream_response(  # type: ignore[attr-defined]
+            history=[{"role": "user", "parts": [prompt]}],
+            model_name=mdl,
+            system_instruction=system_instruction,
+            thinking_level="off"
+        ):
+            if isinstance(chunk, str):
+                chunks.append(chunk)
+        result_text = "".join(chunks).strip()
+        if result_text:
+            logging.info("Gemini direct generation completed successfully")
+            return IntentResult(_format_horoscope_response(
+                sign_displays=sign_displays,
+                day_ru=day_ru,
+                body_text=result_text,
+            ))
+    except Exception as exc:
+        logging.error("Failed to generate fallback horoscope: %s", exc)
+        return None
+
+    return None

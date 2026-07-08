@@ -36,3 +36,7 @@ uvloop>=0.19.0,<1.0.0; sys_platform != "win32"
 # Serialization (Rust-backed, 2-6× faster JSON)
 orjson>=3.10.0,<4.0.0
 msgspec>=0.18.0,<1.0.0
+
+# Astrology/Astronomy
+ephem>=4.1.0,<5.0.0
+geonamescache>=3.0.1,<4.0.0

@@ -1,7 +1,6 @@
 """
 Tests for the AI provider abstraction layer.
 """
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,7 +25,7 @@ class TestAIResponse:
             token_count=10,
             success=True,
             provider="gemini",
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-3.1-flash-lite",
         )
         assert response.text == "Hello, world!"
         assert response.token_count == 10
@@ -64,7 +63,7 @@ class TestIsOpenRouterModel:
 
     def test_gemini_model(self):
         """Gemini models don't contain a slash."""
-        assert is_openrouter_model("gemini-3.1-flash-lite-preview") is False
+        assert is_openrouter_model("gemini-3.1-flash-lite") is False
         assert is_openrouter_model("gemini-3-flash-preview") is False
         assert is_openrouter_model("gemini-pro-vision") is False
 
@@ -195,12 +194,12 @@ class TestProviders:
         with (
             patch("app.providers.gemini.genai.Client") as MockClient,
             patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
-            patch("app.providers.gemini.api_logger", new_callable=MagicMock),
+            patch("app.providers.gemini.api_logger", new_callable=MagicMock) as mock_api_logger,
             patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
 
-            wrapper = GeminiProvider("test-key")
+            wrapper = GeminiProvider("AIza123456789")
 
             mock_aio = MagicMock()
             mock_aio.generate_content = AsyncMock(return_value=mock_response)
@@ -208,7 +207,7 @@ class TestProviders:
 
             response = await wrapper._execute_request(
                 history=[{"role": "user", "parts": ["hi"]}],
-                model_name="gemini-3.1-flash-lite-preview",
+                model_name="gemini-3.1-flash-lite",
                 system_instruction=None,
                 user_id=None,
                 chat_id=None,
@@ -219,6 +218,8 @@ class TestProviders:
             assert response.token_count == 15
             assert response.success is True
             assert response.provider == "gemini"
+            assert mock_api_logger.log_request.call_args.kwargs["key_prefix"] == "AIza1234"
+            assert mock_api_logger.log_response.call_args.kwargs["key_prefix"] == "AIza1234"
 
     @pytest.mark.asyncio
     async def test_gemini_wrapper_error(self):
@@ -244,7 +245,7 @@ class TestProviders:
 
             response = await wrapper._execute_request(
                 history=[{"role": "user", "parts": ["hi"]}],
-                model_name="gemini-3.1-flash-lite-preview",
+                model_name="gemini-3.1-flash-lite",
                 system_instruction=None,
                 user_id=None,
                 chat_id=None,
@@ -253,6 +254,48 @@ class TestProviders:
 
             assert response.success is False
             assert response.is_error is True
+
+    @pytest.mark.asyncio
+    async def test_gemini_wrapper_deadline_exceeded(self):
+        """GeminiProvider should retry on 504 DEADLINE_EXCEEDED."""
+        from google.genai.errors import APIError
+        _gemini_clients_cache.clear()
+
+        # We will mock _execute_request to raise APIError for testing the raise logic,
+        # but wait, the raise logic is INSIDE _execute_request!
+        # So we mock the underlying genai Client to raise APIError("504 DEADLINE_EXCEEDED").
+        with (
+            patch("app.providers.gemini.genai.Client") as MockClient,
+            patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
+            patch("app.providers.gemini.api_logger", new_callable=MagicMock),
+            patch("app.providers.gemini.settings") as mock_settings,
+        ):
+            mock_settings.SAFETY_SETTINGS = []
+            wrapper = GeminiProvider("test-key")
+
+            class FakeAPIError(APIError):
+                def __init__(self, msg):
+                    self.msg = msg
+                def __str__(self):
+                    return self.msg
+
+            mock_aio = MagicMock()
+            # Raise the error
+            mock_aio.generate_content = AsyncMock(side_effect=FakeAPIError("504 DEADLINE_EXCEEDED"))
+            MockClient.return_value.aio.models = mock_aio
+
+            # BaseAIProvider wraps _execute_request in run_with_resilience.
+            # If it is retryable, it will be called `max_retries` times (if max_retries=2, called 2 times).
+            # Let's override the resilience policy to speed it up.
+            response = await wrapper.get_response(
+                history=[{"role": "user", "parts": ["hi"]}],
+                model_name="gemini-3.1-flash-lite",
+                max_retries=2,
+            )
+
+            # _execute_request should have been called 2 times (1 initial + 1 retry)
+            assert mock_aio.generate_content.call_count == 2
+            assert response.success is False
 
     @pytest.mark.asyncio
     async def test_openrouter_wrapper_success(self):
@@ -304,7 +347,7 @@ class TestGetAIResponse:
             text, tokens = await get_ai_response(
                 api_key="key",
                 history=[{"role": "user", "parts": ["hi"]}],
-                model_name="gemini-3.1-flash-lite-preview",
+                model_name="gemini-3.1-flash-lite",
             )
 
             assert text == "Gemini response"

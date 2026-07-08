@@ -1,0 +1,1116 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Разбор рождения</title>
+<link rel="icon" href="data:,">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root {
+  --bg: var(--tg-theme-bg-color, #fbfaf7);
+  --surface: var(--tg-theme-section-bg-color, #ffffff);
+  --surface-2: var(--tg-theme-secondary-bg-color, #f1eee8);
+  --text: var(--tg-theme-text-color, #201d18);
+  --muted: var(--tg-theme-hint-color, #766f65);
+  --accent: var(--tg-theme-button-color, #0f766e);
+  --accent-text: var(--tg-theme-button-text-color, #ffffff);
+  --line: rgba(32, 29, 24, .12);
+  --warn: #b45309;
+  --danger: var(--tg-theme-destructive-text-color, #b42318);
+  --radius: 8px;
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { min-height: 100%; margin: 0; background: var(--bg); color: var(--text); }
+body { font-size: 16px; line-height: 1.35; }
+button, input, select { font: inherit; }
+.page {
+  width: min(680px, 100%);
+  margin: 0 auto;
+  padding: calc(14px + env(safe-area-inset-top)) 14px calc(96px + env(safe-area-inset-bottom));
+}
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin: 4px 0 12px;
+}
+h1 { margin: 0; font-size: 24px; line-height: 1.1; font-weight: 760; letter-spacing: 0; }
+.eyebrow {
+  margin: 0 0 5px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 780;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.intro-lead {
+  max-width: 560px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+.status-pill {
+  flex: none;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.layout {
+  overflow: hidden;
+  border-radius: var(--radius);
+}
+.slide-track {
+  --slide-index: 0;
+  display: flex;
+  width: 100%;
+  transform: translateX(calc(var(--slide-index) * -100%));
+  transition: transform .28s ease;
+}
+.form-slide {
+  flex: 0 0 100%;
+  min-width: 100%;
+  padding-right: 1px;
+}
+.progress-shell {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.progress-copy {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.progress-copy strong {
+  color: var(--text);
+  font-weight: 700;
+  text-align: right;
+}
+.progress-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.progress-meter {
+  display: block;
+  width: 18%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width .18s ease;
+}
+.step-card {
+  min-height: min(520px, calc(100vh - 220px));
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 14px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.panel-title { margin: 0; font-size: 15px; font-weight: 720; letter-spacing: 0; }
+.panel-note { color: var(--muted); font-size: 13px; }
+.panel-head .panel-note { white-space: nowrap; }
+.fields { display: grid; gap: 12px; padding: 14px; }
+.field { display: grid; gap: 7px; }
+label { color: var(--muted); font-size: 13px; }
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+input,
+select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  outline: none;
+}
+input:focus,
+select:focus { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); }
+.field-label { margin: 0; color: var(--muted); font-size: 13px; }
+.date-grid { display: grid; grid-template-columns: minmax(76px, .78fr) minmax(124px, 1.28fr) minmax(92px, .94fr); gap: 8px; }
+.date-part { display: grid; gap: 6px; min-width: 0; }
+.date-part label { white-space: nowrap; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+.chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+.option-grid { display: grid; gap: 8px; }
+.option-card {
+  width: 100%;
+  min-height: 64px;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+}
+.option-card[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.option-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.option-label { font-weight: 760; }
+.option-badge {
+  flex: none;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 720;
+}
+.option-summary { color: var(--text); font-size: 14px; font-weight: 650; }
+.option-detail { color: var(--muted); font-size: 13px; }
+.time-block[hidden], .manual-block[hidden], .layout[hidden], .done[hidden], .error[hidden], .natal-only[hidden] { display: none; }
+.sticky-summary {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
+}
+.summary-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.summary-title { margin: 0; font-size: 15px; font-weight: 760; }
+.summary-status { color: var(--muted); font-size: 13px; text-align: right; }
+.summary-row {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 14px;
+}
+.summary-row span:first-child { color: var(--muted); }
+.summary-row strong { font-weight: 650; overflow-wrap: anywhere; }
+.error {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);
+  border-radius: var(--radius);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 9%, var(--surface));
+}
+.done {
+  margin-top: 10px;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 22px 18px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  text-align: center;
+}
+.done-mark {
+  width: 38px;
+  height: 38px;
+  border: 2px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: spin .9s linear infinite;
+}
+.done-title { margin: 0; font-size: 19px; line-height: 1.2; font-weight: 760; letter-spacing: 0; }
+.done-text { display: grid; gap: 4px; margin: 0; color: var(--muted); font-size: 15px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.action-bar {
+  position: fixed;
+  left: 14px;
+  right: 14px;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  max-width: 652px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(82px, .32fr) minmax(82px, .32fr) minmax(0, 1fr);
+  gap: 8px;
+}
+.submit,
+.cancel,
+.back,
+.next {
+  min-height: 48px;
+  border-radius: var(--radius);
+  font-weight: 720;
+}
+.submit,
+.next {
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+.cancel,
+.back {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+}
+.submit:disabled,
+.next:disabled,
+.back:disabled { opacity: .55; }
+@media (min-width: 720px) {
+  .page { padding-inline: 0; }
+  .action-bar { left: 50%; right: auto; width: 652px; transform: translateX(-50%); }
+}
+@media (max-width: 430px) {
+  .topbar { display: grid; }
+  .status-pill { width: max-content; }
+  .progress-copy { display: grid; }
+  .progress-copy strong { text-align: left; }
+  .summary-head { display: grid; }
+  .summary-status { text-align: left; }
+}
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="topbar">
+    <div>
+      <p class="eyebrow">Натал + матрица судьбы</p>
+      <h1>Разбор рождения</h1>
+      <p class="intro-lead">Введите дату, время и место. В конце выберите, что построить.</p>
+    </div>
+    <div class="status-pill" id="status-pill">Анкета</div>
+  </div>
+
+  <form id="natal-form" data-api="/webapp/api/natal/submit" novalidate>
+    <div class="progress-shell" aria-label="Прогресс заполнения">
+      <div class="progress-copy">
+        <span id="progress-text">Шаг 1 из 5</span>
+        <strong id="progress-status">Начните с даты рождения</strong>
+      </div>
+      <div class="progress-track" aria-hidden="true">
+        <span class="progress-meter" id="progress-meter"></span>
+      </div>
+    </div>
+
+    <div class="layout slide-viewport" id="form-layout">
+      <div class="slide-track" id="slide-track">
+        <section class="form-slide" id="date-slide" data-slide="date">
+          <div class="step-card" id="datetime-panel" data-step="date">
+            <div class="panel-head">
+              <h2 class="panel-title" id="datetime-panel-title">Сначала дата</h2>
+              <span class="panel-note" id="datetime-step-note">1 из 5</span>
+            </div>
+            <div class="fields">
+              <div class="field">
+                <p class="field-label" id="birth-date-label">Дата рождения</p>
+                <p class="hint" id="birth-date-hint">Выберите день, месяц и год рождения.</p>
+                <div class="date-grid" id="birth-date-parts" role="group" aria-labelledby="birth-date-label" aria-describedby="birth-date-hint">
+                  <div class="date-part">
+                    <label for="birth-day">День</label>
+                    <select id="birth-day" name="birth_day" required></select>
+                  </div>
+                  <div class="date-part date-part-month">
+                    <label for="birth-month">Месяц</label>
+                    <select id="birth-month" name="birth_month" required></select>
+                  </div>
+                  <div class="date-part">
+                    <label for="birth-year">Год</label>
+                    <select id="birth-year" name="birth_year" required></select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="form-slide" id="time-slide" data-slide="time">
+          <div class="step-card" id="time-panel" data-step="time">
+            <div class="panel-head">
+              <h2 class="panel-title">Время рождения</h2>
+              <span class="panel-note" id="time-step-note">2 из 5</span>
+            </div>
+            <div class="fields">
+              <div class="field natal-only">
+                <label>Точность времени</label>
+                <p class="hint">Не ставим время по умолчанию: выберите точность сами или отметьте «Не знаю».</p>
+                <div class="chips" data-group="time_precision">
+                  <button class="chip" type="button" data-value="exact" aria-pressed="false">Точное</button>
+                  <button class="chip" type="button" data-value="approximate" aria-pressed="false">Примерное</button>
+                  <button class="chip" type="button" data-value="range" aria-pressed="false">Диапазон</button>
+                  <button class="chip" type="button" data-value="unknown" aria-pressed="false">Не знаю</button>
+                </div>
+              </div>
+              <div class="time-block natal-only" data-time-block="single" hidden>
+                <div class="field">
+                  <label for="birth-time">Время рождения</label>
+                  <p class="hint" id="birth-time-hint">Укажите как в свидетельстве или со слов близких.</p>
+                  <input id="birth-time" name="birth_time" type="time" aria-describedby="birth-time-hint">
+                </div>
+              </div>
+              <div class="time-block natal-only" data-time-block="range" hidden>
+                <div class="grid-2">
+                  <div class="field">
+                    <label for="birth-time-start">С</label>
+                    <input id="birth-time-start" name="birth_time_range_start" type="time">
+                  </div>
+                  <div class="field">
+                    <label for="birth-time-end">До</label>
+                    <input id="birth-time-end" name="birth_time_range_end" type="time">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="form-slide" id="place-slide" data-slide="place">
+          <div class="step-card natal-only" id="place-panel" data-step="place">
+            <div class="panel-head">
+              <h2 class="panel-title">Место и часовой пояс</h2>
+              <span class="panel-note" id="place-step-note">3 из 5</span>
+            </div>
+            <div class="fields">
+              <p class="hint">Место рождения нужно для координат и часового пояса.</p>
+              <div class="field">
+                <label>Страна рождения</label>
+                <p class="hint">Для координат и часового пояса.</p>
+                <div class="chips" id="country-chips"></div>
+              </div>
+              <div class="field manual-block" id="manual-country-block" hidden>
+                <label for="manual-country">Другая страна</label>
+                <input id="manual-country" name="manual_country" type="text" inputmode="text" autocomplete="country-name">
+              </div>
+              <div class="field">
+                <label>Город рождения</label>
+                <div class="chips" id="city-chips"></div>
+              </div>
+              <div class="field manual-block" id="manual-city-block" hidden>
+                <label for="manual-city">Другой город</label>
+                <input id="manual-city" name="manual_city" type="text" inputmode="text" autocomplete="address-level2">
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="form-slide" id="report-slide" data-slide="report">
+          <div class="step-card" id="report-type-panel" data-step="report">
+            <div class="panel-head">
+              <h2 class="panel-title">Фокус и формат</h2>
+              <span class="panel-note" id="report-type-step-note">4 из 5</span>
+            </div>
+            <div class="fields">
+              <div class="field">
+                <label>Фокус разбора</label>
+                <p class="hint">Фокус не урезает отчёт, а помогает поставить самые важные акценты выше.</p>
+                <div class="chips" id="focus-chips"></div>
+              </div>
+              <div class="field">
+                <p class="field-label">Что построить</p>
+                <p class="hint">Варианты: Натал + матрица (Рекомендуем, Лучший выбор для первого разбора), Только натал, Только матрица.</p>
+                <div class="option-grid" id="report-type-chips" data-group="report_type"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="form-slide" id="review-slide" data-slide="review">
+          <div class="step-card" id="review-panel" data-step="review">
+            <div class="panel-head">
+              <h2 class="panel-title">Проверить данные</h2>
+              <span class="panel-note" id="review-step-note">5 из 5</span>
+            </div>
+            <div class="fields">
+              <p class="hint">Проверка перед отправкой: дата, время, место и формат расчёта должны совпадать с тем, что вы хотите получить.</p>
+            </div>
+            <div class="sticky-summary" id="summary">
+              <div class="summary-head">
+                <p class="summary-title">Ваш разбор</p>
+                <span class="summary-status">Осталось заполнить: дату рождения</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="error" id="error-box" hidden></div>
+    <div class="done" id="done-box" data-state="processing" hidden>
+      <div class="done-mark" aria-hidden="true"></div>
+      <p class="done-title" id="done-title">Создаём разбор рождения</p>
+      <p class="done-text" id="done-text">
+        <span>Окно можно закрывать.</span>
+        <span>Ответ будет отправлен новым сообщением в чат с ботом.</span>
+      </p>
+    </div>
+
+    <div class="action-bar" id="action-bar">
+      <button class="cancel" id="cancel-button" type="button">Отменить</button>
+      <button class="back" id="back-button" type="button">Назад</button>
+      <button class="next" id="next-button" type="button" disabled>Далее</button>
+      <button class="submit" id="submit-button" type="submit" hidden>Построить разбор</button>
+    </div>
+  </form>
+</main>
+
+<script>
+const tg = window.Telegram?.WebApp;
+const OPTIONS = {{ natal_form_options|tojson }};
+const state = {
+  report_type: '',
+  time_precision: '',
+  country_code: OPTIONS.countries[0]?.code || '',
+  country_label: OPTIONS.countries[0]?.label || '',
+  city_geoname_id: '',
+  city_label: '',
+  focus: 'general',
+};
+
+const form = document.getElementById('natal-form');
+const formLayout = document.getElementById('form-layout');
+const errorBox = document.getElementById('error-box');
+const doneBox = document.getElementById('done-box');
+const doneTitle = document.getElementById('done-title');
+const doneText = document.getElementById('done-text');
+const submitButton = document.getElementById('submit-button');
+const nextButton = document.getElementById('next-button');
+const backButton = document.getElementById('back-button');
+const statusPill = document.getElementById('status-pill');
+const progressText = document.getElementById('progress-text');
+const progressStatus = document.getElementById('progress-status');
+const progressMeter = document.getElementById('progress-meter');
+const slideTrack = document.getElementById('slide-track');
+const slides = Array.from(document.querySelectorAll('.form-slide'));
+const datetimePanelTitle = document.getElementById('datetime-panel-title');
+const datetimeStepNote = document.getElementById('datetime-step-note');
+const timeStepNote = document.getElementById('time-step-note');
+const placeStepNote = document.getElementById('place-step-note');
+const reportTypeStepNote = document.getElementById('report-type-step-note');
+const reviewStepNote = document.getElementById('review-step-note');
+const birthDay = document.getElementById('birth-day');
+const birthMonth = document.getElementById('birth-month');
+const birthYear = document.getElementById('birth-year');
+const birthDateParts = [birthDay, birthMonth, birthYear];
+const MONTHS = [
+  ['01', 'Январь'],
+  ['02', 'Февраль'],
+  ['03', 'Март'],
+  ['04', 'Апрель'],
+  ['05', 'Май'],
+  ['06', 'Июнь'],
+  ['07', 'Июль'],
+  ['08', 'Август'],
+  ['09', 'Сентябрь'],
+  ['10', 'Октябрь'],
+  ['11', 'Ноябрь'],
+  ['12', 'Декабрь'],
+];
+let closeOnSubmit = false;
+let currentSlideIndex = 0;
+
+function setDoneMessage(title, lines) {
+  doneTitle.textContent = title;
+  doneText.textContent = '';
+  lines.forEach((line) => {
+    const row = document.createElement('span');
+    row.textContent = line;
+    doneText.appendChild(row);
+  });
+}
+
+function showSubmittingState() {
+  submitButton.disabled = true;
+  submitButton.textContent = 'Отправляю...';
+  statusPill.textContent = 'Отправка';
+}
+
+function showAcceptedState() {
+  formLayout.hidden = true;
+  doneBox.dataset.state = 'processing';
+  setDoneMessage('Создаём разбор рождения', [
+    'Окно можно закрывать.',
+    'Ответ будет отправлен новым сообщением в чат с ботом.',
+  ]);
+  doneBox.hidden = false;
+  statusPill.textContent = 'Создаём';
+  nextButton.hidden = true;
+  backButton.hidden = true;
+  submitButton.disabled = false;
+  submitButton.hidden = false;
+  submitButton.textContent = 'Закрыть';
+  closeOnSubmit = true;
+}
+
+function restoreFormState(message) {
+  closeOnSubmit = false;
+  formLayout.hidden = false;
+  doneBox.hidden = true;
+  errorBox.textContent = message;
+  errorBox.hidden = false;
+  submitButton.disabled = false;
+  submitButton.textContent = 'Построить разбор';
+  statusPill.textContent = 'Анкета';
+  updateSlideControls();
+}
+
+function advanceToNextItem(target) {
+  const element = typeof target === 'string' ? document.getElementById(target) : target;
+  if (!element) return;
+  window.setTimeout(() => {
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (element.matches('input, button')) {
+      element.focus({ preventScroll: true });
+      return;
+    }
+    const focusable = element.querySelector('input:not([hidden]), button:not([hidden])');
+    focusable?.focus({ preventScroll: true });
+  }, 140);
+}
+
+function currentSlide() {
+  return slides[currentSlideIndex] || slides[0];
+}
+
+function goToSlide(index) {
+  currentSlideIndex = Math.max(0, Math.min(index, slides.length - 1));
+  slideTrack.style.setProperty('--slide-index', String(currentSlideIndex));
+  updateProgress();
+  updateSlideControls();
+}
+
+function isCurrentSlideComplete() {
+  const slide = currentSlide();
+  if (!slide) return false;
+  if (slide.id === 'date-slide') return isDateComplete();
+  if (slide.id === 'time-slide') return isTimeComplete();
+  if (slide.id === 'place-slide') return isPlaceComplete();
+  if (slide.id === 'report-slide') return Boolean(state.focus && state.report_type);
+  if (slide.id === 'review-slide') return !validateBeforeSubmit(buildPayload());
+  return false;
+}
+
+function updateSlideControls() {
+  const currentSlide = slides[currentSlideIndex] || slides[0];
+  backButton.disabled = currentSlideIndex === 0;
+  backButton.hidden = false;
+  nextButton.hidden = currentSlide.id === 'review-slide';
+  submitButton.hidden = currentSlide.id !== 'review-slide';
+  nextButton.disabled = !isCurrentSlideComplete();
+  submitButton.disabled = currentSlide.id === 'review-slide' ? Boolean(validateBeforeSubmit(buildPayload())) : false;
+}
+
+function setGroup(container, value) {
+  container.querySelectorAll('.chip').forEach((button) => {
+    button.setAttribute('aria-pressed', button.dataset.value === value ? 'true' : 'false');
+  });
+}
+
+function chip(label, value, pressed, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'chip';
+  button.textContent = label;
+  button.dataset.value = value;
+  button.dataset.label = label;
+  button.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function reportTypeCard(reportType, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'option-card';
+  button.dataset.value = reportType.id;
+  button.dataset.label = reportType.label;
+  button.setAttribute('aria-pressed', state.report_type === reportType.id ? 'true' : 'false');
+
+  const top = document.createElement('div');
+  top.className = 'option-top';
+  const label = document.createElement('span');
+  label.className = 'option-label';
+  label.textContent = reportType.label;
+  top.appendChild(label);
+  if (reportType.badge) {
+    const badge = document.createElement('span');
+    badge.className = 'option-badge';
+    badge.textContent = reportType.badge;
+    top.appendChild(badge);
+  }
+
+  const summary = document.createElement('span');
+  summary.className = 'option-summary';
+  summary.textContent = reportType.summary;
+
+  button.append(top, summary);
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function renderCountries() {
+  const container = document.getElementById('country-chips');
+  const manualBlock = document.getElementById('manual-country-block');
+  container.textContent = '';
+  OPTIONS.countries.forEach((country) => {
+    container.appendChild(chip(country.label, country.code, state.country_code === country.code, () => {
+      state.country_code = country.code;
+      state.country_label = country.label;
+      state.city_geoname_id = '';
+      state.city_label = '';
+      document.getElementById('manual-country').value = '';
+      renderCountries();
+      renderCities();
+      renderSummary();
+      advanceToNextItem('city-chips');
+    }));
+  });
+  container.appendChild(chip('Другая страна', 'manual', !state.country_code, () => {
+    state.country_code = '';
+    state.country_label = '';
+    state.city_geoname_id = '';
+    state.city_label = '';
+    manualBlock.hidden = false;
+    renderCountries();
+    renderCities();
+    renderSummary();
+    document.getElementById('manual-country').focus();
+  }));
+  manualBlock.hidden = Boolean(state.country_code);
+}
+
+function renderReportTypes() {
+  const container = document.getElementById('report-type-chips');
+  container.textContent = '';
+  OPTIONS.report_types.forEach((reportType) => {
+    container.appendChild(reportTypeCard(reportType, () => {
+      state.report_type = reportType.id;
+      renderReportTypes();
+      updateProductVisibility();
+      renderSummary();
+      advanceToNextItem('action-bar');
+    }));
+  });
+}
+
+function renderCities() {
+  const container = document.getElementById('city-chips');
+  const manualBlock = document.getElementById('manual-city-block');
+  container.textContent = '';
+  (OPTIONS.cities[state.country_code] || []).forEach((city) => {
+    container.appendChild(chip(city.label, city.id, state.city_geoname_id === city.id, () => {
+      state.city_geoname_id = city.id;
+      state.city_label = city.display;
+      document.getElementById('manual-city').value = '';
+      renderCities();
+      renderSummary();
+      advanceToNextItem('focus-panel');
+    }));
+  });
+  container.appendChild(chip('Другой город', 'manual', !state.city_geoname_id, () => {
+    state.city_geoname_id = '';
+    state.city_label = '';
+    manualBlock.hidden = false;
+    renderCities();
+    renderSummary();
+    document.getElementById('manual-city').focus();
+  }));
+  manualBlock.hidden = Boolean(state.city_geoname_id);
+}
+
+function renderFocuses() {
+  const container = document.getElementById('focus-chips');
+  container.textContent = '';
+  OPTIONS.focuses.forEach((focus) => {
+    container.appendChild(chip(focus.label, focus.id, state.focus === focus.id, () => {
+      state.focus = focus.id;
+      renderFocuses();
+      renderSummary();
+      advanceToNextItem('report-type-panel');
+    }));
+  });
+}
+
+function selectedText(selector) {
+  const selected = document.querySelector(`${selector} [aria-pressed="true"]`);
+  return selected ? selected.dataset.label || selected.textContent : '—';
+}
+
+function selectOption(value, label) {
+  const option = document.createElement('option');
+  option.value = value;
+  option.textContent = label;
+  return option;
+}
+
+function renderBirthDateSelectors() {
+  birthMonth.textContent = '';
+  birthMonth.appendChild(selectOption('', 'Месяц'));
+  MONTHS.forEach(([value, label]) => birthMonth.appendChild(selectOption(value, label)));
+
+  birthYear.textContent = '';
+  birthYear.appendChild(selectOption('', 'Год'));
+  const currentYear = new Date().getFullYear();
+  for (let year = currentYear; year >= currentYear - 120; year -= 1) {
+    birthYear.appendChild(selectOption(String(year), String(year)));
+  }
+
+  renderBirthDayOptions();
+}
+
+function daysInBirthMonth() {
+  const month = Number(birthMonth.value || 1);
+  const year = Number(birthYear.value || 2000);
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function renderBirthDayOptions() {
+  const selectedDay = birthDay.value;
+  const maxDay = daysInBirthMonth();
+  birthDay.textContent = '';
+  birthDay.appendChild(selectOption('', 'День'));
+  for (let day = 1; day <= maxDay; day += 1) {
+    const value = String(day).padStart(2, '0');
+    birthDay.appendChild(selectOption(value, String(day)));
+  }
+  if (selectedDay && Number(selectedDay) <= maxDay) {
+    birthDay.value = selectedDay;
+  }
+}
+
+function buildBirthDate() {
+  if (!birthDay.value || !birthMonth.value || !birthYear.value) return '';
+  return `${birthYear.value}-${birthMonth.value}-${birthDay.value}`;
+}
+
+function formatBirthDateForSummary() {
+  if (!birthDay.value && !birthMonth.value && !birthYear.value) return '—';
+  const monthName = MONTHS.find(([value]) => value === birthMonth.value)?.[1]?.toLowerCase();
+  if (birthDay.value && monthName && birthYear.value) {
+    return `${Number(birthDay.value)} ${monthName} ${birthYear.value}`;
+  }
+  return [birthDay.value && `${Number(birthDay.value)} число`, monthName, birthYear.value].filter(Boolean).join(', ');
+}
+
+function isMatrixOnly() {
+  return state.report_type === 'destiny_matrix';
+}
+
+function updateProductVisibility() {
+  updateStepNotes();
+  showTimeBlocks();
+}
+
+function updateStepNotes() {
+  datetimePanelTitle.textContent = 'Сначала дата';
+  datetimeStepNote.textContent = '1 из 5';
+  timeStepNote.textContent = '2 из 5';
+  placeStepNote.textContent = '3 из 5';
+  reportTypeStepNote.textContent = '4 из 5';
+  reviewStepNote.textContent = '5 из 5';
+}
+
+function isDateComplete() {
+  return Boolean(buildBirthDate());
+}
+
+function isTimeComplete() {
+  if (!state.time_precision) return false;
+  if (state.time_precision === 'unknown') return true;
+  if (state.time_precision === 'range') {
+    return Boolean(document.getElementById('birth-time-start').value && document.getElementById('birth-time-end').value);
+  }
+  return Boolean(document.getElementById('birth-time').value);
+}
+
+function isPlaceComplete() {
+  const manualCountry = document.getElementById('manual-country').value.trim();
+  const manualCity = document.getElementById('manual-city').value.trim();
+  return Boolean((state.country_code || manualCountry) && (state.city_geoname_id || manualCity));
+}
+
+function progressItems() {
+  const items = [
+    { label: 'дату рождения', done: isDateComplete() },
+    { label: 'время рождения', done: isTimeComplete() },
+    { label: 'место рождения', done: isPlaceComplete() },
+    { label: 'что построить', done: Boolean(state.focus && state.report_type) },
+    { label: 'проверку данных', done: !validateBeforeSubmit(buildPayload()) },
+  ];
+  return items;
+}
+
+function missingProgressLabel() {
+  const missing = progressItems().find((item) => !item.done);
+  return missing ? missing.label : '';
+}
+
+function updateProgress() {
+  const items = progressItems();
+  const firstMissingIndex = items.findIndex((item) => !item.done);
+  const total = items.length;
+  const current = currentSlideIndex + 1;
+  const completed = items.filter((item) => item.done).length;
+  const percent = Math.max(18, Math.round((completed / total) * 100));
+  progressText.textContent = firstMissingIndex === -1 ? 'Готово к отправке' : `Шаг ${current} из ${total}`;
+  progressStatus.textContent = firstMissingIndex === -1 ? 'Можно строить разбор' : `Осталось заполнить: ${items[firstMissingIndex].label}`;
+  progressMeter.style.width = `${percent}%`;
+}
+
+function renderSummary() {
+  const date = formatBirthDateForSummary();
+  const reportType = selectedText('#report-type-chips');
+  const precision = selectedText('[data-group="time_precision"]');
+  const time = state.time_precision === 'unknown'
+    ? 'неизвестно'
+    : state.time_precision === 'range'
+      ? `${document.getElementById('birth-time-start').value || '—'}–${document.getElementById('birth-time-end').value || '—'}`
+      : document.getElementById('birth-time').value || '—';
+  const manualCountry = document.getElementById('manual-country').value.trim();
+  const country = state.country_label || manualCountry || '—';
+  const manualCity = document.getElementById('manual-city').value.trim();
+  const city = state.city_label || manualCity || '—';
+  const focus = selectedText('#focus-chips');
+  const summary = document.getElementById('summary');
+  summary.textContent = '';
+  const missing = missingProgressLabel();
+  const head = document.createElement('div');
+  head.className = 'summary-head';
+  const title = document.createElement('p');
+  title.className = 'summary-title';
+  title.textContent = 'Ваш разбор';
+  const status = document.createElement('span');
+  status.className = 'summary-status';
+  status.textContent = missing ? `Осталось заполнить: ${missing}` : 'Все данные готовы';
+  head.append(title, status);
+  summary.appendChild(head);
+  const rows = [
+    ['Тип', reportType],
+    ['Дата', date],
+  ];
+  if (!isMatrixOnly()) {
+    rows.push(
+      ['Время', `${precision}, ${time}`],
+      ['Страна', country],
+      ['Город', city],
+    );
+  }
+  rows.push(['Фокус', focus]);
+  rows.forEach(([label, value]) => {
+    const row = document.createElement('div');
+    row.className = 'summary-row';
+    const labelEl = document.createElement('span');
+    labelEl.textContent = label;
+    const valueEl = document.createElement('strong');
+    valueEl.textContent = value;
+    row.append(labelEl, valueEl);
+    summary.appendChild(row);
+  });
+  updateProgress();
+  updateSlideControls();
+}
+
+function showTimeBlocks() {
+  const single = document.querySelector('[data-time-block="single"]');
+  const range = document.querySelector('[data-time-block="range"]');
+  single.hidden = !['exact', 'approximate'].includes(state.time_precision);
+  range.hidden = state.time_precision !== 'range';
+  renderSummary();
+}
+
+document.querySelector('[data-group="time_precision"]').addEventListener('click', (event) => {
+  const button = event.target.closest('.chip');
+  if (!button) return;
+  state.time_precision = button.dataset.value;
+  setGroup(event.currentTarget, state.time_precision);
+  showTimeBlocks();
+  if (state.time_precision === 'range') {
+    advanceToNextItem('birth-time-start');
+  } else if (state.time_precision === 'unknown') {
+    advanceToNextItem('place-panel');
+  } else {
+    advanceToNextItem('birth-time');
+  }
+});
+
+let lastAdvancedBirthDate = '';
+
+function advanceFromBirthDateIfComplete() {
+  const normalized = buildBirthDate();
+  if (!normalized) {
+    lastAdvancedBirthDate = '';
+    updateSlideControls();
+    return;
+  }
+  if (normalized === lastAdvancedBirthDate) return;
+  lastAdvancedBirthDate = normalized;
+  updateSlideControls();
+}
+
+birthDateParts.forEach((element) => {
+  element.addEventListener('change', () => {
+    if (element === birthMonth || element === birthYear) {
+      renderBirthDayOptions();
+    }
+    renderSummary();
+    advanceFromBirthDateIfComplete();
+  });
+});
+
+document.getElementById('birth-time').addEventListener('change', () => {
+  renderSummary();
+});
+
+document.getElementById('birth-time-start').addEventListener('change', () => {
+  renderSummary();
+});
+
+document.getElementById('birth-time-end').addEventListener('change', () => {
+  renderSummary();
+});
+
+document.getElementById('manual-country').addEventListener('change', () => {
+  if (document.getElementById('manual-country').value.trim()) advanceToNextItem('manual-city');
+});
+
+document.getElementById('manual-city').addEventListener('change', () => {
+  if (document.getElementById('manual-city').value.trim()) advanceToNextItem('focus-panel');
+});
+
+['birth-time', 'birth-time-start', 'birth-time-end', 'manual-country', 'manual-city'].forEach((id) => {
+  document.getElementById(id).addEventListener('input', renderSummary);
+});
+
+function buildPayload() {
+  const payload = {
+    birth_date: buildBirthDate(),
+    report_type: state.report_type,
+    time_precision: state.time_precision,
+    country_code: state.country_code,
+    country: document.getElementById('manual-country').value.trim(),
+    city_geoname_id: state.city_geoname_id,
+    birth_place: document.getElementById('manual-city').value.trim(),
+    focus: state.focus,
+  };
+  if (state.time_precision === 'range') {
+    payload.birth_time_range_start = document.getElementById('birth-time-start').value;
+    payload.birth_time_range_end = document.getElementById('birth-time-end').value;
+  } else if (state.time_precision !== 'unknown') {
+    payload.birth_time = document.getElementById('birth-time').value;
+  }
+  return payload;
+}
+
+function validateBeforeSubmit(payload) {
+  if (!birthDateParts.some((element) => element.value)) return 'Укажите дату рождения.';
+  if (!payload.birth_date) return 'Выберите день, месяц и год рождения.';
+  if (!payload.report_type) return 'Выберите, что построить.';
+  if (payload.report_type === 'destiny_matrix') return '';
+  if (!payload.time_precision) return 'Выберите точность времени рождения.';
+  if (!payload.country_code && !payload.country) return 'Выберите или введите страну рождения.';
+  if (!payload.city_geoname_id && !payload.birth_place) return 'Выберите город или введите другой.';
+  if (payload.time_precision !== 'unknown' && payload.time_precision !== 'range' && !payload.birth_time) {
+    return 'Укажите время рождения.';
+  }
+  if (payload.time_precision === 'range' && (!payload.birth_time_range_start || !payload.birth_time_range_end)) {
+    return 'Укажите начало и конец диапазона.';
+  }
+  return '';
+}
+
+nextButton.addEventListener('click', () => {
+  if (!isCurrentSlideComplete()) return;
+  goToSlide(currentSlideIndex + 1);
+});
+
+backButton.addEventListener('click', () => {
+  goToSlide(currentSlideIndex - 1);
+});
+
+async function submitNatal(event) {
+  event.preventDefault();
+  if (closeOnSubmit) {
+    tg?.close();
+    return;
+  }
+  errorBox.hidden = true;
+  const payload = buildPayload();
+  const validationError = validateBeforeSubmit(payload);
+  if (validationError) {
+    errorBox.textContent = validationError;
+    errorBox.hidden = false;
+    return;
+  }
+  showSubmittingState();
+  try {
+    const response = await fetch(form.dataset.api, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `tma ${tg?.initData || ''}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) {
+      throw new Error(result.detail || result.error || 'Не удалось отправить анкету.');
+    }
+    showAcceptedState();
+  } catch (error) {
+    restoreFormState(error.message);
+  }
+}
+
+form.addEventListener('submit', submitNatal);
+document.getElementById('cancel-button').addEventListener('click', () => {
+  tg?.close();
+});
+tg?.ready();
+tg?.expand();
+renderBirthDateSelectors();
+renderCountries();
+renderCities();
+renderReportTypes();
+renderFocuses();
+updateProductVisibility();
+renderSummary();
+</script>
+</body>
+</html>

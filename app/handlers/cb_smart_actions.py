@@ -9,6 +9,7 @@ Handles:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from telegram import Message, Update
@@ -87,8 +88,6 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         logging.error("Failed to send placeholder: %s", e)
         user_state.is_processing = False
         return
-
-    import asyncio
 
     from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
 

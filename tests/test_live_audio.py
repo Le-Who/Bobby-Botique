@@ -44,7 +44,7 @@ def live_settings(monkeypatch) -> SimpleNamespace:
         VERTEX_AI_KEY="vertex-key",
         VERTEX_AI_PROJECT=None,
         VERTEX_AI_LOCATION="us-central1",
-        DEFAULT_MODEL="gemini-3.1-flash-lite-preview",
+        DEFAULT_MODEL="gemini-3.1-flash-lite",
     )
     monkeypatch.setattr("app.config.settings", settings, raising=False)
     monkeypatch.setattr("app.web_miniapp.settings", settings, raising=False)
@@ -203,7 +203,7 @@ class TestLiveAudioSettingsApi:
     async def test_patch_live_settings_persists_selected_values(self, test_client, auth_headers):
         chat_state = ChatState(
             history=[],
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-3.1-flash-lite",
             token_count=0,
             search_enabled=False,
             system_prompt=None,
@@ -235,7 +235,7 @@ class TestLiveAudioSettingsApi:
     async def test_patch_live_settings_ignores_invalid_values(self, test_client, auth_headers):
         chat_state = ChatState(
             history=[],
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-3.1-flash-lite",
             token_count=0,
             search_enabled=False,
             system_prompt=None,
@@ -275,7 +275,7 @@ class TestLiveAudioProxy:
         url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
         chat_state = ChatState(
             history=[],
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-3.1-flash-lite",
             token_count=0,
             search_enabled=False,
             system_prompt=None,
@@ -330,7 +330,7 @@ class TestLiveAudioProxy:
         url = f"/webapp/live-vertex/ws?initData={urllib.parse.quote(init_data)}"
         chat_state = ChatState(
             history=[],
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-3.1-flash-lite",
             token_count=0,
             search_enabled=False,
             system_prompt=None,
@@ -568,9 +568,14 @@ class TestLiveAudioProxy:
         test_client,
         mock_bot_token,
         mock_api_keys,
-        monkeypatch,
     ):
-        """RESOURCE_EXHAUSTED should trip a model cooldown and stop reconnect retries."""
+        """RESOURCE_EXHAUSTED should trip a model cooldown and stop reconnect retries.
+
+        The cooldown is now Redis-backed (async functions), not module-level globals.
+        We patch _get_live_model_cooldown_seconds to start at 0 (no active cooldown)
+        and _mark_live_model_cooldown to simulate the penalty being applied, so the
+        fatal message carries retry_after_seconds >= 15.
+        """
         init_data = make_valid_init_data(mock_bot_token, user_id=559)
         url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
 
@@ -580,13 +585,18 @@ class TestLiveAudioProxy:
         mock_client = MagicMock()
         mock_client.aio.live.connect.return_value = failing_connect
 
-        monkeypatch.setattr("app.web_miniapp._LIVE_MODEL_COOLDOWN_UNTIL", 0.0)
-        monkeypatch.setattr("app.web_miniapp._LIVE_MODEL_COOLDOWN_REASON", "")
+        async def _no_cooldown() -> int:
+            return 0
+
+        async def _mark_cooldown(seconds: int, reason: str) -> int:
+            return max(15, min(seconds, 300))
 
         with (
             patch("app.providers.gemini.get_live_api_client", return_value=mock_client),
             patch("app.games.crocodile_flags.is_live_audio_enabled", new_callable=AsyncMock, return_value=True),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
+            patch("app.web_miniapp._get_live_model_cooldown_seconds", _no_cooldown),
+            patch("app.web_miniapp._mark_live_model_cooldown", _mark_cooldown),
         ):
             async with test_client.websocket(url) as ws:
                 fatal_raw = await ws.receive()
@@ -631,7 +641,9 @@ class TestLiveAudioProxy:
 
 @pytest.mark.asyncio
 class TestVertexLiveClientBootstrap:
-    async def test_vertex_live_client_returns_none_when_credentials_file_is_unreadable(self, live_settings, monkeypatch):
+    async def test_vertex_live_client_returns_none_when_credentials_file_is_unreadable(
+        self, live_settings, monkeypatch
+    ):
         live_settings.VERTEX_AI_PROJECT = "vertex-project"
         monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/run/secrets/vertex-live-sa.json")
         import app.providers.gemini as gemini_provider

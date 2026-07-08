@@ -18,6 +18,7 @@ Architecture:
        the old edge is closed (valid_to = now()) and the new one is inserted.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -207,7 +208,6 @@ async def extract_graph_structured(
                     pass
 
             if is_transient and attempt < 2:
-                import asyncio
 
                 if is_truncation:
                     # Token budget expands on next attempt logic explicitly (config max_tokens)
@@ -288,7 +288,6 @@ async def _upsert_graph(
     - Source Provenance: appends source_memory_id to source_memory_ids[].
     - Social Graph: stores chat_id and actor_user_id when in group context.
     """
-    import asyncio
 
     from app.database import db_manager
     from app.repos.db_helpers import clear_user_context, set_user_context
@@ -423,6 +422,11 @@ async def _upsert_graph(
                     # ── Upsert relations ───────────────────────────────────
                     source_ids_arr = [source_memory_id] if source_memory_id else []
 
+                    edges_to_merge = []
+                    edges_to_close = []
+                    edges_to_refine = []
+                    edges_to_insert = []
+
                     for rel in graph.relations:
                         src_name = rel.source.strip()
                         tgt_name = rel.target.strip()
@@ -458,20 +462,12 @@ async def _upsert_graph(
                             )
                             if similar_edge:
                                 # Merge: update weight, keep is_core sticky, append source_memory_id
-                                await conn.execute(
-                                    """
-                                    UPDATE memory_edges
-                                    SET weight = $1,
-                                        is_core = is_core OR $2,
-                                        updated_at = now(),
-                                        source_memory_ids = source_memory_ids || $3::bigint[]
-                                    WHERE id = $4
-                                    """,
+                                edges_to_merge.append((
                                     max(rel.weight, similar_edge["weight"]),
                                     rel.is_core,
                                     source_ids_arr,
                                     similar_edge["id"],
-                                )
+                                ))
                                 edges_upserted += 1
                                 continue
 
@@ -494,7 +490,7 @@ async def _upsert_graph(
                                 tgt_id,
                                 pred_emb_str,
                             )
-                            
+
                             # Pre-fetch all Stage 2 (ambiguous zone) verdicts concurrently
                             # This eliminates N+1 LLM API calls and avoids holding the DB transaction open sequentially
                             stage_2_tasks = []
@@ -510,7 +506,7 @@ async def _upsert_graph(
                                             api_key,
                                         )
                                     )
-                                    
+
                             stage_2_verdicts = await asyncio.gather(*stage_2_tasks) if stage_2_tasks else []
                             verdict_idx = 0
                             skip_new_edge_insert = False
@@ -520,10 +516,7 @@ async def _upsert_graph(
 
                                 if distance >= 0.35:
                                     # Stage 1: clearly different → close old
-                                    await conn.execute(
-                                        "UPDATE memory_edges SET valid_to = now() WHERE id = $1",
-                                        old_edge["id"],
-                                    )
+                                    edges_to_close.append((old_edge["id"],))
                                     logging.info(
                                         "Temporal close: edge '%s' superseded by '%s' for user %d (dist=%.3f)",
                                         old_edge["predicate"],
@@ -535,12 +528,9 @@ async def _upsert_graph(
                                     # Stage 2: ambiguous zone (0.15-0.35) → use gathered LLM judge verdict
                                     verdict = stage_2_verdicts[verdict_idx]
                                     verdict_idx += 1
-                                    
+
                                     if verdict == "update":
-                                        await conn.execute(
-                                            "UPDATE memory_edges SET valid_to = now() WHERE id = $1",
-                                            old_edge["id"],
-                                        )
+                                        edges_to_close.append((old_edge["id"],))
                                         logging.info(
                                             "LLM judge: edge '%s' → '%s' = UPDATE for user %d",
                                             old_edge["predicate"],
@@ -549,20 +539,12 @@ async def _upsert_graph(
                                         )
                                     elif verdict == "refinement":
                                         # Merge into existing edge (update predicate text)
-                                        await conn.execute(
-                                            """
-                                            UPDATE memory_edges
-                                            SET predicate = $1,
-                                                predicate_embedding = $2::halfvec,
-                                                weight = GREATEST(weight, $3),
-                                                updated_at = now()
-                                            WHERE id = $4
-                                            """,
+                                        edges_to_refine.append((
                                             rel.predicate,
                                             pred_emb_str,
                                             rel.weight,
                                             old_edge["id"],
-                                        )
+                                        ))
                                         edges_upserted += 1
                                         logging.info(
                                             "LLM judge: edge '%s' → '%s' = REFINEMENT for user %d",
@@ -584,7 +566,49 @@ async def _upsert_graph(
                                 continue  # skip inserting the new edge since it was merged
 
                         # Insert new edge
-                        await conn.execute(
+                        edges_to_insert.append((
+                            user_id,
+                            src_id,
+                            tgt_id,
+                            rel.predicate,
+                            pred_emb_str,
+                            rel.weight,
+                            rel.is_core,
+                            source_ids_arr,
+                        ))
+
+                    # Execute all batched edge updates
+                    if edges_to_merge:
+                        await conn.executemany(
+                            """
+                            UPDATE memory_edges
+                            SET weight = $1,
+                                is_core = is_core OR $2,
+                                updated_at = now(),
+                                source_memory_ids = source_memory_ids || $3::bigint[]
+                            WHERE id = $4
+                            """,
+                            edges_to_merge,
+                        )
+                    if edges_to_close:
+                        await conn.executemany(
+                            "UPDATE memory_edges SET valid_to = now() WHERE id = $1",
+                            edges_to_close,
+                        )
+                    if edges_to_refine:
+                        await conn.executemany(
+                            """
+                            UPDATE memory_edges
+                            SET predicate = $1,
+                                predicate_embedding = $2::halfvec,
+                                weight = GREATEST(weight, $3),
+                                updated_at = now()
+                            WHERE id = $4
+                            """,
+                            edges_to_refine,
+                        )
+                    if edges_to_insert:
+                        await conn.executemany(
                             """
                             INSERT INTO memory_edges
                                 (user_id, source_node, target_node, predicate,
@@ -600,16 +624,9 @@ async def _upsert_graph(
                                 source_memory_ids = memory_edges.source_memory_ids || EXCLUDED.source_memory_ids,
                                 updated_at = now()
                             """,
-                            user_id,
-                            src_id,
-                            tgt_id,
-                            rel.predicate,
-                            pred_emb_str,
-                            rel.weight,
-                            rel.is_core,
-                            source_ids_arr,
+                            edges_to_insert,
                         )
-                        edges_upserted += 1
+                        edges_upserted += len(edges_to_insert)
 
                 logging.info(
                     "Real-time graph upsert for user %d: %d entities, %d edges",

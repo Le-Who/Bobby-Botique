@@ -32,7 +32,7 @@ def mock_boundaries():
         # Default happy-path setup
         m_resolve.return_value = (
             {"api_key": "k", "key_hash": "h"},
-            "gemini-3.1-flash-lite-preview",
+            "gemini-3.1-flash-lite",
             "direct",
         )
 
@@ -117,7 +117,7 @@ async def test_model_exhausted_prompts_fallback_confirmation(mock_boundaries):
     chat_state = make_chat_state()
     mock_boundaries["resolve"].return_value = (
         {"api_key": "fixed_key"},
-        "gemini-3-flash-preview",
+        "gemini-3.1-flash-lite",
         "confirm_fallback",
     )
 
@@ -128,7 +128,7 @@ async def test_model_exhausted_prompts_fallback_confirmation(mock_boundaries):
     placeholder.edit_text.assert_awaited_once()
     call_args, call_kwargs = placeholder.edit_text.call_args
     assert "reply_markup" in call_kwargs, "Expected inline keyboard for fallback confirmation"
-    assert "gemini-3-flash-preview" in call_args[0], "Expected fallback model name in prompt"
+    assert "gemini-3.1-flash-lite" in call_args[0], "Expected fallback model name in prompt"
     # Ensure stream was bypassed while we wait for user confirmation
     mock_boundaries["stream"].assert_not_called()
 

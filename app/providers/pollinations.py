@@ -230,7 +230,6 @@ class PollinationsProvider:
 
         return get_result
 
-
     async def transcribe_audio(
         self,
         audio_bytes: bytes,

@@ -13,6 +13,7 @@ class MockUser:
         self.username = username
         self.first_name = first_name
         self.is_bot = False
+        self.language_code = "en"
 
 
 class MockChat:
@@ -52,6 +53,7 @@ class DummyContext:
         self.bot.send_message = AsyncMock()
         self.user_data = {}
         self.chat_data = {}
+        self.application = MagicMock()
 
 
 # --- Tests for handle_request ---
@@ -100,13 +102,16 @@ async def test_handle_request_rate_limit_exceeded():
     with (
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
+        patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
         patch("app.handlers.messages.settings") as mock_settings,
         patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock) as mock_rate_limit,
+        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as _mock_logger,
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
         mock_rate_limit.return_value = False  # Rate limit exceeded
+        mock_is_auth.return_value = True
 
         await messages.handle_request(update, context)
 
@@ -130,6 +135,7 @@ async def test_handle_request_unauthorized():
         patch("app.handlers.messages.settings") as mock_settings,
         patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock) as mock_rate_limit,
         patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
+        patch("app.admin_alerts.alert_admin_unauthorized_user", new_callable=AsyncMock) as mock_alert,
         patch("app.handlers.messages.api_logger") as _mock_logger,
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
@@ -140,6 +146,7 @@ async def test_handle_request_unauthorized():
         await messages.handle_request(update, context)
 
         mock_is_auth.assert_awaited_once_with(123)
+        mock_alert.assert_awaited_once()
         # Should return without doing anything else
         message.reply_text.assert_not_awaited()
 
@@ -188,7 +195,7 @@ async def test_handle_request_text_message_happy_path():
         patch("app.handlers.messages.api_logger") as _mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.messages.asyncio.create_task") as mock_create_task,
-        patch("app.utils.background_tasks.submit_task", side_effect=capture_submit) as mock_submit,
+        patch("app.handlers.messages.submit_task", side_effect=capture_submit) as mock_submit,
         patch("app.middleware.debounce.debounce_message", side_effect=_debounce_passthrough),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
@@ -256,7 +263,7 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
         patch("app.handlers.messages.asyncio.create_task") as mock_create_task,
-        patch("app.utils.background_tasks.submit_task", side_effect=capture_submit),
+        patch("app.handlers.messages.submit_task", side_effect=capture_submit),
         patch("app.handlers.messages.metrics_collector", AsyncMock()),
         # Prevent xdist cross-test contamination: dedup uses module-level dict
         # shared across tests on the same worker. Without this mock, an earlier
@@ -331,7 +338,7 @@ async def test_handle_request_photo_message():
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
         patch("app.handlers.messages.asyncio.create_task", side_effect=mock_create_task),
-        patch("app.utils.background_tasks.submit_task", side_effect=capture_submit),
+        patch("app.handlers.messages.submit_task", side_effect=capture_submit),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -433,7 +440,7 @@ async def test_handle_request_exception_handling():
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
         patch("app.handlers.messages.asyncio.create_task", side_effect=mock_create_task),
-        patch("app.utils.background_tasks.submit_task", side_effect=capture_submit),
+        patch("app.handlers.messages.submit_task", side_effect=capture_submit),
         patch("app.middleware.debounce.debounce_message", side_effect=_debounce_passthrough),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096

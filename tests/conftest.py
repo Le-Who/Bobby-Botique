@@ -4,6 +4,7 @@ Settings object for tests that import the production modules directly.
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -14,6 +15,13 @@ from dotenv import load_dotenv
 _env_path = Path(__file__).resolve().parent.parent / ".env"
 if _env_path.exists():
     load_dotenv(_env_path, override=False)
+
+os.environ.setdefault("GEMINI_API_KEYS", "dummy_key_for_tests")
+os.environ.setdefault("TAVILY_API_KEYS", "dummy_key_for_tests")
+os.environ.setdefault("ELEVENLABS_API_KEYS", "dummy_key_for_tests")
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ123456789")
+os.environ.setdefault("DATABASE_URL", "postgresql://user:pass@localhost:5432/testdb")
+
 
 
 def _quiet_exception_handler(loop, context):

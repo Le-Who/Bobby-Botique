@@ -62,7 +62,7 @@ class APILogger:
 
         Usage::
 
-            start = api_logger.log_request("gemini", model="gemini-2.5-flash", prompt_length=1200)
+            start = api_logger.log_request("gemini", model="gemini-3.5-flash", prompt_length=1200)
         """
         data: dict[str, Any] = {
             "timestamp": datetime.now().isoformat(),
@@ -88,7 +88,7 @@ class APILogger:
 
         Usage::
 
-            api_logger.log_response("gemini", start_time, model="gemini-2.5-flash",
+            api_logger.log_response("gemini", start_time, model="gemini-3.5-flash",
                                      response_length=4500, token_count=1200)
         """
         if not isinstance(start_time, (int, float)) or start_time <= 0:
@@ -134,7 +134,7 @@ class APILogger:
 
         Usage::
 
-            api_logger.log_error("gemini", exc, context={"model": "gemini-2.5-flash"})
+            api_logger.log_error("gemini", exc, context={"model": "gemini-3.5-flash"})
         """
         error_data: dict[str, Any] = {
             "timestamp": datetime.now().isoformat(),

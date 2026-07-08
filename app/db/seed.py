@@ -7,6 +7,66 @@ Extracted from app/database.py to reduce monolith size.
 import hashlib
 import logging
 
+_KEY_TABLES = frozenset({"api_keys", "tavily_api_keys", "openrouter_api_keys"})
+
+
+def _encrypted_key_rows(keys):
+    from app.crypto import encrypt_api_key
+
+    rows = []
+    seen_hashes = set()
+    for key in keys:
+        key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        if key_hash in seen_hashes:
+            continue
+        seen_hashes.add(key_hash)
+        rows.append((key_hash, encrypt_api_key(key)))
+    return rows
+
+
+async def _sync_key_table(
+    db_query,
+    db_execute_many,
+    *,
+    table_name: str,
+    keys,
+    prune_key_model_status: bool = False,
+) -> None:
+    if table_name not in _KEY_TABLES:
+        raise ValueError(f"Unsupported key table: {table_name!r}")
+
+    rows = _encrypted_key_rows(keys)
+    if not rows:
+        logging.info("No %s keys configured; leaving existing rows unchanged.", table_name)
+        return
+
+    await db_execute_many(
+        f"INSERT INTO {table_name} (key_hash, api_key) "
+        "VALUES ($1, $2) "
+        "ON CONFLICT (key_hash) DO UPDATE SET api_key = EXCLUDED.api_key",
+        rows,
+    )
+
+    expected_hashes = [key_hash for key_hash, _ in rows]
+    if prune_key_model_status:
+        await db_query(
+            f"""
+            DELETE FROM key_model_status
+            WHERE key_hash IN (
+                SELECT key_hash
+                FROM {table_name}
+                WHERE key_hash != ALL($1::text[])
+            )
+            """,
+            (expected_hashes,),
+        )
+
+    await db_query(
+        f"DELETE FROM {table_name} WHERE key_hash != ALL($1::text[])",
+        (expected_hashes,),
+    )
+    logging.info("Synced %d %s key(s) from config.", len(rows), table_name)
+
 
 async def insert_initial_data(db_query, db_execute_many, settings):
     """Insert admin user, encrypt+upsert API keys, and create indexes."""
@@ -15,30 +75,26 @@ async def insert_initial_data(db_query, db_execute_many, settings):
         (settings.ADMIN_ID,),
     )
 
-    from app.crypto import encrypt_api_key
-
-    gemini_data = [(hashlib.sha256(key.encode()).hexdigest(), encrypt_api_key(key)) for key in settings.GEMINI_API_KEYS]
-    if gemini_data:
-        await db_execute_many(
-            "INSERT INTO api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO UPDATE SET api_key = EXCLUDED.api_key",
-            gemini_data,
-        )
-
-    tavily_data = [(hashlib.sha256(key.encode()).hexdigest(), encrypt_api_key(key)) for key in settings.TAVILY_API_KEYS]
-    if tavily_data:
-        await db_execute_many(
-            "INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO UPDATE SET api_key = EXCLUDED.api_key",
-            tavily_data,
-        )
-
-    openrouter_data = [
-        (hashlib.sha256(key.encode()).hexdigest(), encrypt_api_key(key)) for key in settings.OPENROUTER_API_KEYS
-    ]
-    if openrouter_data:
-        await db_execute_many(
-            "INSERT INTO openrouter_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO UPDATE SET api_key = EXCLUDED.api_key",
-            openrouter_data,
-        )
+    await _sync_key_table(
+        db_query,
+        db_execute_many,
+        table_name="api_keys",
+        keys=settings.GEMINI_API_KEYS,
+        prune_key_model_status=True,
+    )
+    await _sync_key_table(
+        db_query,
+        db_execute_many,
+        table_name="tavily_api_keys",
+        keys=settings.TAVILY_API_KEYS,
+    )
+    await _sync_key_table(
+        db_query,
+        db_execute_many,
+        table_name="openrouter_api_keys",
+        keys=settings.OPENROUTER_API_KEYS,
+        prune_key_model_status=True,
+    )
 
     await db_query("CREATE INDEX IF NOT EXISTS idx_chats_user_id ON chats(user_id)")
     await db_query(

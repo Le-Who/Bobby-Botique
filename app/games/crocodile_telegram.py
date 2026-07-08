@@ -63,7 +63,9 @@ class CrocodileTelegramService:
                 f"<i>Израсходовано {len(game.attempts)} попыток</i>"
             )
 
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe")]])
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe")]]
+        )
 
         await bot.edit_message_text(
             inline_message_id=game.inline_message_id,
@@ -128,7 +130,9 @@ class CrocodileTelegramService:
         finally:
             _thermometer_tasks.pop(inline_message_id, None)
             if inline_message_id in _pending_thermometer_updates:
-                _thermometer_tasks[inline_message_id] = asyncio.create_task(cls._flush_thermometer_update(inline_message_id))
+                _thermometer_tasks[inline_message_id] = asyncio.create_task(
+                    cls._flush_thermometer_update(inline_message_id)
+                )
 
 
 def reset_telegram_state_for_tests() -> None:

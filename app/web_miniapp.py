@@ -15,6 +15,7 @@ import base64
 import hashlib
 import hmac
 import logging
+import os
 import re
 import time
 import typing
@@ -23,10 +24,17 @@ from datetime import UTC, datetime, timedelta
 from functools import wraps
 from typing import Any
 
-from quart import Blueprint, jsonify, request
+from quart import Blueprint, jsonify, render_template, request
+from telegram.constants import ParseMode
+from telegram.error import TelegramError
 
+from app.bot_instance import get_bot
 from app.config import GEMINI_LIVE_VOICE_NAME, settings
 from app.games import crocodile_runtime as _croc_runtime
+from app.natal.city_catalog import find_city_by_id, search_cities, search_countries
+from app.natal.models import BirthInput, ReportType, TimePrecision
+from app.natal.service import create_natal_report
+from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
@@ -43,42 +51,51 @@ rate_limit_reader = rate_limit(_reader_limiter)
 ACTIVE_LIVE_SESSIONS: set[int] = set()
 _KEY_ROTATION_INDEX: int = 0
 _LIVE_CONNECT_RETRY_AFTER_RE = re.compile(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE)
-_LIVE_MODEL_COOLDOWN_UNTIL: float = 0.0
-_LIVE_MODEL_COOLDOWN_REASON: str = ""
 _LIVE_DEFAULT_THINKING_LEVEL = "low"
 _LIVE_THINKING_CONFIG_MAP: dict[str, str] = {
     "off": "minimal",
     "low": "low",
     "medium": "medium",
 }
-_LIVE_VOICE_OPTIONS: list[dict[str, str]] = [
-    {"id": "Aoede", "name": "Aoede", "gender": "female", "description": "Нейтральный и естественный"},
-    {"id": "Kore", "name": "Kore", "gender": "female", "description": "Более энергичный и уверенный"},
-    {"id": "Leda", "name": "Leda", "gender": "female", "description": "Лёгкий и молодой"},
-    {"id": "Zephyr", "name": "Zephyr", "gender": "male", "description": "Чёткий и бодрый"},
-    {"id": "Charon", "name": "Charon", "gender": "male", "description": "Сдержанный и профессиональный"},
-    {"id": "Orus", "name": "Orus", "gender": "male", "description": "Более глубокий и авторитетный"},
-]
-_LIVE_THINKING_PRESETS: list[dict[str, str]] = [
-    {"id": "off", "label": "Быстрый", "hint": "Минимальная задержка, короткие ответы."},
-    {"id": "low", "label": "Сбалансированный", "hint": "Лучший режим по умолчанию для live-диалога."},
-    {"id": "medium", "label": "Умный", "hint": "Больше размышления, но выше задержка."},
-]
+from app.i18n import t
+
+
+def _get_live_voice_options(lang: str) -> list[dict[str, str]]:
+    return [
+        {"id": "Aoede", "name": "Aoede", "gender": "female", "description": t("miniapp.voice.aoede", lang)},
+        {"id": "Kore", "name": "Kore", "gender": "female", "description": t("miniapp.voice.kore", lang)},
+        {"id": "Leda", "name": "Leda", "gender": "female", "description": t("miniapp.voice.leda", lang)},
+        {"id": "Zephyr", "name": "Zephyr", "gender": "male", "description": t("miniapp.voice.zephyr", lang)},
+        {"id": "Charon", "name": "Charon", "gender": "male", "description": t("miniapp.voice.charon", lang)},
+        {"id": "Orus", "name": "Orus", "gender": "male", "description": t("miniapp.voice.orus", lang)},
+    ]
+
+def _get_live_thinking_presets(lang: str) -> list[dict[str, str]]:
+    return [
+        {"id": "off", "label": t("miniapp.preset.off_label", lang), "hint": t("miniapp.preset.off_hint", lang)},
+        {"id": "low", "label": t("miniapp.preset.low_label", lang), "hint": t("miniapp.preset.low_hint", lang)},
+        {"id": "medium", "label": t("miniapp.preset.medium_label", lang), "hint": t("miniapp.preset.medium_hint", lang)},
+    ]
+
+_LIVE_VOICE_IDS = {"Aoede", "Kore", "Leda", "Zephyr", "Charon", "Orus"}
+_LIVE_CONNECTION_MODE_IDS = {"standard", "vertex_internet"}
 _LIVE_DEFAULT_CONNECTION_MODE = "standard"
 _LIVE_VERTEX_CONNECTION_MODE = "vertex_internet"
 _VERTEX_LIVE_MODEL = "gemini-live-2.5-flash-native-audio"
-_LIVE_CONNECTION_MODES: list[dict[str, str]] = [
-    {
-        "id": _LIVE_DEFAULT_CONNECTION_MODE,
-        "label": "Стандартный Live",
-        "summary": "Текущий live-режим без интернет-grounding.",
-    },
-    {
-        "id": _LIVE_VERTEX_CONNECTION_MODE,
-        "label": "Vertex Live · с доступом в интернет",
-        "summary": "Экспериментальный путь с Google Search grounding. Требует полноценный Vertex regional client.",
-    },
-]
+
+def _get_live_connection_modes(lang: str) -> list[dict[str, str]]:
+    return [
+        {
+            "id": _LIVE_DEFAULT_CONNECTION_MODE,
+            "label": t("miniapp.conn.standard_label", lang),
+            "summary": t("miniapp.conn.standard_summary", lang),
+        },
+        {
+            "id": _LIVE_VERTEX_CONNECTION_MODE,
+            "label": t("miniapp.conn.vertex_label", lang),
+            "summary": t("miniapp.conn.vertex_summary", lang),
+        },
+    ]
 
 # Backward-compatible test hooks for the classic game lock fallback registry.
 _game_locks = _croc_runtime._game_locks
@@ -109,22 +126,33 @@ def _is_live_resource_exhausted(error_text: str) -> bool:
     )
 
 
-def _get_live_model_cooldown_seconds() -> int:
-    """Return remaining process-local cooldown for the Live model."""
-    return max(0, int(_LIVE_MODEL_COOLDOWN_UNTIL - time.monotonic()))
+async def _get_live_model_cooldown_seconds() -> int:
+    """Return remaining cluster-wide cooldown for the Live model."""
+    from app.cache import redis_client
+    if not redis_client:
+        return 0
+    ttl = await redis_client.ttl("live_model_cooldown")
+    return max(0, ttl)
 
 
-def _mark_live_model_cooldown(seconds: int, reason: str) -> int:
-    """Trip a short model-level breaker to stop reconnect storms."""
-    global _LIVE_MODEL_COOLDOWN_UNTIL, _LIVE_MODEL_COOLDOWN_REASON
+async def _get_live_model_cooldown_reason() -> str:
+    """Return the reason for the active model cooldown."""
+    from app.cache import redis_client
+    if not redis_client:
+        return ""
+    reason = await redis_client.get("live_model_cooldown")
+    return reason.decode("utf-8") if reason else ""
+
+
+async def _mark_live_model_cooldown(seconds: int, reason: str) -> int:
+    """Trip a short model-level breaker to stop reconnect storms across all workers."""
+    from app.cache import redis_client
+    if not redis_client:
+        return seconds
 
     cooldown_seconds = max(15, min(seconds, 300))
-    _LIVE_MODEL_COOLDOWN_UNTIL = max(
-        _LIVE_MODEL_COOLDOWN_UNTIL,
-        time.monotonic() + cooldown_seconds,
-    )
-    _LIVE_MODEL_COOLDOWN_REASON = reason[:500]
-    return _get_live_model_cooldown_seconds()
+    await redis_client.setex("live_model_cooldown", cooldown_seconds, reason[:500])
+    return cooldown_seconds
 
 
 async def _send_live_fatal(
@@ -143,9 +171,7 @@ async def _send_live_fatal(
     }
     if retry_after_seconds:
         payload["retry_after_seconds"] = retry_after_seconds
-        payload["retry_at"] = (
-            datetime.now(UTC) + timedelta(seconds=retry_after_seconds)
-        ).isoformat()
+        payload["retry_at"] = (datetime.now(UTC) + timedelta(seconds=retry_after_seconds)).isoformat()
     try:
         await websocket.send_json(payload)
     except Exception:
@@ -153,7 +179,7 @@ async def _send_live_fatal(
 
 
 def _default_model_name() -> str:
-    return settings.DEFAULT_MODEL if settings else "gemini-3.1-flash-lite-preview"
+    return settings.DEFAULT_MODEL if settings else "gemini-3.1-flash-lite"
 
 
 def _default_chat_state():
@@ -174,7 +200,7 @@ def _default_live_voice_name() -> str:
 
 def _resolve_live_voice_name(chat_state) -> str:
     voice_name = getattr(chat_state, "live_voice_name", None) if chat_state else None
-    valid_voice_ids = {voice["id"] for voice in _LIVE_VOICE_OPTIONS}
+    valid_voice_ids = _LIVE_VOICE_IDS
     if isinstance(voice_name, str) and voice_name in valid_voice_ids:
         return voice_name
     return _default_live_voice_name()
@@ -189,7 +215,7 @@ def _resolve_live_thinking_level(chat_state) -> str:
 
 def _resolve_live_connection_mode(chat_state) -> str:
     mode = getattr(chat_state, "live_connection_mode", None) if chat_state else None
-    valid_mode_ids = {mode_item["id"] for mode_item in _LIVE_CONNECTION_MODES}
+    valid_mode_ids = _LIVE_CONNECTION_MODE_IDS
     if isinstance(mode, str) and mode in valid_mode_ids:
         return mode
     return _LIVE_DEFAULT_CONNECTION_MODE
@@ -359,9 +385,319 @@ def require_webapp_auth(f: typing.Callable) -> typing.Callable:
 @miniapp_blueprint.route("/")
 async def miniapp_page():
     """Serve the Mini App HTML shell."""
-    from quart import render_template
 
     return await render_template("miniapp.html")
+
+
+# ── Natal Form Mini App ─────────────────────────────────────────────────────
+
+_NATAL_FORM_COUNTRIES: tuple[tuple[str, str], ...] = (
+    ("UA", "Украина"),
+    ("RU", "Россия"),
+    ("BY", "Беларусь"),
+)
+_NATAL_FORM_CITY_QUERIES: dict[str, tuple[str, ...]] = {
+    "UA": ("Киев", "Львов", "Харьков"),
+    "RU": ("Москва", "Санкт-Петербург", "Новосибирск"),
+    "BY": ("Минск", "Гомель", "Витебск"),
+}
+_NATAL_FORM_FOCUS_LABELS: dict[str, str] = {
+    "general": "Общий",
+    "relationships": "Отношения",
+    "career": "Карьера",
+    "psychology": "Психология",
+    "brief": "Кратко",
+}
+_NATAL_FORM_REPORT_TYPES: tuple[dict[str, Any], ...] = (
+    {
+        "id": ReportType.COMBINED.value,
+        "label": "Натал + матрица",
+        "badge": "Рекомендуем",
+        "summary": "Лучший выбор для первого разбора",
+        "detail": "Астрологическая карта, архетипы матрицы и общий смысловой вывод в одном отчёте.",
+    },
+    {
+        "id": ReportType.NATAL.value,
+        "label": "Только натал",
+        "badge": "",
+        "summary": "Максимум астрологических деталей",
+        "detail": "Планеты, аспекты, дома, Асцендент и MC, если время рождения известно.",
+    },
+    {
+        "id": ReportType.DESTINY_MATRIX.value,
+        "label": "Только матрица",
+        "badge": "",
+        "summary": "Быстрый архетипический слой по дате",
+        "detail": "Матрице достаточно даты: без времени, города и лишних вопросов.",
+    },
+)
+
+
+@miniapp_blueprint.route("/natal-form")
+async def natal_form_page():
+    """Serve the natal questionnaire Mini App."""
+    return await render_template(
+        "natal_form.html",
+        natal_form_options=_natal_form_options(),
+    )
+
+
+@miniapp_blueprint.route("/api/natal/submit", methods=["POST"])
+@require_webapp_auth
+async def api_natal_submit(user_id: int):
+    """Build a natal report from Mini App form data and deliver it to the user chat."""
+    bot = get_bot()
+    if bot is None:
+        return jsonify({"error": "bot_not_ready"}), 503
+
+    body = await request.get_json(silent=True) or {}
+    try:
+        birth_input = _birth_input_from_natal_payload(body)
+    except ValueError as exc:
+        return jsonify({"error": "invalid_birth_input", "detail": str(exc)}), 400
+
+    webhook_url = _public_webapp_base_url()
+    if not webhook_url:
+        return jsonify({"error": "server_misconfiguration", "detail": "WEBAPP_BASE_URL or WEBHOOK_URL is required."}), 500
+
+    submit_task(_build_and_send_natal_report(bot, user_id, birth_input, webhook_url))
+    return jsonify({"ok": True, "status": "accepted"})
+
+
+async def _build_and_send_natal_report(bot: Any, user_id: int, birth_input: BirthInput, webhook_url: str) -> None:
+    try:
+        report = await create_natal_report(
+            birth_input=birth_input,
+            user_id=user_id,
+            chat_id=user_id,
+            webhook_url=webhook_url,
+        )
+        await _send_natal_report_to_private_chat(bot, user_id, report, birth_input)
+    except Exception as exc:
+        logger.error("Mini App natal background task failed user=%s: %s", user_id, exc, exc_info=True)
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "Не удалось построить натальную карту по отправленной анкете. "
+                    "Попробуйте открыть анкету и отправить данные ещё раз."
+                ),
+            )
+        except TelegramError as notify_error:
+            logger.warning("Failed to notify user %s about natal report failure: %s", user_id, notify_error)
+
+
+def _natal_form_options() -> dict[str, Any]:
+    return {
+        "report_types": list(_NATAL_FORM_REPORT_TYPES),
+        "countries": [{"code": code, "label": label} for code, label in _NATAL_FORM_COUNTRIES],
+        "cities": {
+            code: [
+                {
+                    "id": city.geoname_id,
+                    "label": query,
+                    "display": city.display_name,
+                }
+                for query in city_queries
+                for city in search_cities(query, limit=1, country_code=code)
+            ]
+            for code, city_queries in _NATAL_FORM_CITY_QUERIES.items()
+        },
+        "focuses": [{"id": key, "label": label} for key, label in _NATAL_FORM_FOCUS_LABELS.items()],
+    }
+
+
+def _birth_input_from_natal_payload(payload: dict[str, Any]) -> BirthInput:
+    if not isinstance(payload, dict):
+        raise ValueError("Некорректный формат формы.")
+
+    birth_date = _required_str(payload, "birth_date")
+    _validate_iso_date(birth_date)
+    report_type = _parse_report_type(str(payload.get("report_type") or ReportType.NATAL.value))
+    focus = str(payload.get("focus") or "general").strip() or "general"
+    if focus not in _NATAL_FORM_FOCUS_LABELS:
+        focus = "general"
+    if report_type == ReportType.DESTINY_MATRIX:
+        return BirthInput(
+            birth_date=birth_date,
+            time_precision=TimePrecision.UNKNOWN,
+            birth_place="",
+            focus=focus,
+            language="ru",
+            report_type=report_type,
+        )
+
+    precision = _parse_time_precision(_required_str(payload, "time_precision"))
+    country_code = _resolve_country_code(payload)
+    city = _resolve_natal_city(payload, country_code)
+
+    time_kwargs: dict[str, str | None] = {
+        "birth_time": None,
+        "birth_time_range_start": None,
+        "birth_time_range_end": None,
+    }
+    if precision in {TimePrecision.EXACT, TimePrecision.APPROXIMATE}:
+        time_kwargs["birth_time"] = _validate_time_value(_required_str(payload, "birth_time"))
+    elif precision == TimePrecision.RANGE:
+        start = _validate_time_value(_required_str(payload, "birth_time_range_start"))
+        end = _validate_time_value(_required_str(payload, "birth_time_range_end"))
+        if _time_to_minutes(end) <= _time_to_minutes(start):
+            raise ValueError("Диапазон времени должен заканчиваться позже начала.")
+        time_kwargs["birth_time_range_start"] = start
+        time_kwargs["birth_time_range_end"] = end
+
+    return BirthInput(
+        birth_date=birth_date,
+        time_precision=precision,
+        birth_place=city.display_name,
+        birth_place_country_code=city.country_code,
+        birth_place_geoname_id=city.geoname_id,
+        birth_place_latitude=city.latitude,
+        birth_place_longitude=city.longitude,
+        birth_place_timezone=city.timezone,
+        birth_place_display_name=city.display_name,
+        focus=focus,
+        language="ru",
+        report_type=report_type,
+        **time_kwargs,
+    )
+
+
+def _required_str(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Поле обязательно: {key}.")
+    return value.strip()
+
+
+def _validate_iso_date(value: str) -> None:
+    from datetime import date
+
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("Дата рождения должна быть в формате YYYY-MM-DD.") from exc
+
+
+def _parse_time_precision(value: str) -> TimePrecision:
+    try:
+        return TimePrecision(value)
+    except ValueError as exc:
+        raise ValueError("Выберите точность времени рождения.") from exc
+
+
+def _parse_report_type(value: str) -> ReportType:
+    try:
+        return ReportType(value)
+    except ValueError as exc:
+        raise ValueError("Выберите тип разбора.") from exc
+
+
+def _resolve_country_code(payload: dict[str, Any]) -> str:
+    raw_code = str(payload.get("country_code") or "").strip().upper()
+    if raw_code:
+        matches = search_countries(raw_code, limit=1)
+        if matches and matches[0].code == raw_code:
+            return raw_code
+    country_name = str(payload.get("country") or "").strip()
+    if country_name:
+        matches = search_countries(country_name, limit=1)
+        if matches:
+            return matches[0].code
+    raise ValueError("Страна рождения не найдена.")
+
+
+def _resolve_natal_city(payload: dict[str, Any], country_code: str):
+    city_id = str(payload.get("city_geoname_id") or "").strip()
+    if city_id:
+        city = find_city_by_id(city_id)
+        if city is None or city.country_code != country_code:
+            raise ValueError("Город не найден в выбранной стране.")
+        return city
+    city_query = str(payload.get("birth_place") or payload.get("city") or "").strip()
+    if not city_query:
+        raise ValueError("Поле обязательно: город рождения.")
+    matches = search_cities(city_query, limit=1, country_code=country_code)
+    if not matches:
+        raise ValueError("Город не найден в выбранной стране.")
+    return matches[0]
+
+
+def _validate_time_value(value: str) -> str:
+    parts = value.split(":", 1)
+    if len(parts) != 2:
+        raise ValueError("Время должно быть в формате HH:MM.")
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except ValueError as exc:
+        raise ValueError("Время должно быть в формате HH:MM.") from exc
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise ValueError("Время должно быть в пределах 00:00-23:59.")
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _time_to_minutes(value: str) -> int:
+    hour, minute = value.split(":", 1)
+    return int(hour) * 60 + int(minute)
+
+
+def _public_webapp_base_url() -> str:
+    base = getattr(settings, "WEBAPP_BASE_URL", "").strip().rstrip("/")
+    if base:
+        return base
+    webhook_url = os.environ.get("WEBHOOK_URL", "").strip()
+    return webhook_url.split("/webhook", 1)[0].rstrip("/")
+
+
+async def get_natal_cover_photo():
+    from app.handlers.natal_chart import _get_natal_cover_photo
+
+    return await _get_natal_cover_photo()
+
+
+async def remember_natal_cover_file_id(message: Any) -> None:
+    from app.handlers.natal_chart import _remember_natal_cover_file_id
+
+    await _remember_natal_cover_file_id(message)
+
+
+def natal_result_caption(report, birth_input: BirthInput) -> str:
+    from app.handlers.natal_chart import _result_caption
+
+    return _result_caption(report, birth_input)
+
+
+def natal_result_keyboard(report):
+    from app.handlers.natal_chart import _result_keyboard
+
+    return _result_keyboard(report)
+
+
+async def _send_natal_report_to_private_chat(bot, user_id: int, report, birth_input: BirthInput) -> None:
+    caption = natal_result_caption(report, birth_input)
+    keyboard = natal_result_keyboard(report)
+    cover = await get_natal_cover_photo()
+    if cover is not None:
+        try:
+            message = await bot.send_photo(
+                chat_id=user_id,
+                photo=cover,
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+            await remember_natal_cover_file_id(message)
+            return
+        except (OSError, TelegramError) as exc:
+            logger.warning("Mini App natal cover send failed user=%s: %s", user_id, exc)
+    await bot.send_message(
+        chat_id=user_id,
+        text=caption,
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard,
+        disable_web_page_preview=True,
+    )
 
 
 # ── Memory API ───────────────────────────────────────────────────────────────
@@ -443,7 +779,8 @@ async def api_get_settings(user_id: int):
         gemini_models = list(settings.AVAILABLE_MODELS or [])
         openrouter_models = list(settings.OPENROUTER_AVAILABLE_MODELS or [])
         opencode_models = list(settings.OPENCODE_AVAILABLE_MODELS or [])
-        all_models = gemini_models + openrouter_models + opencode_models
+        freetheai_models = list(settings.FREETHEAI_AVAILABLE_MODELS or [])
+        all_models = gemini_models + openrouter_models + opencode_models + freetheai_models
 
         # Build grouped structure for the frontend picker
         grouped_models = []
@@ -451,6 +788,8 @@ async def api_get_settings(user_id: int):
             grouped_models.append({"provider": "Google Gemini", "icon": "🤖", "models": gemini_models})
         if opencode_models:
             grouped_models.append({"provider": "Opencode Go", "icon": "⚡", "models": opencode_models})
+        if freetheai_models:
+            grouped_models.append({"provider": "FreeTheAI", "icon": "🦅", "models": freetheai_models})
         if openrouter_models:
             grouped_models.append({"provider": "OpenRouter", "icon": "🌐", "models": openrouter_models})
 
@@ -500,14 +839,11 @@ async def api_update_settings(user_id: int):
                 chat_state.system_prompt = prompt.strip() or None
                 changed = True
 
-        # Model — validate against all three providers
+        # Model — validate against all providers (single source of truth)
         if "model" in body:
             model = body["model"]
-            all_models = (
-                list(settings.AVAILABLE_MODELS or [])
-                + list(settings.OPENROUTER_AVAILABLE_MODELS or [])
-                + list(settings.OPENCODE_AVAILABLE_MODELS or [])
-            )
+            from app.config import get_all_available_models
+            all_models = get_all_available_models()
             if model in all_models:
                 chat_state.model = model
                 changed = True
@@ -620,31 +956,78 @@ async def api_delete_role(user_id: int, role_id: int):
         return jsonify({"error": "internal_error"}), 500
 
 
+_voices_cache: list[dict] | None = None
+_voices_cache_ts: float = 0.0
+_VOICES_CACHE_TTL: float = 300.0
+
+
 @miniapp_blueprint.route("/api/voices", methods=["GET"])
 @require_webapp_auth
 async def api_get_voices(user_id: int):
     """Provide a list of curated voices depending on available provider."""
+    import time
+
     from app.config import settings
 
+    lang = "ru"
+
     if settings.ELEVENLABS_API_KEYS:
+        global _voices_cache, _voices_cache_ts
+        now = time.time()
+
+        # Check cache
+        if _voices_cache is not None and (now - _voices_cache_ts < _VOICES_CACHE_TTL):
+            return jsonify({"voices": _voices_cache})
+
+        from app.providers.elevenlabs_tts import fetch_voices
+
+        # Use first key for checking available voices (readonly query)
+        api_key = settings.ELEVENLABS_API_KEYS[0]
+        dynamic_voices = await fetch_voices(api_key)
+
+        if dynamic_voices:
+            # Map into the structure expected by the Mini App
+            voices = []
+            for v in dynamic_voices:
+                name = v["name"]
+                # Append accent label or similar if present in labels for clarity
+                accent = v.get("labels", {}).get("accent")
+                if accent:
+                    name = f"{name} ({accent.title()})"
+                voices.append({
+                    "id": v["id"],
+                    "name": name
+                })
+            _voices_cache = voices
+            _voices_cache_ts = now
+            return jsonify({"voices": voices})
+
+        # Fallback to static ElevenLabs list on API failure
+        logger.warning("ElevenLabs voices API failed or returned empty. Falling back to static curated list.")
+        # Clear cache so next request tries again
+        _voices_cache = None
+        _voices_cache_ts = 0.0
+
         voices = [
-            {"id": "XB0fDUnXU5powFXDhCwa", "name": "Charlotte (Conversational)"},
-            {"id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel (Calm)"},
-            {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam (Deep)"},
-            {"id": "ErXwobaYiN019PkySvjV", "name": "Antoni (Friendly)"},
-            {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella (Soft)"},
-            {"id": "t0jbNlBVZ17f02VDIeMI", "name": "Jessie (Energetic)"},
+            {"id": "XB0fDUnXU5powFXDhCwa", "name": f"Charlotte ({t('miniapp.voice_tag.conversational', lang)})"},
+            {"id": "21m00Tcm4TlvDq8ikWAM", "name": f"Rachel ({t('miniapp.voice_tag.calm', lang)})"},
+            {"id": "pNInz6obpgDQGcFmaJgB", "name": f"Adam ({t('miniapp.voice_tag.deep', lang)})"},
+            {"id": "ErXwobaYiN019PkySvjV", "name": f"Antoni ({t('miniapp.voice_tag.friendly', lang)})"},
+            {"id": "nPczCjzI2devNBz1zQrb", "name": f"Brian ({t('miniapp.voice_tag.professional', lang)})"},
+            {"id": "TX3LPaxmHKxFdv7VOQHJ", "name": f"Liam ({t('miniapp.voice_tag.energetic', lang)})"},
+            {"id": "EXAVITQu4vr4xnSDxMaL", "name": f"Bella ({t('miniapp.voice_tag.soft', lang)})"},
         ]
     else:
+        # Gemini static voices
         voices = [
-            {"id": "Aoede", "name": "Aoede (Natural/Breezy)"},
-            {"id": "Kore", "name": "Kore (Confident/Energetic)"},
-            {"id": "Puck", "name": "Puck (Upbeat Male)"},
-            {"id": "Charon", "name": "Charon (Professional)"},
-            {"id": "Leda", "name": "Leda (Light/Youthful)"},
-            {"id": "Orus", "name": "Orus (Deep/Authoritative)"},
-            {"id": "Zephyr", "name": "Zephyr (Clear/Cheerful)"},
-            {"id": "Rasalgethi", "name": "Rasalgethi (Informative)"},
+            {"id": "Aoede", "name": f"Aoede ({t('miniapp.voice_tag.natural_breezy', lang)})"},
+            {"id": "Kore", "name": f"Kore ({t('miniapp.voice_tag.confident_energetic', lang)})"},
+            {"id": "Puck", "name": f"Puck ({t('miniapp.voice_tag.upbeat_male', lang)})"},
+            {"id": "Charon", "name": f"Charon ({t('miniapp.voice_tag.professional', lang)})"},
+            {"id": "Leda", "name": f"Leda ({t('miniapp.voice_tag.light_youthful', lang)})"},
+            {"id": "Orus", "name": f"Orus ({t('miniapp.voice_tag.deep_authoritative', lang)})"},
+            {"id": "Zephyr", "name": f"Zephyr ({t('miniapp.voice_tag.clear_cheerful', lang)})"},
+            {"id": "Rasalgethi", "name": f"Rasalgethi ({t('miniapp.voice_tag.informative', lang)})"},
         ]
     return jsonify({"voices": voices})
 
@@ -657,13 +1040,14 @@ async def api_get_live_settings(user_id: int):
         from app.repos.chats import get_user_chat
 
         chat_state = await get_user_chat(user_id)
+        lang = "ru"
         return jsonify(
             {
                 "live_settings": _serialize_live_settings(chat_state),
-                "connection_modes": _LIVE_CONNECTION_MODES,
-                "voices": _LIVE_VOICE_OPTIONS,
-                "thinking_presets": _LIVE_THINKING_PRESETS,
-                "reconnect_note": "Изменения применяются через короткое переподключение live-сессии.",
+                "connection_modes": _get_live_connection_modes(lang),
+                "voices": _get_live_voice_options(lang),
+                "thinking_presets": _get_live_thinking_presets(lang),
+                "reconnect_note": t("miniapp.reconnect_note", lang),
             }
         )
     except Exception as e:
@@ -684,7 +1068,7 @@ async def api_update_live_settings(user_id: int):
 
         if "live_voice_name" in body:
             voice_name = body["live_voice_name"]
-            valid_voice_ids = {voice["id"] for voice in _LIVE_VOICE_OPTIONS}
+            valid_voice_ids = _LIVE_VOICE_IDS
             if voice_name in valid_voice_ids:
                 chat_state.live_voice_name = voice_name
                 changed = True
@@ -697,7 +1081,7 @@ async def api_update_live_settings(user_id: int):
 
         if "live_connection_mode" in body:
             connection_mode = body["live_connection_mode"]
-            valid_mode_ids = {mode["id"] for mode in _LIVE_CONNECTION_MODES}
+            valid_mode_ids = _LIVE_CONNECTION_MODE_IDS
             if connection_mode in valid_mode_ids:
                 chat_state.live_connection_mode = connection_mode
                 changed = True
@@ -970,7 +1354,31 @@ async def game_page():
 
     game_id = _req.args.get("game_id") or _req.args.get("tgWebAppStartParam") or _req.args.get("id") or ""
     mode = _req.args.get("mode") or ("daily" if game_id == "daily" else "classic")
+    if game_id in {"daily2048", "2048"} or mode in {"daily2048", "2048"}:
+        return await render_template("daily_2048.html")
     return await render_template("crocodile.html", game_id=game_id, mode=mode)
+
+
+@miniapp_blueprint.route("/daily2048")
+async def daily2048_page():
+    """Serve the Daily 2048 Sprint Mini App HTML shell."""
+    from quart import render_template
+
+    return await render_template("daily_2048.html")
+
+
+@miniapp_blueprint.route("/admin_dailycroc")
+async def webapp_admin_dailycroc_page():
+    """Legacy redirect -> /admin_daily#croc."""
+    from quart import redirect
+    return redirect("/admin_daily#croc", code=301)
+
+
+@miniapp_blueprint.route("/admin_daily2048")
+async def webapp_admin_daily2048_page():
+    """Legacy redirect -> /admin_daily#2048."""
+    from quart import redirect
+    return redirect("/admin_daily#2048", code=301)
 
 
 def _build_daily_word_mask(word: str) -> str:
@@ -978,6 +1386,255 @@ def _build_daily_word_mask(word: str) -> str:
     if not letters:
         return ""
     return " ".join("_" for _ in letters)
+
+
+@miniapp_blueprint.websocket("/daily2048/ws")
+async def daily2048_ws():
+    """WebSocket endpoint for Daily 2048 Sprint."""
+    from quart import websocket
+
+    from app.games.crocodile_runtime import (
+        cache_pending_action_result,
+        game_mutation_lock,
+        get_cached_pending_action_result,
+        stamp_runtime_payload,
+    )
+    from app.games.daily_2048 import get_daily_state, goal_payload, process_move, process_practice_move
+    from app.games.daily_2048_telegram import render_completion_event, send_daily2048_result_message
+    from app.repos import daily_2048 as daily2048_repo
+    from app.repos.crocodile_daily import update_timezone_if_known, update_user_display_name
+
+    raw_init_data = websocket.args.get("initData", "")
+    if not raw_init_data:
+        await websocket.close(4003, "initData required")
+        return
+
+    bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+    validated = _validate_init_data(raw_init_data, bot_token) if bot_token else None
+    if validated is None:
+        await websocket.close(4003, "Unauthorized")
+        return
+
+    user_id = _extract_user_id(validated)
+    if not user_id:
+        await websocket.close(4003, "No user in initData")
+        return
+
+    timezone = websocket.args.get("tz", "")
+    if timezone:
+        try:
+            await update_timezone_if_known(user_id, timezone)
+        except Exception as exc:
+            logger.debug("daily2048_ws: timezone update failed user=%s: %s", user_id, exc)
+
+    try:
+        tg_user = validated.get("user") or {}
+        first = str(tg_user.get("first_name") or "").strip()
+        last = str(tg_user.get("last_name") or "").strip()
+        display_name = f"{first} {last}".strip() if last else first
+        if display_name:
+            await update_user_display_name(user_id, display_name)
+    except Exception as exc:
+        logger.debug("daily2048_ws: display_name update failed user=%s: %s", user_id, exc)
+
+    puzzle, result = await get_daily_state(user_id)
+    runtime_id = f"daily2048:{puzzle.puzzle_date}:{user_id}"
+    practice_result = result if result.status in {"won", "lost"} else None
+    result_message_sent = result.status == "won"
+
+    async def _completion_payload() -> dict[str, Any]:
+        try:
+            return await render_completion_event(user_id, puzzle.puzzle_date)
+        except Exception as exc:
+            logger.warning("daily2048_ws: completion payload failed user=%s: %s", user_id, exc)
+            return {
+                "rank": None,
+                "leaderboard": [],
+                "puzzle_date": puzzle.puzzle_date.isoformat(),
+                "goal": goal_payload(puzzle),
+            }
+
+    def _result_from_event(
+        event: dict[str, Any],
+        fallback: daily2048_repo.Daily2048Result,
+        *,
+        status: str = "practice",
+    ) -> daily2048_repo.Daily2048Result:
+        finished_at = fallback.finished_at or datetime.now(tz=UTC)
+        
+        def _get_int(key: str, default: int) -> int:
+            val = event.get(key)
+            return int(val) if val is not None else default
+
+        return daily2048_repo.Daily2048Result(
+            user_id=user_id,
+            puzzle_date=puzzle.puzzle_date,
+            status=status,
+            board=event.get("board") or fallback.board,
+            spawn_index=_get_int("spawn_index", fallback.spawn_index),
+            moves=_get_int("moves", fallback.moves),
+            merge_score=_get_int("merge_score", fallback.merge_score),
+            final_score=_get_int("final_score", fallback.final_score),
+            elapsed_ms=_get_int("elapsed_ms", fallback.elapsed_ms),
+            started_at=fallback.started_at,
+            won_at=fallback.won_at or finished_at,
+            finished_at=finished_at,
+            recordable=False,
+        )
+
+    def _client_elapsed_ms(payload: dict[str, Any]) -> int | None:
+        try:
+            val = payload.get("client_elapsed_ms")
+            if val is None:
+                return None
+            value = int(val)
+        except (TypeError, ValueError):
+            return None
+        return max(0, min(value, 24 * 60 * 60 * 1000))
+
+    await websocket.send_json(
+        await stamp_runtime_payload(
+            runtime_id,
+            {
+                "event": "game_state",
+                "daily2048": True,
+                "puzzle_date": puzzle.puzzle_date.isoformat(),
+                "board": result.board,
+                "start_board": puzzle.board,
+                "goal": goal_payload(puzzle),
+                "moves": result.moves,
+                "merge_score": result.merge_score,
+                "elapsed_ms": result.elapsed_ms,
+                "final_score": result.final_score,
+                "status": result.status,
+                "recordable": result.status == "active" and result.recordable,
+                "can_practice": result.status in {"won", "lost"},
+                "par_moves": puzzle.par_moves,
+                "target_seconds": puzzle.target_seconds,
+            },
+        )
+    )
+    if result.status == "won":
+        completion = await _completion_payload()
+        await websocket.send_json(
+            await stamp_runtime_payload(
+                runtime_id,
+                {
+                    "event": "daily2048_completed",
+                    "board": result.board,
+                    "start_board": puzzle.board,
+                    "moves": result.moves,
+                    "merge_score": result.merge_score,
+                    "elapsed_ms": result.elapsed_ms,
+                    "final_score": result.final_score,
+                    "recordable": True,
+                    **completion,
+                },
+            )
+        )
+
+    try:
+        while True:
+            try:
+                raw = await asyncio.wait_for(websocket.receive(), timeout=300.0)
+            except TimeoutError:
+                await websocket.close(1000, "Idle timeout")
+                break
+
+            try:
+                msg = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                await websocket.send_json({"event": "error", "message": "Invalid JSON"})
+                continue
+
+            msg_type = msg.get("type")
+            client_elapsed_ms = _client_elapsed_ms(msg)
+
+            if msg_type == "sync_elapsed":
+                if practice_result is None and client_elapsed_ms is not None:
+                    try:
+                        async with game_mutation_lock(f"daily2048:{puzzle.puzzle_date}:{user_id}:timer"):
+                            synced_result = await daily2048_repo.update_result_elapsed(
+                                user_id=user_id,
+                                puzzle_date=puzzle.puzzle_date,
+                                elapsed_ms=client_elapsed_ms,
+                            )
+                            if synced_result is not None:
+                                result = synced_result
+                                await websocket.send_json(
+                                    await stamp_runtime_payload(
+                                        runtime_id,
+                                        {"event": "timer_sync", "elapsed_ms": result.elapsed_ms},
+                                    )
+                                )
+                    except Exception as exc:
+                        logger.debug("daily2048_ws: elapsed sync failed user=%s: %s", user_id, exc)
+                continue
+
+            if msg_type != "move":
+                continue
+            direction = str(msg.get("direction") or "")
+            pending_id = str(msg.get("pending_id") or "")
+            if pending_id:
+                cached_event = await get_cached_pending_action_result(runtime_id, pending_id)
+                if cached_event is not None:
+                    await websocket.send_json(cached_event)
+                    continue
+
+            try:
+                async with game_mutation_lock(f"daily2048:{puzzle.puzzle_date}:{user_id}"):
+                    if practice_result is not None:
+                        event = await process_practice_move(practice_result, puzzle, direction)
+                    else:
+                        event = await process_move(
+                            user_id,
+                            direction,
+                            client_elapsed_ms=client_elapsed_ms,
+                            client_board_before=msg.get("client_board_before"),
+                            client_board_after=msg.get("client_board_after"),
+                        )
+            except TimeoutError:
+                await websocket.send_json(
+                    await stamp_runtime_payload(
+                        runtime_id,
+                        {"event": "error", "message": "Сервер загружен, попробуйте через секунду."},
+                    )
+                )
+                continue
+            except ValueError:
+                await websocket.send_json(
+                    await stamp_runtime_payload(runtime_id, {"event": "error", "message": "Unknown direction"})
+                )
+                continue
+
+            if event.get("daily2048_completed"):
+                completion = await _completion_payload()
+                event = {**event, **completion}
+                practice_result = _result_from_event(event, result, status="won")
+            elif event.get("game_over") and event.get("status") == "lost":
+                event = {**event, "start_board": puzzle.board}
+                practice_result = _result_from_event(event, result, status="lost")
+            elif practice_result is not None and event.get("event") == "move_result":
+                practice_result = _result_from_event(event, practice_result)
+
+            event = await stamp_runtime_payload(runtime_id, event)
+            if pending_id:
+                event["pending_id"] = pending_id
+                await cache_pending_action_result(runtime_id, pending_id, event)
+            await websocket.send_json(event)
+
+            if event.get("daily2048_completed") and not result_message_sent:
+                try:
+                    from app.bot_instance import get_bot
+
+                    bot = get_bot()
+                    if bot:
+                        await send_daily2048_result_message(bot, user_id, puzzle.puzzle_date)
+                    result_message_sent = True
+                except Exception as exc:
+                    logger.warning("daily2048_ws: result message failed user=%s: %s", user_id, exc)
+    except Exception as exc:
+        logger.warning("daily2048_ws: unexpected error user=%s: %s", user_id, exc)
 
 
 @miniapp_blueprint.websocket("/game/daily/ws")
@@ -1193,10 +1850,13 @@ async def daily_game_ws():
             except TimeoutError:
                 logger.warning("daily_game_ws: mutation lock timeout user=%s", user_id)
                 await websocket.send_json(
-                    await stamp_runtime_payload(runtime_id, {
-                        "event": "error",
-                        "message": "Сервер загружен, попробуйте через секунду.",
-                    })
+                    await stamp_runtime_payload(
+                        runtime_id,
+                        {
+                            "event": "error",
+                            "message": "Сервер загружен, попробуйте через секунду.",
+                        },
+                    )
                 )
                 continue
 
@@ -1241,7 +1901,6 @@ async def game_ws():
                {"event": "result", "status": ..., "hint": ..., ...}
                {"event": "game_over", "word": ..., ...}
     """
-    import asyncio
     import uuid
 
     from quart import websocket
@@ -1536,10 +2195,13 @@ async def game_ws():
             except TimeoutError:
                 logger.warning("game_ws: mutation lock timeout game=%s", game_id)
                 await websocket.send_json(
-                    await stamp_runtime_payload(game_id, {
-                        "event": "error",
-                        "message": "Сервер загружен, попробуйте через секунду.",
-                    })
+                    await stamp_runtime_payload(
+                        game_id,
+                        {
+                            "event": "error",
+                            "message": "Сервер загружен, попробуйте через секунду.",
+                        },
+                    )
                 )
                 continue
 
@@ -1633,15 +2295,27 @@ async def _open_authenticated_live_socket(route_mode: str) -> None:
         await websocket.close(4003, "No user in initData")
         return
 
-    if user_id in ACTIVE_LIVE_SESSIONS:
+    from app.cache import redis_client
+
+    has_active_session = False
+    if redis_client:
+        # Atomically check and set the active session flag (15-min TTL safety net)
+        has_active_session = not await redis_client.set(
+            f"live_session:{user_id}",
+            "1",
+            nx=True,
+            ex=900,
+        )
+
+    if has_active_session:
         await websocket.close(4009, "User already has an active session")
         return
 
-    ACTIVE_LIVE_SESSIONS.add(user_id)
     try:
         await _handle_live_session(websocket, user_id, validated, resumption_token, transport_mode=route_mode)
     finally:
-        ACTIVE_LIVE_SESSIONS.discard(user_id)
+        if redis_client:
+            await redis_client.delete(f"live_session:{user_id}")
 
 
 @miniapp_blueprint.websocket("/live/ws")
@@ -1749,9 +2423,15 @@ async def _resolve_live_transport(
 
     client = get_live_api_client()
     if client is None:
-        return None, GEMINI_LIVE_MODEL, None, "misconfigured", "Голосовой режим временно недоступен: API ключи Gemini не настроены."
+        return (
+            None,
+            GEMINI_LIVE_MODEL,
+            None,
+            "misconfigured",
+            "Голосовой режим временно недоступен: API ключи Gemini не настроены.",
+        )
 
-    cooldown_seconds = _get_live_model_cooldown_seconds()
+    cooldown_seconds = await _get_live_model_cooldown_seconds()
     if cooldown_seconds > 0:
         return None, GEMINI_LIVE_MODEL, None, "server_capacity", str(cooldown_seconds)
 
@@ -1824,7 +2504,7 @@ async def _handle_live_session(
                 user_id,
                 model_name,
                 cooldown_seconds,
-                _LIVE_MODEL_COOLDOWN_REASON[:160],
+                (await _get_live_model_cooldown_reason())[:160],
             )
             await _send_live_fatal(
                 websocket,
@@ -2060,7 +2740,7 @@ async def _handle_live_session(
         if _is_live_resource_exhausted(err_str):
             retry_after_seconds = _extract_live_retry_after_seconds(err_str) or 60
             if transport_mode == _LIVE_DEFAULT_CONNECTION_MODE:
-                retry_after_seconds = _mark_live_model_cooldown(retry_after_seconds, err_str)
+                retry_after_seconds = await _mark_live_model_cooldown(retry_after_seconds, err_str)
             capacity_message = (
                 "Экспериментальный internet-live временно недоступен. "
                 "Попробуйте ещё раз чуть позже или продолжите в стандартном режиме."
@@ -2096,170 +2776,3 @@ async def _handle_live_session(
                 pass
 
     logger.info("live_audio_ws: disconnected user=%d mode=%s", user_id, transport_mode)
-
-
-# ── Admin Daily Crocodile Dashboard ─────────────────────────────────────────
-
-@miniapp_blueprint.route("/admin_dailycroc")
-async def admin_dailycroc_page():
-    """Serve the Daily Crocodile TWA Admin Dashboard."""
-    from quart import render_template
-
-    return await render_template("admin_dailycroc.html")
-
-
-@miniapp_blueprint.route("/api/admin/dailycroc", methods=["GET"])
-@require_webapp_auth
-async def api_admin_dailycroc_list(user_id: int):
-    """List 14 upcoming/current daily puzzles via the API."""
-    from app.config import settings
-
-    if user_id != settings.ADMIN_ID:
-        return jsonify({"error": "forbidden"}), 403
-
-    from datetime import timedelta
-
-    from app.repos.crocodile_daily import get_puzzle, today_puzzle_date
-
-    today = today_puzzle_date(datetime.now(tz=UTC))
-    dates = [today + timedelta(days=i - 1) for i in range(14)]  # Yesterday + next 13 days
-
-    puzzles = []
-    for dt in dates:
-        for diff in ("easy", "hard"):
-            puzzle = await get_puzzle(dt, difficulty=diff)
-            if puzzle:
-                puzzles.append({
-                    "date": dt.isoformat(),
-                    "difficulty": diff,
-                    "target_word": puzzle.target_word,
-                    "topic": puzzle.topic,
-                    "image_file_id": puzzle.image_file_id,
-                })
-            else:
-                puzzles.append({
-                    "date": dt.isoformat(),
-                    "difficulty": diff,
-                    "target_word": None,
-                    "topic": None,
-                    "image_file_id": None,
-                })
-    return jsonify({"puzzles": puzzles})
-
-
-@miniapp_blueprint.route("/api/admin/dailycroc/regenerate", methods=["POST"])
-@require_webapp_auth
-async def api_admin_dailycroc_regen(user_id: int):
-    """Force an image regeneration for a specific puzzle date and difficulty."""
-    from app.config import settings
-
-    if user_id != settings.ADMIN_ID:
-        return jsonify({"error": "forbidden"}), 403
-        
-    body = await request.get_json(silent=True) or {}
-    puzzle_date_str = body.get("date")
-    difficulty = body.get("difficulty", "easy")
-    
-    if not puzzle_date_str:
-        return jsonify({"error": "missing date"}), 400
-        
-    try:
-        dt = datetime.fromisoformat(puzzle_date_str).date()
-    except ValueError:
-        return jsonify({"error": "invalid date format"}), 400
-
-    from app.bot_instance import get_bot
-    from app.games.crocodile_daily import prepare_daily_puzzle
-
-    bot = get_bot()
-    try:
-        await prepare_daily_puzzle(dt, bot=bot, difficulty=difficulty, force_image=True)
-        return jsonify({"ok": True})
-    except Exception as e:
-        logger.error("Webapp dailycroc regen failed: %s", e, exc_info=True)
-        return jsonify({"error": str(e)}), 500
-
-
-@miniapp_blueprint.route("/api/admin/dailycroc/reset-word", methods=["POST"])
-@require_webapp_auth
-async def api_admin_dailycroc_reset_word(user_id: int):
-    """Delete a puzzle row so it is recreated with a fresh word on next access."""
-    from app.config import settings
-
-    if user_id != settings.ADMIN_ID:
-        return jsonify({"error": "forbidden"}), 403
-
-    body = await request.get_json(silent=True) or {}
-    puzzle_date_str = body.get("date")
-    difficulty = body.get("difficulty", "easy")
-
-    if not puzzle_date_str:
-        return jsonify({"error": "missing date"}), 400
-
-    try:
-        dt = datetime.fromisoformat(puzzle_date_str).date()
-    except ValueError:
-        return jsonify({"error": "invalid date format"}), 400
-
-    from app import database as db
-
-    await db.db_query(
-        "DELETE FROM public.crocodile_daily_puzzles WHERE puzzle_date = $1 AND difficulty = $2",
-        (dt, difficulty),
-    )
-
-    # Trigger fresh puzzle creation immediately with the new rotation logic
-    from app.repos.crocodile_daily import create_puzzle_if_missing
-
-    new_puzzle = await create_puzzle_if_missing(dt, difficulty=difficulty)
-    return jsonify({
-        "ok": True,
-        "new_word": new_puzzle.target_word,
-        "new_topic": new_puzzle.topic,
-    })
-
-
-@miniapp_blueprint.route("/api/admin/dailycroc/image", methods=["GET"])
-@require_webapp_auth
-async def api_admin_dailycroc_image(user_id: int):
-    """Proxy a Telegram file_id as raw image bytes for dashboard preview.
-
-    Uses aiogram's bot.download() which correctly handles both the public
-    Telegram API and local Bot API server modes — the local API returns
-    an absolute filesystem path from getFile that cannot be fetched via
-    a raw HTTP request to the tg-api container.
-    """
-    from app.bot_instance import get_bot
-    from app.config import settings
-
-    if user_id != settings.ADMIN_ID:
-        return jsonify({"error": "forbidden"}), 403
-
-    file_id = request.args.get("file_id", "")
-    if not file_id:
-        return jsonify({"error": "missing file_id"}), 400
-
-    try:
-        import io
-
-        from quart import Response
-
-        bot = get_bot()
-        # bot.download() resolves file_id → file_path via getFile, then
-        # downloads via the bot's configured base URL (handles local API).
-        buf = await bot.download(file_id, destination=io.BytesIO())
-        if buf is None:
-            return jsonify({"error": "download returned None"}), 502
-        buf.seek(0)
-        return Response(
-            buf.read(),
-            status=200,
-            headers={
-                "Content-Type": "image/jpeg",
-                "Cache-Control": "public, max-age=3600",
-            },
-        )
-    except Exception as exc:
-        logger.error("Admin image proxy failed file_id=%s: %s", file_id, exc, exc_info=True)
-        return jsonify({"error": "proxy_error", "detail": str(exc)}), 502
-

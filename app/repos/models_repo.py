@@ -31,6 +31,71 @@ def _db_key(provider: str) -> str:
     return f"{_KEY_PREFIX}:{provider}"
 
 
+def _provider_attr(provider: str) -> str:
+    if provider == "gemini":
+        return "AVAILABLE_MODELS"
+    if provider == "openrouter":
+        return "OPENROUTER_AVAILABLE_MODELS"
+    return "OPENCODE_AVAILABLE_MODELS"
+
+
+def _sanitize_persisted_gemini_models(models: list[str]) -> list[str]:
+    """Normalize DB-backed Gemini chat models to the current supported set.
+
+    The DB may contain older admin overrides from before a model migration.
+    A legacy Gemini chat model in position 0 meant "primary Gemini", so map it
+    to the current primary model instead of simply dropping it and changing the
+    fallback order.
+    """
+    from app.config import (
+        CURRENT_GEMINI_MODELS,
+        DEFAULT_GEMINI_MODELS,
+        GEMINI_PRIMARY_MODEL,
+    )
+
+    normalized: list[str] = []
+    current = set(CURRENT_GEMINI_MODELS)
+    for model in models:
+        clean = model.strip()
+        if not clean:
+            continue
+        if clean in current:
+            normalized.append(clean)
+        elif clean.startswith("gemini-"):
+            normalized.append(GEMINI_PRIMARY_MODEL)
+    sanitized = _dedupe_current_gemini_models(normalized)
+    return sanitized or DEFAULT_GEMINI_MODELS.copy()
+
+
+def _dedupe_current_gemini_models(models: list[str]) -> list[str]:
+    from app.config import CURRENT_GEMINI_MODELS
+
+    seen: set[str] = set()
+    result: list[str] = []
+    allowed = set(CURRENT_GEMINI_MODELS)
+    for model in models:
+        clean = model.strip()
+        if clean in allowed and clean not in seen:
+            result.append(clean)
+            seen.add(clean)
+    return result
+
+
+def _sanitize_env_gemini_models(models: list[str], *, include_defaults: bool = False) -> list[str]:
+    from app.config import DEFAULT_GEMINI_MODELS
+
+    sanitized = _dedupe_current_gemini_models(models)
+    if sanitized or not include_defaults:
+        return sanitized
+    return DEFAULT_GEMINI_MODELS.copy()
+
+
+def _is_current_gemini_model(model_name: str) -> bool:
+    from app.config import CURRENT_GEMINI_MODELS
+
+    return model_name in CURRENT_GEMINI_MODELS
+
+
 # ── Serialisation helpers ─────────────────────────────────────────────────────
 
 
@@ -69,9 +134,28 @@ async def sync_models_from_db() -> None:
         ("openrouter", "OPENROUTER_AVAILABLE_MODELS"),
         ("opencode", "OPENCODE_AVAILABLE_MODELS"),
     ):
-        raw = await get_global_setting(_db_key(provider), default="")
+        key = _db_key(provider)
+        raw = await get_global_setting(key, default="")
         if raw:
             loaded = _decode(raw)
+            if provider == "gemini":
+                sanitized = _sanitize_persisted_gemini_models(loaded)
+                if sanitized:
+                    setattr(settings, attr, sanitized)
+                    if sanitized != loaded:
+                        await set_global_setting(key, _encode(sanitized))
+                        logger.warning(
+                            "models_repo: sanitized DB Gemini model list from %s to %s",
+                            loaded,
+                            sanitized,
+                        )
+                    logger.info(
+                        "models_repo: loaded %d %s model(s) from DB: %s",
+                        len(sanitized),
+                        provider,
+                        sanitized,
+                    )
+                    continue
             if loaded:
                 setattr(settings, attr, loaded)
                 logger.info(
@@ -85,8 +169,11 @@ async def sync_models_from_db() -> None:
         # No DB override yet — seed it from the current in-memory list so the
         # first startup produces a stable baseline without DB data loss.
         current: list[str] = getattr(settings, attr, []) or []
+        if provider == "gemini":
+            current = _sanitize_env_gemini_models(current, include_defaults=True)
+            setattr(settings, attr, current)
         if current:
-            await set_global_setting(_db_key(provider), _encode(current))
+            await set_global_setting(key, _encode(current))
             logger.info(
                 "models_repo: seeded DB baseline with %d %s model(s)",
                 len(current),
@@ -101,13 +188,14 @@ async def get_models(provider: str) -> list[str]:
     """Return the active model list for *provider* ('gemini' | 'openrouter')."""
     from app.config import settings
 
+    attr = _provider_attr(provider)
+    models = list(getattr(settings, attr, []) or [])
     if provider == "gemini":
-        attr = "AVAILABLE_MODELS"
-    elif provider == "openrouter":
-        attr = "OPENROUTER_AVAILABLE_MODELS"
-    else:
-        attr = "OPENCODE_AVAILABLE_MODELS"
-    return list(getattr(settings, attr, []) or [])
+        sanitized = _sanitize_env_gemini_models(models)
+        if sanitized != models:
+            setattr(settings, attr, sanitized)
+        return sanitized
+    return models
 
 
 async def add_model(provider: str, model_name: str) -> bool:
@@ -117,16 +205,17 @@ async def add_model(provider: str, model_name: str) -> bool:
     """
     from app.config import settings
 
-    if provider == "gemini":
-        attr = "AVAILABLE_MODELS"
-    elif provider == "openrouter":
-        attr = "OPENROUTER_AVAILABLE_MODELS"
-    else:
-        attr = "OPENCODE_AVAILABLE_MODELS"
+    attr = _provider_attr(provider)
     current: list[str] = list(getattr(settings, attr, []) or [])
+    if provider == "gemini":
+        current = _sanitize_env_gemini_models(current)
+        setattr(settings, attr, current)
 
     clean = model_name.strip()
     if not clean:
+        return False
+    if provider == "gemini" and not _is_current_gemini_model(clean):
+        logger.warning("models_repo: rejected unsupported Gemini chat model '%s'", clean)
         return False
     if clean in current:
         return False
@@ -145,13 +234,11 @@ async def remove_model(provider: str, model_name: str) -> bool:
     """
     from app.config import settings
 
-    if provider == "gemini":
-        attr = "AVAILABLE_MODELS"
-    elif provider == "openrouter":
-        attr = "OPENROUTER_AVAILABLE_MODELS"
-    else:
-        attr = "OPENCODE_AVAILABLE_MODELS"
+    attr = _provider_attr(provider)
     current: list[str] = list(getattr(settings, attr, []) or [])
+    if provider == "gemini":
+        current = _sanitize_env_gemini_models(current)
+        setattr(settings, attr, current)
 
     clean = model_name.strip()
     if clean not in current:
@@ -174,12 +261,30 @@ async def reset_models_to_env(provider: str) -> list[str]:
 
     if provider == "gemini":
         # Re-read from env; fall back to hardcoded defaults
-        from app.config import _load_and_clean_keys  # type: ignore[attr-defined]
+        from app.config import (
+            GEMINI_ECONOMY_MODEL,
+            GEMINI_PRIMARY_MODEL,
+            _filter_current_gemini_models,
+            _load_and_clean_keys,
+            normalize_gemini_chat_model,
+        )
 
         try:
             env_list = _load_and_clean_keys("GEMINI_AVAILABLE_MODELS", required=False) or DEFAULT_GEMINI_MODELS.copy()
         except Exception:
             env_list = DEFAULT_GEMINI_MODELS.copy()
+
+        env_list = _filter_current_gemini_models(env_list, include_defaults=False)
+        role_models = [
+            normalize_gemini_chat_model(getattr(settings, "DEFAULT_MODEL", None), fallback=GEMINI_PRIMARY_MODEL),
+            normalize_gemini_chat_model(getattr(settings, "QNA_MODEL", None), fallback=GEMINI_ECONOMY_MODEL),
+            normalize_gemini_chat_model(getattr(settings, "INLINE_MODEL", None), fallback=GEMINI_ECONOMY_MODEL),
+            normalize_gemini_chat_model(getattr(settings, "RESEARCH_MODEL", None), fallback=GEMINI_PRIMARY_MODEL),
+            normalize_gemini_chat_model(getattr(settings, "URL_SELECTION_MODEL", None), fallback=GEMINI_ECONOMY_MODEL),
+            normalize_gemini_chat_model(getattr(settings, "TAXONOMY_MODEL", None), fallback=GEMINI_ECONOMY_MODEL),
+        ]
+        env_list = _filter_current_gemini_models(env_list + role_models)
+
         settings.AVAILABLE_MODELS = env_list
         await set_global_setting(_db_key(provider), _encode(env_list))
         logger.info("models_repo: reset gemini list to env (%d models)", len(env_list))
@@ -191,6 +296,10 @@ async def reset_models_to_env(provider: str) -> list[str]:
             env_list = _load_and_clean_keys("OPENROUTER_AVAILABLE_MODELS", required=False) or []
         except Exception:
             env_list = []
+            
+        if settings.OPENROUTER_DEFAULT_MODEL and settings.OPENROUTER_DEFAULT_MODEL not in env_list:
+            env_list.append(settings.OPENROUTER_DEFAULT_MODEL)
+            
         settings.OPENROUTER_AVAILABLE_MODELS = env_list
         await set_global_setting(_db_key(provider), _encode(env_list))
         logger.info("models_repo: reset openrouter list to env (%d models)", len(env_list))
@@ -202,6 +311,17 @@ async def reset_models_to_env(provider: str) -> list[str]:
             env_list = _load_and_clean_keys("OPENCODE_AVAILABLE_MODELS", required=False) or []
         except Exception:
             env_list = []
+            
+        for role_model in (
+            settings.OPENCODE_DEFAULT_MODEL,
+            settings.OPENCODE_QNA_MODEL,
+            settings.OPENCODE_RESEARCH_MODEL,
+            settings.OPENCODE_VISION_MODEL,
+            settings.OPENCODE_INLINE_MODEL,
+        ):
+            if role_model and role_model not in env_list:
+                env_list.append(role_model)
+                
         settings.OPENCODE_AVAILABLE_MODELS = env_list
         await set_global_setting(_db_key(provider), _encode(env_list))
         logger.info("models_repo: reset opencode list to env (%d models)", len(env_list))

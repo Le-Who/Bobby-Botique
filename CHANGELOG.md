@@ -3,6 +3,189 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-06-27 - Inline Context Continuity, Type Safety & Performance
+
+### ⚡ Performance & Bolt Optimizations
+- **JSON Serialization (`app/tarot.py`, `app/natal/accuracy.py`, `app/natal/city_catalog.py`, `app/handlers/cmd_admin.py`):** Replaced standard library `json` with `app.utils.json_compat` (backed by `orjson`), accelerating encode/decode paths by 2-6×. Updated file loading to use `json.loads(f.read())`.
+- **Concurrent Daily Puzzle Prep (`app/games/daily_2048.py`):** Parallelized `ensure_prepared_puzzles` via `asyncio.gather()`, reducing a 7-day preparation loop from sequential sum of DB RTTs to a single concurrent max RTT.
+- **Database Index Optimization (`scripts/migrations/056_bolt_performance_indexes.sql`):** Added missing indices for `conversation_messages(conversation_id)` and `memory_edges(user_id, target_node)`, eliminating sequential scans during history fetches and reverse graph traversals.
+- **Async Concurrency Refactoring (`app/games/crocodile_daily.py`, `app/handlers/inline.py`, `app/handlers/scheduled_briefs.py`):** Replaced multiple sequential `await` calls inside loops with `asyncio.gather`, drastically reducing wall-clock execution time for daily puzzle generation, inline image placeholder generation, and scheduled brief broadcasts.
+
+### 🔗 Inline Q&A Continuity
+- **Deep Link Context Loading (`app/handlers/commands.py`):** Inline interactions now generate a `?start=ctx_<token>` deep link attached to a "💬 Продолжить" button. Clicking it loads the specific inline question and answer directly into the bot's private chat history as the most recent interaction, allowing seamless follow-up questions.
+- **Rolling Context Store (`app/cache.py`):** Implemented a Redis-backed rolling token store (`store_inline_context`) with a 24-hour TTL and a strict per-user limit of 10 contexts (enforced via Redis ZSET).
+- **History Sync Fix:** Bypassed the bolt optimization in `update_user_chat` by resetting `_original_length` to `0` when loading inline context, ensuring the prepended/appended history is guaranteed to sync to Postgres regardless of array length.
+
+### 🐛 Type Safety & Bug Fixes
+- **Comprehensive Mypy Fixes:** Resolved 30+ strict typing errors across the codebase.
+  - Fixed ConversationHandler state return types (`-> int | str`) in `horoscope_subscription.py` and `natal_chart.py`.
+  - Fixed variable scoping issues and assignment types in `city_readiness.py` and `cmd_keys.py`.
+  - Added strict `None` checks for `elapsed_ms` and integer type casting in `web_miniapp.py`.
+  - Fixed import of `send_tarot_invite` in `web.py`.
+
+---
+
+## [Unreleased] - 2026-06-25 - Unified Daily Admin & Tarot Broadcast
+
+### 🛠️ Unified Admin Interface
+- **Daily Broadcast Center (`/admin_daily`):** Combined the previously fragmented `/admin_dailycroc` and `/admin_daily2048` pages into a single SPA-like interface (`app/templates/admin_daily.html`) with hash-based routing (`#broadcast`, `#croc`, `#2048`, `#horoscope`, `#tarot`). Legacy routes now perform 301 redirects to the new unified panel.
+- **Global Broadcast Management (`app/web.py`):** Centralized the global delivery kill-switches and subscriber metrics for Crocodile, Horoscope, and Tarot under new `/api/admin/broadcast/*` endpoints.
+
+### 🔮 Esoteric & Astrology Suite
+- **Tarot Daily Broadcast (`scripts/migrations/054_add_tarot_daily_subscriptions.sql`, `app/repos/tarot_daily_subscriptions.py`):** Added subscription persistence and scheduler helpers for the "Карта дня" (Daily Tarot Card) broadcast. Supports personalized timezone scheduling mimicking the existing Horoscope subscription system.
+- **Tarot Ops Controls:** Exposed Tarot daily preparation status and forced regeneration triggers (`/api/admin/tarot/status`, `/api/admin/tarot/regenerate`) directly within the new Daily Admin panel.
+
+---
+
+## [Unreleased] - 2026-06-20 - Esoteric Suite, Admin Alerts & Core Ops
+
+### 🔮 Esoteric & Astrology Suite
+- **Natal Charts (`app/handlers/natal_chart.py`, `app/natal/`):** Implemented a complete natal chart generation and interpretation system. Features a step-by-step chat wizard, interactive WebApp birth form (`app/templates/natal_form.html`), GeoNames-based city autocomplete, and detailed hosted results reporting. Backed by `scripts/migrations/050_add_natal_reports.sql`.
+- **Tarot Readings (`app/handlers/tarot_chat.py`, `app/handlers/tarot_daily.py`, `app/handlers/cmd_tarot.py`, `app/tarot.py`):** Added support for multi-spread interactive Tarot readings including Classic spread, Card of the Day, Yes/No spread, Career/Finance, Relationships, and Personal Growth. Includes live session state management in Redis and additional card draws. Backed by `scripts/migrations/051_add_tarot_daily_readings.sql` and `052_add_tarot_sessions.sql`.
+- **Horoscope Subscriptions (`app/handlers/horoscope_subscription.py`, `app/handlers/scheduled_horoscopes.py`, `app/repos/horoscope_subscriptions.py`):** Added a Daily Horoscope subscription service featuring Morning (today) and Evening (tomorrow) automated deliveries in DM according to zodiac signs and user timezones (UTC offset). Backed by `scripts/migrations/047_add_horoscope_subscriptions.sql`.
+
+### 🛡️ Core Ops & Admin Tools
+- **Admin Alerts for Unauthorized Users (`app/admin_alerts.py`, `app/handlers/messages.py`, `app/handlers/callbacks.py`):** Integrated real-time admin notification system. When an unauthorized user attempts to access the bot, an alert with user details is broadcast to admins with inline buttons (`[Разрешить]`, `[Отклонить]`) to control access permissions on-the-fly.
+- **Token Count Logging (`app/streaming.py`):** Enabled token count logging for both streaming and non-streaming Gemini responses to allow cost tracking and logging observability.
+
+### 🐛 Bug Fixes & Mocks
+- **Test Suite Mocks (`tests/test_messages.py`):** Fixed missing `application` attribute in `DummyContext` and `language_code` in `MockUser` to resolve test execution failures.
+- **API Keys Configuration Safeguard (`tests/conftest.py`):** Added fallback environment setup for `GEMINI_API_KEYS` in tests configuration to prevent crashes during test runners initialization when environment keys are absent.
+
+### ✅ Verification
+- `python -m pytest tests/test_messages.py -q` → **Passed**
+- `ruff check .` → **Passed**
+- `python scripts/check_encoding.py` → **Passed**
+
+---
+
+## [Unreleased] - 2026-06-02 - Daily 2048 Sprint
+
+### 🎲 Daily Games
+
+- **Daily 2048 Sprint (`app/games/daily_2048.py`, `app/repos/daily_2048.py`, `app/templates/daily_2048.html`):** Added a server-authoritative 2048-style daily sprint where the explicit objective is to reach a target tile or total board value. First completion records moves, elapsed time, merge score, and final score; subsequent post-win play stays in local practice mode and is not written to daily records.
+- **No-repeat daily challenge generation (`app/repos/daily_2048.py`, `tests/test_daily_2048.py`):** Automatic puzzle preparation now computes stable fingerprints for the visible starting board and daily challenge contract, then retries deterministic candidates until it avoids repeated challenge signatures and repeated starting boards from the prepared history.
+- **Premium tile polish (`app/templates/daily_2048.html`, `app/templates/admin_daily2048.html`):** Player tiles now use pseudo-3D gradients, internal highlights, depth shadows, and hover glow; admin mini/editor cells received the same quieter depth treatment so prepared boards look consistent with the game surface.
+- **Daily 2048 cover refresh (`artifacts/daily2048_cover.png`):** Rebuilt the cover without a phone/device artifact, removed the left-side 2-4-8-256 chain, and replaced the changelog-like copy with shorter poster-style messaging.
+- **Daily-slot switch (`/set_daily_game crocodile|2048`, `global_settings.daily_game_mode`):** Admins can switch this month's active daily experience without removing Crocodile. `/dailycroc`, `/daily2048`, and scheduled daily prompts route to Daily 2048 while the mode is active, using the existing opt-in delivery audience.
+- **Prepared puzzle planner (`/admin_daily2048`, `/webapp/admin_daily2048`):** Operators can prepare boards several days ahead, set tile/total goals, tune par moves and target seconds, and provide deterministic spawn sequences for custom daily starts.
+- **Result and monthly champions flow (`app/games/daily_2048_telegram.py`, `app/handlers/daily_2048.py`):** Completion messages include score, moves, elapsed time, day leaderboard, and an inline "Лучшие за месяц" button that lists each day's top player for the selected month.
+- **Daily 2048 cover message flow (`app/handlers/daily_2048.py`, `app/games/daily_2048_telegram.py`, `scripts/migrations/049_add_daily_2048_prompt_messages.sql`):** Daily 2048 invitations now use the prepared cover as a photo message, track the prompt message, and edit that same cover message into the completion result instead of sending a separate plain-text result.
+- **Daily 2048 practice and theme palette polish (`app/games/daily_2048.py`, `app/templates/daily_2048.html`):** Post-completion practice now stays playable after the first extra move, while Aero, Desk, Swiss, and Deco tile palettes use distinct number-color routes. Leaf keeps its existing tile palette.
+- **Daily 2048 loss practice restart (`app/games/daily_2048.py`, `app/web_miniapp.py`, `app/templates/daily_2048.html`):** Players who run out of moves can enter unranked practice too; because the lost board has no legal moves, practice restarts from the daily starting board with zero practice moves, score, and timer.
+- **Daily 2048 mobile gesture lock (`app/templates/daily_2048.html`):** The Mini App now disables Telegram vertical close/minimize swipes where the client supports it and blocks browser touch scrolling while the game is open, so downward moves stay inside the 2048 board.
+
+### ✅ Verification
+
+- `python -m pytest -q tests/test_daily_2048.py -n 0 --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_daily2048_swipe_lock` → **28 passed**
+- `python -m pytest -o addopts='' -q -n 0 tests/test_daily_crocodile.py --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_dailycroc_2048_regression_env2` → **27 passed**
+- `python -m ruff check app/db/schema.py app/handlers/callbacks.py app/handlers/cmd_admin.py app/handlers/commands.py app/handlers/daily_crocodile.py app/handlers/daily_2048.py app/games/daily_2048.py app/games/daily_2048_telegram.py app/repos/daily_2048.py app/web.py app/web_miniapp.py tests/test_daily_2048.py` → **All checks passed**
+- `python scripts/check_encoding.py` → **passed**
+- `node -e "<daily_2048.html script parse>"` → **daily_2048.html script parses**
+
+---
+
+## [Unreleased] - 2026-06-01 - OSS Maintainer Readiness
+
+### Documentation
+
+- Added an explicit MIT `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`, and `ROADMAP.md` so the public repository has standard OSS maintainer surfaces.
+- Added a top-level README overview with maintainer status, public maintenance signals, security/contribution links, and Codex/API-credit usage intent.
+- Added `docs/MAINTAINER_QUEUE.md` to document the open-PR queue snapshot, label taxonomy, and closure policy.
+- Documented that runtime user/adoption metrics are not yet published and must be exported only as anonymized aggregate deployment counts.
+- Updated the README contributing/license section to point to the new policy files.
+
+---
+
+## [Unreleased] - 2026-05-28 - Tarot Spread Variations Expansion
+
+### 🎴 Tarot Enhancements
+
+- **5 New Spread Variations (`app/tarot.py`, `app/handlers/inline.py`):** Expanded the inline Tarot system to support multiple spread types via a dropdown selector. Added variations:
+  - 🎴 **Карта дня** (Card of the Day) - single card, context changes based on whether it's requested directly or via command without query.
+  - 🔮 **Да или Нет** (Yes/No) - quick binary answer spread.
+  - 💼 **Карьера и финансы** (Career & Finances) - 3-card spread (Past, Present, Future).
+  - ❤️ **Отношения** (Relationships) - 3-card spread (You, Partner, Relationship).
+  - 🌟 **Личностный рост** (Personal Growth) - 3-card spread (Strengths, Weaknesses, Advice).
+- **Automated Validation (`app/handlers/inline.py`):** "Card of the Day" intelligently vanishes from the dropdown if the user provides a specific query string. Yes/No questions employ soft validation, falling back gracefully without requiring a literal question mark.
+- **Fortune Cookie HTML Fast-Path (`app/handlers/inline.py`):** Refactored layout to bypass LLM generation for instant, stateless UI responses during spread selection.
+- **Russian Content Enrichment (`app/assets/tarot.json`):** Extended all 78 tarot cards with `fortune_telling_ru` localizations for richer, localized interpretations.
+
+### ✅ Verification
+
+- `python -m pytest tests/test_tarot.py -q` → **10 passed**
+- Full test suite regression check → **Passed**
+- `ruff` linting and `mypy` typing → **Passed**
+
+---
+
+## [Unreleased] - 2026-05-11 - Cold-Start Latency Optimization (−54% P95)
+
+### ⚡ Startup Performance
+
+Systematic import-time profiling (`python -X importtime`) identified four hot-path modules pulling heavyweight transitive dependencies at startup. Four targeted lazy-import refactors reduced cold-start P95 by **~54%** (from ~2.41 s → ~1.11 s) with no behavior changes and no new dependencies.
+
+| Epoch | File | Deferred symbol | Heavy chain eliminated |
+|-------|------|-----------------|------------------------|
+| 1 | `app/handlers/messages.py` | `cmd_image` imports (draw state + generation) | Avoids transitive image-provider chains on every worker start |
+| 2 | `app/handlers/msg_roles.py` | `app.agents` in `handle_custom_role_generation` | Avoids agent subsystem import on non-role message paths |
+| 3 | `app/handlers/menus.py` | `app.document_processor.get_user_documents` | Eliminates `pypdf` + `docx` (125 K μs cumulative) from startup |
+| 4 | `app/handlers/cmd_admin.py` | `from google import genai` in `list_models_command` | Eliminates google-genai SDK init from startup (admin-only, rare) |
+
+**Pattern**: Python's module cache (`sys.modules`) makes each deferred import free after the first actual call, so there is zero per-call overhead beyond the first invocation.
+
+**Benchmark** (`artifacts/perf/bench_startup.py`, 5 warm subprocess spawns):
+
+| Metric | Before (baseline) | After (this PR) | Δ |
+|--------|-------------------|-----------------|---|
+| P95    | ~2.41 s           | ~1.11 s         | −54% |
+| mean   | ~2.00 s           | ~1.10 s         | −45% |
+
+### 🧪 Test Regression Fixes
+
+- **`tests/test_messages.py`**: Updated `submit_task` mock path to `app.handlers.messages.submit_task` (was wrong namespace after lazy-import refactor). Added `ensure_state_loaded` and `is_authorized` mocks to prevent live-DB dependency in the 9 message handler tests. All 9 pass.
+
+### 🛠️ Infrastructure
+
+- **`artifacts/perf/bench_startup.py`**: Benchmark harness that measures cold-start P95/P99/mean via repeated subprocess spawns of `import bot`.
+- **`artifacts/perf/bench_routing.py`**: Routing + handler benchmark scaffold (mocks all I/O; measures `handle_request` dispatch overhead).
+
+### ✅ Verification
+
+- `python -m pytest tests/test_messages.py -q` → **9 passed**
+- `python artifacts/perf/bench_startup.py` → P95 = **1.11 s**, mean = **1.10 s**
+- `ruff check app/handlers/messages.py app/handlers/msg_roles.py app/handlers/menus.py app/handlers/cmd_admin.py` → pending (run before merge)
+
+---
+
+## [Unreleased] - 2026-05-10 - Gemini 3.1 Flash Lite Stable Migration & Model-Aware Thinking
+
+### 🔄 Model Migration
+
+- **Gemini 3.1 Flash Lite → Stable (`gemini-3.1-flash-lite`):** Migrated all 47 files from `gemini-3.1-flash-lite-preview` to the GA-stable `gemini-3.1-flash-lite` model ID. Covers `app/config.py`, all provider routers, handlers, test fixtures, templates, README.md, and CHANGELOG.md. Both AI Studio API key and Vertex AI Express paths now use the stable identifier.
+
+### 🧠 Model-Aware Adaptive Thinking
+
+- **Default `high` thinking for Flash Lite chat (`app/thinking_classifier.py`, `app/handlers/ai_chat.py`):** When a user's thinking level is set to `auto` (default) and the active model is `gemini-3.1-flash-lite`, the adaptive classifier now returns `"high"` directly — bypassing the 14-rule regex heuristic. This ensures consistent high-quality reasoning for the updated model in standard chat sessions. Inline mode is unaffected (uses its own `INLINE_THINKING_LEVEL`). User explicit preferences (`low`/`medium`/`high`/`off`) always override.
+- **Centralized model-default map (`app/thinking_classifier.py`):** Added `_MODEL_DEFAULT_THINKING` dictionary for extensible per-model thinking defaults. New models requiring specific thinking budgets can be added to this map without touching handler code.
+
+### ✅ Verification
+
+- `ruff check app/ tests/` → 2 pre-existing errors (unrelated: `deferred_response.py` I001, `ai_photo.py` RUF059)
+- `python -m mypy app/ --ignore-missing-imports` → 4 pre-existing errors (unrelated: `cmd_keys.py`, `model_selector.py`)
+- `python scripts/check_encoding.py` → **Passed**
+- `python -m pytest tests/ -q --timeout=60` → **1,845 passed**, 96 skipped (3 DB-dep failures require local PostgreSQL)
+
+---
+
+## [Unreleased] - 2026-05-05 - FreeTheAI Multimodal Integration
+
+### 🎨 FreeTheAI Multimodal Integration
+
+- **Added `FreeTheAIProvider` (`app/providers/freetheai.py`):** First-class integration for FreeTheAI acting as a router to diverse models including Claude, Gemini, GPT, and custom variations. Implemented strict prefix collision guards (`is_freetheai_model`) to ensure `vhr/`, `cat/`, `yng/` prefixes do not leak into OpenRouter.
+- **Image Generation (`app/providers/freetheai_image.py`, `app/handlers/cmd_image.py`):** Added support for models like `vhr/gpt_image_2` and `vhr/nano_banana_2`. Generates custom prompts and securely proxies requests through the FreeTheAI API, complete with specific UI messages for quota errors and provider exhaustion.
+- **Lyria Audio Generation (`app/providers/freetheai_audio.py`, `app/handlers/ai_chat.py`):** Chat texts targeting Lyria audio models (`or/google/lyria-3-pro-preview`) are now intercepted mid-flight. Standard text generation is bypassed in favor of a specialized audio generation pipeline, returning direct Telegram `reply_audio` messages (Base64 MP3 or fallback URLs).
+
 ## [Unreleased] - 2026-04-28 - Daily Crocodile Admin Dashboard & Image Proxy Hardening
 
 ### 🐊 Daily Crocodile — Word Diversity & Topic Rotation
@@ -262,7 +445,7 @@ Format is optimized for agent-parseable context.
 ## [2.15.16] - 2026-04-21 - Inline Primary Driver: Vertex AI Express + Race Hardening
 
 ### 🚀 Inline Generation Architecture
-- **Vertex AI Express promoted to primary inline driver (`app/handlers/inline.py`):** `_INLINE_MODEL` now points to `gemini-3.1-flash-lite-preview` via Vertex AI Express. AI Studio keys (`gemini-2.5-flash-lite`) are demoted to **fallback racers** tracked by the new `_INLINE_FALLBACK_MODEL` constant. The race architecture and all round limits remain intact — only slot priority is flipped.
+- **Vertex AI Express promoted to primary inline driver (`app/handlers/inline.py`):** `_INLINE_MODEL` now points to `gemini-3.1-flash-lite` via Vertex AI Express. AI Studio keys (`gemini-2.5-flash-lite`) are demoted to **fallback racers** tracked by the new `_INLINE_FALLBACK_MODEL` constant. The race architecture and all round limits remain intact — only slot priority is flipped.
 - **Search Grounding on primary slot:** The Vertex AI Express path retains native Google Search Grounding (`enable_web_search=True`). The prompt strictly constrains output to a single noun/phrase so grounding cannot contaminate word-bank results; the 2–60 char validation gate provides an additional safety net.
 - **`ProviderOverloadError` distinction (`app/errors.py`, `app/games/word_bank.py`, `app/handlers/inline.py`):** Infrastructure failures (all providers overloaded / timed out) now raise `ProviderOverloadError` instead of falling through as `ValueError`. The inline Crocodile handler catches this separately and surfaces a user-friendly "⏳ Серверы ИИ временно перегружены. Попробуй ещё раз через пару секунд." message. Genuine unintelligible-topic errors (`ValueError`) still show the existing "❌ Не могу понять тему" prompt.
 
@@ -341,7 +524,7 @@ Format is optimized for agent-parseable context.
 ## [2.15.11] - 2026-04-20 - Hint Race UX Hardening & Config-Free Test Bootstrap
 
 ### 🎮 Crocodile Hint Generation
-- **Three-Lane Hint Race (`app/games/judge.py`):** Reworked `generate_hints()` to use an explicit three-lane race tuned for UX instead of provider-global branching. The new order is: **AI Studio** `gemini-3-flash-preview`, **Vertex AI Express** `gemini-3.1-flash-lite-preview` when configured, and a curated **OpenCode Go** lane that prefers `opencode-go/glm-5.1`.
+- **Three-Lane Hint Race (`app/games/judge.py`):** Reworked `generate_hints()` to use an explicit three-lane race tuned for UX instead of provider-global branching. The new order is: **AI Studio** `gemini-3-flash-preview`, **Vertex AI Express** `gemini-3.1-flash-lite` when configured, and a curated **OpenCode Go** lane that prefers `opencode-go/glm-5.1`.
 - **No More First-Failure Abort:** Each hint lane now isolates its own exceptions and returns `None` on failure, so a fast provider error no longer aborts the entire race or forces an early deterministic fallback while another model is still about to return valid hints.
 - **Config-Light Bootstrap:** `generate_hints()` no longer hard-depends on `get_primary_provider_async()` or a fully initialized global `settings` object before touching the router. In degraded unit-test or local-dev environments, it still attempts the AI Studio lane and only falls back to deterministic local hints after all lanes fail.
 - **Live Audio Boundary Preserved:** The new Vertex path is scoped to Crocodile hint generation only. The Gemini Live Audio Mini App continues to use AI Studio API keys and was not migrated to Vertex.
@@ -769,7 +952,7 @@ A systematic audit of all hot-path handlers and utilities was performed to elimi
 ### 🐛 Bug Fixes & Resilience
 
 - **Gemini Search Hallucination Filter:** Addressed a behavior in the Gemini API (specifically `gemini-3.1-pro/flash`) where the model sometimes leaks internal code execution traces (e.g., `[tool_code] print(google_search.search(...))`) into the chat stream. Implemented a regex filter in `app/streaming.py` (`StreamingWriter.write`) that actively intercepts and strips these artifacts from both the temporary UI buffer and the final persisted text, ensuring a clean user experience.
-- **Crocodile Judge Tolerance:** Increased the `max_length` constraint of the semantic `GuessJudgement` model in `app/games/judge.py` from 80 to 255. This resolves a `503` cascade failure where the primary model (`gemini-3.1-flash-lite-preview`) routinely triggered fallback to `gemini-2.5-flash-lite`, which occasionally generated verbose fallback hints exceeding the old limit, crashing the validator.
+- **Crocodile Judge Tolerance:** Increased the `max_length` constraint of the semantic `GuessJudgement` model in `app/games/judge.py` from 80 to 255. This resolves a `503` cascade failure where the primary model (`gemini-3.1-flash-lite`) routinely triggered fallback to `gemini-2.5-flash-lite`, which occasionally generated verbose fallback hints exceeding the old limit, crashing the validator.
 
 ---
 
@@ -955,7 +1138,7 @@ and updates the shared Telegram message on win/loss.
 
 1. **Levenshtein distance** (Damerau threshold ≤ 1) — sub-millisecond exact/typo match.
 2. **Redis judgement cache** — 24h TTL for previously computed LLM evaluations.
-3. **Race × 3 LLM** — fires `gemini-3.1-flash-lite-preview` (primary) and `gemini-2.5-flash-lite` (fallback) simultaneously; first valid JSON verdict wins. Prompt is single-sentence to minimize latency.
+3. **Race × 3 LLM** — fires `gemini-3.1-flash-lite` (primary) and `gemini-2.5-flash-lite` (fallback) simultaneously; first valid JSON verdict wins. Prompt is single-sentence to minimize latency.
 4. **Hardcoded fallback** — `{"score": 0, "hint": ""}` on all errors (non-blocking).
 
 Verdict fields: `status` (`exact_match` | `close` | `no_match`), `score` (0–100), `hint` (short bilingual phrase), `cached` (bool).
@@ -1352,7 +1535,7 @@ Replaced the `_get_ai_response_with_routing` call with a self-contained `_stream
 | Zero sleep between rounds | ❌ | ✅ |
 | Loser cancellation | n/a | Instant `t.cancel()` on first chunk |
 
-**Why 3 keys (not 2):** `gemini-3.1-flash-lite-preview` has RPD limits in the hundreds per key, and there are 15+ keys configured. Burning 3 simultaneous slots per round is operationally free — at most one key completes, the other two are cancelled the moment the first chunk arrives. This reduces TTFR (time-to-first-result) to `min(key_1, key_2, key_3)` response time.
+**Why 3 keys (not 2):** `gemini-3.1-flash-lite` has RPD limits in the hundreds per key, and there are 15+ keys configured. Burning 3 simultaneous slots per round is operationally free — at most one key completes, the other two are cancelled the moment the first chunk arrives. This reduces TTFR (time-to-first-result) to `min(key_1, key_2, key_3)` response time.
 
 **Round loop:** Up to 4 rounds × 3 keys = 12 key slots before returning `None`. Keys that fail (503, exception, empty stream) are added to `failed_keys` and excluded from the next round — each round draws fresh keys.
 
@@ -1499,7 +1682,7 @@ Successfully deployed a production-grade resilience layer to eliminate service d
 - **Sentinel-Based Completion**: Producer tasks push a `_STREAM_END` sentinel after all chunks, and the consumer breaks only on sentinel receipt — eliminates the `task.done()` TOCTOU race.
 
 #### 2. Model Cascade Fallback (Phase 2)
-- If the primary heavy model (e.g., `gemini-exp-1206` or `gemini-2.5-pro`) exhausts all retries due to 503 errors, the system cascades down to a lighter, more reliable model (e.g. `gemini-3.1-flash-lite-preview`).
+- If the primary heavy model (e.g., `gemini-exp-1206` or `gemini-2.5-pro`) exhausts all retries due to 503 errors, the system cascades down to a lighter, more reliable model (e.g. `gemini-3.1-flash-lite`).
 - Avoids total failure by sacrificing some reasoning capacity during extreme API outages.
 
 #### 3. Delayed UX State Indication (Phase 3)
@@ -1617,13 +1800,13 @@ Users can now invoke the bot from **any Telegram chat** (including private conve
 4. Background pipeline:
    a. **Tavily QnA search** (`search_type="qna"`, 8 s timeout, best-effort) — same search infrastructure as `?` prefix and agentic research.
    b. Freshness context injected into system prompt alongside tone hint.
-   c. **`gemini-3.1-flash-lite-preview`** generates a concise answer (≤ 3–4 paragraphs).
+   c. **`gemini-3.1-flash-lite`** generates a concise answer (≤ 3–4 paragraphs).
    d. `markdown_to_html()` formats the response → `bot.edit_message_text(inline_message_id=..., parse_mode="HTML")` edits the placeholder **in-place**.
 5. Two-level fallback: HTML parse error → plain-text retry. Both log errors without propagating to the user.
 
 #### Technical Details
 
-- **Model**: `gemini-3.1-flash-lite-preview` (ultra-low latency, free-tier compatible).
+- **Model**: `gemini-3.1-flash-lite` (ultra-low latency, free-tier compatible).
 - **Formatting**: fully HTML-based via `app.utils.text_format.markdown_to_html` — consistent with every other bot message.
 - **`_bg_tasks` set**: fire-and-forget `asyncio.create_task` tasks pinned in a module-level set to prevent GC before completion.
 - **Background task GC safety**: task is held in `_bg_tasks: set[asyncio.Task]`; removed via `task.add_done_callback(_bg_tasks.discard)`.
@@ -1680,7 +1863,7 @@ Users can now invoke the bot from **any Telegram chat** (including private conve
 - **6 Hall Types**: `fact`, `opinion`, `event`, `plan`, `preference`, `habit`.
 - **Partial HNSW Indexes**: High-traffic wings (`identity`, `projects`) get dedicated pgvector HNSW indexes for sub-10ms vector search within a single wing.
 - **LLM-Classified**: Graph extraction prompt now instructs Gemini to assign wing/room alongside entities and relations. Validated against allowed values with `knowledge` fallback.
-- **Admin-Configurable Model** (`TAXONOMY_MODEL`): The classification model is hot-reloadable via `config_manager.update_setting("TAXONOMY_MODEL", "...")` or env var `TAXONOMY_MODEL`. Defaults to `gemini-3.1-flash-lite-preview`.
+- **Admin-Configurable Model** (`TAXONOMY_MODEL`): The classification model is hot-reloadable via `config_manager.update_setting("TAXONOMY_MODEL", "...")` or env var `TAXONOMY_MODEL`. Defaults to `gemini-3.1-flash-lite`.
 - **Migration**: `032_add_wing_room_taxonomy.sql` — adds `wing`, `room`, `hall_type` columns to `long_term_memory` and `wing`, `room` to `memory_nodes` with B-tree + partial HNSW indexes.
 
 ### 🗜️ AAAK Tiered Context Compression (Phase 3)
@@ -2003,7 +2186,7 @@ The gap filter's intent is to prune *outliers within the candidate set* (≤ 15p
 
 Implements the dual-process memory architecture from **RF-Mem (2025)**: when the primary vector search (floor ~0.48) returns nothing, a second pass is attempted:
 1. Fetch top-6 candidates at `floor=0.42` (wide net).
-2. One cheap `gemini-3.1-flash-lite-preview` call rates each candidate's relevance to the user's query (single batched JSON response).
+2. One cheap `gemini-3.1-flash-lite` call rates each candidate's relevance to the user's query (single batched JSON response).
 3. Only genuinely relevant candidates (rated `true`) are injected, capped at 3.
 4. Results are tagged `llm_judged=True` for observability.
 5. All errors are caught and silently return `[]` — strictly non-blocking.
@@ -2161,7 +2344,7 @@ This handles recall-intent queries ("Напомни-ка...") that are by design
 - Added **Query Intent Gate** documentation explaining the heuristic bypass.
 - Added **Multi-Query Expansion** documentation as a standalone concept.
 - Added **Knowledge Graph Architecture** subsection documenting graph extraction pipeline, semantic edge deduplication, core persona protection, 2-hop traversal, and edge provenance.
-- Fixed stale consolidation model reference (`gemini-2.0-flash-lite` → `gemini-3.1-flash-lite-preview`).
+- Fixed stale consolidation model reference (`gemini-2.0-flash-lite` → `gemini-3.1-flash-lite`).
 - Added migration `027` to the Schema Management catalog.
 - Fixed config location for embedding model (`memory.py` → `memory_config.py`).
 
@@ -2472,7 +2655,7 @@ Public API: `register_active_task`, `cancel_active_task`, `clear_active_task`, `
 
 *   **Hybrid AI-Regex Intent Detection**: Evolved the image generation pipeline to support highly complex, conversational requests containing coreferences (e.g., *"Я видел картинки гор. Сгенерируй мне такие же"*).
     *   **Level 1 (Regex)**: Maintains zero-latency instant triggering for standard commands ("нарисуй кота").
-    *   **Level 2 (Semantic AI)**: Uses `gemini-3.1-flash-lite-preview` asynchronously (`_extract_draw_prompt_ai`) to read between the lines if a user types a generation verb but doesn't explicitly name a subject immediately.
+    *   **Level 2 (Semantic AI)**: Uses `gemini-3.1-flash-lite` asynchronously (`_extract_draw_prompt_ai`) to read between the lines if a user types a generation verb but doesn't explicitly name a subject immediately.
 *   **Voice Intent Integration**: Overhauled `multimodal_processor.py`'s `_VOICE_SYSTEM_PROMPT`. The ASR layer now natively identifies the `INTENT:DRAW` state and automatically extracts a cleaned `DRAW_PROMPT: <subject>` inline, neutralizing complex audio requests without regex fallback.
 
 #### Files Changed
@@ -2500,7 +2683,7 @@ Public API: `register_active_task`, `cancel_active_task`, `clear_active_task`, `
 ### 🧠 GraphRAG Memory & Pipeline Standardization
 
 *   **API Key Routing Fix**: Resolved `400 INVALID_ARGUMENT` crashes in the background memory storage pipeline. Fixed an architecture bug where the bot improperly reused the active session's API key (often OpenRouter) when making Google-specific embedding calls (`gemini-embedding-2-preview`). The pipeline now proactively fetches an isolated Google key for all graph processes.
-*   **Model Accuracy**: Enforced the `gemini-embedding-2-preview` (768-dim) and `gemini-3.1-flash-lite-preview` endpoints for all internal RAG components.
+*   **Model Accuracy**: Enforced the `gemini-embedding-2-preview` (768-dim) and `gemini-3.1-flash-lite` endpoints for all internal RAG components.
 *   **Legacy SDK Eradication**: Conducted a full codebase audit and permanently removed all usages of the deprecated `google.generativeai` SDK. Operations like graph clustering (`memory_consolidation.py`) and scheduled summarization (`scheduled_briefs.py`) now natively utilize the modern `google-genai` SDK with strict `GenerateContentConfig` structures.
 
 #### Files Changed
@@ -2630,7 +2813,7 @@ Prompt and last-used parameters are stored in PTB's `context.user_data["draw_sta
 #### Change 1 — Multi-Query Expansion
 - **New function `expand_query_with_llm()`** in `memory.py`: fast Flash-Lite LLM call (~200ms) rewrites vague queries ("тот фреймворк который я упоминал") into keyword-dense search phrases ("Python FastAPI web framework project") before the embedding lookup.
 - Fall-through: any exception silently returns the original query — zero pipeline disruption risk.
-- Model: `gemini-3.1-flash-lite-preview` (constant `QUERY_EXPANSION_MODEL`).
+- Model: `gemini-3.1-flash-lite` (constant `QUERY_EXPANSION_MODEL`).
 
 #### Change 2 — Adaptive Similarity Thresholding
 - `search_memories()` rewritten with **over-fetch × 2** (relaxed floor `min_similarity − 0.12`, min 0.40) + **gap-filter** (keeps only results within 15pp of best score, hard floor still enforced).
@@ -3413,7 +3596,7 @@ Root cause: `gemini-2.5-flash-preview-tts` had no entry in `DAILY_LIMITS`, so ke
 |-----|------|--------|
 | 429 mid-stream error breaks fallback chain | `ai_search.py` | Error-tagged text returned as `success=True`. Fix: detect `_TAG_PREFIX` anywhere in `final_answer` and continue to next model. |
 | Fallback can't stream to consumed placeholder | `ai_search.py` | Model 2's edits fail with "Message to edit not found". Fix: send fresh placeholder before retrying. |
-| gemini-3.1-flash-lite-preview always 429 on search | `ai_search.py` | Gemini 3.x has no Search Grounding quota on free tier. Fix: replaced with `gemini-2.5-flash-lite` primary + `gemini-2.5-flash` fallback. |
+| gemini-3.1-flash-lite always 429 on search | `ai_search.py` | Gemini 3.x has no Search Grounding quota on free tier. Fix: replaced with `gemini-2.5-flash-lite` primary + `gemini-2.5-flash` fallback. |
 | Model ignores web search, answers from training data | `ai_search.py` | Without date/instruction prompt, model didn't know "today" and refused queries it thought were about the future. Fix: QnA-specific system prompt with `Сегодня: YYYY-MM-DD` + `ВСЕГДА используй Google Search`. |
 
 ### 📡 Observability
@@ -3421,7 +3604,7 @@ Root cause: `gemini-2.5-flash-preview-tts` had no entry in `DAILY_LIMITS`, so ke
 | Change | File | Detail |
 |--------|------|--------|
 | API key identifiers | `router.py` | Log line now shows both the `key_hash` prefix (8 chars) AND last 4 chars of the actual API key: `key=0c94f6e0…(…XyZ9)`. The suffix lets you identify the key in GCP/AI Studio by matching the end of the key string. |
-| Model name in QnA logs | `ai_search.py` | All `_handle_qna_search` log lines now include the exact model name and attempt number (e.g., `QnA search: trying model gemini-3.1-flash-lite-preview (attempt 1/2)`). |
+| Model name in QnA logs | `ai_search.py` | All `_handle_qna_search` log lines now include the exact model name and attempt number (e.g., `QnA search: trying model gemini-3.1-flash-lite (attempt 1/2)`). |
 
 ### ✅ Quality Gates
 
@@ -3439,7 +3622,7 @@ Root cause: `gemini-2.5-flash-preview-tts` had no entry in `DAILY_LIMITS`, so ke
 | Change | File | Detail |
 |--------|------|--------|
 | Native Google Search Grounding | `ai_search.py`, `base.py`, `gemini.py`, `openrouter.py`, `router.py`, `streaming.py` | Replaced the two-step Tavily+LLM pipeline for `?` prefix queries with a single Gemini API call using `types.Tool(google_search=types.GoogleSearch())`. Reduces latency from 2 network hops to 1 and eliminates Tavily dependency for quick search. Threaded `enable_web_search: bool` flag through the entire provider stack (base → gemini/openrouter → router → streaming → handler). |
-| Model Fallback Chain | `ai_search.py` | `_handle_qna_search` now uses a resilient fallback chain: `gemini-3.1-flash-lite-preview` → `gemini-2.5-flash-lite`. User's custom model (if set) is respected as first in the chain. Falls back to non-streaming if all streaming attempts fail. |
+| Model Fallback Chain | `ai_search.py` | `_handle_qna_search` now uses a resilient fallback chain: `gemini-3.1-flash-lite` → `gemini-2.5-flash-lite`. User's custom model (if set) is respected as first in the chain. Falls back to non-streaming if all streaming attempts fail. |
 
 ### 🧪 Test Updates
 
@@ -3544,7 +3727,7 @@ Root cause: `gemini-2.5-flash-preview-tts` had no entry in `DAILY_LIMITS`, so ke
 | Change | File | Detail |
 |--------|------|--------|
 | In-memory gate | `memory_consolidation.py` | `should_check_consolidation()` — O(1) check, fires only every 20 msgs or 15 min |
-| Model update | `memory_consolidation.py` | Updated model to `gemini-3.1-flash-lite-preview` |
+| Model update | `memory_consolidation.py` | Updated model to `gemini-3.1-flash-lite` |
 | Gate integration | `ai_chat.py` | Wired gate before `should_consolidate()` call |
 
 ### 📄 Change 4: Document Chunking at Retrieval Time (P2)
@@ -4070,7 +4253,7 @@ Two modes for editing custom role prompts directly from the role details view:
 |--------|------|--------|
 | Remove unavailable `gemini-2.5-pro` | `model_selector.py`, `menus.py` | All references to `gemini-2.5-pro` and preview variants replaced with `gemini-2.5-flash`. |
 | Remove legacy models (1.5, 2.0) | `menus.py`, 18 test files | Purged all `gemini-1.5-*` and `gemini-2.0-*` references from application code and test mocks. |
-| Add `gemini-3-flash-preview` and `gemini-3.1-flash-lite-preview` | `model_selector.py`, `menus.py` | New 5-tier hierarchy: `3.0-flash`(5) > `3.1-flash-lite`(4) > `2.5-flash`(3) > `2.5-flash-lite`(1). Benchmarks confirm `3.1-flash-lite` outperforms `2.5-flash` in speed (2.5× TTFT) and quality (higher Arena Elo). |
+| Add `gemini-3-flash-preview` and `gemini-3.1-flash-lite` | `model_selector.py`, `menus.py` | New 5-tier hierarchy: `3.0-flash`(5) > `3.1-flash-lite`(4) > `2.5-flash`(3) > `2.5-flash-lite`(1). Benchmarks confirm `3.1-flash-lite` outperforms `2.5-flash` in speed (2.5× TTFT) and quality (higher Arena Elo). |
 | Smart routing update | `model_selector.py` | Code and reasoning task routing now prefers `3.0-flash` → `3.1-flash-lite` → `2.5-flash`. |
 
 ### ✅ Quality Gates

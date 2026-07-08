@@ -12,6 +12,7 @@ Runtime-only maps (never persisted, ephemeral per-process):
 
 import asyncio
 import logging
+import time
 
 
 class UserState:
@@ -42,6 +43,9 @@ class UserState:
         "manual_role_prompt",
         # MemPalace: persistent role diaries
         "role_diaries",
+        # Tarot mode session state
+        "tarot_mode",
+        "tarot_session",
         # Internal bookkeeping
         "_loaded_from_db",
         "_dirty",
@@ -68,6 +72,9 @@ class UserState:
         self.manual_role_prompt: str = ""
         # MemPalace role diaries: {role_id: ["entry1", "entry2", ...]}
         self.role_diaries: dict[str, list[str]] = {}
+        # Tarot mode session state
+        self.tarot_mode: bool = False
+        self.tarot_session: dict | None = None
         # Internal
         self._loaded_from_db: bool = False
         self._dirty: bool = False
@@ -163,6 +170,8 @@ async def _ensure_loaded(state: UserState) -> UserState:
                 state.manual_role_title = data.get("manual_role_title", "")
                 state.manual_role_prompt = data.get("manual_role_prompt", "")
                 state.role_diaries = data.get("role_diaries") or {}
+                state.tarot_mode = data.get("tarot_mode", False)
+                state.tarot_session = data.get("tarot_session")
         except Exception as e:
             logging.warning("Could not load state for %s: %s", state._user_id, e)
 
@@ -192,6 +201,8 @@ async def _persist(state: UserState) -> None:
             manual_role_title=state.manual_role_title,
             manual_role_prompt=state.manual_role_prompt,
             role_diaries=state.role_diaries,
+            tarot_mode=state.tarot_mode,
+            tarot_session=state.tarot_session,
         )
     except Exception as e:
         logging.warning("Could not persist state for %s: %s", state._user_id, e)
@@ -517,8 +528,7 @@ _STALL_THRESHOLD_S = 15.0
 
 def mark_network_waiting(user_id: int) -> None:
     """Mark the user's active task as waiting for HTTP response headers (TTFB)."""
-    import time
-
+    # Performance: `time` is now a top-level import — no per-call import machinery overhead.
     _NETWORK_STALL_SINCE[user_id] = time.monotonic()
 
 
@@ -535,8 +545,6 @@ def is_task_stalled(user_id: int) -> bool:
     - Task is actively receiving data
     - Stall duration hasn't exceeded threshold yet
     """
-    import time
-
     stall_start = _NETWORK_STALL_SINCE.get(user_id)
     if stall_start is None:
         return False
@@ -570,3 +578,42 @@ def get_last_bot_message(user_id: int) -> tuple[int, int] | None:
 def clear_last_bot_message(user_id: int) -> None:
     """Clear the stored last bot message for a user."""
     _LAST_BOT_MESSAGE.pop(user_id, None)
+
+
+# =============================================================================
+# TAROT MODE STATE
+# =============================================================================
+
+
+def is_in_tarot_mode(user_id: int) -> bool:
+    """Check if user is in Tarot mode."""
+    state = get_user_state(user_id)
+    return state.tarot_mode
+
+
+def set_tarot_mode(user_id: int, enabled: bool) -> None:
+    """Enable or disable Tarot mode."""
+    state = get_user_state(user_id)
+    state.tarot_mode = enabled
+    _schedule_persist(state)
+
+
+def get_tarot_session(user_id: int) -> dict | None:
+    """Get the current Tarot session data."""
+    state = get_user_state(user_id)
+    return state.tarot_session
+
+
+def set_tarot_session(user_id: int, session_data: dict | None) -> None:
+    """Set or update the Tarot session data."""
+    state = get_user_state(user_id)
+    state.tarot_session = session_data
+    _schedule_persist(state)
+
+
+def clear_tarot_session(user_id: int) -> None:
+    """Clear Tarot session and exit mode."""
+    state = get_user_state(user_id)
+    state.tarot_mode = False
+    state.tarot_session = None
+    _schedule_persist(state)

@@ -41,8 +41,8 @@ class TestIsOpencodeModel:
     def test_gemini_model_returns_false(self):
         from app.providers.base import is_opencode_model
 
-        assert is_opencode_model("gemini-3-flash-preview") is False
-        assert is_opencode_model("gemini-2.5-flash") is False
+        assert is_opencode_model("gemini-3.5-flash") is False
+        assert is_opencode_model("gemini-3.1-flash-lite") is False
 
     def test_openrouter_model_returns_false(self):
         from app.providers.base import is_opencode_model
@@ -105,7 +105,7 @@ class TestOpencodeGoProvider:
     def test_strip_model_prefix_passthrough_unknown(self):
         p = self._make_provider()
         # Unknown format should pass through unchanged
-        assert p._strip_model_prefix("gemini-2.5-flash") == "gemini-2.5-flash"
+        assert p._strip_model_prefix("gemini-3.5-flash") == "gemini-3.5-flash"
 
     def test_minimax_uses_messages_transport(self):
         p = self._make_provider()
@@ -243,7 +243,7 @@ class TestGetProviderForModel:
         from app.providers.base import get_provider_for_model
         from app.providers.gemini import GeminiProvider
 
-        provider = get_provider_for_model("gemini-3-flash-preview", "key")
+        provider = get_provider_for_model("gemini-3.5-flash", "key")
         assert isinstance(provider, GeminiProvider)
 
     def test_slash_model_returns_openrouter_provider(self):
@@ -383,23 +383,24 @@ class TestPickTransientFallbackModel:
 
     def test_gemini_flash_cascades_to_lite(self):
         router = self._get_router()
-        from app.config import settings
+        mock_settings = MagicMock()
+        mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
 
-        # Only test if gemini-2.5-flash-lite is in AVAILABLE_MODELS
-        if "gemini-2.5-flash-lite" not in settings.AVAILABLE_MODELS:
-            pytest.skip("gemini-2.5-flash-lite not configured")
-        result = router._pick_transient_fallback_model("gemini-2.5-flash", use_openrouter=False)
-        assert result == "gemini-2.5-flash-lite"
+        with patch("app.providers.router.settings", mock_settings):
+            result = router._pick_transient_fallback_model("gemini-3.5-flash", use_openrouter=False)
+
+        assert result == "gemini-3.1-flash-lite"
 
     def test_opencode_model_cascades_to_gemini(self):
         router = self._get_router()
-        from app.config import settings
+        from app.config import DEFAULT_GEMINI_MODELS, settings
 
         result = router._pick_transient_fallback_model("opencode-go/minimax-m2.7", use_openrouter=None)
         # Should return a Gemini fallback if it's in AVAILABLE_MODELS
         if result is not None:
             assert "opencode" not in result
-            assert result in settings.AVAILABLE_MODELS
+            available = getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else DEFAULT_GEMINI_MODELS
+            assert result in available
 
     def test_openrouter_model_returns_none(self):
         router = self._get_router()
@@ -434,21 +435,43 @@ class TestMultimodalGuard:
             assert "opencode" not in v, f"Fallback value {v!r} must be a Gemini model"
 
     def test_fallback_map_only_contains_canonical_opencode_models(self):
-        """Guard: only approved Opencode model names in the fallback map."""
+        """Guard: only approved Opencode model names in the fallback map.
+
+        Keep this set in sync with _get_opencode_gemini_fallback() in router.py.
+        When adding new Opencode models to the router, add them here too.
+        """
         from app.providers.router import _get_opencode_gemini_fallback
 
         _CANONICAL_OPENCODE = {
-            "opencode-go/minimax-m2.7",
-            "opencode-go/minimax-m2.5",
-            "opencode-go/qwen3.6-plus",
+            # GLM family
+            "opencode-go/glm-5",
+            "opencode-go/glm-5.1",
+            # Kimi family
             "opencode-go/kimi-k2.5",
-            "opencode-go/big-pickle",
-            "opencode-go/qwen3.5-plus",
+            "opencode-go/kimi-k2.6",
+            # MiMo family (V2 + V2.5)
+            "opencode-go/mimo-v2-pro",
             "opencode-go/mimo-v2-omni",
+            "opencode-go/mimo-v2.5-pro",
+            "opencode-go/mimo-v2.5",
+            # MiniMax family
+            "opencode-go/minimax-m2.5",
+            "opencode-go/minimax-m2.7",
+            # Qwen family
+            "opencode-go/qwen3.5-plus",
+            "opencode-go/qwen3.6-plus",
+            # DeepSeek family
+            "opencode-go/deepseek-v4-pro",
+            "opencode-go/deepseek-v4-flash",
+            # Legacy / routing alias
+            "opencode-go/big-pickle",
         }
         for key in _get_opencode_gemini_fallback():
             assert key in _CANONICAL_OPENCODE, (
-                f"Non-canonical Opencode model {key!r} found in fallback map. Allowed: {sorted(_CANONICAL_OPENCODE)}"
+                f"Non-canonical Opencode model {key!r} found in fallback map.\n"
+                f"Add it to _CANONICAL_OPENCODE in this test AND ensure it has a "
+                f"Gemini fallback in _get_opencode_gemini_fallback().\n"
+                f"Current allowed set: {sorted(_CANONICAL_OPENCODE)}"
             )
 
     def test_fallback_values_are_canonical_gemini_models(self):
@@ -456,10 +479,8 @@ class TestMultimodalGuard:
         from app.providers.router import _get_opencode_gemini_fallback
 
         _CANONICAL_GEMINI = {
-            "gemini-3.1-flash-lite-preview",
-            "gemini-3-flash-preview",
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite",
         }
         for opencode_model, gemini_fallback in _get_opencode_gemini_fallback().items():
             # Values are settings.DEFAULT_MODEL etc. — resolved fresh each call
@@ -486,15 +507,16 @@ class TestModelSelectorOpencodeSkip:
         assert result is None, "Should not suggest a different model when current is Opencode"
 
     def test_suggestions_still_work_for_gemini_model(self):
-        from app.config import settings
+        from app.config import DEFAULT_GEMINI_MODELS, settings
         from app.model_selector import select_model
 
-        if len(settings.AVAILABLE_MODELS) < 2:
+        available = getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else DEFAULT_GEMINI_MODELS
+        if len(available) < 2:
             pytest.skip("Need at least 2 Gemini models for upgrade suggestions")
         # A complex coding query with a lite model should potentially suggest an upgrade
         result = select_model(
             "Создай сложный класс на Python с множественным наследованием и метаклассами",
-            current_model="gemini-2.5-flash-lite",
+            current_model="gemini-3.1-flash-lite",
         )
         # Result may be None if only one Gemini model is configured — that's fine
         if result is not None:

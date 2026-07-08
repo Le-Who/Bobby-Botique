@@ -43,10 +43,35 @@ def authorized_only(func):
                     user_data.pop(key, None)
         if not await is_authorized(user_id):
             logging.warning("Unauthorized access attempt by user %s to %s", user_id, func.__name__)
+            
+            from app.admin_alerts import alert_admin_unauthorized_user
+            from app.utils.background_tasks import submit_task
+            
+            _user = update.effective_user
+            message_text = None
+            if update.message and update.message.text:
+                message_text = update.message.text
+            elif update.callback_query and update.callback_query.data:
+                message_text = f"[Callback] {update.callback_query.data}"
+                
+            chat_type = getattr(update.effective_chat, "type", "unknown")
+            
+            submit_task(
+                alert_admin_unauthorized_user(
+                    app=context.application,
+                    user_id=user_id,
+                    username=_user.username if _user else None,
+                    first_name=_user.first_name if _user else None,
+                    language_code=_user.language_code if _user else None,
+                    chat_type=chat_type,
+                    message_text=message_text,
+                )
+            )
+
             if update.message:
-                await update.message.reply_text("❌ У вас нет доступа к этому боту.")
+                await update.message.reply_text("⏳ У вас пока нет доступа к этому боту. Ваша заявка отправлена администратору на рассмотрение. Пожалуйста, ожидайте.")
             elif update.callback_query:
-                await update.callback_query.answer("❌ У вас нет доступа к этому боту.", show_alert=True)
+                await update.callback_query.answer("⏳ Заявка на рассмотрении. Ожидайте.", show_alert=True)
             return
         return await func(update, context, *args, **kwargs)
 

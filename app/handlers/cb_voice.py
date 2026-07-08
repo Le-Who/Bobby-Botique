@@ -311,7 +311,7 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
             async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
                 # Retranscribe with the specific premium model requested
                 new_transcript, new_intent, new_draw_prompt = await transcribe_voice(
-                    voice_bytes, model="gemini-3-flash-preview"
+                    voice_bytes, model="gemini-3.5-flash"
                 )
 
                 if new_transcript is None:

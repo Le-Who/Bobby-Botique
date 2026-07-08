@@ -61,14 +61,17 @@ class DailyKeyManager:
             LEFT JOIN {self.usage_table} ku ON ak.key_hash = ku.key_hash
                 AND ku.model_name = $1 AND ku.usage_date = $2
             ORDER BY COALESCE(ku.request_count, 0) ASC
-            LIMIT 1
         """
         results = await db_query(query, (model_name, today), conn=conn)
-        if results:
-            return {
-                "key_hash": results[0]["key_hash"],
-                "api_key": safe_decrypt(results[0]["api_key"]),
-            }
+        for row in results:
+            try:
+                return {
+                    "key_hash": row["key_hash"],
+                    "api_key": safe_decrypt(row["api_key"]),
+                }
+            except Exception as e:
+                logging.error("Failed to decrypt key %s: %s", row["key_hash"][:8], e)
+                continue
         return None
 
     async def increment_usage(self, key_hash: str, model_name: str) -> list[dict[str, Any]]:
@@ -148,14 +151,17 @@ class DailyKeyManager:
                   )
                 ORDER BY
                     CASE WHEN COALESCE(kms.status, 'active') = 'active' THEN 0 ELSE 1 END
-                LIMIT 1
             """
             keys = await db_query(query, (model_name, excluded), conn=conn)
-            if keys:
-                return {
-                    "key_hash": keys[0]["key_hash"],
-                    "api_key": safe_decrypt(keys[0]["api_key"]),
-                }
+            for row in keys:
+                try:
+                    return {
+                        "key_hash": row["key_hash"],
+                        "api_key": safe_decrypt(row["api_key"]),
+                    }
+                except Exception as e:
+                    logging.error("Failed to decrypt key %s: %s", row["key_hash"][:8], e)
+                    continue
             return None
 
         threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
@@ -184,10 +190,14 @@ class DailyKeyManager:
 
         for row in results:
             if row["request_count"] < threshold:
-                return {
-                    "key_hash": row["key_hash"],
-                    "api_key": safe_decrypt(row["api_key"]),
-                }
+                try:
+                    return {
+                        "key_hash": row["key_hash"],
+                        "api_key": safe_decrypt(row["api_key"]),
+                    }
+                except Exception as e:
+                    logging.error("Failed to decrypt key %s: %s", row["key_hash"][:8], e)
+                    continue
         return None
 
 
@@ -289,6 +299,16 @@ async def get_current_active_gemini_key(model_name: str) -> dict[str, Any] | Non
     """
     daily_limit = await get_model_daily_limit(model_name)
     return await _gemini_km.get_fresh_available_key(model_name, daily_limit)
+
+
+async def count_gemini_keys() -> int:
+    """Return the total number of Gemini API keys currently in the pool.
+
+    Used to dynamically size max_key_retries in batch generation tasks so
+    the router can spread load across the full pool instead of a hardcoded cap.
+    """
+    rows = await db_query("SELECT COUNT(*) AS cnt FROM api_keys", ())
+    return int(rows[0]["cnt"]) if rows else 0
 
 
 async def increment_gemini_key_usage(key_hash: str, model_name: str) -> None:
@@ -544,10 +564,14 @@ class MonthlyKeyManager:
 
         for row in results:
             if row["credit_usage"] < threshold:
-                return {
-                    "key_hash": row["key_hash"],
-                    "api_key": safe_decrypt(row["api_key"]),
-                }
+                try:
+                    return {
+                        "key_hash": row["key_hash"],
+                        "api_key": safe_decrypt(row["api_key"]),
+                    }
+                except Exception as e:
+                    logging.error("Failed to decrypt key %s: %s", row["key_hash"][:8], e)
+                    continue
         return None
 
     async def increment_usage(self, key_hash: str, cost: int) -> None:
@@ -567,8 +591,8 @@ class MonthlyKeyManager:
 _tavily_km = MonthlyKeyManager(
     keys_table="tavily_api_keys",
     usage_table="tavily_key_usage",
-    credit_limit=settings.TAVILY_MONTHLY_CREDIT_LIMIT,
-    threshold_percent=settings.TAVILY_LIMIT_THRESHOLD_PERCENT,
+    credit_limit=settings.TAVILY_MONTHLY_CREDIT_LIMIT if settings else 1000,
+    threshold_percent=settings.TAVILY_LIMIT_THRESHOLD_PERCENT if settings else 80,
 )
 
 

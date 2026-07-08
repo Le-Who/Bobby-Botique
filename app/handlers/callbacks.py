@@ -126,7 +126,10 @@ def register(application: Application) -> None:
         regenerate_dailycroc_image_callback,
         run_dailycroc_prep_check_callback,
         send_dailycroc_test_callback,
+        unauthorized_add_callback,
+        unauthorized_dismiss_callback,
     )
+    from app.handlers.daily_2048 import monthly_champions_callback
 
     # ── Fast (non-blocking) callbacks ────────────────────────────────────
     _add_fast_callback(application, toggle_search_callback, "^toggle_search$")
@@ -209,7 +212,14 @@ def register(application: Application) -> None:
     _add_fast_callback(application, refresh_dailycroc_status_callback, "^dailycroc_status:refresh$")
     application.add_handler(CallbackQueryHandler(run_dailycroc_prep_check_callback, pattern="^dailycroc_status:check$"))
     application.add_handler(CallbackQueryHandler(send_dailycroc_test_callback, pattern="^dailycroc_status:send_test$"))
-    application.add_handler(CallbackQueryHandler(regenerate_dailycroc_image_callback, pattern="^dailycroc_status:regen:.*$"))
+    application.add_handler(
+        CallbackQueryHandler(regenerate_dailycroc_image_callback, pattern="^dailycroc_status:regen:.*$")
+    )
+    _add_fast_callback(application, monthly_champions_callback, "^daily2048:month:")
+
+    # Admin unauthorized user alerts
+    application.add_handler(CallbackQueryHandler(unauthorized_add_callback, pattern="^unauthorized_add:"))
+    application.add_handler(CallbackQueryHandler(unauthorized_dismiss_callback, pattern="^unauthorized_dismiss:"))
 
     # Conversation branching
     from app.handlers.cb_branches import branch_create_callback, branch_return_callback

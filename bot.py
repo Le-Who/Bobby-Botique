@@ -412,8 +412,27 @@ async def run_bot_with_retry():
             webhook_secret = (settings.WEBHOOK_SECRET_TOKEN or "").strip()
             seen_update_ids: dict[int, float] = {}
             seen_lock = asyncio.Lock()
-            dedup_ttl_seconds = 180.0
+            dedup_ttl_seconds = 86_400.0
             dedup_capacity = 10_000
+
+            if local_server_url:
+                from app.telegram_cloud_guard import release_cloud_bot_api_session
+
+                cloud_release = await release_cloud_bot_api_session(settings.TELEGRAM_BOT_TOKEN)
+                if not cloud_release.ok:
+                    raise RuntimeError(
+                        "Official Telegram cloud Bot API release failed before local webhook registration: "
+                        f"status={cloud_release.status} error={cloud_release.error}"
+                    )
+                logging.info(
+                    "Official Telegram cloud Bot API release guard passed: status=%s webhook_was_active=%s "
+                    "delete_webhook_called=%s log_out_called=%s pending_update_count=%s",
+                    cloud_release.status,
+                    cloud_release.webhook_was_active,
+                    cloud_release.delete_webhook_called,
+                    cloud_release.log_out_called,
+                    cloud_release.pending_update_count,
+                )
 
             # Register webhook route on Quart app
             @quart_app.route(webhook_path, methods=["POST"])
@@ -432,22 +451,17 @@ async def run_bot_with_retry():
 
                 update_id = json_data.get("update_id")
                 if isinstance(update_id, int):
-                    now = time.monotonic()
-                    async with seen_lock:
-                        # Opportunistic cleanup before capacity check
-                        stale = [uid for uid, ts in seen_update_ids.items() if now - ts > dedup_ttl_seconds]
-                        for uid in stale:
-                            seen_update_ids.pop(uid, None)
+                    from app.webhook_dedupe import should_accept_webhook_update
 
-                        if update_id in seen_update_ids:
-                            return "", 200
-
-                        if len(seen_update_ids) >= dedup_capacity:
-                            # Drop oldest entries first to keep memory bounded
-                            oldest = sorted(seen_update_ids.items(), key=lambda item: item[1])[: dedup_capacity // 10]
-                            for uid, _ in oldest:
-                                seen_update_ids.pop(uid, None)
-                        seen_update_ids[update_id] = now
+                    if not await should_accept_webhook_update(
+                        update_id,
+                        seen_update_ids,
+                        seen_lock,
+                        payload=json_data,
+                        ttl_seconds=dedup_ttl_seconds,
+                        capacity=dedup_capacity,
+                    ):
+                        return "", 200
 
                 try:
                     update_obj = Update.de_json(json_data, application.bot)
@@ -519,6 +533,21 @@ async def run_bot_with_retry():
         except Exception as e:
             logging.warning("Failed to register Daily Crocodile scheduler: %s", e)
 
+        # Schedule prepared inline Tarot card-of-day generation (hourly gate, PT evening only)
+        try:
+            from app.handlers.tarot_daily import check_tarot_daily_jobs
+
+            if application.job_queue:
+                application.job_queue.run_repeating(
+                    check_tarot_daily_jobs,
+                    interval=3600,
+                    first=150,
+                    name="tarot_daily_preparation",
+                )
+                logging.info("Tarot daily preparation job registered")
+        except Exception as e:
+            logging.warning("Failed to register Tarot daily preparation job: %s", e)
+
         # Schedule reminder delivery poll (every 60 seconds)
         try:
             from app.handlers.cmd_reminders import check_and_deliver_reminders
@@ -533,6 +562,22 @@ async def run_bot_with_retry():
                 logging.info("Reminder delivery job registered (60s interval)")
         except Exception as e:
             logging.warning("Failed to register reminder delivery job: %s", e)
+
+        # Schedule horoscope delivery poll (every 60 seconds, checks exact HH:MM match)
+        try:
+            from app.handlers.scheduled_horoscopes import check_and_send_horoscopes
+
+            if application.job_queue:
+                application.job_queue.run_repeating(
+                    check_and_send_horoscopes,
+                    interval=60,  # Every minute — matches HH:MM granularity
+                    first=45,  # First run 45s after boot (offset from reminder job)
+                    name="horoscope_delivery",
+                )
+                logging.info("Horoscope delivery job registered (60s interval)")
+        except Exception as e:
+            logging.warning("Failed to register horoscope delivery job: %s", e)
+
 
         # Schedule provider health check (every 30 minutes)
         try:
@@ -559,7 +604,7 @@ async def run_bot_with_retry():
             logging.info("Stopping bot...")
             # We shield the shutdown calls to ensure they run even if the cancellation propagates
             if webhook_url:
-                await asyncio.shield(application.bot.delete_webhook())
+                logging.info("Webhook mode shutdown: preserving Telegram webhook for zero-downtime deploy.")
             else:
                 await asyncio.shield(application.updater.stop())
             await asyncio.shield(application.stop())
@@ -713,8 +758,18 @@ async def startup_health_check():
         try:
             import httpx
 
+            # When a local Bot API server is configured the token is logged out
+            # from the cloud, so api.telegram.org/getMe returns 400.  Hit the
+            # local server instead.  Its base_url is like "http://tg-api:8081/bot"
+            # so we append "{token}/getMe" to form the full URL.
+            local_server = settings.TELEGRAM_LOCAL_SERVER_URL or ""
+            if local_server:
+                get_me_url = f"{local_server.rstrip('/')}{settings.TELEGRAM_BOT_TOKEN}/getMe"
+            else:
+                get_me_url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/getMe"
+
             async with httpx.AsyncClient() as client:
-                response = await client.get(f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/getMe")
+                response = await client.get(get_me_url)
                 if response.status_code == 200:
                     bot_info = response.json()
                     if bot_info.get("ok"):

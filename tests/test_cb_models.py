@@ -73,7 +73,7 @@ class TestModelButtonCallback:
             patch("app.handlers.cb_models.get_openrouter_keys", return_value=None),
             patch("app.handlers.cb_models.menus") as mock_menus,
         ):
-            mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite-preview"]
+            mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite"]
             mock_settings.OPENROUTER_AVAILABLE_MODELS = []
             mock_menus.get_model_menu_content.return_value = (
                 "text",
@@ -83,7 +83,7 @@ class TestModelButtonCallback:
 
             await model_button_callback(update, MagicMock())
 
-        assert mock_chat_state.model == "gemini-3.1-flash-lite-preview"
+        assert mock_chat_state.model == "gemini-3.1-flash-lite"
         mock_update.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -98,7 +98,7 @@ class TestModelButtonCallback:
             patch("app.handlers.cb_models.settings") as mock_settings,
             patch("app.handlers.cb_models.get_openrouter_keys", return_value=None),
         ):
-            mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite-preview"]
+            mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite"]
             mock_settings.OPENROUTER_AVAILABLE_MODELS = []
 
             await model_button_callback(update, MagicMock())
@@ -113,7 +113,7 @@ class TestSwitchModelCallback:
     async def test_busy_user_gets_toast(self):
         from app.handlers.cb_models import switch_model_callback
 
-        update, query = _make_update("switch_model:gemini-3.1-flash-lite-preview")
+        update, query = _make_update("switch_model:gemini-3.1-flash-lite")
 
         with patch("app.handlers.cb_models._is_user_busy", return_value=True):
             await switch_model_callback(update, MagicMock())
@@ -130,7 +130,7 @@ class TestSwitchModelCallback:
             patch("app.handlers.cb_models._is_user_busy", return_value=False),
             patch("app.handlers.cb_models.settings") as mock_settings,
         ):
-            mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite-preview"]
+            mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite"]
             mock_settings.OPENROUTER_AVAILABLE_MODELS = []
 
             await switch_model_callback(update, MagicMock())
@@ -142,7 +142,7 @@ class TestSwitchModelCallback:
     async def test_valid_switch_updates_state(self):
         from app.handlers.cb_models import switch_model_callback
 
-        update, query = _make_update("switch_model:gemini-3.1-flash-lite-preview")
+        update, query = _make_update("switch_model:gemini-3.1-flash-lite")
 
         mock_chat_state = MagicMock()
 
@@ -156,12 +156,12 @@ class TestSwitchModelCallback:
             ),
             patch("app.handlers.cb_models.update_user_chat", new_callable=AsyncMock) as mock_update,
         ):
-            mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite-preview"]
+            mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite"]
             mock_settings.OPENROUTER_AVAILABLE_MODELS = []
 
             await switch_model_callback(update, MagicMock())
 
-        assert mock_chat_state.model == "gemini-3.1-flash-lite-preview"
+        assert mock_chat_state.model == "gemini-3.1-flash-lite"
         mock_update.assert_awaited_once()
 
 

@@ -1,0 +1,2034 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Admin: Daily & Broadcast</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Work+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style nonce="{{ g.csp_nonce }}">
+:root {
+  --bg: #0a0e1a;
+  --bg-surface: #111827;
+  --surface: rgba(255, 255, 255, 0.035);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.07);
+  --border-hover: rgba(255, 255, 255, 0.14);
+  --text: #e2e8f0;
+  --text-muted: #64748b;
+  --text-dim: #475569;
+  --accent: #06b6d4;
+  --accent-glow: rgba(6, 182, 212, 0.2);
+  --violet: #8b5cf6;
+  --green: #10b981;
+  --amber: #f59e0b;
+  --rose: #f43f5e;
+  --card-radius: 14px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html { height: 100%; overflow: hidden; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Work Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior-y: none;
+  padding-bottom: 60px;
+  background-image:
+    radial-gradient(ellipse at 15% 5%, rgba(6, 182, 212, 0.06) 0%, transparent 40%),
+    radial-gradient(ellipse at 85% 95%, rgba(139, 92, 246, 0.04) 0%, transparent 40%);
+  background-attachment: fixed;
+}
+
+/* ==========================================
+   TOP HEADER
+   ========================================== */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.8rem 1.5rem;
+  background: rgba(10, 14, 26, 0.9);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+}
+.header h1 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ==========================================
+   TAB NAVIGATION
+   ========================================== */
+.tab-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0.5rem 1.5rem 0;
+  background: rgba(10, 14, 26, 0.8);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 57px;
+  z-index: 90;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tab-nav::-webkit-scrollbar { display: none; }
+.tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.5rem 1rem 0.55rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.2s, border-color 0.2s;
+  font-family: inherit;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ==========================================
+   TAB PANELS
+   ========================================== */
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ==========================================
+   SHARED: STAT CARDS
+   ========================================== */
+.stats-panel {
+  max-width: 1280px;
+  margin: 1.2rem auto 0;
+  padding: 0 1.5rem;
+}
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.8rem;
+}
+@media (max-width: 900px) { .stats-row { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .stats-row { grid-template-columns: 1fr; } }
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  padding: 1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 90px;
+  position: relative;
+  overflow: hidden;
+}
+.stat-card-title {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.stat-card-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--text);
+  font-family: "JetBrains Mono", monospace;
+  margin-top: 4px;
+}
+.stat-card-sub {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.stat-card-action {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+}
+
+/* ==========================================
+   SHARED: TOGGLE SWITCH
+   ========================================== */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: var(--text-dim);
+  transition: .25s;
+  border-radius: 20px;
+}
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 16px; width: 16px;
+  left: 3px; bottom: 3px;
+  background-color: #fff;
+  transition: .25s;
+  border-radius: 50%;
+}
+input:checked + .slider { background-color: var(--green); }
+input:checked + .slider:before { transform: translateX(16px); }
+
+/* ==========================================
+   SHARED: MAIN CONTENT / SECTION
+   ========================================== */
+.main-content {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+.section-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  margin-bottom: 0.8rem;
+  padding-left: 2px;
+}
+
+/* ==========================================
+   BROADCAST: CHANNEL CARDS
+   ========================================== */
+.channel-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1.5rem;
+}
+.channel-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  padding: 1rem 1.2rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+  min-height: 130px;
+  transition: border-color 0.25s;
+}
+.channel-card.enabled { border-color: rgba(16, 185, 129, 0.25); }
+.channel-card.disabled { border-color: rgba(244, 63, 94, 0.15); }
+.channel-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.channel-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.channel-mode-badge {
+  font-size: 0.6rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--accent-glow);
+  color: var(--accent);
+  font-weight: 700;
+  border: 1px solid rgba(6, 182, 212, 0.3);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.channel-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.channel-stat-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+}
+.channel-stat-line span:first-child { color: var(--text-muted); }
+.channel-stat-line span:last-child {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78rem;
+  color: var(--text);
+}
+.channel-toggle {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+}
+.channel-status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 5px;
+}
+.dot-on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot-off { background: var(--rose); }
+
+/* ==========================================
+   BROADCAST: SUBSCRIBERS TABLE
+   ========================================== */
+.table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  overflow: hidden;
+}
+.table-filters {
+  display: flex;
+  gap: 8px;
+  padding: 0.8rem 1rem;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.filter-select, .filter-input {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  height: 30px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.filter-select:focus, .filter-input:focus { border-color: var(--accent); outline: none; }
+.filter-input { width: 130px; }
+.filter-input::placeholder { color: var(--text-dim); }
+.sub-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.sub-table thead { position: sticky; top: 0; z-index: 5; background: var(--bg-surface); }
+.sub-table th {
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.sub-table th.th-r { text-align: right; }
+.sub-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  color: var(--text);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.sub-table td.td-r { text-align: right; }
+.sub-table tr:last-child td { border-bottom: none; }
+.sub-table tr:hover td { background: var(--surface-hover); }
+.sub-table tr.row-inactive td { opacity: 0.5; }
+.sub-table tr.row-inactive:hover td { opacity: 0.75; background: var(--surface-hover); }
+.mono { font-family: "JetBrains Mono", monospace; font-size: 0.75rem; }
+/* User cell: name on top, mono ID below */
+.cell-user { display: flex; flex-direction: column; gap: 1px; }
+.cell-user-name { font-size: 0.8rem; font-weight: 500; color: var(--text); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.cell-user-id { font-family: "JetBrains Mono", monospace; font-size: 0.68rem; color: var(--text-dim); }
+/* Time cell: hour on top, tz below */
+.cell-time { display: flex; flex-direction: column; gap: 1px; text-align: right; }
+.cell-time-hour { font-family: "JetBrains Mono", monospace; font-size: 0.82rem; color: var(--text); font-weight: 600; }
+.cell-time-tz { font-size: 0.62rem; color: var(--text-dim); }
+/* Date cell */
+.cell-date-never { font-size: 0.72rem; color: var(--text-dim); font-style: italic; }
+.cell-date-val { font-family: "JetBrains Mono", monospace; font-size: 0.72rem; color: var(--text-muted); }
+/* Badge channel */
+.badge-channel {
+  display: inline-block;
+  font-size: 0.63rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--accent-glow);
+  color: var(--accent);
+  border: 1px solid rgba(6, 182, 212, 0.25);
+  margin: 1px 2px 1px 0;
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* Status badges */
+.badge-status {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.65rem; font-weight: 600;
+  padding: 2px 7px; border-radius: 20px;
+  white-space: nowrap; border: 1px solid;
+}
+.badge-status-active { background: rgba(16,185,129,0.1); color: var(--green); border-color: rgba(16,185,129,0.25); }
+.badge-status-snoozed { background: rgba(245,158,11,0.1); color: var(--amber); border-color: rgba(245,158,11,0.25); }
+.badge-status-inactive { background: rgba(255,255,255,0.05); color: var(--text-dim); border-color: rgba(255,255,255,0.08); }
+.badge-status-yes { background: rgba(16,185,129,0.1); color: var(--green); border-color: rgba(16,185,129,0.25); }
+.badge-status-no { background: rgba(244,63,94,0.08); color: var(--rose); border-color: rgba(244,63,94,0.18); }
+/* Empty / error states */
+.empty-state {
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.empty-state-icon { font-size: 2rem; margin-bottom: 8px; display: block; }
+.error-state { padding: 32px 20px; text-align: center; }
+.error-state-icon { font-size: 1.6rem; margin-bottom: 6px; }
+.error-state-msg { color: var(--rose); font-size: 0.82rem; }
+
+/* ==========================================
+   CROC: PUZZLE GRID (ported from admin_dailycroc.html)
+   ========================================== */
+.puzzle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 1.2rem;
+}
+.puzzle-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  overflow: hidden;
+  transition: border-color 0.25s, box-shadow 0.25s;
+  display: flex;
+  flex-direction: column;
+}
+.puzzle-card:hover { border-color: var(--border-hover); box-shadow: 0 6px 20px rgba(0,0,0,0.4); }
+.card-today { border-color: var(--accent); box-shadow: 0 0 10px rgba(6,182,212,0.15); }
+.card-today:hover { border-color: var(--accent); box-shadow: 0 6px 22px rgba(6,182,212,0.25); }
+.card-body { padding: 1.1rem 1.2rem; flex-grow: 1; }
+.puzzle-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.puzzle-date { font-size: 0.85rem; font-weight: 600; color: var(--text); }
+.today-badge {
+  font-size: 0.6rem; background: var(--accent-glow); color: var(--accent);
+  padding: 1px 6px; border-radius: 4px; font-weight: 700; border: 1px solid rgba(6,182,212,0.3);
+  letter-spacing: 0.5px; margin-left: 6px; text-transform: uppercase;
+}
+.puzzle-diff {
+  font-size: 0.65rem; padding: 2px 8px; border-radius: 6px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+  font-family: "JetBrains Mono", monospace;
+}
+.diff-easy { color: var(--green); background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.25); }
+.diff-hard { color: var(--rose); background: rgba(244,63,94,0.12); border: 1px solid rgba(244,63,94,0.25); }
+.puzzle-info { margin-bottom: 12px; }
+.puzzle-word { font-size: 1.25rem; font-weight: 700; color: #fff; letter-spacing: -0.2px; }
+.puzzle-topic { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+.image-container { width: 100%; aspect-ratio: 1; position: relative; background: rgba(0,0,0,0.2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: center; }
+.image-preview { width: 100%; height: 100%; object-fit: cover; display: block; }
+.image-placeholder { color: var(--text-dim); font-size: 0.8rem; display: flex; flex-direction: column; align-items: center; gap: 8px; font-weight: 500; }
+.image-spinner { width: 24px; height: 24px; border: 2px solid rgba(255,255,255,0.1); border-radius: 50%; border-top-color: var(--accent); animation: spin 1s linear infinite; }
+.prompt-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.prompt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.prompt-title { font-size: 0.68rem; color: var(--text-muted); font-weight: 600; letter-spacing: 0.05em; }
+.btn-text { background: none; border: none; color: var(--accent); font-size: 0.72rem; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
+.btn-text:hover { opacity: 0.8; }
+.puzzle-prompt { font-size: 0.78rem; line-height: 1.4; color: var(--text); font-style: italic; }
+.prompt-input { width: 100%; min-height: 80px; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text); font-family: inherit; font-size: 0.78rem; resize: vertical; margin-bottom: 8px; }
+.prompt-input:focus { border-color: var(--accent); outline: none; }
+.model-select { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text); font-family: inherit; font-size: 0.78rem; cursor: pointer; transition: border-color 0.2s; }
+.model-select:focus { border-color: var(--accent); outline: none; }
+.card-actions { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; background: rgba(0,0,0,0.1); }
+.btn {
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  padding: 9px 16px; border-radius: 8px; font-size: 0.8rem; font-weight: 500;
+  cursor: pointer; display: flex; justify-content: center; align-items: center;
+  gap: 6px; transition: background 0.2s, border-color 0.2s, opacity 0.15s;
+  font-family: inherit;
+}
+.btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-hover); }
+.btn:active:not(:disabled) { opacity: 0.8; }
+.btn:disabled { opacity: 0.35; cursor: default; }
+.btn-regen { background: var(--accent-glow); color: var(--accent); border-color: rgba(6,182,212,0.3); }
+.btn-regen:hover:not(:disabled) { background: rgba(6,182,212,0.3); border-color: var(--accent); }
+.btn-reset { background: rgba(244,63,94,0.08); color: var(--rose); border-color: rgba(244,63,94,0.2); }
+.btn-reset:hover:not(:disabled) { background: rgba(244,63,94,0.15); border-color: var(--rose); }
+.btn-save { background: var(--accent); color: #000; font-weight: 600; border: none; }
+.btn-save:hover { background: #08d9fd; }
+.btn-row { display: flex; gap: 8px; }
+.btn-row .btn { flex: 1; }
+.btn-refresh { font-size: 0.8rem; font-weight: 600; padding: 6px 12px; height: 32px; border-radius: 6px; width: auto; }
+.btn-primary { background: rgba(139,92,246,0.18); color: var(--violet); border-color: rgba(139,92,246,0.35); font-weight: 600; }
+.btn-primary:hover:not(:disabled) { background: rgba(139,92,246,0.3); border-color: var(--violet); }
+.btn-sm { font-size: 0.72rem; padding: 3px 9px; height: 26px; border-radius: 5px; }
+.loading-container { padding: 60px 0; text-align: center; color: var(--text-muted); font-size: 0.9rem; }
+.badge-missing { display: inline-block; font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; background: rgba(244,63,94,0.15); color: var(--rose); font-weight: 700; border: 1px solid rgba(244,63,94,0.25); text-transform: uppercase; }
+.edit-hidden { display: none; }
+.mt-8 { margin-top: 8px; }
+.error-text { color: var(--rose); }
+.security-mode .puzzle-word { filter: blur(6px); transition: filter 0.15s; user-select: none; }
+.security-mode .puzzle-word:active { filter: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ==========================================
+   2048: PANEL (ported from admin_daily2048.html, adapted to dark theme)
+   ========================================== */
+.s2048-shell { max-width: 1240px; margin: 0 auto; padding: 1.5rem; }
+.s2048-toolbar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 1.2rem;
+}
+@media (max-width: 900px) { .s2048-toolbar { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .s2048-toolbar { grid-template-columns: 1fr; } }
+.s2048-panel {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--card-radius);
+  padding: 12px;
+}
+.s2048-panel label {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  font-weight: 900;
+  letter-spacing: .06em;
+  margin-bottom: 8px;
+}
+.s2048-panel strong { font-size: 1.25rem; font-family: "JetBrains Mono", monospace; }
+.s2048-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.s2048-btn {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-hover);
+  color: var(--text);
+  padding: 6px 12px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.8rem;
+  transition: background 0.2s;
+}
+.s2048-btn:hover { background: rgba(255,255,255,0.08); }
+.s2048-btn.primary { background: var(--accent); color: #000; border: none; }
+.s2048-btn.primary:hover { background: #08d9fd; }
+.s2048-btn.danger { border-color: rgba(244,63,94,0.35); color: var(--rose); }
+.s2048-layout {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 900px) { .s2048-layout { grid-template-columns: 1fr; } }
+.s2048-puzzles { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.s2048-puzzle {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--card-radius);
+  padding: 12px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.s2048-puzzle:hover { border-color: var(--border-hover); }
+.s2048-puzzle.active { border-color: rgba(16, 185, 129, 0.5); }
+.s2048-puzzle-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.s2048-date { font-size: 1.05rem; font-weight: 900; }
+.s2048-badge { border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; color: var(--text-muted); font-size: 11px; font-weight: 700; }
+.s2048-goal { margin: 8px 0; color: #ffe0a1; font-weight: 700; }
+.mini-board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 10px 0; }
+.mini-cell {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 12px;
+  font-family: "JetBrains Mono", monospace;
+}
+.s2048-meta { color: var(--text-muted); font-size: 12px; line-height: 1.4; }
+.s2048-editor { position: sticky; top: 110px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--card-radius); padding: 14px; }
+.editor-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-bottom: 12px; }
+.editor-grid input {
+  width: 100%; aspect-ratio: 1; min-height: 44px; text-align: center;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-surface); color: var(--text);
+  font-weight: 700; font-family: "JetBrains Mono", monospace;
+  font-size: 13px; transition: border-color 0.14s;
+}
+.editor-grid input:focus { border-color: var(--accent); outline: none; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.form-row.single { grid-template-columns: 1fr; }
+.field label { display: block; color: var(--text-muted); font-size: 11px; text-transform: uppercase; font-weight: 700; letter-spacing: .06em; margin-bottom: 5px; }
+.field input, .field select, .field textarea {
+  width: 100%; min-height: 34px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-surface); color: var(--text); padding: 6px 8px; font-family: inherit; font-size: 0.78rem;
+}
+.field textarea { min-height: 80px; resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); outline: none; }
+
+/* ==========================================
+   HOROSCOPE / TAROT STATS
+   ========================================== */
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1.5rem;
+}
+.info-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  padding: 0.9rem 1.1rem;
+}
+.info-card-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.info-card-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--text);
+}
+.tarot-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
+}
+.tarot-card-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+}
+.tarot-card-row.ready { border-color: rgba(16,185,129,0.25); }
+.tarot-card-row .tc-icon { font-size: 1rem; }
+.tarot-card-row .tc-label { flex: 1; color: var(--text-muted); }
+.tarot-card-row.ready .tc-label { color: var(--text); }
+.tarot-card-row .tc-status { font-size: 0.7rem; }
+.sign-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.sign-table td { padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.03); }
+.sign-table td:last-child { text-align: right; font-family: "JetBrains Mono", monospace; color: var(--accent); }
+
+/* ==========================================
+   TOAST NOTIFICATIONS
+   ========================================== */
+.toast-container {
+  position: fixed; bottom: 20px; right: 20px; z-index: 1000;
+  display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+}
+.toast {
+  background: #111827; border: 1px solid var(--border); color: var(--text);
+  padding: 10px 16px; border-radius: 8px; font-size: 0.8rem; font-weight: 500;
+  backdrop-filter: blur(12px); box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  display: flex; align-items: center; gap: 8px;
+  animation: toastIn 0.25s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: auto;
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.toast-success { border-color: var(--green); }
+.toast-error { border-color: var(--rose); }
+.toast-info { border-color: var(--accent); }
+
+/* ==========================================
+   CONFIRMATION MODAL
+   ========================================== */
+.modal {
+  display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(4, 6, 12, 0.8); z-index: 1000; align-items: center; justify-content: center;
+  backdrop-filter: blur(8px);
+}
+.modal-content {
+  background: #111827; border: 1px solid var(--border); border-radius: var(--card-radius);
+  padding: 1.5rem; max-width: 400px; width: 90%; text-align: center;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+  animation: modalScale 0.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes modalScale {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+.modal h3 { font-size: 1.1rem; font-weight: 600; color: #fff; margin-bottom: 8px; }
+.modal p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 20px; line-height: 1.4; }
+.modal-buttons { display: flex; gap: 10px; }
+.modal-buttons .btn { flex: 1; }
+.btn-confirm { background: var(--rose); border: none; color: #fff; font-weight: 600; }
+.btn-confirm:hover { background: #e53935; }
+</style>
+</head>
+<body>
+
+<!-- ========== HEADER ========== -->
+<div class="header">
+  <h1>📅 Daily Admin</h1>
+  <div class="header-actions" id="croc-header-actions" style="display:none;">
+    <button class="btn btn-refresh" id="toggle-security" data-croc-action="toggleSecurity">🔒 Скрыть слова</button>
+    <button class="btn btn-refresh" data-croc-action="loadPuzzles">🔄 Обновить</button>
+  </div>
+  <div class="header-actions" id="broadcast-header-actions">
+    <button class="btn btn-refresh" id="btn-refresh-broadcast">🔄 Обновить</button>
+  </div>
+</div>
+
+<!-- ========== TAB NAVIGATION ========== -->
+<nav class="tab-nav" id="tab-nav">
+  <button class="tab-btn active" data-tab="broadcast">📡 Рассылки</button>
+  <button class="tab-btn" data-tab="croc">🐊 Croc</button>
+  <button class="tab-btn" data-tab="2048">🎲 2048</button>
+  <button class="tab-btn" data-tab="horoscope">⭐ Horoscope</button>
+  <button class="tab-btn" data-tab="tarot">🔮 Tarot</button>
+</nav>
+
+<!-- ========================================
+     TAB: BROADCAST
+     ======================================== -->
+<div class="tab-panel active" id="tab-broadcast">
+  <div class="main-content">
+
+    <h2 class="section-title">Каналы рассылки</h2>
+    <div class="channel-cards" id="channel-cards">
+      <div class="loading-container">
+        <div class="image-spinner" style="margin:0 auto 12px;"></div>
+        Загрузка...
+      </div>
+    </div>
+
+    <h2 class="section-title">Все подписчики</h2>
+    <div class="table-wrap">
+      <div class="table-filters">
+        <select class="filter-select" id="sub-filter-channel">
+          <option value="">Все каналы</option>
+          <option value="daily_challenge">🎮 Daily Challenge</option>
+          <option value="horoscope">⭐ Horoscope</option>
+        </select>
+        <select class="filter-select" id="sub-filter-status">
+          <option value="">Все статусы</option>
+          <option value="active">active</option>
+          <option value="snoozed">snoozed</option>
+        </select>
+        <input type="text" class="filter-input" id="sub-filter-uid" placeholder="User ID…">
+        <button class="btn btn-refresh" id="btn-load-subs" style="margin-left:auto;">🔍 Найти</button>
+        <span style="font-size:0.72rem; color:var(--text-muted);" id="sub-count-label"></span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="sub-table">
+          <thead>
+            <tr>
+              <th>Пользователь</th>
+              <th>Каналы</th>
+              <th class="th-r">Час · Таймзона</th>
+              <th class="th-r">Последняя рассылка</th>
+              <th>Статус</th>
+            </tr>
+          </thead>
+          <tbody id="sub-tbody">
+            <tr><td colspan="5" class="empty-state"><span class="empty-state-icon">🔍</span>Нажмите «Найти» для загрузки</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:8px;padding:10px;border-top:1px solid var(--border);">
+        <button class="btn btn-refresh" id="sub-prev" disabled>← Назад</button>
+        <button class="btn btn-refresh" id="sub-next" disabled>Далее →</button>
+      </div>
+    </div>
+
+    <!-- ═══ OFFER HISTORY & MANUAL SEND ═══════════════════════════════════ -->
+    <h2 class="section-title" style="margin-top:32px;">📬 История офферов и ручная отправка</h2>
+
+    <!-- Quick send form -->
+    <div class="card" style="margin-bottom:18px;padding:18px 20px;">
+      <div style="font-size:0.82rem;font-weight:600;color:var(--text-muted);margin-bottom:12px;letter-spacing:.05em;text-transform:uppercase;">🎯 Отправить оффер по User ID</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <input type="text" class="filter-input" id="offer-quick-uid" placeholder="User ID…" style="width:160px;">
+        <select class="filter-select" id="offer-quick-channel">
+          <option value="daily_challenge">🎮 Daily Challenge</option>
+          <option value="horoscope">⭐ Horoscope</option>
+          <option value="tarot">🔮 Tarot</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--text-muted);cursor:pointer;">
+          <input type="checkbox" id="offer-quick-force"> Отправить даже если подписан
+        </label>
+        <button class="btn btn-primary" id="btn-offer-quick-send">✈️ Отправить</button>
+      </div>
+    </div>
+
+    <!-- Offer history filters -->
+    <div class="table-wrap">
+      <div class="table-filters">
+        <select class="filter-select" id="offer-filter-channel">
+          <option value="all">Все каналы</option>
+          <option value="daily_challenge">🎮 Daily Challenge</option>
+          <option value="horoscope">⭐ Horoscope</option>
+          <option value="tarot">🔮 Tarot</option>
+        </select>
+        <select class="filter-select" id="offer-filter-status">
+          <option value="">Все статусы</option>
+          <option value="subscribed">✅ Подписан</option>
+          <option value="not_subscribed">❌ Не подписан</option>
+          <option value="snoozed">💤 Snoozed</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--text-muted);cursor:pointer;white-space:nowrap;">
+          <input type="checkbox" id="offer-filter-never"> Только никогда не получали
+        </label>
+        <input type="text" class="filter-input" id="offer-filter-uid" placeholder="User ID…" style="width:120px;">
+        <button class="btn btn-refresh" id="btn-load-offers" style="margin-left:auto;">🔍 Найти</button>
+        <span style="font-size:0.72rem;color:var(--text-muted);" id="offer-count-label"></span>
+      </div>
+
+      <!-- Batch controls (visible when rows are checked) -->
+      <div id="offer-batch-bar" style="display:none;align-items:center;gap:10px;padding:10px 14px;background:rgba(139,92,246,.08);border-bottom:1px solid var(--border);">
+        <span style="font-size:0.82rem;color:var(--violet);font-weight:600;" id="offer-batch-count">0 выбрано</span>
+        <select class="filter-select" id="offer-batch-channel" style="width:auto;">
+          <option value="daily_challenge">🎮 Daily Challenge</option>
+          <option value="horoscope">⭐ Horoscope</option>
+          <option value="tarot">🔮 Tarot</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.77rem;color:var(--text-muted);cursor:pointer;">
+          <input type="checkbox" id="offer-batch-force"> force
+        </label>
+        <button class="btn btn-primary" id="btn-offer-batch-send" style="margin-left:auto;">✈️ Отправить выбранным</button>
+        <button class="btn" id="btn-offer-batch-clear" style="background:none;border:1px solid var(--border);color:var(--text-muted);">✕ Снять выбор</button>
+      </div>
+
+      <div style="overflow-x:auto;">
+        <table class="sub-table" id="offer-table">
+          <thead>
+            <tr>
+              <th style="width:32px;"><input type="checkbox" id="offer-select-all" title="Выбрать все"></th>
+              <th>Пользователь</th>
+              <th>Канал</th>
+              <th class="th-r">Оффер отправлен</th>
+              <th class="th-r">Снуз до</th>
+              <th>Подписан</th>
+              <th style="width:48px;"></th>
+            </tr>
+          </thead>
+          <tbody id="offer-tbody">
+            <tr><td colspan="8" class="empty-state"><span class="empty-state-icon">🔍</span>Нажмите «Найти» для загрузки</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:8px;padding:10px;border-top:1px solid var(--border);">
+        <button class="btn btn-refresh" id="offer-prev" disabled>← Назад</button>
+        <button class="btn btn-refresh" id="offer-next" disabled>Далее →</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ========================================
+     TAB: CROC
+     ======================================== -->
+<div class="tab-panel" id="tab-croc">
+  <div class="stats-panel">
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-card-title">Подписки</div>
+        <div class="stat-card-value" id="croc-stats-total-subs">—</div>
+        <div class="stat-card-sub" id="croc-stats-subs-detail">Осталось отправить: —</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-title">Игры сегодня</div>
+        <div class="stat-card-value" id="croc-stats-games">—</div>
+        <div class="stat-card-sub" id="croc-stats-games-detail">Побед: — | В игре: —</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-title">Параметры</div>
+        <div class="stat-card-value" id="croc-stats-placeholder" style="font-size:1.05rem; margin-top:8px;">Баннер: —</div>
+        <div class="stat-card-sub" id="croc-stats-model">Модель: —</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-title">Рассылка</div>
+        <div class="stat-card-value" id="croc-stats-delivery-hint" style="font-size:0.8rem;margin-top:8px;color:var(--text-muted);">
+          Управление рассылкой — на вкладке 📡
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <h2 class="section-title">Календарь пазлов (последние 20 дней)</h2>
+    <div class="puzzle-grid" id="croc-puzzle-container">
+      <div class="loading-container">
+        <div class="image-spinner" style="margin:0 auto 12px;"></div>
+        Загрузка пазлов...
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========================================
+     TAB: 2048
+     ======================================== -->
+<div class="tab-panel" id="tab-2048">
+  <div class="s2048-shell">
+    <section class="s2048-toolbar">
+      <div class="s2048-panel">
+        <label>Активный daily slot</label>
+        <strong id="s2048-mode-label">—</strong>
+      </div>
+      <div class="s2048-panel">
+        <label>Готовые пазлы</label>
+        <strong id="s2048-ready-count">0</strong>
+      </div>
+      <div class="s2048-panel">
+        <label>Ближайшая цель</label>
+        <strong id="s2048-next-goal">—</strong>
+      </div>
+      <div class="s2048-panel">
+        <label>Режим</label>
+        <div class="s2048-actions">
+          <button class="s2048-btn primary" id="s2048-mode-btn">2048</button>
+          <button class="s2048-btn" id="s2048-croc-btn">Croc</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="s2048-layout">
+      <div class="s2048-puzzles" id="s2048-puzzles"></div>
+
+      <aside class="s2048-editor">
+        <div class="form-row">
+          <div class="field"><label>Дата</label><input id="s2048-edit-date" type="date"></div>
+          <div class="field"><label>Статус</label>
+            <select id="s2048-edit-status">
+              <option value="ready">ready</option>
+              <option value="draft">draft</option>
+              <option value="disabled">disabled</option>
+            </select>
+          </div>
+        </div>
+        <div class="editor-grid" id="s2048-editor-board"></div>
+        <div class="form-row">
+          <div class="field"><label>Тип цели</label>
+            <select id="s2048-edit-goal-type"><option value="tile">tile</option><option value="total">total</option></select>
+          </div>
+          <div class="field"><label>Цель</label><input id="s2048-edit-goal-value" type="number" min="8" step="2" value="512"></div>
+        </div>
+        <div class="form-row">
+          <div class="field"><label>Par moves</label><input id="s2048-edit-par-moves" type="number" min="1" value="72"></div>
+          <div class="field"><label>Target seconds</label><input id="s2048-edit-target-seconds" type="number" min="30" value="240"></div>
+        </div>
+        <div class="form-row single">
+          <div class="field"><label>Seed</label><input id="s2048-edit-seed" type="text" value="custom"></div>
+        </div>
+        <div class="form-row single">
+          <div class="field"><label>Spawn sequence JSON</label><textarea id="s2048-edit-spawns">[]</textarea></div>
+        </div>
+        <div class="form-row single">
+          <div class="field"><label>Solution notes</label><textarea id="s2048-edit-solution"></textarea></div>
+        </div>
+        <div class="s2048-actions">
+          <button class="s2048-btn primary" id="s2048-save">Сохранить</button>
+          <button class="s2048-btn" id="s2048-generate">Сгенерировать день</button>
+        </div>
+      </aside>
+    </section>
+  </div>
+</div>
+
+<!-- ========================================
+     TAB: HOROSCOPE
+     ======================================== -->
+<div class="tab-panel" id="tab-horoscope">
+  <div class="main-content">
+    <h2 class="section-title">Подписки на гороскоп</h2>
+    <div class="info-grid" id="horo-info-grid">
+      <div class="info-card"><div class="info-card-label">Активных</div><div class="info-card-value" id="horo-total">—</div></div>
+      <div class="info-card"><div class="info-card-label">Только утро</div><div class="info-card-value" id="horo-today">—</div></div>
+      <div class="info-card"><div class="info-card-label">Только вечер</div><div class="info-card-value" id="horo-tomorrow">—</div></div>
+      <div class="info-card"><div class="info-card-label">Утро + вечер</div><div class="info-card-value" id="horo-both">—</div></div>
+    </div>
+
+    <h2 class="section-title">По знакам зодиака</h2>
+    <div class="table-wrap">
+      <table class="sign-table" id="horo-sign-table">
+        <tbody id="horo-sign-tbody">
+          <tr><td colspan="2" class="empty-state">Загрузка…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ========================================
+     TAB: TAROT
+     ======================================== -->
+<div class="tab-panel" id="tab-tarot">
+  <div class="main-content">
+    <h2 class="section-title">Статус карт на сегодня</h2>
+    <div class="info-grid">
+      <div class="info-card"><div class="info-card-label">Подписчики</div><div class="info-card-value" id="tarot-subs">—</div></div>
+      <div class="info-card"><div class="info-card-label">Готово сегодня</div><div class="info-card-value" id="tarot-today-ready">—</div></div>
+      <div class="info-card"><div class="info-card-label">Готово завтра</div><div class="info-card-value" id="tarot-tomorrow-ready">—</div></div>
+      <div class="info-card">
+        <div class="info-card-label">Принудительная регенерация</div>
+        <div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
+          <input type="date" id="tarot-regen-date" style="background:var(--bg-surface);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 8px;font-family:inherit;font-size:0.78rem;">
+          <button class="btn btn-regen btn-refresh" id="tarot-regen-btn">▶ Старт</button>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+      <div>
+        <h2 class="section-title">Сегодня — <span id="tarot-today-date">…</span></h2>
+        <div class="tarot-cards-grid" id="tarot-today-cards">
+          <div class="empty-state">Загрузка…</div>
+        </div>
+      </div>
+      <div>
+        <h2 class="section-title">Завтра — <span id="tarot-tomorrow-date">…</span></h2>
+        <div class="tarot-cards-grid" id="tarot-tomorrow-cards">
+          <div class="empty-state">Загрузка…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== TOAST ========== -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- ========== MODAL ========== -->
+<div class="modal" id="confirm-modal">
+  <div class="modal-content">
+    <h3 id="modal-title">Подтверждение</h3>
+    <p id="modal-message">Вы уверены?</p>
+    <div class="modal-buttons">
+      <button id="modal-confirm" class="btn btn-confirm">Да, выполнить</button>
+      <button id="modal-cancel" class="btn">Отмена</button>
+    </div>
+  </div>
+</div>
+
+<script nonce="{{ g.csp_nonce }}">
+'use strict';
+
+// ============================================================
+// SHARED UTILITIES
+// ============================================================
+const apiHeaders = { 'Content-Type': 'application/json' };
+const getHeaders = {};
+
+if (window.Telegram?.WebApp?.initData) {
+  const initData = window.Telegram.WebApp.initData;
+  apiHeaders['Authorization'] = 'tma ' + initData;
+  getHeaders['Authorization'] = 'tma ' + initData;
+  window.Telegram.WebApp.ready();
+  window.Telegram.WebApp.expand();
+}
+
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
+  toast.innerHTML = `<span>${icon}</span> <span>${message}</span>`;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-10px) scale(0.95)';
+    toast.style.transition = 'opacity 0.2s, transform 0.2s';
+    setTimeout(() => toast.remove(), 200);
+  }, 3500);
+}
+
+function showConfirm(title, message) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('confirm-modal');
+    const confirmBtn = document.getElementById('modal-confirm');
+    const cancelBtn = document.getElementById('modal-cancel');
+    document.getElementById('modal-title').textContent = title;
+    document.getElementById('modal-message').textContent = message;
+    modal.style.display = 'flex';
+    const cleanup = (value) => {
+      modal.style.display = 'none';
+      confirmBtn.onclick = null;
+      cancelBtn.onclick = null;
+      resolve(value);
+    };
+    confirmBtn.onclick = () => cleanup(true);
+    cancelBtn.onclick = () => cleanup(false);
+  });
+}
+
+function getKyivDateString() {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Kyiv', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  } catch (e) {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+// ============================================================
+// TAB ROUTER (hash-based)
+// ============================================================
+const TabRouter = (() => {
+  const TABS = ['broadcast', 'croc', '2048', 'horoscope', 'tarot'];
+  const HEADER_ACTIONS = {
+    croc: 'croc-header-actions',
+    broadcast: 'broadcast-header-actions',
+  };
+
+  function activate(tabId) {
+    if (!TABS.includes(tabId)) tabId = 'broadcast';
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tab === tabId);
+    });
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    const panel = document.getElementById('tab-' + tabId);
+    if (panel) panel.classList.add('active');
+
+    // Toggle header action buttons
+    document.querySelectorAll('[id$="-header-actions"]').forEach(el => el.style.display = 'none');
+    const ha = HEADER_ACTIONS[tabId];
+    if (ha) document.getElementById(ha).style.display = 'flex';
+
+    // Lazy-load tab data
+    if (tabId === 'broadcast') BroadcastModule.init();
+    else if (tabId === 'croc') CrocModule.init();
+    else if (tabId === '2048') S2048Module.init();
+    else if (tabId === 'horoscope') HoroscopeModule.init();
+    else if (tabId === 'tarot') TarotModule.init();
+
+    history.replaceState(null, '', '#' + tabId);
+  }
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => activate(btn.dataset.tab));
+  });
+  window.addEventListener('hashchange', () => activate(location.hash.slice(1)));
+
+  return { activate };
+})();
+
+// ============================================================
+// MODULE: BROADCAST
+// ============================================================
+const BroadcastModule = (() => {
+  let initialized = false;
+  let subOffset = 0;
+  let offerOffset = 0;
+  const SUB_LIMIT = 50;
+  const OFFER_LIMIT = 50;
+
+  // ── Channel overview ──────────────────────────────────────────────────────
+  async function loadOverview() {
+    const container = document.getElementById('channel-cards');
+    try {
+      const res = await fetch('/api/admin/broadcast/overview', { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      renderChannelCards(data.channels || []);
+    } catch (e) {
+      container.innerHTML = `<div class="empty-state error-text">Ошибка загрузки: ${e.message}</div>`;
+    }
+  }
+
+  function renderChannelCards(channels) {
+    const container = document.getElementById('channel-cards');
+    if (!channels.length) {
+      container.innerHTML = '<div class="empty-state">Нет данных по каналам</div>';
+      return;
+    }
+    container.innerHTML = channels.map(ch => {
+      const isEnabled = ch.delivery_enabled;
+      const dotCls = isEnabled ? 'dot-on' : 'dot-off';
+      const cardCls = isEnabled ? 'enabled' : 'disabled';
+      const toggleHtml = ch.id !== 'tarot' || ch.subscribers > 0
+        ? `<div class="channel-toggle">
+            <label class="switch">
+              <input type="checkbox" ${isEnabled ? 'checked' : ''} data-channel="${ch.id}" class="channel-toggle-chk">
+              <span class="slider"></span>
+            </label>
+           </div>` : '';
+      return `
+        <div class="channel-card ${cardCls}">
+          <div class="channel-card-header">
+            <div class="channel-name">
+              <span class="channel-status-dot ${dotCls}"></span>${ch.emoji} ${ch.name}
+            </div>
+            ${ch.active_game ? `<span class="channel-mode-badge">${ch.active_game}</span>` : ''}
+          </div>
+          <div class="channel-stats">
+            <div class="channel-stat-line">
+              <span>Подписчики</span>
+              <span>${ch.subscribers != null ? ch.subscribers : '—'}</span>
+            </div>
+            ${ch.pending_today != null ? `<div class="channel-stat-line"><span>Ожидает</span><span>${ch.pending_today}</span></div>` : ''}
+            ${ch.sent_today != null ? `<div class="channel-stat-line"><span>Отправлено</span><span>${ch.sent_today}</span></div>` : ''}
+            ${ch.last_sent_at ? `<div class="channel-stat-line"><span>Последняя</span><span>${new Date(ch.last_sent_at).toLocaleTimeString('ru-RU')}</span></div>` : ''}
+          </div>
+          ${toggleHtml}
+        </div>`;
+    }).join('');
+
+    // Bind toggles
+    container.querySelectorAll('.channel-toggle-chk').forEach(chk => {
+      chk.addEventListener('change', async () => {
+        const channel = chk.dataset.channel;
+        const enabled = chk.checked;
+        const label = enabled ? 'включить' : 'отключить';
+        const confirmed = await showConfirm('Изменение рассылки', `${label} рассылку "${channel}"?`);
+        if (!confirmed) { chk.checked = !enabled; return; }
+        chk.disabled = true;
+        try {
+          const res = await fetch('/api/admin/broadcast/toggle', {
+            method: 'POST', headers: apiHeaders,
+            body: JSON.stringify({ channel, enabled })
+          });
+          const d = await res.json();
+          if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
+          showToast(`Рассылка ${channel}: ${enabled ? 'включена' : 'отключена'}`, 'success');
+          await loadOverview();
+        } catch (e) {
+          showToast(`Ошибка: ${e.message}`, 'error');
+          chk.checked = !enabled;
+        } finally {
+          chk.disabled = false;
+        }
+      });
+    });
+  }
+
+  // ── Subscribers table ─────────────────────────────────────────────────────
+  async function loadSubscribers(offset = 0) {
+    subOffset = offset;
+    const channel = document.getElementById('sub-filter-channel').value;
+    const status = document.getElementById('sub-filter-status').value;
+    const uid = document.getElementById('sub-filter-uid').value.trim();
+    const params = new URLSearchParams({ limit: SUB_LIMIT, offset });
+    if (channel) params.set('channel', channel);
+    if (status) params.set('status', status);
+    if (uid) params.set('user_id', uid);
+
+    const tbody = document.getElementById('sub-tbody');
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-state"><div class="image-spinner" style="margin:0 auto 8px;"></div>Загрузка...</td></tr>';
+    try {
+      const res = await fetch('/api/admin/broadcast/subscribers?' + params, { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      const rows = data.rows || [];
+      document.getElementById('sub-count-label').textContent = `Всего: ${data.total}`;
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state"><span class="empty-state-icon">🙅</span>Подписчиков не найдено</td></tr>';
+      } else {
+        tbody.innerHTML = rows.map(r => {
+          const isActive = r.status === 'active';
+          const isSnoozed = r.status === 'snoozed';
+          const rowCls = isActive ? '' : 'row-inactive';
+          let statusBadge;
+          if (isActive) statusBadge = '<span class="badge-status badge-status-active">✦ active</span>';
+          else if (isSnoozed) statusBadge = '<span class="badge-status badge-status-snoozed">⏸ snoozed</span>';
+          else statusBadge = '<span class="badge-status badge-status-inactive">— inactive</span>';
+          const channels = (r.channels || []).map(c => `<span class="badge-channel">${c}</span>`).join('');
+          const lastSent = r.last_sent
+            ? new Date(r.last_sent).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
+            : null;
+          const nameStr = r.display_name || '';
+          const hourStr = r.preferred_hour != null ? String(r.preferred_hour).padStart(2,'0') + ':00' : '—';
+          const tzStr = r.timezone || '—';
+          return `<tr class="${rowCls}">
+            <td>
+              <div class="cell-user">
+                <span class="cell-user-name">${nameStr || 'Без имени'}</span>
+                <span class="cell-user-id">${r.user_id}</span>
+              </div>
+            </td>
+            <td>${channels || '<span class="cell-date-never">нет</span>'}</td>
+            <td class="td-r">
+              <div class="cell-time">
+                <span class="cell-time-hour">${hourStr}</span>
+                <span class="cell-time-tz">${tzStr}</span>
+              </div>
+            </td>
+            <td class="td-r">${lastSent
+              ? `<span class="cell-date-val">${lastSent}</span>`
+              : '<span class="cell-date-never">никогда</span>'}</td>
+            <td>${statusBadge}</td>
+          </tr>`;
+        }).join('');
+      }
+      document.getElementById('sub-prev').disabled = offset <= 0;
+      document.getElementById('sub-next').disabled = rows.length < SUB_LIMIT;
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="5" class="error-state"><div class="error-state-icon">🚨</div><div class="error-state-msg">${e.message}</div></td></tr>`;
+    }
+  }
+
+  // ── Offer history ─────────────────────────────────────────────────────────
+  let _selectedUids = new Set();
+
+  function _updateBatchBar() {
+    const bar = document.getElementById('offer-batch-bar');
+    const countEl = document.getElementById('offer-batch-count');
+    const n = _selectedUids.size;
+    bar.style.display = n > 0 ? 'flex' : 'none';
+    countEl.textContent = `${n} выбрано`;
+  }
+
+  async function loadOfferHistory(offset = 0) {
+    offerOffset = offset;
+    const channel = document.getElementById('offer-filter-channel').value;
+    const status  = document.getElementById('offer-filter-status').value;
+    const never   = document.getElementById('offer-filter-never').checked;
+    const uid     = document.getElementById('offer-filter-uid').value.trim();
+    const params  = new URLSearchParams({ limit: OFFER_LIMIT, offset });
+    if (channel && channel !== 'all') params.set('channel', channel);
+    if (status) params.set('status', status);
+    if (never) params.set('never_sent', '1');
+    if (uid) params.set('user_id', uid);
+
+    const tbody = document.getElementById('offer-tbody');
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="image-spinner" style="margin:0 auto 8px;"></div>Загрузка...</td></tr>';
+    _selectedUids.clear();
+    _updateBatchBar();
+    document.getElementById('offer-select-all').checked = false;
+
+    try {
+      const res = await fetch('/api/admin/broadcast/offer-history?' + params, { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      const rows = data.rows || [];
+      document.getElementById('offer-count-label').textContent = `Всего: ${data.total}`;
+
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><span class="empty-state-icon">🙅</span>Нет данных по выбранным фильтрам</td></tr>';
+      } else {
+        tbody.innerHTML = rows.map((r) => {
+          const offerAt = r.offer_sent_at
+            ? new Date(r.offer_sent_at).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
+            : null;
+          const snoozedUntil = r.snoozed_until
+            ? new Date(r.snoozed_until).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
+            : null;
+          const subBadge = r.is_subscribed
+            ? '<span class="badge-status badge-status-yes">✦ подписан</span>'
+            : '<span class="badge-status badge-status-no">— нет</span>';
+          const nameStr = r.display_name || '';
+          const rowCls = r.is_subscribed ? '' : 'row-inactive';
+          return `<tr class="${rowCls}" data-uid="${r.user_id}" data-channel="${r.channel}">
+            <td style="text-align:center;padding:9px 8px;"><input type="checkbox" class="offer-row-chk" value="${r.user_id}"></td>
+            <td>
+              <div class="cell-user">
+                <span class="cell-user-name">${nameStr || 'Без имени'}</span>
+                <span class="cell-user-id">${r.user_id}</span>
+              </div>
+            </td>
+            <td><span class="badge-channel">${r.channel_emoji} ${r.channel}</span></td>
+            <td class="td-r">${offerAt
+              ? `<span class="cell-date-val">${offerAt}</span>`
+              : '<span class="cell-date-never">никогда</span>'}</td>
+            <td class="td-r">${snoozedUntil
+              ? `<span class="badge-status badge-status-snoozed">⏸ ${snoozedUntil}</span>`
+              : '<span class="cell-date-never">—</span>'}</td>
+            <td>${subBadge}</td>
+            <td>
+              <button class="btn btn-sm offer-send-btn"
+                data-uid="${r.user_id}"
+                data-channel="${r.channel}"
+                data-subscribed="${r.is_subscribed}"
+                title="Отправить оффер">✈️</button>
+            </td>
+          </tr>`;
+        }).join('');
+
+        tbody.querySelectorAll('.offer-row-chk').forEach(chk => {
+          chk.addEventListener('change', () => {
+            const uid = parseInt(chk.value);
+            chk.checked ? _selectedUids.add(uid) : _selectedUids.delete(uid);
+            _updateBatchBar();
+          });
+        });
+
+        tbody.querySelectorAll('.offer-send-btn').forEach(btn => {
+          btn.addEventListener('click', () => _sendOfferConfirm(
+            parseInt(btn.dataset.uid),
+            btn.dataset.channel,
+            btn.dataset.subscribed === 'true',
+            btn
+          ));
+        });
+      }
+      document.getElementById('offer-prev').disabled = offset <= 0;
+      document.getElementById('offer-next').disabled = rows.length < OFFER_LIMIT;
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="8" class="error-state"><div class="error-state-icon">🚨</div><div class="error-state-msg">${e.message}</div></td></tr>`;
+    }
+  }
+
+  async function _sendOfferConfirm(uid, channel, isSubscribed, btnEl) {
+    const chLabel = { daily_challenge: '🎮 Daily Challenge', horoscope: '⭐ Horoscope', tarot: '🔮 Tarot' }[channel] || channel;
+    const subNote = isSubscribed ? '\n⚠️ Пользователь уже подписан.' : '';
+    const confirmed = await showConfirm(
+      'Отправить оффер',
+      `Отправить оффер «${chLabel}» пользователю ${uid}?${subNote}`
+    );
+    if (!confirmed) return;
+    if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
+    try {
+      const res = await fetch('/api/admin/broadcast/send-offer', {
+        method: 'POST', headers: apiHeaders,
+        body: JSON.stringify({ user_id: uid, channel, force: isSubscribed })
+      });
+      const d = await res.json();
+      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
+      if (d.warning) {
+        showToast(`⚠️ ${d.warning}`, 'info');
+      } else {
+        showToast(`✅ Оффер отправлен пользователю ${uid}`, 'success');
+        // Refresh the row's offer_sent_at visually
+        const tr = document.querySelector(`#offer-tbody tr[data-uid="${uid}"]`);
+        if (tr) {
+          const cells = tr.querySelectorAll('td');
+          if (cells[4]) cells[4].textContent = new Date().toLocaleString('ru-RU', {dateStyle:'short',timeStyle:'short'});
+        }
+      }
+    } catch (e) {
+      showToast(`Ошибка: ${e.message}`, 'error');
+    } finally {
+      if (btnEl) { btnEl.disabled = false; btnEl.textContent = '✈️'; }
+    }
+  }
+
+  async function _sendBatch() {
+    const uids = [..._selectedUids];
+    const channel = document.getElementById('offer-batch-channel').value;
+    const force = document.getElementById('offer-batch-force').checked;
+    const chLabel = { daily_challenge: '🎮 Daily Challenge', horoscope: '⭐ Horoscope', tarot: '🔮 Tarot' }[channel] || channel;
+    const confirmed = await showConfirm(
+      'Batch-отправка',
+      `Отправить оффер «${chLabel}» для ${uids.length} пользователей?`
+    );
+    if (!confirmed) return;
+    const btn = document.getElementById('btn-offer-batch-send');
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const res = await fetch('/api/admin/broadcast/send-offer-batch', {
+        method: 'POST', headers: apiHeaders,
+        body: JSON.stringify({ user_ids: uids, channel, force })
+      });
+      const d = await res.json();
+      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
+      const s = d.summary || {};
+      showToast(`✅ Отправлено: ${s.sent} · Пропущено: ${s.skipped} · Ошибок: ${s.errors}`, 'success');
+      _selectedUids.clear();
+      _updateBatchBar();
+      document.getElementById('offer-select-all').checked = false;
+      document.querySelectorAll('.offer-row-chk').forEach(c => { c.checked = false; });
+    } catch (e) {
+      showToast(`Ошибка: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '✈️ Отправить выбранным';
+    }
+  }
+
+  async function _quickSend() {
+    const uid = parseInt(document.getElementById('offer-quick-uid').value.trim());
+    const channel = document.getElementById('offer-quick-channel').value;
+    const force = document.getElementById('offer-quick-force').checked;
+    if (!uid) { showToast('Введите User ID', 'error'); return; }
+    const chLabel = { daily_challenge: '🎮 Daily Challenge', horoscope: '⭐ Horoscope', tarot: '🔮 Tarot' }[channel] || channel;
+    const confirmed = await showConfirm('Отправить оффер', `Отправить оффер «${chLabel}» пользователю ${uid}?`);
+    if (!confirmed) return;
+    const btn = document.getElementById('btn-offer-quick-send');
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/admin/broadcast/send-offer', {
+        method: 'POST', headers: apiHeaders,
+        body: JSON.stringify({ user_id: uid, channel, force })
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+      if (d.error) throw new Error(d.error);
+      if (d.warning) showToast(`⚠️ ${d.warning}`, 'info');
+      else showToast(`✅ Оффер отправлен пользователю ${uid}`, 'success');
+      document.getElementById('offer-quick-uid').value = '';
+    } catch (e) {
+      showToast(`Ошибка: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ── init ──────────────────────────────────────────────────────────────────
+  function init() {
+    if (initialized) return;
+    initialized = true;
+    loadOverview();
+
+    document.getElementById('btn-refresh-broadcast').addEventListener('click', () => {
+      initialized = false;
+      init();
+    });
+    // Subscribers
+    document.getElementById('btn-load-subs').addEventListener('click', () => loadSubscribers(0));
+    document.getElementById('sub-prev').addEventListener('click', () => loadSubscribers(Math.max(0, subOffset - SUB_LIMIT)));
+    document.getElementById('sub-next').addEventListener('click', () => loadSubscribers(subOffset + SUB_LIMIT));
+
+    // Offer history
+    document.getElementById('btn-load-offers').addEventListener('click', () => loadOfferHistory(0));
+    document.getElementById('offer-prev').addEventListener('click', () => loadOfferHistory(Math.max(0, offerOffset - OFFER_LIMIT)));
+    document.getElementById('offer-next').addEventListener('click', () => loadOfferHistory(offerOffset + OFFER_LIMIT));
+
+    // Select all checkbox
+    document.getElementById('offer-select-all').addEventListener('change', e => {
+      document.querySelectorAll('.offer-row-chk').forEach(chk => {
+        chk.checked = e.target.checked;
+        const uid = parseInt(chk.value);
+        e.target.checked ? _selectedUids.add(uid) : _selectedUids.delete(uid);
+      });
+      _updateBatchBar();
+    });
+
+    // Batch send
+    document.getElementById('btn-offer-batch-send').addEventListener('click', _sendBatch);
+    document.getElementById('btn-offer-batch-clear').addEventListener('click', () => {
+      _selectedUids.clear();
+      _updateBatchBar();
+      document.getElementById('offer-select-all').checked = false;
+      document.querySelectorAll('.offer-row-chk').forEach(c => { c.checked = false; });
+    });
+
+    // Quick send
+    document.getElementById('btn-offer-quick-send').addEventListener('click', _quickSend);
+  }
+
+  return { init };
+})();
+
+// ============================================================
+// MODULE: CROC (ported from admin_dailycroc.html, delivery toggle removed)
+// ============================================================
+const CrocModule = (() => {
+  let initialized = false;
+  let currentPuzzles = [];
+  let kyivTodayStr = '';
+
+  async function loadStats() {
+    try {
+      const res = await fetch('/api/admin/dailycroc/stats', { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      document.getElementById('croc-stats-total-subs').textContent = data.total_subscribed || '0';
+      document.getElementById('croc-stats-subs-detail').textContent = `Осталось отправить: ${data.pending_today ?? 0}`;
+      document.getElementById('croc-stats-games').textContent = data.finished || '0';
+      document.getElementById('croc-stats-games-detail').textContent = `Побед: ${data.won ?? 0} | В игре: ${data.active ?? 0}`;
+      document.getElementById('croc-stats-placeholder').textContent = `Баннер: ${data.placeholder_set ? 'Установлен ✅' : 'Не задан ⚠️'}`;
+      document.getElementById('croc-stats-model').textContent = `Модель: ${data.image_model || '—'}`;
+    } catch (e) { console.error('Croc stats error:', e); }
+  }
+
+  async function loadImage(img) {
+    const fileId = img.dataset.fileId;
+    if (!fileId) return;
+    const container = img.parentNode;
+    const spinner = document.createElement('div');
+    spinner.className = 'image-spinner';
+    container.appendChild(spinner);
+    try {
+      const res = await fetch(`/api/admin/dailycroc/image?file_id=${encodeURIComponent(fileId)}`, { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      img.src = URL.createObjectURL(blob);
+      img.style.display = 'block';
+    } catch (e) {
+      img.style.display = 'none';
+      const placeholder = document.createElement('div');
+      placeholder.className = 'image-placeholder';
+      placeholder.innerHTML = '<span>⚠️</span> <span>Ошибка загрузки</span>';
+      container.appendChild(placeholder);
+    } finally { spinner.remove(); }
+  }
+
+  async function loadPuzzles() {
+    const container = document.getElementById('croc-puzzle-container');
+    try {
+      const res = await fetch('/api/admin/dailycroc', { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      currentPuzzles = data.puzzles || [];
+      kyivTodayStr = getKyivDateString();
+      renderPuzzles(currentPuzzles, container);
+      loadStats();
+    } catch (e) {
+      container.innerHTML = `<div class="loading-container error-text">Не удалось загрузить данные: ${e.message}</div>`;
+    }
+  }
+
+  function renderPuzzles(puzzles, container) {
+    container.innerHTML = '';
+    if (!puzzles || !puzzles.length) {
+      container.innerHTML = '<div class="loading-container">Пазлы не найдены.</div>';
+      return;
+    }
+    puzzles.sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return a.difficulty === 'easy' ? -1 : 1;
+    });
+    puzzles.forEach(p => {
+      const isMissing = !p.target_word;
+      const isToday = p.date === kyivTodayStr;
+      const dateObj = new Date(p.date);
+      const dateStr = dateObj.toLocaleDateString('ru-RU', { weekday: 'short', month: 'short', day: 'numeric' });
+      const diffClass = p.difficulty === 'easy' ? 'diff-easy' : 'diff-hard';
+      const card = document.createElement('div');
+      card.className = `puzzle-card ${isToday ? 'card-today' : ''}`;
+      card.id = `croc-card-${p.date}-${p.difficulty}`;
+      let imageSection = '';
+      if (!isMissing) {
+        imageSection = p.image_file_id
+          ? `<div class="image-container"><img class="image-preview" data-file-id="${p.image_file_id.replace(/"/g, '&quot;')}" alt="puzzle image" style="display:none"></div>`
+          : `<div class="image-container"><div class="image-placeholder"><span>❌</span> <span>Изображение отсутствует</span></div></div>`;
+      }
+      card.innerHTML = `
+        <div class="card-body">
+          <div class="puzzle-header">
+            <div class="puzzle-date">${dateStr}${isToday ? '<span class="today-badge">сегодня</span>' : ''}</div>
+            <div class="puzzle-diff ${diffClass}">${p.difficulty}</div>
+          </div>
+          ${isMissing
+            ? '<div class="badge-missing">Не создан</div>'
+            : `<div class="puzzle-info">
+                <div class="puzzle-word-row"><div class="puzzle-word">${p.target_word}</div></div>
+                <div class="puzzle-topic">${p.topic || '—'}</div>
+              </div>
+              <div class="prompt-section">
+                <div class="prompt-header">
+                  <span class="prompt-title">IMAGE PROMPT</span>
+                  <button class="btn-text" data-croc-action="editPrompt" data-date="${p.date}" data-diff="${p.difficulty}">✏️ Изменить</button>
+                </div>
+                <div class="puzzle-prompt" id="croc-prompt-text-${p.date}-${p.difficulty}">${p.image_prompt || '<i>(Промпт отсутствует)</i>'}</div>
+                <div class="prompt-edit edit-hidden" id="croc-prompt-edit-${p.date}-${p.difficulty}">
+                  <textarea class="prompt-input" id="croc-prompt-input-${p.date}-${p.difficulty}">${p.image_prompt || ''}</textarea>
+                  <div class="btn-row">
+                    <button class="btn btn-save" data-croc-action="savePrompt" data-date="${p.date}" data-diff="${p.difficulty}">Сохранить</button>
+                    <button class="btn" data-croc-action="cancelPrompt" data-date="${p.date}" data-diff="${p.difficulty}">Отмена</button>
+                  </div>
+                </div>
+              </div>
+              <div class="prompt-section mt-8">
+                <div class="prompt-header"><span class="prompt-title">IMAGE MODEL</span></div>
+                <select class="model-select" id="croc-model-${p.date}-${p.difficulty}" data-croc-action="saveModel" data-date="${p.date}" data-diff="${p.difficulty}">
+                  <option value="flux" ${(p.image_model||'flux')==='flux'?'selected':''}>Flux Schnell</option>
+                  <option value="zimage" ${(p.image_model||'flux')==='zimage'?'selected':''}>Z-Image Turbo ⚡</option>
+                  <option value="gptimage-1-5" ${(p.image_model||'flux')==='gptimage-1-5'?'selected':''}>GPT Image 1.5</option>
+                  <option value="gptimage" ${(p.image_model||'flux')==='gptimage'?'selected':''}>GPT Image (DALL-E 3)</option>
+                  <option value="qwen-image" ${(p.image_model||'flux')==='qwen-image'?'selected':''}>Qwen Image</option>
+                  <option value="wan-image" ${(p.image_model||'flux')==='wan-image'?'selected':''}>Wan Image</option>
+                  <option value="klein" ${(p.image_model||'flux')==='klein'?'selected':''}>Klein</option>
+                  <option value="fta-gpt-image-2" ${(p.image_model||'flux')==='fta-gpt-image-2'?'selected':''}>🖼️ GPT Image 2 (FTA)</option>
+                </select>
+              </div>`
+          }
+        </div>
+        ${imageSection}
+        <div class="card-actions">
+          <div class="btn-row">
+            <button class="btn btn-regen" id="croc-regen-${p.date}-${p.difficulty}" data-croc-action="regen" data-date="${p.date}" data-diff="${p.difficulty}" ${isMissing ? 'disabled' : ''}>🖼️ Обновить арт</button>
+            <button class="btn btn-reset" id="croc-reset-${p.date}-${p.difficulty}" data-croc-action="reset" data-date="${p.date}" data-diff="${p.difficulty}">🔀 Новое слово</button>
+          </div>
+        </div>`;
+      container.appendChild(card);
+    });
+    container.querySelectorAll('img[data-file-id]').forEach(loadImage);
+  }
+
+  async function regenerate(date, diff) {
+    const confirmed = await showConfirm('Перегенерация арта', `Перегенерировать изображение для ${date} (${diff})?`);
+    if (!confirmed) return;
+    const btn = document.getElementById(`croc-regen-${date}-${diff}`);
+    btn.disabled = true; btn.textContent = '⏳ Генерация…';
+    try {
+      const res = await fetch('/api/admin/dailycroc/regenerate', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date, difficulty: diff }) });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      showToast('Изображение сгенерировано!', 'success');
+      await loadPuzzles();
+    } catch (e) { showToast(`Ошибка: ${e.message}`, 'error'); btn.disabled = false; btn.textContent = '🖼️ Обновить арт'; }
+  }
+
+  async function savePrompt(date, diff) {
+    const newPrompt = document.getElementById(`croc-prompt-input-${date}-${diff}`).value;
+    try {
+      const res = await fetch('/api/admin/dailycroc/prompt', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date, difficulty: diff, prompt: newPrompt }) });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      showToast('Промпт сохранён.', 'success');
+      document.getElementById(`croc-prompt-text-${date}-${diff}`).textContent = newPrompt || '(Промпт отсутствует)';
+      document.getElementById(`croc-prompt-text-${date}-${diff}`).classList.remove('edit-hidden');
+      document.getElementById(`croc-prompt-edit-${date}-${diff}`).classList.add('edit-hidden');
+    } catch (e) { showToast(`Ошибка: ${e.message}`, 'error'); }
+  }
+
+  async function saveModel(date, diff, model) {
+    try {
+      const res = await fetch('/api/admin/dailycroc/model', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date, difficulty: diff, model }) });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      showToast('Модель обновлена.', 'success');
+    } catch (e) { showToast(`Ошибка: ${e.message}`, 'error'); }
+  }
+
+  async function resetWord(date, diff) {
+    const confirmed = await showConfirm('Сброс слова дня', `Сбросить слово для ${date} (${diff})? Удалит прогресс, промпты и арт.`);
+    if (!confirmed) return;
+    const btn = document.getElementById(`croc-reset-${date}-${diff}`);
+    btn.disabled = true; btn.textContent = '⏳ Сброс…';
+    try {
+      const res = await fetch('/api/admin/dailycroc/reset-word', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date, difficulty: diff }) });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      showToast(`Новое слово: ${data.new_word} (${data.new_topic})`, 'success');
+      await loadPuzzles();
+    } catch (e) { showToast(`Ошибка: ${e.message}`, 'error'); btn.disabled = false; btn.textContent = '🔀 Новое слово'; }
+  }
+
+  function init() {
+    if (initialized) return;
+    initialized = true;
+    loadPuzzles();
+    document.getElementById('croc-puzzle-container').addEventListener('click', (e) => {
+      const target = e.target.closest('[data-croc-action]');
+      if (!target) return;
+      const action = target.dataset.crocAction;
+      const date = target.dataset.date;
+      const diff = target.dataset.diff;
+      if (action === 'regen') regenerate(date, diff);
+      else if (action === 'reset') resetWord(date, diff);
+      else if (action === 'editPrompt') {
+        document.getElementById(`croc-prompt-text-${date}-${diff}`).classList.add('edit-hidden');
+        document.getElementById(`croc-prompt-edit-${date}-${diff}`).classList.remove('edit-hidden');
+      }
+      else if (action === 'savePrompt') savePrompt(date, diff);
+      else if (action === 'cancelPrompt') {
+        document.getElementById(`croc-prompt-text-${date}-${diff}`).classList.remove('edit-hidden');
+        document.getElementById(`croc-prompt-edit-${date}-${diff}`).classList.add('edit-hidden');
+      }
+    });
+    document.getElementById('croc-puzzle-container').addEventListener('change', (e) => {
+      if (e.target.matches('.model-select')) saveModel(e.target.dataset.date, e.target.dataset.diff, e.target.value);
+    });
+  }
+
+  // Bind header refresh/security buttons (data-croc-action on header)
+  document.addEventListener('click', (e) => {
+    const target = e.target.closest('[data-croc-action]');
+    if (!target) return;
+    const action = target.dataset.crocAction;
+    if (action === 'loadPuzzles') { initialized = false; init(); }
+    else if (action === 'toggleSecurity') {
+      document.body.classList.toggle('security-mode');
+      target.textContent = document.body.classList.contains('security-mode') ? '👁 Показать' : '🔒 Скрыть слова';
+    }
+  });
+
+  return { init };
+})();
+
+// ============================================================
+// MODULE: 2048 (ported from admin_daily2048.html)
+// ============================================================
+const S2048Module = (() => {
+  let initialized = false;
+  let puzzles = [];
+  let selected = null;
+
+  const $ = id => document.getElementById(id);
+
+  function todayIso() { return new Date().toISOString().slice(0, 10); }
+  function blankBoard() { return [[0,0,0,0],[0,0,0,0],[2,4,8,16],[32,64,128,0]]; }
+
+  function renderEditorBoard(board = blankBoard()) {
+    const root = $('s2048-editor-board');
+    root.innerHTML = '';
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 4; x++) {
+        const input = document.createElement('input');
+        input.type = 'number'; input.min = '0'; input.step = '2';
+        input.value = Number(board[y]?.[x] || 0) || '';
+        input.dataset.x = x; input.dataset.y = y;
+        root.appendChild(input);
+      }
+    }
+  }
+
+  function readBoard() {
+    const board = blankBoard().map(r => r.map(() => 0));
+    $('s2048-editor-board').querySelectorAll('input').forEach(inp => {
+      board[Number(inp.dataset.y)][Number(inp.dataset.x)] = Number(inp.value || 0);
+    });
+    return board;
+  }
+
+  function miniBoard(board) {
+    return `<div class="mini-board">${board.flat().map(v => `<div class="mini-cell">${v || ''}</div>`).join('')}</div>`;
+  }
+
+  function selectPuzzle(puzzle) {
+    selected = puzzle;
+    $('s2048-edit-date').value = puzzle.date || todayIso();
+    $('s2048-edit-status').value = puzzle.status || 'ready';
+    $('s2048-edit-goal-type').value = puzzle.goal_type || 'tile';
+    $('s2048-edit-goal-value').value = puzzle.goal_value || 512;
+    $('s2048-edit-par-moves').value = puzzle.par_moves || 72;
+    $('s2048-edit-target-seconds').value = puzzle.target_seconds || 240;
+    $('s2048-edit-seed').value = puzzle.seed || 'custom';
+    $('s2048-edit-spawns').value = JSON.stringify(puzzle.spawn_sequence || [], null, 2);
+    $('s2048-edit-solution').value = puzzle.solution_moves || '';
+    renderEditorBoard(puzzle.board || blankBoard());
+    renderPuzzles();
+  }
+
+  function renderPuzzles() {
+    const root = $('s2048-puzzles');
+    if (!puzzles.length) { root.innerHTML = '<div class="s2048-panel">Пазлы пока не подготовлены.</div>'; return; }
+    root.innerHTML = puzzles.map((puzzle, index) => {
+      const active = selected && selected.date === puzzle.date ? ' active' : '';
+      return `<article class="s2048-puzzle${active}" data-index="${index}">
+        <div class="s2048-puzzle-head">
+          <div class="s2048-date">${puzzle.date}</div>
+          <div class="s2048-badge">${puzzle.status}</div>
+        </div>
+        <div class="s2048-goal">${puzzle.goal_label}</div>
+        ${miniBoard(puzzle.board || blankBoard())}
+        <div class="s2048-meta">${puzzle.par_moves} ходов · ${puzzle.target_seconds}s · ${puzzle.spawn_sequence?.length || 0} spawns</div>
+      </article>`;
+    }).join('');
+    root.querySelectorAll('[data-index]').forEach(card => {
+      card.addEventListener('click', () => selectPuzzle(puzzles[Number(card.dataset.index)]));
+    });
+  }
+
+  async function load() {
+    const res = await fetch('/api/admin/daily2048', { headers: getHeaders });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    puzzles = data.puzzles || [];
+    $('s2048-ready-count').textContent = puzzles.filter(p => p.status === 'ready').length;
+    $('s2048-next-goal').textContent = puzzles[0]?.goal_label || '—';
+
+    // Show active game mode
+    try {
+      const modeRes = await fetch('/api/admin/broadcast/overview', { headers: getHeaders });
+      if (modeRes.ok) {
+        const modeData = await modeRes.json();
+        const ch = (modeData.channels || []).find(c => c.id === 'daily_challenge');
+        if (ch) $('s2048-mode-label').textContent = ch.active_game || '—';
+      }
+    } catch (_) {}
+
+    if (!selected) selectPuzzle(puzzles[0] || { date: todayIso(), board: blankBoard(), goal_type: 'tile', goal_value: 512, spawn_sequence: [], seed: 'custom', par_moves: 72, target_seconds: 240, status: 'ready', solution_moves: '' });
+    renderPuzzles();
+  }
+
+  async function save() {
+    let spawnSequence;
+    try { spawnSequence = JSON.parse($('s2048-edit-spawns').value || '[]'); }
+    catch { showToast('Spawn JSON некорректен', 'error'); return; }
+    const payload = {
+      date: $('s2048-edit-date').value,
+      board: readBoard(),
+      goal_type: $('s2048-edit-goal-type').value,
+      goal_value: Number($('s2048-edit-goal-value').value || 512),
+      spawn_sequence: spawnSequence,
+      seed: $('s2048-edit-seed').value || 'custom',
+      par_moves: Number($('s2048-edit-par-moves').value || 72),
+      target_seconds: Number($('s2048-edit-target-seconds').value || 240),
+      status: $('s2048-edit-status').value,
+      solution_moves: $('s2048-edit-solution').value || ''
+    };
+    const res = await fetch('/api/admin/daily2048/puzzle', { method: 'POST', headers: apiHeaders, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!res.ok || data.error) { showToast(data.error || `HTTP ${res.status}`, 'error'); return; }
+    showToast('Пазл сохранен', 'success');
+    selected = data.puzzle;
+    await load();
+  }
+
+  async function generate() {
+    const date = $('s2048-edit-date').value || todayIso();
+    const res = await fetch('/api/admin/daily2048/generate', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date }) });
+    const data = await res.json();
+    if (!res.ok || data.error) { showToast(data.error || `HTTP ${res.status}`, 'error'); return; }
+    showToast('День подготовлен', 'success');
+    selected = data.puzzle;
+    await load();
+  }
+
+  async function setMode(mode) {
+    const res = await fetch('/api/admin/daily-mode', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ mode }) });
+    const data = await res.json();
+    if (!res.ok || data.error) { showToast(data.error || `HTTP ${res.status}`, 'error'); return; }
+    $('s2048-mode-label').textContent = mode;
+    showToast(`Daily slot: ${mode}`, 'success');
+  }
+
+  function init() {
+    if (initialized) return;
+    initialized = true;
+    renderEditorBoard();
+    load().catch(err => showToast(err.message, 'error'));
+    $('s2048-save').addEventListener('click', save);
+    $('s2048-generate').addEventListener('click', generate);
+    $('s2048-mode-btn').addEventListener('click', () => setMode('2048'));
+    $('s2048-croc-btn').addEventListener('click', () => setMode('crocodile'));
+  }
+
+  return { init };
+})();
+
+// ============================================================
+// MODULE: HOROSCOPE
+// ============================================================
+const HoroscopeModule = (() => {
+  let initialized = false;
+
+  async function load() {
+    try {
+      const res = await fetch('/api/admin/horoscope/stats', { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      document.getElementById('horo-total').textContent = data.total_active ?? '—';
+      document.getElementById('horo-today').textContent = data.breakdown?.today_only ?? '—';
+      document.getElementById('horo-tomorrow').textContent = data.breakdown?.tomorrow_only ?? '—';
+      document.getElementById('horo-both').textContent = data.breakdown?.both ?? '—';
+      const signs = data.by_sign || {};
+      const tbody = document.getElementById('horo-sign-tbody');
+      const signNames = { aries: '♈ Овен', taurus: '♉ Телец', gemini: '♊ Близнецы', cancer: '♋ Рак', leo: '♌ Лев', virgo: '♍ Дева', libra: '♎ Весы', scorpio: '♏ Скорпион', sagittarius: '♐ Стрелец', capricorn: '♑ Козерог', aquarius: '♒ Водолей', pisces: '♓ Рыбы' };
+      if (!Object.keys(signs).length) {
+        tbody.innerHTML = '<tr><td colspan="2" class="empty-state">Нет данных</td></tr>';
+      } else {
+        tbody.innerHTML = Object.entries(signs).map(([sign, cnt]) =>
+          `<tr><td>${signNames[sign] || sign}</td><td>${cnt}</td></tr>`
+        ).join('');
+      }
+    } catch (e) { console.error('Horoscope stats error:', e); }
+  }
+
+  function init() {
+    if (initialized) return;
+    initialized = true;
+    load();
+  }
+  return { init };
+})();
+
+// ============================================================
+// MODULE: TAROT
+// ============================================================
+const TarotModule = (() => {
+  let initialized = false;
+
+  async function load() {
+    try {
+      const res = await fetch('/api/admin/tarot/status', { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      document.getElementById('tarot-subs').textContent = data.subscribers ?? 0;
+      const td = data.today || {};
+      const tm = data.tomorrow || {};
+      document.getElementById('tarot-today-ready').textContent = `${td.ready_count ?? 0}/${td.total ?? 22}`;
+      document.getElementById('tarot-tomorrow-ready').textContent = `${tm.ready_count ?? 0}/${tm.total ?? 22}`;
+      document.getElementById('tarot-today-date').textContent = td.date || '';
+      document.getElementById('tarot-tomorrow-date').textContent = tm.date || '';
+
+      function renderCards(cards, containerId) {
+        const el = document.getElementById(containerId);
+        if (!cards || !cards.length) { el.innerHTML = '<div class="empty-state">Нет данных</div>'; return; }
+        el.innerHTML = cards.map(c =>
+          `<div class="tarot-card-row ${c.ready ? 'ready' : ''}">
+            <span class="tc-icon">${c.ready ? '🃏' : '⬜'}</span>
+            <span class="tc-label">${c.label}</span>
+            <span class="tc-status">${c.ready ? '✅' : '—'}</span>
+          </div>`
+        ).join('');
+      }
+      renderCards(td.cards, 'tarot-today-cards');
+      renderCards(tm.cards, 'tarot-tomorrow-cards');
+    } catch (e) {
+      document.getElementById('tarot-today-cards').innerHTML = `<div class="empty-state error-text">${e.message}</div>`;
+    }
+  }
+
+  function init() {
+    if (initialized) return;
+    initialized = true;
+    // Set default regen date to today
+    document.getElementById('tarot-regen-date').value = new Date().toISOString().slice(0, 10);
+    load();
+    document.getElementById('tarot-regen-btn').addEventListener('click', async () => {
+      const date = document.getElementById('tarot-regen-date').value;
+      if (!date) { showToast('Укажите дату', 'error'); return; }
+      const confirmed = await showConfirm('Регенерация Таро', `Перегенерировать все карты дня для ${date}?`);
+      if (!confirmed) return;
+      const btn = document.getElementById('tarot-regen-btn');
+      btn.disabled = true; btn.textContent = '⏳…';
+      try {
+        const res = await fetch('/api/admin/tarot/regenerate', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date }) });
+        const d = await res.json();
+        if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
+        showToast(`Готово: сгенерировано ${d.generated}, пропущено ${d.skipped}, ошибок ${d.failed}`, 'success');
+        await load();
+      } catch (e) { showToast(`Ошибка: ${e.message}`, 'error'); }
+      finally { btn.disabled = false; btn.textContent = '▶ Старт'; }
+    });
+  }
+  return { init };
+})();
+
+// ============================================================
+// INIT
+// ============================================================
+TabRouter.activate(location.hash.slice(1) || 'broadcast');
+</script>
+</body>
+</html>

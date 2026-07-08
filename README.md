@@ -1,11 +1,70 @@
-  - **Tabbed Response UI**: Inline responses are structured using XML tags (`<tldr>`, `<details>`, `<sources>`) extracted by the LLM and rendered dynamically via inline buttons. Users can seamlessly switch tabs without re-triggering generation. Admin-toggleable via `/set_inline_tabs <on|off>`.
-  - **Collaborative AI-Notes**: Prefixing a query with `доска: <topic>` initializes a persistent, shared workspace. Any user can reply to the board to add notes (bypassing privacy mode via `via_bot` detection). The bot debounces new entries (60s window) and automatically synthesizes them into an evolving structural summary via the `TaskManager`. Backed by PostgreSQL `inline_boards`.
-  - **Core Architecture**: Powered primarily by **`gemini-3.1-flash-lite-preview` via Vertex AI Express** with native **Google Search Grounding** (`enable_web_search=True`) as the **primary inline slot**. AI Studio keys (`gemini-2.5-flash-lite`) race alongside as fallback slots via `_stream_inline_fast()` (3-way Race Requests, up to 12 slots across 4 rounds). The first valid response wins; Vertex AI Express wins most races due to lower latency and higher quota stability. Infrastructure failures raise `ProviderOverloadError` and surface a "⏳ Серверы ИИ перегружены" prompt instead of a generic error. Grounding citations are surfaced as an expandable `📎 Источники` blockquote (up to 3 URLs) at the end of the response. **5-Mode Smart Image Routing**: inline queries automatically detect intent — quoted text (`«»""`) → `wan-image` (Мем/Текст), edit verbs → `klein` (Изменить фото), or manually selectable: `zimage` (Турбо), `gptimage` (Умный), `qwen-image` (Арт). Background generation tasks are managed by the centralized `TaskManager` (graceful shutdown drain, MAX_TASKS=100 cap). On failure, translation loops gracefully trap errors and attach a **🔄 Повторить** inline retry button for one-tap re-generation. Requires `/setinline` + `/setinlinefeedback` at 100% in BotFather.
+# GemAI Bot v2
+
+GemAI Bot v2 is an open-source Telegram AI assistant framework focused on resilient real-world bot operations: multi-provider AI routing, streaming recovery, agentic web research, multimodal processing, long-term graph memory, Telegram Mini App surfaces, Docker deployment, and operator tooling.
+
+## Maintainer / OSS Status
+
+- **Primary maintainer:** [Le-Who](https://github.com/Le-Who)
+- **Repository:** <https://github.com/Le-Who/gemaibotv2>
+- **Default branch:** `vps_testai`
+- **License:** MIT, see [LICENSE](LICENSE).
+- **Security policy:** see [SECURITY.md](SECURITY.md).
+- **Contributing guide:** see [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Maintainer roadmap:** see [ROADMAP.md](ROADMAP.md).
+- **Maintainer queue:** see [docs/MAINTAINER_QUEUE.md](docs/MAINTAINER_QUEUE.md).
+
+This is a deployed, production-oriented Telegram bot codebase rather than a demo. The project is maintained as a reference implementation for Telegram AI assistants that need provider failover, user-facing recovery from model/API failures, authenticated Mini App surfaces, persistent memory, background task safety, and repeatable VPS/Docker operations.
+
+## Public Maintenance Signals
+
+These signals are intentionally limited to data that is visible from the public repository or generated from the current checkout.
+
+| Signal | Current value |
+| --- | ---: |
+| Git commits | 1,373 |
+| Open pull requests / maintenance queue items | 127 |
+| Closed pull requests | 380 |
+| Python source files | 446 |
+| Test files | 208 |
+| Docs files under `docs/` | 11 |
+
+Runtime user/adoption metrics are not published in this repository yet because they can contain private Telegram deployment data. Before citing active users, chats, request volume, or retention in a public application, export anonymized aggregate counts from the deployed metrics store and document the collection window here.
+
+## Why This Project Matters
+
+GemAI Bot v2 documents and implements hard parts that many Telegram AI bot maintainers hit in production:
+
+- provider routing with quota/failure isolation;
+- streaming response recovery and continuation UX;
+- authenticated Telegram Mini App and WebSocket flows;
+- long-running agentic web research with bounded budgets;
+- multimodal image, voice, document, and live-audio handling;
+- GraphRAG-style long-term memory with user controls;
+- Docker/VPS deployment and operator diagnostics;
+- regression tests around API/provider failure modes.
+
+## Codex / API Credits Use
+
+Additional Codex and API capacity would be used for maintainer work on this public repository:
+
+- pull-request review and regression-risk summaries;
+- focused test generation for provider, auth, webhook, WebSocket, and memory paths;
+- dependency upgrade review;
+- release-note and documentation automation;
+- security review of Telegram auth, Mini App init data validation, provider key handling, and streaming recovery paths;
+- adding an OpenAI provider/evaluation path so users can compare models without hard-coding one vendor.
+
+## Feature Overview
+
+- **Tabbed Response UI**: Inline responses are structured using XML tags (`<tldr>`, `<details>`, `<sources>`) extracted by the LLM and rendered dynamically via inline buttons. Users can seamlessly switch tabs without re-triggering generation. Admin-toggleable via `/set_inline_tabs <on|off>`.
+- **Collaborative AI-Notes**: Prefixing a query with `доска: <topic>` initializes a persistent, shared workspace. Any user can reply to the board to add notes (bypassing privacy mode via `via_bot` detection). The bot debounces new entries (60s window) and automatically synthesizes them into an evolving structural summary via the `TaskManager`. Backed by PostgreSQL `inline_boards`.
+- **Core Architecture**: Powered primarily by **`gemini-3.1-flash-lite` via Vertex AI Express** with native **Google Search Grounding** (`enable_web_search=True`) as the **primary inline slot**. AI Studio keys (`gemini-2.5-flash-lite`) race alongside as fallback slots via `_stream_inline_fast()` (3-way Race Requests, up to 12 slots across 4 rounds). The first valid response wins; Vertex AI Express wins most races due to lower latency and higher quota stability. Infrastructure failures raise `ProviderOverloadError` and surface a "⏳ Серверы ИИ перегружены" prompt instead of a generic error. Grounding citations are surfaced as an expandable `📎 Источники` blockquote (up to 3 URLs) at the end of the response. **5-Mode Smart Image Routing**: inline queries automatically detect intent — quoted text (`«»""`) → `wan-image` (Мем/Текст), edit verbs → `klein` (Изменить фото), or manually selectable: `zimage` (Турбо), `gptimage` (Умный), `qwen-image` (Арт). Background generation tasks are managed by the centralized `TaskManager` (graceful shutdown drain, MAX_TASKS=100 cap). On failure, translation loops gracefully trap errors and attach a **🔄 Повторить** inline retry button for one-tap re-generation. Requires `/setinline` + `/setinlinefeedback` at 100% in BotFather.
 - **Agentic Web Browsing (`??` prefix)**: Deep research mode utilizing Tavily API and Jina Reader API for multi-step query decomposition, autonomous site triage, content extraction, and dynamic self-correction loops. Hardened against memory leaks caused by gRPC protobuf cyclic references during long-running iterations (including threaded, non-blocking asynchronous Garbage Collection). Per-call API key usage tracking ensures accurate quota accounting across all LLM invocations within the agentic loop. Features an intelligent **Model Fallback Cascade** (automatically retries failed LLM requests or 503 errors using the next most capable model according to the capability tier rankings), parallel tool execution (`asyncio.gather` with semaphore), two-layer page content caching (session + global, 30-min TTL), source quality scoring (domain classification, freshness labels, citation validation), adaptive iteration budget (query deduplication, configurable token cap and wall-clock timeout), and rich streaming progress with search queries and iteration counters.
 - **Image Processing Pipeline**: Context-aware adaptive resize (`TASK_DIMS`: describe 1280px, search 768px, OCR 2048px) governed by **Shannon Entropy Analysis** (dynamically boosts +50% dimension for text-dense screenshots while reducing -25% for simple photos, optimizing token usage). Uses a 3-stage compression pipeline (thumbnail → JPEG q85 → fallback q75/65), TTL-cached results (`cache_key` by `file_unique_id`), and `TaggedImage` metadata carrier across handler→provider boundary to eliminate redundant recompression. Media group downloads use `Semaphore(5)` with debounced progress indicator.
-- **Image Generation (Dual Provider)**: Text-to-image generation via `/draw <prompt>` or via **implicit natural language triggers** (e.g., *"Бот, нарисуй кота"* / *"сгенерируй картинку леса"*). Uses a multi-layered Regex heuristics engine to isolate the artistic prompt without leaking pronouns or conversational fillers (e.g. extracts "леса" from "сгенерируй мне пожалуйста картинку леса"). Implicit triggers are natively intercepted in both text and voice channels. Voice requests trigger an **Interactive Pre-Canvas Confirmation** where the parsed text and generation keyboard are rendered interactively before consuming API resources. Uses a Factory Pattern for provider routing:
+- **Image Generation (Multi-Provider)**: Text-to-image generation via `/draw <prompt>` or via **implicit natural language triggers** (e.g., *"Бот, нарисуй кота"* / *"сгенерируй картинку леса"*). Uses a multi-layered Regex heuristics engine to isolate the artistic prompt without leaking pronouns or conversational fillers (e.g. extracts "леса" from "сгенерируй мне пожалуйста картинку леса"). Implicit triggers are natively intercepted in both text and voice channels. Voice requests trigger an **Interactive Pre-Canvas Confirmation** where the parsed text and generation keyboard are rendered interactively before consuming API resources. Uses a Factory Pattern for provider routing:
   - **Google Imagen 4** (`imagen-4.0-fast-generate-001`, etc.): Triggered when the user requests an `imagen-*` model and `GEMINI_API_KEYS` are available. Features an **isolated per-key RPD budget** to protect chat quota.
   - **Pollinations.ai** (Models: `✨ Flux`, `⚡ Z-Image`, etc.): The primary provider for free-tier keys, capable of operating completely without an API key. Uses robust transport layer fallback: attempts OpenAI-compatible `POST` for structured errors, failing over to a direct keyless `GET` stream with `Content-Type: image/*` validation if the primary endpoint throws budget exhaustion (402/401) or 5xx timeouts. Includes user-friendly messaging for 429 rate limits.
+  - **FreeTheAI Router** (Models: hr/gpt_image_2, hr/nano_banana_2, etc.): Triggered for hr/* prefix models, acting as a gateway to advanced external image models.
   - **Interactive Canvas UX**: Features full, unrestricted prompt display (up to 800 characters) across the entire UI. Heartbeat animation (`ChatAction.UPLOAD_PHOTO` refreshed every 4.5 s) during generation, followed by an inline keyboard for one-tap regeneration, aspect ratio switching (1:1, 3:4, 4:3, 9:16, 16:9), and dynamic model switching. Includes a native "✏️  Изменить промпт" pasteboard workflow for frictionless prompt editing. The model selection buttons are auto-generated from environment variables (`IMAGE_MODELS`) with smart column-balancing.
 - **Document Understanding**: Extracts text from PDF/DOCX files and uses it for context-aware Q&A.
 - **Multimodal Processing Pipeline**: Voice messages transcribed via `gemini-3.1-flash-lite` (high thinking budget for ASR quality) with intent-aware routing (`INTENT:CONVERSATIONAL`, `INTENT:TRANSCRIPTION`, `INTENT:SEARCH`). Features **Smart Voice Auto-Routing** (bypasses manual confirmation UI for low-complexity transcripts) with regex-based fluff tolerance, **Voice-to-Search Auto-Routing** (when `INTENT:SEARCH` is detected, directly invokes **WeatherAPI.com** for weather (1 request, localized RU conditions + "feels like"), **ExchangeRate-API** for fiat currency (RUB/KZT/UAH support), and **CoinGecko** for crypto (BTC/ETH/SOL/TON with Russian aliases) — zero LLM cost — then falls back to **QnA Grounded Search** via `gemini-2.5-flash-lite` with native Google Search Grounding for general factual queries; for users in deep-dive or search-enabled mode, routes to the full **Agentic Research Pipeline** instead), **QnA History Persistence** (QnA voice search results are saved to `chat_state.history` and persisted via `update_user_chat`, matching the deep research path — previously these turns were silently dropped), and **Show & Tell** (voice-replies to photos dynamically inject the image into the LLM context). The **Voice Engine 5.0** pipeline powers outbound voice replies using **ElevenLabs TTS** as the primary provider with atomic fallback to Gemini REST TTS (`gemini-2.5-flash-preview-tts`). Audio is transcoded into Telegram-compliant PCM→OGG Opus via `ffmpeg` at **24k bitrate** (optimized for speech). The Gemini TTS engine uses **Parallel Batch Chunking** (800 max bytes, up to 2 chunks concurrently via `asyncio.gather`) to prevent API timeouts while conserving the 15 RPD (Requests Per Day) budget per key, and features a **Future-Based Pre-Generation** architecture: TTS generation starts immediately at enqueue time across all queued messages, while per-user delivery order is preserved by a FIFO worker that simply awaits pre-computed audio futures. If the pre-generation future fails (including `asyncio.CancelledError`, which is a `BaseException` in Python 3.14), the worker gracefully falls back to synchronous retry. Combined with **Asynchronous Race Requests** (2 keys per chunk, first-to-finish wins), this eliminates serialisation bottlenecks when multiple voice replies are pending. Concurrency is capped at 3 simultaneous TTS jobs (`GEMINI_TTS_CONCURRENCY=3`) to ensure worst-case burst (3 jobs × 2 chunks × 2 key-racing = 12 RPD) consumes at most 1 key from the 10–12 key pool. A highly optimized Steerable Voice prompt enforces **Strict Verbatim Constraints** and features **Dynamic Personalities** tied directly to the MiniApp's **Independent TTS Temperature** slider (shifting between strict news-anchor, conversational, or highly engaging storytelling). Finished with a low-threshold PCM silence trimming gate (400 amplitude). Featuring **Zero-Latency Voice Intent Detection** (`[VOICE]` tag stripping). Users can hit the **Re-transcribe (Flash)** button for stubborn transcriptions. Media types stored as long-term memories via `submit_retryable()` tasks.
@@ -27,7 +86,7 @@
 - **Distributed Concurrency**: Multi-tier Redis-backed global semaphores (heavy and ultra-heavy limits) to prevent API quota starvation in multi-replica deployments while guaranteeing isolation between standard queries and intensive Agentic research loops.
 - **Resilient Operations**: Instance-based background task manager with exponential backoff, bare-coroutine safety guard, and admin alerting hooks. Atomic metrics persistence with delta-based increments prevents data loss on restart. Prompt registry validates required variables at render time to prevent silent placeholder leaks.
 - **Thinking Level Control**: Configurable reasoning depth for supported models.
-- **Adaptive Thinking Budget**: Automatic `thinking_level` selection via 14 regex heuristics + context-aware escalation. Simple greetings get `low`, code/math/multi-step queries get `high`. User explicit preference always overrides.
+- **Adaptive Thinking Budget**: Automatic `thinking_level` selection via 14 regex heuristics + context-aware escalation + **model-aware defaults**. Simple greetings get `low`, code/math/multi-step queries get `high`. `gemini-3.1-flash-lite` defaults to `high` thinking in auto mode for optimal reasoning quality. User explicit preference always overrides.
 - **Conversation Branching**: Fork current chat into a "what-if" branch via snapshot. Explore alternative conversation paths without losing the main thread. One-click restore to the original context.
 - **Smart Context Window**: Model-specific token budgets (flash-lite: 32K, flash: 128K — evidence-based on context degradation research) with automatic context trimming and LLM-backed summarization of dropped history.
 - **Agentic Smart Reminders**: DB-persisted user reminders (`/remind 30m Check logs`) with 60s poll-based delivery via `job_queue`. Supports **Zero-Latency Intent Classification** (automatically detects whether a prompt requires a simple text notification, quick QnA search, or deep agentic research). AI tasks run in non-blocking background tasks (`asyncio.create_task`) with concurrency semaphores (max 3), 5-minute timeout guards, and inline ⚙️ cancel buttons in the reminder list.
@@ -42,14 +101,14 @@
   - **Non-Repeating Topic Rotation (v2.15.12):** Topic starts no longer repeatedly return the same first word. `pick_random_word_for_topic()` applies a per-topic rotation cursor over the active bank and resets automatically only when the bank content hash changes.
   - **Topic-Aware Judge Context & Cache Isolation (v2.15.12):** Judge requests now include `category`, `topic_id`, and `sense_context`, and judgement/hints/generated-word caches are keyed by this context. This prevents cross-domain meaning drift (for example, champion `Nocturne` vs musical `nocturne`) and removes false cache hits between unrelated topics.
   - **Security hardened (v2.12.8):** WebSocket connections require valid Telegram `initData` HMAC-SHA256 — unauthenticated connections receive `4003 initData required` immediately. Creator Guard protection restricts guessing actions natively, decoupling authorization boundaries. API key material is sanitized from frame locals before race coroutines are spawned. The local fallback game-lock registry is unbounded (~100 bytes/lock × game count = negligible memory); the prior 512-entry FIFO eviction cap was a critical concurrency defect (evicting held locks broke mutual exclusion under Redis outage). Backed by **130+ automated tests** via `pytest-xdist`, mocking 100% of LLM calls, Quart endpoints, and WS pipelines. Requires no new env vars — uses existing `REDIS_URL`, `WEBAPP_BASE_URL`, and `GEMINI_API_KEYS`.
-  - **Judge Tolerance (v2.12.9):** `GuessJudgement.hint` `max_length` raised from 80 → 255 characters. Resolves a `Pydantic ValidationError` cascade triggered when the primary model (`gemini-3.1-flash-lite-preview`) returns 503 and the fallback (`gemini-2.5-flash-lite`) generates verbose hints exceeding the old limit.
+  - **Judge Tolerance (v2.12.9):** `GuessJudgement.hint` `max_length` raised from 80 → 255 characters. Resolves a `Pydantic ValidationError` cascade triggered when the primary model (`gemini-3.1-flash-lite`) returns 503 and the fallback (`gemini-2.5-flash-lite`) generates verbose hints exceeding the old limit.
   - **Emoji Temperature Prefix (v2.14.0):** Every judge response now carries an automatic emoji prefix based on semantic score (`🧊`/<30%, `🟡`/<70%, `🔥`/<92%, `🎉`/≥92%). The AI’s witty hint text is preserved 100%—the temperature is prepended on the backend before the WebSocket event fires.
   - **Inline Message Thermometer (v2.14.0):** After every new best score the bot silently `edit_message_text`s the inline message showing `🔥 Лучшая попытка: [██████░░░░] 60%`. Persisted via `best_score` field in Redis.
   - **Graceful Surrender (v2.14.0):** The guesser can tap a `Сдаться` button. The game ends cleanly with `🏳️ Игрок сдался.` and both players receive a `surrendered` WebSocket event.
   - **Creator “God Mode” Custom Hints (v2.14.0):** A creator can type any hint text in their WebApp — it is relayed instantly to the guesser via the Pub/Sub bus. Zero LLM calls.
   - **12 Word Categories (v2.14.0):** Added `Транспорт`, `Одежда`, `Музыка`, `Космос` (15 words each, bilingual RU+EN) plus 17 new aliases. Word-category LRU cache (`category_cache.json`, 10k entries) means any previously-seen custom word is classified in <1ms.
   - **Local Heuristics Hardening (v2.14.0):** `_homogenize_pair` now maps `ё→е` and strips trailing punctuation before Damerau-Levenshtein matching. A guess of `кот.` or `бобёр` is accepted locally without an LLM call.
-  - **Hint Race Hardening (v2.15.11):** Progressive hints now race three independent lanes without aborting on the first provider failure: **1 AI Studio lane** (`gemini-3-flash-preview`), **1 optional Vertex AI Express lane** (`gemini-3.1-flash-lite-preview`), and **1 curated OpenCode Go lane** (prefers `opencode-go/glm-5.1`). Router/bootstrap exceptions are isolated per lane, so a fast failure no longer cancels a slightly slower valid hint response.
+  - **Hint Race Hardening (v2.15.11):** Progressive hints now race three independent lanes without aborting on the first provider failure: **1 AI Studio lane** (`gemini-3-flash-preview`), **1 optional Vertex AI Express lane** (`gemini-3.1-flash-lite`), and **1 curated OpenCode Go lane** (prefers `opencode-go/glm-5.1`). Router/bootstrap exceptions are isolated per lane, so a fast failure no longer cancels a slightly slower valid hint response.
   - **Multi-Worker Runtime Sync (v2.15.13):** Crocodile WebSocket broadcasts, reconnect history, and pre-generated per-game hints now flow through a Redis-backed runtime store instead of process-local memory only. Guess mutation is protected by a per-game Redis lock, so multi-worker deployments no longer silently split game state across different Uvicorn/Gunicorn workers.
   - **Redis L1/L2 Crocodile Caches (v2.15.13):** `judgement_cache.py` now keeps hot entries in-process while mirroring judgements, hints, category resolution, and generated-word banks into Redis. JSON files under `app/games/data/` remain as fallback persistence only when Redis is unavailable, eliminating the old multi-worker file-fragmentation problem.
   - **Debounced Inline Thermometer (v2.15.13):** Inline best-score updates are now coalesced through a dedicated Telegram service with a 2-second debounce window. Players still see the same thermometer text, but rapid guess bursts no longer spam `edit_message_text` for every intermediate score.
@@ -60,6 +119,7 @@
   - **Daily Crocodile Dual Track & Delivery Hardening (2026-04-22):** `/dailycroc` and scheduled prompts now open through a `t.me/<bot>/<miniapp>?startapp=daily` deep link, so Telegram always injects `initData` and the Mini App WS auth layer stays valid. The daily experience now exposes two independent prepared tracks, **Easy** and **Hard**; finishing one mode never hides the other. Scheduled delivery remains opt-in, sends only once per user's **local day** after the preferred local hour, and respects automatically captured Mini App timezone data.
   - **Guaranteed Daily Completion Summary (2026-04-22):** Finished daily games always send a result body with score, rank, streak, leaderboard snapshot, mode status summary, and a CTA to the remaining daily track if it is still available. Result messages are tracked in PostgreSQL and refreshed through a debounced background editor whenever new global scores arrive, avoiding Telegram edit storms while keeping the visible leaderboard current.
   - **Daily Delivery Control & Preparation Window (v2.15.15):** Admins can toggle outward daily delivery at runtime via `/set_dailycroc_delivery on|off` without disabling puzzle preparation. The scheduler now prepares a forward window of daily puzzles in advance and only sends a prompt once today's puzzle is fully ready.
+  - **Daily 2048 Sprint (2026-06-02):** Admins can switch the active daily slot with `/set_daily_game crocodile|2048`. In 2048 mode `/dailycroc`, `/daily2048`, and scheduled daily prompts open a mobile-first Mini App where the explicit goal is to reach a target tile or board total as fast as possible. The automatic generator now avoids repeated challenge signatures and repeated starting boards across the prepared history, while still letting operators prepare custom boards, goals, spawn sequences, par moves, and target times several days ahead in the **📅 Daily Admin** panel (`/admin_daily`). The first completed run records moves, elapsed time, and final score; after winning, players can keep playing in practice mode without changing the day's records. Result messages include a monthly champions button.
   - **Prepared Daily Assets & Non-Repeating Words (v2.15.15):** Daily puzzle preparation now reserves words against the persisted `crocodile_daily_puzzles` history, pre-generates hints, stores an image prompt, and requests completion art ahead of time through Pollinations `qwen-image` with prompt enhancement. This avoids day-of-send failures where hints or the art payload would otherwise still be pending.
   - **Daily Completion Art (v2.15.15):** When a player finishes the daily puzzle, the bot can send the pre-generated completion illustration before the result message, preserving the score/rank/streak flow while adding a ready-made reveal asset instead of generating on the critical path.
   - **Single-Message Daily Completion Fallback (2026-04-23):** If the original prompt photo can no longer be upgraded in place, the fallback path now prefers one Telegram photo result card with the prepared completion art attached and the score/rank/leaderboard rendered in the caption, instead of splitting completion into two back-to-back messages.
@@ -73,6 +133,13 @@
   - **Distributed Mutation Lock Hardening (2026-04-22):** `game_mutation_lock` in `crocodile_runtime.py` now raises `TimeoutError` on Redis lock contention instead of silently falling back to a local `asyncio.Lock`. WebSocket routes (`daily_game_ws`, `game_ws`) catch `TimeoutError` gracefully and return structured JSON (`{"event": "error", "message": "Сервер загружен..."}`) so the Mini App can surface a retry prompt instead of crashing with 1011.
   - **Thread-Safe Cache Writes (2026-04-22):** All four JSON cache `_persist_sync` helpers in `judgement_cache.py` now hold dedicated `threading.Lock` objects per cache file. Concurrent `asyncio.to_thread` dispatches are serialized before the atomic `.json.tmp` → rename step, eliminating file corruption races on Windows (and any OS where file rename is not atomic across threads).
   - **Creator God-Mode Reconnect (2026-04-22):** The word-giver (creator) can now reopen the Mini App after the game has ended and see the full result. Previously `game.status != 'active'` closed the WebSocket for everyone including the creator with `4009`. Now: non-creators still get `4009`; the creator receives a `game_state` snapshot (with `target_word`, `finished: True`, `status`) + `history_sync`, then the socket closes gracefully with `1000`, allowing the Mini App to render the post-game overlay.
+- **Esoteric & Astrology Suite**: A fully-integrated suite of esoteric tools and services:
+  - **Interactive Natal Charts (`/natal` / `/webapp/natal-form`):** Builds and interprets birth charts using date, place (local GeoNames-backed city catalog with Nominatim fallback), and time precision details. Features an interactive webapp form, step-by-step chat flow, and produces a hosted full report or Telegraph mirror.
+  - **Tarot Readings (`/tarot` / inline mode):** Multi-spread interactive tarot card readings (Classic, Card of the Day, Yes/No, Career/Finance, Relationships, Personal Growth) with live session memory, replies context, and one-tap additional cards draw.
+  - **Daily Horoscopes (`/horoscope_settings` / `/horoscope_stop`):** Automated delivery of daily morning/evening horoscopes tailored to the user's zodiac sign, delivery time, and local timezone offset (UTC offset).
+- **Core Ops & Admin Enhancements**:
+  - **Admin alerts for unauthorized access:** Real-time Telegram notifications to admins when unauthorized users attempt to interact with the bot. Features inline keyboard options to instantly approve or dismiss access request (`unauthorized_add:` and `unauthorized_dismiss:` callbacks).
+  - **Token count logging:** Displays response token counts for all Gemini requests (both streaming and non-streaming) in the operator console for cost auditing and tracking.
 - **Live Audio Voice Chat (Gemini Live API + Experimental Vertex Route)**: Real-time bidirectional voice conversation with AI via a Telegram Mini App (`/webapp/live`). The **default route** uses **`gemini-3.1-flash-live-preview` via the Gemini GenAI Live API** for sub-second duplex audio streaming over `/webapp/live/ws`. An **opt-in experimental route** is also available through **Vertex Live** on **`gemini-live-2.5-flash-native-audio`** over `/webapp/live-vertex/ws`; this mode is exposed in the Mini App settings as **`Vertex Live · с доступом в интернет`** and enables **Google Search grounding** for the live session. **Architecture**: Browser captures mic audio via **AudioWorklet** (PCM16, 16kHz mono, 100ms chunks), sends base64-encoded frames over WebSocket to a **Quart WebSocket proxy**, which bridges to the selected live backend. Audio responses (PCM 24kHz) are relayed back and played via Web Audio API. **Features & Hardening**: explicit **push-to-talk** turn boundaries (`activity_start` / `activity_end`) instead of relying on implicit browser-side pauses, real-time **input/output audio transcription** in the transcript pane, context-window compression, session resumption handles, interruption handling (playback queue flush on `interrupted` signal), circular waveform visualizer with frequency-reactive bars, turn-based receive handling to avoid per-response reconnect churn, and 10-minute idle timeout. The Mini App now waits for the live session to be ready before it starts the microphone capture path, which eliminates the earlier race where the first short utterance could be dropped while the socket was still opening. Live preferences are **separate from reply-TTS voice settings** and are configured inside the Live Mini App itself: users can pick a live connection mode, choose a Gemini live voice, select a simple live-thinking preset (`Быстрый` / `Сбалансированный` / `Умный`), and browse voices grouped as **женские / мужские**. Changes during an active call are applied via a controlled reconnect, preserving the transcript UI while re-opening the session with the new config. If the experimental Vertex route fails during connect/setup, the Mini App performs a **single-session fallback** to the standard GenAI live route without rewriting the saved user preference. Vertex Live expects a **regional Vertex client plus readable ADC credentials inside the bot container** (`GOOGLE_APPLICATION_CREDENTIALS` pointing to a mounted service-account JSON); an unreadable credentials file is treated as a controlled misconfiguration instead of surfacing a raw session crash. Server logs also distinguish the live backend explicitly (`via=vertex_live` vs `via=gemini_live`) so the active transport is visible during debugging. Session traffic is strictly capped to 1 active socket per user to prevent overlapping API drains. Includes seamless UI haptics (`Telegram.WebApp.HapticFeedback`) across state transitions. Authenticated via Telegram `initData` HMAC-SHA256. Covered by automated unit and E2E WebApp socket tests.
   - **Provider Boundary:** Live Audio now has two explicit boundaries: **standard live** on the Gemini GenAI Live API for the stable deployed voice flow, and an **experimental Vertex Live internet-enabled route** for targeted testing. Inline/search/Crocodile workloads remain independent of this selector.
 - **Smart UX Interactions**: RLHF feedback via a two-stage "📔  Оценить" inline toggle that expands into 👍 /👎 choices to reduce UI clutter. Citation badge `[📚 N фактов (interactive)]` shows when memory was used — tapping it displays an alert with the exact graph relationships and sources used to generate the response. Smart LLM-generated suggestions (`[SUGGESTIONS:...]` tags → inline buttons via memory-cached hash identifiers to bypass Telegram's data limits), intent routing (`[INTENT:...]` → contextual actions), `CopyTextButton` for code blocks, `sendMessageDraft` for input pre-filling, and `🔥` message effects for image generation.
@@ -88,6 +155,9 @@
 - **Live WS Capacity Handling**: The standard Gemini Live Audio WebSocket handler uses the Gemini GenAI Live API path and surfaces controlled capacity/misconfiguration fatal events instead of attempting AI Studio key rotation. The experimental Vertex internet-live route exposes the same client event contract and falls back once to the standard route only when Vertex fails during connect/setup. Classic Telegram-side retry resilience remains unchanged.
   - **Streaming Reliability**: Exponential backoff retry (0.5→1→2s + jitter) for Telegram rate-limit errors with adaptive debounce escalation (auto-scales up to 3s).
 - **Security & GDPR**: CSRF-protected dashboard authentication, brute-force rate limiting (60 req/min/IP on all API endpoints), API key masking in status endpoints, and Telegram commands for data export (`/mydata`) and deletion (`/deleteme`).
+- **Cold-Start Latency Optimization**: Systematic import-time profiling (`-X importtime`) identified four heavy module chains loaded eagerly at startup. Three targeted lazy-import refactors reduced P95 cold-start time by **~54%** (from ~2.41 s to ~1.11 s measured via `artifacts/perf/bench_startup.py` across 5 subprocess spawns): (1) `app.handlers.messages` — deferred `cmd_image` imports inside the task wrapper; (2) `app.handlers.msg_roles` — deferred `app.agents` inside `handle_custom_role_generation`; (3) `app.handlers.menus` — deferred `app.document_processor` (pulls `pypdf` + `docx`) into the two async call sites; (4) `app.handlers.cmd_admin` — deferred `google.genai` SDK into `list_models_command` (admin-only, rarely called). Python's module cache (`sys.modules`) ensures each deferred import is free after the first call.
+
+- **Tarot Spread Variations**: A comprehensive inline Tarot system (`@bot таро`) supporting multiple spread types via an interactive dropdown. Features include: 🎴 **Карта дня** (Card of the Day), 🔮 **Да или Нет** (Yes/No), 💼 **Карьера и финансы** (Career & Finances, 3-card), ❤️ **Отношения** (Relationships, 3-card), and 🌟 **Личностный рост** (Personal Growth, 3-card). The system automatically routes "fortune cookie" non-LLM instantaneous responses during selection and employs context-aware prompt generation with soft validation for queries. Built with 78 fully localized Russian card interpretations.
 
 ## Non-Goals / Limitations
 
@@ -137,11 +207,11 @@ graph TD;
 | `app/`                | Core application logic (bot, web server, DB layer, handlers).                  |
 | `app/handlers/`       | Telegram command and message processors (`ai_chat`, `ai_search`, `commands`, `inline`). |
 | `app/repos/`          | Database repository pattern implementations (queries for chats, memory, keys). |
-| `app/providers/`      | AI provider abstraction layer (base, Gemini, OpenRouter, router with race requests). |
+| `app/providers/`      | AI provider abstraction layer (base, Gemini, Opencode, OpenRouter, FreeTheAI, Pollinations, Imagen, TTS, router). |
 | `app/core/`           | Agentic research engine — multi-step query decomposition and tool use.         |
-| `app/context/`        | Context assembly subsystem (assembler, summarizer, token budget).              |
+| `app/context/`        | Context assembly subsystem (assembler, summarizer, compression, token budget). |
 | `app/documents/`      | Document processing: chunking strategies, parsers, document repository.        |
-| `app/middleware/`     | Request pipeline middleware (dedup).                                           |
+| `app/middleware/`     | Request pipeline middleware (debounce aggregation, dedup prevention).           |
 | `app/adapters/`       | Concurrency primitives and Telegram UI adapter.                                |
 | `app/db/`             | Database bootstrap: schema validation, migrations runner, RLS, seed.           |
 | `app/utils/`          | Shared utilities (formatting, keyboards, background tasks, image utils, reader SSR, etc.). |
@@ -245,6 +315,26 @@ All configuration is loaded from environment variables (or a `.env` file). Varia
 
 ---
 
+### Natal Reports
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `NATAL_REPORTS_ENABLED` | ⚙️ | `true` / `false` | `false` | Enables `/natal` and hosted natal report generation. Keep disabled until live VPS smoke tests pass, then enable explicitly. |
+| `NATAL_REPORT_TTL_DAYS` | ⚙️ | `365` | `365` | Retention window for hosted natal reports. PostgreSQL storage keeps shared links stable by default. |
+| `NATAL_GEOCODER_PROVIDER` | ⚙️ | `local` / `nominatim` | `local` | Birth-place resolution uses the local GeoNames-backed city catalog. Set `nominatim` explicitly to allow network fallback for unresolved free text. |
+| `NATAL_CITY_OVERRIDES_PATH` | ⚙️ | `/srv/bot/natal-city-overrides.json` | `""` | Optional UTF-8 JSON file for admin-reviewed city records missing from GeoNames. Records are loaded into the local autocomplete/geocoding path; see `docs/natal-city-overrides.example.json`. |
+| `NATAL_SEND_RAW_BIRTH_DATA_TO_LLM` | ⚙️ | `false` | `false` | Privacy guard. Keep `false`: LLM prompts should receive derived chart data, not raw birth date/place. |
+
+Natal city autocomplete uses GeoNames data via the `geonamescache` Python package. GeoNames data is licensed under CC BY 4.0 and should be credited in public product materials.
+
+Before enabling natal reports publicly, run the live smoke check on the host with real environment variables:
+
+```bash
+python scripts/natal_smoke.py --webhook-url "$WEBHOOK_URL"
+```
+
+---
+
 ### 🖥️  Local Bot API Server (Optional)
 
 When configured, the bot communicates with a self-hosted Local Bot API Server instead of `api.telegram.org`. This eliminates network latency for file operations, enables 2 GB file uploads, and provides zero-copy media access via a shared Docker volume.
@@ -262,12 +352,12 @@ When configured, the bot communicates with a self-hosted Local Bot API Server in
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
 | `GEMINI_API_KEYS` | ✅ | `key1,key2,key3` | — | Comma-separated Google AI Studio API keys. The system rotates through them automatically on quota exhaustion or 503 errors for Gemini chat/judge/fallback paths. Each key has an independent daily request budget tracked in the DB. Minimum 1 key required. Live Audio no longer consumes this pool. |
-| `GEMINI_AVAILABLE_MODELS` | ⚙️ | `gemini-2.5-flash,gemini-3.1-flash-lite-preview` | See `config.py` | Controls which Gemini models appear in the `/model` selector for users. If a `DEFAULT_MODEL` is not in this list, it is added automatically with a warning at startup. |
-| `DEFAULT_MODEL` | ⚙️ | `gemini-3.1-flash-lite-preview` | `gemini-3.1-flash-lite-preview` | Model used for standard conversational messages. Recommended: `gemini-3.1-flash-lite-preview` (fast + cheap) or `gemini-2.5-flash` (smarter, higher cost). |
+| `GEMINI_AVAILABLE_MODELS` | ⚙️ | `gemini-2.5-flash,gemini-3.1-flash-lite` | See `config.py` | Controls which Gemini models appear in the `/model` selector for users. If a `DEFAULT_MODEL` is not in this list, it is added automatically with a warning at startup. |
+| `DEFAULT_MODEL` | ⚙️ | `gemini-3.1-flash-lite` | `gemini-3.1-flash-lite` | Model used for standard conversational messages. Recommended: `gemini-3.1-flash-lite` (fast + cheap) or `gemini-2.5-flash` (smarter, higher cost). |
 | `QNA_MODEL` | ⚙️ | `gemini-2.5-flash-lite` | `gemini-2.5-flash-lite` | Model used for quick Q&A web search queries (`?` prefix). Optimized for fast factual one-shot answers. |
-| `RESEARCH_MODEL` | ⚙️ | `gemini-3.1-flash-lite-preview` | `gemini-3.1-flash-lite-preview` | Model used for synthesizing Tavily search results into a final research answer. |
-| `URL_SELECTION_MODEL` | ⚙️ | `gemini-3.1-flash-lite-preview` | `gemini-3.1-flash-lite-preview` | Lightweight model that scores and filters candidate URLs during agentic web research before full content extraction. |
-| `TAXONOMY_MODEL` | ⚙️ | `gemini-3.1-flash-lite-preview` | `gemini-3.1-flash-lite-preview` | Model used by MemPalace to classify memories into the Wing/Room taxonomy and to judge temporal contradictions (LLM-as-Judge). Can be set to a cheaper model without quality loss. |
+| `RESEARCH_MODEL` | ⚙️ | `gemini-3.1-flash-lite` | `gemini-3.1-flash-lite` | Model used for synthesizing Tavily search results into a final research answer. |
+| `URL_SELECTION_MODEL` | ⚙️ | `gemini-3.1-flash-lite` | `gemini-3.1-flash-lite` | Lightweight model that scores and filters candidate URLs during agentic web research before full content extraction. |
+| `TAXONOMY_MODEL` | ⚙️ | `gemini-3.1-flash-lite` | `gemini-3.1-flash-lite` | Model used by MemPalace to classify memories into the Wing/Room taxonomy and to judge temporal contradictions (LLM-as-Judge). Can be set to a cheaper model without quality loss. |
 
 ---
 
@@ -314,6 +404,16 @@ For that experimental live route, `VERTEX_AI_PROJECT` and `VERTEX_AI_LOCATION` a
 | `OPENROUTER_QNA_MODEL` | ⚙️ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | OpenRouter model for quick Q&A search synthesis. |
 | `OPENROUTER_RESEARCH_MODEL` | ⚙️ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | OpenRouter model for agentic research synthesis. |
 | `OPENROUTER_URL_SELECTION_MODEL` | ⚙️ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | OpenRouter model for URL scoring during agentic research. |
+
+---
+
+### 🚀 FreeTheAI (Multimodal Router)
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `FREETHEAI_API_KEYS` | ⚙️ | `sk-freetheai-1,sk-freetheai-2` | `[]` | Comma-separated API keys for FreeTheAI. Provides advanced multimodal image generation and Lyria-based audio music models. |
+| `FREETHEAI_AVAILABLE_MODELS` | ⚙️ | `vhr/gpt_image_2,or/google/lyria-3-pro-preview` | `[]` | List of models provided by FreeTheAI router. Handled natively to prevent collisions with OpenRouter. |
+| `FREETHEAI_DEFAULT_MODEL` | ⚙️ | `cat/claude-4-6-sonnet` | `cat/claude-4-6-sonnet` | Default chat model via FreeTheAI. |
 
 ---
 
@@ -493,8 +593,8 @@ Persistent semantic recall stored in the `long_term_memory` table (`pgvector` `h
 | Min query length (recall) | 15 chars | `ai_chat.py` threshold |
 | Similarity threshold (floor) | 0.60 (adaptive gap-filter: top − 0.15pp, adaptive_floor min 0.40) | `ai_chat.py` / `memory.py` |
 | Recall limit | 5 memories (adaptive thresholding filters noise) | `ai_chat.py` `limit` |
-| Query expansion model | `gemini-3.1-flash-lite-preview` (~200ms cheap call) | `QUERY_EXPANSION_MODEL` |
-| Consolidation model | `gemini-3.1-flash-lite-preview` | `CONSOLIDATION_MODEL` |
+| Query expansion model | `gemini-3.1-flash-lite` (~200ms cheap call) | `QUERY_EXPANSION_MODEL` |
+| Consolidation model | `gemini-3.1-flash-lite` | `CONSOLIDATION_MODEL` |
 
 **Storage:** Only user intent is embedded (`user_message[:500]`, `source_type='user_intent'`). Bot replies are discarded to maximize vector density. Saving is asynchronous and non-blocking via `submit_retryable()` with 3 retries.
 
@@ -512,7 +612,7 @@ Persistent semantic recall stored in the `long_term_memory` table (`pgvector` `h
 </long_term_memory>
 ```
 
-**Consolidation:** When raw memories exceed ~8,000 tokens OR 7 days since last consolidation, `gemini-3.1-flash-lite-preview` extracts 5—8 atomic persona facts. Raw memories are deleted and replaced with consolidated facts (`source_type='consolidated'`) in a single transaction. Consolidation is gated by a debounce (`should_check_consolidation()`) — checked only every 20th message or every 15 minutes.
+**Consolidation:** When raw memories exceed ~8,000 tokens OR 7 days since last consolidation, `gemini-3.1-flash-lite` extracts 5—8 atomic persona facts. Raw memories are deleted and replaced with consolidated facts (`source_type='consolidated'`) in a single transaction. Consolidation is gated by a debounce (`should_check_consolidation()`) — checked only every 20th message or every 15 minutes.
 
 ### Knowledge Graph Architecture
 
@@ -552,7 +652,7 @@ Relational knowledge is stored as a directed graph in dual tables:
 
 ## Testing
 
-The application features a heavily engineered test suite (**1,835 unit and integration tests, 100% stable CI-ready**) with **parallel execution** via `pytest-xdist`.
+The application features a heavily engineered test suite (**1,845+ unit and integration tests, 100% stable CI-ready**) with **parallel execution** via `pytest-xdist`.
 
 - **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections via `@pytest.mark.integration`), E2E tests.
 - **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-xdist`, `pytest-cov`.
@@ -620,7 +720,7 @@ The application features a heavily engineered test suite (**1,835 unit and integ
 
 - **Inline Mode**
   - _Preconditions_: `/setinline` + `/setinlinefeedback` (100%) configured in BotFather.
-  - _Steps_: From any Telegram chat, user types `@gemaibotv2 <query>`. Bot returns 3 tone options + up to 5 image mode buttons (auto-detected via smart routing). User selects tone → placeholder with `🔎 ищет в интернете…` sent to chat. Bot receives `ChosenInlineResult`, runs `_stream_inline_fast()` in background via `TaskManager`: **Vertex AI Express** (`gemini-3.1-flash-lite-preview`) is the primary slot with **Google Search Grounding** (`enable_web_search=True`); 2 AI Studio keys (`gemini-2.5-flash-lite`) race as fallback slots. First valid response wins. Grounding citations from the winner are captured via `_GroundingMeta` sentinel and appended as an expandable `📎 Источники` blockquote (up to 3 URLs). Image prompts auto-route to the best Pollinations model based on intent (quoted text → wan-image, edit verbs → klein).
+  - _Steps_: From any Telegram chat, user types `@gemaibotv2 <query>`. Bot returns 3 tone options + up to 5 image mode buttons (auto-detected via smart routing). User selects tone → placeholder with `🔎 ищет в интернете…` sent to chat. Bot receives `ChosenInlineResult`, runs `_stream_inline_fast()` in background via `TaskManager`: **Vertex AI Express** (`gemini-3.1-flash-lite`) is the primary slot with **Google Search Grounding** (`enable_web_search=True`); 2 AI Studio keys (`gemini-2.5-flash-lite`) race as fallback slots. First valid response wins. Grounding citations from the winner are captured via `_GroundingMeta` sentinel and appended as an expandable `📎 Источники` blockquote (up to 3 URLs). Image prompts auto-route to the best Pollinations model based on intent (quoted text → wan-image, edit verbs → klein).
   - _Expected Outcome_: Full AI answer (with real-time web data + citation sources) appears in the original chat, in-place, within ~5—15 s. On all-rounds failure, user can retry with one tap (`🔄 Повторить`, 5-min TTL).
 - **Standard Conversation**
   - _Preconditions_: User selects `/newchat`.
@@ -722,11 +822,15 @@ python -m pytest tests/
 
 ## Contributing
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, validation, pull-request, and secret-handling guidance.
+
+Minimum maintainer checks for behavior changes:
+
 1. Create a descriptive PR.
-2. Verify all `pytest` checks pass: `python -m pytest tests/ --override-ini="addopts="`
-3. Run `ruff check app/ tests/ --output-format=concise` — zero violations required.
-4. Run `mypy app/ --ignore-missing-imports` — exit 0 required.
+2. Verify the relevant `pytest` checks pass.
+3. Run `python -m ruff check .`.
+4. Update user-facing docs when public behavior or deployment changes.
 
 ## License
 
-MIT (Verified via shield badge notation in legacy files).
+MIT, see [LICENSE](LICENSE).

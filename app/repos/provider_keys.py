@@ -20,6 +20,7 @@ _PROVIDER_ENV_MAP: dict[str, str] = {
     "exchange": "EXCHANGE_RATE_API_KEY",
     "pollinations": "POLLINATIONS_API_KEY",
     "jina": "JINA_API_KEY",
+    "horoscope": "HOROSCOPE_API_KEY",
 }
 
 # Providers with list-based keys (multiple keys)

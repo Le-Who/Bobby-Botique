@@ -9,7 +9,15 @@ import logging
 import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    ApplicationHandlerStop,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from app.handlers import menus
 from app.i18n import t
@@ -20,11 +28,73 @@ from app.utils.formatting import TelegramFormatter
 from app.utils.json_compat import json
 
 
+async def ignore_edited_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Stop edited command updates before CommandHandler sees effective_message."""
+    raise ApplicationHandlerStop
+
+
 @authorized_only
 @safe_handler(t("error.command"))
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     logging.info("Start command from user %s", user_id)
+
+    # ── Deep link routing ────────────────────────────────────────────────────
+    payload = (context.args[0] if context.args else "").strip()
+    
+    if payload.startswith("ctx_"):
+        import html as _html
+
+        from app.cache import get_inline_context
+
+        token = payload[4:]  # strip "ctx_" prefix
+        ctx = await get_inline_context(token)
+
+        if ctx is None:
+            await update.message.reply_text(
+                "⏰ <b>Ссылка устарела.</b>\n"
+                "Контекст хранится 24 часа. Задай вопрос боту напрямую.",
+                parse_mode="HTML",
+            )
+            return
+
+        chat_state = await get_user_chat(user_id)
+        # Append inline exchange to existing history (it's the most recent interaction)
+        inline_history = [
+            {"role": "user", "parts": [ctx["q"]]},
+            {"role": "model", "parts": [ctx["a"]]},
+        ]
+        # Keep up to 20 previous messages, then append the new 2 inline messages
+        chat_state.history = chat_state.history[-20:] + inline_history
+        # Force a full rewrite in the DB because we replaced the list 
+        # (bypasses the bolt optimization that assumes only append-only changes)
+        chat_state._original_length = 0
+        await update_user_chat(user_id, chat_state)
+
+        tone_hint = ""
+        if ctx.get("tone") == "formal":
+            tone_hint = " (официальный тон)"
+        elif ctx.get("tone") == "friendly":
+            tone_hint = " (дружеский тон)"
+        elif ctx.get("tone") == "sarcastic":
+            tone_hint = " (саркастический тон)"
+
+        preview_q = ctx["q"][:80] + ("…" if len(ctx["q"]) > 80 else "")
+
+        await update.message.reply_text(
+            f"📎 <b>Контекст загружен</b>{tone_hint}\n\n"
+            f"<i>Исходный вопрос:</i> <code>{_html.escape(preview_q)}</code>\n\n"
+            "Можешь продолжать — я помню этот разговор.",
+            parse_mode="HTML",
+        )
+        return
+        
+    if payload.startswith("subscribe_horoscope_"):
+        from app.handlers.horoscope_subscription import start_subscribe_horoscope
+
+        context.user_data["horo_payload"] = payload
+        await start_subscribe_horoscope(update, context)
+        return
 
     chat_state = await get_user_chat(user_id)
     formatted_text, parse_mode, reply_markup = await menus.get_start_menu_content(chat_state, user_id=user_id)
@@ -40,7 +110,39 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user_id = update.effective_user.id
     logging.info("Help command from user %s", user_id)
 
-    formatted_text, parse_mode = TelegramFormatter.format_text(t("help.title"))
+    help_text = (
+        "🤖 <b>Справка и список команд</b>\n\n"
+        "<b>🔮 Развлечения и сервисы:</b>\n"
+        "• <code>/tarot</code> (или <code>таро</code>) — начать расклад Таро\n"
+        "• <code>натальная карта</code> — составить натальную карту\n"
+        "• <code>/subscribe</code> / <code>/unsubscribe</code> — гороскоп\n"
+        "• <code>/games</code> — каталог мини-игр\n"
+        "• <code>/draw</code> — сгенерировать изображение\n"
+        "• <code>/remind</code> — установить напоминание\n"
+        "• <code>/live</code> — начать Live Audio звонок\n\n"
+        "<b>🧠 Управление ботом:</b>\n"
+        "• <code>/model</code> — сменить AI-модель\n"
+        "• <code>/roles</code> — выбрать роль (личность бота)\n"
+        "• <code>/setprompt</code> — задать системную инструкцию\n"
+        "• <code>/thinking</code> — настройка уровня размышления\n"
+        "• <code>/res</code> — вкл/выкл режим веб-поиска\n"
+        "• <code>/documents</code> — управление вашими документами\n"
+        "• <code>/settings</code> — единая панель настроек\n\n"
+        "<b>💬 Общение и история:</b>\n"
+        "• <code>/newchat</code> — очистить текущий контекст\n"
+        "• <code>/save</code> — сохранить текущую беседу\n"
+        "• <code>/switch</code> — переключиться на сохранённую беседу\n"
+        "• <code>/conversations</code> — список сохранённых бесед\n"
+        "• <code>/rename</code> / <code>/delete</code> — управление беседами\n"
+        "• <code>/export</code> — экспортировать чат в документ\n"
+        "• <code>/stats</code> — ваша статистика использования\n\n"
+        "<b>📚 Память и данные:</b>\n"
+        "• <code>/memory</code> — просмотр и управление памятью\n"
+        "• <code>/clearmemory</code> — очистить долгосрочную память\n"
+        "• <code>/mydata</code> — экспорт всех ваших данных (GDPR)\n"
+        "• <code>/deleteme</code> — полное удаление аккаунта\n\n"
+        "<i>Для получения справки по другим темам используйте кнопки ниже:</i>"
+    )
     keyboard = [
         [
             InlineKeyboardButton(t("help.btn_chat"), callback_data="help_topic:chat"),
@@ -51,9 +153,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             InlineKeyboardButton(t("help.btn_roles"), callback_data="help_topic:roles"),
         ],
     ]
-    await update.message.reply_text(
-        formatted_text,
-        parse_mode=parse_mode,
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+        
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=help_text,
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
     logging.info("Help command completed successfully for user %s", user_id)
@@ -603,14 +710,30 @@ async def games_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 def register(application: Application) -> None:
+    application.add_handler(
+        MessageHandler(filters.UpdateType.EDITED_MESSAGE & filters.COMMAND, ignore_edited_command),
+        group=-100,
+    )
+
     # Core user commands
     application.add_handler(CommandHandler("start", start_command))
+    from app.handlers.natal_chart import build_natal_chart_handler
+    from app.natal.city_catalog import warm_city_catalog
+
+    try:
+        warm_city_catalog()
+    except Exception as exc:
+        logging.warning("Failed to warm natal city catalog: %s", exc)
+    application.add_handler(build_natal_chart_handler())
     application.add_handler(CommandHandler("live", live_command))
     application.add_handler(CommandHandler("games", games_command))
+    from app.handlers.daily_2048 import daily2048_command
     from app.handlers.daily_crocodile import dailycroc_command
 
     application.add_handler(CommandHandler("dailycroc", dailycroc_command))
+    application.add_handler(CommandHandler("daily2048", daily2048_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CallbackQueryHandler(help_command, pattern=r"^help_cmd$"))
     application.add_handler(CommandHandler("newchat", new_chat_command))
     application.add_handler(CommandHandler("model", model_command))
     application.add_handler(CommandHandler("setprompt", set_prompt_command))
@@ -624,6 +747,11 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("mydata", mydata_command))
     application.add_handler(CommandHandler("deleteme", deleteme_command))
     application.add_handler(CommandHandler("clearmemory", clearmemory_command))
+    
+    from app.handlers.cmd_tarot import tarot_command
+    application.add_handler(CommandHandler("tarot", tarot_command))
+    application.add_handler(MessageHandler(filters.Regex(r'(?i)^/(?:таро|расклад)(?:\s+|$)'), tarot_command))
+    application.add_handler(CallbackQueryHandler(tarot_command, pattern=r"^start_tarot$"))
 
     # Image generation commands (/draw, /img, /image, /generate)
     from app.handlers.cmd_image import draw_command
@@ -651,8 +779,11 @@ def register(application: Application) -> None:
         register_group_command,
         reload_config_command,
         role_conv_metrics_command,
+        set_daily_game_command,
         set_dailycroc_delivery_command,
+        set_dailycroc_model_command,
         set_dailycroc_placeholder_command,
+        set_inline_model_command,
         set_inline_tabs_command,
         set_inline_thinking_command,
         set_provider_command,
@@ -678,6 +809,9 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("registergroup", register_group_command))
     application.add_handler(CommandHandler("groupstats", group_stats_command))
     application.add_handler(CommandHandler("set_dailycroc_delivery", set_dailycroc_delivery_command))
+    application.add_handler(CommandHandler("set_daily_game", set_daily_game_command))
+    application.add_handler(CommandHandler("set_dailycroc_model", set_dailycroc_model_command))
+    application.add_handler(CommandHandler("set_inline_model", set_inline_model_command))
     application.add_handler(CommandHandler("dailycroc_status", dailycroc_status_command))
     application.add_handler(CommandHandler("set_dailycroc_placeholder", set_dailycroc_placeholder_command))
     application.add_handler(CommandHandler("rolemetrics", role_conv_metrics_command))
@@ -687,7 +821,8 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("set_inline_tabs", set_inline_tabs_command))
     application.add_handler(CommandHandler("set_provider", set_provider_command))
     application.add_handler(CommandHandler("wordbank", wordbank_command))
-    from telegram.ext import CallbackQueryHandler
+
+
     application.add_handler(CallbackQueryHandler(wb_callback, pattern=r"^wb:"))
 
     # Conversation commands (from cmd_conversations)
@@ -706,10 +841,26 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("delete", delete_conversation_command))
 
     # Scheduled briefs commands (from scheduled_briefs)
+    from app.handlers.horoscope_subscription import horoscope_settings_command
     from app.handlers.scheduled_briefs import subscribe_command, unsubscribe_command
 
-    application.add_handler(CommandHandler("subscribe", subscribe_command))
+    application.add_handler(CommandHandler("subscribe", horoscope_settings_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
+
+    # Horoscope subscription wizard (from horoscope_subscription)
+    from app.handlers.horoscope_subscription import (
+        build_horoscope_subscription_handler,
+        horoscope_settings_callback,
+        horoscope_stop_command,
+    )
+
+    application.add_handler(build_horoscope_subscription_handler())
+    application.add_handler(CommandHandler("horoscope_stop", horoscope_stop_command))
+    application.add_handler(CallbackQueryHandler(horoscope_settings_callback, pattern=r"^horo_settings:"))
+
+    # Tarot Daily callbacks
+    from app.handlers.tarot_daily import tarot_daily_callback
+    application.add_handler(CallbackQueryHandler(tarot_daily_callback, pattern=r"^tarot_daily:"))
 
     # Reminder command (from cmd_reminders)
     from app.handlers.cmd_reminders import remind_command

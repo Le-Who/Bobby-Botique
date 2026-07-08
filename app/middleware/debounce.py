@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -51,6 +52,25 @@ _FORWARD_WINDOW_S = 3.5
 # If STT finishes before this, transcript is included; otherwise a placeholder
 # stub is inserted and STT continues independently.
 _STT_GRACE_S = 8.0
+
+# Performance: hoisted from _format_fwd_prefix() — eliminates a 13-element list
+# allocation on every forwarded message entry rendered in build_llm_context().
+# Index 0 is a dummy empty string so months map 1-based (Jan=1 … Dec=12).
+_MONTHS_RU: tuple[str, ...] = (
+    "",
+    "Янв",
+    "Фев",
+    "Мар",
+    "Апр",
+    "Май",
+    "Июн",
+    "Июл",
+    "Авг",
+    "Сен",
+    "Окт",
+    "Ноя",
+    "Дек",
+)
 
 # ── Data structures ──────────────────────────────────────────────────────────
 
@@ -176,8 +196,6 @@ class _DebounceSlot:
     __slots__ = ("entries", "first_ts", "timer_task", "ready_event", "is_forward_burst")
 
     def __init__(self, entry: _MessageEntry) -> None:
-        import time
-
         self.entries: list[_MessageEntry] = [entry]
         self.first_ts: float = time.monotonic()
         self.timer_task: asyncio.Task[None] | None = None
@@ -385,8 +403,7 @@ async def debounce_text_message(user_id: int, text: str, is_forward: bool = Fals
 
 async def _build_entry(message: Message, *, bot=None) -> _MessageEntry:
     """Extract structured metadata from a telegram.Message into a _MessageEntry."""
-    from datetime import datetime
-
+    # Performance: `datetime` is already imported at module level — no inline import needed.
     forward_origin = getattr(message, "forward_origin", None)
     is_forwarded = forward_origin is not None
     is_user_authored = not is_forwarded
@@ -477,23 +494,9 @@ def _extract_author_label(forward_origin) -> str:
 
 def _format_fwd_prefix(author_label: str, forwarded_date: datetime | None) -> str:
     """Format the blockquote prefix for a forwarded message line."""
-    MONTHS_RU = [
-        "",
-        "Янв",
-        "Фев",
-        "Мар",
-        "Апр",
-        "Май",
-        "Июн",
-        "Июл",
-        "Авг",
-        "Сен",
-        "Окт",
-        "Ноя",
-        "Дек",
-    ]
+    # Performance: _MONTHS_RU is a module-level tuple — no per-call list allocation.
     if forwarded_date is not None:
-        date_str = f"{forwarded_date.day} {MONTHS_RU[forwarded_date.month]}, {forwarded_date.hour:02d}:{forwarded_date.minute:02d}"
+        date_str = f"{forwarded_date.day} {_MONTHS_RU[forwarded_date.month]}, {forwarded_date.hour:02d}:{forwarded_date.minute:02d}"
         if author_label:
             return f"> **[{date_str} | {author_label}]:**"
         return f"> **[{date_str}]:**"

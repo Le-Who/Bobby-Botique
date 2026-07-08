@@ -126,7 +126,17 @@ async def _handle_document_question(
         from app.handlers.ai_core import _resolve_ai_request
         from app.streaming import stream_and_display
 
-        _, model_used, _ = await _resolve_ai_request(settings.DEFAULT_MODEL)
+        _, model_used, resolution = await _resolve_ai_request(settings.DEFAULT_MODEL)
+        
+        if resolution in ("all_exhausted", "decryption_failed"):
+            from app.handlers.chat_logic import classify_resolution
+            result = classify_resolution(resolution, settings.DEFAULT_MODEL)
+            try:
+                await placeholder_message.edit_text(result.user_message or "")
+            except Exception as edit_error:
+                logging.error("Could not edit placeholder message: %s", edit_error)
+            return
+
         stream_model = model_used or chat_state.model or settings.DEFAULT_MODEL
 
         parts = [document_prompt] if document_prompt else []

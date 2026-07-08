@@ -6,35 +6,170 @@ Also provides the module-level convenience functions:
 - get_ai_response()     → backward-compat wrapper
 """
 
+import asyncio
 import logging
 from typing import Any
 
-from app.config import settings
+from app.config import (
+    CURRENT_GEMINI_MODELS,
+    DEFAULT_GEMINI_MODELS,
+    GEMINI_ECONOMY_MODEL,
+    GEMINI_PRIMARY_MODEL,
+    normalize_gemini_chat_model,
+    settings,
+)
 from app.errors import (
     ErrorCode,
     classify_key_error,
     is_error_message,
     is_key_related_error,
+    is_retryable_error,
     tag_error,
+    user_friendly_error,
 )
-from app.providers.base import is_opencode_model
+from app.providers.base import is_freetheai_model, is_opencode_model
 from app.providers.openrouter import _has_multimodal_content
+
+
+def _setting(name: str, fallback: str) -> str:
+    value = getattr(settings, name, None) if settings is not None else None
+    return value if isinstance(value, str) and value.strip() else fallback
+
+
+def _gemini_setting(name: str, fallback: str) -> str:
+    return normalize_gemini_chat_model(_setting(name, fallback), fallback=fallback)
+
+
+def _available_models() -> list[str]:
+    value = getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else None
+    return value if isinstance(value, list) and value else DEFAULT_GEMINI_MODELS
 
 
 # ── Opencode Go → Gemini cross-provider fallback map ──────────────────────────
 # When ALL Opencode Go keys are exhausted or fail, silently retry on Gemini.
 # Returns live mapping so hot-reloaded model names are correctly reflected.
 def _get_opencode_gemini_fallback() -> dict[str, str]:
-    """Build the Opencode → Gemini fallback map from current (live) settings."""
+    """Build the Opencode → Gemini fallback map from current (live) settings.
+
+    Covers all 14 Opencode Go models (opencode.ai/docs/go, 2026-05-01).
+    Vision-capable models fall back to gemini-3.5-flash for image support.
+    """
     return {
-        "opencode-go/minimax-m2.7": settings.DEFAULT_MODEL,
-        "opencode-go/minimax-m2.5": settings.DEFAULT_MODEL,
-        "opencode-go/qwen3.6-plus": settings.RESEARCH_MODEL,
-        "opencode-go/qwen3.5-plus": settings.QNA_MODEL,
-        "opencode-go/kimi-k2.5": settings.RESEARCH_MODEL,
-        "opencode-go/big-pickle": settings.DEFAULT_MODEL,
-        "opencode-go/mimo-v2-omni": "gemini-3-flash-preview",  # vision-capable fallback
+        # GLM family
+        "opencode-go/glm-5": _gemini_setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/glm-5.1": _gemini_setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+        # Kimi family
+        "opencode-go/kimi-k2.5": _gemini_setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/kimi-k2.6": _gemini_setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+        # MiMo family (V2 + V2.5)
+        "opencode-go/mimo-v2-pro": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/mimo-v2-omni": GEMINI_PRIMARY_MODEL,  # vision-capable fallback
+        "opencode-go/mimo-v2.5-pro": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/mimo-v2.5": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+        # MiniMax family
+        "opencode-go/minimax-m2.5": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/minimax-m2.7": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+        # Qwen family
+        "opencode-go/qwen3.5-plus": _gemini_setting("QNA_MODEL", GEMINI_ECONOMY_MODEL),
+        "opencode-go/qwen3.6-plus": _gemini_setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+        # DeepSeek family
+        "opencode-go/deepseek-v4-pro": _gemini_setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+        "opencode-go/deepseek-v4-flash": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+        # Legacy / routing alias
+        "opencode-go/big-pickle": _gemini_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
     }
+
+
+def _dedupe_models(models: list[str | None], *, exclude: str | None = None) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for model in models:
+        if not isinstance(model, str) or not model.strip():
+            continue
+        normalized = model.strip()
+        if normalized == exclude or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
+    """Return configured Gemini fallbacks with 3.5 Flash → 3.1 Flash Lite first."""
+    available = [
+        model
+        for model in (list(getattr(settings, "AVAILABLE_MODELS", []) or []) if settings is not None else [])
+        if model in CURRENT_GEMINI_MODELS
+    ]
+    available_set = set(available)
+    failed_model = normalize_gemini_chat_model(failed_model)
+    preferred: list[str | None] = []
+    if failed_model == GEMINI_PRIMARY_MODEL:
+        preferred.append(GEMINI_ECONOMY_MODEL)
+    else:
+        preferred.extend([GEMINI_PRIMARY_MODEL, GEMINI_ECONOMY_MODEL])
+    preferred.extend(
+        [
+            _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+            _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+            _setting("QNA_MODEL", GEMINI_ECONOMY_MODEL),
+            _setting("INLINE_MODEL", GEMINI_ECONOMY_MODEL),
+        ]
+    )
+    ordered = [
+        model
+        for model in _dedupe_models(preferred, exclude=failed_model)
+        if model in available_set and model in CURRENT_GEMINI_MODELS
+    ]
+    ordered.extend(model for model in available if model != failed_model and model not in ordered)
+    return ordered
+
+
+def _provider_label(model_name: str | None, use_openrouter: bool | None) -> str:
+    if model_name and is_opencode_model(model_name):
+        return "opencode"
+    if model_name and is_freetheai_model(model_name):
+        return "freetheai"
+    if use_openrouter is True or (use_openrouter is None and isinstance(model_name, str) and "/" in model_name):
+        return "openrouter"
+    return "gemini"
+
+
+def _key_prefix(api_key: str) -> str:
+    return api_key[:8]
+
+
+def _log_key_request(
+    api_key: str,
+    model_name: str | None,
+    use_openrouter: bool | None,
+    *,
+    attempt: int | None = None,
+    max_attempts: int | None = None,
+) -> None:
+    attempt_text = f" attempt={attempt}/{max_attempts}" if attempt is not None and max_attempts is not None else ""
+    logging.info(
+        "KEY_EVENT key_request key=%s… model=%s provider=%s%s",
+        _key_prefix(api_key),
+        model_name,
+        _provider_label(model_name, use_openrouter),
+        attempt_text,
+    )
+
+
+def _log_key_answered(
+    api_key: str,
+    model_name: str | None,
+    use_openrouter: bool | None,
+    token_count: int | None,
+) -> None:
+    logging.info(
+        "KEY_EVENT key_answered key=%s… model=%s provider=%s tokens=%s",
+        _key_prefix(api_key),
+        model_name,
+        _provider_label(model_name, use_openrouter),
+        token_count if token_count is not None else "unknown",
+    )
 
 
 class ProviderRouter:
@@ -98,6 +233,7 @@ class ProviderRouter:
         status_mgr = get_key_status_manager()
         failed_keys: set[str] = set()
         all_permanent: bool = True  # Track if ALL failures are permanent (model-level)
+        had_transient: bool = False
 
         for attempt in range(max_key_retries):
             key_data, model_used, resolution = await use_case.resolve_ai_request(
@@ -110,7 +246,10 @@ class ProviderRouter:
                 if resolution == "all_exhausted":
                     # ── Cross-provider fallback: Opencode Go → Gemini ─────────
                     if is_opencode_model(preferred_model) and not _is_fallback:
-                        gemini_fallback = _get_opencode_gemini_fallback().get(preferred_model, settings.DEFAULT_MODEL)
+                        gemini_fallback = _get_opencode_gemini_fallback().get(
+                            preferred_model,
+                            _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+                        )
                         logging.warning(
                             "Opencode keys exhausted for %s, falling back to Gemini %s",
                             preferred_model,
@@ -128,13 +267,43 @@ class ProviderRouter:
                             timeout=timeout,
                             _is_fallback=True,
                         )
+                    # ── Cross-provider fallback: FreeTheAI → Gemini ──────────
+                    if is_freetheai_model(preferred_model) and not _is_fallback:
+                        logging.warning(
+                            "FreeTheAI keys exhausted for %s, falling back to Gemini %s",
+                            preferred_model,
+                            _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+                        )
+                        gemini_fallback = _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL)
+                        return await self.get_response(
+                            gemini_fallback,
+                            history,
+                            system_instruction=system_instruction,
+                            user_id=user_id,
+                            chat_id=chat_id,
+                            use_openrouter=False,
+                            max_key_retries=max_key_retries,
+                            thinking_level=thinking_level,
+                            timeout=timeout,
+                            _is_fallback=True,
+                        )
                     is_or = (
                         use_openrouter
                         if use_openrouter is not None
-                        else ("/" in preferred_model and not is_opencode_model(preferred_model))
+                        else (
+                            "/" in preferred_model
+                            and not is_opencode_model(preferred_model)
+                            and not is_freetheai_model(preferred_model)
+                        )
                     )
                     provider_name = (
-                        "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
+                        "Opencode Go"
+                        if is_opencode_model(preferred_model)
+                        else (
+                            "FreeTheAI"
+                            if is_freetheai_model(preferred_model)
+                            else ("OpenRouter" if is_or else "Gemini")
+                        )
                     )
                     return (
                         tag_error(
@@ -169,40 +338,85 @@ class ProviderRouter:
 
             # Execute the request
             assert model_used is not None  # guaranteed by _resolve_ai_request
-            response_text, token_count = await use_case.get_ai_response(
+            _log_key_request(
                 key_data["api_key"],
-                history,
                 model_used,
-                system_instruction,
-                user_id,
-                chat_id,
                 use_openrouter,
-                thinking_level=thinking_level,
-                timeout=timeout,
+                attempt=attempt + 1,
+                max_attempts=max_key_retries,
             )
+            try:
+                response_text, token_count = await use_case.get_ai_response(
+                    key_data["api_key"],
+                    history,
+                    model_used,
+                    system_instruction,
+                    user_id,
+                    chat_id,
+                    use_openrouter,
+                    thinking_level=thinking_level,
+                    timeout=timeout,
+                    provider_max_retries=1,
+                )
+            except Exception as exc:
+                failed_keys.add(key_data["key_hash"])
+                response_text = user_friendly_error(exc)
+                error_category = classify_key_error(response_text)
+                if error_category == "transient":
+                    had_transient = True
+                if error_category != "permanent":
+                    all_permanent = False
+                try:
+                    if not is_opencode_model(model_used) and not is_freetheai_model(model_used):
+                        await status_mgr.suspend_key(
+                            key_data["key_hash"],
+                            model_used,
+                            error_category,
+                            str(exc)[:200] or type(exc).__name__,
+                        )
+                except Exception as suspend_exc:
+                    logging.warning("Non-critical: failed to suspend key after exception: %s", suspend_exc)
+                logging.warning(
+                    "Key %s… raised %s (category=%s, attempt %d/%d). Retrying with another key.",
+                    key_data["key_hash"][:8],
+                    type(exc).__name__,
+                    error_category,
+                    attempt + 1,
+                    max_key_retries,
+                )
+                continue
 
             # Track health based on response
-            if response_text and is_error_message(response_text) and is_key_related_error(response_text):
+            if response_text and is_error_message(response_text) and (
+                is_key_related_error(response_text) or is_retryable_error(response_text)
+            ):
                 failed_keys.add(key_data["key_hash"])
                 error_category = classify_key_error(response_text)
 
+                if error_category == "transient":
+                    had_transient = True
                 if error_category != "permanent":
                     all_permanent = False
 
-                if error_category != "transient":
-                    try:
-                        if not is_opencode_model(model_used):  # type: ignore[arg-type]
-                            await status_mgr.suspend_key(
-                                key_data["key_hash"],
-                                model_used,  # type: ignore[arg-type]  # asserted above
-                                error_category,
-                                response_text[:200],
-                            )
-                    except Exception as e:
-                        logging.warning(
-                            "Non-critical: failed to suspend key: %s",
-                            e,
+                # Suspend the key for ALL error categories including transient (503/OVERLOADED).
+                # Previously the "!= transient" guard skipped suspension, leaving keys marked
+                # healthy in DB. The next card then resolved the same overloaded keys again.
+                # _PENALTY_DURATIONS["transient"] = 15s already existed but was never reached.
+                # get_fresh_available_key() SQL filters suspended keys (suspended_until < NOW())
+                # so recovery is automatic after the cooldown expires.
+                try:
+                    if not is_opencode_model(model_used) and not is_freetheai_model(model_used):  # type: ignore[arg-type]
+                        await status_mgr.suspend_key(
+                            key_data["key_hash"],
+                            model_used,  # type: ignore[arg-type]  # asserted above
+                            error_category,
+                            response_text[:200],
                         )
+                except Exception as e:
+                    logging.warning(
+                        "Non-critical: failed to suspend key: %s",
+                        e,
+                    )
 
                 logging.warning(
                     "Key %s… failed (category=%s, attempt %d/%d). Error: %s",
@@ -217,9 +431,9 @@ class ProviderRouter:
             # Success — update health and increment usage
             if response_text and not is_error_message(response_text):
                 try:
-                    # Opencode keys are in-memory only — skip DB key_model_status writes
+                    # Opencode/FTA keys are in-memory only — skip DB key_model_status writes
                     # (the trigger check_key_hash_exists() only knows api_keys/openrouter_api_keys)
-                    if not is_opencode_model(model_used):  # type: ignore[arg-type]
+                    if not is_opencode_model(model_used) and not is_freetheai_model(model_used):  # type: ignore[arg-type]
                         await status_mgr.record_success(
                             key_data["key_hash"],
                             model_used,  # type: ignore[arg-type]  # asserted above
@@ -232,9 +446,32 @@ class ProviderRouter:
                 except Exception as e:
                     logging.warning("Non-critical: failed to increment key usage: %s", e)
 
+                _log_key_answered(key_data["api_key"], model_used, use_openrouter, token_count)
+
             return response_text, token_count
 
         # ── Model-level fallback ─────────────────────────────────────────
+        if not _is_fallback and had_transient:
+            fallback_model = self._pick_transient_fallback_model(preferred_model, use_openrouter)
+            if fallback_model:
+                logging.info(
+                    "Cascade fallback: %s → %s (all keys returned transient errors)",
+                    preferred_model,
+                    fallback_model,
+                )
+                return await self.get_response(
+                    fallback_model,
+                    history,
+                    system_instruction=system_instruction,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    use_openrouter=use_openrouter,
+                    max_key_retries=2,
+                    thinking_level=thinking_level,
+                    timeout=timeout,
+                    _is_fallback=True,
+                )
+
         # All keys failed for the preferred model. If every failure was
         # "permanent" (API_KEY_INVALID — Google rejects the key for this
         # specific model), try alternative models before giving up.
@@ -255,9 +492,21 @@ class ProviderRouter:
         is_or = (
             use_openrouter
             if use_openrouter is not None
-            else ("/" in preferred_model and not is_opencode_model(preferred_model))
+            else (
+                "/" in preferred_model
+                and not is_opencode_model(preferred_model)
+                and not is_freetheai_model(preferred_model)
+            )
         )
-        provider_name = "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
+        provider_name = (
+            "Opencode Go"
+            if is_opencode_model(preferred_model)
+            else (
+                "FreeTheAI"
+                if is_freetheai_model(preferred_model)
+                else ("OpenRouter" if is_or else "Gemini")
+            )
+        )
         return (
             tag_error(
                 ErrorCode.KEYS_EXHAUSTED,
@@ -277,9 +526,11 @@ class ProviderRouter:
         max_key_retries: int = 3,
         thinking_level: str | None = None,
         enable_web_search: bool = False,
+        force_grounding: bool = False,
         *,
         _is_fallback: bool = False,
     ):
+
         """
         Stream AI response with Race Requests and automatic key rotation.
 
@@ -292,7 +543,6 @@ class ProviderRouter:
 
         Yields chunks of text.
         """
-        import asyncio
 
         from app.agent_use_cases import AgentRequestUseCase
         from app.providers.base import get_provider_for_model
@@ -318,6 +568,7 @@ class ProviderRouter:
             # ── Race Requests: resolve up to 2 keys in parallel ──────────
             keys_to_race: list[dict] = []
             resolved_model: str | None = None
+            resolution_status: str | None = None
 
             for _race_idx in range(2):
                 key_data, model_used, _resolution = await use_case.resolve_ai_request(
@@ -325,6 +576,7 @@ class ProviderRouter:
                     use_openrouter=use_openrouter,
                     excluded_key_hashes=failed_keys | {k["key_hash"] for k in keys_to_race},
                 )
+                resolution_status = _resolution
                 if key_data and model_used:
                     keys_to_race.append(key_data)
                     resolved_model = model_used
@@ -332,19 +584,29 @@ class ProviderRouter:
                     break  # No more keys available
 
             # ── Inject Vertex AI Express Slot ─────────────────────────
-            # Only for supported models (currently gemini-3.1-flash-lite-preview)
+            # Only for supported models (currently gemini-3.1-flash-lite)
             # and only if we have at least one valid Gemini key to race alongside it.
             _VERTEX_KH = "__vertex_ai__"
-            if keys_to_race and resolved_model and "gemini-3.1-flash-lite-preview" in resolved_model:
+            if keys_to_race and resolved_model and "gemini-3.1-flash-lite" in resolved_model:
                 from app.providers.gemini import get_vertex_client
+
                 vertex_client = get_vertex_client()
                 if vertex_client and _VERTEX_KH not in failed_keys:
                     keys_to_race.append({"api_key": "vertex", "key_hash": _VERTEX_KH})
 
             if not keys_to_race or not resolved_model:
+                if resolution_status == "decryption_failed":
+                    yield tag_error(
+                        ErrorCode.DECRYPTION_FAILED,
+                        "🔐 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET).",
+                    )
+                    return
                 # ── Cross-provider fallback: Opencode Go → Gemini (streaming) ─────
                 if is_opencode_model(preferred_model) and not _is_fallback:
-                    gemini_fallback = _get_opencode_gemini_fallback().get(preferred_model, settings.DEFAULT_MODEL)
+                    gemini_fallback = _get_opencode_gemini_fallback().get(
+                        preferred_model,
+                        _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+                    )
                     logging.warning(
                         "Opencode stream keys unavailable for %s, cascading to Gemini %s",
                         preferred_model,
@@ -360,17 +622,29 @@ class ProviderRouter:
                         max_key_retries=max_key_retries,
                         thinking_level=thinking_level,
                         enable_web_search=enable_web_search,
+                        force_grounding=force_grounding,
                         _is_fallback=True,
+
                     ):
                         yield chunk
                     return
                 is_or = (
                     use_openrouter
                     if use_openrouter is not None
-                    else ("/" in preferred_model and not is_opencode_model(preferred_model))
+                    else (
+                        "/" in preferred_model
+                        and not is_opencode_model(preferred_model)
+                        and not is_freetheai_model(preferred_model)
+                    )
                 )
                 provider_name = (
-                    "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
+                    "Opencode Go"
+                    if is_opencode_model(preferred_model)
+                    else (
+                        "FreeTheAI"
+                        if is_freetheai_model(preferred_model)
+                        else ("OpenRouter" if is_or else "Gemini")
+                    )
                 )
                 yield tag_error(
                     ErrorCode.KEYS_EXHAUSTED,
@@ -404,7 +678,9 @@ class ProviderRouter:
                         system_instruction=system_instruction,
                         thinking_level=thinking_level,
                         enable_web_search=enable_web_search,
+                        force_grounding=force_grounding,
                     ):
+
                         # Guard: provider may yield a tagged error string instead of
                         # raising an exception (e.g. OpenRouter 429 → RATE_LIMIT tag).
                         # Treat that as a stream-level failure so key rotation kicks in.
@@ -414,8 +690,8 @@ class ProviderRouter:
                         if not stream_started:
                             stream_started = True
                             try:
-                                # Opencode keys are in-memory only — skip DB writes
-                                if not is_opencode_model(model_used):
+                                # Opencode/FTA keys are in-memory only — skip DB writes
+                                if not is_opencode_model(model_used) and not is_freetheai_model(model_used):
                                     await status_mgr.record_success(key_data["key_hash"], model_used)
                                 await use_case.increment_key_usage(key_data["key_hash"], model_used, use_openrouter)
                             except Exception as e:
@@ -451,8 +727,8 @@ class ProviderRouter:
                         error_msg[:120],
                     )
                     try:
-                        # Opencode keys are in-memory only — skip DB suspension writes
-                        if not is_opencode_model(model_used):
+                        # Opencode/FTA keys are in-memory only — skip DB suspension writes
+                        if not is_opencode_model(model_used) and not is_freetheai_model(model_used):
                             await status_mgr.suspend_key(
                                 key_data["key_hash"],
                                 model_used,
@@ -507,7 +783,9 @@ class ProviderRouter:
                             system_instruction=system_instruction,
                             thinking_level=thinking_level,
                             enable_web_search=enable_web_search,
+                            force_grounding=force_grounding,
                         ):
+
                             # Guard: provider may yield a tagged error string instead of
                             # raising an exception — treat it as a race failure so the
                             # partner key can win the race and serve the user.
@@ -539,10 +817,7 @@ class ProviderRouter:
                     max_key_retries,
                 )
 
-                tasks = [
-                    asyncio.create_task(_race_stream(i, kd))
-                    for i, kd in enumerate(keys_to_race)
-                ]
+                tasks = [asyncio.create_task(_race_stream(i, kd)) for i, kd in enumerate(keys_to_race)]
 
                 winner_idx: int | None = None
                 race_errors: dict[int, Exception] = {}
@@ -593,7 +868,7 @@ class ProviderRouter:
                             )
                             await status_mgr.suspend_key(
                                 kd["key_hash"], model_used, err_category, raw_err[:200]
-                            ) if not is_opencode_model(model_used) else None
+                            ) if not is_opencode_model(model_used) and not is_freetheai_model(model_used) else None
                         except Exception:
                             pass
                         # Update outer flags regardless of whether suspend_key succeeded
@@ -615,7 +890,7 @@ class ProviderRouter:
                 # Same guard as inline.py:1230.
                 if winner_key["key_hash"] != _VERTEX_KH:
                     try:
-                        if not is_opencode_model(model_used):
+                        if not is_opencode_model(model_used) and not is_freetheai_model(model_used):
                             await status_mgr.record_success(winner_key["key_hash"], model_used)
                         await use_case.increment_key_usage(winner_key["key_hash"], model_used, use_openrouter)
                     except Exception as e:
@@ -692,7 +967,9 @@ class ProviderRouter:
                     max_key_retries=2,  # Fewer retries for fallback
                     thinking_level=thinking_level,
                     enable_web_search=enable_web_search,
+                    force_grounding=force_grounding,
                     _is_fallback=True,
+
                 ):
                     yield chunk
                 return
@@ -739,9 +1016,21 @@ class ProviderRouter:
         is_or = (
             use_openrouter
             if use_openrouter is not None
-            else ("/" in preferred_model and not is_opencode_model(preferred_model))
+            else (
+                "/" in preferred_model
+                and not is_opencode_model(preferred_model)
+                and not is_freetheai_model(preferred_model)
+            )
         )
-        provider_name = "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
+        provider_name = (
+            "Opencode Go"
+            if is_opencode_model(preferred_model)
+            else (
+                "FreeTheAI"
+                if is_freetheai_model(preferred_model)
+                else ("OpenRouter" if is_or else "Gemini")
+            )
+        )
         yield tag_error(
             ErrorCode.KEYS_EXHAUSTED,
             f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже.",
@@ -758,17 +1047,18 @@ class ProviderRouter:
         Maps heavy models to their lite counterparts. Returns None if
         the failed model is already the lightest available.
         """
-        # Gemini cascade: heavy → lite (canonical model list only)
+        # Gemini cascade: current primary → current economy only.
         _GEMINI_CASCADE = {
-            "gemini-3-flash-preview": "gemini-2.5-flash-lite",
-            "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
-            "gemini-2.5-flash": "gemini-2.5-flash-lite",
+            GEMINI_PRIMARY_MODEL: GEMINI_ECONOMY_MODEL,
         }
 
         # Opencode Go: cascade to Gemini via the cross-provider fallback map
         if is_opencode_model(failed_model):
-            gemini_fallback = _get_opencode_gemini_fallback().get(failed_model, settings.DEFAULT_MODEL)
-            if gemini_fallback in settings.AVAILABLE_MODELS:
+            gemini_fallback = _get_opencode_gemini_fallback().get(
+                failed_model,
+                _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+            )
+            if gemini_fallback in _available_models():
                 return gemini_fallback
             return None
 
@@ -780,16 +1070,13 @@ class ProviderRouter:
         if is_or:
             return None  # OpenRouter handles its own fallbacks
 
-        fallback = _GEMINI_CASCADE.get(failed_model)
+        gemini_failed_model = normalize_gemini_chat_model(failed_model)
+        fallback = _GEMINI_CASCADE.get(gemini_failed_model)
         if fallback:
             # Verify the fallback model is actually in our available models list
-            available = settings.AVAILABLE_MODELS
+            available = [model for model in _available_models() if model in CURRENT_GEMINI_MODELS]
             if fallback in available:
                 return fallback
-            # If the exact match isn't configured, try any lite model in the list
-            for m in available:
-                if m != failed_model and ("lite" in m or "8b" in m):
-                    return m
 
         return None
 
@@ -818,7 +1105,7 @@ class ProviderRouter:
 
         # Never use OpenRouter for fallback according to user request.
         # Fallback always uses the reliable production models (Gemini)
-        fallback_models = settings.AVAILABLE_MODELS
+        fallback_models = _ordered_gemini_fallback_models(failed_model)
 
         for fallback_model in fallback_models:
             if fallback_model == failed_model:
@@ -837,6 +1124,7 @@ class ProviderRouter:
                 failed_model,
             )
 
+            _log_key_request(key_data["api_key"], model_used, use_openrouter)
             response_text, token_count = await use_case.get_ai_response(
                 key_data["api_key"],
                 history,
@@ -845,6 +1133,7 @@ class ProviderRouter:
                 user_id,
                 chat_id,
                 use_openrouter,
+                provider_max_retries=1,
             )
 
             if response_text and not is_error_message(response_text):
@@ -865,6 +1154,7 @@ class ProviderRouter:
                     )
                 except Exception as e:
                     logging.warning("Non-critical: failed to increment key usage: %s", e)
+                _log_key_answered(key_data["api_key"], model_used, use_openrouter, token_count)
                 return response_text, token_count
 
             logging.warning(

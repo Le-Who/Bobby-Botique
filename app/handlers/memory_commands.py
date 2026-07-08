@@ -5,6 +5,7 @@ Provides transparency into what the bot "remembers" and lets users
 delete individual memories via inline buttons.
 """
 
+import asyncio
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -30,11 +31,15 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
     ``target`` is either ``update.message`` (for commands) or
     ``query.message`` (for callback navigation).
     """
+
     from app.repos.memory import get_memory_stats, list_memories
 
     offset = page * MEMORIES_PER_PAGE
-    memories = await list_memories(user_id, offset=offset, limit=MEMORIES_PER_PAGE)
-    stats = await get_memory_stats(user_id)
+    # ⚡ Bolt Optimization: Fetch memories and stats concurrently to reduce DB wait time
+    memories, stats = await asyncio.gather(
+        list_memories(user_id, offset=offset, limit=MEMORIES_PER_PAGE),
+        get_memory_stats(user_id)
+    )
     total = stats.get("total_memories", 0) if stats else 0
 
     if not memories and page == 0:

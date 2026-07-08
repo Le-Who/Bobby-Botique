@@ -42,10 +42,10 @@ logger = logging.getLogger(__name__)
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
-_PRIMARY_MODEL = "gemini-3.1-flash-lite-preview"
-_FALLBACK_MODEL = "gemini-2.5-flash-lite"
-_HINTS_AI_STUDIO_MODEL = "gemini-3-flash-preview"
-_HINTS_VERTEX_MODEL = "gemini-3.1-flash-lite-preview"
+_PRIMARY_MODEL = "gemini-3.1-flash-lite"
+_FALLBACK_MODEL = "gemini-3.5-flash"
+_HINTS_AI_STUDIO_MODEL = "gemini-3.5-flash"
+_HINTS_VERTEX_MODEL = "gemini-3.1-flash-lite"
 _HINTS_OPENCODE_MODEL_CANDIDATES = (
     "opencode-go/glm-5.1",
     "opencode-go/qwen3.6-plus",
@@ -74,10 +74,14 @@ _PRIMARY_CIRCUIT_COOLDOWN_S: float = 120.0  # 2 min between probes
 
 
 def _budget_provider_for_model(model_name: str, lane_type: str | None = None) -> str:
+    from app.providers.base import is_freetheai_model
+
     if lane_type == "vertex":
         return "vertex_express"
     if model_name.startswith("opencode-go/"):
         return "opencode_go"
+    if is_freetheai_model(model_name):
+        return "freetheai"
     if "/" in model_name:
         return "openrouter"
     return "ai_studio"
@@ -292,7 +296,7 @@ async def _race_generate(
     """Fire up to 3 Gemini keys simultaneously; return the first valid result.
 
     Fallback chain:
-        1. Race up to 3 keys on _PRIMARY_MODEL (gemini-3.1-flash-lite-preview).
+        1. Race up to 3 keys on _PRIMARY_MODEL (gemini-3.1-flash-lite).
         2. If all fail (503 / timeout / 429), retry once with _FALLBACK_MODEL.
         3. If still None → caller receives judge_unavailable sentinel.
 
@@ -503,72 +507,7 @@ async def _race_generate(
             _FALLBACK_MODEL,
         )
 
-    # ── Fallback model race ───────────────────────────────────────────────────
-    # Primary model race returned nothing (503 / 429 / all keys failed).
-    # resolve_ai_request will skip keys already suspended by _one_call above.
-    fallback_kd, fallback_mdl, _ = await use_case.resolve_ai_request(_FALLBACK_MODEL)
-    if fallback_kd and fallback_mdl:
-        fallback_pair = [(fallback_kd["api_key"], fallback_kd["key_hash"])]
-        result = await _run_race(fallback_pair, fallback_mdl, timeout=_LLM_FALLBACK_TIMEOUT_S)
-        if result is not None:
-            logger.info("Judge: fallback model %r succeeded", fallback_mdl)
-            return result
-        logger.warning("Judge: fallback model %r also failed", fallback_mdl)
-    else:
 
-        # Resolve up to 3 Gemini API keys
-        keys: list[dict] = []
-        resolved_model: str | None = None
-        for _ in range(3):
-            kd, mdl, _ = await use_case.resolve_ai_request(
-                _PRIMARY_MODEL,
-                excluded_key_hashes={k["key_hash"] for k in keys},
-            )
-            if kd and mdl:
-                keys.append(kd)
-                resolved_model = mdl
-            else:
-                break
-
-        resolved_model = resolved_model or _PRIMARY_MODEL
-        primary_pairs = [(kd["api_key"], kd["key_hash"]) for kd in keys]
-        keys.clear()
-
-        # Concurrent task list: Gemini API key pool + Vertex AI.
-        # _one_vertex_call() returns None instantly when Vertex AI is not configured.
-        all_tasks: list[asyncio.Task] = [  # type: ignore[type-arg]
-            asyncio.create_task(_one_call(ak, kh, resolved_model)) for ak, kh in primary_pairs
-        ]
-        all_tasks.append(asyncio.create_task(_one_vertex_call()))
-
-        result: GuessJudgement | None = None
-        pending = set(all_tasks)
-        try:
-            while pending and result is None:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for finished in done:
-                    r = finished.result()
-                    if r is not None:
-                        result = r
-                        break
-        finally:
-            for t in pending:
-                t.cancel()
-
-        if result is not None:
-            if _primary_circuit_open_until > 0.0:
-                logger.info("Judge: primary race recovered — circuit closed")
-                _primary_circuit_open_until = 0.0
-            return result
-
-        # All Gemini keys + Vertex AI failed — open circuit
-        _primary_circuit_open_until = time.monotonic() + _PRIMARY_CIRCUIT_COOLDOWN_S
-        logger.warning(
-            "Judge: primary model %r all-fail — circuit opened for %.0fs, routing to %r",
-            resolved_model,
-            _PRIMARY_CIRCUIT_COOLDOWN_S,
-            _FALLBACK_MODEL,
-        )
 
     # ── Fallback model race ───────────────────────────────────────────────────
     # Primary model race returned nothing (503 / 429 / all keys failed).
@@ -717,7 +656,6 @@ async def generate_hints(word: str, category: str, mode: HintGenerationMode = "f
         candidates = [
             _HINTS_AI_STUDIO_MODEL,
             _setting(settings_obj, "QNA_MODEL"),
-            "gemini-2.5-flash-lite",
             _setting(settings_obj, "DEFAULT_MODEL"),
         ]
         if gemini_available:

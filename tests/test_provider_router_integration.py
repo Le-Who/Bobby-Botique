@@ -21,7 +21,7 @@ class TestProviderRouterIntegration:
         mock_use_case.resolve_ai_request = AsyncMock(
             return_value=(
                 {"key_hash": "abc", "api_key": "test-key"},
-                "gemini-3.1-flash-lite-preview",
+                "gemini-3.1-flash-lite",
                 "resolved",
             )
         )
@@ -38,7 +38,7 @@ class TestProviderRouterIntegration:
             ),
         ):
             text, tokens = await router.get_response(
-                preferred_model="gemini-3.1-flash-lite-preview",
+                preferred_model="gemini-3.1-flash-lite",
                 history=[{"role": "user", "parts": ["hi"]}],
                 user_id=123,
             )
@@ -110,7 +110,7 @@ class TestProviderRouterIntegration:
             ),
         ):
             text, tokens = await router.get_response(
-                preferred_model="gemini-3.1-flash-lite-preview",
+                preferred_model="gemini-3.1-flash-lite",
                 history=[{"role": "user", "parts": ["hi"]}],
                 user_id=1,
             )
@@ -132,7 +132,7 @@ class TestProviderRouterIntegration:
             return_value=False,
         ):
             text, tokens = await router.get_response(
-                preferred_model="gemini-3.1-flash-lite-preview",
+                preferred_model="gemini-3.1-flash-lite",
                 history=[{"role": "user", "parts": ["hi"]}],
                 user_id=123,
             )
@@ -157,7 +157,7 @@ class TestProviderRouterIntegration:
         mock_use_case.resolve_ai_request = AsyncMock(
             return_value=(
                 {"key_hash": "abc", "api_key": "test-key"},
-                "gemini-3.1-flash-lite-preview",
+                "gemini-3.1-flash-lite",
                 "resolved",
             )
         )
@@ -174,7 +174,7 @@ class TestProviderRouterIntegration:
             ),
         ):
             text, tokens = await router.get_response(
-                preferred_model="gemini-3.1-flash-lite-preview",
+                preferred_model="gemini-3.1-flash-lite",
                 history=history,
                 user_id=1,
             )
@@ -182,7 +182,7 @@ class TestProviderRouterIntegration:
         assert text == "Image desc"
         # resolve_ai_request should have been called with use_openrouter=False
         call_kwargs = mock_use_case.resolve_ai_request.call_args
-        assert call_kwargs[1].get("use_openrouter") is False or call_kwargs[0][0] == "gemini-3.1-flash-lite-preview"
+        assert call_kwargs[1].get("use_openrouter") is False or call_kwargs[0][0] == "gemini-3.1-flash-lite"
 
     @pytest.mark.asyncio
     async def test_key_failure_triggers_retry(self):
@@ -197,12 +197,12 @@ class TestProviderRouterIntegration:
             side_effect=[
                 (
                     {"key_hash": "bad_key", "api_key": "bad"},
-                    "gemini-3.1-flash-lite-preview",
+                    "gemini-3.1-flash-lite",
                     "resolved",
                 ),
                 (
                     {"key_hash": "good_key", "api_key": "good"},
-                    "gemini-3.1-flash-lite-preview",
+                    "gemini-3.1-flash-lite",
                     "resolved",
                 ),
             ]
@@ -225,7 +225,7 @@ class TestProviderRouterIntegration:
             ),
         ):
             text, tokens = await router.get_response(
-                preferred_model="gemini-3.1-flash-lite-preview",
+                preferred_model="gemini-3.1-flash-lite",
                 history=[{"role": "user", "parts": ["hi"]}],
                 user_id=1,
             )

@@ -42,12 +42,26 @@ def classify_resolution(
         ResolutionResult with action and optional metadata.
     """
     if resolution == "all_exhausted":
-        is_openrouter = "/" in model_requested if model_requested else False
-        provider = "OpenRouter" if is_openrouter else "Gemini"
+        from app.providers.base import is_freetheai_model, is_opencode_model, is_openrouter_model
+
+        if model_requested and is_opencode_model(model_requested):
+            provider = "Opencode Go"
+        elif model_requested and is_freetheai_model(model_requested):
+            provider = "FreeTheAI"
+        elif model_requested and is_openrouter_model(model_requested):
+            provider = "OpenRouter"
+        else:
+            provider = "Gemini"
         return ResolutionResult(
             action="all_exhausted",
             provider_name=provider,
             user_message=(f"🚫 Все лимиты для всех моделей {provider} на сегодня исчерпаны. Попробуйте позже."),
+        )
+
+    if resolution == "decryption_failed":
+        return ResolutionResult(
+            action="decryption_failed",
+            user_message="⚠️ Системная ошибка: Не удалось расшифровать API-ключи. Пожалуйста, проверьте конфигурацию `ADMIN_SECRET`."
         )
 
     if resolution == "confirm_fallback":

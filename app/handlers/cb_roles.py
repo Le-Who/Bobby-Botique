@@ -2,6 +2,7 @@
 Role management callbacks — apply, clear, create, delete, rename, detail, nav, page.
 """
 
+import asyncio
 import logging
 
 import telegram
@@ -93,12 +94,13 @@ async def start_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    chat_state = await get_user_chat(user_id)
     key = query.data.split(":", 1)[1]
     role_title = ""
 
-    # Get data roles via хелпер
-    role_data = await get_role_data(key, user_id)
+    chat_state, role_data = await asyncio.gather(
+        get_user_chat(user_id),
+        get_role_data(key, user_id)
+    )
 
     if not role_data:
         await query.answer("❌ Роль не найдена.")
@@ -379,11 +381,11 @@ async def role_delete_confirm_callback(update: Update, context: ContextTypes.DEF
         return
     try:
         role_id = int(query.data.split(":")[1])
-        # Check, не активна ли эта role сейчас
-        chat_state = await get_user_chat(user_id)
-
-        # Get промпт удаляемой roles, чтобы проверить, активна ли она
-        role_prompt = await get_custom_role_prompt(role_id, user_id)
+        
+        chat_state, role_prompt = await asyncio.gather(
+            get_user_chat(user_id),
+            get_custom_role_prompt(role_id, user_id)
+        )
 
         await delete_custom_role(role_id, user_id)
 

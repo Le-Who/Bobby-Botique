@@ -184,7 +184,11 @@ async def detect_tts_intent(
             reason="explicit_user_command",
         )
 
-    if not effective_user_text and len(entry_forwarded_texts) == 1 and _is_short_forward_command(entry_forwarded_texts[0]):
+    if (
+        not effective_user_text
+        and len(entry_forwarded_texts) == 1
+        and _is_short_forward_command(entry_forwarded_texts[0])
+    ):
         return VoiceIntentDecision(
             explicit_tts=True,
             confidence=0.9,

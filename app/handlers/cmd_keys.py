@@ -48,6 +48,7 @@ _PROVIDERS: dict[str, str] = {
     "pollinations": "🎨 Pollinations",
     "elevenlabs": "🎙️ ElevenLabs",
     "jina": "📄 Jina",
+    "horoscope": "🔮 Horoscope",
 }
 
 # ConversationHandler states
@@ -58,6 +59,7 @@ AWAITING_KEY = 0
 _HEALTH_CHECKS: dict[str, str] = {
     "weather": "https://api.weatherapi.com/v1/current.json?key={key}&q=London&aqi=no",
     "exchange": "https://v6.exchangerate-api.com/v6/{key}/pair/USD/EUR",
+    "horoscope": "https://api.api-ninjas.com/v1/horoscope?zodiac=aries",
 }
 
 # Cooldown for alerts per provider (6 hours)
@@ -193,9 +195,12 @@ async def _clear_provider_key_cb(query, provider: str) -> int:
 
 async def _show_all_statuses(query) -> int:
     """Show a compact overview of all providers."""
+    import asyncio
     lines = ["🔑 **Статус всех провайдеров**\n"]
-    for provider, label in _PROVIDERS.items():
-        status = await get_provider_status(provider)
+    providers = list(_PROVIDERS.items())
+    statuses = await asyncio.gather(*(get_provider_status(p) for p, _ in providers))
+    
+    for (_provider, label), status in zip(providers, statuses, strict=False):
         if status["source"] == "missing":
             icon = "⚠️"
         elif status["source"] == "db":
@@ -260,10 +265,13 @@ async def check_single_provider_health(provider: str) -> bool | None:
     if not key:
         return False
 
-    url = template.format(key=key)
     try:
         async with httpx.AsyncClient(timeout=6.0) as client:
-            resp = await client.get(url)
+            if provider == "horoscope":
+                resp = await client.get(template, headers={"X-Api-Key": key})
+            else:
+                url = template.format(key=key)
+                resp = await client.get(url)
             return resp.status_code == 200
     except Exception:
         return False
@@ -271,17 +279,20 @@ async def check_single_provider_health(provider: str) -> bool | None:
 
 async def run_all_health_checks(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Background job: ping all providers and alert admin on failure."""
+    import asyncio
     admin_id = get_admin_id()
     now = time.time()
 
-    tasks = {provider: check_single_provider_health(provider) for provider in _PROVIDERS}
+    providers = list(_PROVIDERS.keys())
     # Run all health checks in parallel
-    results = {}
-    for provider, coro in tasks.items():
-        try:
-            results[provider] = await coro
-        except Exception:
+    results_list = await asyncio.gather(*(check_single_provider_health(p) for p in providers), return_exceptions=True)
+    
+    results: dict[str, bool | None] = {}
+    for provider, res in zip(providers, results_list, strict=False):
+        if isinstance(res, Exception):  # return_exceptions=True can yield exceptions
             results[provider] = False
+        else:
+            results[provider] = res  # type: ignore[assignment]  # bool | None from check_single_provider_health
 
     failures = []
     for provider, healthy in results.items():
@@ -318,5 +329,6 @@ def build_keys_conversation_handler() -> ConversationHandler:
         ],
         per_user=True,
         per_chat=True,
+        per_message=False,
         name="keys_wizard",
     )

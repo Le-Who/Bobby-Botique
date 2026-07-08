@@ -90,7 +90,7 @@ async def load_user_state(user_id: int) -> dict[str, Any] | None:
                     "document_mode": row.get("document_mode", False) or False,
                     "selected_document_id": row.get("selected_document_id"),
                     "awaiting_custom_role_input": row.get("awaiting_custom_role_input", False) or False,
-                    "generated_role": row.get("generated_role"),  # JSONB → dict
+                    "generated_role": row.get("generated_role"),
                     "last_custom_role_prompt": row.get("last_custom_role_prompt"),
                     "generating_custom_role": row.get("generating_custom_role", False) or False,
                     "last_sent_message_text": row.get("last_sent_message_text"),
@@ -99,6 +99,8 @@ async def load_user_state(user_id: int) -> dict[str, Any] | None:
                     "manual_role_title": row.get("manual_role_title", "") or "",
                     "manual_role_prompt": row.get("manual_role_prompt", "") or "",
                     "role_diaries": row.get("role_diaries") or {},
+                    "tarot_mode": row.get("tarot_mode", False) or False,
+                    "tarot_session": row.get("tarot_session"),
                 }
         return None
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
@@ -120,12 +122,11 @@ async def save_user_state(
     manual_role_title: str = "",
     manual_role_prompt: str = "",
     role_diaries: dict | None = None,
+    tarot_mode: bool = False,
+    tarot_session: dict | None = None,
 ) -> None:
     """Persist user state to the database using UPSERT."""
     try:
-        role_json = json.dumps(generated_role) if generated_role else None
-        diaries_json = json.dumps(role_diaries or {}, ensure_ascii=False)
-
         await db_query(
             """
             INSERT INTO user_state (
@@ -135,9 +136,9 @@ async def save_user_state(
                 last_sent_message_text,
                 awaiting_manual_role_title, awaiting_manual_role_prompt,
                 manual_role_title, manual_role_prompt,
-                role_diaries,
+                role_diaries, tarot_mode, tarot_session,
                 updated_at
-            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, CURRENT_TIMESTAMP)
+            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15::jsonb, CURRENT_TIMESTAMP)
             ON CONFLICT (user_id) DO UPDATE SET
                 document_mode = EXCLUDED.document_mode,
                 selected_document_id = EXCLUDED.selected_document_id,
@@ -151,6 +152,8 @@ async def save_user_state(
                 manual_role_title = EXCLUDED.manual_role_title,
                 manual_role_prompt = EXCLUDED.manual_role_prompt,
                 role_diaries = EXCLUDED.role_diaries,
+                tarot_mode = EXCLUDED.tarot_mode,
+                tarot_session = EXCLUDED.tarot_session,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
@@ -158,7 +161,7 @@ async def save_user_state(
                 document_mode,
                 selected_document_id,
                 awaiting_custom_role_input,
-                role_json,
+                generated_role,
                 last_custom_role_prompt,
                 generating_custom_role,
                 last_sent_message_text,
@@ -166,7 +169,9 @@ async def save_user_state(
                 awaiting_manual_role_prompt,
                 manual_role_title,
                 manual_role_prompt,
-                diaries_json,
+                role_diaries or {},
+                tarot_mode,
+                tarot_session,
             ),
         )
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:

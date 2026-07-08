@@ -36,8 +36,8 @@ class MetricsCollector:
         self.error_log = deque(maxlen=100)  # Храним последние 100 ошибок
         self.api_event_log = deque(maxlen=200)  # Храним последние API события
         self.daily_metrics: dict[str, PerformanceMetrics] = defaultdict(PerformanceMetrics)
-        # Per-user daily metrics: key = (date_str, user_id)
-        self._user_daily: dict[tuple, dict[str, Any]] = defaultdict(lambda: {"request_count": 0, "model_usage": {}})
+        # Per-user daily metrics: key = date_str -> uid
+        self._user_daily: dict[str, dict[int, dict[str, Any]]] = defaultdict(lambda: defaultdict(lambda: {"request_count": 0, "model_usage": {}}))
         self._events_queue = asyncio.Queue()
         self._last_save_time = time.time()
         self._save_interval = 300  # Save каждые 5 минут
@@ -82,14 +82,14 @@ class MetricsCollector:
             del self.daily_metrics[d]
         # Prune _user_daily for past days (keep only today)
         today_str = today.isoformat()
-        stale_user_keys = [k for k in self._user_daily if k[0] != today_str]
-        for k in stale_user_keys:
-            del self._user_daily[k]
-        if stale_days or stale_user_keys:
+        stale_dates = [d for d in self._user_daily if d != today_str]
+        for d in stale_dates:
+            del self._user_daily[d]
+        if stale_days or stale_dates:
             logging.debug(
                 "Metrics pruned: %d stale days, %d stale user-day entries",
                 len(stale_days),
-                len(stale_user_keys),
+                len(stale_dates),
             )
 
     def _process_event(self, event: dict[str, Any]):
@@ -115,8 +115,7 @@ class MetricsCollector:
             # Per-user tracking
             uid = event.get("user_id")
             if uid:
-                ukey = (today, uid)
-                self._user_daily[ukey]["request_count"] += 1
+                self._user_daily[today][uid]["request_count"] += 1
 
         elif event_type == "api_call":
             api_name = event["api_name"]
@@ -132,8 +131,7 @@ class MetricsCollector:
                 # Per-user model usage
                 uid = event.get("user_id")
                 if uid:
-                    ukey = (today, uid)
-                    mu = self._user_daily[ukey]["model_usage"]
+                    mu = self._user_daily[today][uid]["model_usage"]
                     mu[model] = mu.get(model, 0) + 1
 
             self.api_event_log.append(
@@ -212,12 +210,12 @@ class MetricsCollector:
                 # Snapshot per-user metrics
                 user_snapshot = [
                     (uid, {"request_count": data["request_count"], "model_usage": dict(data["model_usage"])})
-                    for (d, uid), data in self._user_daily.items()
-                    if d == today_str and data["request_count"] > 0
+                    for uid, data in self._user_daily[today_str].items()
+                    if data["request_count"] > 0
                 ]
                 # Reset per-user counters
-                for (d, _uid), data in self._user_daily.items():
-                    if d == today_str and data["request_count"] > 0:
+                for _uid, data in self._user_daily[today_str].items():
+                    if data["request_count"] > 0:
                         data["request_count"] = 0
                         data["model_usage"] = {}
 
@@ -345,11 +343,10 @@ class MetricsCollector:
                             daily.model_usage[k] = daily.model_usage.get(k, 0) + v
                         # Re-add per-user data
                         for uid, data in user_snapshot:
-                            ukey = (today_str, uid)
-                            self._user_daily[ukey]["request_count"] += data["request_count"]
+                            self._user_daily[today_str][uid]["request_count"] += data["request_count"]
                             for k, v in data["model_usage"].items():
-                                self._user_daily[ukey]["model_usage"][k] = (
-                                    self._user_daily[ukey]["model_usage"].get(k, 0) + v
+                                self._user_daily[today_str][uid]["model_usage"][k] = (
+                                    self._user_daily[today_str][uid]["model_usage"].get(k, 0) + v
                                 )
                 except Exception as comp_err:
                     logging.error("Metrics compensation failed: %s", comp_err, exc_info=True)
@@ -829,15 +826,21 @@ def _mask_key(key: str | None) -> str:
 
 async def get_system_status_data() -> dict[str, Any]:
     """
-    Агрегирует все системные metrics, вkeyая проfromводительность,
-    использование API keyей и кредитов.
+    Агрегирует все системные metrics, включая производительность,
+    использование API ключей и кредитов.
     """
-    # 1. Метрики проfromводительности
-    metrics = await metrics_collector.get_metrics_summary()
-
-    # 2. Статус keyей Gemini
     today_pacific = time_utils.get_pacific_date()
-    gemini_keys_raw = await db.db_query("SELECT key_hash, api_key FROM api_keys")
+    current_month = time_utils.get_current_month_str()
+
+    # ⚡ Bolt Optimization: Phase 1 — fan out 3 independent I/O calls concurrently.
+    # Previously: metrics summary + gemini keys + tavily keys ran sequentially (~3× RTT).
+    # Now: all three run in parallel (~1× max RTT).
+    metrics, gemini_keys_raw, tavily_keys_raw = await asyncio.gather(
+        metrics_collector.get_metrics_summary(),
+        db.db_query("SELECT key_hash, api_key FROM api_keys"),
+        db.db_query("SELECT key_hash, api_key FROM tavily_api_keys"),
+    )
+
     gemini_keys = [
         {
             "key_hash": row["key_hash"],
@@ -845,24 +848,6 @@ async def get_system_status_data() -> dict[str, Any]:
         }
         for row in gemini_keys_raw
     ]
-
-    # Get использование keyей Gemini за сегодня
-    gemini_usage_map: dict[str, list[Any]] = {}
-    if gemini_keys:
-        all_usage = await db.db_query(
-            "SELECT key_hash, model_name, request_count FROM key_usage WHERE usage_date = $1",
-            (today_pacific,),
-        )
-        if all_usage:
-            for row in all_usage:
-                k = row["key_hash"]
-                if k not in gemini_usage_map:
-                    gemini_usage_map[k] = []
-                gemini_usage_map[k].append(row)
-
-    # 3. Статус кредитов Tavily
-    current_month = time_utils.get_current_month_str()
-    tavily_keys_raw = await db.db_query("SELECT key_hash, api_key FROM tavily_api_keys")
     tavily_keys = [
         {
             "key_hash": row["key_hash"],
@@ -871,16 +856,34 @@ async def get_system_status_data() -> dict[str, Any]:
         for row in tavily_keys_raw
     ]
 
-    # Get использование keyей Tavily за месяц
-    tavily_usage_map = {}
-    if tavily_keys:
-        all_tavily_usage = await db.db_query(
+    # ⚡ Phase 2 — fan out usage queries concurrently (only if keys exist).
+    # Gemini usage and Tavily usage are independent of each other.
+    gemini_usage_coro = (
+        db.db_query(
+            "SELECT key_hash, model_name, request_count FROM key_usage WHERE usage_date = $1",
+            (today_pacific,),
+        )
+        if gemini_keys
+        else _empty_list()
+    )
+    tavily_usage_coro = (
+        db.db_query(
             "SELECT key_hash, credit_usage FROM tavily_key_usage WHERE usage_month = $1",
             (current_month,),
         )
-        if all_tavily_usage:
-            for row in all_tavily_usage:
-                tavily_usage_map[row["key_hash"]] = row["credit_usage"]
+        if tavily_keys
+        else _empty_list()
+    )
+    all_usage, all_tavily_usage = await asyncio.gather(gemini_usage_coro, tavily_usage_coro)
+
+    gemini_usage_map: dict[str, list[Any]] = {}
+    for row in all_usage or []:
+        k = row["key_hash"]
+        if k not in gemini_usage_map:
+            gemini_usage_map[k] = []
+        gemini_usage_map[k].append(row)
+
+    tavily_usage_map = {row["key_hash"]: row["credit_usage"] for row in all_tavily_usage or []}
 
     return {
         "metrics_summary": metrics,
@@ -891,3 +894,8 @@ async def get_system_status_data() -> dict[str, Any]:
         },
         "tavily": {"keys": tavily_keys, "usage_map": tavily_usage_map},
     }
+
+
+async def _empty_list() -> list:
+    """Lightweight coroutine sentinel: returns [] without hitting the DB."""
+    return []

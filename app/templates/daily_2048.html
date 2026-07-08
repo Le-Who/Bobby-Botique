@@ -1,0 +1,1686 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Daily 2048 Sprint</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #10100f;
+      --panel: rgba(245, 239, 226, 0.08);
+      --panel-strong: rgba(245, 239, 226, 0.14);
+      --line: rgba(245, 239, 226, 0.14);
+      --text: #fff8ea;
+      --muted: rgba(255, 248, 234, 0.62);
+      --ink: #171512;
+      --amber: #f2ba57;
+      --mint: #7fe0bd;
+      --coral: #f27963;
+      --cyan: #6cc9dd;
+      --tile-empty: rgba(255, 248, 234, 0.08);
+      --tile-top: #fff0cd;
+      --tile-bottom: #d6ad69;
+      --tile-fg: #1f1a12;
+      --tile-glow: rgba(242, 186, 87, 0.42);
+      --shadow: 0 18px 60px rgba(0, 0, 0, 0.34);
+      --radius: 8px;
+      --gap: 10px;
+      --cell: calc((100% - (var(--gap) * 3)) / 4);
+      --font: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+    body {
+      background:
+        linear-gradient(135deg, rgba(242, 186, 87, 0.08), transparent 28%),
+        linear-gradient(225deg, rgba(127, 224, 189, 0.08), transparent 34%),
+        var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      user-select: none;
+      touch-action: none;
+      overscroll-behavior: none;
+    }
+
+    #app {
+      min-height: 100dvh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      padding: max(14px, env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom));
+      gap: 12px;
+      touch-action: none;
+      overscroll-behavior: none;
+    }
+
+    .top {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: start;
+    }
+
+    .brand {
+      min-width: 0;
+    }
+
+    .eyebrow {
+      color: var(--mint);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    h1 {
+      font-size: 23px;
+      line-height: 1.05;
+      margin-top: 4px;
+      letter-spacing: 0;
+    }
+
+    .state-pill {
+      justify-self: end;
+      min-width: 92px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: var(--radius);
+      padding: 8px 10px;
+      text-align: right;
+      box-shadow: var(--shadow);
+    }
+
+    .state-pill strong {
+      display: block;
+      color: var(--amber);
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .state-pill span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .goal-band {
+      border: 1px solid rgba(242, 186, 87, 0.35);
+      background: linear-gradient(135deg, rgba(242, 186, 87, 0.18), rgba(127, 224, 189, 0.08));
+      border-radius: var(--radius);
+      padding: 11px 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .goal-band .label {
+      font-size: 18px;
+      font-weight: 900;
+      color: #ffe0a1;
+    }
+
+    .goal-band .hint {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.25;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: var(--radius);
+      padding: 9px 8px;
+      text-align: center;
+    }
+
+    .metric b {
+      display: block;
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 4px;
+      font-size: 10px;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 800;
+      letter-spacing: 0.06em;
+    }
+
+    .stage {
+      display: flex;
+      min-height: 0;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .board-wrap {
+      width: min(94vw, 440px);
+      aspect-ratio: 1;
+      padding: 10px;
+      border: 1px solid rgba(255, 248, 234, 0.16);
+      border-radius: var(--radius);
+      background:
+        radial-gradient(circle at 28% 20%, rgba(255, 248, 234, 0.12), transparent 28%),
+        linear-gradient(180deg, rgba(255, 248, 234, 0.13), rgba(255, 248, 234, 0.05)),
+        rgba(15, 14, 13, 0.78);
+      box-shadow:
+        0 26px 70px rgba(0, 0, 0, 0.42),
+        inset 0 1px 0 rgba(255, 255, 255, 0.12),
+        inset 0 -18px 34px rgba(0, 0, 0, 0.18);
+      position: relative;
+      touch-action: none;
+    }
+
+    .grid, .tiles {
+      position: absolute;
+      inset: 10px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      grid-template-rows: repeat(4, 1fr);
+      gap: var(--gap);
+    }
+
+    .cell {
+      border-radius: var(--radius);
+      background:
+        linear-gradient(145deg, rgba(255, 248, 234, 0.11), rgba(255, 248, 234, 0.035)),
+        var(--tile-empty);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.07),
+        inset 0 -10px 18px rgba(0, 0, 0, 0.2);
+    }
+
+    .tile {
+      position: absolute;
+      width: var(--cell);
+      height: var(--cell);
+      display: grid;
+      place-items: center;
+      transform: translate(
+        calc(var(--x) * (100% + var(--gap))),
+        calc(var(--y) * (100% + var(--gap)))
+      );
+      border-radius: var(--radius);
+      color: var(--tile-fg);
+      font-weight: 900;
+      font-size: 28px;
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background:
+        radial-gradient(circle at 28% 18%, rgba(255, 255, 255, 0.68), transparent 24%),
+        linear-gradient(145deg, var(--tile-top), var(--tile-bottom));
+      box-shadow:
+        0 12px 22px rgba(0, 0, 0, 0.32),
+        0 0 0 1px rgba(255, 255, 255, 0.04),
+        inset 0 2px 0 rgba(255, 255, 255, 0.34),
+        inset 0 -12px 18px rgba(0, 0, 0, 0.14);
+      overflow: hidden;
+      isolation: isolate;
+      transition: transform 150ms ease, filter 150ms ease, opacity 150ms ease, box-shadow 150ms ease;
+      animation: pop 150ms ease both;
+    }
+
+    .tile::before {
+      content: "";
+      position: absolute;
+      inset: 6px 8px auto;
+      height: 28%;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0));
+      opacity: 0.7;
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    .tile::after {
+      content: "";
+      position: absolute;
+      inset: -18%;
+      border-radius: inherit;
+      background: radial-gradient(circle at 50% 42%, var(--tile-glow), transparent 56%);
+      opacity: 0;
+      transition: opacity 160ms ease;
+      pointer-events: none;
+      z-index: -2;
+    }
+
+    .tile:hover {
+      filter: brightness(1.08) saturate(1.04);
+      box-shadow:
+        0 14px 28px rgba(0, 0, 0, 0.36),
+        0 0 26px var(--tile-glow),
+        inset 0 2px 0 rgba(255, 255, 255, 0.42),
+        inset 0 -12px 18px rgba(0, 0, 0, 0.12);
+    }
+
+    .tile:hover::after { opacity: 0.82; }
+
+    .tile.v2 { --tile-top: #fff4d5; --tile-bottom: #d9ba79; --tile-glow: rgba(255, 227, 150, 0.5); }
+    .tile.v4 { --tile-top: #ffe1a8; --tile-bottom: #ca9653; --tile-glow: rgba(242, 186, 87, 0.55); }
+    .tile.v8 { --tile-top: #ffc768; --tile-bottom: #db7e34; --tile-glow: rgba(242, 186, 87, 0.72); }
+    .tile.v16 { --tile-top: #ffab65; --tile-bottom: #c76533; --tile-glow: rgba(242, 121, 99, 0.6); }
+    .tile.v32 { --tile-top: #ff826f; --tile-bottom: #b94a3d; --tile-fg: #fff8ea; --tile-glow: rgba(242, 121, 99, 0.68); }
+    .tile.v64 { --tile-top: #e86454; --tile-bottom: #96392f; --tile-fg: #fff8ea; --tile-glow: rgba(242, 121, 99, 0.72); }
+    .tile.v128 { --tile-top: #adf4d6; --tile-bottom: #49b98f; --tile-glow: rgba(127, 224, 189, 0.7); }
+    .tile.v256 { --tile-top: #79dfbd; --tile-bottom: #279d83; --tile-glow: rgba(127, 224, 189, 0.78); }
+    .tile.v512 { --tile-top: #a2eff9; --tile-bottom: #3aa8bb; --tile-glow: rgba(108, 201, 221, 0.78); }
+    .tile.v1024, .tile.v2048 { --tile-top: #fff2a8; --tile-bottom: #d6c448; --tile-glow: rgba(255, 224, 116, 0.82); }
+    .tile.vbig { --tile-top: #ffe7b5; --tile-bottom: #b9894c; --tile-glow: rgba(255, 224, 161, 0.72); }
+
+    @keyframes pop {
+      from { opacity: 0; transform: translate(calc(var(--x) * (100% + var(--gap))), calc(var(--y) * (100% + var(--gap)))) scale(.86); }
+      to { opacity: 1; transform: translate(calc(var(--x) * (100% + var(--gap))), calc(var(--y) * (100% + var(--gap)))) scale(1); }
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(3, 54px);
+      gap: 8px;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .ctrl {
+      width: 54px;
+      height: 48px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-strong);
+      color: var(--text);
+      font-size: 22px;
+      font-weight: 900;
+      cursor: pointer;
+      box-shadow: 0 8px 22px rgba(0,0,0,0.22);
+    }
+
+    .ctrl:active { transform: scale(.95); }
+    .ctrl.blank { visibility: hidden; }
+
+    .toast {
+      position: fixed;
+      left: 14px;
+      right: 14px;
+      bottom: max(14px, env(safe-area-inset-bottom));
+      min-height: 48px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius);
+      border: 1px solid rgba(242, 186, 87, 0.35);
+      background: rgba(20, 18, 15, 0.94);
+      color: var(--text);
+      text-align: center;
+      padding: 10px 12px;
+      z-index: 30;
+      box-shadow: var(--shadow);
+    }
+
+    .toast.visible { display: flex; }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      background: rgba(10, 9, 8, 0.74);
+      padding: 18px;
+      z-index: 40;
+    }
+
+    .overlay.visible { display: grid; }
+
+    .modal {
+      width: min(420px, 100%);
+      border: 1px solid rgba(255, 248, 234, 0.18);
+      border-radius: var(--radius);
+      background: #181510;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .modal h2 {
+      font-size: 22px;
+      line-height: 1.1;
+      letter-spacing: 0;
+      color: #ffe0a1;
+    }
+
+    .modal .summary {
+      margin: 12px 0;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .modal .summary div {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 9px 8px;
+      text-align: center;
+      background: var(--panel);
+    }
+
+    .modal .summary b { display: block; font-size: 16px; }
+    .modal .summary span { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; text-transform: uppercase; }
+
+    .modal button {
+      width: 100%;
+      height: 46px;
+      border: 0;
+      border-radius: var(--radius);
+      background: var(--amber);
+      color: var(--ink);
+      font-weight: 900;
+      font-size: 15px;
+      cursor: pointer;
+    }
+
+    .leaderboard {
+      margin: 10px 0 14px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .leaderboard-row {
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      gap: 8px;
+      align-items: center;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .leaderboard-row strong { color: var(--text); }
+
+    @media (min-width: 760px) {
+      #app {
+        max-width: 980px;
+        margin: 0 auto;
+        grid-template-columns: 360px 1fr;
+        grid-template-rows: auto 1fr;
+        align-items: center;
+        padding: 26px;
+      }
+      .top, .goal-band, .metrics { grid-column: 1; }
+      .stage { grid-column: 2; grid-row: 1 / span 2; }
+      .controls { grid-column: 1; }
+      .board-wrap { width: min(52vw, 520px); }
+    }
+
+    /* Theme system v2: selected player skins share the same backend contract. */
+    body[data-theme="aero"] {
+      --bg: #edf9f8;
+      --page-bg:
+        radial-gradient(circle at 22% 10%, rgba(255,255,255,.86), transparent 24%),
+        radial-gradient(circle at 80% 18%, rgba(120, 224, 255, .54), transparent 26%),
+        linear-gradient(180deg, #e9fbff 0%, #bfeee7 48%, #fbf1c9 100%);
+      --panel: linear-gradient(145deg, rgba(255,255,255,.74), rgba(255,255,255,.28));
+      --panel-strong: linear-gradient(145deg, rgba(255,255,255,.82), rgba(119,226,216,.34));
+      --line: rgba(255,255,255,.72);
+      --text: #0b3532;
+      --muted: rgba(9, 50, 50, .62);
+      --ink: #103c38;
+      --amber: #c67a2b;
+      --mint: #168c88;
+      --accent: #42cabd;
+      --accent-2: #d88a35;
+      --tile-empty: rgba(29, 128, 126, .09);
+      --tile-radius: 20px;
+      --tile-border: 1px solid rgba(255,255,255,.72);
+      --tile-shadow:
+        0 12px 22px rgba(48,126,130,.22),
+        inset 0 2px 0 rgba(255,255,255,.70),
+        inset 0 -12px 20px rgba(16,93,92,.12);
+      --tile-font: 900 28px/1 "Trebuchet MS", "Segoe UI", sans-serif;
+      --tile-shine: linear-gradient(180deg, rgba(255,255,255,.90), rgba(255,255,255,0));
+      --trail: rgba(70, 215, 204, .52);
+      --button-radius: 18px;
+      --button-bg:
+        radial-gradient(circle at 28% 18%, rgba(255,255,255,.92), transparent 28%),
+        linear-gradient(145deg, rgba(255,255,255,.76), rgba(119,226,216,.42));
+      --button-shadow: inset 0 1px rgba(255,255,255,.92), 0 12px 24px rgba(55,132,138,.20);
+      --button-color: #164844;
+    }
+
+    body[data-theme="desk"] {
+      --bg: #17100b;
+      --page-bg:
+        radial-gradient(circle at 78% 14%, rgba(255,201,101,.22), transparent 24%),
+        linear-gradient(180deg, #20140c, #0f0d0b 56%, #17100c);
+      --panel: linear-gradient(145deg, rgba(96,61,27,.78), rgba(37,24,13,.90));
+      --panel-strong: linear-gradient(145deg, #805b2d, #34210e);
+      --line: rgba(255,216,145,.28);
+      --text: #fff3d4;
+      --muted: rgba(255, 239, 210, .66);
+      --ink: #3a2817;
+      --amber: #ffd98b;
+      --mint: #d6a757;
+      --accent: #d59d57;
+      --accent-2: #65b989;
+      --tile-empty: rgba(20, 13, 7, .36);
+      --tile-radius: 10px;
+      --tile-border: 2px solid rgba(70,39,15,.30);
+      --tile-shadow:
+        0 7px 0 rgba(54,31,13,.45),
+        0 13px 20px rgba(0,0,0,.28),
+        inset 0 3px 0 rgba(255,255,255,.34),
+        inset 0 -11px 0 rgba(80,43,15,.13);
+      --tile-font: 900 27px/1 Georgia, serif;
+      --tile-shine: linear-gradient(180deg, rgba(255,255,255,.50), rgba(255,255,255,0));
+      --trail: rgba(255, 205, 112, .54);
+      --button-radius: 12px;
+      --button-bg:
+        radial-gradient(circle at 28% 18%, rgba(255,255,255,.46), transparent 28%),
+        linear-gradient(145deg, #805b2d, #34210e);
+      --button-shadow: inset 0 1px rgba(255,255,255,.22), 0 10px 20px rgba(0,0,0,.34);
+      --button-color: #fff0c3;
+    }
+
+    body[data-theme="swiss"] {
+      --bg: #f4f0e8;
+      --page-bg: #f4f0e8;
+      --panel: #f4f0e8;
+      --panel-strong: #f4f0e8;
+      --line: #151515;
+      --text: #151515;
+      --muted: rgba(21,21,21,.62);
+      --ink: #151515;
+      --amber: #e34b2f;
+      --mint: #151515;
+      --accent: #e34b2f;
+      --accent-2: #19b7a0;
+      --radius: 0;
+      --tile-empty: #ded9cf;
+      --tile-radius: 0;
+      --tile-border: 0;
+      --tile-shadow: none;
+      --tile-font: 900 26px/1 "Arial Black", Impact, sans-serif;
+      --tile-shine: transparent;
+      --trail: rgba(21, 21, 21, .22);
+      --button-radius: 0;
+      --button-bg: #f4f0e8;
+      --button-shadow: none;
+      --button-color: #151515;
+    }
+
+    body[data-theme="botanical"] {
+      --bg: #07100b;
+      --page-bg:
+        radial-gradient(circle at 18% 16%, rgba(156,255,151,.18), transparent 24%),
+        linear-gradient(160deg, #102414, #07100b 58%, #15210e);
+      --panel: linear-gradient(145deg, rgba(114,190,80,.22), rgba(255,255,255,.055));
+      --panel-strong: linear-gradient(145deg, rgba(185,255,156,.16), rgba(255,255,255,.06));
+      --line: rgba(177,239,149,.24);
+      --text: #f5ffe6;
+      --muted: rgba(238,255,218,.66);
+      --ink: #173916;
+      --amber: #e8ffc0;
+      --mint: #9df091;
+      --accent: #96bd50;
+      --accent-2: #71d5b6;
+      --tile-empty: rgba(226,255,213,.08);
+      --tile-radius: 22px 8px 22px 8px;
+      --tile-border: 1px solid rgba(229,255,216,.28);
+      --tile-shadow:
+        0 12px 20px rgba(0,0,0,.27),
+        inset 0 2px 0 rgba(255,255,255,.34),
+        inset 0 -10px 16px rgba(25,74,28,.14);
+      --tile-font: 900 27px/1 "Trebuchet MS", sans-serif;
+      --tile-shine: linear-gradient(180deg, rgba(255,255,255,.60), transparent);
+      --trail: rgba(171,245,144,.44);
+      --button-radius: 999px 12px 999px 12px;
+      --button-bg:
+        radial-gradient(circle at 30% 18%, rgba(255,255,255,.62), transparent 26%),
+        linear-gradient(145deg, #cdf8a7, #5aac58);
+      --button-shadow: 0 12px 24px rgba(0,0,0,.28), inset 0 1px rgba(255,255,255,.50);
+      --button-color: #173916;
+    }
+
+    body[data-theme="deco"] {
+      --bg: #080706;
+      --page-bg:
+        linear-gradient(135deg, transparent 48%, rgba(255,206,86,.08) 49%, transparent 50%),
+        linear-gradient(225deg, transparent 48%, rgba(255,206,86,.08) 49%, transparent 50%),
+        #080706;
+      --panel: linear-gradient(145deg, rgba(255,210,103,.18), rgba(255,255,255,.035));
+      --panel-strong: linear-gradient(145deg, rgba(255,220,120,.30), rgba(81,49,11,.62));
+      --line: rgba(245,194,84,.34);
+      --text: #fff1c3;
+      --muted: rgba(255,241,195,.64);
+      --ink: #17100a;
+      --amber: #ffe39a;
+      --mint: #d7a848;
+      --accent: #c99235;
+      --accent-2: #3dc8c5;
+      --tile-empty: rgba(255,233,174,.07);
+      --tile-radius: 0;
+      --tile-border: 1px solid rgba(255,222,132,.24);
+      --tile-shadow:
+        0 10px 18px rgba(0,0,0,.36),
+        inset 0 2px 0 rgba(255,255,255,.20),
+        inset 0 -12px 0 rgba(0,0,0,.12);
+      --tile-font: 900 26px/1 Georgia, serif;
+      --tile-shine:
+        linear-gradient(135deg, rgba(255,255,255,.22), transparent 34%),
+        linear-gradient(315deg, rgba(0,0,0,.10), transparent 42%);
+      --trail: rgba(255, 213, 112, .46);
+      --button-radius: 0;
+      --button-bg: linear-gradient(145deg, rgba(255,220,120,.32), rgba(81,49,11,.60));
+      --button-shadow: 0 12px 24px rgba(0,0,0,.38);
+      --button-color: #ffe8a4;
+    }
+
+    body {
+      background: var(--page-bg);
+      transition: background 220ms ease, color 220ms ease;
+    }
+
+    body[data-theme="deco"] {
+      background-size: 28px 28px, 28px 28px, auto;
+    }
+
+    #app {
+      grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+      gap: 8px;
+      padding: max(10px, env(safe-area-inset-top)) 14px max(10px, env(safe-area-inset-bottom));
+    }
+
+    .top {
+      grid-template-columns: 1fr auto;
+      align-items: start;
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+      justify-content: end;
+    }
+
+    .theme-btn {
+      min-width: 58px;
+      border: 1px solid var(--line);
+      border-radius: var(--button-radius);
+      background: var(--button-bg);
+      color: var(--button-color);
+      font-weight: 950;
+      font-size: 12px;
+      line-height: 1;
+      padding: 8px 10px;
+      box-shadow: var(--button-shadow);
+      cursor: pointer;
+    }
+
+    .theme-btn small {
+      display: block;
+      margin-top: 3px;
+      font-size: 9px;
+      opacity: .7;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    .state-pill,
+    .goal-band,
+    .metric {
+      background: var(--panel);
+      border-color: var(--line);
+      color: var(--text);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+    }
+
+    .state-pill {
+      min-width: 72px;
+      padding: 8px 9px;
+      border-radius: var(--button-radius);
+    }
+
+    .state-pill strong { color: var(--amber); }
+    .state-pill span { color: var(--muted); }
+
+    .goal-band {
+      min-height: 56px;
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: calc(var(--radius) + 10px);
+    }
+
+    .goal-target {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: var(--tile-radius);
+      color: var(--tile-fg, var(--ink));
+      background:
+        radial-gradient(circle at 28% 18%, rgba(255,255,255,.72), transparent 24%),
+        linear-gradient(145deg, var(--tile-top, #fff4d5), var(--tile-bottom, #d9ba79));
+      border: var(--tile-border);
+      box-shadow: var(--tile-shadow);
+      font: 900 14px/1 var(--font);
+    }
+
+    .goal-copy { min-width: 0; }
+
+    .goal-band .label {
+      font-size: 17px;
+      line-height: 1.08;
+      color: var(--amber);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .goal-band .hint {
+      margin-top: 3px;
+      font-size: 11px;
+      line-height: 1.18;
+      color: var(--muted);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .goal-meta {
+      color: var(--mint);
+      font-size: 10px;
+      font-weight: 950;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      white-space: nowrap;
+    }
+
+    .metric {
+      min-height: 46px;
+      padding: 6px 6px;
+      border-radius: calc(var(--radius) + 8px);
+    }
+
+    .board-wrap {
+      width: min(86vw, 390px, calc(100dvh - 380px));
+      min-width: 258px;
+      border-color: var(--line);
+      border-radius: calc(var(--radius) + 16px);
+      background:
+        radial-gradient(circle at 28% 20%, rgba(255,255,255,.12), transparent 28%),
+        var(--panel);
+      box-shadow:
+        0 24px 56px rgba(0,0,0,.36),
+        inset 0 1px 0 rgba(255,255,255,.16),
+        inset 0 -18px 34px rgba(0,0,0,.12);
+      overflow: hidden;
+    }
+
+    .board-wrap::after {
+      content: "";
+      position: absolute;
+      inset: 10px;
+      border-radius: inherit;
+      pointer-events: none;
+      opacity: 0;
+      z-index: 5;
+    }
+
+    .board-wrap.move-left::after {
+      animation: trail-left 280ms ease-out both;
+      background: linear-gradient(90deg, var(--trail), transparent 72%);
+    }
+
+    .board-wrap.move-right::after {
+      animation: trail-right 280ms ease-out both;
+      background: linear-gradient(270deg, var(--trail), transparent 72%);
+    }
+
+    .board-wrap.move-up::after {
+      animation: trail-up 280ms ease-out both;
+      background: linear-gradient(180deg, var(--trail), transparent 72%);
+    }
+
+    .board-wrap.move-down::after {
+      animation: trail-down 280ms ease-out both;
+      background: linear-gradient(0deg, var(--trail), transparent 72%);
+    }
+
+    .cell {
+      border-radius: var(--tile-radius);
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.10), rgba(255,255,255,.03)),
+        var(--tile-empty);
+    }
+
+    .tile {
+      border-radius: var(--tile-radius);
+      border: var(--tile-border);
+      box-shadow: var(--tile-shadow);
+      font: var(--tile-font);
+      background:
+        radial-gradient(circle at 28% 18%, rgba(255,255,255,.68), transparent 24%),
+        linear-gradient(145deg, var(--tile-top), var(--tile-bottom));
+      animation: none;
+      will-change: transform, opacity, filter;
+      transition: filter 140ms ease, box-shadow 140ms ease;
+    }
+
+    .tile span {
+      position: relative;
+      z-index: 1;
+    }
+
+    .tile::before {
+      background: var(--tile-shine);
+      opacity: .76;
+    }
+
+    body[data-theme="deco"] .tile,
+    body[data-theme="deco"] .cell {
+      clip-path: polygon(12% 0, 88% 0, 100% 12%, 100% 88%, 88% 100%, 12% 100%, 0 88%, 0 12%);
+    }
+
+    body[data-theme="deco"] .tile::before {
+      inset: 0;
+      height: 100%;
+      border-radius: 0;
+    }
+
+    .tile.moved {
+      animation: tile-slide 170ms cubic-bezier(.18,.82,.28,1) both;
+    }
+
+    .tile.merged {
+      z-index: 4;
+      animation:
+        tile-slide 170ms cubic-bezier(.18,.82,.28,1) both,
+        tile-merge 230ms 165ms ease-out both;
+    }
+
+    .tile.spawn {
+      z-index: 3;
+      animation: tile-spawn 190ms cubic-bezier(.2,1.3,.35,1) both;
+    }
+
+    .controls {
+      grid-template-columns: repeat(3, 46px);
+      gap: 7px;
+    }
+
+    .ctrl {
+      width: 46px;
+      height: 42px;
+      border-radius: var(--button-radius);
+      border-color: var(--line);
+      background: var(--button-bg);
+      color: var(--button-color);
+      box-shadow: var(--button-shadow);
+      transition: transform 120ms ease, filter 120ms ease;
+    }
+
+    .ctrl:active,
+    .theme-btn:active {
+      transform: scale(.94);
+      filter: brightness(1.08);
+    }
+
+    body[data-theme="swiss"] .top,
+    body[data-theme="swiss"] .goal-band,
+    body[data-theme="swiss"] .metrics {
+      border-radius: 0;
+    }
+
+    body[data-theme="swiss"] .goal-band,
+    body[data-theme="swiss"] .metric,
+    body[data-theme="swiss"] .state-pill,
+    body[data-theme="swiss"] .theme-btn {
+      border-width: 2px;
+      box-shadow: none;
+      backdrop-filter: none;
+    }
+
+    body[data-theme="swiss"] .board-wrap {
+      background: #151515;
+      border: 4px solid #151515;
+      box-shadow: none;
+      padding: 7px;
+    }
+
+    body[data-theme="swiss"] .grid,
+    body[data-theme="swiss"] .tiles {
+      inset: 7px;
+    }
+
+    body[data-theme="desk"] .board-wrap {
+      border: 3px solid #8a5e2e;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,.05), transparent 20%),
+        linear-gradient(145deg, #5d3b20, #21160d);
+    }
+
+    body[data-theme="botanical"] .board-wrap {
+      border-radius: 34px 14px 34px 14px;
+    }
+
+    .tile.v2 { --tile-top: #dafcff; --tile-bottom: #82d6e4; --tile-fg: #07363f; --tile-glow: rgba(112, 221, 238, .66); }
+    .tile.v4 { --tile-top: #c7fff3; --tile-bottom: #50d4bd; --tile-fg: #063a33; --tile-glow: rgba(70, 215, 204, .72); }
+    .tile.v8 { --tile-top: #e4ff88; --tile-bottom: #a7dc3f; --tile-fg: #213409; --tile-glow: rgba(174, 229, 72, .68); }
+    .tile.v16 { --tile-top: #fff9c7; --tile-bottom: #e7c76d; --tile-fg: #3d2c08; --tile-glow: rgba(255, 235, 126, .66); }
+    .tile.v32 { --tile-top: #ffbd72; --tile-bottom: #ff7c42; --tile-fg: #271307; --tile-glow: rgba(255, 145, 72, .68); }
+    .tile.v64 { --tile-top: #ff8787; --tile-bottom: #df4b61; --tile-fg: #fff8ea; --tile-glow: rgba(255, 116, 130, .72); }
+    .tile.v128 { --tile-top: #b9c2ff; --tile-bottom: #6c7df2; --tile-fg: #fff8ea; --tile-glow: rgba(116, 146, 255, .74); }
+    .tile.v256 { --tile-top: #ffc0e5; --tile-bottom: #ef69bb; --tile-fg: #fff8ea; --tile-glow: rgba(255, 122, 199, .78); }
+    .tile.v512 { --tile-top: #8df8ff; --tile-bottom: #20b7e5; --tile-fg: #06343d; --tile-glow: rgba(70, 218, 255, .78); }
+    .tile.v1024 { --tile-top: #fbff91; --tile-bottom: #66cf54; --tile-fg: #17300d; --tile-glow: rgba(180, 238, 93, .82); }
+    .tile.v2048 { --tile-top: #ffffff; --tile-bottom: #7fefff; --tile-fg: #06343d; --tile-glow: rgba(126, 243, 255, .9); }
+    .tile.vbig { --tile-top: #c6b4ff; --tile-bottom: #4c7cff; --tile-fg: #fff8ea; --tile-glow: rgba(94,170,255,.78); }
+
+    body[data-theme="desk"] .tile.v2 { --tile-top: #f8e4b0; --tile-bottom: #c8944b; --tile-fg: #241407; }
+    body[data-theme="desk"] .tile.v4 { --tile-top: #bfd88a; --tile-bottom: #657b39; --tile-fg: #241407; }
+    body[data-theme="desk"] .tile.v8 { --tile-top: #72c8b0; --tile-bottom: #2f7768; --tile-fg: #fff1d1; }
+    body[data-theme="desk"] .tile.v16 { --tile-top: #e8b765; --tile-bottom: #a96a32; --tile-fg: #241407; }
+    body[data-theme="desk"] .tile.v32 { --tile-top: #c7633b; --tile-bottom: #76311f; --tile-fg: #fff1d1; }
+    body[data-theme="desk"] .tile.v64 { --tile-top: #8d3340; --tile-bottom: #411416; --tile-fg: #fff1d1; }
+    body[data-theme="desk"] .tile.v128 { --tile-top: #65b989; --tile-bottom: #2f7556; --tile-fg: #fff1d1; }
+    body[data-theme="desk"] .tile.v256 { --tile-top: #5da8c7; --tile-bottom: #22566c; --tile-fg: #fff1d1; }
+    body[data-theme="desk"] .tile.v512 { --tile-top: #a679ba; --tile-bottom: #57406d; --tile-fg: #fff1d1; }
+    body[data-theme="desk"] .tile.v1024 { --tile-top: #d6a84f; --tile-bottom: #7b5420; --tile-fg: #fff1d1; }
+    body[data-theme="desk"] .tile.v2048 { --tile-top: #f6d36e; --tile-bottom: #3d2811; --tile-fg: #241407; }
+    body[data-theme="desk"] .tile.vbig { --tile-top: #4d3219; --tile-bottom: #11100c; --tile-fg: #fff1d1; }
+
+    body[data-theme="swiss"] .tile.v2 { --tile-top: #37cdd6; --tile-bottom: #37cdd6; --tile-fg: #151515; }
+    body[data-theme="swiss"] .tile.v4 { --tile-top: #f4f0e8; --tile-bottom: #f4f0e8; --tile-fg: #151515; }
+    body[data-theme="swiss"] .tile.v8 { --tile-top: #f7d948; --tile-bottom: #f7d948; --tile-fg: #151515; }
+    body[data-theme="swiss"] .tile.v16 { --tile-top: #e94b35; --tile-bottom: #e94b35; --tile-fg: #fff8ea; }
+    body[data-theme="swiss"] .tile.v32 { --tile-top: #151515; --tile-bottom: #151515; --tile-fg: #fff8ea; }
+    body[data-theme="swiss"] .tile.v64 { --tile-top: #2e6ce6; --tile-bottom: #2e6ce6; --tile-fg: #fff8ea; }
+    body[data-theme="swiss"] .tile.v128 { --tile-top: #19b75a; --tile-bottom: #19b75a; --tile-fg: #151515; }
+    body[data-theme="swiss"] .tile.v256 { --tile-top: #ff80b5; --tile-bottom: #ff80b5; --tile-fg: #151515; }
+    body[data-theme="swiss"] .tile.v512 { --tile-top: #6f46d9; --tile-bottom: #6f46d9; --tile-fg: #fff8ea; }
+    body[data-theme="swiss"] .tile.v1024 { --tile-top: #f28c28; --tile-bottom: #f28c28; --tile-fg: #151515; }
+    body[data-theme="swiss"] .tile.v2048 { --tile-top: #151515; --tile-bottom: #151515; --tile-fg: #fff8ea; }
+    body[data-theme="swiss"] .tile.vbig { --tile-top: #f4f0e8; --tile-bottom: #f4f0e8; --tile-fg: #151515; --tile-border: 3px solid #151515; }
+
+    body[data-theme="botanical"] .tile.v2 { --tile-top: #f2de91; --tile-bottom: #d1aa56; --tile-fg: #1f1a12; }
+    body[data-theme="botanical"] .tile.v4 { --tile-top: #d7e87a; --tile-bottom: #96bd50; --tile-fg: #1f1a12; }
+    body[data-theme="botanical"] .tile.v8 { --tile-top: #9bd26e; --tile-bottom: #5eaa54; --tile-fg: #1f1a12; }
+    body[data-theme="botanical"] .tile.v16 { --tile-top: #65b96a; --tile-bottom: #2d7a4b; --tile-fg: #fff8ea; }
+    body[data-theme="botanical"] .tile.v32 { --tile-top: #3a9b63; --tile-bottom: #1c5f40; --tile-fg: #fff8ea; }
+    body[data-theme="botanical"] .tile.v64 { --tile-top: #24724e; --tile-bottom: #0e382b; --tile-fg: #fff8ea; }
+    body[data-theme="botanical"] .tile.v128 { --tile-top: #f2a15d; --tile-bottom: #c95f36; --tile-fg: #1f1a12; }
+    body[data-theme="botanical"] .tile.v256 { --tile-top: #71d5b6; --tile-bottom: #2b9c7b; --tile-fg: #1f1a12; }
+    body[data-theme="botanical"] .tile.v512 { --tile-top: #b985d6; --tile-bottom: #704caa; --tile-fg: #fff8ea; }
+    body[data-theme="botanical"] .tile.v1024 { --tile-top: #d75e70; --tile-bottom: #913244; --tile-fg: #fff8ea; }
+    body[data-theme="botanical"] .tile.v2048 { --tile-top: #f4cf68; --tile-bottom: #b98325; --tile-fg: #1f1a12; }
+    body[data-theme="botanical"] .tile.vbig { --tile-top: #99d66d; --tile-bottom: #324b22; --tile-fg: #fff8ea; }
+
+    body[data-theme="deco"] .tile.v2 { --tile-top: #f6d894; --tile-bottom: #b98437; --tile-fg: #17100a; }
+    body[data-theme="deco"] .tile.v4 { --tile-top: #53c9b4; --tile-bottom: #146454; --tile-fg: #17100a; }
+    body[data-theme="deco"] .tile.v8 { --tile-top: #7a4fc9; --tile-bottom: #2d174f; --tile-fg: #fff1c3; }
+    body[data-theme="deco"] .tile.v16 { --tile-top: #c83d4f; --tile-bottom: #5c1f18; --tile-fg: #fff1c3; }
+    body[data-theme="deco"] .tile.v32 { --tile-top: #1d1710; --tile-bottom: #d6a83d; --tile-fg: #fff1c3; }
+    body[data-theme="deco"] .tile.v64 { --tile-top: #4fc09a; --tile-bottom: #145d4a; --tile-fg: #17100a; }
+    body[data-theme="deco"] .tile.v128 { --tile-top: #3a86d9; --tile-bottom: #123e78; --tile-fg: #fff1c3; }
+    body[data-theme="deco"] .tile.v256 { --tile-top: #eedc8a; --tile-bottom: #80651e; --tile-fg: #17100a; }
+    body[data-theme="deco"] .tile.v512 { --tile-top: #e66f5e; --tile-bottom: #7b2e28; --tile-fg: #fff1c3; }
+    body[data-theme="deco"] .tile.v1024 { --tile-top: #201525; --tile-bottom: #9a4c88; --tile-fg: #fff1c3; }
+    body[data-theme="deco"] .tile.v2048 { --tile-top: #fff1c3; --tile-bottom: #c99235; --tile-fg: #17100a; }
+    body[data-theme="deco"] .tile.vbig { --tile-top: #070604; --tile-bottom: #8d6922; --tile-fg: #fff1c3; }
+
+    @keyframes tile-slide {
+      from {
+        opacity: .92;
+        transform: translate(
+          calc(var(--from-x) * (100% + var(--gap))),
+          calc(var(--from-y) * (100% + var(--gap)))
+        ) scale(.985);
+      }
+      to {
+        opacity: 1;
+        transform: translate(
+          calc(var(--x) * (100% + var(--gap))),
+          calc(var(--y) * (100% + var(--gap)))
+        ) scale(1);
+      }
+    }
+
+    @keyframes tile-spawn {
+      from {
+        opacity: 0;
+        transform: translate(
+          calc(var(--x) * (100% + var(--gap))),
+          calc(var(--y) * (100% + var(--gap)))
+        ) scale(.62);
+        filter: brightness(1.28);
+      }
+      to {
+        opacity: 1;
+        transform: translate(
+          calc(var(--x) * (100% + var(--gap))),
+          calc(var(--y) * (100% + var(--gap)))
+        ) scale(1);
+        filter: brightness(1);
+      }
+    }
+
+    @keyframes tile-merge {
+      0% {
+        transform: translate(
+          calc(var(--x) * (100% + var(--gap))),
+          calc(var(--y) * (100% + var(--gap)))
+        ) scale(1);
+        filter: brightness(1);
+      }
+      48% {
+        transform: translate(
+          calc(var(--x) * (100% + var(--gap))),
+          calc(var(--y) * (100% + var(--gap)))
+        ) scale(1.12);
+        filter: brightness(1.22);
+      }
+      100% {
+        transform: translate(
+          calc(var(--x) * (100% + var(--gap))),
+          calc(var(--y) * (100% + var(--gap)))
+        ) scale(1);
+        filter: brightness(1);
+      }
+    }
+
+    @keyframes trail-left {
+      from { opacity: 0; transform: translateX(22px) scaleX(.72); }
+      35% { opacity: .82; }
+      to { opacity: 0; transform: translateX(-12px) scaleX(1); }
+    }
+
+    @keyframes trail-right {
+      from { opacity: 0; transform: translateX(-22px) scaleX(.72); }
+      35% { opacity: .82; }
+      to { opacity: 0; transform: translateX(12px) scaleX(1); }
+    }
+
+    @keyframes trail-up {
+      from { opacity: 0; transform: translateY(22px) scaleY(.72); }
+      35% { opacity: .82; }
+      to { opacity: 0; transform: translateY(-12px) scaleY(1); }
+    }
+
+    @keyframes trail-down {
+      from { opacity: 0; transform: translateY(-22px) scaleY(.72); }
+      35% { opacity: .82; }
+      to { opacity: 0; transform: translateY(12px) scaleY(1); }
+    }
+
+    @media (min-width: 760px) {
+      #app {
+        grid-template-columns: 360px minmax(0, 1fr);
+        grid-template-rows: auto auto auto minmax(0, 1fr);
+      }
+      .top, .goal-band, .metrics, .controls { grid-column: 1; }
+      .stage { grid-column: 2; grid-row: 1 / span 4; }
+      .board-wrap {
+        width: min(52vw, 520px);
+        min-width: 360px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .tile, .ctrl, .theme-btn, .board-wrap::after { transition: none; animation: none; }
+    }
+  </style>
+</head>
+<body data-theme="aero">
+  <main id="app">
+    <section class="top">
+      <div class="brand">
+        <div class="eyebrow">Daily Sprint</div>
+        <h1>2048</h1>
+      </div>
+      <div class="top-actions">
+        <button class="theme-btn" id="theme-btn" type="button" aria-label="Сменить тему">
+          <span id="theme-label">Aero</span>
+          <small>тема</small>
+        </button>
+        <div class="state-pill">
+          <strong id="record-state">REC</strong>
+          <span id="record-sub">рекорд дня</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="goal-band">
+      <div class="goal-target" id="goal-target">...</div>
+      <div class="goal-copy">
+        <div class="label" id="goal-label">Загрузка цели...</div>
+        <div class="hint" id="goal-help"></div>
+      </div>
+      <div class="goal-meta" id="goal-meta">зачёт</div>
+    </section>
+
+    <section class="metrics">
+      <div class="metric"><b id="timer">0:00</b><span>время</span></div>
+      <div class="metric"><b id="moves">0</b><span>ходы</span></div>
+      <div class="metric"><b id="score">0</b><span>очки</span></div>
+    </section>
+
+    <section class="stage">
+      <div class="board-wrap" id="board">
+        <div class="grid">
+          <div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div>
+          <div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div>
+          <div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div>
+          <div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div>
+        </div>
+        <div class="tiles" id="tiles"></div>
+      </div>
+    </section>
+
+    <section class="controls">
+      <button class="ctrl blank" type="button" aria-hidden="true"></button>
+      <button class="ctrl" type="button" data-dir="up" aria-label="Вверх">↑</button>
+      <button class="ctrl blank" type="button" aria-hidden="true"></button>
+      <button class="ctrl" type="button" data-dir="left" aria-label="Влево">←</button>
+      <button class="ctrl" type="button" data-dir="down" aria-label="Вниз">↓</button>
+      <button class="ctrl" type="button" data-dir="right" aria-label="Вправо">→</button>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <div class="overlay" id="overlay">
+    <div class="modal">
+      <h2 id="overlay-title">Финиш</h2>
+      <div class="summary">
+        <div><b id="overlay-score">0</b><span>очки</span></div>
+        <div><b id="overlay-moves">0</b><span>ходы</span></div>
+        <div><b id="overlay-time">0:00</b><span>время</span></div>
+      </div>
+      <div class="leaderboard" id="leaderboard"></div>
+      <button type="button" id="practice-btn">Играть дальше</button>
+    </div>
+  </div>
+
+  <script>
+    const tg = window.Telegram?.WebApp;
+
+    function disableTelegramVerticalSwipes() {
+      try { tg?.disableVerticalSwipes?.(); } catch {}
+    }
+
+    tg?.ready();
+    tg?.expand();
+    disableTelegramVerticalSwipes();
+
+    const $ = id => document.getElementById(id);
+    const INIT_DATA = tg?.initData || new URLSearchParams(location.search).get('initData') || '';
+    const TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Kyiv';
+    const CLIENT_SESSION_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    let ws = null;
+    let board = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+    let startBoard = cloneBoard(board);
+    let status = 'loading';
+    let recordable = true;
+    let elapsedOffset = 0;
+    let activeStartedAt = null;
+    let pendingMove = false;
+    let pendingMoveTimer = null;
+    let pendingMoveSnapshot = null;
+    let tickTimer = null;
+    let pendingCounter = 0;
+    let lastMoveDirection = null;
+    let hasRenderedBoard = false;
+    let windowFocused = true;
+    let practiceStartStatus = null;
+
+    const THEMES = [
+      { id: 'aero', label: 'Aero' },
+      { id: 'desk', label: 'Desk' },
+      { id: 'swiss', label: 'Swiss' },
+      { id: 'botanical', label: 'Leaf' },
+      { id: 'deco', label: 'Deco' }
+    ];
+    const THEME_STORAGE_KEY = 'daily2048:theme';
+
+    function applyTheme(themeId) {
+      const theme = THEMES.find(item => item.id === themeId) || THEMES[0];
+      document.body.dataset.theme = theme.id;
+      $('theme-label').textContent = theme.label;
+      try { localStorage.setItem(THEME_STORAGE_KEY, theme.id); } catch {}
+    }
+
+    function nextThemeId() {
+      const current = document.body.dataset.theme || THEMES[0].id;
+      const idx = THEMES.findIndex(item => item.id === current);
+      return THEMES[(idx + 1) % THEMES.length].id;
+    }
+
+    function initTheme() {
+      let saved = THEMES[0].id;
+      try { saved = localStorage.getItem(THEME_STORAGE_KEY) || saved; } catch {}
+      applyTheme(saved);
+    }
+
+    function fmt(ms) {
+      const total = Math.max(0, Math.floor(ms / 1000));
+      const min = Math.floor(total / 60);
+      const sec = total % 60;
+      return `${min}:${String(sec).padStart(2, '0')}`;
+    }
+
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[ch]));
+    }
+
+    function tileClass(value) {
+      return value <= 2048 ? `v${value}` : 'vbig';
+    }
+
+    function cloneBoard(source) {
+      const result = [];
+      for (let y = 0; y < 4; y++) {
+        const row = Array.isArray(source?.[y]) ? source[y] : [];
+        result.push([0, 1, 2, 3].map(x => Number(row[x] || 0)));
+      }
+      return result;
+    }
+
+    function boardsEqual(a, b) {
+      const left = cloneBoard(a);
+      const right = cloneBoard(b);
+      for (let y = 0; y < 4; y++) {
+        for (let x = 0; x < 4; x++) {
+          if (left[y][x] !== right[y][x]) return false;
+        }
+      }
+      return true;
+    }
+
+    function mergeLineClient(values) {
+      const compact = values.filter(value => value > 0);
+      const merged = [];
+      let gained = 0;
+      for (let i = 0; i < compact.length; i++) {
+        if (i + 1 < compact.length && compact[i + 1] === compact[i]) {
+          const value = compact[i] * 2;
+          merged.push(value);
+          gained += value;
+          i += 1;
+        } else {
+          merged.push(compact[i]);
+        }
+      }
+      while (merged.length < 4) merged.push(0);
+      return { line: merged.slice(0, 4), gained };
+    }
+
+    function transposeClient(source) {
+      const normalized = cloneBoard(source);
+      return [0, 1, 2, 3].map(x => [0, 1, 2, 3].map(y => normalized[y][x]));
+    }
+
+    function applyMoveClient(source, direction) {
+      const normalized = cloneBoard(source);
+      const vertical = direction === 'up' || direction === 'down';
+      const reverse = direction === 'right' || direction === 'down';
+      const working = vertical ? transposeClient(normalized) : normalized;
+      let gained = 0;
+      const movedRows = working.map(row => {
+        const raw = reverse ? row.slice().reverse() : row.slice();
+        const merged = mergeLineClient(raw);
+        gained += merged.gained;
+        return reverse ? merged.line.slice().reverse() : merged.line;
+      });
+      const next = vertical ? transposeClient(movedRows) : movedRows;
+      return { board: next, moved: !boardsEqual(normalized, next), gained };
+    }
+
+    function flattenBoard(source) {
+      const result = [];
+      for (let y = 0; y < 4; y++) {
+        for (let x = 0; x < 4; x++) {
+          const value = Number(source[y]?.[x] || 0);
+          if (value) result.push({ x, y, value, used: false });
+        }
+      }
+      return result;
+    }
+
+    function directionDistance(from, to) {
+      if (!lastMoveDirection) return Math.abs(from.x - to.x) + Math.abs(from.y - to.y);
+      if (lastMoveDirection === 'left') return Math.abs(from.y - to.y) * 8 + Math.max(0, from.x - to.x);
+      if (lastMoveDirection === 'right') return Math.abs(from.y - to.y) * 8 + Math.max(0, to.x - from.x);
+      if (lastMoveDirection === 'up') return Math.abs(from.x - to.x) * 8 + Math.max(0, from.y - to.y);
+      if (lastMoveDirection === 'down') return Math.abs(from.x - to.x) * 8 + Math.max(0, to.y - from.y);
+      return Math.abs(from.x - to.x) + Math.abs(from.y - to.y);
+    }
+
+    function takeSource(sources, tile, value) {
+      let best = null;
+      let bestDistance = Infinity;
+      for (const source of sources) {
+        if (source.used || source.value !== value) continue;
+        const distance = directionDistance(source, tile);
+        if (distance < bestDistance) {
+          best = source;
+          bestDistance = distance;
+        }
+      }
+      if (best) best.used = true;
+      return best;
+    }
+
+    function isSpawnedTile(tile, spawned) {
+      if (!spawned) return false;
+      return Number(spawned.x) === tile.x && Number(spawned.y) === tile.y && Number(spawned.value) === tile.value;
+    }
+
+    function buildTileModels(previous, next, options = {}) {
+      const sources = flattenBoard(previous);
+      const spawned = options.spawned || null;
+      const models = [];
+      for (let y = 0; y < 4; y++) {
+        for (let x = 0; x < 4; x++) {
+          const value = Number(next[y]?.[x] || 0);
+          if (!value) continue;
+          const tile = { x, y, value };
+          if (isSpawnedTile(tile, spawned)) {
+            models.push({ x, y, fromX: x, fromY: y, value, state: hasRenderedBoard ? 'spawn' : '' });
+            continue;
+          }
+          let source = takeSource(sources, tile, value);
+          let state = 'moved';
+
+          if (!source && value > 2) {
+            source = takeSource(sources, tile, value / 2);
+            if (source) {
+              takeSource(sources, tile, value / 2);
+              state = 'merged';
+            }
+          }
+
+          if (!source) {
+            source = { x, y, value };
+            state = hasRenderedBoard ? 'spawn' : '';
+          }
+
+          if (source.x === x && source.y === y && state === 'moved') state = '';
+          models.push({ x, y, fromX: source.x, fromY: source.y, value, state });
+        }
+      }
+      return models;
+    }
+
+    function flashDirection(direction) {
+      const boardEl = $('board');
+      if (!direction) return;
+      boardEl.classList.remove('move-left', 'move-right', 'move-up', 'move-down');
+      void boardEl.offsetWidth;
+      boardEl.classList.add(`move-${direction}`);
+      clearTimeout(flashDirection._timer);
+      flashDirection._timer = setTimeout(() => boardEl.classList.remove(`move-${direction}`), 320);
+    }
+
+    function renderBoard(next, options = {}) {
+      const nextBoard = Array.isArray(next) ? cloneBoard(next) : cloneBoard(board);
+      const previous = options.instant ? cloneBoard(nextBoard) : cloneBoard(board);
+      const shouldFlash = hasRenderedBoard && !options.instant;
+      const tiles = buildTileModels(previous, nextBoard, options).map(tile => (
+        `<div class="tile ${tileClass(tile.value)} ${tile.state}" style="--x:${tile.x};--y:${tile.y};--from-x:${tile.fromX};--from-y:${tile.fromY}"><span>${tile.value}</span></div>`
+      ));
+      board = nextBoard;
+      $('tiles').innerHTML = tiles.join('');
+      if (shouldFlash) flashDirection(lastMoveDirection);
+      hasRenderedBoard = true;
+      lastMoveDirection = null;
+    }
+
+    function updateClock() {
+      if (activeStartedAt !== null && !isTimerForeground()) {
+        pauseTimer({ sync: true });
+        return;
+      }
+      renderClock();
+    }
+
+    function renderClock() {
+      $('timer').textContent = fmt(currentElapsedMs());
+    }
+
+    function currentElapsedMs() {
+      return elapsedOffset + (activeStartedAt === null ? 0 : Date.now() - activeStartedAt);
+    }
+
+    function isTimerForeground() {
+      return document.visibilityState !== 'hidden' && (windowFocused || document.hasFocus?.() === true);
+    }
+
+    function syncElapsedToServer() {
+      if (!ws || ws.readyState !== WebSocket.OPEN || status !== 'active' || !recordable) return;
+      try {
+        ws.send(JSON.stringify({ type: 'sync_elapsed', client_elapsed_ms: currentElapsedMs() }));
+      } catch {}
+    }
+
+    function pauseTimer(options = {}) {
+      if (activeStartedAt !== null) {
+        elapsedOffset = currentElapsedMs();
+        activeStartedAt = null;
+      }
+      renderClock();
+      if (options.sync) syncElapsedToServer();
+    }
+
+    function resumeTimer() {
+      if (status !== 'active' || !isTimerForeground()) return;
+      if (activeStartedAt === null) activeStartedAt = Date.now();
+      if (!tickTimer) tickTimer = setInterval(updateClock, 250);
+      updateClock();
+    }
+
+    function stopTimer() {
+      pauseTimer();
+      clearInterval(tickTimer);
+      tickTimer = null;
+    }
+
+    function setServerElapsed(ms) {
+      elapsedOffset = Math.max(0, Number(ms || 0));
+      activeStartedAt = null;
+      if (status === 'active') resumeTimer();
+      else renderClock();
+    }
+
+    function setMetrics(msg) {
+      if (typeof msg.moves === 'number') $('moves').textContent = msg.moves;
+      if (typeof msg.final_score === 'number' && msg.final_score > 0) $('score').textContent = msg.final_score;
+      else if (typeof msg.merge_score === 'number') $('score').textContent = msg.merge_score;
+      if (typeof msg.elapsed_ms === 'number') {
+        setServerElapsed(msg.elapsed_ms);
+      }
+      recordable = !!msg.recordable;
+      $('record-state').textContent = recordable ? 'REC' : 'PLAY';
+      $('record-sub').textContent = recordable ? 'рекорд дня' : 'практика';
+      $('goal-meta').textContent = recordable ? 'зачёт' : 'игра';
+      if (status === 'active') resumeTimer();
+      else stopTimer();
+    }
+
+    function setGoal(goal) {
+      if (!goal) return;
+      $('goal-label').textContent = goal.label || `Цель ${goal.value}`;
+      $('goal-help').textContent = goal.help || '';
+      $('goal-target').textContent = goal.value ? String(goal.value) : '...';
+      $('goal-meta').textContent = recordable ? 'зачёт' : 'игра';
+    }
+
+    function showToast(text) {
+      const toast = $('toast');
+      toast.textContent = text;
+      toast.classList.add('visible');
+      clearTimeout(showToast._timer);
+      showToast._timer = setTimeout(() => toast.classList.remove('visible'), 1900);
+    }
+
+    function renderLeaderboard(rows = []) {
+      const box = $('leaderboard');
+      if (!Array.isArray(rows) || rows.length === 0) {
+        box.innerHTML = '';
+        return;
+      }
+      box.innerHTML = rows.map((row, idx) => {
+        const name = (row.display_name || `игрок ${String(row.user_id || '').slice(-4)}`).trim();
+        return `<div class="leaderboard-row"><strong>#${idx + 1}</strong><span>${esc(name)}</span><strong>${esc(row.final_score || 0)}</strong></div>`;
+      }).join('');
+    }
+
+    function showOverlay(msg) {
+      const lost = msg.status === 'lost';
+      practiceStartStatus = lost ? 'lost' : 'won';
+      $('overlay-title').textContent = lost ? 'Ходов больше нет' : 'Цель собрана';
+      $('overlay-score').textContent = msg.final_score || 0;
+      $('overlay-moves').textContent = msg.moves || 0;
+      $('overlay-time').textContent = fmt(msg.elapsed_ms || 0);
+      $('practice-btn').textContent = lost ? 'Начать заново' : 'Играть дальше';
+      renderLeaderboard(msg.leaderboard || []);
+      $('overlay').classList.add('visible');
+      status = msg.status || 'won';
+      setMetrics({ ...msg, recordable: false });
+    }
+
+    function wsUrl() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      return `${proto}://${location.host}/webapp/daily2048/ws?initData=${encodeURIComponent(INIT_DATA)}&tz=${encodeURIComponent(TIMEZONE)}`;
+    }
+
+    function connect() {
+      ws = new WebSocket(wsUrl());
+      ws.onopen = () => showToast('Готово');
+      ws.onmessage = ev => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        handleMessage(msg);
+      };
+      ws.onclose = ev => {
+        if (ev.code === 4003) showToast('Ошибка авторизации');
+        else if (status === 'active') showToast('Соединение закрыто');
+      };
+    }
+
+    function handleMessage(msg) {
+      if (msg.event === 'game_state') {
+        status = msg.status || 'active';
+        if (msg.start_board) startBoard = cloneBoard(msg.start_board);
+        setGoal(msg.goal);
+        renderBoard(msg.board);
+        setMetrics(msg);
+        return;
+      }
+      if (msg.event === 'move_result') {
+        clearPendingMove();
+        if (msg.status) status = msg.status;
+        if (msg.start_board) startBoard = cloneBoard(msg.start_board);
+        setGoal(msg.goal);
+        renderBoard(msg.board, { spawned: msg.spawned });
+        setMetrics(msg);
+        if (msg.daily2048_completed || msg.game_over) showOverlay(msg);
+        return;
+      }
+      if (msg.event === 'daily2048_completed') {
+        clearPendingMove();
+        if (msg.start_board) startBoard = cloneBoard(msg.start_board);
+        renderBoard(msg.board);
+        showOverlay(msg);
+        return;
+      }
+      if (msg.event === 'timer_sync') {
+        if (typeof msg.elapsed_ms === 'number') setServerElapsed(msg.elapsed_ms);
+        return;
+      }
+      if (msg.event === 'error') {
+        if (pendingMoveSnapshot) renderBoard(pendingMoveSnapshot);
+        clearPendingMove();
+        showToast(msg.message || 'Ошибка');
+      }
+    }
+
+    function clearPendingMove() {
+      pendingMove = false;
+      pendingMoveSnapshot = null;
+      clearTimeout(pendingMoveTimer);
+      pendingMoveTimer = null;
+    }
+
+    function sendMove(direction) {
+      if (!ws || ws.readyState !== WebSocket.OPEN || pendingMove || status !== 'active') return;
+      const beforeBoard = cloneBoard(board);
+      const outcome = applyMoveClient(beforeBoard, direction);
+      if (!outcome.moved) return;
+      pendingMoveSnapshot = beforeBoard;
+      pendingMove = true;
+      lastMoveDirection = direction;
+      tg?.HapticFeedback?.impactOccurred('light');
+      renderBoard(outcome.board, { optimistic: true });
+      const pendingId = `${CLIENT_SESSION_ID}:m${++pendingCounter}`;
+      ws.send(JSON.stringify({
+        type: 'move',
+        direction,
+        pending_id: pendingId,
+        client_elapsed_ms: currentElapsedMs(),
+        client_board_before: pendingMoveSnapshot,
+        client_board_after: outcome.board
+      }));
+      clearTimeout(pendingMoveTimer);
+      pendingMoveTimer = setTimeout(() => {
+        pendingMoveTimer = null;
+        showToast('Ждём сервер');
+      }, 5000);
+    }
+
+    $('theme-btn').addEventListener('click', () => {
+      applyTheme(nextThemeId());
+      tg?.HapticFeedback?.selectionChanged();
+    });
+
+    document.querySelectorAll('[data-dir]').forEach(btn => {
+      btn.addEventListener('click', () => sendMove(btn.dataset.dir));
+    });
+
+    document.addEventListener('keydown', ev => {
+      const map = {
+        ArrowLeft: 'left', a: 'left', A: 'left',
+        ArrowRight: 'right', d: 'right', D: 'right',
+        ArrowUp: 'up', w: 'up', W: 'up',
+        ArrowDown: 'down', s: 'down', S: 'down'
+      };
+      const dir = map[ev.key];
+      if (dir) {
+        ev.preventDefault();
+        sendMove(dir);
+      }
+    });
+
+    document.addEventListener('touchmove', ev => {
+      ev.preventDefault();
+    }, { passive: false });
+
+    const boardInput = $('board');
+    let activePointerId = null;
+    let pointerStart = null;
+    let pointerLast = null;
+    let lockedPointerDirection = null;
+
+    function directionFromDelta(dx, dy) {
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+      if (Math.max(absX, absY) < 30) return null;
+      if (absX >= absY * 1.12) return dx > 0 ? 'right' : 'left';
+      if (absY >= absX * 1.12) return dy > 0 ? 'down' : 'up';
+      return null;
+    }
+
+    function resetPointer() {
+      activePointerId = null;
+      pointerStart = null;
+      pointerLast = null;
+      lockedPointerDirection = null;
+    }
+
+    boardInput.addEventListener('pointerdown', ev => {
+      if (activePointerId !== null || (ev.pointerType === 'mouse' && ev.button !== 0)) return;
+      windowFocused = true;
+      activePointerId = ev.pointerId;
+      pointerStart = { x: ev.clientX, y: ev.clientY };
+      pointerLast = pointerStart;
+      boardInput.setPointerCapture?.(ev.pointerId);
+      ev.preventDefault();
+    }, { passive: false });
+
+    boardInput.addEventListener('pointermove', ev => {
+      if (ev.pointerId !== activePointerId) return;
+      pointerLast = { x: ev.clientX, y: ev.clientY };
+      if (!lockedPointerDirection && pointerStart) {
+        lockedPointerDirection = directionFromDelta(pointerLast.x - pointerStart.x, pointerLast.y - pointerStart.y);
+      }
+      ev.preventDefault();
+    }, { passive: false });
+
+    boardInput.addEventListener('pointerup', ev => {
+      if (ev.pointerId !== activePointerId || !pointerStart) return;
+      pointerLast = { x: ev.clientX, y: ev.clientY };
+      const dx = pointerLast.x - pointerStart.x;
+      const dy = pointerLast.y - pointerStart.y;
+      const direction = lockedPointerDirection || directionFromDelta(dx, dy);
+      resetPointer();
+      if (direction) sendMove(direction);
+      ev.preventDefault();
+    }, { passive: false });
+
+    boardInput.addEventListener('pointercancel', resetPointer);
+    boardInput.addEventListener('lostpointercapture', resetPointer);
+
+    $('practice-btn').addEventListener('click', () => {
+      $('overlay').classList.remove('visible');
+      status = 'active';
+      recordable = false;
+      if (practiceStartStatus === 'lost') {
+        clearPendingMove();
+        renderBoard(startBoard, { instant: true });
+        setMetrics({ moves: 0, merge_score: 0, final_score: 0, elapsed_ms: 0, recordable: false });
+      }
+      $('record-state').textContent = 'PLAY';
+      $('record-sub').textContent = 'практика';
+      $('goal-meta').textContent = 'игра';
+      resumeTimer();
+      showToast(practiceStartStatus === 'lost' ? 'Тренировка с начала' : 'Рекорд уже зафиксирован');
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') pauseTimer({ sync: true });
+      else resumeTimer();
+    });
+    window.addEventListener('blur', () => {
+      windowFocused = false;
+      pauseTimer({ sync: true });
+    });
+    window.addEventListener('focus', () => {
+      windowFocused = true;
+      disableTelegramVerticalSwipes();
+      resumeTimer();
+    });
+    window.addEventListener('pagehide', () => pauseTimer({ sync: true }));
+    window.addEventListener('pageshow', () => {
+      windowFocused = true;
+      disableTelegramVerticalSwipes();
+      resumeTimer();
+    });
+    try {
+      tg?.onEvent?.('deactivated', () => {
+        windowFocused = false;
+        pauseTimer({ sync: true });
+      });
+      tg?.onEvent?.('activated', () => {
+        windowFocused = true;
+        disableTelegramVerticalSwipes();
+        resumeTimer();
+      });
+    } catch {}
+
+    initTheme();
+    connect();
+  </script>
+</body>
+</html>

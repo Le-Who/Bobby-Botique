@@ -15,6 +15,7 @@ Scheduling:
 - Runs once per hour, checks which subscriptions need delivery.
 """
 
+import asyncio
 import logging
 import time
 from datetime import UTC, datetime
@@ -175,7 +176,7 @@ async def _get_user_topics(user_id: int) -> list[str]:
         result = await db.db_query(
             "SELECT content FROM long_term_memory "
             "WHERE user_id = $1 AND source_type = 'consolidated' "
-            "ORDER BY updated_at DESC LIMIT 5",
+            "ORDER BY created_at DESC LIMIT 5",
             (user_id,),
         )
         # Fallback to raw user intents
@@ -183,7 +184,7 @@ async def _get_user_topics(user_id: int) -> list[str]:
             result = await db.db_query(
                 "SELECT content FROM long_term_memory "
                 "WHERE user_id = $1 AND source_type = 'user_intent' "
-                "ORDER BY updated_at DESC LIMIT 10",
+                "ORDER BY created_at DESC LIMIT 10",
                 (user_id,),
             )
         if not result:
@@ -249,7 +250,7 @@ async def _generate_brief_summary(topics: list[str], articles: list[dict[str, st
         from app.providers.gemini import get_cached_genai_client
         from app.repos.keys import get_available_gemini_key
 
-        key_data = await get_available_gemini_key(model_name="gemini-3.1-flash-lite-preview")
+        key_data = await get_available_gemini_key(model_name="gemini-3.1-flash-lite")
         if not key_data:
             logger.warning("No Gemini API key available for brief generation.")
             return {}
@@ -273,7 +274,7 @@ async def _generate_brief_summary(topics: list[str], articles: list[dict[str, st
         )
 
         response = await client.aio.models.generate_content(
-            model="gemini-3.1-flash-lite-preview",
+            model="gemini-3.1-flash-lite",
             contents=prompt,
             config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
         )
@@ -372,7 +373,7 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if success:
         await update.message.reply_text(
             t("brief.subscribed", type=sub_type, hour=str(preferred_hour)),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
     else:
         await update.message.reply_text(t("brief.subscribe_error"))
@@ -392,7 +393,7 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if success:
         await update.message.reply_text(
             t("brief.unsubscribed", type=sub_type),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
     else:
         await update.message.reply_text(t("brief.unsubscribe_error"))
@@ -402,7 +403,13 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def check_and_send_briefs(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Hourly job: check for due subscriptions and send briefs."""
+    """Hourly job: check for due subscriptions and send briefs.
+
+    ⚡ Bolt: previously iterated sequentially — each LLM+Tavily call blocked the
+    next user. Now all deliveries run concurrently, bounded by a semaphore of 10
+    to avoid hammering provider APIs. Wall-clock time drops from O(n * t_brief)
+    to roughly O(t_brief) regardless of subscriber count.
+    """
     current_hour = datetime.now(tz=UTC).hour
 
     due_subs = await get_due_subscriptions(current_hour)
@@ -411,8 +418,14 @@ async def check_and_send_briefs(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     logger.info("Found %d due subscriptions for hour %d UTC", len(due_subs), current_hour)
 
-    for sub in due_subs:
-        try:
-            await generate_and_send_brief(sub["user_id"], context.bot)
-        except Exception as e:
-            logger.error("Failed to process brief for user %s: %s", sub["user_id"], e)
+    # Concurrency cap: 10 simultaneous LLM+search chains prevent provider overload.
+    sem = asyncio.Semaphore(10)
+
+    async def _send_one(sub: dict) -> None:
+        async with sem:
+            try:
+                await generate_and_send_brief(sub["user_id"], context.bot)
+            except Exception as e:
+                logger.error("Failed to process brief for user %s: %s", sub["user_id"], e)
+
+    await asyncio.gather(*[_send_one(sub) for sub in due_subs])

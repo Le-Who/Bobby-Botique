@@ -2,6 +2,7 @@
 AI Chat handler — regular conversational chat with context management.
 """
 
+import asyncio
 import logging
 import time
 from datetime import datetime
@@ -31,6 +32,17 @@ from app.utils.ux_improvements import (
 )
 
 # Removed _background_tasks set, using centralized TaskManager
+
+_DEFAULT_CONTEXT_BUDGET = 128_000
+_DEFAULT_MODEL_CONTEXT_BUDGETS = {
+    "flash-lite": 32_000,
+    "flash": _DEFAULT_CONTEXT_BUDGET,
+}
+
+
+def _setting(name: str, fallback: Any) -> Any:
+    value = getattr(settings, name, None) if settings is not None else None
+    return fallback if value is None else value
 
 
 def _store_memory_in_background(user_id: int, user_message: str) -> None:
@@ -68,31 +80,35 @@ def _store_memory_in_background(user_id: int, user_message: str) -> None:
                 source_type="user_intent",
             )
 
-            # ── Real-time graph extraction (non-blocking) ─────────────
-            if memory_id:
+            # ── Real-time graph extraction & Consolidation (Concurrent) ───────
+            async def _run_graph():
+                if memory_id:
+                    try:
+                        from app.repos.memory_extraction import extract_and_store_graph
+
+                        await extract_and_store_graph(
+                            user_id,
+                            memory_content,
+                            _api_key,
+                            source_memory_id=memory_id,
+                        )
+                    except Exception as graph_err:
+                        logging.debug("Real-time graph extraction skipped: %s", graph_err)
+
+            async def _run_consolidation():
                 try:
-                    from app.repos.memory_extraction import extract_and_store_graph
-
-                    await extract_and_store_graph(
-                        user_id,
-                        memory_content,
-                        _api_key,
-                        source_memory_id=memory_id,
+                    from app.repos.memory_consolidation import (
+                        maybe_consolidate,
+                        should_check_consolidation,
                     )
-                except Exception as graph_err:
-                    logging.debug("Real-time graph extraction skipped: %s", graph_err)
 
-            try:
-                from app.repos.memory_consolidation import (
-                    consolidate_memories,
-                    should_check_consolidation,
-                    should_consolidate,
-                )
+                    # ⚡ maybe_consolidate fetches raw_memories once and reuses them
+                    if should_check_consolidation(user_id):
+                        await maybe_consolidate(user_id, _api_key)
+                except Exception as cons_err:
+                    logging.debug("Consolidation check skipped: %s", cons_err)
 
-                if should_check_consolidation(user_id) and await should_consolidate(user_id):
-                    await consolidate_memories(user_id, _api_key)
-            except Exception as cons_err:
-                logging.debug("Consolidation check skipped: %s", cons_err)
+            await asyncio.gather(_run_graph(), _run_consolidation())
 
         from app.utils.background_tasks import submit_retryable
 
@@ -113,9 +129,20 @@ async def _handle_regular_chat(
 ):
     # Используем переопределение models, if указано, иначе model from chat_state
     model_for_this_request = model_override or chat_state.model
+
+    # ── Lyria audio intercept ─────────────────────────────────────────────
+    # When user has selected a Lyria model, generate music instead of chat.
+    from app.providers.freetheai_audio import is_lyria_model
+
+    if is_lyria_model(model_for_this_request):
+        await _handle_lyria_audio(
+            placeholder_message, user_id, user_message, model_for_this_request
+        )
+        return
+
     key_data, model_used, resolution = await _resolve_ai_request(model_for_this_request)
 
-    if resolution == "all_exhausted":
+    if resolution in ("all_exhausted", "decryption_failed"):
         result = classify_resolution(resolution, model_for_this_request)
         try:
             await placeholder_message.edit_text(result.user_message or "")
@@ -179,9 +206,10 @@ async def _handle_regular_chat(
         system_instruction += fwd_override
 
     # Resolve model-specific token budget for context assembly
-    context_budget = settings.DEFAULT_CONTEXT_BUDGET
+    context_budget = _setting("DEFAULT_CONTEXT_BUDGET", _DEFAULT_CONTEXT_BUDGET)
     model_lower = (model_used or "").lower()
-    for pattern, budget in settings.MODEL_CONTEXT_BUDGETS.items():
+    model_context_budgets = _setting("MODEL_CONTEXT_BUDGETS", _DEFAULT_MODEL_CONTEXT_BUDGETS)
+    for pattern, budget in model_context_budgets.items():
         if pattern in model_lower:
             context_budget = budget
             break
@@ -199,26 +227,42 @@ async def _handle_regular_chat(
     chat_state.history = assembled.history
     chat_state.context_summary = assembled.summary
 
-    # ── Inject tiered memory context — MemPalace L0-L2 ─────────────────────
+    # ── Inject tiered memory context & Update UI Stage (Concurrent) ───────
     _memories_injected = 0
     _graph_triples_count = 0
-    if chat_state.ltm_enabled and key_data:
-        try:
-            from app.context.compression import inject_memory_layers
+    
+    async def _do_inject():
+        if chat_state.ltm_enabled and key_data:
+            try:
+                from app.context.compression import inject_memory_layers
 
-            system_instruction, _injection_stats = await inject_memory_layers(
-                user_id=user_id,
-                query=user_message,
-                api_key=key_data["api_key"],
-                system_instruction=system_instruction,
-                role_id=getattr(chat_state, "system_prompt_id", None),
-                limit=5,
-                min_similarity=0.60,
-            )
-            _memories_injected = _injection_stats.get("l2_memories", 0)
-            _graph_triples_count = _injection_stats.get("l2_graph_triples", 0)
-        except Exception as mem_err:
-            logging.warning("Memory recall failed for user %s: %s", user_id, mem_err)
+                return await inject_memory_layers(
+                    user_id=user_id,
+                    query=user_message,
+                    api_key=key_data["api_key"],
+                    system_instruction=system_instruction,
+                    role_id=getattr(chat_state, "system_prompt_id", None),
+                    limit=5,
+                    min_similarity=0.60,
+                )
+            except Exception as mem_err:
+                logging.warning("Memory recall failed for user %s: %s", user_id, mem_err)
+        return system_instruction, {}
+        
+    async def _do_stage_update():
+        try:
+            await update_stage(placeholder_message, STAGES_CHAT, 0)
+            return placeholder_message
+        except Exception as edit_error:
+            logging.error("Could not edit placeholder message: %s", edit_error)
+            _lang = detect_language(user_message)
+            return await placeholder_message.reply_text(t("chat.model_thinking", _lang, model=model_used))
+
+    (system_instruction_new, _injection_stats), new_placeholder = await asyncio.gather(_do_inject(), _do_stage_update())
+    system_instruction = system_instruction_new
+    placeholder_message = new_placeholder
+    _memories_injected = _injection_stats.get("l2_memories", 0)
+    _graph_triples_count = _injection_stats.get("l2_graph_triples", 0)
 
     if assembled.was_truncated:
         logging.info(
@@ -256,13 +300,6 @@ async def _handle_regular_chat(
                 callback=_store_llm_summary,
             )
 
-    try:
-        await update_stage(placeholder_message, STAGES_CHAT, 0)
-    except Exception as edit_error:
-        logging.error("Could not edit placeholder message: %s", edit_error)
-        _lang = detect_language(user_message)
-        placeholder_message = await placeholder_message.reply_text(t("chat.model_thinking", _lang, model=model_used))
-
     # ── Unified Streaming ────────────────────────────────────────────
     response_text = None
     new_token_count = 0
@@ -285,13 +322,14 @@ async def _handle_regular_chat(
 
     # ── Resolve thinking level (adaptive or user-configured) ────────────
     effective_thinking_level = chat_state.thinking_level
-    if settings.ADAPTIVE_THINKING_ENABLED:
+    if _setting("ADAPTIVE_THINKING_ENABLED", True):
         from app.thinking_classifier import resolve_thinking_level
 
         effective_thinking_level = resolve_thinking_level(
             user_level=chat_state.thinking_level,
             message=user_message or "",
             history=chat_state.history,
+            model=model_used,
         )
 
     from app.streaming import stream_and_display
@@ -343,11 +381,13 @@ async def _handle_regular_chat(
     # ── Metrics: record every chat LLM call ────────────────────────────────
 
     from app.metrics import metrics_collector as _mc
-    from app.providers.base import is_opencode_model, is_openrouter_model
+    from app.providers.base import is_freetheai_model, is_opencode_model, is_openrouter_model
 
     _chat_provider = (
         "opencode_chat"
         if is_opencode_model(model_used or "")
+        else "freetheai_chat"
+        if is_freetheai_model(model_used or "")
         else "openrouter_chat"
         if is_openrouter_model(model_used or "")
         else "gemini_chat"
@@ -582,3 +622,148 @@ async def _handle_regular_chat(
             )
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
+
+
+async def _handle_lyria_audio(
+    placeholder_message: Message,
+    user_id: int,
+    user_message: str,
+    model: str,
+) -> None:
+    """Generate music via Lyria and send as Telegram audio.
+
+    Flow:
+        1. Edit placeholder → "🎵 Генерирую музыку..."
+        2. Call FreeTheAIAudioProvider.generate()
+        3. On success: reply with audio file + caption
+        4. On failure: show error + retry button
+    """
+    from io import BytesIO
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from app.providers.freetheai_audio import LYRIA_MODEL_LABELS, get_lyria_provider
+
+    model_label = LYRIA_MODEL_LABELS.get(model, model)
+
+    try:
+        await placeholder_message.edit_text(f"🎵 Генерирую музыку ({model_label})... Это может занять до 5 минут.")
+    except Exception:
+        pass
+
+    # Typing heartbeat
+    import asyncio
+
+    from telegram.constants import ChatAction
+
+    bot = placeholder_message.get_bot()
+    chat_id = placeholder_message.chat_id
+    stop_event = asyncio.Event()
+
+    async def _heartbeat() -> None:
+        while not stop_event.is_set():
+            try:
+                await bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(asyncio.shield(stop_event.wait()), timeout=4.5)
+            except TimeoutError:
+                pass
+
+    heartbeat_task = asyncio.create_task(_heartbeat())
+
+    try:
+        provider = get_lyria_provider()
+        result = await provider.generate(prompt=user_message, model=model)
+    finally:
+        stop_event.set()
+        heartbeat_task.cancel()
+
+    if result.success and result.audio_bytes:
+        # Determine file extension from mime type
+        ext_map = {
+            "audio/mpeg": ".mp3",
+            "audio/wav": ".wav",
+            "audio/ogg": ".ogg",
+            "audio/opus": ".ogg",
+        }
+        ext = ext_map.get(result.mime_type, ".mp3")
+        filename = f"lyria_music{ext}"
+
+        # Prepare audio as file-like object
+        audio_io = BytesIO(result.audio_bytes)
+        audio_io.name = filename
+
+        # Build caption
+        short_prompt = user_message[:200].strip()
+        if len(user_message) > 200:
+            short_prompt += "..."
+        caption = f"🎵 *{short_prompt}*\n_{model_label}_"
+        if result.text_content:
+            # Include any text (e.g. lyrics) in caption, truncated
+            text_preview = result.text_content[:300].strip()
+            if len(result.text_content) > 300:
+                text_preview += "..."
+            caption += f"\n\n{text_preview}"
+
+        # Escape markdown characters
+        for ch in ("*", "_", "`", "["):
+            short_prompt = short_prompt.replace(ch, f"\\{ch}")
+
+        try:
+            await placeholder_message.reply_audio(
+                audio=audio_io,
+                title=f"AI Music: {user_message[:40]}",
+                performer="Lyria AI",
+                caption=caption,
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Новая генерация", callback_data="retry_last")],
+                ]),
+            )
+            # Delete the placeholder
+            try:
+                await placeholder_message.delete()
+            except Exception:
+                pass
+            logging.info("Lyria audio sent: user=%s model=%s size=%.1fKB", user_id, model, len(result.audio_bytes) / 1024)
+        except Exception as send_err:
+            logging.error("Failed to send Lyria audio: %s", send_err)
+            try:
+                await placeholder_message.edit_text("❌ Аудио создано, но не удалось отправить. Попробуйте снова.")
+            except Exception:
+                pass
+
+    elif result.text_content and not result.audio_bytes:
+        # Model returned text but no audio — show the text
+        text = result.text_content[:2000]
+        try:
+            await placeholder_message.edit_text(
+                f"⚠️ Модель вернула текст вместо аудио:\n\n{text}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Попробовать снова", callback_data="retry_last")],
+                ]),
+            )
+        except Exception:
+            pass
+    else:
+        # Error
+        err = result.error_message or "unknown"
+        error_texts = {
+            "no_keys": "🔑 Нет доступных ключей FreeTheAI для генерации музыки.",
+            "rate_limited": "⏳ Превышен лимит запросов. Подождите минуту.",
+            "auth_error": "🔑 Ошибка авторизации FreeTheAI.",
+            "timeout": "⏰ Время ожидания истекло. Генерация музыки может занимать до 5 минут.",
+            "no_audio_in_response": "⚠️ Модель не вернула аудиоданные. Попробуйте другой запрос.",
+        }
+        text = error_texts.get(err, f"❌ Не удалось создать музыку: `{err}`")
+        try:
+            await placeholder_message.edit_text(
+                text,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Попробовать снова", callback_data="retry_last")],
+                ]),
+            )
+        except Exception as edit_err:
+            logging.error("Could not edit Lyria error message: %s", edit_err)

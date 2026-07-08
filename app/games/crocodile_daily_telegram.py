@@ -44,7 +44,7 @@ def _daily_art_caption(puzzle: repo.DailyPuzzle) -> str:
 
 
 def _rendered_content_for_message_type(text: str, message_type: str) -> str:
-    return text[:1024] if message_type == "photo" else text
+    return text[:1024] if message_type in ("photo", "album") else text
 
 
 def _preferred_completion_focus(results: dict[str, repo.DailyResult]) -> str:
@@ -64,7 +64,9 @@ async def _resolve_completion_focus(user_id: int, puzzle_date: date) -> str:
     return _preferred_completion_focus(results)
 
 
-async def _load_completion_puzzle_with_art(bot, user_id: int, puzzle_date: date, *, difficulty: str) -> repo.DailyPuzzle | None:
+async def _load_completion_puzzle_with_art(
+    bot, user_id: int, puzzle_date: date, *, difficulty: str
+) -> repo.DailyPuzzle | None:
     difficulty = repo.normalize_daily_difficulty(difficulty)
     puzzle = await repo.get_puzzle(puzzle_date, difficulty=difficulty)
     if puzzle and puzzle.image_file_id:
@@ -171,7 +173,8 @@ async def render_daily_result_body(
     attempts_label = (
         f"{int(focus_mode.get('attempts') or 0)}/{repo.DAILY_MAX_ATTEMPTS}"
         if focus_mode.get("status") == "won"
-        else "X/6" if focus_mode.get("status") == "lost"
+        else "X/6"
+        if focus_mode.get("status") == "lost"
         else f"{int(focus_mode.get('attempts') or 0)}/{repo.DAILY_MAX_ATTEMPTS}"
     )
     lines = [
@@ -203,9 +206,7 @@ async def render_daily_result_body(
             mode_suffix = "X/6"
         else:
             mode_suffix = "ещё доступен"
-        lines.append(
-            f"{mode_icon} {html.escape(repo.daily_difficulty_label(difficulty))} — {html.escape(mode_suffix)}"
-        )
+        lines.append(f"{mode_icon} {html.escape(repo.daily_difficulty_label(difficulty))} — {html.escape(mode_suffix)}")
 
     share_lines = [
         f"<code>{html.escape(_share_line(result))}</code>"
@@ -234,7 +235,9 @@ async def render_daily_result_body(
     return "\n".join(lines), keyboard
 
 
-async def send_daily_result_message(bot, user_id: int, puzzle_date: date, *, focus_difficulty: str | None = None) -> None:
+async def send_daily_result_message(
+    bot, user_id: int, puzzle_date: date, *, focus_difficulty: str | None = None
+) -> None:
     text, keyboard = await render_daily_result_body(user_id, puzzle_date, focus_difficulty=focus_difficulty)
     difficulty = repo.normalize_daily_difficulty(focus_difficulty or "easy")
     puzzle = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty=difficulty)
@@ -291,8 +294,8 @@ async def _update_result_message(
     message_type = item.get("message_type", "text")
     content = _rendered_content_for_message_type(text, message_type)
     try:
-        if message_type == "photo":
-            if puzzle and puzzle.image_file_id:
+        if message_type in ("photo", "album"):
+            if message_type == "photo" and puzzle and puzzle.image_file_id:
                 await bot.edit_message_media(
                     chat_id=item["chat_id"],
                     message_id=item["message_id"],
@@ -309,7 +312,7 @@ async def _update_result_message(
                     message_id=item["message_id"],
                     caption=content,
                     parse_mode=ParseMode.HTML,
-                    reply_markup=keyboard,
+                    reply_markup=keyboard if message_type != "album" else None,
                 )
         else:
             await bot.edit_message_text(
@@ -369,7 +372,57 @@ async def send_daily_completion_bundle(
 
     text, keyboard = await render_daily_result_body(user_id, puzzle_date, focus_difficulty=focus_difficulty)
     existing_result = await repo.get_active_result_message_for_user(user_id, puzzle_date)
-    if existing_result:
+    
+    # Check if both games are finished to send an album
+    all_results = await repo.get_results_for_user(user_id, puzzle_date)
+    both_finished = all(
+        d in all_results and all_results[d].status in ("won", "lost") 
+        for d in repo.DAILY_DIFFICULTIES
+    )
+    
+    easy_puzzle = None
+    hard_puzzle = None
+    if both_finished:
+        easy_puzzle = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty="easy")
+        hard_puzzle = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty="hard")
+
+    if (
+        both_finished 
+        and easy_puzzle 
+        and easy_puzzle.image_file_id 
+        and hard_puzzle 
+        and hard_puzzle.image_file_id
+        and (not existing_result or existing_result.get("message_type") != "album")
+    ):
+            if existing_result:
+                try:
+                    await bot.delete_message(chat_id=existing_result["chat_id"], message_id=existing_result["message_id"])
+                except Exception as exc:
+                    logger.debug("daily: delete old result message failed user=%s: %s", user_id, exc)
+                await repo.deactivate_result_message(int(existing_result["id"]))
+            
+            rendered = _rendered_content_for_message_type(text, "album")
+            try:
+                media_group = [
+                    InputMediaPhoto(media=easy_puzzle.image_file_id, caption=rendered, parse_mode=ParseMode.HTML),
+                    InputMediaPhoto(media=hard_puzzle.image_file_id)
+                ]
+                msgs = await bot.send_media_group(chat_id=user_id, media=media_group)
+                if msgs:
+                    first_msg = msgs[0]
+                    await repo.register_result_message(
+                        user_id=user_id,
+                        puzzle_date=puzzle_date,
+                        chat_id=first_msg.chat_id,
+                        message_id=first_msg.message_id,
+                        rendered_hash_value=repo.render_hash(rendered),
+                        message_type="album",
+                    )
+                    return
+            except Exception as exc:
+                logger.warning("daily: send_media_group failed user=%s: %s", user_id, exc)
+
+    if existing_result and (not both_finished or existing_result.get("message_type") == "album"):
         await repo.deactivate_other_result_messages(user_id, puzzle_date, keep_id=int(existing_result["id"]))
         puzzle = None
         if existing_result.get("message_type") == "photo":
@@ -443,7 +496,9 @@ async def _flush_daily_result_refresh(puzzle_date: date) -> None:
                     continue
                 puzzle = None
                 if msg_type == "photo":
-                    puzzle = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty=focus_difficulty)
+                    puzzle = await _load_completion_puzzle_with_art(
+                        bot, user_id, puzzle_date, difficulty=focus_difficulty
+                    )
                 updated = await _update_result_message(bot, item, text, keyboard, puzzle=puzzle)
                 if updated:
                     await repo.deactivate_other_result_messages(user_id, puzzle_date, keep_id=int(item["id"]))

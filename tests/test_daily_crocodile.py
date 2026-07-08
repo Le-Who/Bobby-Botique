@@ -4,6 +4,7 @@ import asyncio
 import json
 import urllib.parse
 from datetime import UTC, date, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -15,6 +16,8 @@ from app.handlers import cmd_admin, daily_crocodile
 from app.repos import crocodile_daily as repo
 from app.web import quart_app
 from tests.factories import make_valid_init_data
+
+ADMIN_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app" / "templates" / "admin_daily.html"
 
 
 def test_daily_score_formula() -> None:
@@ -128,9 +131,17 @@ async def test_send_daily_prompt_uses_placeholder_photo_and_tracks_prompt_messag
     )
 
     with (
-        patch("app.handlers.daily_crocodile._get_placeholder_file_id", new_callable=AsyncMock, return_value="placeholder-file"),
+        patch(
+            "app.handlers.daily_crocodile._get_placeholder_file_id",
+            new_callable=AsyncMock,
+            return_value="placeholder-file",
+        ),
         patch("app.handlers.daily_crocodile.repo.register_prompt_message", new_callable=AsyncMock) as register_mock,
-        patch("app.handlers.daily_crocodile.repo.get_preference", new_callable=AsyncMock, return_value={"timezone": "Europe/Kyiv"}),
+        patch(
+            "app.handlers.daily_crocodile.repo.get_preference",
+            new_callable=AsyncMock,
+            return_value={"timezone": "Europe/Kyiv"},
+        ),
         patch("app.handlers.daily_crocodile.repo.mark_daily_sent", new_callable=AsyncMock) as mark_mock,
     ):
         sent_as_photo = await daily_crocodile.send_daily_prompt(bot, 77, date(2026, 4, 23))
@@ -156,9 +167,17 @@ async def test_send_daily_prompt_can_skip_prompt_tracking() -> None:
     )
 
     with (
-        patch("app.handlers.daily_crocodile._get_placeholder_file_id", new_callable=AsyncMock, return_value="placeholder-file"),
+        patch(
+            "app.handlers.daily_crocodile._get_placeholder_file_id",
+            new_callable=AsyncMock,
+            return_value="placeholder-file",
+        ),
         patch("app.handlers.daily_crocodile.repo.register_prompt_message", new_callable=AsyncMock) as register_mock,
-        patch("app.handlers.daily_crocodile.repo.get_preference", new_callable=AsyncMock, return_value={"timezone": "Europe/Kyiv"}),
+        patch(
+            "app.handlers.daily_crocodile.repo.get_preference",
+            new_callable=AsyncMock,
+            return_value={"timezone": "Europe/Kyiv"},
+        ),
         patch("app.handlers.daily_crocodile.repo.mark_daily_sent", new_callable=AsyncMock),
     ):
         sent_as_photo = await daily_crocodile.send_daily_prompt(
@@ -183,7 +202,11 @@ async def test_dailycroc_command_reuses_placeholder_sender_for_manual_entry() ->
 
     with (
         patch("app.handlers.daily_crocodile.repo.record_player_activity", new_callable=AsyncMock) as activity_mock,
-        patch("app.handlers.daily_crocodile.repo.get_preference", new_callable=AsyncMock, return_value={"is_subscribed": False}),
+        patch(
+            "app.handlers.daily_crocodile.repo.get_preference",
+            new_callable=AsyncMock,
+            return_value={"is_subscribed": False},
+        ),
         patch("app.handlers.daily_crocodile.repo.today_puzzle_date", return_value=date(2026, 4, 23)),
         patch("app.handlers.daily_crocodile._send_daily_entry_message", new_callable=AsyncMock) as sender_mock,
         patch("app.handlers.daily_crocodile.repo.mark_daily_sent", new_callable=AsyncMock) as mark_mock,
@@ -235,22 +258,105 @@ async def test_build_dailycroc_status_snapshot_shows_hint_and_art_breakdown() ->
         return values.get(key, default)
 
     with (
-        patch("app.handlers.cmd_admin.daily_croc_repo.get_delivery_status", new_callable=AsyncMock, return_value={"total_subscribed": 5, "sent_today": 2, "pending_today": 3, "finished": 4, "won": 4, "active": 0}),
-        patch("app.handlers.cmd_admin.daily_croc_repo.get_puzzles_for_date", new_callable=AsyncMock, return_value={"easy": easy, "hard": hard}),
+        patch(
+            "app.handlers.cmd_admin.daily_croc_repo.get_delivery_status",
+            new_callable=AsyncMock,
+            return_value={
+                "total_subscribed": 5,
+                "sent_today": 2,
+                "pending_today": 3,
+                "finished": 4,
+                "won": 4,
+                "active": 0,
+            },
+        ),
+        patch(
+            "app.handlers.cmd_admin.daily_croc_repo.get_puzzles_for_date",
+            new_callable=AsyncMock,
+            return_value={"easy": easy, "hard": hard},
+        ),
         patch("app.handlers.cmd_admin.get_global_setting", new_callable=AsyncMock, side_effect=fake_get_global_setting),
-        patch("app.games.crocodile_flags.get_crocodile_runtime_switches", new_callable=AsyncMock, return_value={"live_audio_enabled": True, "crocodile_hint_prewarm_enabled": True, "daily_dual_track_enabled": True}),
-        patch("app.games.hinting.get_hint_prewarm_health", new_callable=AsyncMock, return_value={"queue_depth": 0, "worker_running": False}),
-        patch("app.games.crocodile_runtime.get_runtime_health_snapshot", return_value={"history_buffers": 0, "pending_result_buckets": 0}),
+        patch(
+            "app.games.crocodile_flags.get_crocodile_runtime_switches",
+            new_callable=AsyncMock,
+            return_value={
+                "live_audio_enabled": True,
+                "crocodile_hint_prewarm_enabled": True,
+                "daily_dual_track_enabled": True,
+            },
+        ),
+        patch(
+            "app.games.hinting.get_hint_prewarm_health",
+            new_callable=AsyncMock,
+            return_value={"queue_depth": 0, "worker_running": False},
+        ),
+        patch(
+            "app.games.crocodile_runtime.get_runtime_health_snapshot",
+            return_value={"history_buffers": 0, "pending_result_buckets": 0},
+        ),
         patch("app.providers.gemini.get_vertex_client", return_value=object()),
-        patch("app.web_miniapp._get_live_model_cooldown_seconds", return_value=0),
+        patch("app.web_miniapp._get_live_model_cooldown_seconds", new_callable=AsyncMock, return_value=12),
+        patch("app.config.settings", SimpleNamespace(WEBAPP_BASE_URL="https://example.test")),
     ):
         text, keyboard = await cmd_admin.build_dailycroc_status_snapshot(now=datetime(2026, 4, 23, 9, 0, tzinfo=UTC))
 
-    assert "easy: <code>ready</code> · puzzle=<code>yes</code> · hints=<code>3/3</code> · art=<code>yes</code> · prepared=<code>23.04 09:15 Kyiv</code>" in text
-    assert "hard: <code>ready</code> · puzzle=<code>yes</code> · hints=<code>3/3</code> · art=<code>no</code> · prepared=<code>23.04 09:45 Kyiv</code>" in text
+    assert "coroutine" not in text
+    assert "Live cooldown: <code>12s</code>" in text
+    assert (
+        "easy (2026-04-23): <code>ready</code> · puzzle=<code>yes</code> · word=<code>крокодил</code> · hints=<code>3/3</code> · art=<code>yes</code> · gen_time=<code>23.04 09:15 Kyiv</code>"
+        in text
+    )
+    assert (
+        "hard (2026-04-23): <code>ready</code> · puzzle=<code>yes</code> · word=<code>телескоп</code> · hints=<code>3/3</code> · art=<code>no</code> · gen_time=<code>23.04 09:45 Kyiv</code>"
+        in text
+    )
     assert "🧪 <b>Placeholder test:</b> <code>ok/photo @ 23.04 09:20 Kyiv</code>" in text
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
-    assert labels == ["🔄 Refresh", "🧪 Prep check", "📬 Send test to admin"]
+    assert labels == [
+        "🔄 Refresh",
+        "🧪 Prep check",
+        "🖼 Regen Easy",
+        "🖼 Regen Hard",
+        "🎛 WebApp Dashboard",
+        "📬 Send test to admin",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_admin_dailycroc_dashboard_can_toggle_delivery() -> None:
+    template = ADMIN_TEMPLATE_PATH.read_text(encoding="utf-8")
+    assert 'data-tab="broadcast"' in template
+    assert "channel-toggle-chk" in template
+    assert "/api/admin/broadcast/toggle" in template
+
+    client = quart_app.test_client()
+    headers = {"X-Auth-Token": "admin-secret"}
+
+    with (
+        patch("app.web._get_admin_secret", return_value="admin-secret"),
+        patch(
+            "app.repos.crocodile_daily.get_delivery_status",
+            new_callable=AsyncMock,
+            return_value={"total_subscribed": 2, "pending_today": 1},
+        ),
+        patch("app.repos.settings_repo.get_global_setting", new_callable=AsyncMock, return_value="off"),
+        patch("app.repos.settings_repo.set_global_setting", new_callable=AsyncMock) as set_mock,
+    ):
+        stats_response = await client.get("/api/admin/dailycroc/stats", headers=headers)
+        assert stats_response.status_code == 200
+        stats_payload = await stats_response.get_json()
+        assert stats_payload["delivery_enabled"] is False
+
+        toggle_response = await client.post(
+            "/api/admin/broadcast/toggle",
+            headers=headers,
+            json={"channel": "daily_challenge", "enabled": True},
+        )
+        assert toggle_response.status_code == 200
+        toggle_payload = await toggle_response.get_json()
+
+    assert toggle_payload == {"channel": "daily_challenge", "enabled": True, "success": True}
+    set_mock.assert_awaited_once_with(repo.DAILY_DELIVERY_SETTING_KEY, "on")
 
 
 @pytest.mark.asyncio
@@ -461,7 +567,9 @@ async def test_daily_scheduler_skips_sends_when_delivery_disabled() -> None:
     context = SimpleNamespace(bot=_bot, application=SimpleNamespace(bot=_bot))
 
     with (
-        patch("app.games.crocodile_daily.ensure_prepared_puzzles", new_callable=AsyncMock, return_value=[prepared_puzzle]) as prep_mock,
+        patch(
+            "app.games.crocodile_daily.ensure_prepared_puzzles", new_callable=AsyncMock, return_value=[prepared_puzzle]
+        ) as prep_mock,
         patch("app.games.crocodile_daily.active_daily_difficulties", new_callable=AsyncMock, return_value=["easy"]),
         patch("app.handlers.daily_crocodile.is_daily_delivery_enabled", new_callable=AsyncMock, return_value=False),
         patch("app.handlers.daily_crocodile.send_daily_prompt", new_callable=AsyncMock) as prompt_mock,
@@ -487,15 +595,19 @@ async def test_daily_scheduler_waits_until_puzzle_is_fully_prepared() -> None:
         target_word="крокодил",
         topic="Разное",
         lang="ru",
-        hints=[],           # no hints → not fully prepared
+        hints=[],  # no hints → not fully prepared
         image_prompt="prompt",
-        image_file_id="",   # no image either (irrelevant to readiness now)
+        image_file_id="",  # no image either (irrelevant to readiness now)
     )
     _bot = object()
     context = SimpleNamespace(bot=_bot, application=SimpleNamespace(bot=_bot))
 
     with (
-        patch("app.games.crocodile_daily.ensure_prepared_puzzles", new_callable=AsyncMock, return_value=[incomplete_puzzle]),
+        patch(
+            "app.games.crocodile_daily.ensure_prepared_puzzles",
+            new_callable=AsyncMock,
+            return_value=[incomplete_puzzle],
+        ),
         patch("app.games.crocodile_daily.active_daily_difficulties", new_callable=AsyncMock, return_value=["easy"]),
         patch("app.handlers.daily_crocodile.is_daily_delivery_enabled", new_callable=AsyncMock, return_value=True),
         patch("app.handlers.daily_crocodile.send_daily_prompt", new_callable=AsyncMock) as prompt_mock,
@@ -525,10 +637,31 @@ async def test_daily_completion_bundle_passes_art_into_single_result_message_whe
 
     with (
         patch("app.games.crocodile_daily_telegram.send_daily_result_message", new_callable=AsyncMock) as result_mock,
-        patch("app.games.crocodile_daily_telegram.render_daily_result_body", new_callable=AsyncMock, return_value=("text", None)),
-        patch("app.games.crocodile_daily_telegram.repo.get_preference", new_callable=AsyncMock, return_value={"is_subscribed": False, "last_sent_puzzle_date": None}),
-        patch("app.games.crocodile_daily_telegram.repo.get_active_result_message_for_user", new_callable=AsyncMock, return_value=None),
-        patch("app.games.crocodile_daily_telegram.repo.get_active_prompt_message", new_callable=AsyncMock, return_value=None),
+        patch(
+            "app.games.crocodile_daily_telegram.render_daily_result_body",
+            new_callable=AsyncMock,
+            return_value=("text", None),
+        ),
+        patch(
+            "app.games.crocodile_daily_telegram.repo.get_preference",
+            new_callable=AsyncMock,
+            return_value={"is_subscribed": False, "last_sent_puzzle_date": None},
+        ),
+        patch(
+            "app.games.crocodile_daily_telegram.repo.get_active_result_message_for_user",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.games.crocodile_daily_telegram.repo.get_active_prompt_message",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.games.crocodile_daily_telegram.repo.get_results_for_user",
+            new_callable=AsyncMock,
+            return_value={"easy": SimpleNamespace(status="won")},
+        ),
         patch("app.games.crocodile_daily_telegram.repo.deactivate_other_result_messages", new_callable=AsyncMock),
         patch("app.games.crocodile_daily_telegram.repo.mark_daily_sent", new_callable=AsyncMock),
         patch("app.games.crocodile_daily_telegram.repo.get_puzzle", new_callable=AsyncMock, return_value=puzzle),
@@ -554,9 +687,15 @@ async def test_send_daily_result_message_uses_photo_caption_when_art_available()
     )
 
     with (
-        patch("app.games.crocodile_daily_telegram.render_daily_result_body", new_callable=AsyncMock, return_value=("hard text", None)),
+        patch(
+            "app.games.crocodile_daily_telegram.render_daily_result_body",
+            new_callable=AsyncMock,
+            return_value=("hard text", None),
+        ),
         patch("app.games.crocodile_daily_telegram.repo.get_puzzle", new_callable=AsyncMock, return_value=puzzle),
-        patch("app.games.crocodile_daily_telegram.repo.register_result_message", new_callable=AsyncMock) as register_mock,
+        patch(
+            "app.games.crocodile_daily_telegram.repo.register_result_message", new_callable=AsyncMock
+        ) as register_mock,
     ):
         await crocodile_daily_telegram.send_daily_result_message(
             bot,
@@ -596,18 +735,37 @@ async def test_daily_completion_bundle_updates_existing_photo_result() -> None:
     )
 
     with (
-        patch("app.games.crocodile_daily_telegram.render_daily_result_body", new_callable=AsyncMock, return_value=("hard text", None)),
-        patch("app.games.crocodile_daily_telegram.repo.get_preference", new_callable=AsyncMock, return_value={"is_subscribed": False, "last_sent_puzzle_date": None}),
+        patch(
+            "app.games.crocodile_daily_telegram.render_daily_result_body",
+            new_callable=AsyncMock,
+            return_value=("hard text", None),
+        ),
+        patch(
+            "app.games.crocodile_daily_telegram.repo.get_preference",
+            new_callable=AsyncMock,
+            return_value={"is_subscribed": False, "last_sent_puzzle_date": None},
+        ),
         patch("app.games.crocodile_daily_telegram.repo.mark_daily_sent", new_callable=AsyncMock),
         patch(
             "app.games.crocodile_daily_telegram.repo.get_active_result_message_for_user",
             new_callable=AsyncMock,
             return_value={"id": 17, "chat_id": 77, "message_id": 501, "message_type": "photo"},
         ),
-        patch("app.games.crocodile_daily_telegram.repo.deactivate_other_result_messages", new_callable=AsyncMock) as dedupe_mock,
+        patch(
+            "app.games.crocodile_daily_telegram.repo.get_results_for_user",
+            new_callable=AsyncMock,
+            return_value={"hard": SimpleNamespace(status="won")},
+        ),
+        patch(
+            "app.games.crocodile_daily_telegram.repo.deactivate_other_result_messages", new_callable=AsyncMock
+        ) as dedupe_mock,
         patch("app.games.crocodile_daily_telegram.repo.get_puzzle", new_callable=AsyncMock, return_value=puzzle),
-        patch("app.games.crocodile_daily_telegram.repo.update_result_message_hash", new_callable=AsyncMock) as hash_mock,
-        patch("app.games.crocodile_daily_telegram.repo.get_active_prompt_message", new_callable=AsyncMock) as prompt_mock,
+        patch(
+            "app.games.crocodile_daily_telegram.repo.update_result_message_hash", new_callable=AsyncMock
+        ) as hash_mock,
+        patch(
+            "app.games.crocodile_daily_telegram.repo.get_active_prompt_message", new_callable=AsyncMock
+        ) as prompt_mock,
         patch("app.games.crocodile_daily_telegram._send_daily_completion_art", new_callable=AsyncMock) as art_mock,
         patch("app.games.crocodile_daily_telegram.send_daily_result_message", new_callable=AsyncMock) as result_mock,
     ):
@@ -651,7 +809,9 @@ async def test_daily_completion_art_prepares_missing_image_before_send() -> None
 
     with (
         patch("app.games.crocodile_daily_telegram.repo.get_puzzle", new_callable=AsyncMock, return_value=missing),
-        patch("app.games.crocodile_daily.prepare_daily_puzzle", new_callable=AsyncMock, return_value=refreshed) as prepare_mock,
+        patch(
+            "app.games.crocodile_daily.prepare_daily_puzzle", new_callable=AsyncMock, return_value=refreshed
+        ) as prepare_mock,
     ):
         sent = await crocodile_daily_telegram._send_daily_completion_art(
             bot,
@@ -678,7 +838,16 @@ async def test_result_refresh_prefers_hard_focus_when_hard_completed() -> None:
         patch(
             "app.games.crocodile_daily_telegram.repo.get_active_result_messages",
             new_callable=AsyncMock,
-            return_value=[{"id": 1, "user_id": 77, "chat_id": 77, "message_id": 900, "rendered_hash": "old", "message_type": "text"}],
+            return_value=[
+                {
+                    "id": 1,
+                    "user_id": 77,
+                    "chat_id": 77,
+                    "message_id": 900,
+                    "rendered_hash": "old",
+                    "message_type": "text",
+                }
+            ],
         ),
         patch(
             "app.games.crocodile_daily_telegram.repo.get_results_for_user",
@@ -714,7 +883,11 @@ async def test_result_refresh_prefers_hard_focus_when_hard_completed() -> None:
                 ),
             },
         ),
-        patch("app.games.crocodile_daily_telegram.render_daily_result_body", new_callable=AsyncMock, return_value=("fresh text", None)) as render_mock,
+        patch(
+            "app.games.crocodile_daily_telegram.render_daily_result_body",
+            new_callable=AsyncMock,
+            return_value=("fresh text", None),
+        ) as render_mock,
         patch("app.games.crocodile_daily_telegram.repo.update_result_message_hash", new_callable=AsyncMock),
         patch("app.games.crocodile_daily_telegram.repo.deactivate_other_result_messages", new_callable=AsyncMock),
     ):
@@ -765,7 +938,11 @@ async def test_render_daily_result_body_omits_attempt_suffix_in_leaderboard() ->
     with (
         patch("app.games.crocodile_daily.build_daily_completion_summary", new_callable=AsyncMock, return_value=summary),
         patch("app.games.crocodile_daily_telegram.repo.get_results_for_user", new_callable=AsyncMock, return_value={}),
-        patch("app.games.crocodile_daily_telegram.repo.get_preference", new_callable=AsyncMock, return_value={"is_subscribed": False}),
+        patch(
+            "app.games.crocodile_daily_telegram.repo.get_preference",
+            new_callable=AsyncMock,
+            return_value={"is_subscribed": False},
+        ),
     ):
         text, _ = await crocodile_daily_telegram.render_daily_result_body(77, puzzle_date, focus_difficulty="easy")
 
@@ -823,7 +1000,9 @@ async def test_build_daily_completion_summary_uses_aggregate_daily_leaderboard()
     aggregate_board = [{"user_id": 77, "display_name": "amogus balls", "points": 1320}]
 
     with (
-        patch("app.games.crocodile_daily.active_daily_difficulties", new_callable=AsyncMock, return_value=("easy", "hard")),
+        patch(
+            "app.games.crocodile_daily.active_daily_difficulties", new_callable=AsyncMock, return_value=("easy", "hard")
+        ),
         patch(
             "app.games.crocodile_daily.repo.get_puzzles_for_date",
             new_callable=AsyncMock,
@@ -834,7 +1013,9 @@ async def test_build_daily_completion_summary_uses_aggregate_daily_leaderboard()
             new_callable=AsyncMock,
             return_value={"easy": easy_result, "hard": hard_result},
         ),
-        patch("app.games.crocodile_daily.repo.get_leaderboard", new_callable=AsyncMock, return_value=aggregate_board) as board_mock,
+        patch(
+            "app.games.crocodile_daily.repo.get_leaderboard", new_callable=AsyncMock, return_value=aggregate_board
+        ) as board_mock,
         patch("app.games.crocodile_daily.repo.get_rank", new_callable=AsyncMock, return_value=1) as rank_mock,
     ):
         summary = await crocodile_daily.build_daily_completion_summary(77, puzzle_date, focus_difficulty="easy")
@@ -845,8 +1026,6 @@ async def test_build_daily_completion_summary_uses_aggregate_daily_leaderboard()
     assert summary["modes"]["hard"]["leaderboard"] == aggregate_board
     assert summary["modes"]["easy"]["rank"] == 1
     assert summary["modes"]["hard"]["rank"] == 1
-
-
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@ Flow:
   4. ``handle_chosen_inline_result`` captures ``inline_message_id`` + query
      + chosen tone, then fires ``_generate_and_edit_inline`` as a background task.
   5. ``_generate_and_edit_inline``:
-       a) Calls ``gemini-2.5-flash-lite`` with Google Search Grounding enabled.
+       a) Calls ``gemini-3.1-flash-lite`` with Google Search Grounding enabled.
        b) Grounding citations (when available) are appended as an expandable
           blockquote below the answer.
        c) Converts the Markdown answer to Telegram HTML and edits the inline
@@ -51,24 +51,39 @@ from telegram import (
 )
 from telegram.ext import ContextTypes
 
+from app.cache import get_inline_context, store_inline_context
 from app.config import settings
-from app.errors import is_error_message
+from app.errors import classify_key_error, is_error_message, is_key_related_error, is_retryable_error
+from app.i18n import t
 from app.metrics import metrics_collector
 from app.repos.settings_repo import get_global_setting
+from app.tarot import SpreadType
 from app.utils.api_logger import api_logger
 from app.utils.text_format import markdown_to_html, strip_formatting
 
+
+def _get_lang(obj) -> str:
+    user_lang = obj.from_user.language_code if obj and obj.from_user else "en"
+    return "ru" if user_lang and user_lang.startswith("ru") else "en"
+
 # ── Constants ────────────────────────────────────────────────────────────────
 
-# Primary inline model: Vertex AI Express (more stable, native Search Grounding).
-# AI Studio keys race alongside as fallback slots using _INLINE_FALLBACK_MODEL.
-_INLINE_MODEL = "gemini-3.1-flash-lite-preview"
-_INLINE_FALLBACK_MODEL = "gemini-2.5-flash-lite"
+# Primary inline model is now dynamic.
+async def get_inline_model() -> str:
+    from app.config import settings
+    from app.repos.settings_repo import get_global_setting
+    default = settings.INLINE_MODEL if settings else "gemini-3.1-flash-lite"
+    return await get_global_setting("inline_model", default)
+
+_INLINE_FALLBACK_MODEL = "gemini-3.1-flash-lite"
 
 # Outer timeout for the entire generation pipeline.
 _GEN_TIMEOUT_S = 55.0
 # Seconds after which we edit the placeholder to show a progress message.
 _GEN_PROGRESS_AFTER_S = 20.0
+# When inline is configured to a heavier primary model, flash-lite runs as a
+# hot standby and may answer once the primary misses this deadline.
+_INLINE_PRIMARY_GRACE_S = 13.0
 
 # ── Image intent detection ────────────────────────────────────────────────────
 # Matches a broad set of image-generation intents in both Russian and English.
@@ -139,12 +154,20 @@ _IMAGE_EDIT_INTENT_RE = re.compile(
 #   🅰️ Мем    — Wan 2.7 Image, accurate text rendering on images
 #   🔷 Изменить — FLUX.2 Klein 4B, auto-routed only (hidden from menu)
 # Format: (result_id, display_title, pollinations_model)
-_IMAGE_MODELS: list[tuple[str, str, str]] = [
-    ("img_turbo", "⚡ Турбо — быстро и красиво", "zimage"),
-    ("img_smart", "🤖 Умный — бот улучшит промпт", "gptimage"),
-    ("img_art", "🎨 Арт / Аватарка — стилизация", "qwen-image"),
-    ("img_meme", "🅰️ Мем / Текст — точный текст", "wan-image"),
+_IMAGE_MODELS_IDS: list[tuple[str, str]] = [
+    ("img_turbo", "zimage"),
+    ("img_smart", "gptimage"),
+    ("img_art", "qwen-image"),
+    ("img_meme", "wan-image"),
 ]
+
+def _get_image_models(lang: str) -> list[tuple[str, str, str]]:
+    return [
+        ("img_turbo", t("inline.img_turbo", lang), "zimage"),
+        ("img_smart", t("inline.img_smart", lang), "gptimage"),
+        ("img_art", t("inline.img_art", lang), "qwen-image"),
+        ("img_meme", t("inline.img_meme", lang), "wan-image"),
+    ]
 # Klein is NOT shown in the inline menu — it is auto-routed when user attaches
 # an image with an edit intent keyword.
 _IMG_KLEIN_ID = "img_edit"
@@ -174,6 +197,18 @@ _BOARD_PREFIX_RE = re.compile(r"^(?:доска|board|трекер)\s*:\s*", re.I
 # Matches: "крокодил:животные", "croc:animals", "крокодил:=пылесос", "croc:=vacuum"
 _CROC_PREFIX_RE = re.compile(
     r"^(?:крокодил|крок|croc|crocodile) ?:\s*",
+    re.IGNORECASE,
+)
+
+# Horoscope intent prefix
+_HOROSCOPE_PREFIX_RE = re.compile(
+    r"^(?:гороскоп|horoscope)[\s:]*",
+    re.IGNORECASE,
+)
+
+# Tarot intent prefix
+_TAROT_PREFIX_RE = re.compile(
+    r"^(?:таро|tarot|расклад)[\s:]*",
     re.IGNORECASE,
 )
 
@@ -217,10 +252,12 @@ async def _ensure_placeholders(bot) -> None:
         if _placeholder_file_ids:
             return
 
-        from PIL import Image, ImageDraw
+        from PIL import Image, ImageDraw, ImageFont
 
-        all_ids = [m[0] for m in _IMAGE_MODELS] + [_IMG_KLEIN_ID]
+        all_ids = [m[0] for m in _IMAGE_MODELS_IDS] + [_IMG_KLEIN_ID]
 
+        # ── Build all image buffers synchronously (CPU-bound, no I/O) ─────
+        pending: list[tuple[str, io.BytesIO]] = []
         for result_id in all_ids:
             style = _PLACEHOLDER_STYLES.get(result_id)
             if not style:
@@ -235,8 +272,6 @@ async def _ensure_placeholders(bot) -> None:
 
             # Load the largest available built-in font.
             # load_default(size=N) requires Pillow ≥ 10.1; fall back for older builds.
-            from PIL import ImageFont
-
             try:
                 font_large = ImageFont.load_default(size=56)
                 font_small = ImageFont.load_default(size=28)
@@ -265,7 +300,13 @@ async def _ensure_placeholders(bot) -> None:
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=75)
             buf.seek(0)
+            pending.append((result_id, buf))
 
+        # ⚡ Bolt: upload all placeholders to Telegram concurrently.
+        # Previously each send_photo + delete_message was awaited in sequence;
+        # now all N uploads happen in parallel, cutting first-inline-query
+        # initialisation from O(N × telegram_rtt) to O(telegram_rtt).
+        async def _mint_one(result_id: str, buf: io.BytesIO) -> None:
             try:
                 msg = await bot.send_photo(
                     chat_id=settings.ADMIN_ID,
@@ -279,6 +320,8 @@ async def _ensure_placeholders(bot) -> None:
                     )
             except Exception:
                 logging.exception("Failed to mint placeholder file_id for %s", result_id)
+
+        await asyncio.gather(*[_mint_one(rid, buf) for rid, buf in pending])
 
         logging.info(
             "Minted %d/%d inline placeholder file_ids",
@@ -325,49 +368,20 @@ def _tabs_store_get(inline_message_id: str) -> dict | None:
 # Kept as named constants for easy future extraction to i18n.
 
 
-def _placeholder_html(bot_name: str) -> str:
-    # Inline always uses Gemini Search Grounding → "searching" is accurate UX
-    return f"🔎 <b>{_html.escape(bot_name)}</b> ищет в интернете…"
+def _placeholder_html(bot_name: str, lang: str) -> str:
+    return t("inline.search_progress", lang, bot_name=_html.escape(bot_name))
 
 
-def _progress_search_done_html(bot_name: str) -> str:
-    return f"🧠 <b>{_html.escape(bot_name)}</b> собрал информацию, теперь генерирует ответ…"
+def _progress_search_done_html(bot_name: str, lang: str) -> str:
+    return t("inline.generate_progress", lang, bot_name=_html.escape(bot_name))
 
 
-def _progress_delayed_html(bot_name: str) -> str:
-    return f"⏳ <b>{_html.escape(bot_name)}</b> задерживается…"
+def _progress_delayed_html(bot_name: str, lang: str) -> str:
+    return t("inline.delayed", lang, bot_name=_html.escape(bot_name))
 
 
-_TIMEOUT_ERROR = "⏰ Модель не успела ответить вовремя. Нажмите «Повторить» ниже."
-_GENERATION_ERROR = "❌ Не удалось получить ответ."
-_FALLBACK_ERROR = "Ошибка генерации ответа."
-
-
-# (result_id, display_label, system_tone_hint)
-_TONES: list[tuple[str, str, str]] = [
-    (
-        "formal",
-        "📋 Формальный ответ",
-        "Отвечай строго, профессионально и по делу. Только факты, без юмора.",
-    ),
-    (
-        "friendly",
-        "😊 Дружеский ответ",
-        "Отвечай тепло, понятно и неформально, как близкий друг. Допускай эмодзи.",
-    ),
-    (
-        "sarcastic",
-        "😏 Саркастичный ответ",
-        "Отвечай с приятной иронией и лёгким сарказмом, оставаясь при этом полезным.",
-    ),
-]
-
-
-# Inline keyboard attached to every result — Telegram Bot API REQUIRES this
-# for ChosenInlineResult to include `inline_message_id`.  Without it the bot
-# cannot edit the placeholder in-place.  The button itself is cosmetic and
-# gets replaced once the final response is ready.
-_LOADING_KEYBOARD = InlineKeyboardMarkup([[InlineKeyboardButton("⏳ Генерация…", callback_data="inline_noop")]])
+def _get_loading_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton(t("inline.loading", lang), callback_data="inline_noop")]])
 
 # ── Retry store ──────────────────────────────────────────────────────────────
 # Keyed by short UUID, stores params needed to re-run _generate_and_edit_inline.
@@ -378,16 +392,22 @@ _retry_store: dict[str, dict] = {}
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+def _get_tones(lang: str) -> list[tuple[str, str, str]]:
+    return [
+        ("formal", t("inline.tone_formal", lang), t("inline.tone_hint_formal", lang)),
+        ("friendly", t("inline.tone_friendly", lang), t("inline.tone_hint_friendly", lang)),
+        ("sarcastic", t("inline.tone_sarcastic", lang), t("inline.tone_hint_sarcastic", lang)),
+    ]
 
-def _tone_display(tone_id: str) -> str:
-    for tid, label, _ in _TONES:
+def _tone_display(tone_id: str, lang: str) -> str:
+    for tid, label, _ in _get_tones(lang):
         if tid == tone_id:
             return label
     return tone_id
 
 
-def _tone_hint(tone_id: str) -> str:
-    for tid, _, hint in _TONES:
+def _tone_hint(tone_id: str, lang: str) -> str:
+    for tid, _, hint in _get_tones(lang):
         if tid == tone_id:
             return hint
     return ""
@@ -453,8 +473,9 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
     logging.info("Inline query from user=%s: %r", query.from_user.id, query.query[:80])
 
     user_query = query.query.strip()
+    lang = _get_lang(query)
     bot_name = context.bot.first_name or "Bot"
-    placeholder = _placeholder_html(bot_name)
+    placeholder = _placeholder_html(bot_name, lang)
 
     if not user_query:
         # Guide the user when no text has been typed yet.
@@ -462,13 +483,13 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
             results=[
                 InlineQueryResultArticle(
                     id="hint",
-                    title="🤖 Введите запрос после @бота…",
-                    description="Например: какая погода в Москве?",
+                    title=t("inline.hint_title", lang),
+                    description=t("inline.hint_desc", lang),
                     input_message_content=InputTextMessageContent(
                         message_text=placeholder,
                         parse_mode="HTML",
                     ),
-                    reply_markup=_LOADING_KEYBOARD,
+                    reply_markup=_get_loading_keyboard(lang),
                 )
             ],
             cache_time=0,
@@ -488,16 +509,17 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         # ── Smart auto-routing ────────────────────────────────────────────────
         if has_edit_intent:
             # Edit/inpaint mode: show only klein
-            routed_models: list[tuple[str, str, str]] = [(_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL)]
-            auto_hint = "✏️ Режим редактирования (Klein)"
+            routed_models: list[tuple[str, str, str]] = [(_IMG_KLEIN_ID, t("inline.img_edit", lang), _IMG_KLEIN_MODEL)]
+            auto_hint = t("inline.img_edit_hint", lang)
         elif has_quoted_text:
             # Meme/text mode: wan-image first for text accuracy
-            meme_entry = next((m for m in _IMAGE_MODELS if m[0] == "img_meme"), None)
-            rest = [m for m in _IMAGE_MODELS if m[0] != "img_meme"]
+            models_for_lang = _get_image_models(lang)
+            meme_entry = next((m for m in models_for_lang if m[0] == "img_meme"), None)
+            rest = [m for m in models_for_lang if m[0] != "img_meme"]
             routed_models = ([meme_entry] if meme_entry else []) + rest
-            auto_hint = "🅰️ Обнаружен текст → авто-выбран Мем-режим"
+            auto_hint = t("inline.img_meme_hint", lang)
         else:
-            routed_models = _IMAGE_MODELS
+            routed_models = _get_image_models(lang)
             auto_hint = ""
 
         # Ensure placeholder file_ids are minted (lazy, once per process)
@@ -510,12 +532,12 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
                 title=title,
                 description=(f"{auto_hint} · {stripped_prompt[:70]}" if auto_hint else stripped_prompt[:100]),
                 caption=(
-                    f"🎨 <b>Запрос:</b> {_html.escape(stripped_prompt[:200])}"
+                    t("inline.img_caption", lang, prompt=_html.escape(stripped_prompt[:200]))
                     + (f"\n<i>{_html.escape(auto_hint)}</i>" if auto_hint else "")
-                    + "\n⏳ Генерация…"
+                    + "\n" + t("inline.loading", lang)
                 ),
                 parse_mode="HTML",
-                reply_markup=_LOADING_KEYBOARD,
+                reply_markup=_get_loading_keyboard(lang),
             )
             for result_id, title, _ in routed_models
             if result_id in _placeholder_file_ids
@@ -528,20 +550,15 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
     # ── Board / Topic Aggregator intent ───────────────────────────────────────
     if _BOARD_PREFIX_RE.match(user_query):
         topic = _BOARD_PREFIX_RE.sub("", user_query).strip() or user_query
-        board_init_html = (
-            f"📋 <b>{_html.escape(topic)}</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Отвечайте (reply) на это сообщение, чтобы добавить свои идеи.</i>\n\n"
-            "Пока ничего не предложено."
-        )
+        board_init_html = t("inline.board_init", lang, topic=_html.escape(topic))
         board_keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("📋 Доска активирована", callback_data="board_link:pending")]]
+            [[InlineKeyboardButton(t("inline.board_activated", lang), callback_data="board_link:pending")]]
         )
         results_board = [
             InlineQueryResultArticle(
                 id="board",
-                title=f"📋 Создать доску: {topic[:60]}",
-                description="Участники смогут добавлять идеи через reply",
+                title=t("inline.board_topic", lang, topic=topic[:60]),
+                description=t("inline.board_desc", lang),
                 input_message_content=InputTextMessageContent(
                     message_text=board_init_html,
                     parse_mode="HTML",
@@ -557,14 +574,16 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         arg = _CROC_PREFIX_RE.sub("", user_query).strip()
         is_custom = arg.startswith("=")
         if is_custom:
-            label = "🐊 Крокодил: своё слово"
-            desc = "Загадаешь своё слово — второй игрок будет отгадывать"
+            label = t("inline.croc_custom", lang)
+            desc = t("inline.croc_custom_desc", lang)
         else:
             cat = arg or "разное"
-            label = f"🐊 Крокодил: {cat[:40]}"
-            desc = "Бот загадает слово из категории — второй игрок отгадывает"
-        croc_init_html = "🐊 <b>Крокодил</b>\n<i>Игра загружается…</i>"
-        croc_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⏳ Загрузка...", callback_data="inline_noop")]])
+            label = t("inline.croc_category", lang, cat=cat[:40])
+            desc = t("inline.croc_cat_desc", lang)
+        croc_init_html = t("inline.croc_init", lang)
+        croc_keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton(t("inline.croc_loading", lang), callback_data="inline_noop")]]
+        )
         results_croc = [
             InlineQueryResultArticle(
                 id="croc",
@@ -580,6 +599,135 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer(results_croc, cache_time=0, is_personal=True)
         return
 
+    # ── Horoscope intent ─────────────────────────────────────────────────────────
+    if _HOROSCOPE_PREFIX_RE.match(user_query):
+        arg = _HOROSCOPE_PREFIX_RE.sub("", user_query).strip()
+        if not arg:
+            arg = "Овен на сегодня"
+        horoscope_init_html = t("inline.horoscope_init", lang, arg=arg)
+        horoscope_keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton(t("inline.horoscope_btn", lang), callback_data="inline_noop")]]
+        )
+        results_horo = [
+            InlineQueryResultArticle(
+                id="horoscope",
+                title=f"✨ Гороскоп: {arg[:40]}",
+                description=t("inline.horoscope_desc", lang),
+                input_message_content=InputTextMessageContent(
+                    message_text=horoscope_init_html,
+                    parse_mode="HTML",
+                ),
+                reply_markup=horoscope_keyboard,
+            )
+        ]
+        await query.answer(results_horo, cache_time=0, is_personal=True)
+        return
+
+    # ── Tarot intent ────────────────────────────────────────────────────────────────────────────
+    if _TAROT_PREFIX_RE.match(user_query):
+        # 1. Parse intent
+        arg = _TAROT_PREFIX_RE.sub("", user_query).strip()
+        has_question = bool(arg)  # evaluate BEFORE applying fallback
+
+        if not arg:
+            arg = "Без вопроса"
+
+        loading_keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton(t("inline.tarot_btn", lang), callback_data="inline_noop")]]
+        )
+        results_tarot = []
+
+        # 1. Карта дня — только если значимый вопрос не введён
+        if not has_question:
+            results_tarot.append(
+                InlineQueryResultArticle(
+                    id="tarot_daily",
+                    title=t("inline.tarot_daily_title", lang),
+                    description=t("inline.tarot_daily_desc", lang),
+                    input_message_content=InputTextMessageContent(
+                        message_text=t("inline.tarot_daily_init", lang),
+                        parse_mode="HTML",
+                    ),
+                    reply_markup=loading_keyboard,
+                )
+            )
+
+        # 2. Да или Нет — всегда в списке
+        results_tarot.append(
+            InlineQueryResultArticle(
+                id="tarot_yesno",
+                title=t("inline.tarot_yesno_title", lang),
+                description=arg[:80] if has_question else t("inline.tarot_yesno_desc", lang),
+                input_message_content=InputTextMessageContent(
+                    message_text=t("inline.tarot_yesno_init", lang),
+                    parse_mode="HTML",
+                ),
+                reply_markup=loading_keyboard,
+            )
+        )
+
+        # 3. Отношения
+        results_tarot.append(
+            InlineQueryResultArticle(
+                id="tarot_love",
+                title=t("inline.tarot_love_title", lang),
+                description=arg[:80] if has_question else t("inline.tarot_love_desc", lang),
+                input_message_content=InputTextMessageContent(
+                    message_text=t("inline.tarot_love_init", lang),
+                    parse_mode="HTML",
+                ),
+                reply_markup=loading_keyboard,
+            )
+        )
+
+        # 4. Классический (Прошлое / Настоящее / Будущее)
+        results_tarot.append(
+            InlineQueryResultArticle(
+                id="tarot",
+                title=(
+                    f"Таро: {arg[:40]}" if has_question
+                    else t("inline.tarot_classic_title", lang)
+                ),
+                description=t("inline.tarot_desc", lang),
+                input_message_content=InputTextMessageContent(
+                    message_text=t("inline.tarot_init", lang),
+                    parse_mode="HTML",
+                ),
+                reply_markup=loading_keyboard,
+            )
+        )
+
+        # 5. Кельтский крест
+        results_tarot.append(
+            InlineQueryResultArticle(
+                id="tarot_celtic",
+                title=t("inline.tarot_celtic_title", lang),
+                description=arg[:80] if has_question else t("inline.tarot_celtic_desc", lang),
+                input_message_content=InputTextMessageContent(
+                    message_text=t("inline.tarot_celtic_init", lang),
+                    parse_mode="HTML",
+                ),
+                reply_markup=loading_keyboard,
+            )
+        )
+
+        # 6. Мгновенное предсказание — без LLM, контент уже готов
+        results_tarot.append(
+            InlineQueryResultArticle(
+                id="tarot_fortune",
+                title=t("inline.tarot_fortune_title", lang),
+                description=t("inline.tarot_fortune_desc", lang),
+                input_message_content=InputTextMessageContent(
+                    message_text=_build_fortune_cookie_html(),
+                    parse_mode="HTML",
+                ),
+                # No loading keyboard — content is already final
+            )
+        )
+
+        await query.answer(results_tarot, cache_time=0, is_personal=True)
+        return
+
     # ── Default: 3 tone variants ──────────────────────────────────────────────
     results = [
         InlineQueryResultArticle(
@@ -590,9 +738,9 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
                 message_text=placeholder,
                 parse_mode="HTML",
             ),
-            reply_markup=_LOADING_KEYBOARD,
+            reply_markup=_get_loading_keyboard(lang),
         )
-        for tone_id, label, _ in _TONES
+        for tone_id, label, _ in _get_tones(lang)
     ]
 
     # cache_time=0 ensures each new character triggers a fresh result list.
@@ -625,15 +773,11 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
     # ── Guard: empty / hint ───────────────────────────────────────────────────
     if not user_query or result_id == "hint":
         bot_name = context.bot.first_name or "бота"
-        _empty_hint = (
-            f"❌ <b>Ошибка:</b> Пустой запрос.\n"
-            f"Введите текст после @{bot_name} "
-            f"(например, <i>какая сегодня погода?</i>)"
-        )
+        lang = _get_lang(chosen)
         try:
             await context.bot.edit_message_text(
                 inline_message_id=inline_message_id,
-                text=_empty_hint,
+                text=t("inline.empty_query", lang, bot_name=_html.escape(bot_name)),
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([]),
             )
@@ -646,9 +790,9 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
     # ── Image generation path ─────────────────────────────────────────────────
     if result_id.startswith("img_"):
         # Include klein (auto-routed, hidden from menu) in model lookup
-        all_known_models = _IMAGE_MODELS + [(_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL)]
+        all_known_models = _IMAGE_MODELS_IDS + [(_IMG_KLEIN_ID, _IMG_KLEIN_MODEL)]
         prov_model = next(
-            (entry[2] for entry in all_known_models if entry[0] == result_id),
+            (entry[1] for entry in all_known_models if entry[0] == result_id),
             "zimage",  # fallback to Турбо
         )
         # Extract clean prompt: remove intent verb prefix
@@ -693,6 +837,37 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
             )
         )
         return
+
+    # ── Horoscope path ───────────────────────────────────────────────────────────
+    if result_id == "horoscope":
+        get_task_manager().submit(
+            _generate_horoscope_inline(
+                bot=context.bot,
+                inline_message_id=inline_message_id,
+                user_query=user_query,
+                user_id=user_id,
+            )
+        )
+        return
+
+    # ── Tarot paths ────────────────────────────────────────────────────────────────────────────
+    if result_id.startswith("tarot"):
+        # Fortune cookie: content was baked into InputTextMessageContent at query time.
+        # The message is already final — no background generation needed.
+        if result_id == "tarot_fortune":
+            return
+
+        get_task_manager().submit(
+            _generate_tarot_inline(
+                bot=context.bot,
+                inline_message_id=inline_message_id,
+                user_query=user_query,
+                user_id=user_id,
+                spread_type=result_id,
+            )
+        )
+        return
+
 
     # ── Default text generation path ──────────────────────────────────────────
     get_task_manager().submit(
@@ -1043,6 +1218,24 @@ async def _stream_inline_fast(
     status_mgr = get_key_status_manager()
     failed_keys: set[str] = set()
     _winner_sources: list[tuple[str, str]] = []  # Grounding citations from winner
+    _VERTEX_KH = "__vertex_ai__"
+
+    async def _record_stream_error(kh: str, model: str, error_text: str) -> None:
+        """Apply router-equivalent key penalties for tagged stream error chunks."""
+        failed_keys.add(kh)
+        if kh == _VERTEX_KH:
+            return
+        if not (is_key_related_error(error_text) or is_retryable_error(error_text)):
+            return
+        try:
+            await status_mgr.suspend_key(
+                kh,
+                model,
+                classify_key_error(error_text),
+                error_text[:200],
+            )
+        except Exception as suspend_exc:
+            logging.warning("Non-critical: failed to suspend inline key after stream error: %s", suspend_exc)
 
     class _End:
         """Sentinel: producer puts this when its stream finishes or is cancelled."""
@@ -1058,7 +1251,7 @@ async def _stream_inline_fast(
         keys: list[dict] = []
         resolved_model: str | None = None
         # AI Studio keys race as fallback alongside the primary Vertex slot.
-        # Use _INLINE_FALLBACK_MODEL (gemini-2.5-flash-lite) for AI Studio racers.
+        # Use _INLINE_FALLBACK_MODEL (gemini-3.1-flash-lite) for AI Studio racers.
         _ai_studio_model = _INLINE_FALLBACK_MODEL
         for _ in range(2):
             kd, mdl, _ = await use_case.resolve_ai_request(
@@ -1091,7 +1284,9 @@ async def _stream_inline_fast(
                     thinking_level=_tl,
                     timeout=45.0,
                     enable_web_search=enable_web_search,
+                    force_grounding=enable_web_search,  # inline always forces Search when grounding is on
                 ):
+
                     # Intercept _GroundingMeta sentinel — don't put in queue as text chunk
                     if isinstance(chunk, _GroundingMeta):
                         await _q.put((kh, chunk, None))
@@ -1105,11 +1300,10 @@ async def _stream_inline_fast(
             await _q.put((kh, _End(kh), None))
 
         # ── Vertex AI Express slot ─────────────────────────────────────────────
-        # gemini-3.1-flash-lite-preview on Vertex supports Search Grounding and
+        # gemini-3.1-flash-lite on Vertex supports Search Grounding and
         # races alongside the 3 AI Studio keys. Uses a pseudo-key-hash so the
         # shared queue logic treats it uniformly.
-        _VERTEX_KH = "__vertex_ai__"
-        _INLINE_VERTEX_MODEL = "gemini-3.1-flash-lite-preview"
+        _INLINE_VERTEX_MODEL = "gemini-3.1-flash-lite"
         _vertex_grounding_holder: list[list[tuple[str, str]]] = [[]]  # mutable closure slot
 
         async def _vertex_race(_q: asyncio.Queue = q) -> None:
@@ -1210,6 +1404,10 @@ async def _stream_inline_fast(
                 # Skip _GroundingMeta sentinels — only text triggers winner
                 if isinstance(chunk, _GroundingMeta):
                     continue
+                if chunk and is_error_message(chunk):
+                    await _record_stream_error(kh, resolved_model, str(chunk))
+                    errors[kh] = RuntimeError(str(chunk)[:200])
+                    continue
                 if chunk and not is_error_message(chunk):
                     winner_kh = kh
                     chunks.append(chunk)
@@ -1245,14 +1443,30 @@ async def _stream_inline_fast(
                 if kh != winner_kh:
                     continue  # Stale item from cancelled loser — discard
                 if exc is not None:
-                    logging.warning("Inline: winner stream failed mid-flight: %s", exc)
-                    break
+                    logging.warning(
+                        "Inline: winner stream failed mid-flight: %s — discarding partial chunks, retrying next round",
+                        exc,
+                    )
+                    # Mark winner key as failed so the next round picks a fresh key.
+                    # Clear accumulated chunks so we don't return a truncated response.
+                    failed_keys.add(winner_kh)
+                    chunks = []
+                    break  # → finally cancels tasks → result="" → outer loop continues
+
                 if isinstance(chunk, _End):
                     break  # Clean completion
                 # Capture grounding sources from winner's _GroundingMeta sentinel
                 if isinstance(chunk, _GroundingMeta):
                     _winner_sources = chunk.sources
                     continue
+                if chunk and is_error_message(chunk):
+                    logging.warning(
+                        "Inline: winner stream returned tagged error mid-flight: %s",
+                        str(chunk)[:120],
+                    )
+                    await _record_stream_error(kh, resolved_model, str(chunk))
+                    chunks = []
+                    break
                 if chunk:
                     chunks.append(chunk)
         finally:
@@ -1274,6 +1488,163 @@ async def _stream_inline_fast(
     return None, []  # All rounds exhausted
 
 
+def _is_usable_inline_answer(text: str | None) -> bool:
+    return bool(text and text.strip() and not is_error_message(text))
+
+
+def _should_use_inline_primary(user_query: str) -> bool:
+    """Reserve heavier inline primaries for queries that clearly need them."""
+    try:
+        from app.thinking_classifier import classify_thinking_level
+
+        return classify_thinking_level(user_query) == "high"
+    except Exception as exc:
+        logging.debug("Inline primary classifier failed, using flash-lite: %s", exc)
+        return False
+
+
+def _select_inline_generation_model(configured_model: str, user_query: str) -> str:
+    if configured_model == _INLINE_FALLBACK_MODEL:
+        return _INLINE_FALLBACK_MODEL
+    if _should_use_inline_primary(user_query):
+        return configured_model
+    return _INLINE_FALLBACK_MODEL
+
+
+async def _stream_inline_primary(
+    preferred_model: str,
+    history: list,
+    system_instruction: str | None,
+    user_id: int | None,
+    enable_web_search: bool,
+) -> tuple[str | None, list[tuple[str, str]]]:
+    """Collect a ProviderRouter streaming response for a configured primary model."""
+    from app.providers.gemini import _GroundingMeta
+    from app.providers.router import get_provider_router
+
+    thinking_level = await get_global_setting("inline_thinking_level", settings.INLINE_THINKING_LEVEL)
+    router = get_provider_router()
+    chunks: list[str] = []
+    sources: list[tuple[str, str]] = []
+
+    try:
+        async for chunk in router.stream_response(
+            preferred_model=preferred_model,
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            use_openrouter=False,
+            max_key_retries=3,
+            thinking_level=thinking_level,
+            enable_web_search=enable_web_search,
+            force_grounding=enable_web_search,
+        ):
+            if isinstance(chunk, _GroundingMeta):
+                sources = chunk.sources
+                continue
+            if chunk:
+                chunks.append(str(chunk))
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logging.warning("Inline primary stream failed for %s: %s", preferred_model, exc)
+        return None, []
+
+    answer = "".join(chunks)
+    return (answer, sources) if answer.strip() else (None, sources)
+
+
+async def _generate_inline_answer(
+    preferred_model: str,
+    user_query: str,
+    history: list,
+    system_instruction: str | None,
+    user_id: int | None,
+    enable_web_search: bool,
+) -> tuple[str | None, list[tuple[str, str]], str]:
+    """Generate inline text, using flash-lite as a hot standby for heavier primaries."""
+    preferred_model = _select_inline_generation_model(preferred_model, user_query)
+
+    if preferred_model == _INLINE_FALLBACK_MODEL:
+        text, sources = await _stream_inline_fast(
+            preferred_model=_INLINE_FALLBACK_MODEL,
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            max_rounds=4,
+            enable_web_search=enable_web_search,
+        )
+        return text, sources, _INLINE_FALLBACK_MODEL
+
+    primary_task = asyncio.create_task(
+        _stream_inline_primary(
+            preferred_model=preferred_model,
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            enable_web_search=enable_web_search,
+        )
+    )
+    lite_task = asyncio.create_task(
+        _stream_inline_fast(
+            preferred_model=_INLINE_FALLBACK_MODEL,
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            max_rounds=4,
+            enable_web_search=enable_web_search,
+        )
+    )
+
+    primary_result: tuple[str | None, list[tuple[str, str]]] | None = None
+    lite_result: tuple[str | None, list[tuple[str, str]]] | None = None
+
+    try:
+        try:
+            primary_result = await asyncio.wait_for(
+                asyncio.shield(primary_task),
+                timeout=_INLINE_PRIMARY_GRACE_S,
+            )
+            if _is_usable_inline_answer(primary_result[0]):
+                return primary_result[0], primary_result[1], preferred_model
+        except TimeoutError:
+            logging.info(
+                "Inline primary %s missed %.0fs deadline; waiting for %s hot standby",
+                preferred_model,
+                _INLINE_PRIMARY_GRACE_S,
+                _INLINE_FALLBACK_MODEL,
+            )
+        except Exception as exc:
+            logging.warning("Inline primary %s failed before fallback decision: %s", preferred_model, exc)
+
+        try:
+            lite_result = await lite_task
+            if _is_usable_inline_answer(lite_result[0]):
+                return lite_result[0], lite_result[1], _INLINE_FALLBACK_MODEL
+        except Exception as exc:
+            logging.warning("Inline flash-lite hot standby failed: %s", exc)
+
+        if primary_result is None:
+            try:
+                primary_result = await primary_task
+            except Exception as exc:
+                logging.warning("Inline primary %s failed after fallback failure: %s", preferred_model, exc)
+
+        if primary_result and _is_usable_inline_answer(primary_result[0]):
+            return primary_result[0], primary_result[1], preferred_model
+        if lite_result:
+            return lite_result[0], lite_result[1], _INLINE_FALLBACK_MODEL
+        if primary_result:
+            return primary_result[0], primary_result[1], preferred_model
+        return None, [], preferred_model
+    finally:
+        for task in (primary_task, lite_task):
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
+
+
 # ── Background generation ─────────────────────────────────────────────────────
 
 
@@ -1283,11 +1654,14 @@ async def _generate_and_edit_inline(
     user_query: str,
     tone_id: str,
     user_id: int | None,
+    lang: str = "ru",
 ) -> None:
     """
     Core async pipeline with progressive UX feedback:
 
-    1. Call ``gemini-2.5-flash-lite`` with **Google Search Grounding** enabled.
+    1. Call ``gemini-3.1-flash-lite`` with **Google Search Grounding** enabled
+       by default. If inline is configured to a heavier primary model, use it
+       only for high-complexity prompts and race flash-lite as a hot standby.
        The model searches the web natively for factual/current queries — no
        separate Tavily call needed.  This ensures real-time data (exchange
        rates, weather, news) instead of potentially stale Tavily QnA cache.
@@ -1301,8 +1675,8 @@ async def _generate_and_edit_inline(
     from app.prompt_registry import FORMATTING_RULES_COMPACT
 
     bot_name = bot.first_name or "Bot"
-    tone_sys_hint = _tone_hint(tone_id)
-    tone_label = _tone_display(tone_id)
+    tone_sys_hint = _tone_hint(tone_id, lang)
+    tone_label = _tone_display(tone_id, lang)
     today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
 
     # ── Check tabs setting early (needed for system prompt) ──────────────────
@@ -1339,20 +1713,28 @@ async def _generate_and_edit_inline(
 
     history = [{"role": "user", "parts": [user_query]}]
 
-    # ── Step 2: Generate (3-way Race Requests, up to 4 rounds) ──────────────────
-    # Primary: Vertex AI Express (gemini-3.1-flash-lite-preview) with Search Grounding.
-    # Fallback racers: 2x AI Studio keys (gemini-2.5-flash-lite) per round.
+    # ── Step 2: Generate ───────────────────────────────────────────────────────
+    # Default route: flash-lite 2+1 race (Vertex + AI Studio keys).
+    # High-complexity route: configured primary + flash-lite hot standby.
     _gen_start = time.monotonic()
     final_answer: str | None = None
     _grounding_sources: list[tuple[str, str]] = []  # Grounding Citations (url, title)
     _gen_timed_out = False
     _progress_shown = False
+    _inline_req_id = f"inline-{user_id}-{uuid.uuid4().hex[:8]}"
+    _requested_inline_model = await get_inline_model()
+    _effective_inline_model = _select_inline_generation_model(_requested_inline_model, user_query)
+    _response_model = _effective_inline_model
     _log_start = api_logger.log_request(
         "gemini_inline",
-        model=_INLINE_MODEL,
+        request_id=_inline_req_id,
+        user_id=user_id,
+        model=_effective_inline_model,
+        configured_model=_requested_inline_model,
         query_length=len(user_query),
         tone=tone_id,
     )
+
 
     async def _delayed_progress_edit() -> None:
         """At _GEN_PROGRESS_AFTER_S seconds, edit placeholder to show delay notice."""
@@ -1364,21 +1746,21 @@ async def _generate_and_edit_inline(
         with contextlib.suppress(Exception):
             await bot.edit_message_text(
                 inline_message_id=inline_message_id,
-                text=_progress_delayed_html(bot_name),
+                text=_progress_delayed_html(bot_name, lang),
                 parse_mode="HTML",
-                reply_markup=_LOADING_KEYBOARD,
+                reply_markup=_get_loading_keyboard(lang),
             )
 
     progress_task = asyncio.create_task(_delayed_progress_edit())
 
     try:
-        final_answer, _grounding_sources = await asyncio.wait_for(
-            _stream_inline_fast(
-                preferred_model=_INLINE_MODEL,
+        final_answer, _grounding_sources, _response_model = await asyncio.wait_for(
+            _generate_inline_answer(
+                preferred_model=_effective_inline_model,
+                user_query=user_query,
                 history=history,
                 system_instruction=system_instruction,
                 user_id=user_id,
-                max_rounds=4,
                 enable_web_search=True,
             ),
             timeout=_GEN_TIMEOUT_S,
@@ -1404,12 +1786,12 @@ async def _generate_and_edit_inline(
             "gemini_inline",
             _log_start,
             success=_gen_success,
-            model=_INLINE_MODEL,
+            model=_response_model,
             response_length=len(final_answer or ""),
         )
 
     # Record metrics (we're already in a background task — awaiting is safe)
-    await metrics_collector.record_api_call("gemini_inline", _INLINE_MODEL, user_id=user_id)
+    await metrics_collector.record_api_call("gemini_inline", _response_model, user_id=user_id)
     await metrics_collector.record_request(
         "inline",
         response_time=time.monotonic() - _gen_start,
@@ -1439,7 +1821,18 @@ async def _generate_and_edit_inline(
                     btn_row.append(
                         InlineKeyboardButton("🔗 Источники", callback_data=f"inl_tab:sources:{inline_message_id}")
                     )
-                reply_markup = InlineKeyboardMarkup([btn_row])
+                
+                # Append continue buttons
+                continue_kb = await _build_continue_keyboard(
+                    bot_username=getattr(bot, "username", "") or "",
+                    user_query=user_query,
+                    final_answer=segments.get("details", final_answer), # Use parsed details instead of raw XML
+                    tone_id=tone_id,
+                    lang=lang,
+                    user_id=user_id,
+                )
+                rows = [btn_row] + list(continue_kb.inline_keyboard)
+                reply_markup = InlineKeyboardMarkup(rows)
                 try:
                     await bot.edit_message_text(
                         inline_message_id=inline_message_id,
@@ -1453,7 +1846,7 @@ async def _generate_and_edit_inline(
                     with contextlib.suppress(Exception):
                         await bot.edit_message_text(
                             inline_message_id=inline_message_id,
-                            text=strip_formatting(formatted)[:4000] or _FALLBACK_ERROR,
+                            text=strip_formatting(formatted)[:4000] or t("inline.fallback_error", lang),
                             reply_markup=reply_markup,
                             link_preview_options=LinkPreviewOptions(is_disabled=True),
                         )
@@ -1490,7 +1883,7 @@ async def _generate_and_edit_inline(
         if _is_api_error and final_answer:
             formatted = strip_error_tag(final_answer)
         else:
-            formatted = _TIMEOUT_ERROR if _gen_timed_out else _GENERATION_ERROR
+            formatted = t("inline.timeout_error", lang) if _gen_timed_out else t("inline.generation_error", lang)
 
     # On failure, attach a retry button so the user can re-trigger generation.
     reply_markup_out: InlineKeyboardMarkup | None = None
@@ -1505,7 +1898,14 @@ async def _generate_and_edit_inline(
             [[InlineKeyboardButton("🔄 Повторить", callback_data=f"inl_retry:{retry_id}")]]
         )
     else:
-        reply_markup_out = InlineKeyboardMarkup([])  # strip loading indicator
+        reply_markup_out = await _build_continue_keyboard(
+            bot_username=getattr(bot, "username", "") or "",
+            user_query=user_query,
+            final_answer=final_answer,
+            tone_id=tone_id,
+            lang=lang,
+            user_id=user_id,
+        )
 
     try:
         await bot.edit_message_text(
@@ -1526,12 +1926,54 @@ async def _generate_and_edit_inline(
             plain = strip_formatting(formatted)[:4000]
             await bot.edit_message_text(
                 inline_message_id=inline_message_id,
-                text=plain or _FALLBACK_ERROR,
+                text=plain or t("inline.fallback_error", lang),
                 reply_markup=reply_markup_out,
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
         except Exception as fallback_err:
             logging.error("Inline: Plain-text fallback also failed: %s", fallback_err)
+
+
+async def _build_continue_keyboard(
+    bot_username: str,
+    user_query: str,
+    final_answer: str,
+    tone_id: str,
+    lang: str,
+    user_id: int | None,
+) -> InlineKeyboardMarkup:
+    """Build 2-button keyboard: «💬 Продолжить» (deep link) + «🔄 Ещё вопрос» (switch inline).
+
+    Falls back to empty keyboard or 'Ask more' only if Redis is unavailable.
+    """
+    btn_ask_more = InlineKeyboardButton(
+        t("inline.btn_ask_more", lang),
+        switch_inline_query_current_chat=user_query[:50],
+    )
+    
+    if not bot_username:
+        # Cannot build deep link without bot username
+        return InlineKeyboardMarkup([[btn_ask_more]])
+
+    token = uuid.uuid4().hex[:16]
+    stored = await store_inline_context(
+        token=token,
+        payload={
+            "q": user_query[:500],
+            "a": final_answer[:2000],
+            "tone": tone_id,
+        },
+        user_id=user_id
+    )
+
+    if stored:
+        btn_continue = InlineKeyboardButton(
+            t("inline.btn_continue", lang),
+            url=f"https://t.me/{bot_username}?start=ctx_{token}",
+        )
+        return InlineKeyboardMarkup([[btn_continue, btn_ask_more]])
+    else:
+        return InlineKeyboardMarkup([[btn_ask_more]])
 
 
 # ── Retry store helpers ───────────────────────────────────────────────────────
@@ -1543,10 +1985,7 @@ def _store_retry_params(
     user_id: int | None,
 ) -> str:
     """Store retry params and return a short ID (fits in callback_data)."""
-    # Prune expired entries
-    import time as _time
-
-    now = _time.monotonic()
+    now = time.monotonic()
     expired = [k for k, v in _retry_store.items() if now - v["ts"] > _RETRY_TTL_S]
     for k in expired:
         _retry_store.pop(k, None)
@@ -1575,8 +2014,6 @@ def _store_retry_params(
 
 async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the 🔄 Повторить button press on failed inline messages."""
-    import time as _time
-
     query = update.callback_query
     if not query:
         return
@@ -1590,11 +2027,12 @@ async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEF
     retry_id = data.split(":", 1)[1]
     entry = _retry_store.pop(retry_id, None)
 
-    if not entry or (_time.monotonic() - entry["ts"] > _RETRY_TTL_S):
+    if not entry or (time.monotonic() - entry["ts"] > _RETRY_TTL_S):
         # Expired or unknown — edit with a polite message
+        lang = _get_lang(query)
         with contextlib.suppress(Exception):
             await query.edit_message_text(
-                "⏳ Запрос устарел. Пожалуйста, вызовите бот заново.",
+                t("inline.retry_expired", lang),
             )
         return
 
@@ -1603,12 +2041,13 @@ async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEF
         return
 
     # Show loading state
+    lang = _get_lang(query)
     bot_name = context.bot.first_name or "Bot"
     with contextlib.suppress(Exception):
         await query.edit_message_text(
-            text=_placeholder_html(bot_name),
+            text=_placeholder_html(bot_name, lang),
             parse_mode="HTML",
-            reply_markup=_LOADING_KEYBOARD,
+            reply_markup=_get_loading_keyboard(lang),
         )
 
     # Re-run generation as a background task
@@ -1621,6 +2060,7 @@ async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEF
             user_query=entry["query"],
             tone_id=entry["tone"],
             user_id=entry["user_id"],
+            lang=lang,
         )
     )
 
@@ -1639,10 +2079,8 @@ def _parse_xml_segments(text: str) -> dict | None:
          and Gemini's occasional markdown wrapping around the response block.
       2. Require at a minimum a non-empty <tldr> block to consider it parseable.
     """
-    import re as _re
-
     def _extract(tag: str) -> str:
-        m = _re.search(rf"<{tag}>(.*?)</{tag}>", text, _re.DOTALL | _re.IGNORECASE)
+        m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL | re.IGNORECASE)
         return m.group(1).strip() if m else ""
 
     tldr = _extract("tldr")
@@ -1728,3 +2166,440 @@ async def handle_inline_tab_switch(update: Update, context: ContextTypes.DEFAULT
         )
     except Exception as err:
         logging.error("Inline tab switch: edit failed for %s: %s", inline_message_id, err)
+
+# -- Specialized Inline Generators (Tarot / Horoscope) --------------------------
+
+
+
+# ── Specialized Inline Generators (Tarot / Horoscope) ──────────────────────────
+
+async def _generate_horoscope_inline(
+    bot,
+    inline_message_id: str,
+    user_query: str,
+    user_id: int | None,
+) -> None:
+    import contextlib
+
+    from app.intent_router import _handle_horoscope
+    from app.utils.text_format import markdown_to_html
+
+    res = await _handle_horoscope(user_query)
+
+    # Try to extract sign from the query for the deep-link payload
+    _SIGN_MAP = {
+        "овен": "aries", "телец": "taurus", "близнецы": "gemini",
+        "рак": "cancer", "лев": "leo", "дева": "virgo",
+        "весы": "libra", "скорпион": "scorpio", "стрелец": "sagittarius",
+        "козерог": "capricorn", "водолей": "aquarius", "рыбы": "pisces",
+        "aries": "aries", "taurus": "taurus", "gemini": "gemini",
+        "cancer": "cancer", "leo": "leo", "virgo": "virgo",
+        "libra": "libra", "scorpio": "scorpio", "sagittarius": "sagittarius",
+        "capricorn": "capricorn", "aquarius": "aquarius", "pisces": "pisces",
+    }
+    detected_sign = "aries"
+    query_lower = user_query.lower()
+    for ru_or_en, slug in _SIGN_MAP.items():
+        if ru_or_en in query_lower:
+            detected_sign = slug
+            break
+
+    # Build subscribe deep-link button
+    try:
+        bot_username = (getattr(bot, "username", None) or "").lstrip("@")
+    except Exception:
+        bot_username = ""
+
+    subscribe_btn = None
+    if bot_username:
+        subscribe_url = f"https://t.me/{bot_username}?start=subscribe_horoscope_{detected_sign}"
+        subscribe_btn = InlineKeyboardButton("🔔 Подписаться на ежедневный гороскоп", url=subscribe_url)
+
+    reply_markup = (
+        InlineKeyboardMarkup([[subscribe_btn]]) if subscribe_btn else InlineKeyboardMarkup([])
+    )
+
+    if res and res.text:
+        html = markdown_to_html(res.text)
+        with contextlib.suppress(Exception):
+            await bot.edit_message_text(
+                inline_message_id=inline_message_id,
+                text=html[:4000],
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+    else:
+        with contextlib.suppress(Exception):
+            await bot.edit_message_text(
+                inline_message_id=inline_message_id,
+                text="❌ Ошибка генерации гороскопа.",
+            )
+
+
+
+
+def _build_fortune_cookie_html() -> str:
+    """Build an instant fortune cookie message from fortune_telling_ru in tarot.json.
+
+    Called at answerInlineQuery time — no LLM, no latency.
+    Falls back to the English fortune_telling if Russian isn't present yet.
+    """
+    import html as _html_mod
+
+    from app.tarot import get_fortune_cookie
+
+    result = get_fortune_cookie()
+    if not result:
+        return "\u26a1 <b>\u041f\u0440\u0435\u0434\u0441\u043a\u0430\u0437\u0430\u043d\u0438\u0435</b>\
+\
+<i>\u041a\u0430\u0440\u0442\u044b \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b.</i>"
+
+    fortune, card_name = result
+    return (
+        "\u26a1 <b>\u041f\u0440\u0435\u0434\u0441\u043a\u0430\u0437\u0430\u043d\u0438\u0435</b>\
+\
+"
+        f"<i>\u00ab{_html_mod.escape(fortune)}\u00bb</i>\
+\
+"
+        f"\U0001f3a4 {_html_mod.escape(card_name)}"
+    )
+
+
+async def _generate_tarot_inline(
+    bot,
+    inline_message_id: str,
+    user_query: str,
+    user_id: int | None,
+    spread_type: str = "tarot",
+) -> None:
+    """Generate and stream a tarot reading for any spread type.
+
+    Spread-specific prompts are built by _build_tarot_system_prompt().
+    spread_type maps directly to SpreadType enum values (e.g. 'tarot_love').
+
+    Uses ProviderRouter.get_response() for sequential key rotation: tries one
+    key at a time and rotates on 503/UNAVAILABLE (max 3 retries). QNA_MODEL
+    uses the current economy Gemini model, so parallel racing would only waste
+    daily quota.
+    """
+    import contextlib
+    import logging
+
+    from telegram import InlineKeyboardMarkup
+
+    from app.tarot import SPREAD_BY_ID, SpreadType, get_tarot_context
+    from app.utils.text_format import markdown_to_html
+
+    async def _edit_failure(reason: str | None = None) -> None:
+        retry_id = _store_retry_params(
+            user_query=user_query,
+            tone_id="formal",
+            user_id=user_id,
+        )
+        reason_text = reason.strip() if reason else "Модель временно не ответила."
+        text = (
+            f"❌ Карты молчат: {reason_text}\n\n"
+            "Повторите запрос или попробуйте обычный inline-ответ — он пойдёт через другой маршрут и модель."
+        )
+        with contextlib.suppress(Exception):
+            await bot.edit_message_text(
+                inline_message_id=inline_message_id,
+                text=text[:4000],
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔄 Повторить обычным ИИ", callback_data=f"inl_retry:{retry_id}")]]
+                ),
+            )
+
+    # Resolve spread
+    spread = SPREAD_BY_ID.get(spread_type, SpreadType.CLASSIC)
+
+    # Extract user question (strip "таро" prefix)
+    arg = _TAROT_PREFIX_RE.sub("", user_query).strip()
+    if not arg:
+        arg = "Общий прогноз"
+
+    tarot_ctx, card_names = get_tarot_context(spread)
+    if not tarot_ctx:
+        with contextlib.suppress(Exception):
+            await bot.edit_message_text(
+                inline_message_id=inline_message_id,
+                text="❌ База Таро недоступна.",
+            )
+        return
+
+    daily_card_key: tuple[str, str] | None = None
+    if spread == SpreadType.DAILY and card_names:
+        from app.tarot_daily import get_prepared_daily_reading, parse_card_label, today_reading_date
+
+        daily_card_key = parse_card_label(card_names[0])
+        if daily_card_key:
+            card_name, orientation = daily_card_key
+            with contextlib.suppress(Exception):
+                prepared = await get_prepared_daily_reading(
+                    reading_date=today_reading_date(),
+                    card_name=card_name,
+                    orientation=orientation,
+                )
+                if prepared:
+                    cards_str = " • ".join(card_names)
+                    final_text = f"🎤 Карта дня\n_Выпала: {cards_str}_\n\n{prepared.body_markdown}"
+                    await bot.edit_message_text(
+                        inline_message_id=inline_message_id,
+                        text=markdown_to_html(final_text)[:4000],
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([]),
+                    )
+                    return
+
+    system_instruction = _build_tarot_system_prompt(spread, tarot_ctx, arg)
+    prompt = f"Вопрос к Таро: {arg}"
+
+    # Spread-specific header for the final message
+    _HEADER_MAP = {
+        SpreadType.CLASSIC: "🔮 Таро",
+        SpreadType.DAILY:   "🎤 Карта дня",
+        SpreadType.YES_NO:  "🔮 Да или Нет",
+        SpreadType.LOVE:    "💞 Отношения",
+        SpreadType.CELTIC:  "🌙 Кельтский крест",
+    }
+    header = _HEADER_MAP.get(spread, "🔮 Таро")
+
+    # ── Generation: primary (flash-3.5) + parallel hot-standby (flash-lite) ────
+    # For non-DAILY spreads the primary is gemini-3.5-flash. A gemini-3.1-flash-lite
+    # task is launched *immediately* in parallel as a hot standby. Its result is
+    # consumed only when the primary exhausts all 3 key retries (KEYS_EXHAUSTED) or
+    # raises. On success the lite task is cancelled — zero wasted quota in happy path.
+    from app.errors import is_error_message
+    from app.providers.router import get_provider_router
+
+    router = get_provider_router()
+    _history = [{"role": "user", "parts": [prompt]}]
+    preferred_model = "gemini-3.1-flash-lite" if spread == SpreadType.DAILY else "gemini-3.5-flash"
+
+    # Start hot-standby only when the primary is flash-3.5 (not for DAILY which already uses lite)
+    _lite_task: asyncio.Task | None = None
+    if preferred_model == "gemini-3.5-flash":
+        _lite_task = asyncio.create_task(
+            router.get_response(
+                preferred_model="gemini-3.1-flash-lite",
+                history=_history,
+                system_instruction=system_instruction,
+                user_id=user_id,
+                use_openrouter=False,
+                max_key_retries=3,
+            )
+        )
+
+    result: str | None = None
+    _primary_failed_exc = False
+    try:
+        result, _tokens = await router.get_response(
+            preferred_model=preferred_model,
+            history=_history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            use_openrouter=False,
+            max_key_retries=3,
+        )
+    except Exception as exc:
+        logging.error(
+            "Tarot generation exception (spread=%s): %s",
+            spread_type,
+            exc,
+            exc_info=True,
+        )
+        _primary_failed_exc = True
+
+    # ── Hot-standby fallback decision ────────────────────────────────────────
+    # Trigger if: (a) primary raised, or (b) primary returned a tagged error.
+    # Note: we check BEFORE cancelling _lite_task so it's still running.
+    _used_fallback = False
+    _need_lite = _lite_task is not None and (
+        _primary_failed_exc or (result is not None and is_error_message(result))
+    )
+
+    if _need_lite and _lite_task is not None:
+        try:
+            lite_result, _tokens = await asyncio.wait_for(_lite_task, timeout=30.0)
+            _lite_task = None  # consumed — skip cancel below
+            if lite_result and lite_result.strip() and not is_error_message(lite_result):
+                logging.info(
+                    "Tarot: primary overloaded, using flash-lite fallback (spread=%s)", spread_type
+                )
+                result = lite_result
+                _used_fallback = True
+        except Exception as _lite_exc:
+            logging.warning(
+                "Tarot: flash-lite fallback also failed (spread=%s): %s", spread_type, _lite_exc
+            )
+
+    # Cancel the lite task if it was never consumed (primary succeeded or we already awaited it)
+    if _lite_task is not None and not _lite_task.done():
+        _lite_task.cancel()
+
+    # Primary raised AND lite fallback didn't save us
+    if _primary_failed_exc and not _used_fallback:
+        await _edit_failure("ошибка генерации. Попробуйте ещё раз.")
+        return
+
+    if not result or not result.strip() or is_error_message(result):
+        logging.error(
+            "Tarot generation failed (spread=%s): %s",
+            spread_type,
+            (result or "")[:120],
+        )
+        if result and is_error_message(result):
+            from app.errors import strip_error_tag
+
+            await _edit_failure(strip_error_tag(result))
+        else:
+            await _edit_failure("пустой ответ от модели.")
+        return
+
+    # Defense-in-depth: strip any surrogate codepoints the LLM may emit
+    result = result.strip().encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+
+    if spread == SpreadType.DAILY and daily_card_key:
+        from app.tarot_daily import TAROT_DAILY_MODEL, today_reading_date, upsert_prepared_daily_reading
+
+        card_name, orientation = daily_card_key
+        with contextlib.suppress(Exception):
+            await upsert_prepared_daily_reading(
+                reading_date=today_reading_date(),
+                card_name=card_name,
+                orientation=orientation,
+                language="ru",
+                body_markdown=result,
+                model_name=TAROT_DAILY_MODEL,
+            )
+
+    cards_str = " • ".join(card_names)
+    has_question = bool(arg and arg != "Общий прогноз")
+
+    # Only show card list for spreads with a meaningful question
+    if spread == SpreadType.DAILY or spread == SpreadType.YES_NO:
+        if has_question:
+            final_text = f"{header}\n> {arg}\n_Выпала: {cards_str}_\n\n{result}"
+        else:
+            final_text = f"{header}\n_Выпала: {cards_str}_\n\n{result}"
+    else:
+        if has_question:
+            final_text = f"{header}\n> {arg}\n_Выпали: {cards_str}_\n\n{result}"
+        else:
+            final_text = f"{header}: **Общий прогноз**\n_Выпали: {cards_str}_\n\n{result}"
+    html = markdown_to_html(final_text)
+
+    try:
+        await bot.edit_message_text(
+            inline_message_id=inline_message_id,
+            text=html[:4000],
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([]),
+        )
+    except Exception as edit_e:
+        logging.error(
+            "Failed to edit inline message for tarot (HTML parse error?): %s\nHTML:\n%s",
+            edit_e,
+            html[:500],
+        )
+        # Last resort: strip HTML and retry as plain text
+        with contextlib.suppress(Exception):
+            from app.utils.text_format import strip_formatting
+            await bot.edit_message_text(
+                inline_message_id=inline_message_id,
+                text=strip_formatting(html)[:4000] or "❌ Ошибка форматирования.",
+                reply_markup=InlineKeyboardMarkup([]),
+            )
+
+
+
+def _build_tarot_system_prompt(
+    spread: "SpreadType",
+    tarot_ctx: str,
+    arg: str,
+) -> str:
+    """Return a spread-specific system instruction for the LLM."""
+    from app.tarot import SpreadType
+
+    if spread == SpreadType.CLASSIC:
+        return (
+            "Ты — мистический и мудрый таролог.\n"
+            "Твоя задача — сделать расклад Таро на 3 карты для пользователя.\n"
+            "ОБЯЗАТЕЛЬНО используй значения выпавших карт (предоставлены ниже), "
+            "чтобы дать связный, глубокий и полезный ответ на вопрос/ситуацию пользователя.\n"
+            "Не просто перечисляй значения карт, а свяжи их воедино, создав красивую историю "
+            "(Прошлое, Настоящее, Будущее).\n"
+            f"---\nВЫПАВШИЕ КАРТЫ:\n{tarot_ctx}\n---\n"
+            "Ответ должен быть в формате Markdown. Используй мистические эмодзи."
+        )
+
+    if spread == SpreadType.DAILY:
+        return (
+            "Ты — мистический таролог.\n"
+            "Пользователь вытянул ОДНУ карту дня — это совет и энергия на сегодня.\n"
+            "Используй значение карты (ниже), чтобы дать:\n"
+            "1. Краткое описание энергии дня (2–3 предложения)\n"
+            "2. Практический совет на сегодня (1–2 предложения)\n"
+            "3. От чего стоит остеречься (1 предложение)\n\n"
+            "Ответ должен быть КОРОТКИМ (6–8 предложений). "
+            "Формат: Markdown. Используй мистические эмодзи.\n"
+            f"---\nКАРТА ДНЯ:\n{tarot_ctx}\n---"
+        )
+
+    if spread == SpreadType.YES_NO:
+        # Determine upright/reversed from the single card's orientation in tarot_ctx
+        is_upright = "Прямая" in tarot_ctx
+        verdict = "ДА" if is_upright else "НЕТ"
+        verdict_context = "ПРЯМО (ответ: ДА)" if is_upright else "ПЕРЕВЁРНУТО (ответ: НЕТ)"
+        return (
+            "Ты — мистический оракул Таро.\n"
+            f"Пользователь задал вопрос формата Да/Нет. Карта выпала {verdict_context}.\n\n"
+            "Твоя задача:\n"
+            f"1. Чётко объявить вердикт: **{verdict}**\n"
+            "2. Обосновать ответ через значение карты (2–3 предложения)\n"
+            "3. Краткое напутствие (1 предложение)\n\n"
+            "Ответ КОРОТКИЙ (5–6 предложений). "
+            "Формат: Markdown. Используй мистические эмодзи.\n"
+            f"---\nВЫПАВШАЯ КАРТА:\n{tarot_ctx}\n---"
+        )
+
+    if spread == SpreadType.LOVE:
+        return (
+            "Ты — мистический таролог, специализирующийся на отношениях.\n"
+            "Выполни расклад на ОТНОШЕНИЯ из 5 карт в следующих позициях:\n"
+            "• Ты — что ты привносишь в отношения\n"
+            "• Партнёр — что привносит второй человек\n"
+            "• Что вас связывает — основа и сила вашего союза\n"
+            "• Что мешает — скрытые препятствия и конфликты\n"
+            "• Куда ведёт — вероятный путь развития\n\n"
+            "ОБЯЗАТЕЛЬНО используй значения выпавших карт.\n"
+            "Создай СВЯЗНУЮ историю об этих отношениях, не просто перечисление.\n"
+            "Ответ средней длины (10–15 предложений). "
+            "Формат: Markdown. Используй романтические и мистические эмодзи.\n"
+            f"---\nВЫПАВШИЕ КАРТЫ:\n{tarot_ctx}\n---"
+        )
+
+    if spread == SpreadType.CELTIC:
+        return (
+            "Ты — мудрый и опытный таролог.\n"
+            "Выполни расклад «Кельтский крест» (адаптированный) из 6 карт:\n"
+            "• Ситуация — центральная тема, суть вопроса\n"
+            "• Препятствие — что перекрывает путь прямо сейчас\n"
+            "• Подсознание — глубинные мотивы, скрытые от самого человека\n"
+            "• Прошлое — события и энергии, приведшие к текущей ситуации\n"
+            "• Ближайшее будущее — что развернётся в ближайшее время\n"
+            "• Итог — финальный результат, если текущий курс не изменится\n\n"
+            "ОБЯЗАТЕЛЬНО используй значения выпавших карт.\n"
+            "Построй ГЛУБОКИЙ и связный нарратив. Это самый подробный расклад.\n"
+            "Ответ развёрнутый (15–20 предложений), но ОБЯЗАТЕЛЬНО уложись в 3500 символов.\n"
+            "Формат: Markdown. Используй мистические эмодзи.\n"
+            f"---\nВЫПАВШИЕ КАРТЫ:\n{tarot_ctx}\n---"
+        )
+
+    # Fallback: CLASSIC
+    return (
+        "Ты — мистический таролог.\n"
+        f"---\nВЫПАВШИЕ КАРТЫ:\n{tarot_ctx}\n---\n"
+        "Ответь связно и глубоко. Формат: Markdown. Используй мистические эмодзи."
+    )

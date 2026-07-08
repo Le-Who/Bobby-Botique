@@ -76,3 +76,6 @@ class UserStateRow(BaseModel):
     awaiting_manual_role_prompt: bool = False
     manual_role_title: str = ""
     manual_role_prompt: str = ""
+    tarot_mode: bool = False
+    tarot_session: dict[str, Any] | None = None
+

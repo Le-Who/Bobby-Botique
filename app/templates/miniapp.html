@@ -623,10 +623,8 @@ let roleDataCache = [];
 // Human-readable display names for models (auto-populated from API, enriched with known aliases)
 const MODEL_DISPLAY_NAMES = {
   // Google Gemini
-  'gemini-3-flash-preview':          { name: 'Gemini 3 Flash', sub: '💥 Флагман — максимальный интеллект' },
-  'gemini-3.1-flash-lite-preview':   { name: 'Gemini 3.1 Flash Lite', sub: '🍱 Лёгкая версия — быстро и отзывчиво' },
-  'gemini-2.5-flash':                { name: 'Gemini 2.5 Flash', sub: '⚡ Баланс скорости и качества' },
-  'gemini-2.5-flash-lite':           { name: 'Gemini 2.5 Flash Lite', sub: '💫 Мгновенные ответы' },
+  'gemini-3.1-flash-lite':   { name: 'Gemini 3.1 Flash Lite', sub: '🍱 Лёгкая версия — быстро и отзывчиво' },
+  'gemini-3.5-flash':                { name: 'Gemini 3.5 Flash', sub: '💥 Основная мощная модель' },
   // Opencode Go
   'opencode-go/glm-5':               { name: 'GLM 5', sub: '🌐 Универсальная модель' },
   'opencode-go/glm-5.1':             { name: 'GLM 5.1', sub: '📚 Длинный контекст и логика' },
@@ -1075,46 +1073,67 @@ function toggleProviderGroup(groupId) {
   document.getElementById(groupId).classList.toggle('collapsed');
 }
 
+function renderSettings(d, r, v) {
+  settingsData = d.settings;
+  availableModels = d.available_models || [];
+  groupedModels = d.grouped_models || [];
+  roleDataCache = r.roles || [];
+  
+  // Populate model sheet
+  buildModelSheet();
+  document.getElementById('val-model').textContent = `${modelDisplayName(settingsData.model)} ❭`;
+  
+  renderRoles(settingsData.system_prompt);
+  
+  // Prompt
+  const prev = settingsData.system_prompt || 'Стандартная';
+  document.getElementById('val-prompt-preview').textContent = prev.length > 20 ? prev.substring(0, 20)+'...' : prev;
+  document.getElementById('s-prompt-area').value = settingsData.system_prompt || '';
+  
+  // Toggles
+  document.getElementById('s-ltm').checked = settingsData.ltm_enabled;
+  document.getElementById('s-search').checked = settingsData.search_enabled;
+  
+  // Thinking
+  setThinking(settingsData.thinking_level || 'off', true);
+  
+  // Temp
+  syncTempControls(settingsData.temperature);
+  syncTtsTempControls(settingsData.tts_temperature);
+  
+  // Voices
+  let vHtml = '';
+  (v.voices || []).forEach(voice => {
+    let isActive = settingsData.voice_id === voice.id || (!settingsData.voice_id && voice.name.includes("Charlotte"));
+    vHtml += `<div class="setting-row" onclick="setVoice('${voice.id}')">
+      <div class="setting-label">${esc(voice.name)}</div>
+      <div class="setting-val">${isActive ? '✓' : ''}</div>
+    </div>`;
+  });
+  document.getElementById('settings-voices-list').innerHTML = vHtml;
+}
+
 async function loadSettings() {
   try {
+    // Optimistic UI via CloudStorage
+    if (tg.CloudStorage) {
+      tg.CloudStorage.getItem('gemaibot_settings_cache', (err, val) => {
+        if (!err && val) {
+          try {
+            const cached = JSON.parse(val);
+            renderSettings(cached.d, cached.r, cached.v);
+          } catch(e) {}
+        }
+      });
+    }
+
     const [d, r, v] = await Promise.all([ api('/settings'), api('/roles'), api('/voices') ]);
-    settingsData = d.settings;
-    availableModels = d.available_models || [];
-    groupedModels = d.grouped_models || [];
-    roleDataCache = r.roles || [];
     
-    // Populate model sheet
-    buildModelSheet();
-    document.getElementById('val-model').textContent = `${modelDisplayName(settingsData.model)} ❭`;
+    renderSettings(d, r, v);
     
-    renderRoles(settingsData.system_prompt);
-    
-    // Prompt
-    const prev = settingsData.system_prompt || 'Стандартная';
-    document.getElementById('val-prompt-preview').textContent = prev.length > 20 ? prev.substring(0, 20)+'...' : prev;
-    document.getElementById('s-prompt-area').value = settingsData.system_prompt || '';
-    
-    // Toggles
-    document.getElementById('s-ltm').checked = settingsData.ltm_enabled;
-    document.getElementById('s-search').checked = settingsData.search_enabled;
-    
-    // Thinking
-    setThinking(settingsData.thinking_level || 'off', true);
-    
-    // Temp
-    syncTempControls(settingsData.temperature);
-    syncTtsTempControls(settingsData.tts_temperature);
-    
-    // Voices
-    let vHtml = '';
-    (v.voices || []).forEach(voice => {
-      let isActive = settingsData.voice_id === voice.id || (!settingsData.voice_id && voice.name.includes("Charlotte"));
-      vHtml += `<div class="setting-row" onclick="setVoice('${voice.id}')">
-        <div class="setting-label">${esc(voice.name)}</div>
-        <div class="setting-val">${isActive ? '✓' : ''}</div>
-      </div>`;
-    });
-    document.getElementById('settings-voices-list').innerHTML = vHtml;
+    if (tg.CloudStorage) {
+      tg.CloudStorage.setItem('gemaibot_settings_cache', JSON.stringify({d, r, v}));
+    }
     
     isDirty = false;
   } catch(e) { showToast('Ошибка загрузки настроек'); }

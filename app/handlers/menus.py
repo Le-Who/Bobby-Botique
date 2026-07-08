@@ -1,11 +1,13 @@
+import asyncio
 import logging
 import os
 from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
-from app.config import get_model_hash, get_openrouter_keys, settings
-from app.document_processor import get_user_documents
+from app.config import get_all_available_models, get_model_hash, get_openrouter_keys, settings
+
+# app.document_processor (pypdf, docx) is deferred to reduce startup latency
 from app.i18n import t
 from app.metrics import get_system_status_data
 from app.prompt_registry import DEFAULT_ROLES
@@ -38,13 +40,15 @@ async def get_start_menu_content(chat_state, user_id=None):
     activity_line = ""
     if user_id:
         try:
-            today_requests = await get_user_today_request_count(user_id)
+            from app.document_processor import get_user_documents  # deferred — avoids pypdf/docx at startup
+            today_requests, docs, conv_count = await asyncio.gather(
+                get_user_today_request_count(user_id),
+                get_user_documents(user_id),
+                get_conversation_count(user_id)
+            )
+            
             req_count = today_requests
-
-            docs = await get_user_documents(user_id)
             doc_count = len(docs) if docs else 0
-
-            conv_count = await get_conversation_count(user_id)
 
             if req_count > 0 or doc_count > 0 or conv_count > 0:
                 activity_line = f"📈 Сегодня: {req_count} запр. · {doc_count} док. · {conv_count} бесед\n\n"
@@ -96,10 +100,8 @@ async def get_start_menu_content(chat_state, user_id=None):
 
 # Model descriptions for decision support
 MODEL_HINTS = {
-    "gemini-3-flash-preview": "💎 Флагманская модель — максимальный интеллект",
-    "gemini-3.1-flash-lite-preview": "🧠 Самая умная из доступных — сложные задачи и код",
-    "gemini-2.5-flash": "⚡ Быстрая — баланс скорости и качества",
-    "gemini-2.5-flash-lite": "💨 Самая лёгкая — мгновенные ответы",
+    "gemini-3.5-flash": "💎 Основная мощная модель — сложные задачи и код",
+    "gemini-3.1-flash-lite": "⚡ Экономичная быстрая модель — простые и частые задачи",
 }
 
 
@@ -111,7 +113,7 @@ def _generate_model_buttons(models, current_model, start_index, provider="gemini
         models (list): Список моделей.
         current_model (str): Текущая выбранная model.
         start_index (int): Начальный индекс for callback_data.
-        provider (str): Провайдер ("gemini", "openrouter", "opencode").
+        provider (str): Провайдер ("gemini", "openrouter", "opencode", "freetheai").
 
     Returns:
         tuple: (list строк кнопок, следующий индекс)
@@ -131,6 +133,9 @@ def _generate_model_buttons(models, current_model, start_index, provider="gemini
         elif provider == "opencode":
             display_name = m.replace("opencode-go/", "").replace("-", " ").title()
             icon = "⚡"
+        elif provider == "freetheai":
+            display_name = m.split("/")[-1].replace("_", " ").replace("-", " ").title() if "/" in m else m
+            icon = "🔮"
         else:  # gemini
             display_name = m
             icon = "🤖"
@@ -153,13 +158,7 @@ def get_model_menu_content(chat_state, context):
     openrouter_available = bool(get_openrouter_keys())
 
     # Create единый list всех моделей for индексации
-    all_models = []
-    if settings.AVAILABLE_MODELS:
-        all_models.extend(settings.AVAILABLE_MODELS)
-    if settings.OPENCODE_AVAILABLE_MODELS:
-        all_models.extend(settings.OPENCODE_AVAILABLE_MODELS)
-    if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
-        all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
+    all_models = get_all_available_models()
 
     if not all_models:
         from app.utils.keyboards import error_with_back_keyboard
@@ -207,12 +206,27 @@ def get_model_menu_content(chat_state, context):
             provider="openrouter",
         )
         keyboard.extend(buttons)
+    # Add FreeTheAI models, if available
+    if settings.FREETHEAI_AVAILABLE_MODELS:
+        if settings.AVAILABLE_MODELS or settings.OPENCODE_AVAILABLE_MODELS or (
+            openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS
+        ):
+            keyboard.append([InlineKeyboardButton("─────────────", callback_data="model_none")])
+        buttons, model_index = _generate_model_buttons(
+            settings.FREETHEAI_AVAILABLE_MODELS,
+            current_model,
+            model_index,
+            provider="freetheai",
+        )
+        keyboard.extend(buttons)
 
     # Build text with model hint for decision support
-    from app.providers.base import is_opencode_model, is_openrouter_model
+    from app.providers.base import is_freetheai_model, is_opencode_model, is_openrouter_model
 
     if current_model and is_opencode_model(current_model):
         provider_name = "Opencode Go"
+    elif current_model and is_freetheai_model(current_model):
+        provider_name = "FreeTheAI"
     elif current_model and is_openrouter_model(current_model):
         provider_name = "OpenRouter"
     else:
@@ -232,7 +246,7 @@ def get_model_menu_content(chat_state, context):
     if len(all_models) > 1:
         # Find best recommendation
         rec = None
-        for m in ["gemini-2.5-flash", "gemini-2.5-flash-preview-04-17"]:
+        for m in ["gemini-3.5-flash", "gemini-3.1-flash-lite"]:
             if m in all_models and m != current_model:
                 rec = m
                 break
@@ -604,6 +618,7 @@ async def get_metrics_content():
 
 
 async def get_documents_menu_content(user_id):
+    from app.document_processor import get_user_documents  # deferred — avoids pypdf/docx at startup
     documents = await get_user_documents(user_id)
 
     if not documents:
@@ -643,8 +658,10 @@ async def get_conversations_menu_content(user_id, page=1):
     limit = 5
     offset = (page - 1) * limit
 
-    conversations = await get_user_conversations(user_id, limit, offset)
-    total_count = await get_conversation_count(user_id)
+    conversations, total_count = await asyncio.gather(
+        get_user_conversations(user_id, limit, offset),
+        get_conversation_count(user_id)
+    )
 
     if not conversations:
         empty_text = (

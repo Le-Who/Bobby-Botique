@@ -3,61 +3,95 @@
 .github/
 .gitignore
 
-# ── IDE & Editor Configs ──────────────────────────────────────
+# ── IDE, Editor & Agent Configs ───────────────────────────────
 .vscode/
 .cursor/
 .Jules/
 .idea/
+.vs/
+.codex/
 .roomodes
+*.swp
+*.swo
 skills/
 .agents/
+skills-lock.json
+implementation_plan.md
+walkthrough.md
+task.md
+.playwright-cli/
 
-# ── Virtual Environment ──────────────────────────────────────
-.venv/
-venv/
-
-# ── Python Caches ────────────────────────────────────────────
+# ── Python Caches & Virtual Environments ──────────────────────
 __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+.venv/
+venv/
+uv.lock
 
-# ── Test & Coverage (not needed in prod) ─────────────────────
+# ── Test & Coverage (not needed in prod) ──────────────────────
 tests/
 pytest.ini
-.pytest_cache/
 .coverage
 htmlcov/
-tests_output.log
-verification/
+.pytest_cache/
 .pytest_tmp/
-test_script.py
-test_sim.py
-test_perf.py
-load_test.py
-benchmark*.py
+pytest*.log
+pytest_output.txt
+tests_output.log
+test_keys_out.txt
 
-# ── Linter / Type Checker Caches ─────────────────────────────
+# ── Linter / Type Checker Caches ──────────────────────────────
 .ruff_cache/
 .mypy_cache/
-pyproject.toml
 
-# ── Secrets ──────────────────────────────────────────────────
+# ── Secrets ───────────────────────────────────────────────────
 .env
 .env.*
 
-# ── Docs (not needed in image) ───────────────────────────────
+# ── Docs (not needed in image) ────────────────────────────────
 README.md
 CHANGELOG.md
-docs/
+ROADMAP.md
+CONTRIBUTING.md
+SECURITY.md
+GEMINI.md
+AGENTS.md
 LICENSE
+docs/*
+!docs/natal-reference-fixture.moira-jpl.json
 
-# ── Dev/Legacy ───────────────────────────────────────────────
+# ── Dev/Legacy & Artifacts ────────────────────────────────────
 legacy/
 data/
+output/
+verification/
+artifacts/perf/
 northflank.yaml
 docker-compose*.yml
 
-# ── OS files ─────────────────────────────────────────────────
+# ── Logs & Output ─────────────────────────────────────────────
+out.log
+out*.log
+
+# ── Dev Scripts ───────────────────────────────────────────────
+test_script.py
+test_sim.py
+test_perf.py
+test_size.py
+test_stream.py
+load_test.py
+benchmark*.py
+_patch_*.py
+_test_*.py
+scratch*.py
+script.py
+
+# ── App Data & Caches ─────────────────────────────────────────
+app/games/data/*.json
+
+# ── OS Files ──────────────────────────────────────────────────
 Thumbs.db
+Desktop.ini
 .DS_Store

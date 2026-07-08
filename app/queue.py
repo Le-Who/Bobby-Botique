@@ -117,7 +117,6 @@ class TaskQueue:
         self.tasks: dict[str, Task] = {}
         self.workers: list[asyncio.Task] = []
         self.running = False
-        self._lock = asyncio.Lock()
         self._task_handlers: dict[str, Callable] = {}
         self._cleanup_task: asyncio.Task | None = None
         self._metrics_scheduler_task: asyncio.Task | None = None
@@ -261,8 +260,7 @@ class TaskQueue:
             created_at=datetime.now(tz=UTC),
         )
 
-        async with self._lock:
-            self.tasks[task_id] = task
+        self.tasks[task_id] = task
 
         if self._use_redis:
             try:
@@ -279,8 +277,7 @@ class TaskQueue:
         try:
             await asyncio.wait_for(self._fallback_queue.put((-priority.value, task_id)), timeout=2.0)
         except TimeoutError:
-            async with self._lock:
-                self.tasks.pop(task_id, None)
+            self.tasks.pop(task_id, None)
             logging.warning("Task queue put timeout. Rejecting task %s", task_id)
             return ""
 
@@ -290,22 +287,20 @@ class TaskQueue:
 
     async def get_task_status(self, task_id: str) -> Task | None:
         """Получает статус задачи"""
-        async with self._lock:
-            return self.tasks.get(task_id)
+        return self.tasks.get(task_id)
 
     async def cancel_task(self, task_id: str, user_id: int) -> bool:
         """Отменяет задачу"""
-        async with self._lock:
-            task = self.tasks.get(task_id)
-            if not task or task.user_id != user_id:
-                return False
-
-            if task.status in [TaskStatus.PENDING, TaskStatus.RUNNING]:
-                task.status = TaskStatus.CANCELLED
-                task.completed_at = datetime.now(tz=UTC)
-                return True
-
+        task = self.tasks.get(task_id)
+        if not task or task.user_id != user_id:
             return False
+
+        if task.status in [TaskStatus.PENDING, TaskStatus.RUNNING]:
+            task.status = TaskStatus.CANCELLED
+            task.completed_at = datetime.now(tz=UTC)
+            return True
+
+        return False
 
     async def _dequeue_task(self) -> tuple[Task | None, bytes | None]:
         """Dequeue a task from Redis (priority-ordered) or fallback queue.
@@ -333,8 +328,7 @@ class TaskQueue:
         # Fallback: in-memory queue
         try:
             _, task_id = self._fallback_queue.get_nowait()
-            async with self._lock:
-                return self.tasks.get(task_id), None
+            return self.tasks.get(task_id), None
         except asyncio.QueueEmpty:
             return None, None
 
@@ -401,27 +395,25 @@ class TaskQueue:
                         break
 
                     # Check if cancelled
-                    async with self._lock:
-                        cached = self.tasks.get(task.id)
-                        if cached and cached.status == TaskStatus.CANCELLED:
-                            await self._ack_task(original_json)
-                            continue
+                    cached = self.tasks.get(task.id)
+                    if cached and cached.status == TaskStatus.CANCELLED:
+                        await self._ack_task(original_json)
+                        continue
 
-                        # Update status
-                        task.status = TaskStatus.RUNNING
-                        task.started_at = datetime.now(tz=UTC)
-                        self.tasks[task.id] = task
+                    # Update status
+                    task.status = TaskStatus.RUNNING
+                    task.started_at = datetime.now(tz=UTC)
+                    self.tasks[task.id] = task
 
                     logging.info("Worker %s processing task %s", worker_name, task.id)
 
                     try:
                         result = await self._execute_task(task)
 
-                        async with self._lock:
-                            task.status = TaskStatus.COMPLETED
-                            task.completed_at = datetime.now(tz=UTC)
-                            task.result = result
-                            self.tasks[task.id] = task
+                        task.status = TaskStatus.COMPLETED
+                        task.completed_at = datetime.now(tz=UTC)
+                        task.result = result
+                        self.tasks[task.id] = task
 
                         await self._ack_task(original_json)
                         logging.info("Task %s completed successfully", task.id)
@@ -429,17 +421,16 @@ class TaskQueue:
                     except Exception as e:
                         logging.error("Task %s failed: %s", task.id, e, exc_info=True)
 
-                        async with self._lock:
-                            task.error = str(e)
-                            task.retry_count += 1
+                        task.error = str(e)
+                        task.retry_count += 1
 
-                            if task.retry_count < task.max_retries:
-                                await self._nack_task(task, original_json)
-                            else:
-                                task.status = TaskStatus.FAILED
-                                task.completed_at = datetime.now(tz=UTC)
-                                await self._ack_task(original_json)
-                            self.tasks[task.id] = task
+                        if task.retry_count < task.max_retries:
+                            await self._nack_task(task, original_json)
+                        else:
+                            task.status = TaskStatus.FAILED
+                            task.completed_at = datetime.now(tz=UTC)
+                            await self._ack_task(original_json)
+                        self.tasks[task.id] = task
 
             except asyncio.CancelledError:
                 break
@@ -519,18 +510,17 @@ class TaskQueue:
 
                 cutoff_time = datetime.now(tz=UTC) - timedelta(days=7)
 
-                async with self._lock:
-                    tasks_to_remove = [
-                        task_id
-                        for task_id, task in self.tasks.items()
-                        if task.completed_at and task.completed_at < cutoff_time
-                    ]
+                tasks_to_remove = [
+                    task_id
+                    for task_id, task in self.tasks.items()
+                    if task.completed_at and task.completed_at < cutoff_time
+                ]
 
-                    for task_id in tasks_to_remove:
-                        del self.tasks[task_id]
+                for task_id in tasks_to_remove:
+                    del self.tasks[task_id]
 
-                    if tasks_to_remove:
-                        logging.info("Cleaned up %s old tasks", len(tasks_to_remove))
+                if tasks_to_remove:
+                    logging.info("Cleaned up %s old tasks", len(tasks_to_remove))
 
             except Exception as e:
                 logging.error("Error in cleanup task: %s", e, exc_info=True)
@@ -565,23 +555,22 @@ class TaskQueue:
                 except Exception:
                     pass
 
-        async with self._lock:
-            total_tasks = len(self.tasks)
-            pending_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.PENDING)
-            running_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.RUNNING)
-            completed_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.COMPLETED)
-            failed_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.FAILED)
+        total_tasks = len(self.tasks)
+        pending_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.PENDING)
+        running_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.RUNNING)
+        completed_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.COMPLETED)
+        failed_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.FAILED)
 
-            return {
-                "total_tasks": total_tasks,
-                "pending_tasks": pending_tasks,
-                "running_tasks": running_tasks,
-                "completed_tasks": completed_tasks,
-                "failed_tasks": failed_tasks,
-                "queue_size": redis_queue_size or self._fallback_queue.qsize(),
-                "active_workers": len([w for w in self.workers if not w.done()]),
-                "backend": "redis" if self._use_redis else "memory",
-            }
+        return {
+            "total_tasks": total_tasks,
+            "pending_tasks": pending_tasks,
+            "running_tasks": running_tasks,
+            "completed_tasks": completed_tasks,
+            "failed_tasks": failed_tasks,
+            "queue_size": redis_queue_size or self._fallback_queue.qsize(),
+            "active_workers": len([w for w in self.workers if not w.done()]),
+            "backend": "redis" if self._use_redis else "memory",
+        }
 
 
 # Global task queue instance

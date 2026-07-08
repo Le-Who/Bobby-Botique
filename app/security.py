@@ -464,7 +464,7 @@ class RateLimiter:
         """
         self.max_requests = max_requests
         self.window_seconds = window_seconds
-        self._user_requests: dict[int, list[float]] = defaultdict(list)
+        self._user_requests: dict[int, deque[float]] = defaultdict(deque)
         self._lock = asyncio.Lock()
         self._cleanup_interval = 300  # Cleanup every 5 minutes
         self._last_cleanup = time.time()
@@ -492,7 +492,8 @@ class RateLimiter:
 
             # Remove requests older than the window
             cutoff_time = current_time - self.window_seconds
-            user_requests[:] = [req_time for req_time in user_requests if req_time > cutoff_time]
+            while user_requests and user_requests[0] <= cutoff_time:
+                user_requests.popleft()
 
             # Check limit
             if len(user_requests) >= self.max_requests:
@@ -515,7 +516,8 @@ class RateLimiter:
 
         for user_id, requests in self._user_requests.items():
             # Remove stale requests
-            self._user_requests[user_id] = [req_time for req_time in requests if req_time > cutoff_time]
+            while requests and requests[0] <= cutoff_time:
+                requests.popleft()
 
             # Mark users with no active requests for removal
             if not self._user_requests[user_id]:
@@ -563,7 +565,7 @@ class SyncRateLimiter:
     def __init__(self, max_requests: int = 5, window_seconds: int = 300, cleanup_every: int = 50):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
-        self._requests: dict[str, list[float]] = defaultdict(list)
+        self._requests: dict[str, deque[float]] = defaultdict(deque)
         self._lock = threading.Lock()
         self._cleanup_every = cleanup_every
         self._call_count = 0
@@ -579,7 +581,11 @@ class SyncRateLimiter:
         with self._lock:
             now = time.time()
             cutoff = now - self.window_seconds
-            self._requests[key] = [t for t in self._requests[key] if t > cutoff]
+            
+            requests = self._requests[key]
+            while requests and requests[0] <= cutoff:
+                requests.popleft()
+                
             self._maybe_cleanup(cutoff)
             return len(self._requests[key]) < self.max_requests
 

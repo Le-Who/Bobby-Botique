@@ -22,7 +22,7 @@ Prompt translation:
       to the provider.  The translated text is shown in the caption so the user
       can see what was passed; the original Russian prompt is preserved in state.
     - The translation API call is tracked in metrics_collector under the key
-      "gemini_img_translate" / model "gemini-3.1-flash-lite-preview-04-17".
+      "gemini_img_translate" / model "gemini-3.1-flash-lite-04-17".
 
 State (draw_state in context.user_data):
     prompt          str   — original user prompt (always Russian / original language)
@@ -55,6 +55,12 @@ from app.config import (
     settings,
 )
 from app.metrics import metrics_collector
+from app.providers.freetheai_image import (
+    FTA_IMAGE_MODEL_LABELS,
+    FTA_IMAGE_MODELS,
+    FTAImageResult,
+    get_fta_image_provider,
+)
 from app.providers.imagen_provider import (
     ASPECT_RATIO_LABELS,
     SUPPORTED_ASPECT_RATIOS,
@@ -94,7 +100,7 @@ _CYRILLIC_NATIVE_MODELS: frozenset[str] = frozenset({"zimage"})
 _CYRILLIC_RE = re.compile(r"[а-яёА-ЯЁ]")
 
 # Translation model — cheapest Gemini variant; fast and cost-effective.
-_TRANSLATE_MODEL = "gemini-3.1-flash-lite-preview"
+_TRANSLATE_MODEL = "gemini-3.1-flash-lite"
 
 _DRAW_STATE_KEY = "draw_state"
 
@@ -287,20 +293,36 @@ def _is_imagen_model(model: str) -> bool:
     return model.startswith("imagen-")
 
 
+def _is_fta_image_model(model: str) -> bool:
+    return model in FTA_IMAGE_MODELS
+
+
 def _needs_translation(prompt: str, model: str) -> bool:
     """True if prompt contains Cyrillic and model doesn't natively handle it."""
     if _is_imagen_model(model):
         return False  # Imagen understands many languages
+    if _is_fta_image_model(model):
+        return False  # FTA image models handle prompt internally
     if model in _CYRILLIC_NATIVE_MODELS:
         return False
     return bool(_CYRILLIC_RE.search(prompt))
 
 
 def _get_all_models() -> list[str]:
-    return list(settings.POLLINATIONS_IMAGE_MODELS)
+    models = list(settings.POLLINATIONS_IMAGE_MODELS)
+    # Append FTA image models (always available if keys are configured)
+    from app.config import get_freetheai_keys
+
+    if get_freetheai_keys():
+        for m in FTA_IMAGE_MODELS:
+            if m not in models:
+                models.append(m)
+    return models
 
 
 def _model_label(model: str) -> str:
+    if model in FTA_IMAGE_MODEL_LABELS:
+        return FTA_IMAGE_MODEL_LABELS[model]
     if model in IMAGEN_MODEL_LABELS:
         return IMAGEN_MODEL_LABELS[model]
     return get_model_label(model)
@@ -537,15 +559,18 @@ async def _run_generation(
         awaiting_prompt=False,
     )
 
-    # Translate if needed
-    api_prompt = prompt
-    translated = False
-    if _needs_translation(prompt, model):
-        api_prompt = await _translate_to_english(prompt, user_id=user_id)
-        translated = api_prompt != prompt
+    # ⚡ Bolt Optimization: Translate prompt and send placeholder concurrently.
+    
+    async def _do_translate():
+        if _needs_translation(prompt, model):
+            return await _translate_to_english(prompt, user_id=user_id)
+        return prompt
 
-    # Placeholder
-    placeholder = await message.reply_text("🎨 Рисую... это займёт несколько секунд.")
+    api_prompt, placeholder = await asyncio.gather(
+        _do_translate(),
+        message.reply_text("🎨 Рисую... это займёт несколько секунд.")
+    )
+    translated = api_prompt != prompt
 
     stop_event = asyncio.Event()
     heartbeat_task = asyncio.create_task(_send_typing_heartbeat(chat_id, bot, stop_event))
@@ -566,6 +591,18 @@ async def _run_generation(
                 image_bytes = result.images[0]
             else:
                 error_message = result.error_message
+        elif _is_fta_image_model(model):
+            fta_provider = get_fta_image_provider()
+            width, height = _AR_TO_PIXELS.get(aspect_ratio, (1024, 1024))
+            fta_result: FTAImageResult = await fta_provider.generate(
+                prompt=api_prompt,
+                model=model,
+                size=f"{width}x{height}",
+            )
+            if fta_result.success and fta_result.images:
+                image_bytes = fta_result.images[0]
+            else:
+                error_message = fta_result.error_message
         else:
             width, height = _AR_TO_PIXELS.get(aspect_ratio, (1024, 1024))
             import random
@@ -674,7 +711,17 @@ def _error_text(err: str) -> str:
             "💳 *Эта модель требует оплаченного аккаунта.*\n\n"
             "Переключитесь на **✨ Flux** или **⚡ Z-Image** — они работают бесплатно."
         )
-    if err == "unauthorized":
+    if err == "no_keys":
+        return (
+            "🔑 *Нет доступных ключей FreeTheAI.*\n\n"
+            "Переключитесь на другую модель или попробуйте позже."
+        )
+    if err == "rate_limited":
+        return (
+            "⏳ *Превышен лимит запросов FreeTheAI.*\n\n"
+            "Подождите минуту и попробуйте снова."
+        )
+    if err in ("auth_error", "unauthorized"):
         return "🔑 *Ошибка авторизации.* Проверьте корректность `POLLINATIONS_API_KEY`."
     if err == "timeout":
         return "⏰ *Время ожидания истекло.* Серверы перегружены — попробуйте ещё раз."
@@ -812,12 +859,19 @@ async def draw_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
-    state = _get_draw_state(context)
-    await _run_generation(
-        update,
+    # 1. Update the canvas state with the detected prompt
+    state = _set_draw_state(
         context,
         prompt=prompt,
-        model=state["model"],
-        aspect_ratio=state["aspect_ratio"],
-        enhance=state.get("enhance_prompt", True),
+        awaiting_prompt=False,
     )
+
+    # 2. Render confirmation text
+    auto_text = f"🎨 **Запрос на генерацию:**\n`{_escape_md(prompt)}`"
+    from app.utils.formatting import TelegramFormatter
+
+    formatted, parse_mode = TelegramFormatter.format_text(auto_text)
+
+    # 3. Apply canvas menu inline
+    keyboard = _build_main_menu(state)
+    await update.message.reply_text(formatted, parse_mode=parse_mode, reply_markup=keyboard)

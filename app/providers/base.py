@@ -202,6 +202,8 @@ class BaseAIProvider(ABC):
         """Check if error is transient and can be retried."""
         transient_patterns = [
             "503",
+            "504",
+            "deadline",
             "unavailable",
             "overloaded",
             "rate limit",
@@ -261,6 +263,7 @@ class BaseAIProvider(ABC):
         thinking_level: str | None = None,
         timeout: float = 120.0,
         enable_web_search: bool = False,
+        force_grounding: bool = False,
     ) -> None:  # type: ignore[override]  # subclasses yield — AsyncGenerator[Any, None]
         """
         Stream response from AI provider. Must be implemented by subclasses.
@@ -269,16 +272,49 @@ class BaseAIProvider(ABC):
         Args:
             enable_web_search: If True, enable native web search grounding
                 (Google Search for Gemini, ignored by other providers).
+            force_grounding: If True, use DynamicRetrievalConfig with threshold=0.0
+                so the model ALWAYS performs a web search instead of relying on
+                dynamic retrieval heuristics. Use for inline / real-time queries.
         """
 
 
+
+# Known FreeTheAI routing prefixes — checked BEFORE the generic "/" detection
+# to prevent FTA models from being misrouted to OpenRouter.
+KNOWN_FTA_PREFIXES: tuple[str, ...] = (
+    "cat/",
+    "yng/",
+    "vhr/",
+    "img/",          # img/gpt-image-2 — FTA image generation endpoint
+    "or/google/lyria-",
+)
+
+
+def is_freetheai_model(model_name: str) -> bool:
+    """Check if model name indicates a FreeTheAI model."""
+    if not model_name:
+        return False
+    return any(model_name.startswith(p) for p in KNOWN_FTA_PREFIXES)
+
+
 def is_openrouter_model(model_name: str) -> bool:
-    """Check if model name indicates an OpenRouter model (has '/' but not opencode-go/)."""
-    return "/" in model_name and not model_name.startswith("opencode-go/")
+    """Check if model name indicates an OpenRouter model.
+
+    Has '/' but is NOT opencode-go/ and NOT a FreeTheAI prefix.
+    """
+    if not model_name:
+        return False
+    return (
+        "/" in model_name
+        and not model_name.startswith("opencode-go/")
+        and not is_freetheai_model(model_name)
+    )
 
 
 def is_opencode_model(model_name: str) -> bool:
     """Check if model name indicates an Opencode Go model."""
+    if not model_name:
+        return False
     return model_name.startswith("opencode-go/")
 
 
@@ -291,10 +327,12 @@ def get_provider_for_model(model_name: str, api_key: str) -> BaseAIProvider:
     """
     Factory function to get appropriate provider for a model.
 
-    Dispatch order (important — opencode models also contain '/'):
-    1. ``opencode-go/*``  → ``OpencodeGoProvider``
-    2. ``org/model``      → ``OpenRouterProvider``
-    3. everything else    → ``GeminiProvider``
+    Dispatch order (important — multiple providers use '/' in model names):
+    1. ``opencode-go/*``     → ``OpencodeGoProvider``
+    2. FreeTheAI prefixes    → ``FreeTheAIProvider``
+    3. ``org/model``         → ``OpenRouterProvider``
+    4. Vertex pseudo-key     → ``VertexGeminiProvider``
+    5. everything else       → ``GeminiProvider``
 
     Args:
         model_name: Model identifier
@@ -303,12 +341,15 @@ def get_provider_for_model(model_name: str, api_key: str) -> BaseAIProvider:
     Returns:
         Appropriate AIProvider instance
     """
+    from app.providers.freetheai import FreeTheAIProvider
     from app.providers.gemini import GeminiProvider, VertexGeminiProvider
     from app.providers.opencode import OpencodeGoProvider
     from app.providers.openrouter import OpenRouterProvider
 
     if is_opencode_model(model_name):
         return OpencodeGoProvider(api_key)
+    elif is_freetheai_model(model_name):
+        return FreeTheAIProvider(api_key)
     elif is_openrouter_model(model_name):
         return OpenRouterProvider(api_key)
     elif is_vertex_provider_key(api_key):

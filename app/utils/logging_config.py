@@ -16,6 +16,7 @@ import time
 
 try:
     import structlog
+
     HAS_STRUCTLOG = True
 except ImportError:
     HAS_STRUCTLOG = False
@@ -25,6 +26,7 @@ from app.request_context import get_chat_id, get_request_id, get_user_id
 # =============================================================================
 # STRUCTLOG PIPELINE
 # =============================================================================
+
 
 def bridge_legacy_contextvars(logger, method_name, event_dict):
     """Bridge legacy thread-local context variables into structlog."""
@@ -40,6 +42,7 @@ def bridge_legacy_contextvars(logger, method_name, event_dict):
 def configure_structlog_pipeline(enable_structured: bool, enable_pretty: bool) -> logging.Formatter:
     """Configures structlog to intercept and format log records."""
     import socket
+
     hostname = os.environ.get("HOSTNAME", socket.gethostname())
     service = os.environ.get("SERVICE_NAME", "gemaibotv2")
 
@@ -68,12 +71,35 @@ def configure_structlog_pipeline(enable_structured: bool, enable_pretty: bool) -
     )
 
     if enable_structured:
-        return structlog.stdlib.ProcessorFormatter(
-            processor=structlog.processors.JSONRenderer()
-        )
-    return structlog.stdlib.ProcessorFormatter(
-        processor=structlog.dev.ConsoleRenderer(colors=enable_pretty)
-    )
+        return structlog.stdlib.ProcessorFormatter(processor=structlog.processors.JSONRenderer())
+    return structlog.stdlib.ProcessorFormatter(processor=structlog.dev.ConsoleRenderer(colors=enable_pretty))
+
+
+
+# =============================================================================
+# REQUEST CONTEXT FILTER
+# =============================================================================
+
+
+class RequestContextFilter(logging.Filter):
+    """Logging filter that injects request/user context into every log record.
+
+    Reads from the asyncio context-var store set by ``set_request_id`` /
+    ``set_user_context`` and stamps each record with:
+      - ``record.request_id``
+      - ``record.user_id``
+      - ``record.chat_id``
+
+    Attach to any ``logging.Handler`` to get automatic correlation IDs in all
+    log lines without changing call-sites.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
+        record.request_id = get_request_id()
+        record.user_id = get_user_id()
+        record.chat_id = get_chat_id()
+        return True
+
 
 # Fallback basic formatter if structlog is missing
 class FallbackFormatter(logging.Formatter):
@@ -85,6 +111,7 @@ class FallbackFormatter(logging.Formatter):
 # SETUP FUNCTIONS
 # =============================================================================
 
+
 def _is_production_environment() -> bool:
     """Detect if we're running in a production container environment."""
     indicators = ("DYNO", "RENDER", "RAILWAY_ENVIRONMENT", "FLY_APP_NAME")
@@ -94,11 +121,7 @@ def _is_production_environment() -> bool:
     return bool(os.environ.get("PORT") and len(hostname) >= 12 and hostname.isalnum())
 
 
-def _setup_logger(
-    logger_name: str,
-    level: int,
-    formatter: logging.Formatter
-) -> None:
+def _setup_logger(logger_name: str, level: int, formatter: logging.Formatter) -> None:
     """Configure a named logger with standard settings."""
     logger = logging.getLogger(logger_name)
     logger.setLevel(level)
@@ -120,7 +143,7 @@ def setup_detailed_logging(
     enable_pretty: bool | None = None,
 ) -> None:
     """Configure logging for all bot components and setup structlog bridging."""
-    
+
     # Auto-resolve settings
     if enable_structured_logging is None:
         env_val = os.environ.get("STRUCTURED_LOGGING", "").lower()
@@ -173,7 +196,7 @@ def setup_detailed_logging(
         _setup_logger(
             logger_name,
             max(numeric_level, logging.WARNING) if logger_name in ("httpx", "httpcore") else numeric_level,
-            formatter
+            formatter,
         )
 
     logging.info(
@@ -189,9 +212,10 @@ def setup_detailed_logging(
 # LOGGER HELPERS
 # =============================================================================
 
+
 def get_logger(name: str):
     """
-    Get a structlog-aware logger config. 
+    Get a structlog-aware logger config.
     Drop-in compatibility with: logger = get_logger(__name__)
     """
     if HAS_STRUCTLOG:
@@ -201,6 +225,7 @@ def get_logger(name: str):
 
 def timed_operation(operation_name: str = ""):
     """Decorator that logs the execution time of async functions."""
+
     def decorator(fn):
         name = operation_name or fn.__qualname__
 
@@ -213,40 +238,41 @@ def timed_operation(operation_name: str = ""):
                 elapsed_ms = (time.perf_counter() - start) * 1000
                 if elapsed_ms > 500:
                     log.warning(
-                        f"Slow operation {name}: {elapsed_ms:.1f}ms",
-                        operation=name,
-                        duration_ms=round(elapsed_ms, 1)
+                        f"Slow operation {name}: {elapsed_ms:.1f}ms", operation=name, duration_ms=round(elapsed_ms, 1)
                     )
                 else:
-                    log.debug(
-                        f"Operation {name}: {elapsed_ms:.1f}ms",
-                        operation=name,
-                        duration_ms=round(elapsed_ms, 1)
-                    )
+                    log.debug(f"Operation {name}: {elapsed_ms:.1f}ms", operation=name, duration_ms=round(elapsed_ms, 1))
                 return result
             except Exception:
                 elapsed_ms = (time.perf_counter() - start) * 1000
                 log.debug(
                     f"Operation {name} failed after {elapsed_ms:.1f}ms",
                     operation=name,
-                    duration_ms=round(elapsed_ms, 1)
+                    duration_ms=round(elapsed_ms, 1),
                 )
                 raise
+
         return wrapper
+
     return decorator
+
 
 # Legacy compatibility functions
 def setup_api_logger(level: int, enable_structured_logging: bool = False) -> None:
     pass
 
+
 def setup_telegram_logger(level: int, enable_structured_logging: bool = False) -> None:
     pass
+
 
 def setup_database_logger(level: int, enable_structured_logging: bool = False) -> None:
     pass
 
+
 def is_pretty_logging() -> bool:
     return os.environ.get("LOG_PRETTY", "").lower() in ("1", "true", "yes")
+
 
 def log_api_summary() -> None:
     logging.info("API logging active — Gemini, Tavily, Telegram request/response + error tracing")

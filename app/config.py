@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import hashlib
 import inspect
 import logging
@@ -15,13 +16,18 @@ from app.utils.json_compat import json
 
 # Single source of truth for default Gemini models.
 # Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().
+GEMINI_PRIMARY_MODEL: str = "gemini-3.5-flash"
+GEMINI_ECONOMY_MODEL: str = "gemini-3.1-flash-lite"
 DEFAULT_GEMINI_MODELS: list[str] = [
-    "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
+    GEMINI_PRIMARY_MODEL,
+    GEMINI_ECONOMY_MODEL,
 ]
+CURRENT_GEMINI_MODELS: tuple[str, ...] = (GEMINI_PRIMARY_MODEL, GEMINI_ECONOMY_MODEL)
 DEFAULT_DAILY_LIMIT_PER_MODEL: int = 15
+DEFAULT_DAILY_LIMITS_BY_MODEL: dict[str, int] = {
+    GEMINI_PRIMARY_MODEL: DEFAULT_DAILY_LIMIT_PER_MODEL,
+    GEMINI_ECONOMY_MODEL: 400,
+}
 
 # --- Imagen 4 model identifiers (AI Studio / Gemini API) ---
 IMAGEN_MODEL_FAST: str = "imagen-4.0-fast-generate-001"
@@ -42,12 +48,13 @@ GEMINI_LIVE_VOICE_NAME: str = os.getenv("GEMINI_LIVE_VOICE_NAME", "Aoede").strip
 DEFAULT_POLLINATIONS_IMAGE_MODELS: list[str] = [
     "flux",
     "zimage",
+    "gptimage-1-5",
     "gptimage",
     "qwen-image",
     "wan-image",
     "klein",
 ]
-DEFAULT_POLLINATIONS_IMAGE_MODEL: str = "flux"
+DEFAULT_POLLINATIONS_IMAGE_MODEL: str = "zimage"
 # Pollinations API base URL
 POLLINATIONS_BASE_URL: str = "https://gen.pollinations.ai"
 
@@ -101,15 +108,42 @@ def _load_single_model(env_var_name: str, fallback: str) -> str:
     return fallback
 
 
+def _filter_current_gemini_models(models: list[str], *, include_defaults: bool = True) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    allowed = set(CURRENT_GEMINI_MODELS)
+    for model in models:
+        normalized = model.strip()
+        if normalized in allowed and normalized not in seen:
+            result.append(normalized)
+            seen.add(normalized)
+    if include_defaults:
+        for model in CURRENT_GEMINI_MODELS:
+            if model not in seen:
+                result.append(model)
+                seen.add(model)
+    return result
+
+
+def normalize_gemini_chat_model(model_name: str | None, fallback: str = GEMINI_PRIMARY_MODEL) -> str:
+    if isinstance(model_name, str) and model_name.strip() in CURRENT_GEMINI_MODELS:
+        return model_name.strip()
+    return fallback
+
+
+def _load_gemini_role_model(env_var_name: str, fallback: str) -> str:
+    return normalize_gemini_chat_model(_load_single_model(env_var_name, fallback), fallback=fallback)
+
+
 def _load_daily_limits() -> dict[str, int]:
     """
     Загружает DAILY_LIMITS from env переменной to formatе JSON or компактном формате.
 
     Формат в env (JSON, рекомендуется):
-    DAILY_LIMITS='{"gemini-2.5-flash": 250, "gemini-2.5-flash-lite": 15}'
+    DAILY_LIMITS='{"gemini-3.5-flash": 15, "gemini-3.1-flash-lite": 400}'
 
     Или компактный формат:
-    DAILY_LIMITS='gemini-2.5-flash:250,gemini-2.5-flash-lite:15'
+    DAILY_LIMITS='gemini-3.5-flash:15,gemini-3.1-flash-lite:400'
 
     Returns:
         Dict[str, int]: Словарь с limitами for моделей
@@ -117,7 +151,10 @@ def _load_daily_limits() -> dict[str, int]:
     value = os.getenv("DAILY_LIMITS")
 
     # Reuse module-level constant for defaults
-    default_limits = dict.fromkeys(DEFAULT_GEMINI_MODELS, DEFAULT_DAILY_LIMIT_PER_MODEL)
+    default_limits = {
+        model: DEFAULT_DAILY_LIMITS_BY_MODEL.get(model, DEFAULT_DAILY_LIMIT_PER_MODEL)
+        for model in DEFAULT_GEMINI_MODELS
+    }
 
     if not value:
         return default_limits
@@ -148,6 +185,7 @@ def _load_daily_limits() -> dict[str, int]:
         return default_limits
 
 
+@functools.lru_cache(maxsize=32)
 def get_model_hash(model_name: str) -> str:
     """
     Генерирует короткий хэш models (8 символов) for использования в callback_data.
@@ -176,6 +214,7 @@ class Settings(BaseModel):
     OPENROUTER_API_KEYS: list[str] = []  # Optional, by default empty list
     ELEVENLABS_API_KEYS: list[str] = []  # Optional, free-tier ElevenLabs keys
     ELEVENLABS_VOICE_ID: str = "XB0fDUnXU5powFXDhCwa"  # Charlotte — conversational
+    ELEVENLABS_MODEL: str = "eleven_multilingual_v2"
     # Imagen image generation — uses same GEMINI_API_KEYS pool.
     # A separate per-key RPD counter is maintained in ImagenProvider so that
     # image quota exhaustion does NOT suspend keys for LLM / audio traffic.
@@ -192,7 +231,7 @@ class Settings(BaseModel):
     POLLINATIONS_API_KEY: str = ""
 
     # --- Vertex AI Express (optional resilience pathway for judge) ---
-    # Provides a stable alternative endpoint for gemini-3.1-flash-lite-preview
+    # Provides a stable alternative endpoint for gemini-3.1-flash-lite
     # when the Gemini API is under high load (503 storms).
     # Requires a *Google Cloud* API key — NOT a Gemini AI Studio key.
     # How to get one: GCP Console → APIs & Services → Credentials → Create API Key
@@ -228,6 +267,13 @@ class Settings(BaseModel):
     GAME_HUB_DIRECT_LINK: str = ""
     GAME_HUB_MINIAPP_SHORT_NAME: str = "games"
 
+    # --- NATAL CHART REPORTS ---
+    NATAL_REPORTS_ENABLED: bool = False
+    NATAL_REPORT_TTL_DAYS: int = 365
+    NATAL_GEOCODER_PROVIDER: str = "local"
+    NATAL_CITY_OVERRIDES_PATH: str = ""
+    NATAL_SEND_RAW_BIRTH_DATA_TO_LLM: bool = False
+
     # --- LOCAL BOT API SERVER ---
     # If set, the bot routes through a self-hosted Local Bot API Server
     # instead of api.telegram.org and enables local_mode in PTB.
@@ -237,15 +283,17 @@ class Settings(BaseModel):
     # --- CHAT ---
     CHAT_TOKEN_LIMIT: int = 384000
     TELEGRAM_MESSAGE_LIMIT: int = 4096
+    TAROT_IDLE_CONFIRM_AFTER_SECONDS: int = 86_400
 
     # --- MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
     AVAILABLE_MODELS: list[str] = DEFAULT_GEMINI_MODELS.copy()
-    DEFAULT_MODEL: str = "gemini-3.1-flash-lite-preview"
-    QNA_MODEL: str = "gemini-2.5-flash-lite"
-    RESEARCH_MODEL: str = "gemini-3.1-flash-lite-preview"
-    URL_SELECTION_MODEL: str = "gemini-3.1-flash-lite-preview"
-    TAXONOMY_MODEL: str = "gemini-3.1-flash-lite-preview"  # MemPalace: wing/room classification + contradiction judge
+    DEFAULT_MODEL: str = GEMINI_PRIMARY_MODEL
+    QNA_MODEL: str = GEMINI_ECONOMY_MODEL
+    INLINE_MODEL: str = GEMINI_ECONOMY_MODEL
+    RESEARCH_MODEL: str = GEMINI_PRIMARY_MODEL
+    URL_SELECTION_MODEL: str = GEMINI_ECONOMY_MODEL
+    TAXONOMY_MODEL: str = GEMINI_ECONOMY_MODEL  # MemPalace: wing/room classification + contradiction judge
 
     # --- OPENROUTER MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
@@ -256,15 +304,28 @@ class Settings(BaseModel):
     OPENROUTER_URL_SELECTION_MODEL: str = "stepfun/step-3.5-flash:free"
 
     # --- OPENCODE GO MODELS ---
+    # Full model list as of 2026-05-01 (opencode.ai/docs/go):
+    #   glm-5, glm-5.1, kimi-k2.5, kimi-k2.6, mimo-v2-pro, mimo-v2-omni,
+    #   mimo-v2.5-pro, mimo-v2.5, minimax-m2.5, minimax-m2.7,
+    #   qwen3.5-plus, qwen3.6-plus, deepseek-v4-pro, deepseek-v4-flash
+    # All use prefix opencode-go/<model-id>.
     # Support comma-separated key list for rotation (same pattern as GEMINI_API_KEYS).
     OPENCODE_API_KEYS: list[str] = []  # sk-... keys, rotatable
     OPENCODE_AVAILABLE_MODELS: list[str] = []  # populated from env OPENCODE_AVAILABLE_MODELS
-    OPENCODE_DEFAULT_MODEL: str = "opencode-go/qwen3.5-plus"
+    OPENCODE_DEFAULT_MODEL: str = "opencode-go/deepseek-v4-flash"
     OPENCODE_QNA_MODEL: str = "opencode-go/qwen3.6-plus"  # High quality dialog
-    OPENCODE_RESEARCH_MODEL: str = "opencode-go/glm-5.1"  # Or keep qwen3.6-plus
+    OPENCODE_RESEARCH_MODEL: str = "opencode-go/deepseek-v4-pro"  # Deep reasoning
     OPENCODE_URL_SELECTION_MODEL: str = "opencode-go/big-pickle"
-    OPENCODE_VISION_MODEL: str = "opencode-go/mimo-v2-omni"
-    OPENCODE_INLINE_MODEL: str = "opencode-go/minimax-m2.5"  # Fast but pleasant
+    OPENCODE_VISION_MODEL: str = "opencode-go/mimo-v2-omni"  # Multimodal
+    OPENCODE_INLINE_MODEL: str = "opencode-go/deepseek-v4-flash"  # Fast but pleasant
+
+    # --- FREETHEAI MODELS ---
+    # FreeTheAI router (freetheai.xyz/docs): supports chat (cat/, yng/),
+    # image (vhr/), and audio (or/google/lyria-*) models.
+    # Keys are Bearer tokens, comma-separated for rotation.
+    FREETHEAI_API_KEYS: list[str] = []
+    FREETHEAI_AVAILABLE_MODELS: list[str] = []
+    FREETHEAI_DEFAULT_MODEL: str = "cat/claude-4-6-sonnet"
 
     # --- API PROVIDER SELECTION ---
     # "opencode" routes primary chat/search/inline through Opencode Go with Gemini fallback.
@@ -284,7 +345,7 @@ class Settings(BaseModel):
     MAX_DOCUMENTS_PER_USER: int = 5
     MAX_CONCURRENT_HEAVY_REQUESTS: int = 4
     MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS: int = 1
-    LRU_STATE_CACHE_SIZE: int = 1000  # In-memory UserState cap; prevents OOM on free-tier containers
+    LRU_STATE_CACHE_SIZE: int = 1000  # In-memory UserState cap
 
     # --- AGENTIC RESEARCH ---
     JINA_API_KEY: str = ""
@@ -304,8 +365,8 @@ class Settings(BaseModel):
     # flash-lite: lighter architecture, faster degradation → conservative 32K.
     # flash:      good quality up to ~128K (validated sweet spot for reasoning).
     MODEL_CONTEXT_BUDGETS: dict[str, int] = {
-        "flash-lite": 32_000,  # gemini-2.5-flash-lite, gemini-3.1-flash-lite-preview
-        "flash": 128_000,  # gemini-2.5-flash, gemini-3-flash-preview
+        "flash-lite": 32_000,  # gemini-3.1-flash-lite
+        "flash": 128_000,  # gemini-3.5-flash
     }
     DEFAULT_CONTEXT_BUDGET: int = 128_000
 
@@ -330,6 +391,9 @@ def load_settings() -> Settings:
         # Значения by default for моделей
         default_gemini_models = DEFAULT_GEMINI_MODELS.copy()
         default_openrouter_models: list[str] = []
+        configured_gemini_models = _filter_current_gemini_models(
+            _load_and_clean_keys("GEMINI_AVAILABLE_MODELS", required=False) or default_gemini_models
+        )
 
         inline_thinking = os.getenv("INLINE_THINKING_LEVEL", "").strip().lower()
         if not inline_thinking:
@@ -341,7 +405,7 @@ def load_settings() -> Settings:
         # Manually load all values from the environment.
         raw_settings = {
             "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
-            "ADMIN_SECRET": os.getenv("ADMIN_SECRET"),
+            "ADMIN_SECRET": (os.getenv("ADMIN_SECRET") or "").strip().strip("\"'").strip() or None,
             "DATABASE_URL": os.getenv("DATABASE_URL"),
             "ADMIN_ID": _load_int_env("ADMIN_ID", required=False) or 0,
             "PORT": os.getenv("PORT", "10000"),  # Provide a default for PORT
@@ -354,12 +418,20 @@ def load_settings() -> Settings:
             "GAME_HUB_URL": os.getenv("GAME_HUB_URL", "").rstrip("/"),
             "GAME_HUB_DIRECT_LINK": os.getenv("GAME_HUB_DIRECT_LINK", "").strip(),
             "GAME_HUB_MINIAPP_SHORT_NAME": os.getenv("GAME_HUB_MINIAPP_SHORT_NAME", "games").strip(),
+            "NATAL_REPORTS_ENABLED": os.getenv("NATAL_REPORTS_ENABLED", "false").lower() == "true",
+            "NATAL_REPORT_TTL_DAYS": int(os.getenv("NATAL_REPORT_TTL_DAYS", "365")),
+            "NATAL_GEOCODER_PROVIDER": os.getenv("NATAL_GEOCODER_PROVIDER", "local").strip().lower(),
+            "NATAL_CITY_OVERRIDES_PATH": os.getenv("NATAL_CITY_OVERRIDES_PATH", "").strip(),
+            "NATAL_SEND_RAW_BIRTH_DATA_TO_LLM": os.getenv("NATAL_SEND_RAW_BIRTH_DATA_TO_LLM", "false").lower()
+            == "true",
             "TELEGRAM_LOCAL_SERVER_URL": os.getenv("TELEGRAM_LOCAL_SERVER_URL", "").rstrip("/"),
+            "TAROT_IDLE_CONFIRM_AFTER_SECONDS": int(os.getenv("TAROT_IDLE_CONFIRM_AFTER_SECONDS", "86400")),
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
             "TAVILY_API_KEYS": _load_and_clean_keys("TAVILY_API_KEYS"),
             "OPENROUTER_API_KEYS": _load_and_clean_keys("OPENROUTER_API_KEYS", required=False),
             "ELEVENLABS_API_KEYS": _load_and_clean_keys("ELEVENLABS_API_KEYS", required=False),
             "ELEVENLABS_VOICE_ID": os.getenv("ELEVENLABS_VOICE_ID", "XB0fDUnXU5powFXDhCwa"),
+            "ELEVENLABS_MODEL": os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
             # Pollinations image generation
             "POLLINATIONS_IMAGE_MODELS": _load_and_clean_keys("IMAGE_MODELS", required=False)
             or DEFAULT_POLLINATIONS_IMAGE_MODELS.copy(),
@@ -372,15 +444,15 @@ def load_settings() -> Settings:
             "WEATHER_API_KEY": os.getenv("WEATHER_API_KEY", "").strip(),
             "EXCHANGE_RATE_API_KEY": os.getenv("EXCHANGE_RATE_API_KEY", "").strip(),
             # Load models from env or use значения by default
-            "AVAILABLE_MODELS": _load_and_clean_keys("GEMINI_AVAILABLE_MODELS", required=False)
-            or default_gemini_models,
+            "AVAILABLE_MODELS": configured_gemini_models,
             "OPENROUTER_AVAILABLE_MODELS": _load_and_clean_keys("OPENROUTER_AVAILABLE_MODELS", required=False)
             or default_openrouter_models,
-            "DEFAULT_MODEL": _load_single_model("DEFAULT_MODEL", "gemini-3.1-flash-lite-preview"),
-            "QNA_MODEL": _load_single_model("QNA_MODEL", "gemini-2.5-flash-lite"),
-            "RESEARCH_MODEL": _load_single_model("RESEARCH_MODEL", "gemini-3.1-flash-lite-preview"),
-            "URL_SELECTION_MODEL": _load_single_model("URL_SELECTION_MODEL", "gemini-3.1-flash-lite-preview"),
-            "TAXONOMY_MODEL": _load_single_model("TAXONOMY_MODEL", "gemini-3.1-flash-lite-preview"),
+            "DEFAULT_MODEL": _load_gemini_role_model("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
+            "QNA_MODEL": _load_gemini_role_model("QNA_MODEL", GEMINI_ECONOMY_MODEL),
+            "INLINE_MODEL": _load_gemini_role_model("INLINE_MODEL", GEMINI_ECONOMY_MODEL),
+            "RESEARCH_MODEL": _load_gemini_role_model("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
+            "URL_SELECTION_MODEL": _load_gemini_role_model("URL_SELECTION_MODEL", GEMINI_ECONOMY_MODEL),
+            "TAXONOMY_MODEL": _load_gemini_role_model("TAXONOMY_MODEL", GEMINI_ECONOMY_MODEL),
             "OPENROUTER_DEFAULT_MODEL": _load_single_model("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_QNA_MODEL": _load_single_model("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_RESEARCH_MODEL": _load_single_model("OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free"),
@@ -398,6 +470,10 @@ def load_settings() -> Settings:
             ),
             "OPENCODE_VISION_MODEL": _load_single_model("OPENCODE_VISION_MODEL", "opencode-go/mimo-v2-omni"),
             "OPENCODE_INLINE_MODEL": _load_single_model("OPENCODE_INLINE_MODEL", "opencode-go/minimax-m2.5"),
+            # FreeTheAI provider
+            "FREETHEAI_API_KEYS": _load_and_clean_keys("FREETHEAI_API_KEYS", required=False),
+            "FREETHEAI_AVAILABLE_MODELS": _load_and_clean_keys("FREETHEAI_AVAILABLE_MODELS", required=False),
+            "FREETHEAI_DEFAULT_MODEL": _load_single_model("FREETHEAI_DEFAULT_MODEL", "cat/claude-4-6-sonnet"),
             "PRIMARY_PROVIDER": os.getenv("PRIMARY_PROVIDER", "opencode").strip().lower(),
             "DAILY_LIMITS": _load_daily_limits(),
             "MAX_CONCURRENT_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_HEAVY_REQUESTS", "4")),
@@ -426,11 +502,18 @@ def load_settings() -> Settings:
             settings_obj.AVAILABLE_MODELS.append(settings_obj.DEFAULT_MODEL)
 
         if settings_obj.QNA_MODEL not in settings_obj.AVAILABLE_MODELS:
-            logging.warning(
+            logging.info(
                 "QNA_MODEL '%s' not in AVAILABLE_MODELS. Adding it.",
                 settings_obj.QNA_MODEL,
             )
             settings_obj.AVAILABLE_MODELS.append(settings_obj.QNA_MODEL)
+
+        if settings_obj.INLINE_MODEL not in settings_obj.AVAILABLE_MODELS:
+            logging.info(
+                "INLINE_MODEL '%s' not in AVAILABLE_MODELS. Adding it.",
+                settings_obj.INLINE_MODEL,
+            )
+            settings_obj.AVAILABLE_MODELS.append(settings_obj.INLINE_MODEL)
 
         if settings_obj.RESEARCH_MODEL not in settings_obj.AVAILABLE_MODELS:
             logging.warning(
@@ -457,8 +540,21 @@ def load_settings() -> Settings:
             if role_model and role_model not in settings_obj.OPENCODE_AVAILABLE_MODELS:
                 settings_obj.OPENCODE_AVAILABLE_MODELS.append(role_model)
 
+        # Check FreeTheAI models
+        # Filter out image models so they only appear in /draw, not in chat menus.
+        settings_obj.FREETHEAI_AVAILABLE_MODELS = [
+            m for m in settings_obj.FREETHEAI_AVAILABLE_MODELS
+            if not m.startswith(("vhr/", "img/"))
+        ]
+        
+        if settings_obj.FREETHEAI_DEFAULT_MODEL not in settings_obj.FREETHEAI_AVAILABLE_MODELS:
+            logging.warning(
+                f"FREETHEAI_DEFAULT_MODEL '{settings_obj.FREETHEAI_DEFAULT_MODEL}' not in FREETHEAI_AVAILABLE_MODELS. Adding it."
+            )
+            settings_obj.FREETHEAI_AVAILABLE_MODELS.append(settings_obj.FREETHEAI_DEFAULT_MODEL)
+
         # Validate PRIMARY_PROVIDER
-        if settings_obj.PRIMARY_PROVIDER not in ("opencode", "gemini", "openrouter"):
+        if settings_obj.PRIMARY_PROVIDER not in ("opencode", "gemini", "openrouter", "freetheai"):
             logging.warning(
                 "Invalid PRIMARY_PROVIDER '%s'. Falling back to 'opencode'.",
                 settings_obj.PRIMARY_PROVIDER,
@@ -504,8 +600,12 @@ def get_settings_safe() -> Settings | None:
     Safe version that returns None if settings cannot be loaded.
     Useful for testing and development.
     """
+    global _settings_instance
+    if _settings_instance is not None:
+        return _settings_instance
     try:
-        return get_settings()
+        _settings_instance = load_settings()
+        return _settings_instance
     except Exception:
         return None
 
@@ -513,11 +613,7 @@ def get_settings_safe() -> Settings | None:
 # --- SINGLETON INSTANCE ---
 # Create the one and only settings object for the app.
 # Use lazy loading to prevent import errors
-try:
-    settings = get_settings()
-except Exception:
-    # During development/testing, allow None settings
-    settings = None  # type: ignore[assignment]  # Settings is expected, None only in dev
+settings: Settings = get_settings_safe()  # type: ignore
 
 
 class ConfigManager:
@@ -674,6 +770,30 @@ def get_opencode_keys() -> list[str]:
     return config_manager.get_setting("OPENCODE_API_KEYS", [])
 
 
+def get_freetheai_keys() -> list[str]:
+    """Returns FreeTheAI API keys."""
+    return config_manager.get_setting("FREETHEAI_API_KEYS", [])
+
+
+def get_all_available_models() -> list[str]:
+    """Return the union of all provider model lists.
+
+    Single source of truth — use this instead of manually concatenating
+    AVAILABLE_MODELS + OPENROUTER_AVAILABLE_MODELS + ... everywhere.
+    Prevents the class of bugs where a new provider's models are added
+    to some whitelists but missed in others.
+    """
+    s = config_manager.settings
+    models: list[str] = list(s.AVAILABLE_MODELS or [])
+    if s.OPENROUTER_AVAILABLE_MODELS:
+        models.extend(s.OPENROUTER_AVAILABLE_MODELS)
+    if s.OPENCODE_AVAILABLE_MODELS:
+        models.extend(s.OPENCODE_AVAILABLE_MODELS)
+    if s.FREETHEAI_AVAILABLE_MODELS:
+        models.extend(s.FREETHEAI_AVAILABLE_MODELS)
+    return models
+
+
 # ── Primary provider: DB-backed runtime toggle ────────────────────────────────
 # The DB global_settings store is the source-of-truth when the admin uses
 # /set_provider.  If the DB is unavailable (e.g. startup), we fall back to
@@ -707,7 +827,10 @@ def get_primary_provider() -> str:
     # For synchronous callers the env fallback is used on first call;
     # the DB value is fetched asynchronously the first time through the
     # admin command and then cached.
-    env_value: str = config_manager.get_setting("PRIMARY_PROVIDER", "opencode")
+    try:
+        env_value: str = config_manager.get_setting("PRIMARY_PROVIDER", "opencode")
+    except Exception:
+        env_value = os.getenv("PRIMARY_PROVIDER", "opencode").strip().lower() or "opencode"
     return env_value
 
 
@@ -723,6 +846,9 @@ async def get_primary_provider_async() -> str:
             return db_value
     except Exception:
         pass  # DB unavailable — fall through to env
-    env_value: str = config_manager.get_setting("PRIMARY_PROVIDER", "opencode")
+    try:
+        env_value: str = config_manager.get_setting("PRIMARY_PROVIDER", "opencode")
+    except Exception:
+        env_value = os.getenv("PRIMARY_PROVIDER", "opencode").strip().lower() or "opencode"
     _primary_provider_cache = env_value
     return env_value

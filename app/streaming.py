@@ -26,6 +26,7 @@ import httpx
 from google.genai.errors import APIError
 
 from app.metrics import metrics_collector
+from app.utils.api_logger import api_logger
 from app.utils.formatting import TelegramFormatter
 from app.utils.text_format import sanitize_html_tags, strip_formatting
 
@@ -628,6 +629,19 @@ async def stream_and_display(
     _voice_requested.set(False)
     _was_interrupted = False
 
+    # Capture start time for api_logger duration tracking
+    _stream_log_start = api_logger.log_request(
+        "gemini",
+        model=model_name,
+        prompt_length=sum(
+            len(str(part))
+            for item in history
+            for part in (item.get("parts", []) or [])
+            if part is not None
+        ) if history else 0,
+        streaming=True,
+    )
+
     # ── UX State Indication: delayed feedback if API is slow ─────────
     # If no chunks arrive within 5 seconds, update placeholder to inform
     # the user and offer a [Cancel] button.
@@ -994,11 +1008,13 @@ async def stream_and_display(
         writer.message_count,
         fr,
     )
-    from app.providers.base import is_opencode_model, is_openrouter_model
+    from app.providers.base import is_freetheai_model, is_opencode_model, is_openrouter_model
 
     _stream_provider = (
         "opencode_streaming"
         if is_opencode_model(model_name)
+        else "freetheai_streaming"
+        if is_freetheai_model(model_name)
         else "openrouter_streaming"
         if is_openrouter_model(model_name)
         else "gemini_streaming"
@@ -1006,4 +1022,15 @@ async def stream_and_display(
     await metrics_collector.record_api_call(_stream_provider, model_name)
     actual_tokens = _last_token_count.get()
     voice_requested = _voice_requested.get()
+
+    # Log token count for streaming responses (mirrors _execute_request non-streaming path)
+    api_logger.log_response(
+        "gemini",
+        _stream_log_start,
+        model=model_name,
+        response_length=len(final_text),
+        token_count=actual_tokens,
+        streaming=True,
+    )
+
     return final_text, True, writer.last_message, actual_tokens, _was_interrupted, voice_requested  # type: ignore[return-value]

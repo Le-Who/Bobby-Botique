@@ -12,12 +12,13 @@ TYPE-B: C3 B0 + C2 9F (broken ð + control)
 
 Install: copy or symlink to .git/hooks/pre-commit and chmod +x
 """
+
 import sys
 from pathlib import Path
 
 # Patterns that indicate the file was written with wrong encoding
 BROKEN_PATTERNS: list[bytes] = [
-    bytes([0xC3, 0xA2, 0x20]),        # â + space  (broken E2 xx sequence)
+    bytes([0xC3, 0xA2, 0x20]),  # â + space  (broken E2 xx sequence)
     bytes([0xC3, 0xA2, 0xC2, 0x8C]),  # â + U+008C (alt broken gear)
     bytes([0xC3, 0xA2, 0xC2, 0x9C]),  # â + U+009C
     bytes([0xC3, 0xA2, 0xC2, 0x86]),  # â + U+0086 (broken arrow →)
@@ -25,6 +26,7 @@ BROKEN_PATTERNS: list[bytes] = [
 ]
 
 DOCS = ["README.md", "CHANGELOG.md"]
+
 
 def check_file(path: Path) -> list[str]:
     if not path.exists():
@@ -39,6 +41,7 @@ def check_file(path: Path) -> list[str]:
                 f"({count} occurrences) — likely Latin-1 reinterpretation of UTF-8"
             )
     return errors
+
 
 root = Path(__file__).parent.parent  # .git/hooks/pre-commit → repo root
 all_errors: list[str] = []

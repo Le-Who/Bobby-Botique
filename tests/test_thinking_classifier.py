@@ -125,7 +125,7 @@ def test_high_debug_keyword():
         "подготовь доклад про космос",
         "нужно эссе для университета",
         "write a long dissertation",
-        "сочини сказку", # this overlaps with the creative ones, but long form wins
+        "сочини сказку",  # this overlaps with the creative ones, but long form wins
         "can you write a report on this?",
     ],
     ids=["ru_essay", "ru_referat", "ru_report", "ru_essay2", "en_dissertation", "ru_compose", "en_report"],

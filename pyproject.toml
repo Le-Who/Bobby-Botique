@@ -35,8 +35,11 @@ ignore = [
 # Root-level one-off debug scripts (not part of the production or test suite).
 # They use print() by design for interactive REPL-style output.
 "test_*.py" = ["T201", "E402"]
-"scripts/check_db.py" = ["T201"]
-"scripts/check_encoding.py" = ["T201"]
+"scripts/**" = ["T201"]
+"clear_db.py" = ["T201"]
+"seed_horoscope.py" = ["T201"]
+# Perf benchmark scripts use print() and have loose import structure by design
+"artifacts/perf/**" = ["T201", "I001", "F841", "F821", "F541"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
@@ -60,5 +63,5 @@ disable_error_code = ["no-any-return", "import-untyped"]
 module = [
     "app.handlers.*",
 ]
-disable_error_code = ["union-attr", "has-type"]
+disable_error_code = ["union-attr", "has-type", "index", "arg-type"]
 

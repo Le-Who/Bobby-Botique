@@ -1,8 +1,17 @@
 """Tests for app.config helper functions — pure parsing logic."""
 
+import logging
+
 import pytest
 
-from app.config import _load_and_clean_keys, _load_daily_limits, get_model_hash, load_settings
+from app.config import (
+    DEFAULT_GEMINI_MODELS,
+    _load_and_clean_keys,
+    _load_daily_limits,
+    get_model_hash,
+    get_settings_safe,
+    load_settings,
+)
 
 # ── get_model_hash ───────────────────────────────────────────────────────────
 
@@ -19,7 +28,7 @@ class TestGetModelHash:
         assert get_model_hash("gemini-2.5-flash") == get_model_hash("gemini-2.5-flash")
 
     def test_different_models_different_hashes(self):
-        assert get_model_hash("gemini-2.5-flash") != get_model_hash("gemini-3.1-flash-lite-preview")
+        assert get_model_hash("gemini-2.5-flash") != get_model_hash("gemini-3.1-flash-lite")
 
 
 # ── _load_and_clean_keys ─────────────────────────────────────────────────────
@@ -99,6 +108,15 @@ class TestLoadDailyLimits:
         result = _load_daily_limits()
         assert isinstance(result, dict)
 
+    def test_default_limits_include_primary_and_economy_models_first(self, monkeypatch):
+        monkeypatch.delenv("DAILY_LIMITS", raising=False)
+
+        result = _load_daily_limits()
+
+        assert DEFAULT_GEMINI_MODELS[:2] == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+        assert "gemini-3-flash-preview" not in DEFAULT_GEMINI_MODELS[:2]
+        assert result["gemini-3.5-flash"] < result["gemini-3.1-flash-lite"]
+
 
 def test_load_settings_reads_webhook_backpressure_envs(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
@@ -116,6 +134,67 @@ def test_load_settings_reads_webhook_backpressure_envs(monkeypatch):
     assert settings.UPDATE_QUEUE_MAXSIZE == 2500
 
 
+def test_load_settings_defaults_to_3_5_primary_and_3_1_lite_economy(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    for key in (
+        "GEMINI_AVAILABLE_MODELS",
+        "DEFAULT_MODEL",
+        "RESEARCH_MODEL",
+        "QNA_MODEL",
+        "INLINE_MODEL",
+        "URL_SELECTION_MODEL",
+        "TAXONOMY_MODEL",
+        "DAILY_LIMITS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    settings = load_settings()
+
+    assert settings.AVAILABLE_MODELS[:2] == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+    assert settings.DEFAULT_MODEL == "gemini-3.5-flash"
+    assert settings.RESEARCH_MODEL == "gemini-3.5-flash"
+    assert settings.QNA_MODEL == "gemini-3.1-flash-lite"
+    assert settings.INLINE_MODEL == "gemini-3.1-flash-lite"
+    assert settings.URL_SELECTION_MODEL == "gemini-3.1-flash-lite"
+    assert settings.TAXONOMY_MODEL == "gemini-3.1-flash-lite"
+
+
+def test_default_gemini_models_only_include_current_flash_models():
+    assert DEFAULT_GEMINI_MODELS == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+
+
+def test_load_settings_filters_legacy_gemini_models_from_env(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    monkeypatch.setenv(
+        "GEMINI_AVAILABLE_MODELS",
+        "gemini-3-flash-preview,gemini-2.5-flash,gemini-3.1-flash-lite",
+    )
+    monkeypatch.setenv("DEFAULT_MODEL", "gemini-3-flash-preview")
+    monkeypatch.setenv("RESEARCH_MODEL", "gemini-2.5-flash")
+    monkeypatch.setenv("QNA_MODEL", "gemini-3.1-flash-lite")
+    monkeypatch.setenv("INLINE_MODEL", "gemini-3-flash-preview")
+    monkeypatch.setenv("URL_SELECTION_MODEL", "gemini-2.5-flash-lite")
+    monkeypatch.setenv("TAXONOMY_MODEL", "gemini-3-flash-preview")
+
+    settings = load_settings()
+
+    assert settings.AVAILABLE_MODELS == ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
+    assert settings.DEFAULT_MODEL == "gemini-3.5-flash"
+    assert settings.RESEARCH_MODEL == "gemini-3.5-flash"
+    assert settings.QNA_MODEL == "gemini-3.1-flash-lite"
+    assert settings.INLINE_MODEL == "gemini-3.1-flash-lite"
+    assert settings.URL_SELECTION_MODEL == "gemini-3.1-flash-lite"
+    assert settings.TAXONOMY_MODEL == "gemini-3.1-flash-lite"
+
+
 def test_load_settings_reads_game_hub_envs(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
@@ -130,3 +209,29 @@ def test_load_settings_reads_game_hub_envs(monkeypatch):
     assert settings.GAME_HUB_URL == "https://games.tri.mom"
     assert settings.GAME_HUB_DIRECT_LINK == "https://t.me/b0b_bot/games"
     assert settings.GAME_HUB_MINIAPP_SHORT_NAME == "games"
+
+
+def test_load_settings_reads_natal_city_override_path(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    monkeypatch.setenv("NATAL_CITY_OVERRIDES_PATH", " /srv/bot/natal-city-overrides.json ")
+
+    settings = load_settings()
+
+    assert settings.NATAL_CITY_OVERRIDES_PATH == "/srv/bot/natal-city-overrides.json"
+
+
+def test_get_settings_safe_does_not_log_expected_missing_env_errors(monkeypatch, caplog):
+    import app.config as config
+
+    monkeypatch.setattr(config, "_settings_instance", None)
+    monkeypatch.delenv("GEMINI_API_KEYS", raising=False)
+
+    with caplog.at_level(logging.ERROR):
+        settings = get_settings_safe()
+
+    assert settings is None
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]

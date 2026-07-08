@@ -3,12 +3,12 @@
 
 import asyncio
 import html
-import json
 import logging
 from datetime import UTC, datetime
 
 import httpx
-from google import genai
+
+# google.genai is deferred to reduce startup latency (used only in list_models_command)
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
@@ -21,6 +21,7 @@ from app.metrics import role_conv_metrics
 from app.prompt_registry import DEFAULT_ROLES
 from app.queue import task_queue
 from app.repos import crocodile_daily as daily_croc_repo
+from app.repos import daily_2048 as daily_2048_repo
 from app.repos.admin import (
     authorize_user,
     clear_old_metrics,
@@ -36,6 +37,10 @@ from app.repos.users import invalidate_user_auth_cache
 from app.utils import time as time_utils
 from app.utils.decorators import admin_only, authorized_only
 from app.utils.formatting import TelegramFormatter
+
+# ⚡ Perf: json_compat wraps orjson for 2-6× faster JSON encode/decode than stdlib.
+# json.loads, json.dumps, and json.JSONDecodeError are all supported.
+from app.utils.json_compat import json
 
 _DAILYCROC_STATUS_REFRESH = "dailycroc_status:refresh"
 _DAILYCROC_STATUS_CHECK = "dailycroc_status:check"
@@ -54,8 +59,8 @@ def _dailycroc_status_keyboard() -> InlineKeyboardMarkup:
 
     from app.config import settings
 
-    webapp_url = f"{settings.WEBAPP_BASE_URL.rstrip('/')}/webapp/admin_dailycroc"
-    
+    webapp_url = f"{settings.WEBAPP_BASE_URL.rstrip('/')}/admin_daily"
+
     return InlineKeyboardMarkup(
         [
             [
@@ -142,12 +147,12 @@ def _daily_prep_component_line(difficulty: str, puzzle) -> str:
     art_ready = bool(str(getattr(puzzle, "image_file_id", "") or "").strip())
     prepared_at = _format_daily_prepared_at(getattr(puzzle, "prepared_at", None))
     state = "ready" if daily_croc_repo.is_puzzle_fully_prepared(puzzle) else "warming"
-    
+
     target_date = getattr(puzzle, "puzzle_date", None)
     date_str = f" ({target_date.isoformat()})" if target_date else ""
     word_str = str(getattr(puzzle, "target_word", "") or "").strip()
     word_display = f"word=<code>{word_str}</code> · " if word_str else ""
-    
+
     return (
         f"  {difficulty}{date_str}: <code>{state}</code> · "
         f"puzzle=<code>{'yes' if puzzle_ready else 'no'}</code> · "
@@ -168,16 +173,33 @@ async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tup
 
     current = now or datetime.now(tz=UTC)
     today = daily_croc_repo.today_puzzle_date(current)
-    stats = await daily_croc_repo.get_delivery_status(today)
-    puzzles = await daily_croc_repo.get_puzzles_for_date(today)
-    delivery_on = await get_global_setting(daily_croc_repo.DAILY_DELIVERY_SETTING_KEY, "on")
-    placeholder = await get_global_setting("daily_croc_placeholder_file_id", "")
-    placeholder_test = await get_global_setting(_DAILYCROC_PLACEHOLDER_TEST_KEY, "")
-    switches = await get_crocodile_runtime_switches()
-    hint_health = await get_hint_prewarm_health()
+
+    # ⚡ Bolt Optimization: fan out 6 independent I/O calls concurrently.
+    # Previously sequential: 6 separate network round-trips (2 DB queries + 3
+    # settings reads + 1 hint health poll). Now: max(RTTs) instead of sum.
+    _results = await asyncio.gather(
+        daily_croc_repo.get_delivery_status(today),
+        daily_croc_repo.get_puzzles_for_date(today),
+        get_global_setting(daily_croc_repo.DAILY_DELIVERY_SETTING_KEY, "on"),
+        get_global_setting("daily_croc_placeholder_file_id", ""),
+        get_global_setting(_DAILYCROC_PLACEHOLDER_TEST_KEY, ""),
+        get_crocodile_runtime_switches(),
+        get_hint_prewarm_health(),
+        get_global_setting(daily_croc_repo.DAILY_IMAGE_MODEL_SETTING_KEY, "pollinations"),
+        get_global_setting(daily_2048_repo.DAILY_GAME_MODE_SETTING_KEY, daily_2048_repo.DAILY_GAME_MODE_CROCODILE),
+    )
+    stats: dict = _results[0]  # type: ignore[assignment]
+    puzzles: dict = _results[1]  # type: ignore[assignment]
+    delivery_on: str = _results[2]  # type: ignore[assignment]
+    placeholder: str = _results[3]  # type: ignore[assignment]
+    placeholder_test: str = _results[4]  # type: ignore[assignment]
+    switches: dict = _results[5]  # type: ignore[assignment]
+    hint_health: dict = _results[6]  # type: ignore[assignment]
+    image_model_raw: str = _results[7]  # type: ignore[assignment]
+    active_daily_mode: str = _results[8]  # type: ignore[assignment]
     runtime_health = get_runtime_health_snapshot()
     vertex_ready = get_vertex_client() is not None
-    live_cooldown = _get_live_model_cooldown_seconds()
+    live_cooldown = await _get_live_model_cooldown_seconds()
 
     prepared_lines = [
         _daily_prep_component_line(difficulty, puzzles.get(difficulty))
@@ -187,8 +209,10 @@ async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tup
     lines = [
         f"🐊 <b>Daily Crocodile — {today.isoformat()}</b>",
         "",
+        f"🎛 <b>Активная daily-игра:</b> <code>{html.escape(active_daily_mode)}</code>",
         f"📨 <b>Рассылка:</b> {'включена ✅' if delivery_on == 'on' else 'выключена ❌'}",
         f"🖼 <b>Placeholder:</b> {'установлен ✅' if placeholder else 'не задан ⚠️'}",
+        f"🎨 <b>Image model:</b> <code>{image_model_raw}</code>",
         f"🧪 <b>Placeholder test:</b> {_render_placeholder_test_status(placeholder_test)}",
         "",
         "<b>Runtime switches:</b>",
@@ -238,6 +262,7 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     await update.message.reply_text("Запрашиваю список моделей у Google API...")
     try:
+        from google import genai  # deferred — avoids heavy google-genai startup cost
         client = genai.Client(api_key=key_data["api_key"])
 
         # google-genai SDK: Model has .name and .supported_actions (list of str)
@@ -280,6 +305,42 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"Ошибка: {e}")
 
 
+async def _send_welcome_to_new_user(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    welcome_text = (
+        "🎉 <b>Доступ разрешён!</b>\n"
+        "Администратор одобрил вашу заявку. Теперь вы можете полноценно пользоваться ботом.\n\n"
+        "<b>Популярные функции:</b>\n"
+        "🔮 Нажмите кнопку ниже или напишите «таро», чтобы запустить режим расклада Таро.\n"
+        "🌟 Нажмите кнопку ниже или напишите «натальная карта», чтобы составить свою натальную карту.\n"
+        "✨ Нажмите кнопку ниже или отправьте /subscribe, чтобы подписаться на гороскоп.\n\n"
+        "<b>Основные команды:</b>\n"
+        "/start — начать работу и настроить бота\n"
+        "/newchat — очистить контекст текущей беседы\n"
+        "/settings — открыть настройки (модель, поиск, память)\n\n"
+        "Чтобы ознакомиться с более полным списком команд, нажмите кнопку помощи или отправьте /help."
+    )
+    keyboard = [
+        [
+            InlineKeyboardButton("🔮 Расклад Таро", callback_data="start_tarot"),
+            InlineKeyboardButton("🌟 Натальная карта", callback_data="start_natal"),
+        ],
+        [
+            InlineKeyboardButton("✨ Гороскоп", callback_data="start_horoscope"),
+            InlineKeyboardButton("ℹ️ Помощь", callback_data="help_cmd"),
+        ]
+    ]
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=welcome_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logging.error("Failed to send welcome message to %s: %s", user_id, e)
+
+
 @admin_only
 async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for получения argumentов команды
@@ -291,6 +352,7 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await authorize_user(user_to_add)
         await invalidate_user_auth_cache(user_to_add)
         await update.message.reply_text(f"Пользователь {user_to_add} добавлен.")
+        await _send_welcome_to_new_user(user_to_add, context)
     except (IndexError, ValueError):
         await update.message.reply_text("Использование: /adduser <user_id>")
 
@@ -318,6 +380,42 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # context используется for совместимости с другими командами
     user_ids = await list_authorized_users()
     await update.message.reply_text("Авторизованные пользователи:\n" + "\n".join(str(uid) for uid in user_ids))
+
+
+async def unauthorized_add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    # Check admin privileges directly (admin_only decorator is for messages, not callbacks)
+    if update.effective_user.id != settings.ADMIN_ID:
+        await query.answer("Только администратор может использовать эту кнопку", show_alert=True)
+        return
+
+    try:
+        user_id = int(query.data.split(":")[1])
+        await authorize_user(user_id)
+        await invalidate_user_auth_cache(user_id)
+        await query.answer(f"Пользователь {user_id} добавлен в белый список!")
+        
+        # Remove buttons, append success message
+        text = query.message.text_html if query.message else ""
+        text += f"\n\n✅ <b>Пользователь {user_id} добавлен в whitelist!</b>"
+        await query.edit_message_text(text, parse_mode="HTML")
+        await _send_welcome_to_new_user(user_id, context)
+    except Exception as e:
+        await query.answer(f"Ошибка: {e}", show_alert=True)
+
+
+async def unauthorized_dismiss_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if update.effective_user.id != settings.ADMIN_ID:
+        await query.answer("Только администратор может использовать эту кнопку", show_alert=True)
+        return
+
+    try:
+        # Just remove the buttons
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.answer("Алерт проигнорирован")
+    except Exception:
+        await query.answer("Ошибка при обновлении сообщения")
 
 
 @admin_only
@@ -742,13 +840,15 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "• `/adduser user_id` — добавить пользователя\n"
             "• `/deluser user_id` — удалить пользователя\n"
             "• `/listusers` — список авторизованных пользователей\n\n"
+            "*🔑 Ключи и модели (wizards):*\n"
+            "• `/keys` — управление ключами провайдеров\n"
+            "• `/models` — управление доступными моделями\n\n"
             "*📊 Мониторинг и статистика:*\n"
             "• `/metrics` — полная сводка метрик, ключей, кредитов\n"
             "• `/cachestats` — статистика кэша\n"
             "• `/queuestats` — статистика очереди задач\n"
             "• `/docstats` — статистика документов\n"
-            "• `/rolemetrics` — метрики ролей и бесед\n"
-            "• `/groupstats` — статистика групповых чатов\n\n"
+            "• `/rolemetrics` — метрики ролей и бесед\n\n"
             "*🔧 Управление системой:*\n"
             "• `/reloadconfig` — перезагрузить конфигурацию из env\n"
             "• `/clearcache` — очистить кэш\n"
@@ -756,26 +856,29 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "• `/clearolddocs` — очистить старые документы 3\\+ дня\n"
             "• `/listmodels` — список доступных моделей\n\n"
             "*🗂 Word Bank:*\n"
-            "• `/wordbank` — управление банком слов (статистика, генерация, дубли)\n\n"
-            "*🐊 Daily Crocodile:*\n" 
-            "• `/set_dailycroc_delivery on|off` — включить/выключить исходящую daily-рассылку\n"
-            "• `/dailycroc_status` — снимок подписок/готовности на сегодня + кнопки Refresh и Prep check\n"
-            "• `/set_dailycroc_placeholder` — реплайни на фото, чтобы задать баннер рассылки\n\n"
-            "*🌐 API ключи:*\n"
+            "• `/wordbank` — управление банком слов\n\n"
+            "*🐊 Daily Crocodile:*\n"
+            "• `/set_daily_game crocodile|2048` — выбрать активную игру\n"
+            "• `/set_dailycroc_delivery on|off` — рассылка вкл/выкл\n"
+            "• `/set_dailycroc_model` — сменить модель генерации\n"
+            "• `/dailycroc_status` — статус подписок и генерации\n"
+            "• `/set_dailycroc_placeholder` — реплай на фото для баннера\n\n"
+            "*📡 Инлайн-режим:*\n"
+            "• `/set_inline_model` — модель для инлайн-режима\n"
+            "• `/set_inline_thinking` — уровень мышления инлайна\n"
+            "• `/set_inline_tabs` — отображение вкладок\n"
+            "• `/set_provider` — провайдер по умолчанию\n\n"
+            "*🌐 Управление API ключами (legacy):*\n"
             "• `/checkgeminikeys` — проверить статус ключей Gemini\n"
             "• `/updatetavilykeys` — обновить ключи Tavily API\n"
             "• `/checktavilykeys` — проверить статус ключей Tavily\n\n"
             "*👥 Групповые чаты:*\n"
             "• `/registergroup` — зарегистрировать групповой чат\n"
             "• `/groupstats` — статистика групповых чатов\n\n"
-            "*💬 Управление беседами:*\n"
-            "• `/save` — сохранить текущую беседу\n"
-            "• `/conversations` — список сохраненных бесед\n"
-            "• `/switch` — переключиться между беседами\n"
-            "• `/rename` — переименовать беседу\n"
-            "• `/delete` — удалить беседу\n\n"
-            "*📄 Документы:*\n"
-            "• `/documents` — управление документами пользователя\n"
+            "*💬 Данные пользователей:*\n"
+            "• `/save`, `/conversations`, `/switch`, `/rename`, `/delete`\n"
+            "• `/documents` — управление документами\n"
+            "• `/memory` — просмотр памяти пользователей\n"
         )
 
         formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
@@ -789,7 +892,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def _check_single_gemini_key(client: httpx.AsyncClient, key_hash: str, api_key: str) -> str:
     # A fast, lightweight check bypassing the SDK to avoid retry-loops.
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash?key={api_key}"
     try:
         resp = await client.get(url)
         if resp.status_code == 200:
@@ -913,20 +1016,27 @@ async def set_inline_tabs_command(update: Update, context: ContextTypes.DEFAULT_
 
 # ── Provider routing ───────────────────────────────────────────────────────────
 
-_VALID_PROVIDERS = frozenset({"opencode", "gemini"})
+_VALID_PROVIDERS = frozenset({"opencode", "gemini", "freetheai"})
 _VALID_ON_OFF_VALUES = frozenset({"on", "off"})
+_VALID_DAILY_GAME_MODES = frozenset(
+    {
+        daily_2048_repo.DAILY_GAME_MODE_CROCODILE,
+        daily_2048_repo.DAILY_GAME_MODE_2048,
+    }
+)
 
 
 @admin_only
 async def set_provider_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Switch the PRIMARY_PROVIDER at runtime (no restart required).
 
-    Usage: /set_provider <opencode|gemini>
+    Usage: /set_provider <opencode|gemini|freetheai>
 
     - ``opencode``: Route all requests through Opencode Go models first,
       with automatic fallback to Gemini on key exhaustion.
     - ``gemini``: Revert to Gemini-only mode; Opencode Go models are
       still accessible via /model if explicitly selected.
+    - ``freetheai``: Route requests through FreeTheAI models.
     """
     args = context.args or []
     current_raw = await get_global_setting("primary_provider", settings.PRIMARY_PROVIDER)
@@ -934,10 +1044,11 @@ async def set_provider_command(update: Update, context: ContextTypes.DEFAULT_TYP
     if not args or args[0].lower() not in _VALID_PROVIDERS:
         await update.message.reply_text(
             f"⚙️ <b>Текущий провайдер:</b> <code>{current_raw}</code>\n\n"
-            "Использование: <code>/set_provider &lt;opencode|gemini&gt;</code>\n\n"
+            "Использование: <code>/set_provider &lt;opencode|gemini|freetheai&gt;</code>\n\n"
             "📝 <b>Описание:</b>\n"
             "• <code>opencode</code> — приоритет Opencode Go (с авто-фоллбэком на Gemini)\n"
-            "• <code>gemini</code>   — только Gemini (классический режим)\n\n"
+            "• <code>gemini</code>   — только Gemini (классический режим)\n"
+            "• <code>freetheai</code> — приоритет FreeTheAI\n\n"
             "Смена вступает в силу немедленно без перезапуска.",
             parse_mode="HTML",
         )
@@ -954,10 +1065,47 @@ async def set_provider_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     logging.info("Admin %s switched PRIMARY_PROVIDER → %s", update.effective_user.id, provider)
 
-    label = "🚀 Opencode Go (фоллбэк: Gemini)" if provider == "opencode" else "🔵 Gemini (классический режим)"
+    if provider == "opencode":
+        label = "🚀 Opencode Go (фоллбэк: Gemini)"
+    elif provider == "freetheai":
+        label = "🔮 FreeTheAI"
+    else:
+        label = "🔵 Gemini (классический режим)"
+        
     await update.message.reply_text(
         f"✅ <b>Провайдер переключён:</b> {label}\n"
         "Все новые запросы будут маршрутизироваться через выбранный провайдер.",
+        parse_mode="HTML",
+    )
+
+
+@admin_only
+async def set_daily_game_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Switch which daily game is opened and delivered to subscribers."""
+
+    args = context.args or []
+
+    if not args or args[0].lower() not in _VALID_DAILY_GAME_MODES:
+        current = await get_global_setting(
+            daily_2048_repo.DAILY_GAME_MODE_SETTING_KEY,
+            daily_2048_repo.DAILY_GAME_MODE_CROCODILE,
+        )
+        await update.message.reply_text(
+            f"🎛 <b>Активная daily-игра:</b> <code>{html.escape(current)}</code>\n\n"
+            "Использование: <code>/set_daily_game &lt;crocodile|2048&gt;</code>\n\n"
+            "• <code>crocodile</code> — вернуть Daily Crocodile\n"
+            "• <code>2048</code> — заменить daily-слот на Daily 2048 Sprint\n",
+            parse_mode="HTML",
+        )
+        return
+
+    value = args[0].lower()
+    await set_global_setting(daily_2048_repo.DAILY_GAME_MODE_SETTING_KEY, value)
+    logging.info("Admin %s set active daily game → %s", update.effective_user.id, value)
+    label = "Daily 2048 Sprint" if value == daily_2048_repo.DAILY_GAME_MODE_2048 else "Daily Crocodile"
+    await update.message.reply_text(
+        f"✅ Активная daily-игра: <b>{label}</b>\n"
+        "Команда /dailycroc и hourly scheduler теперь используют выбранный режим.",
         parse_mode="HTML",
     )
 
@@ -986,8 +1134,81 @@ async def set_dailycroc_delivery_command(update: Update, context: ContextTypes.D
 
     state = "включена ✅" if value == "on" else "выключена ❌"
     await update.message.reply_text(
-        f"🐊 Daily-отправка {state}\n"
-        "Pre-generation пазлов, подсказок и изображений продолжает работать.",
+        f"🐊 Daily-отправка {state}\nPre-generation пазлов, подсказок и изображений продолжает работать.",
+        parse_mode="HTML",
+    )
+
+
+_VALID_DAILY_IMAGE_MODELS = frozenset({"pollinations", "fta-gpt-image-2"})
+_DAILY_IMAGE_MODEL_LABELS = {
+    "pollinations": "🌏 Pollinations (qwen-image)",
+    "fta-gpt-image-2": "🖼️ FreeTheAI (img/gpt-image-2)",
+}
+
+
+@admin_only
+async def set_inline_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Set the default model for inline queries (no restart required).
+
+    Usage: /set_inline_model <model_name>
+    """
+    args = context.args or []
+    current = await get_global_setting("inline_model", settings.INLINE_MODEL)
+
+    if not args:
+        await update.message.reply_text(
+            f"⚙️ <b>Текущая inline-модель:</b> <code>{current}</code>\n\n"
+            "Использование: <code>/set_inline_model &lt;model_name&gt;</code>\n"
+            "Пример: <code>/set_inline_model gemini-3.5-flash</code>\n",
+            parse_mode="HTML",
+        )
+        return
+
+    model_name = args[0]
+    await set_global_setting("inline_model", model_name)
+    logging.info("Admin %s set inline_model → %s", update.effective_user.id, model_name)
+    
+    await update.message.reply_text(
+        f"✅ Модель по умолчанию для инлайна переключена на: <code>{model_name}</code>\n"
+        "Смена вступит в силу для всех новых инлайн-запросов.",
+        parse_mode="HTML",
+    )
+
+
+@admin_only
+async def set_dailycroc_model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Switch the image model used for daily crocodile art generation.
+
+    Usage: /set_dailycroc_model <pollinations|fta-gpt-image-2>
+
+    Constraints for fta-gpt-image-2:
+        - Max 1 concurrent request (enforced by semaphore)
+        - Max 10 requests per minute (sliding window)
+    """
+    args = context.args or []
+    current = await get_global_setting(daily_croc_repo.DAILY_IMAGE_MODEL_SETTING_KEY, "pollinations")
+
+    if not args or args[0].lower() not in _VALID_DAILY_IMAGE_MODELS:
+        label = _DAILY_IMAGE_MODEL_LABELS.get(current, current)
+        await update.message.reply_text(
+            f"🎨 <b>Текущая модель daily croc:</b> {label}\n\n"
+            "Использование: <code>/set_dailycroc_model &lt;model&gt;</code>\n\n"
+            "Доступные модели:\n"
+            "• <code>pollinations</code> — Pollinations qwen-image (default)\n"
+            "• <code>fta-gpt-image-2</code> — FreeTheAI img/gpt-image-2 "
+            "(⚠️ max 1 concurrent, 10 req/min)\n",
+            parse_mode="HTML",
+        )
+        return
+
+    value = args[0].lower()
+    await set_global_setting(daily_croc_repo.DAILY_IMAGE_MODEL_SETTING_KEY, value)
+    logging.info("Admin %s set daily_croc_image_model → %s", update.effective_user.id, value)
+
+    label = _DAILY_IMAGE_MODEL_LABELS.get(value, value)
+    await update.message.reply_text(
+        f"✅ Модель для daily croc артов переключена: {label}\n"
+        "Следующая генерация будет использовать новую модель.",
         parse_mode="HTML",
     )
 
@@ -1146,6 +1367,7 @@ def _wb_cat_key(category: str) -> str:
 # Build category key ↔ name mapping at module level (done once on import).
 def _build_wb_cat_map() -> dict:
     from app.games.word_bank import WORD_BANK
+
     return {_wb_cat_key(cat): cat for cat in (WORD_BANK.get("ru") or {})}
 
 
@@ -1168,15 +1390,15 @@ async def _wb_categories_page_kb(page: int, total_cats: int) -> InlineKeyboardMa
 
     cats = list((WORD_BANK.get("ru") or {}).keys())
     start = page * _WB_PAGE_SIZE
-    page_cats = cats[start: start + _WB_PAGE_SIZE]
+    page_cats = cats[start : start + _WB_PAGE_SIZE]
 
     rows = []
-    for cat in page_cats:
-        stats = await get_bank_stats(cat)
+    stats_list = await asyncio.gather(*(get_bank_stats(cat) for cat in page_cats))
+    for cat, stats in zip(page_cats, stats_list, strict=False):
         warn = " ⚠️" if stats["total"] == 0 else ""
-        rows.append([
-            InlineKeyboardButton(f"{cat} ({stats['total']}){warn}", callback_data=f"wb:cat:{_wb_cat_key(cat)}")
-        ])
+        rows.append(
+            [InlineKeyboardButton(f"{cat} ({stats['total']}){warn}", callback_data=f"wb:cat:{_wb_cat_key(cat)}")]
+        )
 
     nav = []
     if page > 0:
@@ -1187,33 +1409,37 @@ async def _wb_categories_page_kb(page: int, total_cats: int) -> InlineKeyboardMa
         nav.append(InlineKeyboardButton("▶️", callback_data=f"wb:cats:{page + 1}"))
     if nav:
         rows.append(nav)
-    rows.append([
-        InlineKeyboardButton("🔍 Найти дубликаты", callback_data="wb:dup"),
-        InlineKeyboardButton("🔙 Назад", callback_data="wb:menu"),
-    ])
+    rows.append(
+        [
+            InlineKeyboardButton("🔍 Найти дубликаты", callback_data="wb:dup"),
+            InlineKeyboardButton("🔙 Назад", callback_data="wb:menu"),
+        ]
+    )
     return InlineKeyboardMarkup(rows)
 
 
 def _wb_menu_kb() -> InlineKeyboardMarkup:
     from app.games.word_bank import WORD_BANK
+
     cats = list((WORD_BANK.get("ru") or {}).keys())
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(f"📋 Категории ({len(cats)})", callback_data="wb:cats:0"),
-        InlineKeyboardButton("🔍 Найти дубликаты", callback_data="wb:dup"),
-    ]])
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(f"📋 Категории ({len(cats)})", callback_data="wb:cats:0"),
+                InlineKeyboardButton("🔍 Найти дубликаты", callback_data="wb:dup"),
+            ]
+        ]
+    )
 
 
 @admin_only
 async def wordbank_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show word bank management menu."""
     from app.games.word_bank import WORD_BANK
+
     cats = list((WORD_BANK.get("ru") or {}).keys())
     total_words = sum(len(v) for v in (WORD_BANK.get("ru") or {}).values())
-    text = (
-        f"🗂 <b>Word Bank</b>\n"
-        f"Категорий: <b>{len(cats)}</b> | Слов: <b>{total_words}</b>\n\n"
-        "Выберите действие:"
-    )
+    text = f"🗂 <b>Word Bank</b>\nКатегорий: <b>{len(cats)}</b> | Слов: <b>{total_words}</b>\n\nВыберите действие:"
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=_wb_menu_kb())
 
 
@@ -1233,11 +1459,7 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data == "wb:menu":
         cats = list((WORD_BANK.get("ru") or {}).keys())
         total_words = sum(len(v) for v in (WORD_BANK.get("ru") or {}).values())
-        text = (
-            f"🗂 <b>Word Bank</b>\n"
-            f"Категорий: <b>{len(cats)}</b> | Слов: <b>{total_words}</b>\n\n"
-            "Выберите действие:"
-        )
+        text = f"🗂 <b>Word Bank</b>\nКатегорий: <b>{len(cats)}</b> | Слов: <b>{total_words}</b>\n\nВыберите действие:"
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=_wb_menu_kb())
         return
 
@@ -1267,13 +1489,19 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"Всего слов: <b>{stats['total']}</b>\n"
             f"easy: {stats['easy']} | medium: {stats['medium']} | hard: {stats['hard']}\n"
         )
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⚡ Сгенерировать слова", callback_data=f"wb:gen:{cat_key}"),
-        ], [
-            InlineKeyboardButton("🗑 Очистить сгенерированные", callback_data=f"wb:clr:{cat_key}"),
-        ], [
-            InlineKeyboardButton("🔙 Назад", callback_data="wb:cats:0"),
-        ]])
+        kb = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("⚡ Сгенерировать слова", callback_data=f"wb:gen:{cat_key}"),
+                ],
+                [
+                    InlineKeyboardButton("🗑 Очистить сгенерированные", callback_data=f"wb:clr:{cat_key}"),
+                ],
+                [
+                    InlineKeyboardButton("🔙 Назад", callback_data="wb:cats:0"),
+                ],
+            ]
+        )
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
         return
 
@@ -1283,14 +1511,19 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not cat_name:
             await query.edit_message_text("❌ Категория не найдена.")
             return
-        
+
         from app.games.word_bank import clear_generated_category
+
         await clear_generated_category(cat_name)
-        
+
         text = f"✅ Кэш сгенерированных слов для <b>{cat_name}</b> очищен!"
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 К категории", callback_data=f"wb:cat:{cat_key}"),
-        ]])
+        kb = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("🔙 К категории", callback_data=f"wb:cat:{cat_key}"),
+                ]
+            ]
+        )
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
         return
 
@@ -1306,11 +1539,12 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         try:
             from app.games.word_bank import generate_words_for_category
+
             result = await generate_words_for_category(cat_name)
             if result is None:
                 raise ValueError("LLM generation failed or timed out.")
             added = len(result)
-            skipped = "Неизвестно" # duplicates filtered internally
+            skipped = "Неизвестно"  # duplicates filtered internally
             text = (
                 f"✅ Сгенерированы слова для <b>{cat_name}</b>\n"
                 f"Добавлено: <b>{added}</b> | Дублей отброшено: <b>{skipped}</b>"
@@ -1318,9 +1552,13 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         except Exception as exc:
             logging.error("wb gen failed for %s: %s", cat_name, exc, exc_info=True)
             text = f"❌ Ошибка генерации слов для <b>{cat_name}</b>: {exc}"
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 К категории", callback_data=f"wb:cat:{cat_key}"),
-        ]])
+        kb = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("🔙 К категории", callback_data=f"wb:cat:{cat_key}"),
+                ]
+            ]
+        )
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
         return
 
@@ -1360,6 +1598,7 @@ async def wb_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             cats_str = ", ".join(d["categories"])
             lines.append(f"{d['word_key']}: {cats_str}")
         import io
+
         file_bytes = "\n".join(lines).encode("utf-8")
         doc = io.BytesIO(file_bytes)
         doc.name = "wordbank_duplicates.txt"

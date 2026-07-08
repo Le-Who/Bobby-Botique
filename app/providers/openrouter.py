@@ -70,6 +70,14 @@ class OpenRouterProvider(BaseAIProvider):
         """
         return model_name
 
+    def _extra_payload_params(self, model_name: str, thinking_level: str | None) -> dict:
+        """Extra OpenAI-compatible payload params (hook for subclasses).
+
+        Base implementation returns an empty dict.
+        OpencodeGoProvider overrides this to inject reasoning_effort for supporting models.
+        """
+        return {}
+
     def _build_http_error_tag(
         self,
         status: int,
@@ -128,7 +136,8 @@ class OpenRouterProvider(BaseAIProvider):
             url = self._get_url()
             headers = self._get_headers()
             api_model = self._strip_model_prefix(model_name)
-            payload = {"model": api_model, "messages": messages}
+            payload: dict = {"model": api_model, "messages": messages}
+            payload.update(self._extra_payload_params(model_name, thinking_level))
             logging.debug(
                 "%s: sending %d messages to %s (api_model=%s)",
                 self.provider_name,
@@ -215,7 +224,19 @@ class OpenRouterProvider(BaseAIProvider):
                     model=model_name,
                 )
 
-            token_count = response_data.get("usage", {}).get("total_tokens", 0)
+            usage_data = response_data.get("usage") or {}
+            token_count = usage_data.get("total_tokens", 0)
+            cached_tokens = usage_data.get("prompt_tokens_details", {}).get("cached_tokens", 0) or usage_data.get(
+                "cache_read_input_tokens", 0
+            )
+            if cached_tokens:
+                logging.debug(
+                    "%s prompt cache hit: model=%s cached=%d total=%d",
+                    self.provider_name,
+                    model_name,
+                    cached_tokens,
+                    token_count,
+                )
 
             # Log success
             if start_time is not None:
@@ -256,7 +277,9 @@ class OpenRouterProvider(BaseAIProvider):
         thinking_level: str | None = None,
         timeout: float = 120.0,
         enable_web_search: bool = False,
+        force_grounding: bool = False,  # no-op: OpenRouter has no native Search grounding
     ):
+
         """
         Stream response from OpenRouter API using Server-Sent Events (SSE).
         Yields text chunks.
@@ -270,7 +293,8 @@ class OpenRouterProvider(BaseAIProvider):
         url = self._get_url()
         headers = self._get_headers()
         api_model = self._strip_model_prefix(model_name)
-        payload = {"model": api_model, "messages": messages, "stream": True}
+        payload: dict = {"model": api_model, "messages": messages, "stream": True}
+        payload.update(self._extra_payload_params(model_name, thinking_level))
 
         if _openrouter_http_client is None:
             yield tag_error(ErrorCode.GENERIC, "❌ OpenRouter HTTP client not initialized")
@@ -306,6 +330,7 @@ class OpenRouterProvider(BaseAIProvider):
                         except json.JSONDecodeError:
                             continue
         except httpx.HTTPStatusError as e:
+            await e.response.aread()
             status = e.response.status_code
             yield self._build_http_error_tag(status, e.response.text, model_name)
         except Exception as e:
@@ -322,6 +347,31 @@ class OpenRouterProvider(BaseAIProvider):
             if content:
                 messages.append({"role": "system", "content": content})
 
+        # Pass 1: Collect tasks for concurrent processing
+        image_tasks = []
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+            parts = item.get("parts", [])
+            if not isinstance(parts, list):
+                parts = [parts] if parts is not None else []
+
+            for part in parts:
+                if isinstance(part, TaggedImage) and not part.pre_compressed:
+                    image_tasks.append(
+                        save_image_as_bytes(part.data, cache_key=part.cache_key, task_type=part.task_type)
+                    )
+                elif isinstance(part, (bytes, bytearray, Image.Image)):
+                    image_data = bytes(part) if isinstance(part, bytearray) else part
+                    image_tasks.append(save_image_as_bytes(image_data))
+
+        # Execute concurrently
+        processed_images = []
+        if image_tasks:
+            processed_images = await asyncio.gather(*image_tasks, return_exceptions=True)
+
+        # Pass 2: Build actual objects
+        img_idx = 0
         for item in history:
             if not isinstance(item, dict):
                 continue
@@ -335,13 +385,16 @@ class OpenRouterProvider(BaseAIProvider):
 
             content_parts = []
             for part in parts:
+                img_bytes: bytes | None = None
+
                 if isinstance(part, TaggedImage):
                     if part.pre_compressed:
                         img_bytes = part.data
                     else:
-                        img_bytes = await save_image_as_bytes(  # type: ignore[assignment]  # bytes | None from save_image_as_bytes
-                            part.data, cache_key=part.cache_key, task_type=part.task_type
-                        )
+                        res = processed_images[img_idx]
+                        img_idx += 1
+                        img_bytes = res if not isinstance(res, BaseException) else None
+
                     if img_bytes:
                         img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]  # lambda default-arg pattern
                         content_parts.append(
@@ -351,9 +404,11 @@ class OpenRouterProvider(BaseAIProvider):
                             }
                         )
                 elif isinstance(part, (bytes, bytearray, Image.Image)):
-                    img_bytes_raw: bytes | None = await save_image_as_bytes(part)
-                    if img_bytes_raw:
-                        img_b64 = await asyncio.to_thread(lambda b=img_bytes_raw: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]  # lambda default-arg pattern
+                    res = processed_images[img_idx]
+                    img_idx += 1
+                    img_bytes = res if not isinstance(res, BaseException) else None
+                    if img_bytes:
+                        img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]  # lambda default-arg pattern
                         content_parts.append(
                             {
                                 "type": "image_url",

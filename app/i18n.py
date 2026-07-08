@@ -43,7 +43,7 @@ def detect_language(text: str | None) -> str:
     #         (2) a second full iteration via sum(1 for ch in text if ch.isalpha()).
     cyrillic_count = 0
     alpha_count = 0
-    for ch in text:
+    for ch in text[:500]:
         if ch.isalpha():
             alpha_count += 1
             # Cyrillic Basic (U+0400–U+04FF) covers Russian, Ukrainian, etc.
@@ -59,6 +59,162 @@ def detect_language(text: str | None) -> str:
 # ── String Registry ──────────────────────────────────────────────────────────
 
 _STRINGS: dict[str, dict[str, str]] = {
+    # ── Mini App ─────────────────────────────────────────────────────────
+    "miniapp.voice.aoede": {"ru": "Нейтральный и естественный", "en": "Neutral and natural"},
+    "miniapp.voice.kore": {"ru": "Более энергичный и уверенный", "en": "More energetic and confident"},
+    "miniapp.voice.leda": {"ru": "Лёгкий и молодой", "en": "Light and youthful"},
+    "miniapp.voice.zephyr": {"ru": "Чёткий и бодрый", "en": "Clear and brisk"},
+    "miniapp.voice.charon": {"ru": "Сдержанный и профессиональный", "en": "Restrained and professional"},
+    "miniapp.voice.orus": {"ru": "Более глубокий и авторитетный", "en": "Deeper and authoritative"},
+    "miniapp.voice.puck": {"ru": "Бодрый", "en": "Upbeat"},
+    "miniapp.preset.off_label": {"ru": "Быстрый", "en": "Fast"},
+    "miniapp.preset.off_hint": {"ru": "Минимальная задержка, короткие ответы.", "en": "Minimal latency, short answers."},
+    "miniapp.preset.low_label": {"ru": "Сбалансированный", "en": "Balanced"},
+    "miniapp.preset.low_hint": {"ru": "Лучший режим по умолчанию для live-диалога.", "en": "Best default mode for live dialogue."},
+    "miniapp.preset.medium_label": {"ru": "Умный", "en": "Smart"},
+    "miniapp.preset.medium_hint": {"ru": "Больше размышления, но выше задержка.", "en": "More thinking, but higher latency."},
+    "miniapp.conn.standard_label": {"ru": "Стандартный Live", "en": "Standard Live"},
+    "miniapp.conn.standard_summary": {"ru": "без проверки актуальной информации в интернете (просто поболтать)", "en": "without internet fact-checking (just for chatting)"},
+    "miniapp.conn.vertex_label": {"ru": "Vertex Live · с доступом в интернет", "en": "Vertex Live · with internet access"},
+    "miniapp.conn.vertex_summary": {"ru": "с поиском актуальной информации в интернете (проверка фактов, актуальные новости)", "en": "with live internet search (fact-checking, breaking news)"},
+    "miniapp.voice_tag.conversational": {"ru": "Разговорный", "en": "Conversational"},
+    "miniapp.voice_tag.calm": {"ru": "Спокойный", "en": "Calm"},
+    "miniapp.voice_tag.deep": {"ru": "Глубокий", "en": "Deep"},
+    "miniapp.voice_tag.friendly": {"ru": "Дружелюбный", "en": "Friendly"},
+    "miniapp.voice_tag.professional": {"ru": "Профессиональный", "en": "Professional"},
+    "miniapp.voice_tag.energetic": {"ru": "Энергичный", "en": "Energetic"},
+    "miniapp.voice_tag.soft": {"ru": "Мягкий", "en": "Soft"},
+    "miniapp.voice_tag.natural_breezy": {"ru": "Естественный/Легкий", "en": "Natural/Breezy"},
+    "miniapp.voice_tag.confident_energetic": {"ru": "Уверенный/Энергичный", "en": "Confident/Energetic"},
+    "miniapp.voice_tag.upbeat_male": {"ru": "Оживленный мужской", "en": "Upbeat Male"},
+    "miniapp.voice_tag.light_youthful": {"ru": "Светлый/Молодой", "en": "Light/Youthful"},
+    "miniapp.voice_tag.deep_authoritative": {"ru": "Глубокий/Авторитетный", "en": "Deep/Authoritative"},
+    "miniapp.voice_tag.clear_cheerful": {"ru": "Чёткий/Бодрый", "en": "Clear/Cheerful"},
+    "miniapp.voice_tag.informative": {"ru": "Информативный", "en": "Informative"},
+
+    # ── Inline Mode ──────────────────────────────────────────────────────
+    # Tones
+    "inline.tone_formal": {"ru": "🧑‍💼 Формальный ответ", "en": "🧑‍💼 Formal reply"},
+    "inline.tone_friendly": {"ru": "😊 Дружеский ответ", "en": "😊 Friendly reply"},
+    "inline.tone_sarcastic": {"ru": "😏 Саркастичный ответ", "en": "😏 Sarcastic reply"},
+    "inline.tone_hint_formal": {
+        "ru": "Отвечай строго, профессионально и по делу. Только факты, без юмора.",
+        "en": "Reply strictly, professionally and to the point. Facts only, no humor.",
+    },
+    "inline.tone_hint_friendly": {
+        "ru": "Отвечай тепло, понятно и неформально, как близкий друг. Допускай эмодзи.",
+        "en": "Reply warmly, clearly and informally, like a close friend. Emojis OK.",
+    },
+    "inline.tone_hint_sarcastic": {
+        "ru": "Отвечай с приятной иронией и лёгким сарказмом, оставаясь при этом полезным.",
+        "en": "Reply with pleasant irony and light sarcasm while remaining helpful.",
+    },
+    # Loading / progress
+    "inline.loading": {"ru": "⏳ Генерация…", "en": "⏳ Generating…"},
+    "inline.search_progress": {
+        "ru": "🔎 <b>{bot_name}</b> ищет в интернете…",
+        "en": "🔎 <b>{bot_name}</b> is searching the web…",
+    },
+    "inline.generate_progress": {
+        "ru": "🧠 <b>{bot_name}</b> собрал информацию, теперь генерирует ответ…",
+        "en": "🧠 <b>{bot_name}</b> gathered info, now generating answer…",
+    },
+    "inline.delayed": {
+        "ru": "⏳ <b>{bot_name}</b> задерживается…",
+        "en": "⏳ <b>{bot_name}</b> is taking longer than usual…",
+    },
+    # Empty query hint
+    "inline.hint_title": {"ru": "💬 Введите запрос после @бота…", "en": "💬 Type a query after @bot…"},
+    "inline.hint_desc": {"ru": "Например: какая погода в Москве?", "en": "Example: what's the weather in London?"},
+    "inline.empty_query": {
+        "ru": "💬 Чтобы использовать <b>{bot_name}</b>, введите запрос после @бота.",
+        "en": "💬 To use <b>{bot_name}</b>, type a query after @bot.",
+    },
+    # Image models
+    "inline.img_turbo": {"ru": "⚡ Турбо", "en": "⚡ Turbo"},
+    "inline.img_smart": {"ru": "🧠 Умный", "en": "🧠 Smart"},
+    "inline.img_art": {"ru": "🎨 Арт", "en": "🎨 Art"},
+    "inline.img_meme": {"ru": "🅰️ Мем", "en": "🅰️ Meme"},
+    "inline.img_edit": {"ru": "🪄 Изменить фото", "en": "🪄 Edit photo"},
+    "inline.img_edit_hint": {"ru": "✏️ Режим редактирования (Klein)", "en": "✏️ Edit mode (Klein)"},
+    "inline.img_meme_hint": {"ru": "🅰️ Обнаружен текст → авто-выбран Мем-режим", "en": "🅰️ Text detected → Meme mode auto-selected"},
+    "inline.img_caption": {"ru": "🎨 <b>Запрос:</b> {prompt}", "en": "🎨 <b>Prompt:</b> {prompt}"},
+    # Board
+    "inline.board_init": {
+        "ru": "📋 <b>{topic}</b>\n━━━━━━━━━━━━━━━━━━━━━\n<i>Отвечайте (reply) на это сообщение, чтобы добавить свои идеи.</i>\n\nПока ничего не предложено.",
+        "en": "📋 <b>{topic}</b>\n━━━━━━━━━━━━━━━━━━━━━\n<i>Reply to this message to add your ideas.</i>\n\nNothing proposed yet.",
+    },
+    "inline.board_activated": {"ru": "📋 Доска активирована", "en": "📋 Board activated"},
+    "inline.board_topic": {"ru": "📋 Создать доску: {topic}", "en": "📋 Create board: {topic}"},
+    "inline.board_desc": {"ru": "Участники смогут добавлять идеи через reply", "en": "Participants can add ideas via reply"},
+    # Crocodile
+    "inline.croc_custom": {"ru": "🐊 Крокодил: своё слово", "en": "🐊 Crocodile: custom word"},
+    "inline.croc_custom_desc": {"ru": "Задаёшь своё слово — второй игрок будет отгадывать", "en": "You set the word — another player will guess"},
+    "inline.croc_category": {"ru": "🐊 Крокодил: {cat}", "en": "🐊 Crocodile: {cat}"},
+    "inline.croc_cat_desc": {"ru": "Бот загадает слово из категории — второй игрок отгадывает", "en": "Bot picks a word from the category — another player guesses"},
+    "inline.croc_init": {"ru": "🐊 <b>Крокодил</b>\n<i>Игра загружается…</i>", "en": "🐊 <b>Crocodile</b>\n<i>Game loading…</i>"},
+    "inline.croc_loading": {"ru": "⏳ Загрузка...", "en": "⏳ Loading..."},
+    # Horoscope
+    "inline.horoscope_init": {"ru": "✨ <b>Гороскоп: {arg}</b>\n<i>Звёзды сходятся…</i>", "en": "✨ <b>Horoscope: {arg}</b>\n<i>The stars are aligning…</i>"},
+    "inline.horoscope_btn": {"ru": "⏳ Анализ...", "en": "⏳ Analyzing..."},
+    "inline.horoscope_desc": {"ru": "Астрономически точный прогноз", "en": "Astronomically accurate forecast"},
+    # Tarot — classic (legacy, kept for backward compat)
+    "inline.tarot_init": {"ru": "🔮 <b>Таро</b>\n<i>Тасуем колоду…</i>", "en": "🔮 <b>Tarot</b>\n<i>Shuffling the deck…</i>"},
+    "inline.tarot_btn": {"ru": "⏳ Тасуем...", "en": "⏳ Shuffling..."},
+    "inline.tarot_desc": {"ru": "Расклад на 3 карты", "en": "3-card spread"},
+    "inline.tarot_classic_title": {"ru": "🔮 Прошлое / Настоящее / Будущее", "en": "🔮 Past / Present / Future"},
+    # Tarot — card of the day
+    "inline.tarot_daily_title": {"ru": "🎴 Карта дня", "en": "🎴 Card of the Day"},
+    "inline.tarot_daily_desc": {"ru": "Одна карта — совет и энергия на сегодня", "en": "One card — advice and energy for today"},
+    "inline.tarot_daily_init": {
+        "ru": "🎴 <b>Карта дня</b>\n<i>Достаём вашу карту…</i>",
+        "en": "🎴 <b>Card of the Day</b>\n<i>Drawing your card…</i>",
+    },
+    # Tarot — yes/no
+    "inline.tarot_yesno_title": {"ru": "🔮 Да или Нет", "en": "🔮 Yes or No"},
+    "inline.tarot_yesno_desc": {"ru": "Одна карта отвечает на ваш вопрос", "en": "One card answers your question"},
+    "inline.tarot_yesno_init": {
+        "ru": "🔮 <b>Да или Нет</b>\n<i>Карта решает…</i>",
+        "en": "🔮 <b>Yes or No</b>\n<i>The card decides…</i>",
+    },
+    # Tarot — relationship
+    "inline.tarot_love_title": {"ru": "💞 Отношения", "en": "💞 Relationship"},
+    "inline.tarot_love_desc": {"ru": "5 карт: ты, партнёр, связь, препятствие, итог", "en": "5 cards: you, partner, bond, obstacle, outcome"},
+    "inline.tarot_love_init": {
+        "ru": "💞 <b>Расклад на отношения</b>\n<i>Раскладываем 5 карт…</i>",
+        "en": "💞 <b>Relationship Spread</b>\n<i>Laying out 5 cards…</i>",
+    },
+    # Tarot — celtic cross
+    "inline.tarot_celtic_title": {"ru": "🌙 Кельтский крест", "en": "🌙 Celtic Cross"},
+    "inline.tarot_celtic_desc": {"ru": "6 карт: глубокий анализ ситуации", "en": "6 cards: deep situation analysis"},
+    "inline.tarot_celtic_init": {
+        "ru": "🌙 <b>Кельтский крест</b>\n<i>Раскладываем 6 карт…</i>",
+        "en": "🌙 <b>Celtic Cross</b>\n<i>Laying out 6 cards…</i>",
+    },
+    # Tarot — fortune cookie (instant, no LLM)
+    "inline.tarot_fortune_title": {"ru": "⚡ Мгновенное предсказание", "en": "⚡ Instant Fortune"},
+    "inline.tarot_fortune_desc": {"ru": "Одна фраза от карт — без ожидания", "en": "One fortune phrase — instant, no waiting"},
+
+    # Errors
+    "inline.timeout_error": {
+        "ru": "⏰ Модель не успела ответить вовремя. Нажмите «Повторить» ниже.",
+        "en": "⏰ Model didn't respond in time. Press «Retry» below.",
+    },
+    "inline.generation_error": {"ru": "❌ Не удалось получить ответ.", "en": "❌ Failed to get a response."},
+    "inline.fallback_error": {"ru": "Ошибка генерации ответа.", "en": "Response generation error."},
+    "inline.retry_expired": {
+        "ru": "⌛ Ссылка на повтор устарела. Введите запрос заново.",
+        "en": "⌛ Retry link has expired. Please send the query again.",
+    },
+    "inline.btn_continue": {
+        "ru": "💬 Продолжить",
+        "en": "💬 Continue",
+    },
+    "inline.btn_ask_more": {
+        "ru": "🔄 Ещё вопрос",
+        "en": "🔄 Ask more",
+    },
+
     # ── Voice Handler ────────────────────────────────────────────────────
     "voice.processing": {
         "ru": "🎙️ Обрабатываю голосовое сообщение...",
@@ -783,16 +939,16 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "📬 **Morning Brief**\n\n{summary}",
     },
     "brief.subscribed": {
-        "ru": "✅ Подписка на **{type}** активирована!\n📬 Вы будете получать рассылки в {hour}:00 UTC.",
-        "en": "✅ Subscribed to **{type}**!\n📬 You will receive briefs at {hour}:00 UTC.",
+        "ru": "✅ Подписка на <b>{type}</b> активирована!\n📬 Вы будете получать рассылки в {hour}:00 UTC.",
+        "en": "✅ Subscribed to <b>{type}</b>!\n📬 You will receive briefs at {hour}:00 UTC.",
     },
     "brief.subscribe_error": {
         "ru": "❌ Ошибка при создании подписки. Попробуйте позже.",
         "en": "❌ Error creating subscription. Please try later.",
     },
     "brief.unsubscribed": {
-        "ru": "🔕 Подписка на **{type}** деактивирована.",
-        "en": "🔕 Unsubscribed from **{type}**.",
+        "ru": "🔕 Подписка на <b>{type}</b> деактивирована.",
+        "en": "🔕 Unsubscribed from <b>{type}</b>.",
     },
     "brief.unsubscribe_error": {
         "ru": "❌ Ошибка при отмене подписки.",
@@ -894,6 +1050,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     "blockquote.partial_label": {
         "ru": "Частичный ответ / Сбой сети",
         "en": "Partial response / Network failure",
+    },
+    "miniapp.reconnect_note": {
+        "ru": "Изменения применяются через короткое переподключение live-сессии.",
+        "en": "Changes apply after a short reconnect of the live session.",
     },
 }
 

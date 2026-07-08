@@ -564,7 +564,7 @@ async def check_and_deliver_reminders(context: ContextTypes.DEFAULT_TYPE) -> Non
         if not pending:
             return
 
-        for reminder in pending:
+        async def _process_single_reminder(reminder: dict) -> None:
             try:
                 user_id = reminder["user_id"]
                 prompt = reminder["prompt"]
@@ -621,6 +621,9 @@ async def check_and_deliver_reminders(context: ContextTypes.DEFAULT_TYPE) -> Non
 
             except Exception as e:
                 logger.warning("Failed to deliver reminder %d: %s", reminder["id"], e)
+
+        # ⚡ Bolt Optimization: Process all pending reminders concurrently
+        await asyncio.gather(*[_process_single_reminder(r) for r in pending])
 
     except Exception as e:
         logger.error("Reminder poll loop error: %s", e)

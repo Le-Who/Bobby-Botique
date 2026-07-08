@@ -15,13 +15,11 @@ logger = logging.getLogger(__name__)
 HintGenerationMode = Literal["foreground", "background"]
 
 _AI_STUDIO_FOREGROUND_RPM: dict[str, int] = {
-    "gemini-3-flash-preview": 4,
-    "gemini-3.1-flash-lite-preview": 14,
-    "gemini-2.5-flash-lite": 9,
-    "gemini-2.5-flash": 2,
+    "gemini-3.5-flash": 4,
+    "gemini-3.1-flash-lite": 14,
 }
 _AI_STUDIO_BACKGROUND_RPM: dict[str, int] = {
-    "gemini-3.1-flash-lite-preview": 2,
+    "gemini-3.1-flash-lite": 2,
 }
 _LOCAL_CONCURRENCY_LIMITS: dict[tuple[str, str], int] = {
     ("foreground", "ai_studio"): 3,
@@ -162,10 +160,7 @@ class _BudgetManager:
     def has_any_ai_studio_cooldown(self) -> bool:
         self._prune_expired_cooldowns()
         now = time.monotonic()
-        return any(
-            state.provider == "ai_studio" and state.cooldown_until > now
-            for state in self._cooldowns.values()
-        )
+        return any(state.provider == "ai_studio" and state.cooldown_until > now for state in self._cooldowns.values())
 
     def should_pause_background_prefetch(self) -> bool:
         return self._foreground_active > 0 or self.has_any_ai_studio_cooldown()

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import time
 from datetime import UTC, date, datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
+from app.config import settings
 from app.repos import crocodile_daily as repo
+from app.repos.daily_2048 import get_active_daily_game_mode
 from app.repos.settings_repo import get_global_setting
 from app.utils.decorators import safe_handler
 
@@ -36,6 +40,7 @@ async def _edit_callback_text(
         # Photo / media message — edit the caption instead.
         await query.edit_message_caption(caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
 
+
 _TIME_CHOICES = (9, 13, 19, 21)
 _PLACEHOLDER_KEY = "daily_croc_placeholder_file_id"
 
@@ -46,7 +51,6 @@ _PLACEHOLDER_TTL = 60.0  # seconds
 
 
 async def _get_placeholder_file_id() -> str:
-    import time
 
     global _placeholder_cache, _placeholder_cache_ts  # noqa: PLW0603
     now = time.monotonic()
@@ -58,10 +62,7 @@ async def _get_placeholder_file_id() -> str:
     return _placeholder_cache
 
 
-
 def _webapp_base() -> str:
-    from app.config import settings
-
     base = getattr(settings, "WEBAPP_BASE_URL", "").strip().rstrip("/")
     if base:
         return base
@@ -90,7 +91,6 @@ def _play_button(label: str = "Играть") -> InlineKeyboardButton:
     (error ``Button_type_invalid``).
     """
     from app.bot_instance import get_bot
-    from app.config import settings
 
     miniapp_short = getattr(settings, "MINIAPP_SHORT_NAME", "").strip()
     bot = get_bot()
@@ -121,10 +121,7 @@ def daily_play_keyboard(*, include_subscribe: bool = True) -> InlineKeyboardMark
 
 def subscribe_time_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton(f"{hour:02d}:00", callback_data=f"dailycroc:time:{hour}")]
-            for hour in _TIME_CHOICES
-        ]
+        [[InlineKeyboardButton(f"{hour:02d}:00", callback_data=f"dailycroc:time:{hour}")] for hour in _TIME_CHOICES]
     )
 
 
@@ -246,6 +243,22 @@ async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not update.effective_user or not update.message:
         return
     user_id = update.effective_user.id
+    if await get_active_daily_game_mode() == "2048":
+        from app.handlers.daily_2048 import send_daily2048_entry
+        from app.repos import daily_2048 as daily2048_repo
+
+        today_2048 = daily2048_repo.today_puzzle_date(datetime.now(tz=UTC))
+        await daily2048_repo.ensure_puzzle(today_2048)
+        pref_2048 = await repo.get_preference(user_id)
+        await send_daily2048_entry(
+            context.bot,
+            user_id,
+            today_2048,
+            include_subscribe=not bool(pref_2048 and pref_2048.get("is_subscribed")),
+            reply_to_message_id=update.message.message_id,
+            mark_delivered=False,
+        )
+        return
     await repo.record_player_activity(user_id, event="daily_played")
     pref = await repo.get_preference(user_id)
     is_subscribed = bool(pref and pref.get("is_subscribed"))
@@ -328,9 +341,7 @@ async def daily_unsubscribe_callback(update: Update, context: ContextTypes.DEFAU
     await repo.unsubscribe(update.effective_user.id)
     await query.answer("Подписка отменена")
     try:
-        await query.edit_message_reply_markup(
-            reply_markup=daily_play_keyboard(include_subscribe=True)
-        )
+        await query.edit_message_reply_markup(reply_markup=daily_play_keyboard(include_subscribe=True))
     except Exception:
         pass
 
@@ -338,6 +349,12 @@ async def daily_unsubscribe_callback(update: Update, context: ContextTypes.DEFAU
 async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
     from app.admin_alerts import AlertSeverity, alert_admin
     from app.games.crocodile_daily import active_daily_difficulties, ensure_prepared_puzzles
+
+    if await get_active_daily_game_mode() == "2048":
+        from app.handlers.daily_2048 import check_daily_2048_jobs
+
+        await check_daily_2048_jobs(context)
+        return
 
     now = datetime.now(tz=UTC)
     try:
@@ -379,15 +396,29 @@ async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     due_delivery = await repo.get_due_deliveries(puzzle_date=today, now=now)
-    for item in due_delivery:
-        try:
-            await send_daily_prompt(context.bot, int(item["user_id"]), today)
-        except Exception as exc:
-            logger.warning("daily Crocodile delivery failed user=%s: %s", item.get("user_id"), exc)
+    if due_delivery:
+        # ⚡ Bolt Optimization: Send daily prompts concurrently with a safe concurrency limit (10)
+        # to avoid blocking the job scheduler for O(N) seconds.
+        sem = asyncio.Semaphore(10)
+
+        async def _bounded_send(item):
+            async with sem:
+                try:
+                    await send_daily_prompt(context.bot, int(item["user_id"]), today)
+                except Exception as exc:
+                    logger.warning("daily Crocodile delivery failed user=%s: %s", item.get("user_id"), exc)
+
+        await asyncio.gather(*[_bounded_send(item) for item in due_delivery])
 
     discovery = await repo.get_discovery_candidates(now=now)
-    for item in discovery:
-        try:
-            await send_discovery_intro(context.bot, int(item["user_id"]))
-        except Exception as exc:
-            logger.warning("daily Crocodile discovery failed user=%s: %s", item.get("user_id"), exc)
+    if discovery:
+        sem_disc = asyncio.Semaphore(10)
+
+        async def _bounded_discovery(item):
+            async with sem_disc:
+                try:
+                    await send_discovery_intro(context.bot, int(item["user_id"]))
+                except Exception as exc:
+                    logger.warning("daily Crocodile discovery failed user=%s: %s", item.get("user_id"), exc)
+
+        await asyncio.gather(*[_bounded_discovery(item) for item in discovery])

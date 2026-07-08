@@ -24,6 +24,12 @@ from app.utils.image_utils import TaggedImage, save_image_as_bytes
 _gemini_clients_cache: LRUCache = LRUCache(maxsize=50)
 
 
+def _api_key_prefix(api_key: str) -> str:
+    if api_key == "vertex":
+        return "vertex"
+    return api_key[:8]
+
+
 class _GroundingMeta:
     """Sentinel yielded after stream_response finishes when Google Search Grounding
     is active. Carries source citations for callers that want to surface them.
@@ -198,17 +204,19 @@ class GeminiProvider(BaseAIProvider):
         self,
         history: list[dict[str, Any]],
         model_name: str,
-        system_instruction: str | None,
-        user_id: int | None,
-        chat_id: int | None,
-        timeout: float,
+        system_instruction: str | None = None,
         thinking_level: str | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
+        timeout: float = 90.0,
         enable_web_search: bool = False,
+        force_grounding: bool = False,
     ) -> AIResponse:
         start_time = None
 
         try:
             await metrics_collector.record_api_call("gemini", model_name)
+            key_prefix = _api_key_prefix(self._client_api_key)
 
             # Compute metrics
             try:
@@ -229,6 +237,7 @@ class GeminiProvider(BaseAIProvider):
             start_time = api_logger.log_request(
                 "gemini",
                 model=model_name,
+                key_prefix=key_prefix,
                 prompt_length=prompt_length,
                 has_images=has_images,
             )
@@ -249,7 +258,24 @@ class GeminiProvider(BaseAIProvider):
             config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]  # Pydantic coerces dicts→SafetySetting
             # Apply Google Search Grounding if requested
             if enable_web_search:
-                config.tools = [types.Tool(google_search=types.GoogleSearch())]
+                if force_grounding:
+                    # Force search on every request (inline use-case): the model's training
+                    # data may confidently answer time-sensitive questions (e.g. live sports
+                    # scores, ongoing tournaments) without calling Search.  threshold=0.0
+                    # bypasses Dynamic Retrieval heuristics and always retrieves.
+                    config.tools = [
+                        types.Tool(
+                            google_search_retrieval=types.GoogleSearchRetrieval(
+                                dynamic_retrieval_config=types.DynamicRetrievalConfig(
+                                    mode=types.DynamicRetrievalConfigMode.MODE_DYNAMIC,
+                                    dynamic_threshold=0.0,
+                                )
+                            )
+                        )
+                    ]
+                else:
+                    config.tools = [types.Tool(google_search=types.GoogleSearch())]
+
             # Apply thinking config if user requested a specific level
             tc = _build_thinking_config(model_name, thinking_level)
             if tc:
@@ -307,6 +333,7 @@ class GeminiProvider(BaseAIProvider):
                     "gemini",
                     start_time,
                     model=model_name,
+                    key_prefix=key_prefix,
                     response_length=len(response_text),
                     token_count=token_count,
                 )
@@ -356,7 +383,13 @@ class GeminiProvider(BaseAIProvider):
                     ErrorCode.QUOTA_EXCEEDED,
                     "🚫 Достигнут лимит запросов к API (Quota Exceeded).",
                 )
-            elif "503" in str(e) or "unavailable" in err_lower or "overloaded" in err_lower:
+            elif (
+                "503" in str(e)
+                or "unavailable" in err_lower
+                or "overloaded" in err_lower
+                or "504" in str(e)
+                or "deadline_exceeded" in err_lower
+            ):
                 await metrics_collector.record_error("gemini_overloaded", str(e))
                 raise  # Trigger retry in BaseAIProvider
             elif "api key" in err_lower or "api_key_invalid" in err_lower:
@@ -408,6 +441,7 @@ class GeminiProvider(BaseAIProvider):
         thinking_level: str | None = None,
         timeout: float = 120.0,
         enable_web_search: bool = False,
+        force_grounding: bool = False,
     ):
         """
         Stream response from Gemini API.
@@ -429,7 +463,23 @@ class GeminiProvider(BaseAIProvider):
         config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]
         # Apply Google Search Grounding if requested
         if enable_web_search:
-            config.tools = [types.Tool(google_search=types.GoogleSearch())]
+            if force_grounding:
+                # Force search on every request (inline real-time queries): use
+                # google_search_retrieval with dynamic_threshold=0.0 so the model
+                # always retrieves instead of relying on confidence heuristics.
+                config.tools = [
+                    types.Tool(
+                        google_search_retrieval=types.GoogleSearchRetrieval(
+                            dynamic_retrieval_config=types.DynamicRetrievalConfig(
+                                mode=types.DynamicRetrievalConfigMode.MODE_DYNAMIC,
+                                dynamic_threshold=0.0,
+                            )
+                        )
+                    )
+                ]
+            else:
+                config.tools = [types.Tool(google_search=types.GoogleSearch())]
+
         tc = _build_thinking_config(model_name, thinking_level)
         if tc:
             config.thinking_config = tc
@@ -514,6 +564,8 @@ class GeminiProvider(BaseAIProvider):
                 "503" in str(e)
                 or "unavailable" in err_lower
                 or "overloaded" in err_lower
+                or "504" in str(e)
+                or "deadline_exceeded" in err_lower
                 or "rate limit" in err_lower
                 or retry_after_seconds is not None
             )
@@ -565,6 +617,31 @@ class GeminiProvider(BaseAIProvider):
         """Convert history dicts → list[types.Content]. Returns None on total failure."""
         contents = []
         try:
+            # Pass 1: Collect tasks for concurrent processing
+            image_tasks = []
+            for item in history:
+                if not isinstance(item, dict):
+                    continue
+                parts = item.get("parts", [])
+                if not isinstance(parts, list):
+                    parts = [parts] if parts is not None else []
+
+                for part in parts:
+                    if isinstance(part, TaggedImage) and not part.pre_compressed:
+                        image_tasks.append(
+                            save_image_as_bytes(part.data, cache_key=part.cache_key, task_type=part.task_type)
+                        )
+                    elif isinstance(part, (bytes, bytearray, Image.Image)):
+                        image_data = bytes(part) if isinstance(part, bytearray) else part
+                        image_tasks.append(save_image_as_bytes(image_data))
+
+            # Execute concurrently
+            processed_images = []
+            if image_tasks:
+                processed_images = await asyncio.gather(*image_tasks, return_exceptions=True)
+
+            # Pass 2: Build actual objects
+            img_idx = 0
             for item in history:
                 if not isinstance(item, dict):
                     logging.warning("Skipping invalid history item (not dict): %s", type(item))
@@ -576,13 +653,15 @@ class GeminiProvider(BaseAIProvider):
 
                 processed = []
                 for part in parts:
+                    img_bytes: bytes | None = None
                     if isinstance(part, TaggedImage):
                         if part.pre_compressed:
                             img_bytes = part.data
                         else:
-                            img_bytes = await save_image_as_bytes(  # type: ignore[assignment]  # bytes | None from save_image_as_bytes
-                                part.data, cache_key=part.cache_key, task_type=part.task_type
-                            )
+                            res = processed_images[img_idx]
+                            img_idx += 1
+                            img_bytes = res if not isinstance(res, BaseException) else None
+
                         if img_bytes:
                             try:
                                 processed.append(
@@ -592,19 +671,22 @@ class GeminiProvider(BaseAIProvider):
                                 logging.warning("Failed to create image part: %s", e)
                         else:
                             logging.warning("Skipping TaggedImage part due to processing error")
+
                     elif isinstance(part, (bytes, bytearray, Image.Image)):
-                        img_bytes_raw: bytes | None = await save_image_as_bytes(
-                            bytes(part) if isinstance(part, bytearray) else part
-                        )
-                        if img_bytes_raw:
+                        res = processed_images[img_idx]
+                        img_idx += 1
+                        img_bytes = res if not isinstance(res, BaseException) else None
+
+                        if img_bytes:
                             try:
                                 processed.append(
-                                    types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=img_bytes_raw))
+                                    types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=img_bytes))
                                 )
                             except (TypeError, ValueError) as e:
                                 logging.warning("Failed to create image part: %s", e)
                         else:
                             logging.warning("Skipping image part due to processing error")
+
                     else:
                         try:
                             processed.append(types.Part.from_text(text=str(part)))
@@ -616,6 +698,7 @@ class GeminiProvider(BaseAIProvider):
                         contents.append(types.Content(role=role, parts=processed))
                     except (TypeError, ValueError) as e:
                         logging.warning("Failed to create Content object: %s", e)
+
         except Exception as e:
             logging.error("Error processing history: %s", e, exc_info=True)
             return None
@@ -697,11 +780,11 @@ class GeminiProvider(BaseAIProvider):
                 "gemini",
                 start_time,
                 model=model,
+                key_prefix=_api_key_prefix(self._client_api_key),
                 response_length=0,
                 success=False,
                 error_message=msg,
             )
-
 
 
 # ── Vertex AI Provider ────────────────────────────────────────────────────────

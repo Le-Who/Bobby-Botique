@@ -43,6 +43,47 @@ class OpencodeGoProvider(OpenRouterProvider):
     _MESSAGES_MODELS = frozenset({"minimax-m2.5", "minimax-m2.7"})
     _MESSAGES_MAX_TOKENS = 8192
 
+    # Models that support reasoning_effort (OpenAI-compatible extended thinking).
+    # DeepSeek V4 Pro/Flash: "low"/"medium"/"high"/"max"
+    # Kimi K2.5/K2.6: "low"/"high"
+    _REASONING_EFFORT_MODELS = frozenset(
+        {
+            "deepseek-v4-pro",
+            "deepseek-v4-flash",
+            "kimi-k2.5",
+            "kimi-k2.6",
+        }
+    )
+
+    # Models that support OpenAI-compatible function calling (tools array).
+    # All /chat/completions models potentially support tools; we whitelist the
+    # ones confirmed or very likely to support it based on model family.
+    # MiniMax models use Anthropic /messages transport — handled separately.
+    _TOOLS_MODELS = frozenset(
+        {
+            "glm-5",
+            "glm-5.1",
+            "kimi-k2.5",
+            "kimi-k2.6",
+            "mimo-v2-pro",
+            "mimo-v2-omni",
+            "mimo-v2.5-pro",
+            "mimo-v2.5",
+            "qwen3.5-plus",
+            "qwen3.6-plus",
+            "deepseek-v4-pro",
+            "deepseek-v4-flash",
+            "big-pickle",
+        }
+    )
+    # Map internal thinking_level labels -> API reasoning_effort values.
+    _THINKING_TO_EFFORT: dict[str, str] = {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "max": "max",
+    }
+
     def _get_url(self) -> str:
         """Preserve OpenRouter template expectations for chat-completions models."""
         return self._CHAT_URL
@@ -88,6 +129,39 @@ class OpencodeGoProvider(OpenRouterProvider):
 
     def _uses_messages_transport(self, model_name: str) -> bool:
         return self._strip_model_prefix(model_name) in self._MESSAGES_MODELS
+
+    def _supports_reasoning_effort(self, model_name: str) -> bool:
+        return self._strip_model_prefix(model_name) in self._REASONING_EFFORT_MODELS
+
+    def _supports_tools(self, model_name: str) -> bool:
+        """Return True if this model supports OpenAI-compatible function calling."""
+        return (
+            not self._uses_messages_transport(model_name)
+            and self._strip_model_prefix(model_name) in self._TOOLS_MODELS
+        )
+
+    def _extra_payload_params(self, model_name: str, thinking_level: str | None) -> dict:
+        """Inject reasoning_effort for DeepSeek V4 and Kimi K2 models.
+        Also injects tools/tool_choice when set via _pending_tools (from _execute_request
+        or stream_response).
+
+        Called by OpenRouterProvider._execute_request and stream_response
+        to enrich the payload with model-specific thinking parameters.
+        """
+        params: dict[str, Any] = {}
+        # reasoning_effort
+        if thinking_level and self._supports_reasoning_effort(model_name):
+            effort = self._THINKING_TO_EFFORT.get(thinking_level)
+            if effort:
+                params["reasoning_effort"] = effort
+        # function calling tools (set by _execute_request / stream_response)
+        pending_tools = getattr(self, "_pending_tools", None)
+        if pending_tools:
+            params["tools"] = pending_tools
+            pending_tc = getattr(self, "_pending_tool_choice", None)
+            if pending_tc:
+                params["tool_choice"] = pending_tc
+        return params
 
     def _build_http_error_tag(
         self,
@@ -160,17 +234,27 @@ class OpencodeGoProvider(OpenRouterProvider):
         chat_id: int | None,
         timeout: float,
         thinking_level: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict | None = None,
     ) -> AIResponse:
         if not self._uses_messages_transport(model_name):
-            return await super()._execute_request(
-                history=history,
-                model_name=model_name,
-                system_instruction=system_instruction,
-                user_id=user_id,
-                chat_id=chat_id,
-                timeout=timeout,
-                thinking_level=thinking_level,
-            )
+            # Inject tools into the parent call via _extra_payload_params override.
+            # We store them on self temporarily so super() picks them up.
+            self._pending_tools = tools if (tools and self._supports_tools(model_name)) else None
+            self._pending_tool_choice = tool_choice if self._pending_tools else None
+            try:
+                return await super()._execute_request(
+                    history=history,
+                    model_name=model_name,
+                    system_instruction=system_instruction,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    timeout=timeout,
+                    thinking_level=thinking_level,
+                )
+            finally:
+                self._pending_tools = None
+                self._pending_tool_choice = None
 
         start_time = None
         try:
@@ -254,7 +338,16 @@ class OpencodeGoProvider(OpenRouterProvider):
                     model=model_name,
                 )
 
-            token_count = self._messages_token_count(response_data.get("usage"))
+            usage = response_data.get("usage") or {}
+            token_count = self._messages_token_count(usage)
+            cached_tokens = usage.get("cache_read_input_tokens", 0)
+            if cached_tokens:
+                logging.debug(
+                    "Opencode prompt cache hit: model=%s cached=%d total=%d",
+                    model_name,
+                    cached_tokens,
+                    token_count,
+                )
             if start_time is not None:
                 openrouter_provider.api_logger.log_response(
                     "opencode",
@@ -292,17 +385,27 @@ class OpencodeGoProvider(OpenRouterProvider):
         thinking_level: str | None = None,
         timeout: float = 120.0,
         enable_web_search: bool = False,
+        force_grounding: bool = False,  # no-op: Opencode has no native Search grounding
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict | None = None,
     ):
         if not self._uses_messages_transport(model_name):
-            async for chunk in super().stream_response(
-                history=history,
-                model_name=model_name,
-                system_instruction=system_instruction,
-                thinking_level=thinking_level,
-                timeout=timeout,
-                enable_web_search=enable_web_search,
-            ):
-                yield chunk
+            # Store tools so _extra_payload_params picks them up inside super()
+            self._pending_tools = tools if (tools and self._supports_tools(model_name)) else None
+            self._pending_tool_choice = tool_choice if self._pending_tools else None
+            try:
+                async for chunk in super().stream_response(
+                    history=history,
+                    model_name=model_name,
+                    system_instruction=system_instruction,
+                    thinking_level=thinking_level,
+                    timeout=timeout,
+                    enable_web_search=enable_web_search,
+                ):
+                    yield chunk
+            finally:
+                self._pending_tools = None
+                self._pending_tool_choice = None
             return
 
         payload = await self._build_messages_payload(history, model_name, system_instruction)
@@ -350,6 +453,7 @@ class OpencodeGoProvider(OpenRouterProvider):
                     if should_stop:
                         return
         except httpx.HTTPStatusError as e:
+            await e.response.aread()
             status = e.response.status_code
             yield self._build_http_error_tag(status, e.response.text, model_name)
         except Exception as e:
@@ -418,7 +522,9 @@ class OpencodeGoProvider(OpenRouterProvider):
         if not content_blocks:
             return None
         if all(block.get("type") == "text" for block in content_blocks):
-            return "\n".join(str(block.get("text", "")) for block in content_blocks if str(block.get("text", "")).strip())
+            return "\n".join(
+                str(block.get("text", "")) for block in content_blocks if str(block.get("text", "")).strip()
+            )
         return content_blocks
 
     async def _build_anthropic_image_block(self, part: Any) -> dict[str, Any] | None:
