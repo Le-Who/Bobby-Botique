@@ -41,7 +41,14 @@ logger = logging.getLogger(__name__)
 
 miniapp_blueprint = Blueprint("miniapp", __name__, template_folder="templates")
 
-# State tracking for Live Audio sessions (Redis-backed)
+from app.security import SyncRateLimiter, rate_limit  # noqa: E402
+
+# Rate limiter for public-facing Reader pages (30 req/min)
+_reader_limiter = SyncRateLimiter(max_requests=30, window_seconds=60)
+rate_limit_reader = rate_limit(_reader_limiter)
+
+# State tracking for Live Audio sessions
+ACTIVE_LIVE_SESSIONS: set[int] = set()
 _KEY_ROTATION_INDEX: int = 0
 _LIVE_CONNECT_RETRY_AFTER_RE = re.compile(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE)
 _LIVE_DEFAULT_THINKING_LEVEL = "low"
@@ -1093,6 +1100,7 @@ async def api_update_live_settings(user_id: int):
 
 
 @miniapp_blueprint.route("/reader")
+@rate_limit_reader
 async def reader_page():
     """Serve the Long Read reader (Server-Side Rendered).
 
@@ -1204,6 +1212,7 @@ async def _fetch_telegraph_content(tg_url: str) -> str | None:
 
 
 @miniapp_blueprint.route("/api/reader/<uid>")
+@rate_limit_reader
 async def api_reader_content(uid: str):
     """Return the stored long message content for a given UID.
 

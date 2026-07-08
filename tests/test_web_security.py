@@ -252,3 +252,29 @@ async def test_error_leakage_prevented(client):
 
         response_text = (await response.get_data()).decode()
         assert secret_message not in response_text
+
+
+@pytest.mark.asyncio
+async def test_reader_rate_limiting(client):
+    """Verify that the public reader page has rate limiting."""
+    from app.web_miniapp import _reader_limiter
+
+    # Lower the limit for testing
+    original_max = _reader_limiter.max_requests
+    _reader_limiter.max_requests = 2
+    try:
+        # Request 1 - OK
+        response = await client.get("/webapp/reader?id=00000000-0000-0000-0000-000000000000")
+        assert response.status_code == 200
+
+        # Request 2 - OK
+        response = await client.get("/webapp/reader?id=00000000-0000-0000-0000-000000000000")
+        assert response.status_code == 200
+
+        # Request 3 - Rate Limited
+        response = await client.get("/webapp/reader?id=00000000-0000-0000-0000-000000000000")
+        assert response.status_code == 429
+        data = await response.get_data()
+        assert b"too many requests" in data.lower() or "пожалуйста, подождите".encode() in data.lower()
+    finally:
+        _reader_limiter.max_requests = original_max
