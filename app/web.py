@@ -164,23 +164,13 @@ def require_auth(f):
     return decorated_function
 
 
-from app.security import SyncRateLimiter  # noqa: E402
+from app.security import SyncRateLimiter, rate_limit  # noqa: E402
 
 _login_limiter = SyncRateLimiter(max_requests=5, window_seconds=300)
 _api_limiter = SyncRateLimiter(max_requests=60, window_seconds=60)
 
-
-def rate_limit_api(f):
-    """Rate-limit decorator for API endpoints (60 req/min per IP)."""
-
-    @wraps(f)
-    async def decorated(*args, **kwargs):
-        client_ip = request.remote_addr or "unknown"
-        if not _api_limiter.check(client_ip):
-            return jsonify({"error": "Rate limit exceeded"}), 429
-        return await f(*args, **kwargs)
-
-    return decorated
+# Rate-limit decorator for API endpoints (60 req/min per IP)
+rate_limit_api = rate_limit(_api_limiter, use_json=True)
 
 
 @quart_app.route("/login", methods=["GET", "POST"])

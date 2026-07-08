@@ -11,8 +11,11 @@ import re
 import threading
 import time
 from collections import defaultdict
-from typing import Any
+from functools import wraps
+from typing import Any, Callable
 from urllib.parse import urlparse
+
+from quart import jsonify, render_template, request
 
 from app.errors import InputSanitizationError
 
@@ -595,6 +598,55 @@ class SyncRateLimiter:
         stale = [k for k, v in self._requests.items() if not v or v[-1] <= cutoff]
         for k in stale:
             del self._requests[k]
+
+
+def rate_limit(
+    limiter: SyncRateLimiter,
+    use_json: bool | None = None,
+    error_message: str = "Слишком много запросов. Пожалуйста, подождите.",
+):
+    """Generic rate-limiting decorator for Quart routes.
+
+    Args:
+        limiter: The SyncRateLimiter instance to use.
+        use_json: Whether to return a JSON error (True) or render a template (False).
+                  If None, detects automatically via request path prefix /api/.
+        error_message: The message to display/return on rate limit exceed.
+    """
+
+    def decorator(f: Callable):
+        @wraps(f)
+        async def decorated(*args, **kwargs):
+            client_ip = request.remote_addr or "unknown"
+            if not limiter.check(client_ip):
+                logging.warning("Rate limit exceeded for IP %s on %s", client_ip, request.path)
+                should_use_json = use_json if use_json is not None else "/api/" in request.path
+
+                if should_use_json:
+                    return jsonify({"error": "Rate limit exceeded", "message": error_message}), 429
+                return (
+                    await render_template(
+                        "status.html",
+                        status={
+                            "system": {"cpu_percent": 0, "memory_percent": 0, "disk_percent": 0},
+                            "bot": "Rate Limited",
+                            "database": "Rate Limited",
+                            "environment": "Production",
+                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                            "version": "2.0.0",
+                        },
+                        error=error_message,
+                    ),
+                    429,
+                )
+
+            # Record success
+            limiter.record(client_ip)
+            return await f(*args, **kwargs)
+
+        return decorated
+
+    return decorator
 
 
 # Global rate limiter instance
