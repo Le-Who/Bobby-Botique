@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
 from app import database as db
-from app.errors import is_error_message
+from app.errors import ErrorCode, extract_error_code, is_error_message
 from app.providers import get_provider_router
 from app.repos.keys import count_gemini_keys
 from app.tarot import iter_daily_card_variants
@@ -20,9 +20,20 @@ logger = logging.getLogger(__name__)
 TAROT_DAILY_MODEL = "gemini-3.1-flash-lite"
 TAROT_DAILY_RPM = 15
 TAROT_DAILY_REQUEST_INTERVAL_SECONDS = 60.0 / TAROT_DAILY_RPM
+TAROT_DAILY_MAX_KEY_RETRIES = 4
 TAROT_DAILY_LANGUAGE = "ru"
 _PREPARATION_WINDOW_HOURS_PT = {22, 23}
 _LABEL_RE = re.compile(r"^(?P<card>.+?)\s+\((?P<orientation>Прямая|Перевернутая)\)$")
+_STOP_BATCH_ERROR_CODES = frozenset(
+    {
+        ErrorCode.KEYS_EXHAUSTED,
+        ErrorCode.QUOTA_EXCEEDED,
+        ErrorCode.RATE_LIMIT,
+        ErrorCode.INVALID_KEY,
+        ErrorCode.DECRYPTION_FAILED,
+        ErrorCode.NO_KEYS,
+    }
+)
 
 _local_locks: dict[tuple[date, str], asyncio.Lock] = {}
 
@@ -152,12 +163,15 @@ async def prepare_daily_readings(
             variants = list(iter_daily_card_variants())
             router = get_provider_router()
 
-            # Dynamic retry count: use the full Gemini key pool so the router
-            # can spread load across all available keys instead of a hardcoded
-            # cap. Previously max_key_retries=4 meant only 4 of 12 keys were
-            # ever tried per card. Falls back to 4 if the DB count returns 0.
+            # Keep a bounded per-card retry budget. Tarot prep is background
+            # work; it must not be able to burn through the whole Gemini pool
+            # and suspend every key used by interactive inline/chat requests.
             pool_size = await count_gemini_keys()
-            max_key_retries = max(pool_size, 4)
+            max_key_retries = (
+                min(pool_size, TAROT_DAILY_MAX_KEY_RETRIES)
+                if pool_size > 0
+                else TAROT_DAILY_MAX_KEY_RETRIES
+            )
             logger.info(
                 "Tarot prep: using max_key_retries=%d (pool_size=%d)",
                 max_key_retries,
@@ -207,6 +221,13 @@ async def prepare_daily_readings(
                     failed += 1
                     _consecutive_failures += 1
                     logger.warning("Prepared tarot daily failed date=%s card=%s", target, variant["label"])
+                    if _should_stop_batch_after_error(result):
+                        logger.warning(
+                            "Tarot prep: stopping batch after key-pool error date=%s card=%s",
+                            target,
+                            variant["label"],
+                        )
+                        break
                     # Adaptive backoff: if the API is in a sustained overload storm,
                     # pause long enough for 15s-suspended keys to recover before
                     # the next card tries to acquire a key from the pool again.
@@ -241,6 +262,11 @@ async def prepare_daily_readings(
             skipped=skipped,
             failed=failed,
         )
+
+
+def _should_stop_batch_after_error(text: str | None) -> bool:
+    code = extract_error_code(text or "")
+    return code in _STOP_BATCH_ERROR_CODES
 
 
 def _build_daily_system_instruction(tarot_context: str) -> str:

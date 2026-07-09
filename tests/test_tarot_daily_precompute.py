@@ -80,6 +80,7 @@ async def test_prepare_daily_tarot_generates_missing_variants_with_rpm_delay():
     with (
         patch("app.tarot_daily.iter_daily_card_variants", return_value=variants),
         patch("app.tarot_daily.get_provider_router", return_value=router),
+        patch("app.tarot_daily.count_gemini_keys", new_callable=AsyncMock, return_value=4),
         patch("app.tarot_daily.get_prepared_daily_reading", new_callable=AsyncMock, return_value=None),
         patch("app.tarot_daily.upsert_prepared_daily_reading", new_callable=AsyncMock) as upsert,
     ):
@@ -97,6 +98,36 @@ async def test_prepare_daily_tarot_generates_missing_variants_with_rpm_delay():
     first_call = router.get_response.await_args_list[0].kwargs
     assert first_call["preferred_model"] == TAROT_DAILY_MODEL
     assert first_call["max_key_retries"] >= 3
+
+
+@pytest.mark.asyncio
+async def test_prepare_daily_tarot_caps_per_card_key_retries():
+    from app.tarot_daily import TAROT_DAILY_MAX_KEY_RETRIES, prepare_daily_readings
+
+    variants = [
+        {
+            "name": "Маг",
+            "orientation": "Прямая",
+            "context": "Позиция «Карта дня»: Маг, Прямая.",
+            "label": "Маг (Прямая)",
+        }
+    ]
+    router = AsyncMock()
+    router.get_response.return_value = ("Готовый текст карты дня.", 42)
+
+    with (
+        patch("app.tarot_daily.iter_daily_card_variants", return_value=variants),
+        patch("app.tarot_daily.get_provider_router", return_value=router),
+        patch("app.tarot_daily.count_gemini_keys", new_callable=AsyncMock, return_value=12),
+        patch("app.tarot_daily.get_prepared_daily_reading", new_callable=AsyncMock, return_value=None),
+        patch("app.tarot_daily.upsert_prepared_daily_reading", new_callable=AsyncMock),
+    ):
+        result = await prepare_daily_readings(target_date=date(2026, 6, 9))
+
+    assert result.generated == 1
+    call = router.get_response.await_args.kwargs
+    assert call["max_key_retries"] == TAROT_DAILY_MAX_KEY_RETRIES
+    assert call["max_key_retries"] < 12
 
 
 @pytest.mark.asyncio
@@ -124,6 +155,7 @@ async def test_prepare_daily_tarot_throttles_after_failed_generation():
     with (
         patch("app.tarot_daily.iter_daily_card_variants", return_value=variants),
         patch("app.tarot_daily.get_provider_router", return_value=router),
+        patch("app.tarot_daily.count_gemini_keys", new_callable=AsyncMock, return_value=4),
         patch("app.tarot_daily.get_prepared_daily_reading", new_callable=AsyncMock, return_value=None),
         patch("app.tarot_daily.upsert_prepared_daily_reading", new_callable=AsyncMock) as upsert,
     ):
@@ -137,6 +169,45 @@ async def test_prepare_daily_tarot_throttles_after_failed_generation():
     assert upsert.await_count == 0
     assert sleep.await_count == 1
     assert sleep.await_args.args[0] >= TAROT_DAILY_REQUEST_INTERVAL_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_prepare_daily_tarot_stops_after_key_pool_exhaustion():
+    from app.errors import ErrorCode, tag_error
+    from app.tarot_daily import prepare_daily_readings
+
+    variants = [
+        {
+            "name": "Маг",
+            "orientation": "Прямая",
+            "context": "Позиция «Карта дня»: Маг, Прямая.",
+            "label": "Маг (Прямая)",
+        },
+        {
+            "name": "Жрица",
+            "orientation": "Прямая",
+            "context": "Позиция «Карта дня»: Жрица, Прямая.",
+            "label": "Жрица (Прямая)",
+        },
+    ]
+    router = AsyncMock()
+    router.get_response.return_value = (
+        tag_error(ErrorCode.KEYS_EXHAUSTED, "Все ключи Gemini недоступны."),
+        None,
+    )
+
+    with (
+        patch("app.tarot_daily.iter_daily_card_variants", return_value=variants),
+        patch("app.tarot_daily.get_provider_router", return_value=router),
+        patch("app.tarot_daily.count_gemini_keys", new_callable=AsyncMock, return_value=12),
+        patch("app.tarot_daily.get_prepared_daily_reading", new_callable=AsyncMock, return_value=None),
+        patch("app.tarot_daily.upsert_prepared_daily_reading", new_callable=AsyncMock),
+    ):
+        result = await prepare_daily_readings(target_date=date(2026, 6, 9))
+
+    assert result.generated == 0
+    assert result.failed == 1
+    assert router.get_response.await_count == 1
 
 
 def test_tarot_daily_preparation_window_is_pacific_evening():
