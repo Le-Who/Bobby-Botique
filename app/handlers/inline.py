@@ -9,10 +9,11 @@ Flow:
   4. ``handle_chosen_inline_result`` captures ``inline_message_id`` + query
      + chosen tone, then fires ``_generate_and_edit_inline`` as a background task.
   5. ``_generate_and_edit_inline``:
-       a) Calls ``gemini-3.1-flash-lite`` with Google Search Grounding enabled.
-       b) Grounding citations (when available) are appended as an expandable
+       a) Routes simple requests to ``gemini-3.1-flash-lite`` without Search.
+       b) Routes fresh/current-data requests to Gemini 2.5 Search grounding.
+       c) Grounding citations (when available) are appended as an expandable
           blockquote below the answer.
-       c) Converts the Markdown answer to Telegram HTML and edits the inline
+       d) Converts the Markdown response to Telegram HTML and edits the inline
           placeholder message in-place using ``bot.edit_message_text(inline_message_id=…)``.
 
 Image intent routing (5 modes, auto-selected):
@@ -52,7 +53,7 @@ from telegram import (
 from telegram.ext import ContextTypes
 
 from app.cache import get_inline_context, store_inline_context
-from app.config import settings
+from app.config import GEMINI_GROUNDING_FALLBACK_MODEL, GEMINI_GROUNDING_MODEL, settings
 from app.errors import classify_key_error, is_error_message, is_key_related_error, is_retryable_error
 from app.i18n import t
 from app.metrics import metrics_collector
@@ -76,6 +77,8 @@ async def get_inline_model() -> str:
     return await get_global_setting("inline_model", default)
 
 _INLINE_FALLBACK_MODEL = "gemini-3.1-flash-lite"
+_INLINE_GROUNDING_MODEL = GEMINI_GROUNDING_MODEL
+_INLINE_GROUNDING_STANDBY_MODEL = GEMINI_GROUNDING_FALLBACK_MODEL
 
 # Outer timeout for the entire generation pipeline.
 _GEN_TIMEOUT_S = 55.0
@@ -84,6 +87,17 @@ _GEN_PROGRESS_AFTER_S = 20.0
 # When inline is configured to a heavier primary model, flash-lite runs as a
 # hot standby and may answer once the primary misses this deadline.
 _INLINE_PRIMARY_GRACE_S = 13.0
+
+_INLINE_SEARCH_INTENT_RE = re.compile(
+    r"(?:"
+    r"\b(?:today|now|current|latest|recent|news|weather|forecast|price|stock|exchange\s+rate|schedule)\b"
+    r"|сегодня|сейчас|текущ|актуальн|последн|новост|погод|прогноз"
+    r"|курс|котиров|цена|стоимост|бирж|акци[ия]|крипт|биткоин|bitcoin|btc|ethereum|eth"
+    r"|расписани|результат(?:ы)?|сч[её]т|кто\s+выиграл|кто\s+победил"
+    r"|завтра|вчера|на\s+этой\s+неделе|за\s+последн"
+    r")",
+    re.IGNORECASE,
+)
 
 # ── Image intent detection ────────────────────────────────────────────────────
 # Matches a broad set of image-generation intents in both Russian and English.
@@ -1250,9 +1264,10 @@ async def _stream_inline_fast(
         # (Vertex AI Express adds a 3rd parallel racer — total concurrency = 3)
         keys: list[dict] = []
         resolved_model: str | None = None
-        # AI Studio keys race as fallback alongside the primary Vertex slot.
-        # Use _INLINE_FALLBACK_MODEL (gemini-3.1-flash-lite) for AI Studio racers.
-        _ai_studio_model = _INLINE_FALLBACK_MODEL
+        # AI Studio keys race on the model selected by the route:
+        # - gemini-3.1-flash-lite for fast ungrounded inline answers
+        # - gemini-2.5-flash for Google Search grounding on free-tier keys
+        _ai_studio_model = preferred_model
         for _ in range(2):
             kd, mdl, _ = await use_case.resolve_ai_request(
                 _ai_studio_model,
@@ -1300,9 +1315,9 @@ async def _stream_inline_fast(
             await _q.put((kh, _End(kh), None))
 
         # ── Vertex AI Express slot ─────────────────────────────────────────────
-        # gemini-3.1-flash-lite on Vertex supports Search Grounding and
-        # races alongside the 3 AI Studio keys. Uses a pseudo-key-hash so the
-        # shared queue logic treats it uniformly.
+        # Vertex races only for the fast ungrounded flash-lite route. Grounded
+        # inline requests intentionally stay on AI Studio 2.5 Flash because
+        # free-tier Gemini 3+ grounding is not available for our key pool.
         _INLINE_VERTEX_MODEL = "gemini-3.1-flash-lite"
         _vertex_grounding_holder: list[list[tuple[str, str]]] = [[]]  # mutable closure slot
 
@@ -1316,9 +1331,7 @@ async def _stream_inline_fast(
             if vertex_client is None:
                 return  # Vertex not configured — skip silently (no sentinel → race ignores slot)
             try:
-                _search_tool = _gtypes.Tool(google_search=_gtypes.GoogleSearch())
                 _vcfg = _gtypes.GenerateContentConfig(
-                    tools=[_search_tool],
                     system_instruction=system_instruction,
                     temperature=0.7,
                 )
@@ -1368,12 +1381,16 @@ async def _stream_inline_fast(
             await _q.put((_VERTEX_KH, _End(_VERTEX_KH), None))  # noqa: B023
 
         tasks: dict[str, asyncio.Task] = {kd["key_hash"]: asyncio.create_task(_race(kd)) for kd in keys}
-        # Add Vertex racer only if client is available (checked lazily inside the task)
+        # Add Vertex racer only for ungrounded flash-lite if client is available.
         _vertex_client_available = True  # Task self-skips if None; count slot regardless
         try:
             from app.providers.gemini import get_vertex_client as _gvc
 
-            _vertex_client_available = _gvc() is not None
+            _vertex_client_available = (
+                not enable_web_search
+                and resolved_model == _INLINE_FALLBACK_MODEL
+                and _gvc() is not None
+            )
         except Exception:
             _vertex_client_available = False
         if _vertex_client_available:
@@ -1503,6 +1520,11 @@ def _should_use_inline_primary(user_query: str) -> bool:
         return False
 
 
+def _should_use_inline_web_search(user_query: str) -> bool:
+    """Use native Search only for queries that need fresh/current data."""
+    return bool(_INLINE_SEARCH_INTENT_RE.search(user_query or ""))
+
+
 def _select_inline_generation_model(configured_model: str, user_query: str) -> str:
     if configured_model == _INLINE_FALLBACK_MODEL:
         return _INLINE_FALLBACK_MODEL
@@ -1554,6 +1576,82 @@ async def _stream_inline_primary(
     return (answer, sources) if answer.strip() else (None, sources)
 
 
+async def _generate_inline_grounded_answer(
+    history: list,
+    system_instruction: str | None,
+    user_id: int | None,
+) -> tuple[str | None, list[tuple[str, str]], str]:
+    """Generate grounded inline text with 2.5 Flash and 2.5 Flash-Lite standby."""
+    primary_task = asyncio.create_task(
+        _stream_inline_fast(
+            preferred_model=_INLINE_GROUNDING_MODEL,
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            max_rounds=4,
+            enable_web_search=True,
+        )
+    )
+    standby_task = asyncio.create_task(
+        _stream_inline_fast(
+            preferred_model=_INLINE_GROUNDING_STANDBY_MODEL,
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            max_rounds=4,
+            enable_web_search=True,
+        )
+    )
+
+    primary_result: tuple[str | None, list[tuple[str, str]]] | None = None
+    standby_result: tuple[str | None, list[tuple[str, str]]] | None = None
+
+    try:
+        try:
+            primary_result = await asyncio.wait_for(
+                asyncio.shield(primary_task),
+                timeout=_INLINE_PRIMARY_GRACE_S,
+            )
+            if _is_usable_inline_answer(primary_result[0]):
+                return primary_result[0], primary_result[1], _INLINE_GROUNDING_MODEL
+        except TimeoutError:
+            logging.info(
+                "Inline grounded primary %s missed %.0fs deadline; waiting for %s standby",
+                _INLINE_GROUNDING_MODEL,
+                _INLINE_PRIMARY_GRACE_S,
+                _INLINE_GROUNDING_STANDBY_MODEL,
+            )
+        except Exception as exc:
+            logging.warning("Inline grounded primary %s failed before standby decision: %s", _INLINE_GROUNDING_MODEL, exc)
+
+        try:
+            standby_result = await standby_task
+            if _is_usable_inline_answer(standby_result[0]):
+                return standby_result[0], standby_result[1], _INLINE_GROUNDING_STANDBY_MODEL
+        except Exception as exc:
+            logging.warning("Inline grounded standby %s failed: %s", _INLINE_GROUNDING_STANDBY_MODEL, exc)
+
+        if primary_result is None:
+            try:
+                primary_result = await primary_task
+            except Exception as exc:
+                logging.warning("Inline grounded primary %s failed after standby failure: %s", _INLINE_GROUNDING_MODEL, exc)
+
+        if primary_result and _is_usable_inline_answer(primary_result[0]):
+            return primary_result[0], primary_result[1], _INLINE_GROUNDING_MODEL
+        if standby_result:
+            return standby_result[0], standby_result[1], _INLINE_GROUNDING_STANDBY_MODEL
+        if primary_result:
+            return primary_result[0], primary_result[1], _INLINE_GROUNDING_MODEL
+        return None, [], _INLINE_GROUNDING_MODEL
+    finally:
+        for task in (primary_task, standby_task):
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
+
+
 async def _generate_inline_answer(
     preferred_model: str,
     user_query: str,
@@ -1563,6 +1661,13 @@ async def _generate_inline_answer(
     enable_web_search: bool,
 ) -> tuple[str | None, list[tuple[str, str]], str]:
     """Generate inline text, using flash-lite as a hot standby for heavier primaries."""
+    if enable_web_search:
+        return await _generate_inline_grounded_answer(
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+        )
+
     preferred_model = _select_inline_generation_model(preferred_model, user_query)
 
     if preferred_model == _INLINE_FALLBACK_MODEL:
@@ -1659,12 +1764,12 @@ async def _generate_and_edit_inline(
     """
     Core async pipeline with progressive UX feedback:
 
-    1. Call ``gemini-3.1-flash-lite`` with **Google Search Grounding** enabled
-       by default. If inline is configured to a heavier primary model, use it
-       only for high-complexity prompts and race flash-lite as a hot standby.
-       The model searches the web natively for factual/current queries — no
-       separate Tavily call needed.  This ensures real-time data (exchange
-       rates, weather, news) instead of potentially stale Tavily QnA cache.
+    1. Route generation by intent:
+       - simple/common prompts → ``gemini-3.1-flash-lite`` without Search;
+       - fresh/current-data prompts → ``gemini-2.5-flash`` with Search and
+         ``gemini-2.5-flash-lite`` hot standby;
+       - high-complexity prompts → configured primary model with flash-lite
+         hot standby.
        → At 20 s mark: edit placeholder to "⏳ задерживается…" (if still running).
        → Hard timeout at 55 s.
     2. Convert Markdown response to Telegram HTML.
@@ -1682,10 +1787,11 @@ async def _generate_and_edit_inline(
     # ── Check tabs setting early (needed for system prompt) ──────────────────
     tabs_enabled_now = await get_global_setting("inline_tabs_enabled", "off") == "on"
 
+    _enable_web_search = _should_use_inline_web_search(user_query)
+
     # ── Step 1: Build system prompt ───────────────────────────────────────────
-    # Google Search Grounding (enable_web_search=True) lets the model search
-    # the web internally — we just inject today's date so it knows what "now"
-    # means, and instruct it to ALWAYS use Google Search for factual queries.
+    # Search grounding is used only for fresh/current-data intents. General
+    # quick inline answers stay on flash-lite without a Search tool call.
     _tabs_directive = (
         (
             "\n\nВерни ответ строго в формате XML (без пояснений вне тегов):\n"
@@ -1699,14 +1805,21 @@ async def _generate_and_edit_inline(
         else ""
     )
 
+    _search_directive = (
+        "Для этого запроса доступен Google Search. Используй его для актуальных фактов "
+        "(курсы валют, погода, новости, цены, расписания, результаты) и не отвечай по памяти, "
+        "если вопрос зависит от текущей даты.\n\n"
+        if _enable_web_search
+        else "Для этого запроса не нужен веб-поиск: отвечай по общей модели знаний кратко и быстро.\n\n"
+    )
+
     system_instruction = (
         f"[system: current_utc_date={today}]\n"
         f"Тон ответа: {tone_sys_hint}\n"
         "Ты — ассистент в инлайн-режиме Telegram. "
         "Пользователь задаёт вопрос прямо из переписки с другим человеком — "
         "отвечай КРАТКО и по существу (не более 3–4 абзацев).\n"
-        "Используй инструмент Google Search для каждого фактического запроса "
-        "(курсы валют, погода, новости, даты, цены, статистика).\n\n"
+        f"{_search_directive}"
         f"{FORMATTING_RULES_COMPACT}\n"
         f"{_tabs_directive}"
     )
@@ -1723,7 +1836,11 @@ async def _generate_and_edit_inline(
     _progress_shown = False
     _inline_req_id = f"inline-{user_id}-{uuid.uuid4().hex[:8]}"
     _requested_inline_model = await get_inline_model()
-    _effective_inline_model = _select_inline_generation_model(_requested_inline_model, user_query)
+    _effective_inline_model = (
+        _INLINE_GROUNDING_MODEL
+        if _enable_web_search
+        else _select_inline_generation_model(_requested_inline_model, user_query)
+    )
     _response_model = _effective_inline_model
     _log_start = api_logger.log_request(
         "gemini_inline",
@@ -1733,6 +1850,7 @@ async def _generate_and_edit_inline(
         configured_model=_requested_inline_model,
         query_length=len(user_query),
         tone=tone_id,
+        web_search=_enable_web_search,
     )
 
 
@@ -1761,7 +1879,7 @@ async def _generate_and_edit_inline(
                 history=history,
                 system_instruction=system_instruction,
                 user_id=user_id,
-                enable_web_search=True,
+                enable_web_search=_enable_web_search,
             ),
             timeout=_GEN_TIMEOUT_S,
         )

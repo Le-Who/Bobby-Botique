@@ -272,9 +272,8 @@ class BaseAIProvider(ABC):
         Args:
             enable_web_search: If True, enable native web search grounding
                 (Google Search for Gemini, ignored by other providers).
-            force_grounding: If True, use DynamicRetrievalConfig with threshold=0.0
-                so the model ALWAYS performs a web search instead of relying on
-                dynamic retrieval heuristics. Use for inline / real-time queries.
+            force_grounding: If True, the caller requires a grounded attempt.
+                Current Gemini models use the google_search tool for this.
         """
 
 

@@ -14,8 +14,12 @@ from app.config import (
     CURRENT_GEMINI_MODELS,
     DEFAULT_GEMINI_MODELS,
     GEMINI_ECONOMY_MODEL,
+    GEMINI_GROUNDING_FALLBACK_MODEL,
+    GEMINI_GROUNDING_MODEL,
     GEMINI_PRIMARY_MODEL,
+    RUNTIME_GEMINI_MODELS,
     normalize_gemini_chat_model,
+    normalize_gemini_runtime_model,
     settings,
 )
 from app.errors import (
@@ -96,13 +100,19 @@ def _dedupe_models(models: list[str | None], *, exclude: str | None = None) -> l
 
 def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
     """Return configured Gemini fallbacks with 3.5 Flash → 3.1 Flash Lite first."""
+    runtime_failed_model = normalize_gemini_runtime_model(failed_model)
+    if runtime_failed_model == GEMINI_GROUNDING_MODEL:
+        return [GEMINI_GROUNDING_FALLBACK_MODEL]
+    if runtime_failed_model == GEMINI_GROUNDING_FALLBACK_MODEL:
+        return []
+
     available = [
         model
         for model in (list(getattr(settings, "AVAILABLE_MODELS", []) or []) if settings is not None else [])
         if model in CURRENT_GEMINI_MODELS
     ]
     available_set = set(available)
-    failed_model = normalize_gemini_chat_model(failed_model)
+    failed_model = normalize_gemini_chat_model(runtime_failed_model)
     preferred: list[str | None] = []
     if failed_model == GEMINI_PRIMARY_MODEL:
         preferred.append(GEMINI_ECONOMY_MODEL)
@@ -1047,9 +1057,12 @@ class ProviderRouter:
         Maps heavy models to their lite counterparts. Returns None if
         the failed model is already the lightest available.
         """
-        # Gemini cascade: current primary → current economy only.
+        # Gemini cascade: current primary → current economy; grounding stays
+        # on the Gemini 2.5 family because free-tier AI Studio keys do not
+        # support Gemini 3+ Google Search grounding.
         _GEMINI_CASCADE = {
             GEMINI_PRIMARY_MODEL: GEMINI_ECONOMY_MODEL,
+            GEMINI_GROUNDING_MODEL: GEMINI_GROUNDING_FALLBACK_MODEL,
         }
 
         # Opencode Go: cascade to Gemini via the cross-provider fallback map
@@ -1070,11 +1083,13 @@ class ProviderRouter:
         if is_or:
             return None  # OpenRouter handles its own fallbacks
 
-        gemini_failed_model = normalize_gemini_chat_model(failed_model)
+        gemini_failed_model = normalize_gemini_runtime_model(failed_model)
         fallback = _GEMINI_CASCADE.get(gemini_failed_model)
         if fallback:
+            if fallback in (GEMINI_GROUNDING_FALLBACK_MODEL,):
+                return fallback
             # Verify the fallback model is actually in our available models list
-            available = [model for model in _available_models() if model in CURRENT_GEMINI_MODELS]
+            available = [model for model in _available_models() if model in RUNTIME_GEMINI_MODELS]
             if fallback in available:
                 return fallback
 

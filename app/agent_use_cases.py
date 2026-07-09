@@ -6,12 +6,14 @@ from typing import Any
 from app.config import (
     CURRENT_GEMINI_MODELS,
     GEMINI_ECONOMY_MODEL,
+    GEMINI_GROUNDING_FALLBACK_MODEL,
+    GEMINI_GROUNDING_MODEL,
     GEMINI_PRIMARY_MODEL,
     get_freetheai_keys,
     get_opencode_keys,
     get_openrouter_keys,
     get_use_openrouter,
-    normalize_gemini_chat_model,
+    normalize_gemini_runtime_model,
     settings,
 )
 from app.providers.base import is_freetheai_model, is_opencode_model
@@ -50,7 +52,11 @@ def _dedupe_models(models: list[str | None], *, exclude: str | None = None) -> l
 
 def _gemini_fallback_priority(preferred_model: str) -> list[str]:
     """Return Gemini fallback order with 3.5 Flash → 3.1 Flash Lite as the first downgrade."""
-    preferred_model = normalize_gemini_chat_model(preferred_model)
+    preferred_model = normalize_gemini_runtime_model(preferred_model)
+    if preferred_model == GEMINI_GROUNDING_MODEL:
+        return [GEMINI_GROUNDING_FALLBACK_MODEL]
+    if preferred_model == GEMINI_GROUNDING_FALLBACK_MODEL:
+        return []
     priority: list[str | None] = []
     if preferred_model == GEMINI_PRIMARY_MODEL:
         priority.append(GEMINI_ECONOMY_MODEL)
@@ -186,7 +192,7 @@ class AgentRequestUseCase:
     async def _resolve_gemini_request(
         self, preferred_model: str, excluded_key_hashes: set[str] | None = None
     ) -> tuple[dict[str, Any] | None, str | None, str | None]:
-        preferred_model = normalize_gemini_chat_model(preferred_model)
+        preferred_model = normalize_gemini_runtime_model(preferred_model)
         fallback_priority = _gemini_fallback_priority(preferred_model)
         return await self._resolve_key_generic(
             preferred_model,

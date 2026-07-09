@@ -264,6 +264,40 @@ class TestProviderRouter:
         assert fake_use_case.resolve_calls[2]["preferred_model"] == "gemini-3.1-flash-lite"
 
     @pytest.mark.asyncio
+    async def test_transient_grounding_failures_cascade_to_2_5_lite_for_non_stream_response(self):
+        router = ProviderRouter()
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[
+                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-2.5-flash", None),
+                ({"api_key": "k2", "key_hash": "hash2"}, "gemini-2.5-flash-lite", None),
+            ],
+            response_sequence=[
+                TimeoutError(),
+                ("Grounded lite fallback response", 11),
+            ],
+        )
+
+        mock_settings = MagicMock()
+        mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
+            patch("app.providers.router.settings", mock_settings),
+        ):
+            text, tokens = await router.get_response(
+                "gemini-2.5-flash",
+                [{"role": "user", "parts": ["курс доллара сегодня"]}],
+                max_key_retries=1,
+                timeout=0.1,
+            )
+
+        assert text == "Grounded lite fallback response"
+        assert tokens == 11
+        assert fake_use_case.resolve_calls[1]["preferred_model"] == "gemini-2.5-flash-lite"
+
+    @pytest.mark.asyncio
     async def test_quota_error_suspends_with_quota_category(self):
         """Quota exceeded should suspend with 'quota' category."""
         router = ProviderRouter()

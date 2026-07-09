@@ -258,23 +258,7 @@ class GeminiProvider(BaseAIProvider):
             config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]  # Pydantic coerces dicts→SafetySetting
             # Apply Google Search Grounding if requested
             if enable_web_search:
-                if force_grounding:
-                    # Force search on every request (inline use-case): the model's training
-                    # data may confidently answer time-sensitive questions (e.g. live sports
-                    # scores, ongoing tournaments) without calling Search.  threshold=0.0
-                    # bypasses Dynamic Retrieval heuristics and always retrieves.
-                    config.tools = [
-                        types.Tool(
-                            google_search_retrieval=types.GoogleSearchRetrieval(
-                                dynamic_retrieval_config=types.DynamicRetrievalConfig(
-                                    mode=types.DynamicRetrievalConfigMode.MODE_DYNAMIC,
-                                    dynamic_threshold=0.0,
-                                )
-                            )
-                        )
-                    ]
-                else:
-                    config.tools = [types.Tool(google_search=types.GoogleSearch())]
+                config.tools = [types.Tool(google_search=types.GoogleSearch())]
 
             # Apply thinking config if user requested a specific level
             tc = _build_thinking_config(model_name, thinking_level)
@@ -463,22 +447,7 @@ class GeminiProvider(BaseAIProvider):
         config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]
         # Apply Google Search Grounding if requested
         if enable_web_search:
-            if force_grounding:
-                # Force search on every request (inline real-time queries): use
-                # google_search_retrieval with dynamic_threshold=0.0 so the model
-                # always retrieves instead of relying on confidence heuristics.
-                config.tools = [
-                    types.Tool(
-                        google_search_retrieval=types.GoogleSearchRetrieval(
-                            dynamic_retrieval_config=types.DynamicRetrievalConfig(
-                                mode=types.DynamicRetrievalConfigMode.MODE_DYNAMIC,
-                                dynamic_threshold=0.0,
-                            )
-                        )
-                    )
-                ]
-            else:
-                config.tools = [types.Tool(google_search=types.GoogleSearch())]
+            config.tools = [types.Tool(google_search=types.GoogleSearch())]
 
         tc = _build_thinking_config(model_name, thinking_level)
         if tc:

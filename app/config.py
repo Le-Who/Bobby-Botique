@@ -18,15 +18,25 @@ from app.utils.json_compat import json
 # Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().
 GEMINI_PRIMARY_MODEL: str = "gemini-3.5-flash"
 GEMINI_ECONOMY_MODEL: str = "gemini-3.1-flash-lite"
+GEMINI_GROUNDING_MODEL: str = "gemini-2.5-flash"
+GEMINI_GROUNDING_FALLBACK_MODEL: str = "gemini-2.5-flash-lite"
 DEFAULT_GEMINI_MODELS: list[str] = [
     GEMINI_PRIMARY_MODEL,
     GEMINI_ECONOMY_MODEL,
 ]
 CURRENT_GEMINI_MODELS: tuple[str, ...] = (GEMINI_PRIMARY_MODEL, GEMINI_ECONOMY_MODEL)
+RUNTIME_GEMINI_MODELS: tuple[str, ...] = (
+    GEMINI_PRIMARY_MODEL,
+    GEMINI_ECONOMY_MODEL,
+    GEMINI_GROUNDING_MODEL,
+    GEMINI_GROUNDING_FALLBACK_MODEL,
+)
 DEFAULT_DAILY_LIMIT_PER_MODEL: int = 15
 DEFAULT_DAILY_LIMITS_BY_MODEL: dict[str, int] = {
     GEMINI_PRIMARY_MODEL: DEFAULT_DAILY_LIMIT_PER_MODEL,
     GEMINI_ECONOMY_MODEL: 400,
+    GEMINI_GROUNDING_MODEL: 500,
+    GEMINI_GROUNDING_FALLBACK_MODEL: 500,
 }
 
 # --- Imagen 4 model identifiers (AI Studio / Gemini API) ---
@@ -131,6 +141,12 @@ def normalize_gemini_chat_model(model_name: str | None, fallback: str = GEMINI_P
     return fallback
 
 
+def normalize_gemini_runtime_model(model_name: str | None, fallback: str = GEMINI_PRIMARY_MODEL) -> str:
+    if isinstance(model_name, str) and model_name.strip() in RUNTIME_GEMINI_MODELS:
+        return model_name.strip()
+    return fallback
+
+
 def _load_gemini_role_model(env_var_name: str, fallback: str) -> str:
     return normalize_gemini_chat_model(_load_single_model(env_var_name, fallback), fallback=fallback)
 
@@ -151,10 +167,7 @@ def _load_daily_limits() -> dict[str, int]:
     value = os.getenv("DAILY_LIMITS")
 
     # Reuse module-level constant for defaults
-    default_limits = {
-        model: DEFAULT_DAILY_LIMITS_BY_MODEL.get(model, DEFAULT_DAILY_LIMIT_PER_MODEL)
-        for model in DEFAULT_GEMINI_MODELS
-    }
+    default_limits = DEFAULT_DAILY_LIMITS_BY_MODEL.copy()
 
     if not value:
         return default_limits

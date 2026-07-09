@@ -6,6 +6,8 @@ import pytest
 
 from app.config import (
     DEFAULT_GEMINI_MODELS,
+    GEMINI_GROUNDING_FALLBACK_MODEL,
+    GEMINI_GROUNDING_MODEL,
     _load_and_clean_keys,
     _load_daily_limits,
     get_model_hash,
@@ -116,6 +118,8 @@ class TestLoadDailyLimits:
         assert DEFAULT_GEMINI_MODELS[:2] == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
         assert "gemini-3-flash-preview" not in DEFAULT_GEMINI_MODELS[:2]
         assert result["gemini-3.5-flash"] < result["gemini-3.1-flash-lite"]
+        assert result[GEMINI_GROUNDING_MODEL] == 500
+        assert result[GEMINI_GROUNDING_FALLBACK_MODEL] == 500
 
 
 def test_load_settings_reads_webhook_backpressure_envs(monkeypatch):

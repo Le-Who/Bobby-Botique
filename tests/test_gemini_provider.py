@@ -156,3 +156,45 @@ async def test_execute_gemini_request_timeout():
 
         assert resp.success is False
         assert "Превышено время ожидания" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_stream_force_grounding_uses_current_google_search_tool():
+    """Current Gemini grounding models use google_search, not google_search_retrieval."""
+    _gemini_clients_cache.clear()
+
+    class FakeChunk:
+        text = "grounded"
+        candidates = []
+        usage_metadata = None
+
+    async def fake_stream():
+        yield FakeChunk()
+
+    with (
+        patch("app.providers.gemini.genai.Client") as MockClient,
+        patch("app.providers.gemini.settings") as mock_settings,
+    ):
+        mock_settings.SAFETY_SETTINGS = []
+        provider = GeminiProvider("key")
+
+        mock_client_instance = MockClient.return_value
+        mock_aio_models = MagicMock()
+        mock_aio_models.generate_content_stream = AsyncMock(return_value=fake_stream())
+        mock_client_instance.aio.models = mock_aio_models
+
+        chunks = [
+            chunk
+            async for chunk in provider.stream_response(
+                history=[{"role": "user", "parts": ["курс доллара сегодня"]}],
+                model_name="gemini-2.5-flash",
+                enable_web_search=True,
+                force_grounding=True,
+            )
+        ]
+
+        assert chunks == ["grounded"]
+        config = mock_aio_models.generate_content_stream.call_args.kwargs["config"]
+        tool = config.tools[0]
+        assert getattr(tool, "google_search", None) is not None
+        assert getattr(tool, "google_search_retrieval", None) is None

@@ -124,6 +124,16 @@ def test_select_inline_generation_model_uses_lite_for_simple_query():
     )
 
 
+def test_should_use_inline_web_search_only_for_time_sensitive_queries():
+    from app.handlers import inline
+
+    assert inline._should_use_inline_web_search("когда вышел первый айфон?") is False
+    assert inline._should_use_inline_web_search("объясни разницу между http и https") is False
+    assert inline._should_use_inline_web_search("какой курс доллара сегодня?") is True
+    assert inline._should_use_inline_web_search("погода в Киеве завтра") is True
+    assert inline._should_use_inline_web_search("последние новости OpenAI") is True
+
+
 def test_select_inline_generation_model_keeps_primary_for_contract_query():
     from app.handlers import inline
 
@@ -165,7 +175,7 @@ async def test_generate_inline_answer_returns_lite_when_primary_misses_deadline(
         history=[{"role": "user", "parts": ["draft a contract"]}],
         system_instruction="system",
         user_id=123,
-        enable_web_search=True,
+        enable_web_search=False,
     )
 
     assert text == "lite answer"
@@ -173,6 +183,39 @@ async def test_generate_inline_answer_returns_lite_when_primary_misses_deadline(
     assert model_used == "gemini-3.1-flash-lite"
     assert router_calls[0]["preferred_model"] == "gemini-3.5-flash"
     assert lite_calls[0]["preferred_model"] == "gemini-3.1-flash-lite"
+
+
+@pytest.mark.asyncio
+async def test_generate_inline_answer_uses_grounding_standby_when_primary_misses_deadline(monkeypatch):
+    from app.handlers import inline
+
+    calls: list[dict] = []
+
+    async def fake_stream_inline_fast(**kwargs):
+        calls.append(kwargs)
+        if kwargs["preferred_model"] == "gemini-2.5-flash":
+            await asyncio.sleep(0.2)
+            return "primary grounded answer", [("https://example.com/primary", "Primary")]
+        await asyncio.sleep(0.01)
+        return "standby grounded answer", [("https://example.com/standby", "Standby")]
+
+    monkeypatch.setattr(inline, "_stream_inline_fast", fake_stream_inline_fast)
+    monkeypatch.setattr(inline, "_INLINE_PRIMARY_GRACE_S", 0.05, raising=False)
+
+    text, sources, model_used = await inline._generate_inline_answer(
+        preferred_model="gemini-3.5-flash",
+        user_query="какой курс доллара сегодня?",
+        history=[{"role": "user", "parts": ["какой курс доллара сегодня?"]}],
+        system_instruction="system",
+        user_id=123,
+        enable_web_search=True,
+    )
+
+    assert text == "standby grounded answer"
+    assert sources == [("https://example.com/standby", "Standby")]
+    assert model_used == "gemini-2.5-flash-lite"
+    assert [call["preferred_model"] for call in calls] == ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+    assert all(call["enable_web_search"] is True for call in calls)
 
 
 @pytest.mark.asyncio
@@ -200,7 +243,7 @@ async def test_generate_inline_answer_skips_primary_for_simple_query(monkeypatch
         history=[{"role": "user", "parts": ["когда вышел первый айфон?"]}],
         system_instruction="system",
         user_id=123,
-        enable_web_search=True,
+        enable_web_search=False,
     )
 
     assert text == "lite answer"
@@ -208,3 +251,4 @@ async def test_generate_inline_answer_skips_primary_for_simple_query(monkeypatch
     assert model_used == "gemini-3.1-flash-lite"
     assert router_calls == []
     assert lite_calls[0]["preferred_model"] == "gemini-3.1-flash-lite"
+    assert lite_calls[0]["enable_web_search"] is False
