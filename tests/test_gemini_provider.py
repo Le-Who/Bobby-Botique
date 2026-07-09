@@ -198,3 +198,27 @@ async def test_stream_force_grounding_uses_current_google_search_tool():
         tool = config.tools[0]
         assert getattr(tool, "google_search", None) is not None
         assert getattr(tool, "google_search_retrieval", None) is None
+
+
+def test_vertex_billing_disabled_error_temporarily_disables_vertex(monkeypatch):
+    from app.providers import gemini
+
+    monkeypatch.setattr(gemini, "_vertex_client", object())
+    monkeypatch.setattr(gemini, "_vertex_client_initialized", True)
+    monkeypatch.setattr(gemini, "_vertex_disabled_until_monotonic", 0.0, raising=False)
+    monkeypatch.setattr(gemini.time, "monotonic", lambda: 100.0)
+
+    assert gemini.is_vertex_client_available() is True
+
+    gemini.report_vertex_error(
+        RuntimeError(
+            "403 PERMISSION_DENIED. This API method requires billing to be enabled. "
+            "reason: BILLING_DISABLED"
+        ),
+        cooldown_seconds=3600.0,
+    )
+
+    assert gemini.is_vertex_client_available() is False
+
+    monkeypatch.setattr(gemini.time, "monotonic", lambda: 3701.0)
+    assert gemini.is_vertex_client_available() is True

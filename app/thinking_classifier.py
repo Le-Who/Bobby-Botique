@@ -53,7 +53,7 @@ _HIGH_DEBUG = re.compile(
     re.IGNORECASE,
 )
 _HIGH_LONG_FORM_WRITING = re.compile(
-    r"(?:сочинени|сачыненне|сочини|эссе|доклад|реферат|курсовая|диплом|essay|report|thesis|dissertation|статью|лонгрид)",
+    r"(?:сочинени|сачыненне|эссе|доклад|реферат|курсовая|диплом|essay|report|thesis|dissertation|статью|лонгрид)",
     re.IGNORECASE,
 )
 
@@ -77,7 +77,7 @@ _MEDIUM_EXPLAIN = re.compile(
     re.IGNORECASE,
 )
 _MEDIUM_CREATIVE = re.compile(
-    r"(?:напиши|придумай|сгенерируй|создай|write|compose|generate|draft|история|рассказ|стих)",
+    r"(?:напиши|сочини|придумай|сгенерируй|создай|write|compose|generate|draft|история|рассказ|стих)",
     re.IGNORECASE,
 )
 _MEDIUM_SUMMARIZE = re.compile(

@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -112,6 +113,197 @@ def _async_return(value):
     return _inner
 
 
+@pytest.mark.asyncio
+async def test_build_continue_keyboard_uses_context_token_for_inline_followup(monkeypatch):
+    from app.handlers import inline
+
+    stored_calls: list[dict] = []
+    long_query = "поясни архитектуру очень подробно " * 8
+
+    async def fake_store_inline_context(token, payload, user_id=None):
+        stored_calls.append({"token": token, "payload": payload, "user_id": user_id})
+        return True
+
+    monkeypatch.setattr(inline.uuid, "uuid4", lambda: SimpleNamespace(hex="0123456789abcdef9999"))
+    monkeypatch.setattr(inline, "store_inline_context", fake_store_inline_context)
+
+    keyboard = await inline._build_continue_keyboard(
+        bot_username="gemaibotv2",
+        user_query=long_query,
+        final_answer="предыдущий ответ",
+        tone_id="friendly",
+        lang="ru",
+        user_id=42,
+    )
+
+    continue_button, ask_more_button = keyboard.inline_keyboard[0]
+
+    assert continue_button.text == "💬 Обсудить в ЛС"
+    assert continue_button.url == "https://t.me/gemaibotv2?start=ctx_0123456789abcdef"
+    assert ask_more_button.text == "🔄 Ещё вопрос"
+    assert ask_more_button.switch_inline_query_current_chat == "↪ 0123456789abcdef "
+    assert ask_more_button.switch_inline_query_current_chat != long_query[:50]
+    assert stored_calls == [
+        {
+            "token": "0123456789abcdef",
+            "payload": {
+                "q": long_query[:500],
+                "a": "предыдущий ответ",
+                "tone": "friendly",
+            },
+            "user_id": 42,
+        }
+    ]
+
+
+def test_parse_inline_followup_query_extracts_token_and_new_question():
+    from app.handlers import inline
+
+    parsed = inline._parse_inline_followup_query("↪ 0123456789abcdef чем это отличается?")
+
+    assert parsed == ("0123456789abcdef", "чем это отличается?")
+
+
+@pytest.mark.asyncio
+async def test_chosen_inline_followup_submits_generation_with_context(monkeypatch):
+    import app.utils.background_tasks as background_tasks
+    from app.handlers import inline
+
+    context_payload = {
+        "q": "первый вопрос",
+        "a": "первый ответ",
+        "tone": "sarcastic",
+    }
+    captured: dict = {}
+
+    async def fake_get_inline_context(token):
+        assert token == "0123456789abcdef"
+        return context_payload
+
+    def fake_generate_and_edit_inline(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(close=lambda: None)
+
+    class FakeTaskManager:
+        def submit(self, task):
+            captured["submitted_task"] = task
+
+    chosen = SimpleNamespace(
+        inline_message_id="inline-1",
+        query="↪ 0123456789abcdef чем продолжим?",
+        result_id="ctx_followup",
+        from_user=SimpleNamespace(id=42, language_code="ru"),
+    )
+    update = SimpleNamespace(chosen_inline_result=chosen)
+    context = SimpleNamespace(bot=SimpleNamespace(first_name="GemAI"))
+
+    monkeypatch.setattr(inline, "get_inline_context", fake_get_inline_context)
+    monkeypatch.setattr(inline, "_generate_and_edit_inline", fake_generate_and_edit_inline)
+    monkeypatch.setattr(background_tasks, "get_task_manager", lambda: FakeTaskManager())
+
+    await inline.handle_chosen_inline_result(update, context)
+
+    assert captured["inline_message_id"] == "inline-1"
+    assert captured["user_query"] == "чем продолжим?"
+    assert captured["tone_id"] == "sarcastic"
+    assert captured["user_id"] == 42
+    assert captured["inline_context"] == context_payload
+
+
+@pytest.mark.asyncio
+async def test_chosen_inline_followup_without_question_edits_hint(monkeypatch):
+    from app.handlers import inline
+
+    async def fake_get_inline_context(token):
+        assert token == "0123456789abcdef"
+        return {
+            "q": "первый вопрос",
+            "a": "первый ответ",
+            "tone": "friendly",
+        }
+
+    class FakeBot:
+        async def edit_message_text(self, **kwargs):
+            captured["edit_kwargs"] = kwargs
+
+    captured: dict = {}
+    chosen = SimpleNamespace(
+        inline_message_id="inline-1",
+        query="↪ 0123456789abcdef",
+        result_id="ctx_hint",
+        from_user=SimpleNamespace(id=42, language_code="ru"),
+    )
+    update = SimpleNamespace(chosen_inline_result=chosen)
+    context = SimpleNamespace(bot=FakeBot())
+
+    monkeypatch.setattr(inline, "get_inline_context", fake_get_inline_context)
+
+    await inline.handle_chosen_inline_result(update, context)
+
+    assert captured["edit_kwargs"]["text"] == "Допишите новый вопрос после стрелки"
+
+
+@pytest.mark.asyncio
+async def test_generate_and_edit_inline_includes_inline_context_in_history(monkeypatch):
+    from app.handlers import inline
+
+    captured: dict = {}
+
+    async def fake_generate_inline_answer(**kwargs):
+        captured["history"] = kwargs["history"]
+        return "новый ответ", [], "gemini-3.1-flash-lite"
+
+    class FakeMetrics:
+        async def record_api_call(self, *args, **kwargs):
+            return None
+
+        async def record_request(self, *args, **kwargs):
+            return None
+
+    class FakeLogger:
+        def log_request(self, *args, **kwargs):
+            return "request-start"
+
+        def log_response(self, *args, **kwargs):
+            captured["logged_response"] = kwargs
+
+    class FakeBot:
+        first_name = "GemAI"
+        username = "gemaibotv2"
+
+        async def edit_message_text(self, **kwargs):
+            captured["edit_kwargs"] = kwargs
+
+    monkeypatch.setattr(inline, "get_global_setting", _async_return("off"))
+    monkeypatch.setattr(inline, "get_inline_model", _async_return("gemini-3.1-flash-lite"))
+    monkeypatch.setattr(inline, "_generate_inline_answer", fake_generate_inline_answer)
+    monkeypatch.setattr(inline, "metrics_collector", FakeMetrics())
+    monkeypatch.setattr(inline, "api_logger", FakeLogger())
+    monkeypatch.setattr(inline, "store_inline_context", _async_return(True))
+    monkeypatch.setattr(inline.uuid, "uuid4", lambda: SimpleNamespace(hex="fedcba98765432100000"))
+
+    await inline._generate_and_edit_inline(
+        bot=FakeBot(),
+        inline_message_id="inline-2",
+        user_query="а какие риски?",
+        tone_id="friendly",
+        user_id=42,
+        lang="ru",
+        inline_context={
+            "q": "как спроектировать систему?",
+            "a": "предыдущий ответ",
+            "tone": "friendly",
+        },
+    )
+
+    assert captured["history"] == [
+        {"role": "user", "parts": ["как спроектировать систему?"]},
+        {"role": "model", "parts": ["предыдущий ответ"]},
+        {"role": "user", "parts": ["а какие риски?"]},
+    ]
+    assert "новый ответ" in captured["edit_kwargs"]["text"]
+
+
 def test_select_inline_generation_model_uses_lite_for_simple_query():
     from app.handlers import inline
 
@@ -119,6 +311,18 @@ def test_select_inline_generation_model_uses_lite_for_simple_query():
         inline._select_inline_generation_model(
             configured_model="gemini-3.5-flash",
             user_query="когда вышел первый айфон?",
+        )
+        == "gemini-3.1-flash-lite"
+    )
+
+
+def test_select_inline_generation_model_uses_lite_for_short_creative_query():
+    from app.handlers import inline
+
+    assert (
+        inline._select_inline_generation_model(
+            configured_model="gemini-3.5-flash",
+            user_query="сочини-ка мне лютую рэпчинку на свободную темку, с плавным флоу",
         )
         == "gemini-3.1-flash-lite"
     )

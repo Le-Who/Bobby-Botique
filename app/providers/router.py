@@ -598,10 +598,9 @@ class ProviderRouter:
             # and only if we have at least one valid Gemini key to race alongside it.
             _VERTEX_KH = "__vertex_ai__"
             if keys_to_race and resolved_model and "gemini-3.1-flash-lite" in resolved_model:
-                from app.providers.gemini import get_vertex_client
+                from app.providers.gemini import is_vertex_client_available
 
-                vertex_client = get_vertex_client()
-                if vertex_client and _VERTEX_KH not in failed_keys:
+                if is_vertex_client_available() and _VERTEX_KH not in failed_keys:
                     keys_to_race.append({"api_key": "vertex", "key_hash": _VERTEX_KH})
 
             if not keys_to_race or not resolved_model:
@@ -876,9 +875,14 @@ class ProviderRouter:
                                 err_category,
                                 raw_err[:120],
                             )
-                            await status_mgr.suspend_key(
-                                kd["key_hash"], model_used, err_category, raw_err[:200]
-                            ) if not is_opencode_model(model_used) and not is_freetheai_model(model_used) else None
+                            if kd["key_hash"] == _VERTEX_KH:
+                                from app.providers.gemini import report_vertex_error
+
+                                report_vertex_error(RuntimeError(raw_err))
+                            elif not is_opencode_model(model_used) and not is_freetheai_model(model_used):
+                                await status_mgr.suspend_key(
+                                    kd["key_hash"], model_used, err_category, raw_err[:200]
+                                )
                         except Exception:
                             pass
                         # Update outer flags regardless of whether suspend_key succeeded

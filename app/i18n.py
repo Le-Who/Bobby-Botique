@@ -207,12 +207,24 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "⌛ Retry link has expired. Please send the query again.",
     },
     "inline.btn_continue": {
-        "ru": "💬 Продолжить",
-        "en": "💬 Continue",
+        "ru": "💬 Обсудить в ЛС",
+        "en": "💬 Discuss in DM",
     },
     "inline.btn_ask_more": {
         "ru": "🔄 Ещё вопрос",
         "en": "🔄 Ask more",
+    },
+    "inline.followup_title": {
+        "ru": "↪️ Продолжить обсуждение",
+        "en": "↪️ Continue discussion",
+    },
+    "inline.followup_hint": {
+        "ru": "Допишите новый вопрос после стрелки",
+        "en": "Type the next question after the arrow",
+    },
+    "inline.followup_expired": {
+        "ru": "⏰ Контекст устарел. Задайте новый inline-вопрос.",
+        "en": "⏰ Context expired. Start a new inline question.",
     },
 
     # ── Voice Handler ────────────────────────────────────────────────────

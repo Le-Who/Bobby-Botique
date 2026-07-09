@@ -388,7 +388,7 @@ async def get_telegraph_url(uid: str) -> str | None:
         return None
 
 
-# ── Inline Context Store (for «Продолжить» deep-link button) ─────────────────
+# ── Inline Context Store (for DM and current-chat inline continuation) ───────
 _INLINE_CTX_PREFIX = "inline_ctx:"
 _INLINE_CTX_ZSET_PREFIX = "inline_ctx_zset:"
 _INLINE_CTX_TTL = 86_400  # 24 hours

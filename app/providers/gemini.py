@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
@@ -75,6 +76,15 @@ _vertex_client: "genai.Client | None" = None
 _vertex_client_initialized: bool = False
 _vertex_live_client: "genai.Client | None" = None
 _vertex_live_client_initialized: bool = False
+_vertex_disabled_until_monotonic: float = 0.0
+_VERTEX_CONFIG_ERROR_COOLDOWN_SECONDS = 3600.0
+_VERTEX_CONFIG_ERROR_PATTERNS = (
+    "BILLING_DISABLED",
+    "requires billing to be enabled",
+    "SERVICE_DISABLED",
+    "PERMISSION_DENIED",
+    "aiplatform.googleapis.com",
+)
 
 
 def get_vertex_client() -> "genai.Client | None":
@@ -129,6 +139,31 @@ def get_vertex_client() -> "genai.Client | None":
         log.warning("Vertex AI client init failed — Vertex AI pathway disabled: %s", exc)
         _vertex_client = None
     return _vertex_client
+
+
+def is_vertex_client_available() -> bool:
+    """Return True only when Vertex is configured and not in a local cooldown."""
+    return get_vertex_client() is not None and time.monotonic() >= _vertex_disabled_until_monotonic
+
+
+def report_vertex_error(exc: BaseException, *, cooldown_seconds: float = _VERTEX_CONFIG_ERROR_COOLDOWN_SECONDS) -> None:
+    """Suppress repeated Vertex races after permanent configuration/billing errors."""
+    global _vertex_disabled_until_monotonic
+
+    error_text = str(exc)
+    if not any(pattern in error_text for pattern in _VERTEX_CONFIG_ERROR_PATTERNS):
+        return
+
+    disabled_until = time.monotonic() + cooldown_seconds
+    if disabled_until <= _vertex_disabled_until_monotonic:
+        return
+
+    _vertex_disabled_until_monotonic = disabled_until
+    logging.getLogger(__name__).warning(
+        "Vertex AI pathway disabled for %.0fs after configuration/billing error: %s",
+        cooldown_seconds,
+        error_text[:200],
+    )
 
 
 def get_vertex_live_client() -> "genai.Client | None":

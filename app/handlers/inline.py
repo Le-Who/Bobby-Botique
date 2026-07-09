@@ -403,6 +403,12 @@ def _get_loading_keyboard(lang: str) -> InlineKeyboardMarkup:
 _RETRY_TTL_S = 300.0
 _retry_store: dict[str, dict] = {}
 
+# Short marker inserted by the "Ещё вопрос" button. Telegram does not provide a
+# hidden payload for switch_inline_query_current_chat, so the token must ride in
+# the visible inline query and stay compact.
+_INLINE_FOLLOWUP_MARKER = "↪"
+_INLINE_FOLLOWUP_RE = re.compile(r"^↪\s*([0-9a-fA-F]{16})\s*(.*)$", re.DOTALL)
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -425,6 +431,17 @@ def _tone_hint(tone_id: str, lang: str) -> str:
         if tid == tone_id:
             return hint
     return ""
+
+
+def _format_inline_followup_query(token: str) -> str:
+    return f"{_INLINE_FOLLOWUP_MARKER} {token} "
+
+
+def _parse_inline_followup_query(query: str) -> tuple[str, str] | None:
+    match = _INLINE_FOLLOWUP_RE.match((query or "").strip())
+    if not match:
+        return None
+    return match.group(1).lower(), match.group(2).strip()
 
 
 # ── Public handlers ───────────────────────────────────────────────────────────
@@ -499,6 +516,62 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
                     id="hint",
                     title=t("inline.hint_title", lang),
                     description=t("inline.hint_desc", lang),
+                    input_message_content=InputTextMessageContent(
+                        message_text=placeholder,
+                        parse_mode="HTML",
+                    ),
+                    reply_markup=_get_loading_keyboard(lang),
+                )
+            ],
+            cache_time=0,
+            is_personal=True,
+        )
+        return
+
+    followup = _parse_inline_followup_query(user_query)
+    if followup:
+        token, followup_question = followup
+        inline_ctx = await get_inline_context(token)
+        if inline_ctx is None:
+            await query.answer(
+                results=[
+                    InlineQueryResultArticle(
+                        id="ctx_expired",
+                        title=t("inline.followup_title", lang),
+                        description=t("inline.followup_expired", lang),
+                        input_message_content=InputTextMessageContent(
+                            message_text=t("inline.followup_expired", lang),
+                        ),
+                    )
+                ],
+                cache_time=0,
+                is_personal=True,
+            )
+            return
+
+        if not followup_question:
+            await query.answer(
+                results=[
+                    InlineQueryResultArticle(
+                        id="ctx_hint",
+                        title=t("inline.followup_title", lang),
+                        description=t("inline.followup_hint", lang),
+                        input_message_content=InputTextMessageContent(
+                            message_text=t("inline.followup_hint", lang),
+                        ),
+                    )
+                ],
+                cache_time=0,
+                is_personal=True,
+            )
+            return
+
+        await query.answer(
+            results=[
+                InlineQueryResultArticle(
+                    id="ctx_followup",
+                    title=t("inline.followup_title", lang),
+                    description=followup_question[:120],
                     input_message_content=InputTextMessageContent(
                         message_text=placeholder,
                         parse_mode="HTML",
@@ -800,6 +873,41 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
         return
 
     from app.utils.background_tasks import get_task_manager
+
+    followup = _parse_inline_followup_query(user_query)
+    if followup:
+        token, followup_question = followup
+        lang = _get_lang(chosen)
+        inline_ctx = await get_inline_context(token)
+        if inline_ctx is None:
+            with contextlib.suppress(Exception):
+                await context.bot.edit_message_text(
+                    inline_message_id=inline_message_id,
+                    text=t("inline.followup_expired", lang),
+                )
+            return
+        if not followup_question:
+            with contextlib.suppress(Exception):
+                await context.bot.edit_message_text(
+                    inline_message_id=inline_message_id,
+                    text=t("inline.followup_hint", lang),
+                )
+            return
+
+        ctx_tone = inline_ctx.get("tone") if isinstance(inline_ctx, dict) else None
+        tone_id = ctx_tone if ctx_tone in {tone[0] for tone in _get_tones(lang)} else "friendly"
+        get_task_manager().submit(
+            _generate_and_edit_inline(
+                bot=context.bot,
+                inline_message_id=inline_message_id,
+                user_query=followup_question,
+                tone_id=tone_id,
+                user_id=user_id,
+                lang=lang,
+                inline_context=inline_ctx,
+            )
+        )
+        return
 
     # ── Image generation path ─────────────────────────────────────────────────
     if result_id.startswith("img_"):
@@ -1325,7 +1433,7 @@ async def _stream_inline_fast(
             from google.genai import types as _gtypes
 
             from app.providers.gemini import _GroundingMeta as _GMeta
-            from app.providers.gemini import get_vertex_client
+            from app.providers.gemini import get_vertex_client, report_vertex_error
 
             vertex_client = get_vertex_client()
             if vertex_client is None:
@@ -1376,20 +1484,21 @@ async def _stream_inline_fast(
             except asyncio.CancelledError:
                 pass
             except Exception as exc:
+                report_vertex_error(exc)  # noqa: B023
                 await _q.put((_VERTEX_KH, None, exc))  # noqa: B023
                 return
             await _q.put((_VERTEX_KH, _End(_VERTEX_KH), None))  # noqa: B023
 
         tasks: dict[str, asyncio.Task] = {kd["key_hash"]: asyncio.create_task(_race(kd)) for kd in keys}
         # Add Vertex racer only for ungrounded flash-lite if client is available.
-        _vertex_client_available = True  # Task self-skips if None; count slot regardless
+        _vertex_client_available = False
         try:
-            from app.providers.gemini import get_vertex_client as _gvc
+            from app.providers.gemini import is_vertex_client_available
 
             _vertex_client_available = (
                 not enable_web_search
                 and resolved_model == _INLINE_FALLBACK_MODEL
-                and _gvc() is not None
+                and is_vertex_client_available()
             )
         except Exception:
             _vertex_client_available = False
@@ -1760,6 +1869,7 @@ async def _generate_and_edit_inline(
     tone_id: str,
     user_id: int | None,
     lang: str = "ru",
+    inline_context: dict | None = None,
 ) -> None:
     """
     Core async pipeline with progressive UX feedback:
@@ -1824,7 +1934,18 @@ async def _generate_and_edit_inline(
         f"{_tabs_directive}"
     )
 
-    history = [{"role": "user", "parts": [user_query]}]
+    history = []
+    if inline_context:
+        prev_question = str(inline_context.get("q", "")).strip()
+        prev_answer = str(inline_context.get("a", "")).strip()
+        if prev_question and prev_answer:
+            history.extend(
+                [
+                    {"role": "user", "parts": [prev_question]},
+                    {"role": "model", "parts": [prev_answer]},
+                ]
+            )
+    history.append({"role": "user", "parts": [user_query]})
 
     # ── Step 2: Generate ───────────────────────────────────────────────────────
     # Default route: flash-lite 2+1 race (Vertex + AI Studio keys).
@@ -2060,19 +2181,10 @@ async def _build_continue_keyboard(
     lang: str,
     user_id: int | None,
 ) -> InlineKeyboardMarkup:
-    """Build 2-button keyboard: «💬 Продолжить» (deep link) + «🔄 Ещё вопрос» (switch inline).
+    """Build continuation keyboard for DM and current-chat inline follow-up.
 
-    Falls back to empty keyboard or 'Ask more' only if Redis is unavailable.
+    Falls back to a blank inline prompt when Redis is unavailable.
     """
-    btn_ask_more = InlineKeyboardButton(
-        t("inline.btn_ask_more", lang),
-        switch_inline_query_current_chat=user_query[:50],
-    )
-    
-    if not bot_username:
-        # Cannot build deep link without bot username
-        return InlineKeyboardMarkup([[btn_ask_more]])
-
     token = uuid.uuid4().hex[:16]
     stored = await store_inline_context(
         token=token,
@@ -2085,12 +2197,23 @@ async def _build_continue_keyboard(
     )
 
     if stored:
+        btn_ask_more = InlineKeyboardButton(
+            t("inline.btn_ask_more", lang),
+            switch_inline_query_current_chat=_format_inline_followup_query(token),
+        )
+        if not bot_username:
+            return InlineKeyboardMarkup([[btn_ask_more]])
+
         btn_continue = InlineKeyboardButton(
             t("inline.btn_continue", lang),
             url=f"https://t.me/{bot_username}?start=ctx_{token}",
         )
         return InlineKeyboardMarkup([[btn_continue, btn_ask_more]])
     else:
+        btn_ask_more = InlineKeyboardButton(
+            t("inline.btn_ask_more", lang),
+            switch_inline_query_current_chat="",
+        )
         return InlineKeyboardMarkup([[btn_ask_more]])
 
 
