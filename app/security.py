@@ -10,7 +10,7 @@ import logging
 import re
 import threading
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from functools import wraps
 from typing import Any, Callable
 from urllib.parse import urlparse

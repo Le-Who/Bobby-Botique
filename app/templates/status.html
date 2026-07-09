@@ -18,6 +18,13 @@
             <div class="subtitle">System Status Dashboard</div>
         </header>
 
+        {% if error %}
+        <div class="glass-card animate-up" style="text-align: center; margin-bottom: 2rem;">
+            <div class="metric-label">Too many requests</div>
+            <div style="color: var(--accent-color); margin-top: 0.5rem;">{{ error }}</div>
+        </div>
+        {% endif %}
+
         <!-- System Health Section -->
         <h2 class="animate-up">System Health</h2>
         <div class="grid">

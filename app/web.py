@@ -105,6 +105,7 @@ async def add_security_headers(response):
 
     nonce = getattr(g, "csp_nonce", "")
     is_natal_report = request.path.startswith("/reports/natal/")
+    is_health_check = request.path == "/health"
     is_webapp = request.path.startswith("/webapp")
 
     if is_natal_report:
@@ -116,6 +117,17 @@ async def add_security_headers(response):
             "img-src 'self' data:; "
             "object-src 'none'; "
             "base-uri 'none'; "
+            "frame-ancestors 'none';"
+        )
+        response.headers["X-Frame-Options"] = "DENY"
+    elif is_health_check:
+        csp = (
+            "default-src 'self'; "
+            f"script-src 'self' 'nonce-{nonce}'; "
+            f"style-src 'self' 'nonce-{nonce}' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self'; "
             "frame-ancestors 'none';"
         )
         response.headers["X-Frame-Options"] = "DENY"
