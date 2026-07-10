@@ -17,6 +17,8 @@ import logging
 import re
 from typing import Any
 
+from app.utils.text_utils import get_part_length
+
 logger = logging.getLogger(__name__)
 
 # ── Phase 1: Regex-based heuristics ──────────────────────────────────────────
@@ -172,7 +174,7 @@ def classify_thinking_level(
         long_responses = sum(
             1
             for h in recent_model_msgs
-            if any(len(str(p.get("text", "") if isinstance(p, dict) else str(p))) > 2000 for p in h.get("parts", []))
+            if any(get_part_length(p) > 2000 for p in h.get("parts", []))
         )
         if long_responses >= 3:
             logger.debug("Thinking classifier: escalated MEDIUM->HIGH (conversation complexity)")
