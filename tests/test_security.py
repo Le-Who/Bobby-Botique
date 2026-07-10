@@ -140,6 +140,18 @@ class TestSanitizeUrl:
         with pytest.raises(InputSanitizationError, match="IP"):
             self.s.sanitize_url("http://192.168.1.1/admin")
 
+    def test_rejects_dns_resolved_localhost(self):
+        import socket
+        from unittest.mock import patch
+
+        with patch("socket.getaddrinfo") as mock_dns:
+            # Mock resolving to a loopback address
+            mock_dns.return_value = [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', 0))
+            ]
+            with pytest.raises(InputSanitizationError, match="resolves to protected IP"):
+                self.s.sanitize_url("http://fake-domain-that-resolves-local.com")
+
     def test_rejects_too_long_url(self):
         with pytest.raises(InputSanitizationError, match="too long"):
             self.s.sanitize_url("https://example.com/" + "a" * 10000)
