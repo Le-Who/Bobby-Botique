@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-25 - [SSRF Mitigation] DNS Pre-flight Resolution
+**Vulnerability:** The `sanitize_url` function relied solely on string matching (e.g., 'localhost') and literal IP parsing to block Server-Side Request Forgery (SSRF) attacks, failing to protect against attackers using domain names that resolve to internal IPs (e.g., `127.0.0.1.nip.io` or custom DNS records).
+**Learning:** Checking hostnames against literal strings or IP regexes is insufficient. Attackers can easily bypass string-based filters using DNS resolution tricks.
+**Prevention:** Always resolve the hostname using `socket.getaddrinfo` and validate all returned IP addresses against private, loopback, link-local, unspecified, and multicast ranges before allowing the URL.
