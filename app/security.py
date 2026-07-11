@@ -8,6 +8,7 @@ import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -218,6 +219,18 @@ class InputSanitizer:
             raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
         except ValueError:
             # Not an IP address, continue
+            pass
+
+        # Resolve hostname to IP to prevent DNS rebinding and SSRF
+        try:
+            addr_info = socket.getaddrinfo(hostname, None)
+            for _family, _type, _proto, _canonname, sockaddr in addr_info:
+                ip_str = sockaddr[0]
+                ip = ipaddress.ip_address(ip_str)
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
+                    raise InputSanitizationError(f"Disallowed IP address resolved from {hostname}: {ip}")
+        except socket.gaierror:
+            # Unable to resolve hostname; allow downstream to fail or handle it
             pass
 
         return url
