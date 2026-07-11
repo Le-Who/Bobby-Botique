@@ -5,3 +5,7 @@
 ## 2025-05-18 - Consolidating N+1 User Stats Queries
 **Learning:** Fetching user documents entirely (`await get_user_documents(user_id)`) just to determine `len(docs)` creates a massive memory overhead and blocks the thread during `/start` menu rendering, especially for users with many large documents. Coupled with multiple distinct `await db_query()` calls for requests and conversations, this increases latency.
 **Action:** Always consolidate aggregate counts into a single atomic SQL query using subqueries (`SELECT (SELECT COUNT(*)...), (SELECT COUNT(*)...)`), and never fetch full records into Python memory if only `COUNT(*)` is required.
+
+## 2026-07-11 - Prevent memory spikes and thread-blocking latency on message parts
+**Learning:** Using `len(str(part))` or chained inline ternary logic directly on dicts, raw `bytes`, `bytearray`, or image objects (`Image.Image`, `TaggedImage`) can trigger massive memory allocations and thread-blocking latency in message history calculations.
+**Action:** Extract length calculation logic into a dedicated helper function (e.g., `get_part_length` in `app/utils/text_utils.py`) with explicit `if` statements targeting only the `text` field and avoiding binary formats or complex objects entirely.
