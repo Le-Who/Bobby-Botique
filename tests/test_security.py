@@ -140,6 +140,18 @@ class TestSanitizeUrl:
         with pytest.raises(InputSanitizationError, match="IP"):
             self.s.sanitize_url("http://192.168.1.1/admin")
 
+    def test_rejects_ssrf_domain(self):
+        import socket
+        from unittest.mock import patch
+
+        # Mock getaddrinfo to return a loopback address for the test domain
+        def mock_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+
+        with patch("socket.getaddrinfo", side_effect=mock_getaddrinfo):
+            with pytest.raises(InputSanitizationError, match="restricted IP"):
+                self.s.sanitize_url("http://localtest.me")
+
     def test_rejects_too_long_url(self):
         with pytest.raises(InputSanitizationError, match="too long"):
             self.s.sanitize_url("https://example.com/" + "a" * 10000)

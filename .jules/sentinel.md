@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-24 - [CRITICAL] Fix Server-Side Request Forgery (SSRF) bypass
+**Vulnerability:** The `sanitize_url` function blocked explicit local IP addresses (like `127.0.0.1`) and `localhost`, but failed to resolve domain names to their underlying IP addresses. Furthermore, when `socket.getaddrinfo` encountered an error (e.g. `gaierror`), the validation logic caught the exception and silently allowed the request (fail open), enabling potential DNS rebinding bypasses via `SERVFAIL`.
+**Learning:** String matching and direct IP validation are insufficient to protect against SSRF. Always perform a DNS resolution, and security checks MUST fail closed. An attacker can provide a valid domain name that dynamically resolves to a restricted internal IP, or temporarily error out to bypass the check.
+**Prevention:** Always perform a DNS resolution using `socket.getaddrinfo` on the extracted hostname during URL validation. Validate all returned IP addresses against restricted ranges (loopback, private, link-local, multicast, and unspecified) before allowing the request to proceed. Catch resolution exceptions (`socket.gaierror`) and block the request (fail closed).
