@@ -220,6 +220,17 @@ class InputSanitizer:
             # Not an IP address, continue
             pass
 
+        import socket
+        try:
+            addr_info = socket.getaddrinfo(hostname, None)
+            for _family, _type, _proto, _canonname, sockaddr in addr_info:
+                ip = sockaddr[0]
+                ip_obj = ipaddress.ip_address(ip)
+                if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_multicast or ip_obj.is_unspecified:
+                    raise InputSanitizationError(f"URL resolves to restricted IP: {ip}")
+        except socket.gaierror as e:
+            raise InputSanitizationError(f"Could not resolve hostname: {hostname}") from e
+
         return url
 
     def sanitize_query(self, query: str) -> str:
