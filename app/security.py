@@ -8,6 +8,7 @@ import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -219,6 +220,28 @@ class InputSanitizer:
         except ValueError:
             # Not an IP address, continue
             pass
+
+        # Check for DNS resolving to forbidden IPs
+        try:
+            addr_info = socket.getaddrinfo(hostname, None)
+        except socket.gaierror as e:
+            raise InputSanitizationError(f"DNS resolution failed for {hostname}: {e}") from e
+
+        for _family, _type, _proto, _canonname, sockaddr in addr_info:
+            ip = sockaddr[0]
+            try:
+                ip_obj = ipaddress.ip_address(ip)
+                # Block private, loopback, link-local, unspecified, and multicast IPs
+                if (
+                    ip_obj.is_private
+                    or ip_obj.is_loopback
+                    or ip_obj.is_link_local
+                    or ip_obj.is_unspecified
+                    or ip_obj.is_multicast
+                ):
+                    raise InputSanitizationError(f"Forbidden IP range resolved from {hostname}: {ip}")
+            except ValueError:
+                pass
 
         return url
 
