@@ -169,10 +169,11 @@ def classify_thinking_level(
     if history:
         # If recent model responses are long → conversation is complex → escalate
         recent_model_msgs = [h for h in history[-5:] if h.get("role") == "model"]
+        from app.utils.text_utils import get_part_length
         long_responses = sum(
             1
             for h in recent_model_msgs
-            if any(len(str(p.get("text", "") if isinstance(p, dict) else str(p))) > 2000 for p in h.get("parts", []))
+            if any(get_part_length(p) > 2000 for p in h.get("parts", []))
         )
         if long_responses >= 3:
             logger.debug("Thinking classifier: escalated MEDIUM->HIGH (conversation complexity)")
