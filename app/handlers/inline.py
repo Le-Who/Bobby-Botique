@@ -88,6 +88,11 @@ _GEN_PROGRESS_AFTER_S = 20.0
 # hot standby and may answer once the primary misses this deadline.
 _INLINE_PRIMARY_GRACE_S = 13.0
 
+_TAROT_LITE_MODEL = "gemini-3.1-flash-lite"
+_TAROT_PRIMARY_MODEL = "gemini-3.5-flash"
+_TAROT_COMPLEX_SPREADS = frozenset({SpreadType.LOVE, SpreadType.CELTIC})
+_TAROT_COMPLEX_PRIMARY_GRACE_S = 23.0
+
 _INLINE_SEARCH_INTENT_RE = re.compile(
     r"(?:"
     r"\b(?:today|now|current|latest|recent|news|weather|forecast|price|stock|exchange\s+rate|schedule)\b"
@@ -2606,24 +2611,21 @@ async def _generate_tarot_inline(
     }
     header = _HEADER_MAP.get(spread, "🔮 Таро")
 
-    # ── Generation: primary (flash-3.5) + parallel hot-standby (flash-lite) ────
-    # For non-DAILY spreads the primary is gemini-3.5-flash. A gemini-3.1-flash-lite
-    # task is launched *immediately* in parallel as a hot standby. Its result is
-    # consumed only when the primary exhausts all 3 key retries (KEYS_EXHAUSTED) or
-    # raises. On success the lite task is cancelled — zero wasted quota in happy path.
+    # ── Generation: simple spreads use lite; complex spreads use a hot standby ──
     from app.errors import is_error_message
     from app.providers.router import get_provider_router
 
     router = get_provider_router()
     _history = [{"role": "user", "parts": [prompt]}]
-    preferred_model = "gemini-3.1-flash-lite" if spread == SpreadType.DAILY else "gemini-3.5-flash"
+    is_complex_spread = spread in _TAROT_COMPLEX_SPREADS
+    preferred_model = _TAROT_PRIMARY_MODEL if is_complex_spread else _TAROT_LITE_MODEL
 
-    # Start hot-standby only when the primary is flash-3.5 (not for DAILY which already uses lite)
+    # Start the lite hot standby only for the multi-card relationship spreads.
     _lite_task: asyncio.Task | None = None
-    if preferred_model == "gemini-3.5-flash":
+    if is_complex_spread:
         _lite_task = asyncio.create_task(
             router.get_response(
-                preferred_model="gemini-3.1-flash-lite",
+                preferred_model=_TAROT_LITE_MODEL,
                 history=_history,
                 system_instruction=system_instruction,
                 user_id=user_id,

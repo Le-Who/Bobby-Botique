@@ -7,8 +7,8 @@ and then patched again to use ProviderRouter.get_response() to avoid
 unnecessary parallel racing for a stable QNA_MODEL.
 
 These tests verify that:
-1. _generate_tarot_inline delegates to ProviderRouter.get_response()
-   for both the primary model and the flash-lite hot standby.
+1. Simple inline spreads use only the flash-lite model, while complex spreads
+   can use the primary model and its hot standby.
 2. On total failure (empty or error message), it gracefully edits the message.
 """
 
@@ -24,42 +24,34 @@ def _make_bot(edit_calls: list | None = None) -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_generate_tarot_inline_uses_provider_router():
-    """_generate_tarot_inline must use ProviderRouter.get_response
-    for both primary and hot-standby routes, instead of _stream_inline_fast
-    or bespoke resolve_ai_request calls.
-    """
+@pytest.mark.parametrize("spread_type", ["tarot", "tarot_daily", "tarot_yesno"])
+async def test_generate_tarot_inline_uses_only_flash_lite_for_simple_spreads(spread_type):
+    """One- and three-card inline spreads must not consume a 3.5 Flash request."""
     from app.handlers.inline import _generate_tarot_inline
 
     bot = _make_bot()
-
-    # We mock get_provider_router to return a mock router
     mock_router = AsyncMock()
-    mock_router.get_response.return_value = ("🔮 Карты говорят: всё будет хорошо.", 100)
+    mock_router.get_response.return_value = ("Карты говорят: всё будет хорошо.", 100)
 
-    with patch("app.providers.router.get_provider_router", return_value=mock_router):
+    with (
+        patch("app.providers.router.get_provider_router", return_value=mock_router),
+        patch("app.tarot_daily.get_prepared_daily_reading", new=AsyncMock(return_value=None)),
+        patch("app.tarot_daily.upsert_prepared_daily_reading", new=AsyncMock()),
+    ):
         await _generate_tarot_inline(
             bot=bot,
-            inline_message_id="test-msg-1",
-            user_query="таро",
+            inline_message_id="test-simple-spread",
+            user_query="таро будем ли мы спорить?",
             user_id=123,
-            spread_type="tarot",
+            spread_type=spread_type,
         )
 
-    assert mock_router.get_response.call_count == 2
-    call_kwargs = [call.kwargs for call in mock_router.get_response.call_args_list]
-    assert [kwargs.get("preferred_model") for kwargs in call_kwargs] == [
-        "gemini-3.1-flash-lite",
-        "gemini-3.5-flash",
-    ]
-    assert all(kwargs.get("max_key_retries") == 3 for kwargs in call_kwargs)
-    assert all(kwargs.get("use_openrouter") is False for kwargs in call_kwargs)
-
-    # The bot must have edited the message with actual content
-    bot.edit_message_text.assert_called()
-    final_call_kwargs = bot.edit_message_text.call_args_list[-1][1]
-    text = final_call_kwargs.get("text", "")
-    assert "❌" not in text
+    mock_router.get_response.assert_awaited_once()
+    call = mock_router.get_response.await_args.kwargs
+    assert call["preferred_model"] == "gemini-3.1-flash-lite"
+    assert call["max_key_retries"] == 3
+    assert call["use_openrouter"] is False
+    assert "❌" not in bot.edit_message_text.await_args.kwargs["text"]
 
 
 @pytest.mark.asyncio
