@@ -412,7 +412,7 @@ _retry_store: dict[str, dict] = {}
 # hidden payload for switch_inline_query_current_chat, so the token must ride in
 # the visible inline query and stay compact.
 _INLINE_FOLLOWUP_MARKER = "↪"
-_INLINE_FOLLOWUP_RE = re.compile(r"^↪\s*([0-9a-fA-F]{16})\s*(.*)$", re.DOTALL)
+_INLINE_FOLLOWUP_RE = re.compile(r"^↪\ufe0f?\s*([0-9a-fA-F]{16})\s*(.*)$", re.DOTALL)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

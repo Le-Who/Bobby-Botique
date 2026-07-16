@@ -164,6 +164,14 @@ def test_parse_inline_followup_query_extracts_token_and_new_question():
     assert parsed == ("0123456789abcdef", "чем это отличается?")
 
 
+def test_parse_inline_followup_query_accepts_telegram_emoji_arrow():
+    from app.handlers import inline
+
+    parsed = inline._parse_inline_followup_query("↪️ 3ca2f7941e084f8a разложи музыкально")
+
+    assert parsed == ("3ca2f7941e084f8a", "разложи музыкально")
+
+
 @pytest.mark.asyncio
 async def test_chosen_inline_followup_submits_generation_with_context(monkeypatch):
     import app.utils.background_tasks as background_tasks
