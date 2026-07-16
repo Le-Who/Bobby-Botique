@@ -12,6 +12,8 @@ These tests verify that:
 2. On total failure (empty or error message), it gracefully edits the message.
 """
 
+import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -143,3 +145,107 @@ async def test_generate_tarot_inline_shows_retry_on_provider_exception():
     retry_markup = final_kwargs.get("reply_markup")
     assert retry_markup is not None
     assert retry_markup.inline_keyboard[0][0].callback_data.startswith("inl_retry:")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spread_name", ["LOVE", "CELTIC"])
+async def test_generate_tarot_response_prefers_complex_primary_within_deadline(spread_name):
+    from app.handlers import inline
+    from app.tarot import SpreadType
+
+    calls: list[str] = []
+    lite_cancelled = asyncio.Event()
+
+    async def get_response(**kwargs):
+        model = kwargs["preferred_model"]
+        calls.append(model)
+        if model == "gemini-3.5-flash":
+            await asyncio.sleep(0.01)
+            return "strong answer", 100
+        try:
+            await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            lite_cancelled.set()
+            raise
+        return "lite answer", 50
+
+    router = MagicMock()
+    router.get_response = AsyncMock(side_effect=get_response)
+
+    result = await inline._generate_tarot_response(
+        router=router,
+        spread=getattr(SpreadType, spread_name),
+        history=[{"role": "user", "parts": ["question"]}],
+        system_instruction="system",
+        user_id=123,
+    )
+
+    assert result == "strong answer"
+    assert set(calls) == {"gemini-3.5-flash", "gemini-3.1-flash-lite"}
+    assert lite_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spread_name", ["LOVE", "CELTIC"])
+async def test_generate_tarot_response_uses_ready_lite_after_primary_deadline(monkeypatch, spread_name):
+    from app.handlers import inline
+    from app.tarot import SpreadType
+
+    calls: list[str] = []
+    primary_cancelled = asyncio.Event()
+
+    async def get_response(**kwargs):
+        model = kwargs["preferred_model"]
+        calls.append(model)
+        if model == "gemini-3.5-flash":
+            try:
+                await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                primary_cancelled.set()
+                raise
+            return "late strong answer", 100
+        await asyncio.sleep(0.01)
+        return "ready lite answer", 50
+
+    router = MagicMock()
+    router.get_response = AsyncMock(side_effect=get_response)
+    monkeypatch.setattr(inline, "_TAROT_COMPLEX_PRIMARY_GRACE_S", 0.05)
+
+    started = time.monotonic()
+    result = await inline._generate_tarot_response(
+        router=router,
+        spread=getattr(SpreadType, spread_name),
+        history=[{"role": "user", "parts": ["question"]}],
+        system_instruction="system",
+        user_id=123,
+    )
+    elapsed = time.monotonic() - started
+
+    assert result == "ready lite answer"
+    assert elapsed < 0.25
+    assert set(calls) == {"gemini-3.5-flash", "gemini-3.1-flash-lite"}
+    assert primary_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_generate_tarot_response_uses_lite_immediately_when_primary_fails():
+    from app.handlers import inline
+    from app.tarot import SpreadType
+
+    async def get_response(**kwargs):
+        if kwargs["preferred_model"] == "gemini-3.5-flash":
+            raise RuntimeError("primary unavailable")
+        return "lite after failure", 50
+
+    router = MagicMock()
+    router.get_response = AsyncMock(side_effect=get_response)
+
+    result = await inline._generate_tarot_response(
+        router=router,
+        spread=SpreadType.LOVE,
+        history=[{"role": "user", "parts": ["question"]}],
+        system_instruction="system",
+        user_id=123,
+    )
+
+    assert result == "lite after failure"

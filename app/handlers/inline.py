@@ -2512,6 +2512,90 @@ def _build_fortune_cookie_html() -> str:
     )
 
 
+async def _generate_tarot_response(
+    router,
+    spread: SpreadType,
+    history: list,
+    system_instruction: str,
+    user_id: int | None,
+) -> str | None:
+    """Return a Tarot answer according to the inline spread model policy."""
+
+    async def _call(model: str) -> str | None:
+        response, _tokens = await router.get_response(
+            preferred_model=model,
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            use_openrouter=False,
+            max_key_retries=3,
+        )
+        return response
+
+    if spread not in _TAROT_COMPLEX_SPREADS:
+        return await _call(_TAROT_LITE_MODEL)
+
+    primary_task = asyncio.create_task(_call(_TAROT_PRIMARY_MODEL))
+    lite_task = asyncio.create_task(_call(_TAROT_LITE_MODEL))
+    primary_result: str | None = None
+    lite_result: str | None = None
+
+    try:
+        try:
+            primary_result = await asyncio.wait_for(
+                asyncio.shield(primary_task),
+                timeout=_TAROT_COMPLEX_PRIMARY_GRACE_S,
+            )
+        except TimeoutError:
+            logging.info(
+                "Inline Tarot primary %s missed %.0fs deadline for spread=%s",
+                _TAROT_PRIMARY_MODEL,
+                _TAROT_COMPLEX_PRIMARY_GRACE_S,
+                spread.value,
+            )
+        except Exception as exc:
+            logging.warning(
+                "Inline Tarot primary failed for spread=%s: %s",
+                spread.value,
+                exc,
+            )
+
+        if _is_usable_inline_answer(primary_result):
+            return primary_result
+
+        try:
+            lite_result = await lite_task
+        except Exception as exc:
+            logging.warning(
+                "Inline Tarot lite fallback failed for spread=%s: %s",
+                spread.value,
+                exc,
+            )
+
+        if _is_usable_inline_answer(lite_result):
+            return lite_result
+
+        if primary_result is None and primary_task.done():
+            try:
+                primary_result = primary_task.result()
+            except Exception as exc:
+                logging.warning(
+                    "Inline Tarot primary finished with an error for spread=%s: %s",
+                    spread.value,
+                    exc,
+                )
+
+        if _is_usable_inline_answer(primary_result):
+            return primary_result
+        return lite_result if lite_result is not None else primary_result
+    finally:
+        for task in (primary_task, lite_task):
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
+
+
 async def _generate_tarot_inline(
     bot,
     inline_message_id: str,
@@ -2525,9 +2609,9 @@ async def _generate_tarot_inline(
     spread_type maps directly to SpreadType enum values (e.g. 'tarot_love').
 
     Uses ProviderRouter.get_response() for sequential key rotation: tries one
-    key at a time and rotates on 503/UNAVAILABLE (max 3 retries). QNA_MODEL
-    uses the current economy Gemini model, so parallel racing would only waste
-    daily quota.
+    key at a time and rotates on 503/UNAVAILABLE (max 3 retries). Simple
+    spreads use the economy model; relationship and Celtic spreads race it
+    against the stronger model with a bounded primary wait.
     """
     import contextlib
     import logging
@@ -2611,39 +2695,18 @@ async def _generate_tarot_inline(
     }
     header = _HEADER_MAP.get(spread, "🔮 Таро")
 
-    # ── Generation: simple spreads use lite; complex spreads use a hot standby ──
     from app.errors import is_error_message
     from app.providers.router import get_provider_router
 
     router = get_provider_router()
     _history = [{"role": "user", "parts": [prompt]}]
-    is_complex_spread = spread in _TAROT_COMPLEX_SPREADS
-    preferred_model = _TAROT_PRIMARY_MODEL if is_complex_spread else _TAROT_LITE_MODEL
-
-    # Start the lite hot standby only for the multi-card relationship spreads.
-    _lite_task: asyncio.Task | None = None
-    if is_complex_spread:
-        _lite_task = asyncio.create_task(
-            router.get_response(
-                preferred_model=_TAROT_LITE_MODEL,
-                history=_history,
-                system_instruction=system_instruction,
-                user_id=user_id,
-                use_openrouter=False,
-                max_key_retries=3,
-            )
-        )
-
-    result: str | None = None
-    _primary_failed_exc = False
     try:
-        result, _tokens = await router.get_response(
-            preferred_model=preferred_model,
+        result = await _generate_tarot_response(
+            router=router,
+            spread=spread,
             history=_history,
             system_instruction=system_instruction,
             user_id=user_id,
-            use_openrouter=False,
-            max_key_retries=3,
         )
     except Exception as exc:
         logging.error(
@@ -2652,37 +2715,6 @@ async def _generate_tarot_inline(
             exc,
             exc_info=True,
         )
-        _primary_failed_exc = True
-
-    # ── Hot-standby fallback decision ────────────────────────────────────────
-    # Trigger if: (a) primary raised, or (b) primary returned a tagged error.
-    # Note: we check BEFORE cancelling _lite_task so it's still running.
-    _used_fallback = False
-    _need_lite = _lite_task is not None and (
-        _primary_failed_exc or (result is not None and is_error_message(result))
-    )
-
-    if _need_lite and _lite_task is not None:
-        try:
-            lite_result, _tokens = await asyncio.wait_for(_lite_task, timeout=30.0)
-            _lite_task = None  # consumed — skip cancel below
-            if lite_result and lite_result.strip() and not is_error_message(lite_result):
-                logging.info(
-                    "Tarot: primary overloaded, using flash-lite fallback (spread=%s)", spread_type
-                )
-                result = lite_result
-                _used_fallback = True
-        except Exception as _lite_exc:
-            logging.warning(
-                "Tarot: flash-lite fallback also failed (spread=%s): %s", spread_type, _lite_exc
-            )
-
-    # Cancel the lite task if it was never consumed (primary succeeded or we already awaited it)
-    if _lite_task is not None and not _lite_task.done():
-        _lite_task.cancel()
-
-    # Primary raised AND lite fallback didn't save us
-    if _primary_failed_exc and not _used_fallback:
         await _edit_failure("ошибка генерации. Попробуйте ещё раз.")
         return
 
