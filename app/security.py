@@ -8,6 +8,7 @@ import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -219,6 +220,29 @@ class InputSanitizer:
         except ValueError:
             # Not an IP address, continue
             pass
+
+        # Mitigate SSRF via DNS resolution
+        try:
+            # Resolve the hostname to all possible IP addresses
+            addr_info = socket.getaddrinfo(hostname, None)
+            for _family, _type, _proto, _canonname, sockaddr in addr_info:
+                ip = sockaddr[0]
+                try:
+                    ip_obj = ipaddress.ip_address(ip)
+                    # Block any non-publicly routable IPs
+                    if (
+                        ip_obj.is_private
+                        or ip_obj.is_loopback
+                        or ip_obj.is_link_local
+                        or ip_obj.is_unspecified
+                        or ip_obj.is_multicast
+                    ):
+                        raise InputSanitizationError(f"URL resolves to a forbidden internal IP: {ip}")
+                except ValueError:
+                    pass
+        except socket.gaierror as e:
+            # Hostname could not be resolved
+            raise InputSanitizationError(f"DNS resolution failed for hostname: {hostname}") from e
 
         return url
 
