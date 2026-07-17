@@ -5,3 +5,6 @@
 ## 2025-05-18 - Consolidating N+1 User Stats Queries
 **Learning:** Fetching user documents entirely (`await get_user_documents(user_id)`) just to determine `len(docs)` creates a massive memory overhead and blocks the thread during `/start` menu rendering, especially for users with many large documents. Coupled with multiple distinct `await db_query()` calls for requests and conversations, this increases latency.
 **Action:** Always consolidate aggregate counts into a single atomic SQL query using subqueries (`SELECT (SELECT COUNT(*)...), (SELECT COUNT(*)...)`), and never fetch full records into Python memory if only `COUNT(*)` is required.
+## 2024-07-17 - Avoid len(str(obj)) on large/binary objects
+**Learning:** Using `len(str(part))` to calculate string length for metrics or classifiers can trigger massive memory allocations and thread-blocking latency when the `part` is a dictionary, `bytes`, `bytearray`, or image object (`Image.Image`, `TaggedImage`).
+**Action:** Always extract this logic into a dedicated helper function (e.g., `get_part_length` in `app/utils/text_utils.py`) using explicit type checks and `if` statements. Skip binary formats entirely, and specifically evaluate the `text` field for dictionaries. Prefer string-based type checks like `type(part).__name__` for custom classes to avoid `NameError` exceptions from missing class imports.

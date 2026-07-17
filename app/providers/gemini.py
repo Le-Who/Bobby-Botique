@@ -13,6 +13,7 @@ from google.genai.errors import APIError
 from PIL import Image
 
 from app.config import settings
+from app.utils.text_utils import get_part_length
 from app.errors import ErrorCode, tag_error
 from app.metrics import metrics_collector
 from app.providers.base import AIResponse, BaseAIProvider, _build_thinking_config
@@ -65,7 +66,7 @@ class GeminiProvider(BaseAIProvider):
             # Compute metrics
             try:
                 prompt_length = sum(
-                    len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None
+                    get_part_length(part) for item in history for part in (item.get("parts", []) or []) if part is not None
                 )
                 has_images = any(
                     isinstance(part, (bytes, bytearray, Image.Image))
