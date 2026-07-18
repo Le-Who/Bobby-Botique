@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2026-07-18 - [SSRF Mitigation] DNS Resolution DoS and Policy
+**Vulnerability:** Performing synchronous DNS resolution (`socket.getaddrinfo`) within an input sanitizer allows Denial of Service (DoS) attacks via slow DNS servers (tarpitting). Additionally, mitigating SSRF by allowing valid resolutions but returning the original hostname string leaves the system vulnerable to DNS Rebinding (TOCTOU).
+**Learning:** Security mitigations must not introduce new vulnerabilities. Any blocking network call for validation must be strictly bounded by a short timeout (e.g., using a ThreadPoolExecutor in sync contexts). Returning a string instead of a resolved IP prevents Server Name Indication (SNI) breakage, but shifts the responsibility of TOCTOU protection to the actual fetching client. Always respect the pre-existing security policies (e.g., blocking all literal IPs).
+**Prevention:** Wrap all DNS lookups in short, enforced timeouts. Validate input incrementally: first check static rules (literal IP blocking), then perform the dynamic checks safely.

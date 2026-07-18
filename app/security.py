@@ -4,10 +4,12 @@ Provides protection against malicious input and ensures data safety.
 """
 
 import asyncio
+import concurrent.futures
 import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -209,16 +211,38 @@ class InputSanitizer:
         if hostname.lower() == "localhost":
             raise InputSanitizationError("Localhost URLs not allowed")
 
-        # Check for IP addresses
+        # Check for literal IP addresses first
         try:
-            # This handles both IPv4 and IPv6
             ipaddress.ip_address(hostname)
-            # If we are here, it IS an IP address.
-            # Current policy: Block ALL IP addresses.
+            # If we are here, it IS an IP address. Current policy: Block ALL IP addresses.
             raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
         except ValueError:
-            # Not an IP address, continue
             pass
+
+        # Resolve hostname to check for SSRF (unsafe IPs) using a timeout to prevent DoS
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(socket.getaddrinfo, hostname, None)
+                addr_info = future.result(timeout=2.0)
+        except concurrent.futures.TimeoutError as e:
+            raise InputSanitizationError(f"DNS resolution timed out for hostname: {hostname}") from e
+        except Exception as e:
+            raise InputSanitizationError(f"Could not resolve hostname: {hostname}") from e
+
+        for _family, _type, _proto, _canonname, sockaddr in addr_info:
+            ip_str = sockaddr[0]
+            try:
+                ip_obj = ipaddress.ip_address(ip_str)
+                if (
+                    ip_obj.is_private
+                    or ip_obj.is_loopback
+                    or ip_obj.is_link_local
+                    or ip_obj.is_unspecified
+                    or ip_obj.is_multicast
+                ):
+                    raise InputSanitizationError(f"URL resolves to unsafe IP address: {ip_str}")
+            except ValueError:
+                pass
 
         return url
 
