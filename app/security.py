@@ -4,10 +4,12 @@ Provides protection against malicious input and ensures data safety.
 """
 
 import asyncio
+import concurrent.futures
 import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -209,7 +211,7 @@ class InputSanitizer:
         if hostname.lower() == "localhost":
             raise InputSanitizationError("Localhost URLs not allowed")
 
-        # Check for IP addresses
+        # Check for literal IP addresses
         try:
             # This handles both IPv4 and IPv6
             ipaddress.ip_address(hostname)
@@ -219,6 +221,44 @@ class InputSanitizer:
         except ValueError:
             # Not an IP address, continue
             pass
+
+        # Resolve hostname to prevent SSRF via obfuscated IPs or simple DNS attacks
+        def resolve_hostname():
+            try:
+                # getaddrinfo returns a list of (family, type, proto, canonname, sockaddr)
+                return socket.getaddrinfo(hostname, None)
+            except socket.gaierror:
+                return []
+
+        # Use ThreadPoolExecutor without a context manager to prevent long DNS lookups from blocking
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(resolve_hostname)
+        try:
+            # 2.0s timeout is sufficient for most legitimate DNS requests
+            addr_info = future.result(timeout=2.0)
+        except concurrent.futures.TimeoutError as e:
+            raise InputSanitizationError(f"DNS resolution timeout for hostname: {hostname}") from e
+        except Exception as e:
+            raise InputSanitizationError(f"Failed to resolve hostname {hostname}: {e}") from e
+        finally:
+            # wait=False ensures we don't block the main thread if a timeout occurred
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        if not addr_info:
+            raise InputSanitizationError(f"Could not resolve hostname: {hostname}")
+
+        # Check all resolved IPs against disallowed ranges
+        for _family, _type, _proto, _canonname, sockaddr in addr_info:
+            ip_str = sockaddr[0]
+            try:
+                ip = ipaddress.ip_address(ip_str)
+                # Block any IP that is private, loopback, link-local, unspecified, or multicast
+                if (ip.is_private or ip.is_loopback or ip.is_link_local or
+                    ip.is_unspecified or ip.is_multicast):
+                    raise InputSanitizationError(f"Resolved to restricted IP address: {ip_str} for hostname {hostname}")
+            except ValueError:
+                # Should not happen with valid getaddrinfo results, but safe to continue
+                pass
 
         return url
 
