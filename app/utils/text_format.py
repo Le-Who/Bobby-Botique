@@ -4,6 +4,22 @@ import re
 # Constants
 MAX_MESSAGE_LENGTH = 4096
 
+# Pre-compiled regular expressions for performance
+_CODE_BLOCK_SPLIT_RE = re.compile(r"(```(?:.|\n)*?```)")
+_ESCAPE_RE = re.compile(r"\\([.\-()!=[\]{}|#+])")
+_HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$")
+_HR_RE = re.compile(r"^[-*_]{3,}\s*$")
+_INLINE_CODE_RE = re.compile(r"`([^`]+)`")
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_ITALIC_STD_RE = re.compile(r"__(.+?)__")
+_ITALIC_STAR_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
+_ITALIC_UNDER_RE = re.compile(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)")
+_STRIKETHROUGH_RE = re.compile(r"~~(.+?)~~")
+_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_HTML_TAG_RE = re.compile(r"<(/?)(\w+)[^>]*>")
+_STRIP_HTML_RE = re.compile(r"<[^>]+>")
+_EMPTY_TAG_RE = re.compile(r"<(pre|code|b|i|a|u|s|em|strong|blockquote)(?:\s[^>]*)?>(?:</\1>)")
+
 
 def format_text(text: str, parse_mode: str = "HTML") -> tuple[str, str]:
     """
@@ -38,7 +54,7 @@ def markdown_to_html(text: str) -> str:
     # Pattern to capture ```...``` blocks including language specifier
     # We use a capture group () to include the delimiters in the split result
     # Non-greedy match for content
-    segments = re.split(r"(```(?:.|\n)*?```)", text)
+    segments = _CODE_BLOCK_SPLIT_RE.split(text)
 
     html_parts = []
 
@@ -84,7 +100,7 @@ def markdown_to_html(text: str) -> str:
             # Remove backslashes before non-special characters or punctuation that doesn't need it in HTML
             # e.g. \. -> .   \( -> (   \) -> )   \- -> -   \= -> =
             # We be careful not to break \\ (literal backslash) if it was intended, but usually it's better to clean.
-            segment = re.sub(r"\\([.\-()!=[\]{}|#+])", r"\1", segment)
+            segment = _ESCAPE_RE.sub(r"\1", segment)
 
             # 1. Escape HTML characters (important to do first!)
             # This turns < into &lt;, etc.
@@ -120,14 +136,14 @@ def markdown_to_html(text: str) -> str:
                 _flush_blockquote()
 
                 # Headings: # text, ## text, ### text → <b>text</b>
-                heading_match = re.match(r"^(#{1,3})\s+(.+)$", stripped)
+                heading_match = _HEADING_RE.match(stripped)
                 if heading_match:
                     heading_text = heading_match.group(2).strip()
                     processed_lines.append(f"\n<b>{heading_text}</b>")
                     continue
 
                 # Horizontal rules: ---, ***, ___ (3+ chars) → Unicode line
-                if re.match(r"^[-*_]{3,}\s*$", stripped):
+                if _HR_RE.match(stripped):
                     processed_lines.append("━━━━━━━━━━━━━━━━")
                     continue
 
@@ -143,17 +159,17 @@ def markdown_to_html(text: str) -> str:
 
             # Inline Code: `code`
             # Pattern: `...` (non-greedy)
-            escaped_text = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped_text)
+            escaped_text = _INLINE_CODE_RE.sub(r"<code>\1</code>", escaped_text)
 
             # Bold: **text**
-            escaped_text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped_text)
+            escaped_text = _BOLD_RE.sub(r"<b>\1</b>", escaped_text)
 
             # Italic: __text__ (Standard Markdown allows this)
-            escaped_text = re.sub(r"__(.+?)__", r"<i>\1</i>", escaped_text)
+            escaped_text = _ITALIC_STD_RE.sub(r"<i>\1</i>", escaped_text)
 
             # Italic: *text* (Only if not part of **)
             # This regex uses lookarounds to ensure we don't match inside **
-            escaped_text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", escaped_text)
+            escaped_text = _ITALIC_STAR_RE.sub(r"<i>\1</i>", escaped_text)
 
             # Italic: _text_ (Standard Markdown)
             # Match _text_ but not __text__ or snake_case_text
@@ -162,16 +178,15 @@ def markdown_to_html(text: str) -> str:
             # Safe heuristic: _text_ where _ is preceded/followed by non-word or space/start/end.
             # But standard Markdown is: _text_ works anywhere if surrounded by whitespace or punctuation.
             # Minimal safe version:
-            escaped_text = re.sub(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)", r"<i>\1</i>", escaped_text)
+            escaped_text = _ITALIC_UNDER_RE.sub(r"<i>\1</i>", escaped_text)
 
             # Strikethrough: ~~text~~
-            escaped_text = re.sub(r"~~(.+?)~~", r"<s>\1</s>", escaped_text)
+            escaped_text = _STRIKETHROUGH_RE.sub(r"<s>\1</s>", escaped_text)
 
             # Links: [text](url)
             # Since we already escaped HTML, the url might contain &amp; etc.
             # We match strict []() pattern.
-            link_pattern = r"\[([^\]]+)\]\(([^)]+)\)"
-            escaped_text = re.sub(link_pattern, r'<a href="\2">\1</a>', escaped_text)
+            escaped_text = _LINK_RE.sub(r'<a href="\2">\1</a>', escaped_text)
 
             html_parts.append(escaped_text)
 
@@ -257,7 +272,7 @@ def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list[str
         # Optimized: store full match in stack to avoid re-searching with regex
         open_tags = []
         # Find all tags in chunk
-        tag_iter = re.finditer(r"<(/?)(\w+)[^>]*>", chunk)
+        tag_iter = _HTML_TAG_RE.finditer(chunk)
         for match in tag_iter:
             is_close = match.group(1) == "/"
             tag_name = match.group(2)
@@ -372,9 +387,10 @@ def sanitize_html_tags(html_text: str) -> str:
     result = "".join(result_parts)
 
     # Strip empty tag pairs produced by reopen logic (e.g. <i></i>)
-    _EMPTY_TAG_RE = re.compile(r"<(pre|code|b|i|a|u|s|em|strong|blockquote)(?:\s[^>]*)?>(?:</\1>)")
-    while _EMPTY_TAG_RE.search(result):
-        result = _EMPTY_TAG_RE.sub("", result)
+    while True:
+        result, count = _EMPTY_TAG_RE.subn("", result)
+        if count == 0:
+            break
 
     return result
 
@@ -382,7 +398,7 @@ def sanitize_html_tags(html_text: str) -> str:
 def strip_formatting(text: str) -> str:
     """Removes all HTML tags and invisible characters."""
     # Remove HTML tags
-    text = re.sub(r"<[^>]+>", "", text)
+    text = _STRIP_HTML_RE.sub("", text)
     # Decode entities
     text = html.unescape(text)
     return text.strip()
