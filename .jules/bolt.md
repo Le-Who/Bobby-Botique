@@ -5,3 +5,7 @@
 ## 2025-05-18 - Consolidating N+1 User Stats Queries
 **Learning:** Fetching user documents entirely (`await get_user_documents(user_id)`) just to determine `len(docs)` creates a massive memory overhead and blocks the thread during `/start` menu rendering, especially for users with many large documents. Coupled with multiple distinct `await db_query()` calls for requests and conversations, this increases latency.
 **Action:** Always consolidate aggregate counts into a single atomic SQL query using subqueries (`SELECT (SELECT COUNT(*)...), (SELECT COUNT(*)...)`), and never fetch full records into Python memory if only `COUNT(*)` is required.
+
+## 2026-07-20 - Precompile regex and optimize regex loop
+**Learning:** Calling `re.sub` and `re.split` with string patterns inside loops or frequently called formatting functions causes implicit regex recompilation or cache lookups that add significant overhead. Additionally, using `search` then `sub` in a loop performs double the regex work compared to `subn`.
+**Action:** Always pre-compile frequently used regular expressions at the module level using `re.compile`, and prefer `re.subn` over `re.search` + `re.sub` in loops.
