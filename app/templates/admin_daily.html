@@ -971,12 +971,56 @@ input:checked + .slider:before { transform: translateX(16px); }
      TAB: TRIVIA
      ======================================== -->
 <div class="tab-panel" id="tab-trivia">
-  <div class="main-content">
-    <h2 class="section-title">Настройки Trivia</h2>
-    <div class="empty-state">
-      <span class="empty-state-icon">🧠</span>
-      Интерфейс управления Trivia в разработке...
+  <div class="stats-panel">
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-card-title">Подписчики</div>
+        <div class="stat-card-value" id="trivia-stats-subs">—</div>
+        <div class="stat-card-sub">Daily Challenge</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-title">Игры сегодня</div>
+        <div class="stat-card-value" id="trivia-stats-games">—</div>
+        <div class="stat-card-sub" id="trivia-stats-games-detail">Завершено: — | В игре: —</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-title">Пазлы впереди</div>
+        <div class="stat-card-value" id="trivia-stats-puzzles-ahead">—</div>
+        <div class="stat-card-sub">Готовых дней</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-title">Модель LLM</div>
+        <div class="stat-card-value" style="font-size:1.05rem; margin-top:8px;">gemini-economy</div>
+        <div class="stat-card-sub">5 вопросов в день</div>
+      </div>
     </div>
+  </div>
+
+  <div class="s2048-shell" style="margin-top: 1.2rem;">
+    <section class="s2048-layout">
+      <div>
+        <h2 class="section-title">Календарь вопросов (последние 14 дней и +7 дней)</h2>
+        <div class="s2048-puzzles" id="trivia-puzzles-list">
+          <div class="loading-container"><div class="image-spinner" style="margin:0 auto 12px;"></div>Загрузка...</div>
+        </div>
+      </div>
+
+      <aside class="s2048-editor" style="top: 110px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+          <h3 style="font-size: 1rem; font-weight: 700;" id="trivia-editor-title">Редактор Trivia</h3>
+          <span class="s2048-badge" id="trivia-editor-status">—</span>
+        </div>
+
+        <div id="trivia-editor-questions" style="max-height: 55vh; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 12px;">
+          <!-- 5 question forms rendered here -->
+        </div>
+
+        <div class="s2048-actions" style="margin-top: 14px;">
+          <button class="s2048-btn primary" id="trivia-btn-save" style="flex:1;">💾 Сохранить</button>
+          <button class="s2048-btn danger" id="trivia-btn-regen" style="flex:1;">🤖 Регенерировать (AI)</button>
+        </div>
+      </aside>
+    </section>
   </div>
 </div>
 
@@ -1142,6 +1186,7 @@ const TabRouter = (() => {
     if (tabId === 'broadcast') BroadcastModule.init();
     else if (tabId === 'croc') CrocModule.init();
     else if (tabId === '2048') S2048Module.init();
+    else if (tabId === 'trivia') TriviaModule.init();
     else if (tabId === 'horoscope') HoroscopeModule.init();
     else if (tabId === 'tarot') TarotModule.init();
 
@@ -1965,6 +2010,242 @@ const S2048Module = (() => {
     load().catch(err => showToast(err.message, 'error'));
     $('s2048-save').addEventListener('click', save);
     $('s2048-generate').addEventListener('click', generate);
+  }
+
+  return { init };
+})();
+
+// ============================================================
+// MODULE: TRIVIA
+// ============================================================
+const TriviaModule = (() => {
+  let initialized = false;
+  let puzzles = [];
+  let selectedDate = null;
+  let selectedPuzzle = null;
+
+  async function loadStats() {
+    try {
+      const res = await fetch('/api/admin/dailytrivia/stats', { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      document.getElementById('trivia-stats-subs').textContent = data.total_subscribed || '0';
+      document.getElementById('trivia-stats-games').textContent = data.played_today || '0';
+      document.getElementById('trivia-stats-games-detail').textContent = `Завершено: ${data.finished_today ?? 0} | В игре: ${data.active_today ?? 0}`;
+      document.getElementById('trivia-stats-puzzles-ahead').textContent = data.ready_puzzles_ahead ?? '0';
+    } catch (e) {
+      console.error('Trivia stats error:', e);
+    }
+  }
+
+  async function loadPuzzles() {
+    const container = document.getElementById('trivia-puzzles-list');
+    try {
+      const res = await fetch('/api/admin/dailytrivia', { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      puzzles = data.puzzles || [];
+      const todayStr = data.today || getKyivDateString();
+      renderPuzzles(puzzles, container, todayStr);
+
+      if (!selectedDate && puzzles.length) {
+        const todayPuzzle = puzzles.find(p => p.date === todayStr);
+        selectPuzzle(todayPuzzle || puzzles[0]);
+      } else if (selectedDate) {
+        const p = puzzles.find(x => x.date === selectedDate);
+        selectPuzzle(p || puzzles[0]);
+      }
+    } catch (e) {
+      container.innerHTML = `<div class="empty-state error-text">Ошибка загрузки: ${e.message}</div>`;
+    }
+  }
+
+  function renderPuzzles(list, container, todayStr) {
+    if (!list.length) {
+      container.innerHTML = '<div class="empty-state">Нет викторин</div>';
+      return;
+    }
+    container.innerHTML = list.map(p => {
+      const isToday = p.date === todayStr;
+      const isSelected = selectedDate === p.date;
+      const isReady = p.status === 'ready';
+      const qCount = (p.questions || []).length;
+      return `
+        <div class="s2048-puzzle ${isSelected ? 'active' : ''}" data-date="${p.date}">
+          <div class="s2048-puzzle-head">
+            <span class="s2048-date">${p.date}${isToday ? ' <span class="today-badge">СЕГОДНЯ</span>' : ''}</span>
+            <span class="s2048-badge">${isReady ? '✅ ' + qCount + ' вопр.' : '⚠️ draft'}</span>
+          </div>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-top:6px;">
+            ${(p.questions && p.questions[0]) ? '1. ' + escapeHtml(p.questions[0].question.slice(0, 45)) + '...' : 'Вопросы не сгенерированы'}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    container.querySelectorAll('.s2048-puzzle').forEach(el => {
+      el.addEventListener('click', () => {
+        const d = el.dataset.date;
+        const target = puzzles.find(p => p.date === d);
+        if (target) selectPuzzle(target);
+      });
+    });
+  }
+
+  function selectPuzzle(p) {
+    if (!p) return;
+    selectedDate = p.date;
+    selectedPuzzle = p;
+
+    document.querySelectorAll('#trivia-puzzles-list .s2048-puzzle').forEach(el => {
+      el.classList.toggle('active', el.dataset.date === p.date);
+    });
+
+    document.getElementById('trivia-editor-title').textContent = `Викторина на ${p.date}`;
+    document.getElementById('trivia-editor-status').textContent = p.status || 'draft';
+
+    renderEditorQuestions(p.questions || []);
+  }
+
+  function renderEditorQuestions(questions) {
+    const container = document.getElementById('trivia-editor-questions');
+    const qList = [];
+    for (let i = 0; i < 5; i++) {
+      qList.push(questions[i] || {
+        id: i + 1,
+        topic: 'Общие знания',
+        question: '',
+        options: ['', '', '', ''],
+        correct_index: 0,
+        explanation: ''
+      });
+    }
+
+    container.innerHTML = qList.map((q, i) => {
+      const opts = q.options || ['', '', '', ''];
+      while (opts.length < 4) opts.push('');
+      return `
+        <div style="border:1px solid var(--border); border-radius:8px; padding:10px; background:var(--bg-surface);">
+          <div style="font-weight:700; font-size:0.8rem; color:var(--accent); margin-bottom:8px;">Вопрос #${i + 1}</div>
+          <div class="field" style="margin-bottom:6px;">
+            <label>Тема</label>
+            <input type="text" class="t-q-topic" data-idx="${i}" value="${escapeHtml(q.topic || '')}" placeholder="Тема (напр. Наука)">
+          </div>
+          <div class="field" style="margin-bottom:6px;">
+            <label>Текст вопроса</label>
+            <textarea class="t-q-text" data-idx="${i}" style="min-height:50px;">${escapeHtml(q.question || '')}</textarea>
+          </div>
+          <div class="field" style="margin-bottom:6px;">
+            <label>Варианты ответа (отметьте точкой верный):</label>
+            <div style="display:flex; flex-direction:column; gap:4px;">
+              ${opts.slice(0, 4).map((opt, optIdx) => `
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <input type="radio" name="t-q-correct-${i}" value="${optIdx}" ${q.correct_index === optIdx ? 'checked' : ''}>
+                  <input type="text" class="t-q-opt-${optIdx}" data-idx="${i}" value="${escapeHtml(opt)}" placeholder="Вариант ${optIdx + 1}" style="flex:1;">
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          <div class="field">
+            <label>Познавательное объяснение</label>
+            <textarea class="t-q-exp" data-idx="${i}" style="min-height:45px;">${escapeHtml(q.explanation || '')}</textarea>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function getFormQuestions() {
+    const container = document.getElementById('trivia-editor-questions');
+    const questions = [];
+    for (let i = 0; i < 5; i++) {
+      const topic = container.querySelector(`.t-q-topic[data-idx="${i}"]`)?.value.trim() || 'Общие знания';
+      const question = container.querySelector(`.t-q-text[data-idx="${i}"]`)?.value.trim() || '';
+      const opt0 = container.querySelector(`.t-q-opt-0[data-idx="${i}"]`)?.value.trim() || '';
+      const opt1 = container.querySelector(`.t-q-opt-1[data-idx="${i}"]`)?.value.trim() || '';
+      const opt2 = container.querySelector(`.t-q-opt-2[data-idx="${i}"]`)?.value.trim() || '';
+      const opt3 = container.querySelector(`.t-q-opt-3[data-idx="${i}"]`)?.value.trim() || '';
+      const correctRadio = container.querySelector(`input[name="t-q-correct-${i}"]:checked`);
+      const correct_index = correctRadio ? parseInt(correctRadio.value) : 0;
+      const explanation = container.querySelector(`.t-q-exp[data-idx="${i}"]`)?.value.trim() || '';
+
+      questions.push({
+        id: i + 1,
+        topic,
+        question,
+        options: [opt0, opt1, opt2, opt3],
+        correct_index,
+        explanation
+      });
+    }
+    return questions;
+  }
+
+  async function save() {
+    if (!selectedDate) { showToast('Выберите дату', 'error'); return; }
+    const btn = document.getElementById('trivia-btn-save');
+    btn.disabled = true;
+    btn.textContent = '⏳ Сохранение...';
+
+    const questions = getFormQuestions();
+
+    try {
+      const res = await fetch('/api/admin/dailytrivia/save', {
+        method: 'POST',
+        headers: apiHeaders,
+        body: JSON.stringify({ date: selectedDate, questions, status: 'ready' })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      showToast(`Викторина на ${selectedDate} сохранена!`, 'success');
+      await loadPuzzles();
+      loadStats();
+    } catch (e) {
+      showToast(`Ошибка сохранения: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '💾 Сохранить';
+    }
+  }
+
+  async function regenerate() {
+    if (!selectedDate) { showToast('Выберите дату', 'error'); return; }
+    const confirmed = await showConfirm('Регенерация через AI', `Сгенерировать новые вопросы на ${selectedDate} через LLM?`);
+    if (!confirmed) return;
+
+    const btn = document.getElementById('trivia-btn-regen');
+    btn.disabled = true;
+    btn.textContent = '⏳ Генерация AI...';
+
+    try {
+      const res = await fetch('/api/admin/dailytrivia/regenerate', {
+        method: 'POST',
+        headers: apiHeaders,
+        body: JSON.stringify({ date: selectedDate })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      showToast(`Викторина на ${selectedDate} успешно перегенерирована!`, 'success');
+      await loadPuzzles();
+      loadStats();
+    } catch (e) {
+      showToast(`Ошибка генерации: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🤖 Регенерировать (AI)';
+    }
+  }
+
+  function init() {
+    if (initialized) return;
+    initialized = true;
+    loadStats();
+    loadPuzzles();
+
+    document.getElementById('trivia-btn-save').addEventListener('click', save);
+    document.getElementById('trivia-btn-regen').addEventListener('click', regenerate);
   }
 
   return { init };

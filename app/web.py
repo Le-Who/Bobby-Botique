@@ -1197,6 +1197,100 @@ async def api_admin_daily_mode():
     return jsonify({"success": True, "mode": mode})
 
 
+def _serialize_daily_trivia_puzzle(puzzle):
+    if not puzzle:
+        return None
+    return {
+        "date": puzzle.puzzle_date.isoformat(),
+        "status": puzzle.status,
+        "prepared_at": puzzle.prepared_at.isoformat() if puzzle.prepared_at else None,
+        "questions": [
+            {
+                "id": q.id,
+                "topic": q.topic,
+                "question": q.question,
+                "options": q.options,
+                "correct_index": q.correct_index,
+                "explanation": q.explanation,
+            }
+            for q in puzzle.questions
+        ],
+    }
+
+
+@quart_app.route("/api/admin/dailytrivia/stats", methods=["GET"])
+@require_auth
+async def api_admin_dailytrivia_stats():
+    from app.repos import daily_trivia as daily_trivia_repo
+    from app.repos.crocodile_daily import today_puzzle_date
+    today = today_puzzle_date()
+    stats = await daily_trivia_repo.get_admin_stats(today)
+    return jsonify(stats)
+
+
+@quart_app.route("/api/admin/dailytrivia", methods=["GET"])
+@require_auth
+async def api_admin_dailytrivia_list():
+    from app.repos import daily_trivia as daily_trivia_repo
+    from app.repos.crocodile_daily import today_puzzle_date
+    today = today_puzzle_date()
+    start_date = today - datetime.timedelta(days=14)
+    end_date = today + datetime.timedelta(days=7)
+    puzzles = await daily_trivia_repo.get_puzzles_range(start_date, end_date)
+    return jsonify({
+        "puzzles": [_serialize_daily_trivia_puzzle(p) for p in puzzles],
+        "today": today.isoformat(),
+    })
+
+
+@quart_app.route("/api/admin/dailytrivia/regenerate", methods=["POST"])
+@require_auth
+@rate_limit_api
+async def api_admin_dailytrivia_regenerate():
+    from app.games import daily_trivia as daily_trivia_game
+    from app.repos.crocodile_daily import today_puzzle_date
+    data = await request.get_json() or {}
+    try:
+        p_date = datetime.date.fromisoformat(str(data.get("date") or today_puzzle_date()))
+    except ValueError:
+        return jsonify({"error": "invalid date"}), 400
+    puzzle = await daily_trivia_game.prepare_daily_puzzle(p_date, force=True)
+    return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
+
+
+@quart_app.route("/api/admin/dailytrivia/save", methods=["POST"])
+@require_auth
+@rate_limit_api
+async def api_admin_dailytrivia_save():
+    from app.repos import daily_trivia as daily_trivia_repo
+    data = await request.get_json()
+    if not data:
+        return jsonify({"error": "invalid json"}), 400
+    try:
+        p_date = datetime.date.fromisoformat(str(data.get("date") or ""))
+        raw_questions = data.get("questions") or []
+        status = str(data.get("status") or "ready").strip().lower()
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid payload"}), 400
+
+    questions = []
+    for idx, q in enumerate(raw_questions):
+        questions.append(
+            daily_trivia_repo.TriviaQuestion(
+                id=int(q.get("id", idx + 1)),
+                topic=str(q.get("topic", "")).strip(),
+                question=str(q.get("question", "")).strip(),
+                options=[str(opt).strip() for opt in q.get("options", [])],
+                correct_index=int(q.get("correct_index", 0)),
+                explanation=str(q.get("explanation", "")).strip(),
+            )
+        )
+
+    puzzle = await daily_trivia_repo.save_puzzle(p_date, questions, status=status)
+    return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
+
+
+
 # ── Broadcast Center API ──────────────────────────────────────────────────────
 
 

@@ -259,3 +259,69 @@ async def update_result_answer(
         ),
     )
     return _row_to_result(rows[0])
+
+
+async def get_puzzles_range(start_date: date, end_date: date, *, conn=None) -> list[DailyTriviaPuzzle]:
+    rows = await db.db_query(
+        """
+        SELECT puzzle_date, questions, status, prepared_at
+        FROM public.daily_trivia_puzzles
+        WHERE puzzle_date >= $1 AND puzzle_date <= $2
+        ORDER BY puzzle_date DESC
+        """,
+        (start_date, end_date),
+        conn=conn,
+    )
+    return [_row_to_puzzle(r) for r in rows]
+
+
+async def get_admin_stats(today: date, *, conn=None) -> dict[str, Any]:
+    sub_rows = await db.db_query(
+        """
+        SELECT COUNT(DISTINCT user_id) as cnt
+        FROM public.broadcast_subscriptions
+        WHERE channel = 'daily_challenge' AND status = 'active'
+        """,
+        conn=conn,
+    )
+    total_subbed = int(_row_get(sub_rows[0], "cnt", 0) if sub_rows else 0)
+
+    played_rows = await db.db_query(
+        """
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE status = 'finished') as finished,
+            COUNT(*) FILTER (WHERE status = 'active') as active
+        FROM public.daily_trivia_results
+        WHERE puzzle_date = $1
+        """,
+        (today,),
+        conn=conn,
+    )
+    total_played = 0
+    finished_count = 0
+    active_count = 0
+    if played_rows:
+        total_played = int(_row_get(played_rows[0], "total", 0) or 0)
+        finished_count = int(_row_get(played_rows[0], "finished", 0) or 0)
+        active_count = int(_row_get(played_rows[0], "active", 0) or 0)
+
+    puzzle_rows = await db.db_query(
+        """
+        SELECT COUNT(*) as cnt
+        FROM public.daily_trivia_puzzles
+        WHERE puzzle_date >= $1 AND status = 'ready'
+        """,
+        (today,),
+        conn=conn,
+    )
+    ready_puzzles = int(_row_get(puzzle_rows[0], "cnt", 0) if puzzle_rows else 0)
+
+    return {
+        "total_subscribed": total_subbed,
+        "played_today": total_played,
+        "finished_today": finished_count,
+        "active_today": active_count,
+        "ready_puzzles_ahead": ready_puzzles,
+    }
+
