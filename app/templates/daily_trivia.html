@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Daily Trivia</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+:root {
+  --bg-color: #0b0f19;
+  --card-bg: rgba(22, 30, 49, 0.75);
+  --border-color: rgba(255, 255, 255, 0.08);
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
+  --accent: #38bdf8;
+  --accent-glow: rgba(56, 189, 248, 0.2);
+  --correct: #10b981;
+  --correct-bg: rgba(16, 185, 129, 0.15);
+  --wrong: #f43f5e;
+  --wrong-bg: rgba(244, 63, 94, 0.15);
+  --amber: #fbbf24;
+  --radius: 16px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  background: var(--bg-color);
+  color: var(--text-main);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  background-image: 
+    radial-gradient(circle at 10% 20%, rgba(56, 189, 248, 0.08) 0%, transparent 40%),
+    radial-gradient(circle at 90% 80%, rgba(139, 92, 246, 0.08) 0%, transparent 40%);
+}
+
+.container {
+  max-width: 480px;
+  width: 100%;
+  margin: 0 auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.q-counter {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--accent);
+  background: var(--accent-glow);
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+.score-badge {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--amber);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Progress bar */
+.progress-container {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #8b5cf6);
+  width: 0%;
+  transition: width 0.3s ease;
+  border-radius: 3px;
+}
+
+/* Question card */
+.question-card {
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+.topic-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.question-text {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-main);
+}
+
+/* Options */
+.options-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.option-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  color: var(--text-main);
+  font-size: 1rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.option-btn:hover:not(.disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+.option-btn.selected-correct {
+  background: var(--correct-bg) !important;
+  border-color: var(--correct) !important;
+  color: #a7f3d0 !important;
+  font-weight: 600;
+}
+.option-btn.selected-wrong {
+  background: var(--wrong-bg) !important;
+  border-color: var(--wrong) !important;
+  color: #fecdd3 !important;
+}
+.option-btn.reveal-correct {
+  border-color: var(--correct) !important;
+  background: rgba(16, 185, 129, 0.08) !important;
+}
+.option-btn.disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* Explanation card */
+.explanation-card {
+  background: rgba(56, 189, 248, 0.06);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 20px;
+  animation: fadeIn 0.3s ease;
+}
+.explanation-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.explanation-body {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: #cbd5e1;
+}
+
+/* Next button */
+.btn-primary {
+  width: 100%;
+  background: linear-gradient(135deg, #38bdf8, #8b5cf6);
+  border: none;
+  border-radius: var(--radius);
+  padding: 16px;
+  color: #ffffff;
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+  box-shadow: 0 4px 15px rgba(56, 189, 248, 0.3);
+  margin-top: auto;
+}
+.btn-primary:active {
+  opacity: 0.85;
+}
+
+/* Finish Screen */
+.finish-card {
+  text-align: center;
+  padding: 30px 20px;
+  margin: auto 0;
+}
+.finish-title {
+  font-family: 'Outfit', sans-serif;
+  font-size: 2rem;
+  font-weight: 800;
+  margin-bottom: 12px;
+  background: linear-gradient(90deg, #38bdf8, #fbbf24);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.finish-score {
+  font-size: 3rem;
+  font-weight: 800;
+  color: var(--amber);
+  margin-bottom: 6px;
+  font-family: 'Outfit', sans-serif;
+}
+.finish-subtitle {
+  color: var(--text-muted);
+  font-size: 1rem;
+  margin-bottom: 30px;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="top-bar">
+    <div class="q-counter" id="qCounter">Вопрос 1/5</div>
+    <div class="score-badge" id="scoreBadge">⭐ 0</div>
+  </div>
+
+  <div class="progress-container">
+    <div class="progress-fill" id="progressFill"></div>
+  </div>
+
+  <div id="gameView">
+    <div class="question-card">
+      <div class="topic-badge" id="topicBadge">Загрузка...</div>
+      <div class="question-text" id="questionText">Пожалуйста, подождите...</div>
+    </div>
+
+    <div class="options-grid" id="optionsGrid"></div>
+
+    <div class="explanation-card" id="explanationCard" style="display: none;">
+      <div class="explanation-title">💡 Знаете ли вы?</div>
+      <div class="explanation-body" id="explanationText"></div>
+    </div>
+
+    <button class="btn-primary" id="nextBtn" style="display: none;" onclick="nextQuestion()">Продолжить</button>
+  </div>
+
+  <div id="finishView" style="display: none;" class="question-card finish-card">
+    <div class="finish-title">Викторина завершена!</div>
+    <div class="finish-score" id="finalScore">0</div>
+    <div class="finish-subtitle" id="finalDetails">Вы правильно ответили на 0 из 5 вопросов</div>
+    <button class="btn-primary" onclick="Telegram.WebApp.close()">Закрыть</button>
+  </div>
+</div>
+
+<script>
+const tg = window.Telegram ? window.Telegram.WebApp : null;
+if (tg) {
+  tg.expand();
+  tg.ready();
+}
+
+let questions = [];
+let currentIdx = 0;
+let totalScore = 0;
+let correctCount = 0;
+let startTime = 0;
+let answered = false;
+
+async defInit();
+
+async function defInit() {
+  try {
+    const response = await fetch('/api/miniapp/trivia/today', {
+      headers: { 'X-TG-INIT-DATA': tg ? tg.initData : '' }
+    });
+    const data = await response.json();
+    if (data.questions && data.questions.length > 0) {
+      questions = data.questions;
+      renderQuestion();
+    } else {
+      document.getElementById('questionText').innerText = "Не удалось загрузить вопросы на сегодня.";
+    }
+  } catch (e) {
+    document.getElementById('questionText').innerText = "Ошибка соединения.";
+  }
+}
+
+function renderQuestion() {
+  if (currentIdx >= questions.length) {
+    showFinishScreen();
+    return;
+  }
+
+  answered = false;
+  const q = questions[currentIdx];
+  
+  document.getElementById('qCounter').innerText = `Вопрос ${currentIdx + 1}/${questions.length}`;
+  document.getElementById('progressFill').style.width = `${((currentIdx) / questions.length) * 100}%`;
+  document.getElementById('topicBadge').innerText = q.topic || 'Тривиа';
+  document.getElementById('questionText').innerText = q.question;
+  document.getElementById('explanationCard').style.display = 'none';
+  document.getElementById('nextBtn').style.display = 'none';
+
+  const grid = document.getElementById('optionsGrid');
+  grid.innerHTML = '';
+
+  q.options.forEach((optText, idx) => {
+    const btn = document.createElement('button');
+    btn.className = 'option-btn';
+    btn.innerText = optText;
+    btn.onclick = () => selectAnswer(idx);
+    grid.appendChild(btn);
+  });
+
+  startTime = Date.now();
+}
+
+function selectAnswer(selectedIdx) {
+  if (answered) return;
+  answered = true;
+
+  const elapsedMs = Date.now() - startTime;
+  const q = questions[currentIdx];
+  const isCorrect = (selectedIdx === q.correct_index);
+
+  const grid = document.getElementById('optionsGrid');
+  const buttons = grid.children;
+
+  for (let i = 0; i < buttons.length; i++) {
+    buttons[i].classList.add('disabled');
+    if (i === q.correct_index) {
+      buttons[i].classList.add('reveal-correct');
+    }
+  }
+
+  if (isCorrect) {
+    buttons[selectedIdx].classList.add('selected-correct');
+    correctCount++;
+    // Score calculation
+    let qScore = 200;
+    if (elapsedMs < 15000) {
+      qScore += Math.floor(100 * ((15000 - elapsedMs) / 15000));
+    }
+    totalScore += qScore;
+    document.getElementById('scoreBadge').innerText = `⭐ ${totalScore}`;
+  } else {
+    buttons[selectedIdx].classList.add('selected-wrong');
+  }
+
+  // Show explanation
+  document.getElementById('explanationText').innerText = q.explanation || "Отличный факт!";
+  document.getElementById('explanationCard').style.display = 'block';
+  document.getElementById('nextBtn').style.display = 'block';
+
+  // Async submit score to backend
+  fetch('/api/miniapp/trivia/submit_answer', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-TG-INIT-DATA': tg ? tg.initData : ''
+    },
+    body: JSON.stringify({
+      question_index: currentIdx,
+      selected_index: selectedIdx,
+      is_correct: isCorrect,
+      elapsed_ms: elapsedMs,
+      total_score: totalScore
+    })
+  }).catch(() => {});
+}
+
+function nextQuestion() {
+  currentIdx++;
+  renderQuestion();
+}
+
+function showFinishScreen() {
+  document.getElementById('gameView').style.display = 'none';
+  document.getElementById('progressFill').style.width = '100%';
+  document.getElementById('finalScore').innerText = totalScore;
+  document.getElementById('finalDetails').innerText = `Вы правильно ответили на ${correctCount} из ${questions.length} вопросов`;
+  document.getElementById('finishView').style.display = 'block';
+}
+</script>
+</body>
+</html>

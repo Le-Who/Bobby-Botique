@@ -14,6 +14,7 @@ from app.utils.json_compat import json
 DAILY_GAME_MODE_SETTING_KEY = "daily_game_mode"
 DAILY_GAME_MODE_CROCODILE = "crocodile"
 DAILY_GAME_MODE_2048 = "2048"
+DAILY_GAME_MODE_TRIVIA = "trivia"
 
 DAILY_2048_PREP_DAYS_AHEAD = 7
 DEFAULT_BOARD_SIZE = 4
@@ -199,6 +200,8 @@ async def get_active_daily_game_mode() -> str:
     value = (await get_global_setting(DAILY_GAME_MODE_SETTING_KEY, DAILY_GAME_MODE_CROCODILE)).strip().lower()
     if value in {"2048", "daily2048", "daily_2048"}:
         return DAILY_GAME_MODE_2048
+    if value in {"trivia", "dailytrivia", "daily_trivia"}:
+        return DAILY_GAME_MODE_TRIVIA
     return DAILY_GAME_MODE_CROCODILE
 
 

@@ -17,7 +17,7 @@ from app.utils.time import get_pacific_tz
 
 logger = logging.getLogger(__name__)
 
-TAROT_DAILY_MODEL = "gemini-3.1-flash-lite"
+TAROT_DAILY_MODEL = "gemini-3.5-flash-lite"
 TAROT_DAILY_RPM = 15
 TAROT_DAILY_REQUEST_INTERVAL_SECONDS = 60.0 / TAROT_DAILY_RPM
 TAROT_DAILY_MAX_KEY_RETRIES = 4
@@ -146,6 +146,7 @@ async def prepare_daily_readings(
     target_date: date | None = None,
     language: str = TAROT_DAILY_LANGUAGE,
     force: bool = False,
+    model: str | None = None,
     sleep: Callable[[float], Awaitable[object]] = asyncio.sleep,
 ) -> TarotDailyPreparationResult:
     target = target_date or today_reading_date()
@@ -199,7 +200,7 @@ async def prepare_daily_readings(
 
                 requested_generation = True
                 result, _tokens = await router.get_response(
-                    preferred_model=TAROT_DAILY_MODEL,
+                    preferred_model=model or TAROT_DAILY_MODEL,
                     history=[
                         {
                             "role": "user",

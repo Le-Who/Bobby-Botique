@@ -729,9 +729,11 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("games", games_command))
     from app.handlers.daily_2048 import daily2048_command
     from app.handlers.daily_crocodile import dailycroc_command
+    from app.handlers.daily_trivia import daily_trivia_command
 
     application.add_handler(CommandHandler("dailycroc", dailycroc_command))
     application.add_handler(CommandHandler("daily2048", daily2048_command))
+    application.add_handler(CommandHandler(["trivia", "dailytrivia"], daily_trivia_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CallbackQueryHandler(help_command, pattern=r"^help_cmd$"))
     application.add_handler(CommandHandler("newchat", new_chat_command))

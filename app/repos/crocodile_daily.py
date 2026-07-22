@@ -405,7 +405,7 @@ async def create_puzzle_if_missing(puzzle_date: date, *, difficulty: str = "easy
         return await _create_puzzle_if_missing_with_conn(puzzle_date, difficulty=difficulty, conn=conn)
 
 
-async def regenerate_puzzle_word(puzzle_date: date, difficulty: str = "easy") -> DailyPuzzle | None:
+async def regenerate_puzzle_word(puzzle_date: date, difficulty: str = "easy", model: str | None = None) -> DailyPuzzle | None:
     difficulty = normalize_daily_difficulty(difficulty)
     pool = getattr(db.db_manager, "pool", None)
     if not pool or getattr(pool, "_closed", False):

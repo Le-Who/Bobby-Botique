@@ -243,7 +243,8 @@ async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not update.effective_user or not update.message:
         return
     user_id = update.effective_user.id
-    if await get_active_daily_game_mode() == "2048":
+    game_mode = await get_active_daily_game_mode()
+    if game_mode == "2048":
         from app.handlers.daily_2048 import send_daily2048_entry
         from app.repos import daily_2048 as daily2048_repo
 
@@ -258,6 +259,11 @@ async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             reply_to_message_id=update.message.message_id,
             mark_delivered=False,
         )
+        return
+    elif game_mode == "trivia":
+        from app.handlers.daily_trivia import daily_trivia_command
+
+        await daily_trivia_command(update, context)
         return
     await repo.record_player_activity(user_id, event="daily_played")
     pref = await repo.get_preference(user_id)
@@ -350,10 +356,16 @@ async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None
     from app.admin_alerts import AlertSeverity, alert_admin
     from app.games.crocodile_daily import active_daily_difficulties, ensure_prepared_puzzles
 
-    if await get_active_daily_game_mode() == "2048":
+    game_mode = await get_active_daily_game_mode()
+    if game_mode == "2048":
         from app.handlers.daily_2048 import check_daily_2048_jobs
 
         await check_daily_2048_jobs(context)
+        return
+    elif game_mode == "trivia":
+        from app.handlers.daily_trivia import check_daily_trivia_jobs
+
+        await check_daily_trivia_jobs(context)
         return
 
     now = datetime.now(tz=UTC)

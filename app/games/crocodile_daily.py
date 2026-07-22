@@ -73,7 +73,7 @@ async def ensure_today_puzzles(now: datetime | None = None) -> dict[str, repo.Da
     puzzles_list = await asyncio.gather(
         *[repo.create_puzzle_if_missing(puzzle_date, difficulty=d) for d in difficulties]
     )
-    return dict(zip(difficulties, puzzles_list))
+    return dict(zip(difficulties, puzzles_list, strict=False))
 
 
 async def get_daily_overview(
@@ -96,8 +96,8 @@ async def get_daily_overview(
         asyncio.gather(*result_tasks),
     )
 
-    puzzles: dict[str, repo.DailyPuzzle] = dict(zip(difficulties, puzzles_list))
-    results: dict[str, repo.DailyResult] = dict(zip(difficulties, results_list))
+    puzzles: dict[str, repo.DailyPuzzle] = dict(zip(difficulties, puzzles_list, strict=False))
+    results: dict[str, repo.DailyResult] = dict(zip(difficulties, results_list, strict=False))
 
     for puzzle in puzzles.values():
         _queue_daily_puzzle_preparation_if_needed(puzzle)

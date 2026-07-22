@@ -99,7 +99,7 @@ def _dedupe_models(models: list[str | None], *, exclude: str | None = None) -> l
 
 
 def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
-    """Return configured Gemini fallbacks with 3.5 Flash → 3.1 Flash Lite first."""
+    """Return configured Gemini fallbacks following the 3.6-flash -> 3.5-flash -> 3.5-flash-lite -> 3.1-flash-lite chain."""
     runtime_failed_model = normalize_gemini_runtime_model(failed_model)
     if runtime_failed_model == GEMINI_GROUNDING_MODEL:
         return [GEMINI_GROUNDING_FALLBACK_MODEL]
@@ -111,13 +111,25 @@ def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
         for model in (list(getattr(settings, "AVAILABLE_MODELS", []) or []) if settings is not None else [])
         if model in CURRENT_GEMINI_MODELS
     ]
+    if not available:
+        available = list(CURRENT_GEMINI_MODELS)
     available_set = set(available)
-    failed_model = normalize_gemini_chat_model(runtime_failed_model)
-    preferred: list[str | None] = []
-    if failed_model == GEMINI_PRIMARY_MODEL:
-        preferred.append(GEMINI_ECONOMY_MODEL)
+    failed_model_norm = normalize_gemini_chat_model(runtime_failed_model, fallback=failed_model)
+
+    chain = [
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+    ]
+
+    preferred: list[str] = []
+    if failed_model_norm in chain:
+        idx = chain.index(failed_model_norm)
+        preferred = chain[idx + 1 :]
     else:
-        preferred.extend([GEMINI_PRIMARY_MODEL, GEMINI_ECONOMY_MODEL])
+        preferred = [m for m in chain if m != failed_model_norm]
+
     preferred.extend(
         [
             _setting("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
@@ -128,10 +140,10 @@ def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
     )
     ordered = [
         model
-        for model in _dedupe_models(preferred, exclude=failed_model)
+        for model in _dedupe_models(preferred, exclude=failed_model_norm)
         if model in available_set and model in CURRENT_GEMINI_MODELS
     ]
-    ordered.extend(model for model in available if model != failed_model and model not in ordered)
+    ordered.extend(model for model in available if model != failed_model_norm and model not in ordered)
     return ordered
 
 

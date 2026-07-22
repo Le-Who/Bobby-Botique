@@ -31,6 +31,8 @@ EXPECTED_TABLES = frozenset(
         "daily_2048_puzzles",
         "daily_2048_prompt_messages",
         "daily_2048_results",
+        "daily_trivia_puzzles",
+        "daily_trivia_results",
         "error_logs",
         "tarot_daily_readings",
         "tavily_api_keys",

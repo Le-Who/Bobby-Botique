@@ -11,8 +11,9 @@ import re
 import threading
 import time
 from collections import defaultdict, deque
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlparse
 
 from quart import jsonify, render_template, request

@@ -89,7 +89,7 @@ _GEN_PROGRESS_AFTER_S = 20.0
 _INLINE_PRIMARY_GRACE_S = 13.0
 
 _TAROT_LITE_MODEL = "gemini-3.1-flash-lite"
-_TAROT_PRIMARY_MODEL = "gemini-3.5-flash"
+_TAROT_PRIMARY_MODEL = "gemini-3.6-flash"
 _TAROT_COMPLEX_SPREADS = frozenset({SpreadType.LOVE, SpreadType.CELTIC})
 _TAROT_COMPLEX_PRIMARY_GRACE_S = 23.0
 

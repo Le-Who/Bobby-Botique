@@ -100,8 +100,8 @@ async def get_start_menu_content(chat_state, user_id=None):
 
 # Model descriptions for decision support
 MODEL_HINTS = {
-    "gemini-3.5-flash": "💎 Основная мощная модель — сложные задачи и код",
-    "gemini-3.1-flash-lite": "⚡ Экономичная быстрая модель — простые и частые задачи",
+    "gemini-3.6-flash": "💎 Основная мощная модель — сложные задачи и код",
+    "gemini-3.5-flash-lite": "⚡ Экономичная быстрая модель — простые и частые задачи",
 }
 
 
@@ -246,7 +246,7 @@ def get_model_menu_content(chat_state, context):
     if len(all_models) > 1:
         # Find best recommendation
         rec = None
-        for m in ["gemini-3.5-flash", "gemini-3.1-flash-lite"]:
+        for m in ["gemini-3.6-flash", "gemini-3.5-flash-lite"]:
             if m in all_models and m != current_model:
                 rec = m
                 break

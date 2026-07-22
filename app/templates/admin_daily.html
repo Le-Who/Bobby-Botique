@@ -1685,8 +1685,9 @@ const CrocModule = (() => {
     if (!confirmed) return;
     const btn = document.getElementById(`croc-regen-${date}-${diff}`);
     btn.disabled = true; btn.textContent = '⏳ Генерация…';
+    const model = document.getElementById('global-regen-model')?.value || 'gemini-3.6-flash';
     try {
-      const res = await fetch('/api/admin/dailycroc/regenerate', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date, difficulty: diff }) });
+      const res = await fetch('/api/admin/dailycroc/regenerate', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date, difficulty: diff, model }) });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
       showToast('Изображение сгенерировано!', 'success');
@@ -2013,7 +2014,8 @@ const TarotModule = (() => {
       const btn = document.getElementById('tarot-regen-btn');
       btn.disabled = true; btn.textContent = '⏳…';
       try {
-        const res = await fetch('/api/admin/tarot/regenerate', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date }) });
+        const model = document.getElementById('global-regen-model')?.value || 'gemini-3.6-flash';
+        const res = await fetch('/api/admin/tarot/regenerate', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date, model }) });
         const d = await res.json();
         if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
         showToast(`Готово: сгенерировано ${d.generated}, пропущено ${d.skipped}, ошибок ${d.failed}`, 'success');

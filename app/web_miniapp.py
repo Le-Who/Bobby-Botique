@@ -70,18 +70,25 @@ def _get_live_voice_options(lang: str) -> list[dict[str, str]]:
         {"id": "Orus", "name": "Orus", "gender": "male", "description": t("miniapp.voice.orus", lang)},
     ]
 
+
 def _get_live_thinking_presets(lang: str) -> list[dict[str, str]]:
     return [
         {"id": "off", "label": t("miniapp.preset.off_label", lang), "hint": t("miniapp.preset.off_hint", lang)},
         {"id": "low", "label": t("miniapp.preset.low_label", lang), "hint": t("miniapp.preset.low_hint", lang)},
-        {"id": "medium", "label": t("miniapp.preset.medium_label", lang), "hint": t("miniapp.preset.medium_hint", lang)},
+        {
+            "id": "medium",
+            "label": t("miniapp.preset.medium_label", lang),
+            "hint": t("miniapp.preset.medium_hint", lang),
+        },
     ]
+
 
 _LIVE_VOICE_IDS = {"Aoede", "Kore", "Leda", "Zephyr", "Charon", "Orus"}
 _LIVE_CONNECTION_MODE_IDS = {"standard", "vertex_internet"}
 _LIVE_DEFAULT_CONNECTION_MODE = "standard"
 _LIVE_VERTEX_CONNECTION_MODE = "vertex_internet"
 _VERTEX_LIVE_MODEL = "gemini-live-2.5-flash-native-audio"
+
 
 def _get_live_connection_modes(lang: str) -> list[dict[str, str]]:
     return [
@@ -96,6 +103,7 @@ def _get_live_connection_modes(lang: str) -> list[dict[str, str]]:
             "summary": t("miniapp.conn.vertex_summary", lang),
         },
     ]
+
 
 # Backward-compatible test hooks for the classic game lock fallback registry.
 _game_locks = _croc_runtime._game_locks
@@ -129,6 +137,7 @@ def _is_live_resource_exhausted(error_text: str) -> bool:
 async def _get_live_model_cooldown_seconds() -> int:
     """Return remaining cluster-wide cooldown for the Live model."""
     from app.cache import redis_client
+
     if not redis_client:
         return 0
     ttl = await redis_client.ttl("live_model_cooldown")
@@ -138,6 +147,7 @@ async def _get_live_model_cooldown_seconds() -> int:
 async def _get_live_model_cooldown_reason() -> str:
     """Return the reason for the active model cooldown."""
     from app.cache import redis_client
+
     if not redis_client:
         return ""
     reason = await redis_client.get("live_model_cooldown")
@@ -147,6 +157,7 @@ async def _get_live_model_cooldown_reason() -> str:
 async def _mark_live_model_cooldown(seconds: int, reason: str) -> int:
     """Trip a short model-level breaker to stop reconnect storms across all workers."""
     from app.cache import redis_client
+
     if not redis_client:
         return seconds
 
@@ -458,7 +469,9 @@ async def api_natal_submit(user_id: int):
 
     webhook_url = _public_webapp_base_url()
     if not webhook_url:
-        return jsonify({"error": "server_misconfiguration", "detail": "WEBAPP_BASE_URL or WEBHOOK_URL is required."}), 500
+        return jsonify(
+            {"error": "server_misconfiguration", "detail": "WEBAPP_BASE_URL or WEBHOOK_URL is required."}
+        ), 500
 
     submit_task(_build_and_send_natal_report(bot, user_id, birth_input, webhook_url))
     return jsonify({"ok": True, "status": "accepted"})
@@ -843,6 +856,7 @@ async def api_update_settings(user_id: int):
         if "model" in body:
             model = body["model"]
             from app.config import get_all_available_models
+
             all_models = get_all_available_models()
             if model in all_models:
                 chat_state.model = model
@@ -994,10 +1008,7 @@ async def api_get_voices(user_id: int):
                 accent = v.get("labels", {}).get("accent")
                 if accent:
                     name = f"{name} ({accent.title()})"
-                voices.append({
-                    "id": v["id"],
-                    "name": name
-                })
+                voices.append({"id": v["id"], "name": name})
             _voices_cache = voices
             _voices_cache_ts = now
             return jsonify({"voices": voices})
@@ -1367,10 +1378,99 @@ async def daily2048_page():
     return await render_template("daily_2048.html")
 
 
+@miniapp_blueprint.route("/dailytrivia")
+async def dailytrivia_page():
+    """Serve the Daily Trivia Mini App HTML shell."""
+    from quart import render_template
+
+    return await render_template("daily_trivia.html")
+
+
+@miniapp_blueprint.route("/api/miniapp/trivia/today", methods=["GET"])
+async def api_miniapp_trivia_today():
+    from quart import jsonify
+
+    from app.games.daily_trivia import prepare_daily_puzzle
+    from app.repos.crocodile_daily import today_puzzle_date
+
+    today = today_puzzle_date()
+    puzzle = await prepare_daily_puzzle(today)
+    return jsonify(
+        {
+            "date": puzzle.puzzle_date.isoformat(),
+            "questions": [
+                {
+                    "id": q.id,
+                    "topic": q.topic,
+                    "question": q.question,
+                    "options": q.options,
+                    "correct_index": q.correct_index,
+                    "explanation": q.explanation,
+                }
+                for q in puzzle.questions
+            ],
+        }
+    )
+
+
+@miniapp_blueprint.route("/api/miniapp/trivia/submit_answer", methods=["POST"])
+async def api_miniapp_trivia_submit_answer():
+    from quart import jsonify, request
+
+    from app.repos.crocodile_daily import today_puzzle_date
+    from app.repos.daily_trivia import get_or_create_result, update_result_answer
+
+    data = await request.get_json() or {}
+    q_idx = int(data.get("question_index", 0))
+    selected_idx = int(data.get("selected_index", 0))
+    is_correct = bool(data.get("is_correct", False))
+    elapsed_ms = int(data.get("elapsed_ms", 0))
+    total_score = int(data.get("total_score", 0))
+
+    user_id = 0
+    raw_init = request.headers.get("X-TG-INIT-DATA", "")
+    if raw_init:
+        bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+        validated = _validate_init_data(raw_init, bot_token) if bot_token else None
+        if validated:
+            user_id = _extract_user_id(validated) or 0
+
+    if user_id > 0:
+        today = today_puzzle_date()
+        result = await get_or_create_result(user_id, today)
+        new_answers = list(result.answers)
+        new_answers.append(
+            {
+                "question_index": q_idx,
+                "selected_index": selected_idx,
+                "is_correct": is_correct,
+                "elapsed_ms": elapsed_ms,
+            }
+        )
+        correct_count = result.correct_count + (1 if is_correct else 0)
+        is_finished = q_idx >= 4
+        status = "completed" if is_finished else "active"
+
+        await update_result_answer(
+            user_id,
+            today,
+            current_question=q_idx + 1,
+            correct_count=correct_count,
+            final_score=total_score,
+            elapsed_ms=result.elapsed_ms + elapsed_ms,
+            answers=new_answers,
+            status=status,
+            finished=is_finished,
+        )
+
+    return jsonify({"success": True})
+
+
 @miniapp_blueprint.route("/admin_dailycroc")
 async def webapp_admin_dailycroc_page():
     """Legacy redirect -> /admin_daily#croc."""
     from quart import redirect
+
     return redirect("/admin_daily#croc", code=301)
 
 
@@ -1378,6 +1478,7 @@ async def webapp_admin_dailycroc_page():
 async def webapp_admin_daily2048_page():
     """Legacy redirect -> /admin_daily#2048."""
     from quart import redirect
+
     return redirect("/admin_daily#2048", code=301)
 
 
@@ -1461,7 +1562,7 @@ async def daily2048_ws():
         status: str = "practice",
     ) -> daily2048_repo.Daily2048Result:
         finished_at = fallback.finished_at or datetime.now(tz=UTC)
-        
+
         def _get_int(key: str, default: int) -> int:
             val = event.get(key)
             return int(val) if val is not None else default

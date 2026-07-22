@@ -42,10 +42,10 @@ logger = logging.getLogger(__name__)
 
 # ── Models ────────────────────────────────────────────────────────────────────
 
-_PRIMARY_MODEL = "gemini-3.1-flash-lite"
-_FALLBACK_MODEL = "gemini-3.5-flash"
-_HINTS_AI_STUDIO_MODEL = "gemini-3.5-flash"
-_HINTS_VERTEX_MODEL = "gemini-3.1-flash-lite"
+_PRIMARY_MODEL = "gemini-3.5-flash-lite"
+_FALLBACK_MODEL = "gemini-3.6-flash"
+_HINTS_AI_STUDIO_MODEL = "gemini-3.6-flash"
+_HINTS_VERTEX_MODEL = "gemini-3.5-flash-lite"
 _HINTS_OPENCODE_MODEL_CANDIDATES = (
     "opencode-go/glm-5.1",
     "opencode-go/qwen3.6-plus",

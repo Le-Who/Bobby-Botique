@@ -1187,7 +1187,11 @@ async def api_admin_daily_mode():
     if not data:
         return jsonify({"error": "invalid json"}), 400
     mode = str(data.get("mode") or "").strip().lower()
-    if mode not in {daily_2048_repo.DAILY_GAME_MODE_CROCODILE, daily_2048_repo.DAILY_GAME_MODE_2048}:
+    if mode not in {
+        daily_2048_repo.DAILY_GAME_MODE_CROCODILE,
+        daily_2048_repo.DAILY_GAME_MODE_2048,
+        daily_2048_repo.DAILY_GAME_MODE_TRIVIA,
+    }:
         return jsonify({"error": "invalid mode"}), 400
     await set_global_setting(daily_2048_repo.DAILY_GAME_MODE_SETTING_KEY, mode)
     return jsonify({"success": True, "mode": mode})
@@ -1212,8 +1216,15 @@ async def api_admin_broadcast_overview():
         croc_enabled = delivery_on_raw.strip().lower() != "off"
 
         game_mode = await daily_2048_repo.get_active_daily_game_mode()
-        mode_emoji = "🎲" if game_mode == daily_2048_repo.DAILY_GAME_MODE_2048 else "🐊"
-        mode_label = f"Daily {game_mode.upper() if game_mode == '2048' else 'Croc'}"
+        if game_mode == daily_2048_repo.DAILY_GAME_MODE_TRIVIA:
+            mode_emoji = "🧠"
+            mode_label = "Daily Trivia"
+        elif game_mode == daily_2048_repo.DAILY_GAME_MODE_2048:
+            mode_emoji = "🎲"
+            mode_label = "Daily 2048"
+        else:
+            mode_emoji = "🐊"
+            mode_label = "Daily Croc"
 
         # Count total + pending for daily challenge
         total_subs_rows = await database.db_query(
@@ -1766,6 +1777,9 @@ async def api_admin_broadcast_send_offer():
             if game_mode == "2048":
                 from app.handlers.daily_2048 import send_discovery_intro as send_2048_intro
                 await send_2048_intro(bot, target_user_id)
+            elif game_mode == "trivia":
+                from app.handlers.daily_trivia import send_discovery_intro as send_trivia_intro
+                await send_trivia_intro(bot, target_user_id)
             else:
                 from app.handlers.daily_crocodile import send_discovery_intro as send_croc_intro
                 await send_croc_intro(bot, target_user_id)
