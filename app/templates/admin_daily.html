@@ -722,6 +722,18 @@ input:checked + .slider:before { transform: translateX(16px); }
 <div class="tab-panel active" id="tab-broadcast">
   <div class="main-content">
 
+    <div class="card" style="margin-bottom:18px;padding:18px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+      <div>
+        <div style="font-size:0.82rem;font-weight:600;color:var(--text-muted);letter-spacing:.05em;text-transform:uppercase;">🎯 Активная Daily-игра (Daily Driver)</div>
+        <div style="font-size:1.1rem;font-weight:700;color:var(--text);margin-top:4px;" id="daily-driver-label">—</div>
+      </div>
+      <div style="display:flex;gap:8px;" id="daily-mode-buttons">
+        <button class="btn btn-refresh" data-daily-mode="crocodile">🐊 Croc</button>
+        <button class="btn btn-refresh" data-daily-mode="2048">🎲 2048</button>
+        <button class="btn btn-refresh" data-daily-mode="trivia">🧠 Trivia</button>
+      </div>
+    </div>
+
     <h2 class="section-title">Каналы рассылки</h2>
     <div class="channel-cards" id="channel-cards">
       <div class="loading-container">
@@ -902,23 +914,12 @@ input:checked + .slider:before { transform: translateX(16px); }
   <div class="s2048-shell">
     <section class="s2048-toolbar">
       <div class="s2048-panel">
-        <label>Активный daily slot</label>
-        <strong id="s2048-mode-label">—</strong>
-      </div>
-      <div class="s2048-panel">
         <label>Готовые пазлы</label>
         <strong id="s2048-ready-count">0</strong>
       </div>
       <div class="s2048-panel">
         <label>Ближайшая цель</label>
         <strong id="s2048-next-goal">—</strong>
-      </div>
-      <div class="s2048-panel">
-        <label>Режим</label>
-        <div class="s2048-actions">
-          <button class="s2048-btn primary" id="s2048-mode-btn">2048</button>
-          <button class="s2048-btn" id="s2048-croc-btn">Croc</button>
-        </div>
       </div>
     </section>
 
@@ -1151,6 +1152,43 @@ const BroadcastModule = (() => {
   const SUB_LIMIT = 50;
   const OFFER_LIMIT = 50;
 
+  function updateDailyDriverUI(mode) {
+    const label = document.getElementById('daily-driver-label');
+    if (label) {
+      const modeNames = { crocodile: '🐊 Daily Crocodile', 2048: '🎲 Daily 2048', trivia: '🧠 Daily Trivia' };
+      label.textContent = modeNames[mode] || mode;
+    }
+    document.querySelectorAll('#daily-mode-buttons button').forEach(btn => {
+      const btnMode = btn.getAttribute('data-daily-mode');
+      if (btnMode === mode) {
+        btn.classList.add('btn-primary');
+        btn.classList.remove('btn-refresh');
+      } else {
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-refresh');
+      }
+    });
+  }
+
+  async function setDailyMode(mode) {
+    try {
+      const res = await fetch('/api/admin/daily-mode', {
+        method: 'POST',
+        headers: apiHeaders,
+        body: JSON.stringify({ mode })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        showToast(data.error || `HTTP ${res.status}`, 'error');
+        return;
+      }
+      updateDailyDriverUI(mode);
+      showToast(`Активная daily-игра переключена на: ${mode}`, 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
   // ── Channel overview ──────────────────────────────────────────────────────
   async function loadOverview() {
     const container = document.getElementById('channel-cards');
@@ -1159,7 +1197,12 @@ const BroadcastModule = (() => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      renderChannelCards(data.channels || []);
+      const channels = data.channels || [];
+      renderChannelCards(channels);
+      const challengeCh = channels.find(c => c.id === 'daily_challenge');
+      if (challengeCh && challengeCh.active_game) {
+        updateDailyDriverUI(challengeCh.active_game);
+      }
     } catch (e) {
       container.innerHTML = `<div class="empty-state error-text">Ошибка загрузки: ${e.message}</div>`;
     }
@@ -1536,6 +1579,14 @@ const BroadcastModule = (() => {
 
     // Quick send
     document.getElementById('btn-offer-quick-send').addEventListener('click', _quickSend);
+
+    // Daily mode buttons
+    document.querySelectorAll('#daily-mode-buttons button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const mode = btn.getAttribute('data-daily-mode');
+        if (mode) setDailyMode(mode);
+      });
+    });
   }
 
   return { init };
@@ -1855,16 +1906,6 @@ const S2048Module = (() => {
     $('s2048-ready-count').textContent = puzzles.filter(p => p.status === 'ready').length;
     $('s2048-next-goal').textContent = puzzles[0]?.goal_label || '—';
 
-    // Show active game mode
-    try {
-      const modeRes = await fetch('/api/admin/broadcast/overview', { headers: getHeaders });
-      if (modeRes.ok) {
-        const modeData = await modeRes.json();
-        const ch = (modeData.channels || []).find(c => c.id === 'daily_challenge');
-        if (ch) $('s2048-mode-label').textContent = ch.active_game || '—';
-      }
-    } catch (_) {}
-
     if (!selected) selectPuzzle(puzzles[0] || { date: todayIso(), board: blankBoard(), goal_type: 'tile', goal_value: 512, spawn_sequence: [], seed: 'custom', par_moves: 72, target_seconds: 240, status: 'ready', solution_moves: '' });
     renderPuzzles();
   }
@@ -1903,14 +1944,6 @@ const S2048Module = (() => {
     await load();
   }
 
-  async function setMode(mode) {
-    const res = await fetch('/api/admin/daily-mode', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ mode }) });
-    const data = await res.json();
-    if (!res.ok || data.error) { showToast(data.error || `HTTP ${res.status}`, 'error'); return; }
-    $('s2048-mode-label').textContent = mode;
-    showToast(`Daily slot: ${mode}`, 'success');
-  }
-
   function init() {
     if (initialized) return;
     initialized = true;
@@ -1918,8 +1951,6 @@ const S2048Module = (() => {
     load().catch(err => showToast(err.message, 'error'));
     $('s2048-save').addEventListener('click', save);
     $('s2048-generate').addEventListener('click', generate);
-    $('s2048-mode-btn').addEventListener('click', () => setMode('2048'));
-    $('s2048-croc-btn').addEventListener('click', () => setMode('crocodile'));
   }
 
   return { init };
