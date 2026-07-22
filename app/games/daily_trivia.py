@@ -6,13 +6,14 @@ import random
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from app.config import GEMINI_ECONOMY_MODEL
 from app.providers.router import get_provider_router
 from app.repos import daily_trivia as repo
 from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 
-TRIVIA_MODEL = "gemini-3.1-flash-lite"
+TRIVIA_MODEL = GEMINI_ECONOMY_MODEL
 MAX_TIME_PER_QUESTION_MS = 15000
 BASE_CORRECT_POINTS = 200
 MAX_SPEED_BONUS = 100

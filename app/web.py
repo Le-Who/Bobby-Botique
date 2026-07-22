@@ -1905,6 +1905,9 @@ async def api_admin_broadcast_send_offer_batch():
                         if game_mode == "2048":
                             from app.handlers.daily_2048 import send_discovery_intro as send_2048_intro
                             await send_2048_intro(bot, uid)
+                        elif game_mode == "trivia":
+                            from app.handlers.daily_trivia import send_discovery_intro as send_trivia_intro
+                            await send_trivia_intro(bot, uid)
                         else:
                             from app.handlers.daily_crocodile import send_discovery_intro as send_croc_intro
                             await send_croc_intro(bot, uid)
