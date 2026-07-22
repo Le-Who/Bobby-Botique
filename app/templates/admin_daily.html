@@ -712,6 +712,7 @@ input:checked + .slider:before { transform: translateX(16px); }
   <button class="tab-btn active" data-tab="broadcast">📡 Рассылки</button>
   <button class="tab-btn" data-tab="croc">🐊 Croc</button>
   <button class="tab-btn" data-tab="2048">🎲 2048</button>
+  <button class="tab-btn" data-tab="trivia">🧠 Trivia</button>
   <button class="tab-btn" data-tab="horoscope">⭐ Horoscope</button>
   <button class="tab-btn" data-tab="tarot">🔮 Tarot</button>
 </nav>
@@ -967,6 +968,19 @@ input:checked + .slider:before { transform: translateX(16px); }
 </div>
 
 <!-- ========================================
+     TAB: TRIVIA
+     ======================================== -->
+<div class="tab-panel" id="tab-trivia">
+  <div class="main-content">
+    <h2 class="section-title">Настройки Trivia</h2>
+    <div class="empty-state">
+      <span class="empty-state-icon">🧠</span>
+      Интерфейс управления Trivia в разработке...
+    </div>
+  </div>
+</div>
+
+<!-- ========================================
      TAB: HOROSCOPE
      ======================================== -->
 <div class="tab-panel" id="tab-horoscope">
@@ -1104,7 +1118,7 @@ function getKyivDateString() {
 // TAB ROUTER (hash-based)
 // ============================================================
 const TabRouter = (() => {
-  const TABS = ['broadcast', 'croc', '2048', 'horoscope', 'tarot'];
+  const TABS = ['broadcast', 'croc', '2048', 'trivia', 'horoscope', 'tarot'];
   const HEADER_ACTIONS = {
     croc: 'croc-header-actions',
     broadcast: 'broadcast-header-actions',
