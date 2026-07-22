@@ -312,7 +312,7 @@ async def set_user_subscription(user_id: int, is_subscribed: bool, *, conn=None)
 async def get_daily_leaderboard(puzzle_date: date, limit: int = 10, *, conn=None) -> list[dict[str, Any]]:
     rows = await db.db_query(
         """
-        SELECT r.user_id, r.final_score, r.correct_count, r.elapsed_ms, u.first_name, u.username
+        SELECT r.user_id, r.final_score, r.correct_count, r.elapsed_ms, u.display_name
         FROM public.daily_trivia_results r
         LEFT JOIN public.users u ON r.user_id = u.user_id
         WHERE r.puzzle_date = $1 AND r.status = 'finished'
@@ -325,7 +325,7 @@ async def get_daily_leaderboard(puzzle_date: date, limit: int = 10, *, conn=None
     return [
         {
             "user_id": _row_get(r, "user_id"),
-            "name": _row_get(r, "first_name") or _row_get(r, "username") or f"User {_row_get(r, 'user_id')}",
+            "name": (_row_get(r, "display_name") or "").strip() or f"User {str(_row_get(r, 'user_id'))[-4:]}",
             "score": int(_row_get(r, "final_score", 0)),
             "correct": int(_row_get(r, "correct_count", 0)),
             "elapsed_ms": int(_row_get(r, "elapsed_ms", 0) or 0),
@@ -337,11 +337,11 @@ async def get_daily_leaderboard(puzzle_date: date, limit: int = 10, *, conn=None
 async def get_monthly_leaderboard(year: int, month: int, limit: int = 10, *, conn=None) -> list[dict[str, Any]]:
     rows = await db.db_query(
         """
-        SELECT r.user_id, SUM(r.final_score) as total_score, SUM(r.correct_count) as total_correct, COUNT(r.puzzle_date) as games_played, u.first_name, u.username
+        SELECT r.user_id, SUM(r.final_score) as total_score, SUM(r.correct_count) as total_correct, COUNT(r.puzzle_date) as games_played, u.display_name
         FROM public.daily_trivia_results r
         LEFT JOIN public.users u ON r.user_id = u.user_id
         WHERE EXTRACT(YEAR FROM r.puzzle_date) = $1 AND EXTRACT(MONTH FROM r.puzzle_date) = $2 AND r.status = 'finished'
-        GROUP BY r.user_id, u.first_name, u.username
+        GROUP BY r.user_id, u.display_name
         ORDER BY total_score DESC, games_played DESC
         LIMIT $3
         """,
@@ -351,7 +351,7 @@ async def get_monthly_leaderboard(year: int, month: int, limit: int = 10, *, con
     return [
         {
             "user_id": _row_get(r, "user_id"),
-            "name": _row_get(r, "first_name") or _row_get(r, "username") or f"User {_row_get(r, 'user_id')}",
+            "name": (_row_get(r, "display_name") or "").strip() or f"User {str(_row_get(r, 'user_id'))[-4:]}",
             "score": int(_row_get(r, "total_score", 0)),
             "correct": int(_row_get(r, "total_correct", 0)),
             "games_played": int(_row_get(r, "games_played", 0)),
