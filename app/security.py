@@ -4,10 +4,12 @@ Provides protection against malicious input and ensures data safety.
 """
 
 import asyncio
+import concurrent.futures
 import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -205,20 +207,55 @@ class InputSanitizer:
             if hostname.startswith("[") and hostname.endswith("]"):
                 hostname = hostname[1:-1]
 
-        # Check for localhost
+        # Check for IP addresses directly (original policy: Block ALL IP addresses)
+        try:
+            ipaddress.ip_address(hostname)
+            raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
+        except ValueError:
+            pass
+
+        # Check for localhost literally just in case
         if hostname.lower() == "localhost":
             raise InputSanitizationError("Localhost URLs not allowed")
 
-        # Check for IP addresses
+        # DNS resolution to catch DNS-based SSRF (e.g. localtest.me -> 127.0.0.1)
         try:
-            # This handles both IPv4 and IPv6
-            ipaddress.ip_address(hostname)
-            # If we are here, it IS an IP address.
-            # Current policy: Block ALL IP addresses.
-            raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
-        except ValueError:
-            # Not an IP address, continue
-            pass
+            def _resolve():
+                # Get all IPs for the hostname
+                return socket.getaddrinfo(hostname, None)
+
+            # Use a short timeout to prevent slow DNS resolution blocking
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(_resolve)
+            try:
+                addr_info = future.result(timeout=2.0)
+            except concurrent.futures.TimeoutError:
+                raise InputSanitizationError(f"DNS resolution timeout for hostname: {hostname}")
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+
+            for _family, _type, _proto, _canonname, sockaddr in addr_info:
+                ip_str = sockaddr[0]
+                try:
+                    ip = ipaddress.ip_address(ip_str)
+                    if (
+                        ip.is_private
+                        or ip.is_loopback
+                        or ip.is_link_local
+                        or ip.is_unspecified
+                        or ip.is_multicast
+                    ):
+                        raise InputSanitizationError(
+                            f"Hostname {hostname} resolves to blocked internal IP: {ip_str}"
+                        )
+                except ValueError:
+                    continue
+        except socket.gaierror as e:
+            raise InputSanitizationError(f"DNS resolution failed for {hostname}: {e}")
+        except InputSanitizationError:
+            raise
+        except Exception as e:
+            raise InputSanitizationError(f"Error during hostname validation: {e}")
 
         return url
 
