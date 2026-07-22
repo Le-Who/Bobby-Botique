@@ -970,13 +970,16 @@ input:checked + .slider:before { transform: translateX(16px); }
 <!-- ========================================
      TAB: TRIVIA
      ======================================== -->
+<!-- ========================================
+     TAB: TRIVIA
+     ======================================== -->
 <div class="tab-panel" id="tab-trivia">
   <div class="stats-panel">
     <div class="stats-row">
       <div class="stat-card">
         <div class="stat-card-title">Подписчики</div>
         <div class="stat-card-value" id="trivia-stats-subs">—</div>
-        <div class="stat-card-sub">Daily Challenge</div>
+        <div class="stat-card-sub" id="trivia-stats-subs-detail">Отправлено: — | Ожидает: —</div>
       </div>
       <div class="stat-card">
         <div class="stat-card-title">Игры сегодня</div>
@@ -990,8 +993,14 @@ input:checked + .slider:before { transform: translateX(16px); }
       </div>
       <div class="stat-card">
         <div class="stat-card-title">Модель LLM</div>
-        <div class="stat-card-value" style="font-size:1.05rem; margin-top:8px;">gemini-economy</div>
-        <div class="stat-card-sub">5 вопросов в день</div>
+        <div style="margin-top:6px;">
+          <select id="trivia-model-select" style="padding:4px 8px; font-size:0.85rem; width:100%; background:var(--bg-surface); color:var(--text); border:1px solid var(--border); border-radius:6px;">
+            <option value="gemini-economy">gemini-economy</option>
+            <option value="gemini-primary">gemini-primary</option>
+            <option value="opencode">opencode</option>
+          </select>
+        </div>
+        <div class="stat-card-sub" style="margin-top:4px;">5 вопросов в день</div>
       </div>
     </div>
   </div>
@@ -1002,6 +1011,19 @@ input:checked + .slider:before { transform: translateX(16px); }
         <h2 class="section-title">Календарь вопросов (последние 14 дней и +7 дней)</h2>
         <div class="s2048-puzzles" id="trivia-puzzles-list">
           <div class="loading-container"><div class="image-spinner" style="margin:0 auto 12px;"></div>Загрузка...</div>
+        </div>
+
+        <div style="margin-top: 24px; border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: var(--surface);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+            <h3 style="font-size: 1rem; font-weight: 700; margin:0;" id="trivia-lb-title">🏆 Лидерборд Trivia</h3>
+            <div style="display:flex; gap:6px;">
+              <button class="s2048-btn primary" id="trivia-lb-btn-daily" style="padding:4px 10px; font-size:0.75rem;">За день</button>
+              <button class="s2048-btn" id="trivia-lb-btn-monthly" style="padding:4px 10px; font-size:0.75rem;">За месяц</button>
+            </div>
+          </div>
+          <div id="trivia-leaderboard-container">
+            <div style="color:var(--text-muted); font-size:0.85rem;">Загрузка лидерборда...</div>
+          </div>
         </div>
       </div>
 
@@ -2031,9 +2053,15 @@ const TriviaModule = (() => {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       document.getElementById('trivia-stats-subs').textContent = data.total_subscribed || '0';
+      document.getElementById('trivia-stats-subs-detail').textContent = `Отправлено: ${data.sent_today ?? 0} | Ожидает: ${data.pending_today ?? 0}`;
       document.getElementById('trivia-stats-games').textContent = data.played_today || '0';
       document.getElementById('trivia-stats-games-detail').textContent = `Завершено: ${data.finished_today ?? 0} | В игре: ${data.active_today ?? 0}`;
       document.getElementById('trivia-stats-puzzles-ahead').textContent = data.ready_puzzles_ahead ?? '0';
+
+      const modelSelect = document.getElementById('trivia-model-select');
+      if (modelSelect && data.llm_model) {
+        modelSelect.value = data.llm_model;
+      }
     } catch (e) {
       console.error('Trivia stats error:', e);
     }
@@ -2238,6 +2266,82 @@ const TriviaModule = (() => {
     }
   }
 
+  let currentLbType = 'daily';
+
+  async function loadLeaderboard(type = 'daily') {
+    currentLbType = type;
+    const container = document.getElementById('trivia-leaderboard-container');
+    const titleEl = document.getElementById('trivia-lb-title');
+    const dailyBtn = document.getElementById('trivia-lb-btn-daily');
+    const monthlyBtn = document.getElementById('trivia-lb-btn-monthly');
+
+    if (dailyBtn && monthlyBtn) {
+      dailyBtn.className = type === 'daily' ? 's2048-btn primary' : 's2048-btn';
+      monthlyBtn.className = type === 'monthly' ? 's2048-btn primary' : 's2048-btn';
+    }
+
+    if (titleEl) {
+      titleEl.textContent = type === 'daily' 
+        ? `🏆 Лидерборд Trivia (за ${selectedDate || 'сегодня'})`
+        : `🏆 Лидерборд Trivia (за текущий месяц)`;
+    }
+
+    try {
+      let url = `/api/admin/dailytrivia/leaderboard?type=${type}`;
+      if (type === 'daily' && selectedDate) url += `&date=${selectedDate}`;
+      const res = await fetch(url, { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const items = data.items || [];
+
+      if (!items.length) {
+        container.innerHTML = '<div style="color:var(--text-muted); font-size:0.85rem; padding:8px 0;">Записей пока нет</div>';
+        return;
+      }
+
+      container.innerHTML = `
+        <table style="width:100%; border-collapse:collapse; font-size:0.85rem; text-align:left;">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border); color:var(--text-muted);">
+              <th style="padding:6px;">#</th>
+              <th style="padding:6px;">Игрок</th>
+              <th style="padding:6px;">Очки</th>
+              <th style="padding:6px;">Верно</th>
+              ${type === 'monthly' ? '<th style="padding:6px;">Игр</th>' : ''}
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map((item, idx) => `
+              <tr style="border-bottom:1px solid var(--border-subtle, rgba(255,255,255,0.05));">
+                <td style="padding:6px; font-weight:700; color:var(--accent);">${idx + 1}</td>
+                <td style="padding:6px;">${escapeHtml(item.name || 'User ' + item.user_id)}</td>
+                <td style="padding:6px; font-weight:600;">${item.score}</td>
+                <td style="padding:6px;">${item.correct} ${type === 'daily' ? '/ 5' : ''}</td>
+                ${type === 'monthly' ? `<td style="padding:6px;">${item.games_played}</td>` : ''}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } catch (e) {
+      container.innerHTML = `<div style="color:var(--danger, #ef4444); font-size:0.85rem;">Ошибка лидерборда: ${e.message}</div>`;
+    }
+  }
+
+  async function updateModel(newModel) {
+    try {
+      const res = await fetch('/api/admin/dailytrivia/settings', {
+        method: 'POST',
+        headers: apiHeaders,
+        body: JSON.stringify({ llm_model: newModel })
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      showToast(`Модель LLM успешно изменена на ${newModel}`, 'success');
+    } catch (e) {
+      showToast(`Ошибка смены модели: ${e.message}`, 'error');
+    }
+  }
+
   function init() {
     if (initialized) return;
     initialized = true;
@@ -2246,6 +2350,11 @@ const TriviaModule = (() => {
 
     document.getElementById('trivia-btn-save').addEventListener('click', save);
     document.getElementById('trivia-btn-regen').addEventListener('click', regenerate);
+    document.getElementById('trivia-lb-btn-daily').addEventListener('click', () => loadLeaderboard('daily'));
+    document.getElementById('trivia-lb-btn-monthly').addEventListener('click', () => loadLeaderboard('monthly'));
+    document.getElementById('trivia-model-select').addEventListener('change', (e) => updateModel(e.target.value));
+
+    loadLeaderboard('daily');
   }
 
   return { init };

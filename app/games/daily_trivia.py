@@ -103,11 +103,14 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> rep
 
     router = get_provider_router()
 
+    from app.repos.settings_repo import get_global_setting
+    model_name = await get_global_setting("daily_trivia_llm_model", TRIVIA_MODEL)
+
     prompt = f"Сгенерируй 5 вопросов для тривиа-викторины на дату {puzzle_date.isoformat()}."
 
     try:
         response_text, _ = await router.get_response(
-            preferred_model=TRIVIA_MODEL,
+            preferred_model=model_name,
             history=[{"role": "user", "parts": [{"text": prompt}]}],
             system_instruction=SYSTEM_PROMPT_TRIVIA,
             timeout=45.0,

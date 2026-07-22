@@ -275,16 +275,94 @@ async def get_puzzles_range(start_date: date, end_date: date, *, conn=None) -> l
     return [_row_to_puzzle(r) for r in rows]
 
 
-async def get_admin_stats(today: date, *, conn=None) -> dict[str, Any]:
-    sub_rows = await db.db_query(
+async def get_delivery_status(puzzle_date: date, *, conn=None) -> dict[str, Any]:
+    rows = await db.db_query(
         """
-        SELECT COUNT(DISTINCT user_id) as cnt
-        FROM public.broadcast_subscriptions
-        WHERE channel = 'daily_challenge' AND status = 'active'
+        SELECT
+            COUNT(*) FILTER (WHERE is_subscribed = TRUE) AS total_subscribed,
+            COUNT(*) FILTER (WHERE is_subscribed = TRUE AND last_sent_puzzle_date = $1) AS sent_today,
+            COUNT(*) FILTER (WHERE is_subscribed = TRUE AND (last_sent_puzzle_date IS NULL OR last_sent_puzzle_date < $1)) AS pending_today
+        FROM public.daily_trivia_preferences
         """,
+        (puzzle_date,),
         conn=conn,
     )
-    total_subbed = int(_row_get(sub_rows[0], "cnt", 0) if sub_rows else 0)
+    if not rows:
+        return {"total_subscribed": 0, "sent_today": 0, "pending_today": 0}
+    r = rows[0]
+    return {
+        "total_subscribed": int(_row_get(r, "total_subscribed", 0) or 0),
+        "sent_today": int(_row_get(r, "sent_today", 0) or 0),
+        "pending_today": int(_row_get(r, "pending_today", 0) or 0),
+    }
+
+
+async def set_user_subscription(user_id: int, is_subscribed: bool, *, conn=None) -> None:
+    await db.db_query(
+        """
+        INSERT INTO public.daily_trivia_preferences (user_id, is_subscribed)
+        VALUES ($1, $2)
+        ON CONFLICT (user_id) DO UPDATE SET is_subscribed = EXCLUDED.is_subscribed, updated_at = NOW()
+        """,
+        (user_id, is_subscribed),
+        conn=conn,
+    )
+
+
+async def get_daily_leaderboard(puzzle_date: date, limit: int = 10, *, conn=None) -> list[dict[str, Any]]:
+    rows = await db.db_query(
+        """
+        SELECT r.user_id, r.final_score, r.correct_count, r.elapsed_ms, u.first_name, u.username
+        FROM public.daily_trivia_results r
+        LEFT JOIN public.users u ON r.user_id = u.user_id
+        WHERE r.puzzle_date = $1 AND r.status = 'finished'
+        ORDER BY r.final_score DESC, r.elapsed_ms ASC
+        LIMIT $2
+        """,
+        (puzzle_date, limit),
+        conn=conn,
+    )
+    return [
+        {
+            "user_id": _row_get(r, "user_id"),
+            "name": _row_get(r, "first_name") or _row_get(r, "username") or f"User {_row_get(r, 'user_id')}",
+            "score": int(_row_get(r, "final_score", 0)),
+            "correct": int(_row_get(r, "correct_count", 0)),
+            "elapsed_ms": int(_row_get(r, "elapsed_ms", 0) or 0),
+        }
+        for r in rows
+    ]
+
+
+async def get_monthly_leaderboard(year: int, month: int, limit: int = 10, *, conn=None) -> list[dict[str, Any]]:
+    rows = await db.db_query(
+        """
+        SELECT r.user_id, SUM(r.final_score) as total_score, SUM(r.correct_count) as total_correct, COUNT(r.puzzle_date) as games_played, u.first_name, u.username
+        FROM public.daily_trivia_results r
+        LEFT JOIN public.users u ON r.user_id = u.user_id
+        WHERE EXTRACT(YEAR FROM r.puzzle_date) = $1 AND EXTRACT(MONTH FROM r.puzzle_date) = $2 AND r.status = 'finished'
+        GROUP BY r.user_id, u.first_name, u.username
+        ORDER BY total_score DESC, games_played DESC
+        LIMIT $3
+        """,
+        (year, month, limit),
+        conn=conn,
+    )
+    return [
+        {
+            "user_id": _row_get(r, "user_id"),
+            "name": _row_get(r, "first_name") or _row_get(r, "username") or f"User {_row_get(r, 'user_id')}",
+            "score": int(_row_get(r, "total_score", 0)),
+            "correct": int(_row_get(r, "total_correct", 0)),
+            "games_played": int(_row_get(r, "games_played", 0)),
+        }
+        for r in rows
+    ]
+
+
+async def get_admin_stats(today: date, *, conn=None) -> dict[str, Any]:
+    delivery = await get_delivery_status(today, conn=conn)
+    total_subbed = delivery["total_subscribed"]
 
     played_rows = await db.db_query(
         """

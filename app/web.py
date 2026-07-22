@@ -1223,9 +1223,50 @@ def _serialize_daily_trivia_puzzle(puzzle):
 async def api_admin_dailytrivia_stats():
     from app.repos import daily_trivia as daily_trivia_repo
     from app.repos.crocodile_daily import today_puzzle_date
+    from app.repos.settings_repo import get_global_setting
     today = today_puzzle_date()
     stats = await daily_trivia_repo.get_admin_stats(today)
+    delivery_on = await get_global_setting("daily_trivia_delivery_enabled", "on")
+    stats["delivery_enabled"] = (delivery_on.strip().lower() != "off")
+    stats["llm_model"] = await get_global_setting("daily_trivia_llm_model", "gemini-economy")
+    delivery_info = await daily_trivia_repo.get_delivery_status(today)
+    stats["sent_today"] = delivery_info.get("sent_today", 0)
+    stats["pending_today"] = delivery_info.get("pending_today", 0)
     return jsonify(stats)
+
+
+@quart_app.route("/api/admin/dailytrivia/settings", methods=["POST"])
+@require_auth
+async def api_admin_dailytrivia_settings():
+    from app.repos.settings_repo import set_global_setting
+    data = await request.get_json() or {}
+    if "llm_model" in data:
+        model = str(data["llm_model"]).strip()
+        await set_global_setting("daily_trivia_llm_model", model)
+    if "delivery_enabled" in data:
+        val = "on" if bool(data["delivery_enabled"]) else "off"
+        await set_global_setting("daily_trivia_delivery_enabled", val)
+    return jsonify({"success": True})
+
+
+@quart_app.route("/api/admin/dailytrivia/leaderboard", methods=["GET"])
+@require_auth
+async def api_admin_dailytrivia_leaderboard():
+    from app.repos import daily_trivia as daily_trivia_repo
+    from app.repos.crocodile_daily import today_puzzle_date
+    lb_type = request.args.get("type", "daily")
+    today = today_puzzle_date()
+
+    if lb_type == "monthly":
+        year = int(request.args.get("year", today.year))
+        month = int(request.args.get("month", today.month))
+        items = await daily_trivia_repo.get_monthly_leaderboard(year, month)
+    else:
+        date_str = request.args.get("date")
+        p_date = datetime.date.fromisoformat(date_str) if date_str else today
+        items = await daily_trivia_repo.get_daily_leaderboard(p_date)
+
+    return jsonify({"type": lb_type, "items": items})
 
 
 @quart_app.route("/api/admin/dailytrivia", methods=["GET"])
@@ -1236,9 +1277,28 @@ async def api_admin_dailytrivia_list():
     today = today_puzzle_date()
     start_date = today - datetime.timedelta(days=14)
     end_date = today + datetime.timedelta(days=7)
-    puzzles = await daily_trivia_repo.get_puzzles_range(start_date, end_date)
+    db_puzzles = await daily_trivia_repo.get_puzzles_range(start_date, end_date)
+    
+    db_puzzles_by_date = {p.puzzle_date: p for p in db_puzzles}
+    all_puzzles = []
+    
+    curr = start_date
+    while curr <= end_date:
+        if curr in db_puzzles_by_date:
+            all_puzzles.append(_serialize_daily_trivia_puzzle(db_puzzles_by_date[curr]))
+        else:
+            all_puzzles.append({
+                "date": curr.isoformat(),
+                "status": "missing",
+                "prepared_at": None,
+                "questions": [],
+            })
+        curr += datetime.timedelta(days=1)
+        
+    all_puzzles.sort(key=lambda x: x["date"], reverse=True)
+    
     return jsonify({
-        "puzzles": [_serialize_daily_trivia_puzzle(p) for p in puzzles],
+        "puzzles": all_puzzles,
         "today": today.isoformat(),
     })
 
