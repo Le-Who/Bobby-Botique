@@ -1007,7 +1007,8 @@ input:checked + .slider:before { transform: translateX(16px); }
 
   <div class="s2048-shell" style="margin-top: 1.2rem;">
     <section class="s2048-layout">
-      <div>
+      <!-- Left pane -->
+      <div id="trivia-left-pane">
         <h2 class="section-title">Календарь вопросов (последние 14 дней и +7 дней)</h2>
         <div class="s2048-puzzles" id="trivia-puzzles-list">
           <div class="loading-container"><div class="image-spinner" style="margin:0 auto 12px;"></div>Загрузка...</div>
@@ -1027,13 +1028,15 @@ input:checked + .slider:before { transform: translateX(16px); }
         </div>
       </div>
 
-      <aside class="s2048-editor" style="top: 110px;">
+      <!-- Right pane (Editor) -->
+      <aside class="s2048-editor" id="trivia-editor-pane" style="display: none; width: 100%; position: relative;">
+        <button class="s2048-btn" id="trivia-btn-close" style="margin-bottom: 16px; font-size: 0.8rem; border-color: var(--text-dim); color: var(--text-muted);">⬅ Назад к календарю</button>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
           <h3 style="font-size: 1rem; font-weight: 700;" id="trivia-editor-title">Редактор Trivia</h3>
           <span class="s2048-badge" id="trivia-editor-status">—</span>
         </div>
 
-        <div id="trivia-editor-questions" style="max-height: 55vh; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 12px;">
+        <div id="trivia-editor-questions" style="overflow-y: visible; padding-right: 4px; display: flex; flex-direction: column; gap: 12px;">
           <!-- 5 question forms rendered here -->
         </div>
 
@@ -2088,12 +2091,12 @@ const TriviaModule = (() => {
       const todayStr = data.today || getKyivDateString();
       renderPuzzles(puzzles, container, todayStr);
 
-      if (!selectedDate && puzzles.length) {
-        const todayPuzzle = puzzles.find(p => p.date === todayStr);
-        selectPuzzle(todayPuzzle || puzzles[0]);
-      } else if (selectedDate) {
+      if (selectedDate) {
         const p = puzzles.find(x => x.date === selectedDate);
-        selectPuzzle(p || puzzles[0]);
+        if (p) {
+          selectedPuzzle = p;
+          selectPuzzle(p, true);
+        }
       }
     } catch (e) {
       container.innerHTML = `<div class="empty-state error-text">Ошибка загрузки: ${e.message}</div>`;
@@ -2105,7 +2108,23 @@ const TriviaModule = (() => {
       container.innerHTML = '<div class="empty-state">Нет викторин</div>';
       return;
     }
-    container.innerHTML = list.map(p => {
+    
+    const future = [];
+    const recent = [];
+    const older = [];
+
+    const todayDate = new Date(todayStr);
+    const sevenDaysAgo = new Date(todayDate);
+    sevenDaysAgo.setDate(todayDate.getDate() - 7);
+    const sevenDaysAgoStr = sevenDaysAgo.toISOString().slice(0, 10);
+
+    list.forEach(p => {
+      if (p.date > todayStr) future.push(p);
+      else if (p.date >= sevenDaysAgoStr) recent.push(p);
+      else older.push(p);
+    });
+
+    const renderCard = (p) => {
       const isToday = p.date === todayStr;
       const isSelected = selectedDate === p.date;
       const isReady = p.status === 'ready';
@@ -2121,7 +2140,21 @@ const TriviaModule = (() => {
           </div>
         </div>
       `;
-    }).join('');
+    };
+
+    const renderGroup = (title, items) => {
+      if (!items.length) return '';
+      let groupHtml = `<h3 style="width: 100%; grid-column: 1 / -1; font-size: 0.9rem; color: var(--accent); margin-top: 10px; border-bottom: 1px solid var(--border); padding-bottom: 4px;">${title}</h3>`;
+      groupHtml += items.map(renderCard).join('');
+      return groupHtml;
+    };
+
+    let html = '';
+    html += renderGroup('🔮 Будущие', future);
+    html += renderGroup('📅 Последние 7 дней', recent);
+    html += renderGroup('🕰 Более старые', older);
+
+    container.innerHTML = html;
 
     container.querySelectorAll('.s2048-puzzle').forEach(el => {
       el.addEventListener('click', () => {
@@ -2132,10 +2165,18 @@ const TriviaModule = (() => {
     });
   }
 
-  function selectPuzzle(p) {
+  function selectPuzzle(p, isReload = false) {
     if (!p) return;
     selectedDate = p.date;
     selectedPuzzle = p;
+
+    // Show editor in foreground
+    document.getElementById('trivia-left-pane').style.display = 'none';
+    const editorPane = document.getElementById('trivia-editor-pane');
+    editorPane.style.display = 'block';
+    editorPane.style.gridColumn = '1 / -1';
+    editorPane.style.maxWidth = '1000px';
+    editorPane.style.margin = '0 auto';
 
     document.querySelectorAll('#trivia-puzzles-list .s2048-puzzle').forEach(el => {
       el.classList.toggle('active', el.dataset.date === p.date);
@@ -2145,6 +2186,14 @@ const TriviaModule = (() => {
     document.getElementById('trivia-editor-status').textContent = p.status || 'draft';
 
     renderEditorQuestions(p.questions || []);
+  }
+
+  function closeEditor() {
+    document.getElementById('trivia-left-pane').style.display = 'block';
+    document.getElementById('trivia-editor-pane').style.display = 'none';
+    selectedDate = null;
+    selectedPuzzle = null;
+    document.querySelectorAll('#trivia-puzzles-list .s2048-puzzle').forEach(el => el.classList.remove('active'));
   }
 
   function renderEditorQuestions(questions) {
@@ -2360,6 +2409,7 @@ const TriviaModule = (() => {
 
     document.getElementById('trivia-btn-save').addEventListener('click', save);
     document.getElementById('trivia-btn-regen').addEventListener('click', regenerate);
+    document.getElementById('trivia-btn-close').addEventListener('click', closeEditor);
     document.getElementById('trivia-lb-btn-daily').addEventListener('click', () => loadLeaderboard('daily'));
     document.getElementById('trivia-lb-btn-monthly').addEventListener('click', () => loadLeaderboard('monthly'));
     document.getElementById('trivia-model-select').addEventListener('change', (e) => updateModel(e.target.value));
