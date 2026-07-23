@@ -297,7 +297,7 @@ let answered = false;
 
 async function defInit() {
   try {
-    const response = await fetch('/api/miniapp/trivia/today', {
+    const response = await fetch('/webapp/api/miniapp/trivia/today', {
       headers: { 'X-TG-INIT-DATA': tg ? tg.initData : '' }
     });
     const data = await response.json();
@@ -380,7 +380,7 @@ function selectAnswer(selectedIdx) {
   document.getElementById('nextBtn').style.display = 'block';
 
   // Async submit score to backend
-  fetch('/api/miniapp/trivia/submit_answer', {
+  fetch('/webapp/api/miniapp/trivia/submit_answer', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
