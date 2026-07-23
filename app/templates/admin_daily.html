@@ -896,6 +896,7 @@ input:checked + .slider:before { transform: translateX(16px); }
           </label>
         </div>
         <div class="stat-card-sub" id="croc-stats-placeholder" style="margin-top:4px;">Баннер: —</div>
+        <div class="stat-card-sub" id="croc-stats-model" style="margin-top:2px;">Модель: —</div>
       </div>
       <div class="stat-card">
         <div class="stat-card-title">Рассылка</div>
@@ -926,6 +927,10 @@ input:checked + .slider:before { transform: translateX(16px); }
       <div class="s2048-panel">
         <label>Готовые пазлы</label>
         <strong id="s2048-ready-count">0</strong>
+      </div>
+      <div class="s2048-panel">
+        <label>Следующая цель</label>
+        <strong id="s2048-next-goal">—</strong>
       </div>
       <div class="s2048-panel" style="display:flex; align-items:center; gap:8px;">
         <label style="margin:0;">Баннер</label>
@@ -990,7 +995,7 @@ input:checked + .slider:before { transform: translateX(16px); }
   <div class="stats-panel">
     <div class="stats-row">
       <div class="stat-card">
-        <div class="stat-card-title">Подписчики</div>
+        <div class="stat-card-title">Рассылка</div>
         <div class="stat-card-value" id="trivia-stats-subs">—</div>
         <div class="stat-card-sub" id="trivia-stats-subs-detail">Отправлено: — | Ожидает: —</div>
       </div>
@@ -2089,7 +2094,7 @@ const TriviaModule = (() => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      document.getElementById('trivia-stats-subs').textContent = data.total_subscribed || '0';
+      document.getElementById('trivia-stats-subs').textContent = `${data.sent_today ?? 0} / ${data.total_subscribed ?? 0}`;
       document.getElementById('trivia-stats-subs-detail').textContent = `Отправлено: ${data.sent_today ?? 0} | Ожидает: ${data.pending_today ?? 0}`;
       document.getElementById('trivia-stats-games').textContent = data.played_today || '0';
       document.getElementById('trivia-stats-games-detail').textContent = `Завершено: ${data.finished_today ?? 0} | В игре: ${data.active_today ?? 0}`;

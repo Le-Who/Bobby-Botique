@@ -315,7 +315,7 @@ async def get_daily_leaderboard(puzzle_date: date, limit: int = 10, *, conn=None
         SELECT r.user_id, r.final_score, r.correct_count, r.elapsed_ms, u.display_name
         FROM public.daily_trivia_results r
         LEFT JOIN public.users u ON r.user_id = u.user_id
-        WHERE r.puzzle_date = $1 AND r.status = 'finished'
+        WHERE r.puzzle_date = $1 AND r.status = 'completed'
         ORDER BY r.final_score DESC, r.elapsed_ms ASC
         LIMIT $2
         """,
@@ -340,7 +340,7 @@ async def get_monthly_leaderboard(year: int, month: int, limit: int = 10, *, con
         SELECT r.user_id, SUM(r.final_score) as total_score, SUM(r.correct_count) as total_correct, COUNT(r.puzzle_date) as games_played, u.display_name
         FROM public.daily_trivia_results r
         LEFT JOIN public.users u ON r.user_id = u.user_id
-        WHERE EXTRACT(YEAR FROM r.puzzle_date) = $1 AND EXTRACT(MONTH FROM r.puzzle_date) = $2 AND r.status = 'finished'
+        WHERE EXTRACT(YEAR FROM r.puzzle_date) = $1 AND EXTRACT(MONTH FROM r.puzzle_date) = $2 AND r.status = 'completed'
         GROUP BY r.user_id, u.display_name
         ORDER BY total_score DESC, games_played DESC
         LIMIT $3
@@ -368,7 +368,7 @@ async def get_admin_stats(today: date, *, conn=None) -> dict[str, Any]:
         """
         SELECT
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status = 'finished') as finished,
+            COUNT(*) FILTER (WHERE status = 'completed') as finished,
             COUNT(*) FILTER (WHERE status = 'active') as active
         FROM public.daily_trivia_results
         WHERE puzzle_date = $1
