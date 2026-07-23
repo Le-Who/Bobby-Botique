@@ -295,8 +295,6 @@ let correctCount = 0;
 let startTime = 0;
 let answered = false;
 
-async defInit();
-
 async function defInit() {
   try {
     const response = await fetch('/api/miniapp/trivia/today', {
@@ -410,6 +408,8 @@ function showFinishScreen() {
   document.getElementById('finalDetails').innerText = `Вы правильно ответили на ${correctCount} из ${questions.length} вопросов`;
   document.getElementById('finishView').style.display = 'block';
 }
+
+defInit();
 </script>
 </body>
 </html>
