@@ -1440,6 +1440,12 @@ async def api_miniapp_trivia_submit_answer():
     if user_id > 0:
         today = today_puzzle_date()
         result = await get_or_create_result(user_id, today)
+
+        # Guard: game already completed — ignore further submissions.
+        # This prevents correct_count accumulation and score overwrites on replay.
+        if result.status == "completed":
+            return jsonify({"success": True, "already_completed": True})
+
         new_answers = list(result.answers)
         new_answers.append(
             {

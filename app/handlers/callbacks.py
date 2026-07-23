@@ -130,6 +130,7 @@ def register(application: Application) -> None:
         unauthorized_dismiss_callback,
     )
     from app.handlers.daily_2048 import monthly_champions_callback
+    from app.handlers.daily_trivia import trivia_monthly_champions_callback
 
     # ── Fast (non-blocking) callbacks ────────────────────────────────────
     _add_fast_callback(application, toggle_search_callback, "^toggle_search$")
@@ -216,6 +217,7 @@ def register(application: Application) -> None:
         CallbackQueryHandler(regenerate_dailycroc_image_callback, pattern="^dailycroc_status:regen:.*$")
     )
     _add_fast_callback(application, monthly_champions_callback, "^daily2048:month:")
+    _add_fast_callback(application, trivia_monthly_champions_callback, "^dailytrivia:month:")
 
     # Admin unauthorized user alerts
     application.add_handler(CallbackQueryHandler(unauthorized_add_callback, pattern="^unauthorized_add:"))

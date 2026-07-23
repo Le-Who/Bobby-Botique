@@ -215,3 +215,45 @@ async def check_daily_trivia_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         await asyncio.gather(*[_bounded_discovery(item) for item in discovery])
 
+
+async def trivia_monthly_champions_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle 'Лучшие за месяц' button on the trivia result message."""
+    import html as _html
+
+    del context
+    query = update.callback_query
+    if not query or not query.data:
+        return
+
+    # callback_data = "dailytrivia:month:YYYY-MM"
+    raw_month = query.data.rsplit(":", 1)[-1]
+    try:
+        year_s, month_s = raw_month.split("-", 1)
+        year = int(year_s)
+        month = int(month_s)
+        if not 1 <= month <= 12:
+            raise ValueError
+    except ValueError:
+        await query.answer("Некорректный месяц", show_alert=True)
+        return
+
+    await query.answer("Загружаю лучших за месяц…")
+
+    leaderboard = await trivia_repo.get_monthly_leaderboard(year, month)
+
+    lines = [f"🏆 <b>Лучшие игроки {month:02d}.{year}</b>", ""]
+    if not leaderboard:
+        lines.append("Пока нет завершённых результатов за этот месяц.")
+    else:
+        for idx, row in enumerate(leaderboard, start=1):
+            name = _html.escape((row.get("name") or "").strip() or f"игрок {str(row['user_id'])[-4:]}")
+            lines.append(
+                f"{idx}. {name} — <b>{int(row['score'])}</b> очков · "
+                f"{int(row['correct'])}/5 · {int(row['games_played'])} дн."
+            )
+
+    from telegram import Message
+    if isinstance(query.message, Message):
+        await query.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
