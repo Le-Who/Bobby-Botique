@@ -1367,6 +1367,8 @@ async def game_page():
     mode = _req.args.get("mode") or ("daily" if game_id == "daily" else "classic")
     if game_id in {"daily2048", "2048"} or mode in {"daily2048", "2048"}:
         return await render_template("daily_2048.html")
+    if game_id in {"dailytrivia", "trivia"} or mode in {"dailytrivia", "trivia"}:
+        return await render_template("daily_trivia.html")
     return await render_template("crocodile.html", game_id=game_id, mode=mode)
 
 
