@@ -86,15 +86,33 @@ async def send_daily_trivia_entry(
         try:
             message = await bot.send_photo(photo=cover, caption=caption, **send_kwargs)
             await cover_photo.remember_cover_file_id("dailytrivia", message)
+            await trivia_repo.register_prompt_message(
+                user_id=user_id,
+                puzzle_date=puzzle_date,
+                chat_id=message.chat_id,
+                message_id=message.message_id,
+            )
         except Exception as exc:
             logger.warning("daily trivia cover prompt failed user=%s: %s — falling back to text", user_id, exc)
             try:
-                await bot.send_message(text=caption, **send_kwargs)
+                message = await bot.send_message(text=caption, **send_kwargs)
+                await trivia_repo.register_prompt_message(
+                    user_id=user_id,
+                    puzzle_date=puzzle_date,
+                    chat_id=message.chat_id,
+                    message_id=message.message_id,
+                )
             except Exception as exc2:
                 logger.warning("daily trivia text prompt failed user=%s: %s", user_id, exc2)
     else:
         try:
-            await bot.send_message(text=caption, **send_kwargs)
+            message = await bot.send_message(text=caption, **send_kwargs)
+            await trivia_repo.register_prompt_message(
+                user_id=user_id,
+                puzzle_date=puzzle_date,
+                chat_id=message.chat_id,
+                message_id=message.message_id,
+            )
         except Exception as exc:
             logger.warning("daily trivia prompt failed user=%s: %s", user_id, exc)
 

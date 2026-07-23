@@ -1465,6 +1465,19 @@ async def api_miniapp_trivia_submit_answer():
             finished=is_finished,
         )
 
+        if is_finished:
+            try:
+                from app.bot_instance import get_bot
+                from app.games.daily_trivia_telegram import send_trivia_result_message
+                bot = get_bot()
+                if bot:
+                    await send_trivia_result_message(bot, user_id, today)
+            except Exception as exc:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "trivia: result message failed user=%s: %s", user_id, exc
+                )
+
     return jsonify({"success": True})
 
 

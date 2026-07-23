@@ -33,6 +33,7 @@ EXPECTED_TABLES = frozenset(
         "daily_2048_results",
         "daily_trivia_puzzles",
         "daily_trivia_results",
+        "daily_trivia_prompt_messages",
         "daily_trivia_preferences",
         "error_logs",
         "tarot_daily_readings",
