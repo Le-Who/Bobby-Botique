@@ -69,20 +69,34 @@ async def send_daily_trivia_entry(
     reply_to_message_id: int | None = None,
     mark_delivered: bool = True,
 ) -> None:
+    from app.games import cover_photo
+
     caption = _entry_caption(puzzle_date)
     keyboard = daily_trivia_keyboard(include_subscribe=include_subscribe)
+    cover = await cover_photo.get_cover_photo("dailytrivia")
     send_kwargs = {
         "chat_id": user_id,
-        "text": caption,
         "parse_mode": ParseMode.HTML,
         "reply_markup": keyboard,
     }
     if reply_to_message_id is not None:
         send_kwargs["reply_to_message_id"] = reply_to_message_id
-    try:
-        await bot.send_message(**send_kwargs)
-    except Exception as exc:
-        logger.warning("daily trivia prompt failed user=%s: %s", user_id, exc)
+
+    if cover:
+        try:
+            message = await bot.send_photo(photo=cover, caption=caption, **send_kwargs)
+            await cover_photo.remember_cover_file_id("dailytrivia", message)
+        except Exception as exc:
+            logger.warning("daily trivia cover prompt failed user=%s: %s — falling back to text", user_id, exc)
+            try:
+                await bot.send_message(text=caption, **send_kwargs)
+            except Exception as exc2:
+                logger.warning("daily trivia text prompt failed user=%s: %s", user_id, exc2)
+    else:
+        try:
+            await bot.send_message(text=caption, **send_kwargs)
+        except Exception as exc:
+            logger.warning("daily trivia prompt failed user=%s: %s", user_id, exc)
 
     if mark_delivered:
         pref = await daily_delivery_repo.get_preference(user_id)
@@ -94,16 +108,30 @@ async def send_daily_trivia_entry(
 
 
 async def send_discovery_intro(bot, user_id: int) -> bool:
+    from app.games import cover_photo
+
     text = (
         "🧠 <b>Новая daily-игра: Daily Trivia</b>\n\n"
         "Каждый день 5 уникальных вопросов обо всём на свете! "
         "Проверь свои знания и узнай интересные факты."
     )
     keyboard = daily_trivia_keyboard(include_subscribe=True)
-    try:
-        await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
-    except Exception as exc:
-        logger.warning("daily trivia discovery failed user=%s: %s", user_id, exc)
+    cover = await cover_photo.get_cover_photo("dailytrivia")
+    if cover:
+        try:
+            message = await bot.send_photo(chat_id=user_id, photo=cover, caption=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+            await cover_photo.remember_cover_file_id("dailytrivia", message)
+        except Exception as exc:
+            logger.warning("daily trivia photo discovery failed user=%s: %s", user_id, exc)
+            try:
+                await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+            except Exception as exc2:
+                logger.warning("daily trivia discovery failed user=%s: %s", user_id, exc2)
+    else:
+        try:
+            await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        except Exception as exc:
+            logger.warning("daily trivia discovery failed user=%s: %s", user_id, exc)
     await daily_delivery_repo.mark_discovery_sent(user_id)
     return True
 

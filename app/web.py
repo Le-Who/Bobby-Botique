@@ -1045,6 +1045,63 @@ async def api_admin_dailycroc_image():
         return jsonify({"error": "proxy_error", "detail": str(exc)}), 502
 
 
+@quart_app.route("/api/admin/game-cover/<game_id>", methods=["GET"])
+@require_auth
+async def api_admin_get_game_cover(game_id: str):
+    """Serve cover photo for a daily game (from disk or cached Telegram file_id)."""
+    from quart import Response, send_file
+
+    from app.games import cover_photo
+    from app.repos.settings_repo import get_global_setting
+
+    setting_key, file_path = cover_photo.get_game_keys(game_id)
+    if file_path.exists():
+        return await send_file(file_path, mimetype="image/png")
+
+    file_id = await get_global_setting(setting_key, "")
+    if file_id:
+        try:
+            import io
+
+            from app.bot_instance import get_bot
+            from app.utils.tg_file import get_file_bytes
+
+            bot = get_bot()
+            if bot is not None:
+                tg_file = await bot.get_file(file_id)
+                data = await get_file_bytes(bot, tg_file)
+                return Response(
+                    io.BytesIO(data).read(),
+                    status=200,
+                    headers={
+                        "Content-Type": "image/jpeg",
+                        "Cache-Control": "no-cache",
+                    },
+                )
+        except Exception as exc:
+            logging.warning("Failed to fetch game cover from Telegram: %s", exc)
+
+    return jsonify({"error": "no_cover"}), 404
+
+
+@quart_app.route("/api/admin/game-cover/<game_id>", methods=["POST"])
+@require_auth
+async def api_admin_upload_game_cover(game_id: str):
+    """Upload a new cover photo file for a daily game."""
+    files = await request.files
+    uploaded_file = files.get("file")
+    if not uploaded_file:
+        return jsonify({"error": "missing file"}), 400
+
+    image_bytes = uploaded_file.read()
+    if not image_bytes:
+        return jsonify({"error": "empty file"}), 400
+
+    from app.games import cover_photo
+    file_path = await cover_photo.set_cover_from_upload(game_id, image_bytes)
+    return jsonify({"success": True, "path": file_path.name})
+
+
 @quart_app.route("/api/admin/dailycroc/stats", methods=["GET"])
 @require_auth
 async def api_admin_dailycroc_stats():

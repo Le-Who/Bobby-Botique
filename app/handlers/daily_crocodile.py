@@ -3,10 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import time
 from datetime import UTC, date, datetime
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
@@ -42,24 +41,12 @@ async def _edit_callback_text(
 
 
 _TIME_CHOICES = (9, 13, 19, 21)
-_PLACEHOLDER_KEY = "daily_croc_placeholder_file_id"
-
-# Simple in-process cache so we don't hit the DB on every single delivery.
-_placeholder_cache: str = ""
-_placeholder_cache_ts: float = 0.0
-_PLACEHOLDER_TTL = 60.0  # seconds
 
 
-async def _get_placeholder_file_id() -> str:
+async def _get_placeholder_file_id() -> str | InputFile | None:
+    from app.games import cover_photo
 
-    global _placeholder_cache, _placeholder_cache_ts  # noqa: PLW0603
-    now = time.monotonic()
-    if now - _placeholder_cache_ts < _PLACEHOLDER_TTL:
-        return _placeholder_cache
-    val = await get_global_setting(_PLACEHOLDER_KEY, "")
-    _placeholder_cache = str(val or "")
-    _placeholder_cache_ts = now
-    return _placeholder_cache
+    return await cover_photo.get_cover_photo("dailycroc")
 
 
 def _webapp_base() -> str:
@@ -174,7 +161,7 @@ async def _send_daily_entry_message(
     track_prompt_message: bool = True,
 ) -> bool:
     keyboard = daily_play_keyboard(include_subscribe=include_subscribe)
-    placeholder_file_id = (await _get_placeholder_file_id()).strip()
+    placeholder_file_id = await _get_placeholder_file_id()
     send_kwargs = {
         "chat_id": chat_id,
         "parse_mode": ParseMode.HTML,
@@ -189,6 +176,8 @@ async def _send_daily_entry_message(
                 caption=caption,
                 **send_kwargs,
             )
+            from app.games import cover_photo
+            await cover_photo.remember_cover_file_id("dailycroc", msg)
             if track_prompt_message:
                 await repo.register_prompt_message(
                     user_id=user_id,

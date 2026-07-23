@@ -781,10 +781,13 @@ def register(application: Application) -> None:
         register_group_command,
         reload_config_command,
         role_conv_metrics_command,
+        set_daily2048_cover_command,
         set_daily_game_command,
         set_dailycroc_delivery_command,
         set_dailycroc_model_command,
         set_dailycroc_placeholder_command,
+        set_dailytrivia_cover_command,
+        set_game_cover_command,
         set_inline_model_command,
         set_inline_tabs_command,
         set_inline_thinking_command,
@@ -816,6 +819,9 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("set_inline_model", set_inline_model_command))
     application.add_handler(CommandHandler("dailycroc_status", dailycroc_status_command))
     application.add_handler(CommandHandler("set_dailycroc_placeholder", set_dailycroc_placeholder_command))
+    application.add_handler(CommandHandler("set_daily2048_cover", set_daily2048_cover_command))
+    application.add_handler(CommandHandler("set_dailytrivia_cover", set_dailytrivia_cover_command))
+    application.add_handler(CommandHandler("set_game_cover", set_game_cover_command))
     application.add_handler(CommandHandler("rolemetrics", role_conv_metrics_command))
     application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CommandHandler("reloadconfig", reload_config_command))

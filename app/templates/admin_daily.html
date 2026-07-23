@@ -887,9 +887,15 @@ input:checked + .slider:before { transform: translateX(16px); }
         <div class="stat-card-sub" id="croc-stats-games-detail">Побед: — | В игре: —</div>
       </div>
       <div class="stat-card">
-        <div class="stat-card-title">Параметры</div>
-        <div class="stat-card-value" id="croc-stats-placeholder" style="font-size:1.05rem; margin-top:8px;">Баннер: —</div>
-        <div class="stat-card-sub" id="croc-stats-model">Модель: —</div>
+        <div class="stat-card-title">Баннер Croc</div>
+        <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
+          <img id="dailycroc-cover-preview" src="/api/admin/game-cover/dailycroc" style="height:32px; width:56px; border-radius:4px; object-fit:cover; border:1px solid var(--border);" onerror="this.style.display='none'">
+          <label class="btn btn-secondary" style="font-size:0.75rem; padding:4px 8px; cursor:pointer; margin:0;">
+            📁 Загрузить
+            <input type="file" accept="image/*" style="display:none;" onchange="uploadGameBanner('dailycroc', this)">
+          </label>
+        </div>
+        <div class="stat-card-sub" id="croc-stats-placeholder" style="margin-top:4px;">Баннер: —</div>
       </div>
       <div class="stat-card">
         <div class="stat-card-title">Рассылка</div>
@@ -921,9 +927,13 @@ input:checked + .slider:before { transform: translateX(16px); }
         <label>Готовые пазлы</label>
         <strong id="s2048-ready-count">0</strong>
       </div>
-      <div class="s2048-panel">
-        <label>Ближайшая цель</label>
-        <strong id="s2048-next-goal">—</strong>
+      <div class="s2048-panel" style="display:flex; align-items:center; gap:8px;">
+        <label style="margin:0;">Баннер</label>
+        <img id="daily2048-cover-preview" src="/api/admin/game-cover/daily2048" style="height:28px; width:48px; border-radius:4px; object-fit:cover; border:1px solid var(--border);" onerror="this.style.display='none'">
+        <label class="btn btn-secondary" style="font-size:0.75rem; padding:2px 6px; cursor:pointer; margin:0;">
+          📁 Загрузить
+          <input type="file" accept="image/*" style="display:none;" onchange="uploadGameBanner('daily2048', this)">
+        </label>
       </div>
     </section>
 
@@ -1004,6 +1014,17 @@ input:checked + .slider:before { transform: translateX(16px); }
           </select>
         </div>
         <div class="stat-card-sub" style="margin-top:4px;">5 вопросов в день</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-title">Баннер Trivia</div>
+        <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
+          <img id="dailytrivia-cover-preview" src="/api/admin/game-cover/dailytrivia" style="height:32px; width:56px; border-radius:4px; object-fit:cover; border:1px solid var(--border);" onerror="this.style.display='none'">
+          <label class="btn btn-secondary" style="font-size:0.75rem; padding:4px 8px; cursor:pointer; margin:0;">
+            📁 Загрузить
+            <input type="file" accept="image/*" style="display:none;" onchange="uploadGameBanner('dailytrivia', this)">
+          </label>
+        </div>
+        <div class="stat-card-sub" style="margin-top:4px;">Рассылка + интро</div>
       </div>
     </div>
   </div>
@@ -2524,6 +2545,33 @@ const TarotModule = (() => {
   }
   return { init };
 })();
+
+async function uploadGameBanner(gameId, inputEl) {
+  if (!inputEl.files || !inputEl.files[0]) return;
+  const file = inputEl.files[0];
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const res = await fetch(`/api/admin/game-cover/${gameId}`, {
+      method: 'POST',
+      headers: { credentials: 'same-origin' },
+      body: formData
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`✅ Баннер ${gameId} сохранён!`, 'success');
+      const imgEl = document.getElementById(`${gameId}-cover-preview`);
+      if (imgEl) {
+        imgEl.src = `/api/admin/game-cover/${gameId}?t=${Date.now()}`;
+        imgEl.style.display = 'block';
+      }
+    } else {
+      showToast(`❌ Ошибка: ${data.error || 'upload_failed'}`, 'error');
+    }
+  } catch (e) {
+    showToast(`❌ Ошибка загрузки: ${e.message}`, 'error');
+  }
+}
 
 // ============================================================
 // INIT

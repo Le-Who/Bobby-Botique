@@ -2,20 +2,14 @@ from __future__ import annotations
 
 import html
 from datetime import date
-from pathlib import Path
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputMediaPhoto
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 
-from app.games import daily_2048
+from app.games import cover_photo, daily_2048
 from app.repos import daily_2048 as repo
-from app.repos.settings_repo import get_global_setting, set_global_setting
-
-_COVER_FILE_ID_KEY = "daily2048_cover_file_id"
-_COVER_PATH = Path(__file__).resolve().parents[2] / "artifacts" / "daily2048_cover.png"
-_cover_file_id_cache = ""
 
 
 def _format_duration(elapsed_ms: int) -> str:
@@ -32,26 +26,12 @@ def _user_label(user_id: int) -> str:
     return f"игрок {str(user_id)[-4:]}"
 
 
-async def _get_cover_photo(*, force_upload: bool = False) -> str | InputFile:
-    global _cover_file_id_cache  # noqa: PLW0603
-    if not force_upload:
-        if not _cover_file_id_cache:
-            _cover_file_id_cache = await get_global_setting(_COVER_FILE_ID_KEY, "")
-        if _cover_file_id_cache:
-            return _cover_file_id_cache
-    return InputFile(_COVER_PATH.read_bytes(), filename=_COVER_PATH.name)
+async def _get_cover_photo(*, force_upload: bool = False) -> str | InputFile | None:
+    return await cover_photo.get_cover_photo("daily2048", force_upload=force_upload)
 
 
 async def _remember_cover_file_id(message: Any) -> None:
-    global _cover_file_id_cache  # noqa: PLW0603
-    photos = getattr(message, "photo", None) or []
-    if not photos:
-        return
-    file_id = getattr(photos[-1], "file_id", "")
-    if not file_id or file_id == _cover_file_id_cache:
-        return
-    _cover_file_id_cache = file_id
-    await set_global_setting(_COVER_FILE_ID_KEY, file_id)
+    await cover_photo.remember_cover_file_id("daily2048", message)
 
 
 async def render_result_body(user_id: int, puzzle_date: date) -> tuple[str, InlineKeyboardMarkup]:

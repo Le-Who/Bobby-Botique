@@ -1325,40 +1325,63 @@ async def regenerate_dailycroc_image_callback(update: Update, context: ContextTy
         await query.answer("❌ Ошибка перегенерации", show_alert=True)
 
 
-@admin_only
-async def set_dailycroc_placeholder_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Save a placeholder image file_id for Daily Crocodile delivery.
+async def _handle_set_game_cover(game_id: str, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.games import cover_photo
 
-    Usage: reply to a photo with /set_dailycroc_placeholder
-    """
     msg = update.message
-    # Accept both a direct photo and a photo replied-to
+    if not msg:
+        return
+
     photo_msg = msg.reply_to_message if (msg.reply_to_message and msg.reply_to_message.photo) else msg
     if not photo_msg or not photo_msg.photo:
-        current = await get_global_setting("daily_croc_placeholder_file_id", "")
-        status = f"<code>{current[:40]}…</code>" if current else "<i>не задан</i>"
+        setting_key, file_path = cover_photo.get_game_keys(game_id)
+        current = await get_global_setting(setting_key, "")
+        status = f"<code>{current[:40]}…</code>" if current else "<i>не задан в DB</i>"
+        file_status = "найден ✅" if file_path.exists() else "не найден ⚠️"
         await msg.reply_text(
-            f"🖼 Текущий placeholder: {status}\n\n"
-            "Реплайни на фото командой <code>/set_dailycroc_placeholder</code>, "
-            "чтобы сохранить его как баннер ежедневной рассылки.",
+            f"🖼 <b>Обложка для {game_id}:</b>\n"
+            f"• DB file_id: {status}\n"
+            f"• Файл на диске ({file_path.name}): {file_status}\n\n"
+            f"Реплайни на фото этой командой, чтобы обновить баннер.",
             parse_mode="HTML",
         )
         return
 
-    file_id = photo_msg.photo[-1].file_id  # largest size
-    await set_global_setting("daily_croc_placeholder_file_id", file_id)
+    photo = photo_msg.photo[-1]
+    photo_file = await photo.get_file()
+    image_bytes = await photo_file.download_as_bytearray()
 
-    # Invalidate the in-process cache in the handler module.
-    import app.handlers.daily_crocodile as _dc_mod  # noqa: PLC0415
-    from app.handlers.daily_crocodile import _PLACEHOLDER_KEY  # noqa: PLC0415
-
-    _dc_mod._placeholder_cache = ""
-    _dc_mod._placeholder_cache_ts = 0.0
+    await cover_photo.set_cover_from_upload(game_id, bytes(image_bytes))
+    await cover_photo.remember_cover_file_id(game_id, photo_msg)
 
     await msg.reply_text(
-        f"✅ Placeholder сохранён.\n<code>file_id: {file_id[:60]}…</code>",
+        f"✅ Баннер для <b>{game_id}</b> успешно сохранён на диск и обновлён в Telegram!",
         parse_mode="HTML",
     )
+
+
+@admin_only
+async def set_dailycroc_placeholder_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _handle_set_game_cover("dailycroc", update, context)
+
+
+@admin_only
+async def set_daily2048_cover_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _handle_set_game_cover("daily2048", update, context)
+
+
+@admin_only
+async def set_dailytrivia_cover_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _handle_set_game_cover("dailytrivia", update, context)
+
+
+@admin_only
+async def set_game_cover_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Использование: `/set_game_cover <dailycroc|daily2048|dailytrivia>` (реплай на фото)")
+        return
+    await _handle_set_game_cover(args[0], update, context)
 
 
 # ── /wordbank — Word Bank Management ──────────────────────────────────────────
