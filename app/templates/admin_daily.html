@@ -889,10 +889,10 @@ input:checked + .slider:before { transform: translateX(16px); }
       <div class="stat-card">
         <div class="stat-card-title">Баннер Croc</div>
         <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
-          <img id="dailycroc-cover-preview" src="/api/admin/game-cover/dailycroc" style="height:32px; width:56px; border-radius:4px; object-fit:cover; border:1px solid var(--border);" onerror="this.style.display='none'">
+          <img id="dailycroc-cover-preview" src="/api/admin/game-cover/dailycroc" style="height:32px; width:56px; border-radius:4px; object-fit:cover; border:1px solid var(--border);">
           <label class="btn btn-secondary" style="font-size:0.75rem; padding:4px 8px; cursor:pointer; margin:0;">
             📁 Загрузить
-            <input type="file" accept="image/*" style="display:none;" onchange="uploadGameBanner('dailycroc', this)">
+            <input type="file" id="dailycroc-banner-input" accept="image/*" style="display:none;">
           </label>
         </div>
         <div class="stat-card-sub" id="croc-stats-placeholder" style="margin-top:4px;">Баннер: —</div>
@@ -929,10 +929,10 @@ input:checked + .slider:before { transform: translateX(16px); }
       </div>
       <div class="s2048-panel" style="display:flex; align-items:center; gap:8px;">
         <label style="margin:0;">Баннер</label>
-        <img id="daily2048-cover-preview" src="/api/admin/game-cover/daily2048" style="height:28px; width:48px; border-radius:4px; object-fit:cover; border:1px solid var(--border);" onerror="this.style.display='none'">
+        <img id="daily2048-cover-preview" src="/api/admin/game-cover/daily2048" style="height:28px; width:48px; border-radius:4px; object-fit:cover; border:1px solid var(--border);">
         <label class="btn btn-secondary" style="font-size:0.75rem; padding:2px 6px; cursor:pointer; margin:0;">
           📁 Загрузить
-          <input type="file" accept="image/*" style="display:none;" onchange="uploadGameBanner('daily2048', this)">
+          <input type="file" id="daily2048-banner-input" accept="image/*" style="display:none;">
         </label>
       </div>
     </section>
@@ -1018,10 +1018,10 @@ input:checked + .slider:before { transform: translateX(16px); }
       <div class="stat-card">
         <div class="stat-card-title">Баннер Trivia</div>
         <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
-          <img id="dailytrivia-cover-preview" src="/api/admin/game-cover/dailytrivia" style="height:32px; width:56px; border-radius:4px; object-fit:cover; border:1px solid var(--border);" onerror="this.style.display='none'">
+          <img id="dailytrivia-cover-preview" src="/api/admin/game-cover/dailytrivia" style="height:32px; width:56px; border-radius:4px; object-fit:cover; border:1px solid var(--border);">
           <label class="btn btn-secondary" style="font-size:0.75rem; padding:4px 8px; cursor:pointer; margin:0;">
             📁 Загрузить
-            <input type="file" accept="image/*" style="display:none;" onchange="uploadGameBanner('dailytrivia', this)">
+            <input type="file" id="dailytrivia-banner-input" accept="image/*" style="display:none;">
           </label>
         </div>
         <div class="stat-card-sub" style="margin-top:4px;">Рассылка + интро</div>
@@ -2572,6 +2572,21 @@ async function uploadGameBanner(gameId, inputEl) {
     showToast(`❌ Ошибка загрузки: ${e.message}`, 'error');
   }
 }
+
+// ============================================================
+// Banners & File Inputs
+// ============================================================
+const bannerGameIds = ['dailycroc', 'daily2048', 'dailytrivia'];
+bannerGameIds.forEach(gameId => {
+  const inputEl = document.getElementById(`${gameId}-banner-input`);
+  if (inputEl) {
+    inputEl.addEventListener('change', () => uploadGameBanner(gameId, inputEl));
+  }
+  const imgEl = document.getElementById(`${gameId}-cover-preview`);
+  if (imgEl) {
+    imgEl.addEventListener('error', function() { this.style.display = 'none'; });
+  }
+});
 
 // ============================================================
 // INIT
