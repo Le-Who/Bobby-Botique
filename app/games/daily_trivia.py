@@ -75,11 +75,12 @@ SYSTEM_PROMPT_TRIVIA = """Ты — эксперт по составлению и
 Сгенерируй ровно 5 уникальных, высококачественных вопросов для ежедневной викторины.
 
 ТРЕБОВАНИЯ К ВОПРОСАМ:
-1. Качество и темы: 5 разных сфер знаний (например: наука/космос, история мира, искусcтво/культура, география/природа, удивительные факты/технологии).
+1. Качество и темы: 5 разных сфер знаний (например: наука/космос, история мира, искусство/культура, география/природа, удивительные факты/технологии).
 2. Варианты ответа (options): РОВНО 4 варианта ответа на каждый вопрос.
 3. Сложность и реалистичность: Неправильные варианты ответа (дистракторы) ДОЛЖНЫ быть правдоподобными, иметь схожую длину и категорию с правильным ответом. Избегай очевидных, шуточных или банальных вариантов!
 4. Объяснение (explanation): К каждому вопросу напиши интересное, познавательное объяснение на 2-3 предложения, раскрывающее суть ответа и содержащее 1-2 дополнительных любопытных факта.
-5. Язык: Русский.
+5. Ключевая пара (key): Для каждого вопроса ОБЯЗАТЕЛЬНО укажи объект и конкретный факт/аспект (субобъект), о котором задан вопрос. Избегай широких категорий!
+6. Язык: Русский.
 
 ОТВЕТ ДОЛЖЕН БЫТЬ СТРОГО В ФОРМАТЕ JSON (БЕЗ ЛИШНЕГО ТЕКСТА) СО СЛЕДУЮЩЕЙ СТРУКТУРОЙ:
 [
@@ -89,7 +90,8 @@ SYSTEM_PROMPT_TRIVIA = """Ты — эксперт по составлению и
     "question": "Текст вопроса...",
     "options": ["Вариант A", "Вариант B", "Вариант C", "Вариант D"],
     "correct_index": 0,
-    "explanation": "Подробное познавательное объяснение..."
+    "explanation": "Подробное познавательное объяснение...",
+    "key": { "object": "Bluetooth", "subobject": "происхождение названия" }
   },
   ...
 ]
@@ -106,8 +108,15 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> rep
     from app.repos.settings_repo import get_global_setting
     model_name = await get_global_setting("daily_trivia_llm_model", TRIVIA_MODEL)
 
-    prompt = f"Сгенерируй 5 вопросов для тривиа-викторины на дату {puzzle_date.isoformat()}."
+    used_keys = await repo.get_used_keys(days=90)
+    used_keys_context = ""
+    if used_keys:
+        formatted = "\n".join(f"- {k['object']} → {k['subobject']}" for k in used_keys[:40])
+        used_keys_context = f"\n\nУЖЕ ИССЛЕДОВАННЫЕ ТЕМЫ И ФАКТЫ (НЕ ПОВТОРЯЙ ИХ):\n{formatted}"
 
+    prompt = f"Сгенерируй 5 вопросов для тривиа-викторины на дату {puzzle_date.isoformat()}.{used_keys_context}"
+
+    keys_to_save: list[dict[str, str]] = []
     try:
         response_text, _ = await router.get_response(
             preferred_model=model_name,
@@ -127,6 +136,12 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> rep
         if not isinstance(parsed, list):
             raise ValueError("Parsed LLM output is not a JSON list")
 
+        for item in parsed:
+            if isinstance(item, dict):
+                k = item.get("key")
+                if isinstance(k, dict) and k.get("object") and k.get("subobject"):
+                    keys_to_save.append({"object": str(k["object"]), "subobject": str(k["subobject"])})
+
         questions = shuffle_options_and_update_correct_index(parsed)
         if len(questions) < 5:
             logger.warning("LLM generated fewer than 5 valid trivia questions (%d), using fallback", len(questions))
@@ -137,6 +152,13 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> rep
         questions = _get_fallback_questions()
 
     puzzle = await repo.save_puzzle(puzzle_date, questions, status="ready")
+
+    if keys_to_save:
+        try:
+            await repo.save_used_keys(keys_to_save, puzzle_date)
+        except Exception as ex:
+            logger.warning("Failed to save trivia used keys for date %s: %s", puzzle_date, ex)
+
     return puzzle
 
 

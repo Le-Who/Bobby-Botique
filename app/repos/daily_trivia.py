@@ -403,3 +403,96 @@ async def get_admin_stats(today: date, *, conn=None) -> dict[str, Any]:
         "ready_puzzles_ahead": ready_puzzles,
     }
 
+
+def _is_fuzzy_similar(str1: str, str2: str, threshold: float = 0.85) -> bool:
+    if str1 == str2:
+        return True
+    try:
+        from rapidfuzz import fuzz
+        return (fuzz.token_sort_ratio(str1, str2) / 100.0) >= threshold
+    except ImportError:
+        import difflib
+        return difflib.SequenceMatcher(None, str1, str2).ratio() >= threshold
+
+
+async def get_used_keys(days: int = 90, *, conn=None) -> list[dict[str, str]]:
+    rows = await db.db_query(
+        """
+        SELECT object_norm AS object, subobject_norm AS subobject
+        FROM public.daily_trivia_used_keys
+        WHERE used_at >= CURRENT_DATE - MAKE_INTERVAL(days => $1::int)
+        ORDER BY used_at DESC
+        """,
+        (days,),
+        conn=conn,
+    )
+    return [
+        {
+            "object": str(_row_get(r, "object", "") or ""),
+            "subobject": str(_row_get(r, "subobject", "") or ""),
+        }
+        for r in rows
+    ]
+
+
+async def save_used_keys(keys: list[dict[str, str]], p_date: date | None = None, *, conn=None) -> None:
+    if not keys:
+        return
+
+    target_date = p_date or date.today()
+    existing = await get_used_keys(days=90, conn=conn)
+
+    to_insert: list[tuple[str, str]] = []
+    for k in keys:
+        obj = str(k.get("object", "")).strip().lower()
+        subobj = str(k.get("subobject", "")).strip().lower()
+        if not obj or not subobj:
+            continue
+
+        is_dup = False
+        for ex in existing:
+            ex_obj = ex["object"].strip().lower()
+            ex_sub = ex["subobject"].strip().lower()
+            if obj == ex_obj and _is_fuzzy_similar(subobj, ex_sub, threshold=0.85):
+                is_dup = True
+                break
+
+        if not is_dup:
+            for ins_obj, ins_sub in to_insert:
+                if obj == ins_obj and _is_fuzzy_similar(subobj, ins_sub, threshold=0.85):
+                    is_dup = True
+                    break
+
+        if not is_dup:
+            to_insert.append((obj, subobj))
+
+    for obj_norm, subobj_norm in to_insert:
+        await db.db_query(
+            """
+            INSERT INTO public.daily_trivia_used_keys (object_norm, subobject_norm, used_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (object_norm, subobject_norm) DO NOTHING
+            """,
+            (obj_norm, subobj_norm, target_date),
+            conn=conn,
+        )
+
+
+async def cleanup_old_used_keys(days: int = 90, *, conn=None) -> int:
+    """Delete the single day that just rolled out of the sliding window.
+
+    On day N (N > `days`), deletes entries from exactly `days` days ago.
+    This ensures only one day's worth of entries is removed per scheduled run,
+    implementing a true sliding-window TTL rather than a bulk expiry.
+    """
+    result = await db.db_query(
+        """
+        DELETE FROM public.daily_trivia_used_keys
+        WHERE used_at = CURRENT_DATE - MAKE_INTERVAL(days => $1::int)
+        """,
+        (days,),
+        conn=conn,
+    )
+    return len(result) if result else 0
+
+

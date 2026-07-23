@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 from app.config import settings
 from app.games.daily_trivia import ensure_prepared_puzzles, prepare_daily_puzzle
 from app.repos import crocodile_daily as daily_delivery_repo
+from app.repos import daily_trivia as trivia_repo
 from app.repos.crocodile_daily import today_puzzle_date
 from app.utils.decorators import safe_handler
 
@@ -137,6 +138,13 @@ async def check_daily_trivia_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as exc:
         logger.error("daily trivia: ensure_prepared_puzzles failed: %s", exc, exc_info=True)
         return
+
+    try:
+        deleted = await trivia_repo.cleanup_old_used_keys(days=90)
+        if deleted:
+            logger.info("daily trivia: cleaned up %d expired used_keys entries", deleted)
+    except Exception as exc:
+        logger.warning("daily trivia: cleanup_old_used_keys failed: %s", exc)
 
     today = today_puzzle_date(now)
     if not await is_daily_delivery_enabled():
