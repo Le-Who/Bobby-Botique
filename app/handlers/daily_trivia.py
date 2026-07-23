@@ -82,39 +82,31 @@ async def send_daily_trivia_entry(
     if reply_to_message_id is not None:
         send_kwargs["reply_to_message_id"] = reply_to_message_id
 
+    sent_message = None
     if cover:
         try:
-            message = await bot.send_photo(photo=cover, caption=caption, **send_kwargs)
-            await cover_photo.remember_cover_file_id("dailytrivia", message)
-            await trivia_repo.register_prompt_message(
-                user_id=user_id,
-                puzzle_date=puzzle_date,
-                chat_id=message.chat_id,
-                message_id=message.message_id,
-            )
+            sent_message = await bot.send_photo(photo=cover, caption=caption, **send_kwargs)
+            await cover_photo.remember_cover_file_id("dailytrivia", sent_message)
         except Exception as exc:
             logger.warning("daily trivia cover prompt failed user=%s: %s — falling back to text", user_id, exc)
-            try:
-                message = await bot.send_message(text=caption, **send_kwargs)
-                await trivia_repo.register_prompt_message(
-                    user_id=user_id,
-                    puzzle_date=puzzle_date,
-                    chat_id=message.chat_id,
-                    message_id=message.message_id,
-                )
-            except Exception as exc2:
-                logger.warning("daily trivia text prompt failed user=%s: %s", user_id, exc2)
-    else:
+            sent_message = None
+
+    if sent_message is None:
         try:
-            message = await bot.send_message(text=caption, **send_kwargs)
+            sent_message = await bot.send_message(text=caption, **send_kwargs)
+        except Exception as exc:
+            logger.warning("daily trivia prompt failed user=%s: %s", user_id, exc)
+
+    if sent_message is not None:
+        try:
             await trivia_repo.register_prompt_message(
                 user_id=user_id,
                 puzzle_date=puzzle_date,
-                chat_id=message.chat_id,
-                message_id=message.message_id,
+                chat_id=sent_message.chat_id,
+                message_id=sent_message.message_id,
             )
         except Exception as exc:
-            logger.warning("daily trivia prompt failed user=%s: %s", user_id, exc)
+            logger.warning("daily trivia: register_prompt_message failed user=%s: %s", user_id, exc)
 
     if mark_delivered:
         pref = await daily_delivery_repo.get_preference(user_id)
