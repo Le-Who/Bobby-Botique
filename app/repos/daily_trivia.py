@@ -225,6 +225,36 @@ async def save_puzzle(
     return _row_to_puzzle(rows[0])
 
 
+async def save_super_questions(
+    puzzle_date: date,
+    super_questions: list[TriviaQuestion],
+    *,
+    conn=None,
+) -> DailyTriviaPuzzle:
+    """Update only the super_questions column for an existing puzzle.
+
+    Leaves the regular questions, status and prepared_at untouched.
+    If no puzzle exists yet for that date, the INSERT will create one
+    with empty regular questions.
+    """
+    sq_dict = questions_to_dict_list(super_questions)
+    sq_json = json.dumps(sq_dict)
+    rows = await db.db_query(
+        """
+        INSERT INTO public.daily_trivia_puzzles (puzzle_date, questions, super_questions, status)
+        VALUES ($1, '[]'::jsonb, $2::jsonb, 'draft')
+        ON CONFLICT (puzzle_date) DO UPDATE
+        SET super_questions = EXCLUDED.super_questions,
+            updated_at = NOW()
+        RETURNING puzzle_date, questions, super_questions, status, prepared_at
+        """,
+        (puzzle_date, sq_json),
+        conn=conn,
+    )
+    return _row_to_puzzle(rows[0])
+
+
+
 async def get_result_if_exists(user_id: int, puzzle_date: date, *, conn=None) -> DailyTriviaResult | None:
     """Return the user's trivia result for today if it exists, else None.
 

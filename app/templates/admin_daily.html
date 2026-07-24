@@ -1069,20 +1069,37 @@ input:checked + .slider:before { transform: translateX(16px); }
           <!-- 5 question forms rendered here -->
         </div>
 
-        <!-- Super questions read-only section -->
-        <div id="trivia-super-questions-section" style="margin-top: 20px; display: none;">
-          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
-            <span style="font-size:0.85rem; font-weight:700; color:#ff80bf;">⚡ СУПЕРИГРА — вопросы (только просмотр)</span>
+        <!-- Super questions editable section -->
+        <div id="trivia-super-questions-section" style="margin-top: 24px; display: none;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+            <span style="font-size:0.85rem; font-weight:700; color:#ff80bf;">⚡ СУПЕРИГРА — вопросы</span>
+            <button class="s2048-btn primary" id="trivia-btn-save-super" style="font-size:0.75rem; padding:4px 10px; border-color:rgba(255,128,191,0.5); color:#ff80bf; background:rgba(255,0,128,0.08);">💾 Сохранить супер</button>
           </div>
           <div id="trivia-editor-super-questions" style="display: flex; flex-direction: column; gap: 10px;">
           </div>
         </div>
 
-        <div class="s2048-actions" style="margin-top: 14px; flex-wrap: wrap; gap: 6px;">
-          <button class="s2048-btn primary" id="trivia-btn-save" style="flex:1;">💾 Сохранить</button>
-          <button class="s2048-btn danger" id="trivia-btn-regen" style="flex:1;">🤖 Регенерировать (AI)</button>
-          <button class="s2048-btn" id="trivia-btn-clear-keys" style="flex:1; font-size:0.75rem; border-color: var(--text-dim); color: var(--text-muted);">🗑️ Очистить ключи этого дня</button>
+        <!-- Regen mode checkboxes + actions -->
+        <div style="margin-top: 18px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-surface);">
+          <div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:8px; font-weight:600;">🤖 Регенерировать через AI:</div>
+          <div style="display:flex; align-items:center; gap:14px; margin-bottom:10px; flex-wrap:wrap;">
+            <label style="display:flex; align-items:center; gap:5px; font-size:0.82rem; cursor:pointer;">
+              <input type="checkbox" id="trivia-regen-main" checked> Обычные (5)
+            </label>
+            <label style="display:flex; align-items:center; gap:5px; font-size:0.82rem; cursor:pointer;">
+              <input type="checkbox" id="trivia-regen-super" checked style="accent-color:#ff80bf;"> ⚡ Супер (3)
+            </label>
+          </div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <button class="s2048-btn danger" id="trivia-btn-regen" style="flex:1;">🤖 Регенерировать (AI)</button>
+            <button class="s2048-btn" id="trivia-btn-clear-keys" style="flex:1; font-size:0.75rem; border-color: var(--text-dim); color: var(--text-muted);">🗑️ Очистить ключи этого дня</button>
+          </div>
         </div>
+
+        <div class="s2048-actions" style="margin-top: 10px; flex-wrap: wrap; gap: 6px;">
+          <button class="s2048-btn primary" id="trivia-btn-save" style="flex:1;">💾 Сохранить обычные</button>
+        </div>
+
       </aside>
     </section>
   </div>
@@ -2282,25 +2299,46 @@ const TriviaModule = (() => {
       `;
     }).join('');
 
-    // Render super questions (read-only)
+    // Render super questions (editable)
     const superSection = document.getElementById('trivia-super-questions-section');
     const superContainer = document.getElementById('trivia-editor-super-questions');
     if (superQuestions && superQuestions.length > 0) {
       superSection.style.display = 'block';
-      superContainer.innerHTML = superQuestions.map((q, i) => {
-        const opts = q.options || [];
+      const sqList = [];
+      for (let i = 0; i < 3; i++) {
+        sqList.push(superQuestions[i] || {
+          id: i + 1, topic: 'Сложная тема', question: '', options: ['', '', '', ''], correct_index: 0, explanation: ''
+        });
+      }
+      superContainer.innerHTML = sqList.map((q, i) => {
+        const opts = q.options || ['', '', '', ''];
+        while (opts.length < 4) opts.push('');
         return `
           <div style="border:1px solid rgba(255,128,191,0.3); border-radius:8px; padding:10px; background:rgba(255,0,128,0.04);">
-            <div style="font-weight:700; font-size:0.8rem; color:#ff80bf; margin-bottom:6px;">⚡ Супервопрос #${i + 1} — ${escapeHtml(q.topic || '')}</div>
-            <div style="font-size:0.85rem; margin-bottom:8px; color:var(--text);">${escapeHtml(q.question || '')}</div>
-            <div style="display:flex; flex-direction:column; gap:3px; font-size:0.8rem;">
-              ${opts.map((opt, optIdx) => `
-                <div style="padding:3px 6px; border-radius:4px; ${optIdx === q.correct_index ? 'background:rgba(16,185,129,0.15); color:#10b981; font-weight:600;' : 'color:var(--text-muted);'}">
-                  ${optIdx === q.correct_index ? '✓ ' : ''}${escapeHtml(opt)}
-                </div>
-              `).join('')}
+            <div style="font-weight:700; font-size:0.8rem; color:#ff80bf; margin-bottom:8px;">⚡ Супервопрос #${i + 1}</div>
+            <div class="field" style="margin-bottom:6px;">
+              <label>Тема</label>
+              <input type="text" class="t-sq-topic" data-idx="${i}" value="${escapeHtml(q.topic || '')}" placeholder="Тема">
             </div>
-            ${q.explanation ? `<div style="font-size:0.78rem; color:var(--text-muted); margin-top:6px; font-style:italic;">💡 ${escapeHtml(q.explanation)}</div>` : ''}
+            <div class="field" style="margin-bottom:6px;">
+              <label>Текст вопроса</label>
+              <textarea class="t-sq-text" data-idx="${i}" style="min-height:50px;">${escapeHtml(q.question || '')}</textarea>
+            </div>
+            <div class="field" style="margin-bottom:6px;">
+              <label>Варианты ответа (отметьте точкой верный):</label>
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                ${opts.slice(0, 4).map((opt, optIdx) => `
+                  <div style="display:flex; align-items:center; gap:6px;">
+                    <input type="radio" name="t-sq-correct-${i}" value="${optIdx}" ${q.correct_index === optIdx ? 'checked' : ''}>
+                    <input type="text" class="t-sq-opt-${optIdx}" data-idx="${i}" value="${escapeHtml(opt)}" placeholder="Вариант ${optIdx + 1}" style="flex:1;">
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+            <div class="field">
+              <label>Познавательное объяснение</label>
+              <textarea class="t-sq-exp" data-idx="${i}" style="min-height:45px;">${escapeHtml(q.explanation || '')}</textarea>
+            </div>
           </div>
         `;
       }).join('');
@@ -2336,6 +2374,24 @@ const TriviaModule = (() => {
     return questions;
   }
 
+  function getFormSuperQuestions() {
+    const container = document.getElementById('trivia-editor-super-questions');
+    const questions = [];
+    for (let i = 0; i < 3; i++) {
+      const topic = container.querySelector(`.t-sq-topic[data-idx="${i}"]`)?.value.trim() || 'Общие знания';
+      const question = container.querySelector(`.t-sq-text[data-idx="${i}"]`)?.value.trim() || '';
+      const opt0 = container.querySelector(`.t-sq-opt-0[data-idx="${i}"]`)?.value.trim() || '';
+      const opt1 = container.querySelector(`.t-sq-opt-1[data-idx="${i}"]`)?.value.trim() || '';
+      const opt2 = container.querySelector(`.t-sq-opt-2[data-idx="${i}"]`)?.value.trim() || '';
+      const opt3 = container.querySelector(`.t-sq-opt-3[data-idx="${i}"]`)?.value.trim() || '';
+      const correctRadio = container.querySelector(`input[name="t-sq-correct-${i}"]:checked`);
+      const correct_index = correctRadio ? parseInt(correctRadio.value) : 0;
+      const explanation = container.querySelector(`.t-sq-exp[data-idx="${i}"]`)?.value.trim() || '';
+      questions.push({ id: i + 1, topic, question, options: [opt0, opt1, opt2, opt3], correct_index, explanation });
+    }
+    return questions;
+  }
+
   async function save() {
     if (!selectedDate) { showToast('Выберите дату', 'error'); return; }
     const btn = document.getElementById('trivia-btn-save');
@@ -2359,13 +2415,43 @@ const TriviaModule = (() => {
       showToast(`Ошибка сохранения: ${e.message}`, 'error');
     } finally {
       btn.disabled = false;
-      btn.textContent = '💾 Сохранить';
+      btn.textContent = '💾 Сохранить обычные';
+    }
+  }
+
+  async function saveSuperQuestions() {
+    if (!selectedDate) { showToast('Выберите дату', 'error'); return; }
+    const btn = document.getElementById('trivia-btn-save-super');
+    btn.disabled = true;
+    btn.textContent = '⏳ Сохранение...';
+
+    const super_questions = getFormSuperQuestions();
+    try {
+      const res = await fetch('/api/admin/dailytrivia/save_super', {
+        method: 'POST',
+        headers: apiHeaders,
+        body: JSON.stringify({ date: selectedDate, super_questions })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      showToast(`Суперигра на ${selectedDate} сохранена!`, 'success');
+      await loadPuzzles();
+    } catch (e) {
+      showToast(`Ошибка сохранения: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '💾 Сохранить супер';
     }
   }
 
   async function regenerate() {
     if (!selectedDate) { showToast('Выберите дату', 'error'); return; }
-    const confirmed = await showConfirm('Регенерация через AI', `Сгенерировать новые вопросы на ${selectedDate} через LLM?`);
+    const doMain = document.getElementById('trivia-regen-main')?.checked ?? true;
+    const doSuper = document.getElementById('trivia-regen-super')?.checked ?? true;
+    if (!doMain && !doSuper) { showToast('Выберите хотя бы одну часть для регенерации', 'error'); return; }
+    const mode = doMain && doSuper ? 'all' : doMain ? 'main' : 'super';
+    const modeLabel = mode === 'all' ? 'все вопросы' : mode === 'main' ? 'обычные вопросы (5)' : 'суперигру (3)';
+    const confirmed = await showConfirm('Регенерация через AI', `Сгенерировать ${modeLabel} на ${selectedDate} через LLM?`);
     if (!confirmed) return;
 
     const btn = document.getElementById('trivia-btn-regen');
@@ -2376,11 +2462,13 @@ const TriviaModule = (() => {
       const res = await fetch('/api/admin/dailytrivia/regenerate', {
         method: 'POST',
         headers: apiHeaders,
-        body: JSON.stringify({ date: selectedDate })
+        body: JSON.stringify({ date: selectedDate, mode })
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-      showToast(`Викторина на ${selectedDate} успешно перегенерирована!`, 'success');
+      showToast(`Перегенерировано (${mode}): ${selectedDate}`, 'success');
+      const p = data.puzzle;
+      if (p) selectPuzzle(p, true);
       await loadPuzzles();
       loadStats();
     } catch (e) {
@@ -2474,6 +2562,7 @@ const TriviaModule = (() => {
     loadPuzzles();
 
     document.getElementById('trivia-btn-save').addEventListener('click', save);
+    document.getElementById('trivia-btn-save-super').addEventListener('click', saveSuperQuestions);
     document.getElementById('trivia-btn-regen').addEventListener('click', regenerate);
     document.getElementById('trivia-btn-close').addEventListener('click', closeEditor);
     document.getElementById('trivia-btn-clear-keys').addEventListener('click', clearKeys);

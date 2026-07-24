@@ -1383,7 +1383,10 @@ async def api_admin_dailytrivia_regenerate():
         p_date = datetime.date.fromisoformat(str(data.get("date") or today_puzzle_date()))
     except ValueError:
         return jsonify({"error": "invalid date"}), 400
-    puzzle = await daily_trivia_game.prepare_daily_puzzle(p_date, force=True)
+    mode = str(data.get("mode") or "all").strip().lower()
+    if mode not in ("all", "main", "super"):
+        return jsonify({"error": "mode must be 'all', 'main', or 'super'"}), 400
+    puzzle = await daily_trivia_game.prepare_daily_puzzle(p_date, force=True, mode=mode)
     return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
 
 
@@ -1416,6 +1419,38 @@ async def api_admin_dailytrivia_save():
         )
 
     puzzle = await daily_trivia_repo.save_puzzle(p_date, questions, status=status)
+    return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
+
+
+@quart_app.route("/api/admin/dailytrivia/save_super", methods=["POST"])
+@require_auth
+@rate_limit_api
+async def api_admin_dailytrivia_save_super():
+    """Save manually edited super questions for a puzzle date."""
+    from app.repos import daily_trivia as daily_trivia_repo
+    data = await request.get_json()
+    if not data:
+        return jsonify({"error": "invalid json"}), 400
+    try:
+        p_date = datetime.date.fromisoformat(str(data.get("date") or ""))
+        raw_questions = data.get("super_questions") or []
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid payload"}), 400
+
+    super_questions = []
+    for idx, q in enumerate(raw_questions):
+        super_questions.append(
+            daily_trivia_repo.TriviaQuestion(
+                id=int(q.get("id", idx + 1)),
+                topic=str(q.get("topic", "")).strip(),
+                question=str(q.get("question", "")).strip(),
+                options=[str(opt).strip() for opt in q.get("options", [])],
+                correct_index=int(q.get("correct_index", 0)),
+                explanation=str(q.get("explanation", "")).strip(),
+            )
+        )
+
+    puzzle = await daily_trivia_repo.save_super_questions(p_date, super_questions)
     return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
 
 

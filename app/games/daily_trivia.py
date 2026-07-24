@@ -124,8 +124,18 @@ SYSTEM_PROMPT_SUPER_TRIVIA = """Ты — эксперт по составлен�
 """
 
 
-async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> repo.DailyTriviaPuzzle:
+async def prepare_daily_puzzle(
+    puzzle_date: date, *, force: bool = False, mode: str = "all"
+) -> repo.DailyTriviaPuzzle:
+    """Generate/return the daily trivia puzzle.
+
+    mode: "all"   – regenerate both main (5) and super (3) questions (default)
+          "main"  – regenerate only the 5 regular questions; keep existing super
+          "super" – regenerate only the 3 expert questions; keep existing main
+    """
     existing = await repo.get_puzzle(puzzle_date)
+
+    # Quick-return if everything already exists and we're not forcing
     if (
         existing
         and existing.questions
@@ -138,12 +148,13 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> rep
         return existing
 
     if force:
-        # Remove old used_keys for this date before generating new ones so the
-        # discarded puzzle's topics don't permanently occupy slots in the bank.
+        # Remove only the used_keys that correspond to the parts being regenerated.
+        # "all" or "main": delete all for this date (main keys will be re-saved).
+        # "super": we also delete to allow fresh super-topic selection.
         try:
             deleted = await repo.delete_used_keys_for_date(puzzle_date)
             if deleted:
-                logger.info("trivia: cleared %d stale used_keys for %s before regen", deleted, puzzle_date)
+                logger.info("trivia: cleared %d stale used_keys for %s (mode=%s)", deleted, puzzle_date, mode)
         except Exception as exc:
             logger.warning("trivia: failed to clear used_keys for %s: %s", puzzle_date, exc)
 
@@ -153,7 +164,6 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> rep
     model_name = await get_global_setting("daily_trivia_llm_model", TRIVIA_MODEL)
 
     used_keys = await repo.get_used_keys(days=90)
-
     all_used_keys = list(used_keys)
 
     def _build_used_context(keys_list: list[dict[str, str]]) -> str:
@@ -164,82 +174,73 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> rep
 
     keys_to_save: list[dict[str, str]] = []
 
-    # 1. Regular questions (5)
-    prompt = f"Сгенерируй 5 вопросов для тривиа-викторины на дату {puzzle_date.isoformat()}.{_build_used_context(all_used_keys)}"
-
-    try:
-        response_text, _ = await router.get_response(
-            preferred_model=model_name,
-            history=[{"role": "user", "parts": [{"text": prompt}]}],
-            system_instruction=SYSTEM_PROMPT_TRIVIA,
-            timeout=45.0,
-        )
-
-        start_idx = response_text.find("[")
-        end_idx = response_text.rfind("]")
-        if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
-            clean_json = response_text[start_idx : end_idx + 1]
-        else:
-            clean_json = response_text.strip()
-
-        parsed = json.loads(clean_json)
-        if not isinstance(parsed, list):
-            raise ValueError("Parsed LLM output is not a JSON list")
-
-        for item in parsed:
-            if isinstance(item, dict):
-                k = item.get("key")
-                if isinstance(k, dict) and k.get("object") and k.get("subobject"):
-                    k_obj = {"object": str(k["object"]), "subobject": str(k["subobject"])}
-                    keys_to_save.append(k_obj)
-                    all_used_keys.append(k_obj)
-
-        questions = shuffle_options_and_update_correct_index(parsed)
-        if len(questions) < 5:
-            logger.warning("LLM generated fewer than 5 valid trivia questions (%d), using fallback", len(questions))
+    # ── Regular questions (5) ────────────────────────────────────────────────
+    if mode in ("all", "main"):
+        prompt = f"Сгенерируй 5 вопросов для тривиа-викторины на дату {puzzle_date.isoformat()}.{_build_used_context(all_used_keys)}"
+        try:
+            response_text, _ = await router.get_response(
+                preferred_model=model_name,
+                history=[{"role": "user", "parts": [{"text": prompt}]}],
+                system_instruction=SYSTEM_PROMPT_TRIVIA,
+                timeout=45.0,
+            )
+            start_idx = response_text.find("[")
+            end_idx = response_text.rfind("]")
+            clean_json = response_text[start_idx: end_idx + 1] if start_idx != -1 and end_idx != -1 and start_idx < end_idx else response_text.strip()
+            parsed = json.loads(clean_json)
+            if not isinstance(parsed, list):
+                raise ValueError("Parsed LLM output is not a JSON list")
+            for item in parsed:
+                if isinstance(item, dict):
+                    k = item.get("key")
+                    if isinstance(k, dict) and k.get("object") and k.get("subobject"):
+                        k_obj = {"object": str(k["object"]), "subobject": str(k["subobject"])}
+                        keys_to_save.append(k_obj)
+                        all_used_keys.append(k_obj)
+            questions = shuffle_options_and_update_correct_index(parsed)
+            if len(questions) < 5:
+                logger.warning("LLM generated fewer than 5 valid trivia questions (%d), using fallback", len(questions))
+                questions = _get_fallback_questions()
+        except Exception as e:
+            logger.error("Failed to generate Daily Trivia via LLM for date %s: %s", puzzle_date, e, exc_info=True)
             questions = _get_fallback_questions()
+    else:
+        # mode == "super": keep existing main questions untouched
+        questions = existing.questions if (existing and existing.questions) else _get_fallback_questions()
 
-    except Exception as e:
-        logger.error("Failed to generate Daily Trivia via LLM for date %s: %s", puzzle_date, e, exc_info=True)
-        questions = _get_fallback_questions()
-
-    # 2. Super questions (3 expert level)
-    super_prompt = f"Сгенерируй 3 СУПЕР-вопроса повышенной сложности на дату {puzzle_date.isoformat()}.{_build_used_context(all_used_keys)}"
-
-    try:
-        response_text_super, _ = await router.get_response(
-            preferred_model=model_name,
-            history=[{"role": "user", "parts": [{"text": super_prompt}]}],
-            system_instruction=SYSTEM_PROMPT_SUPER_TRIVIA,
-            timeout=45.0,
-        )
-
-        start_idx = response_text_super.find("[")
-        end_idx = response_text_super.rfind("]")
-        if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
-            clean_json_super = response_text_super[start_idx : end_idx + 1]
-        else:
-            clean_json_super = response_text_super.strip()
-
-        parsed_super = json.loads(clean_json_super)
-        if not isinstance(parsed_super, list):
-            raise ValueError("Parsed super LLM output is not a JSON list")
-
-        for item in parsed_super:
-            if isinstance(item, dict):
-                k = item.get("key")
-                if isinstance(k, dict) and k.get("object") and k.get("subobject"):
-                    keys_to_save.append({"object": str(k["object"]), "subobject": str(k["subobject"])})
-
-        super_questions = shuffle_options_and_update_correct_index(parsed_super)
-        if len(super_questions) < 3:
-            logger.warning("LLM generated fewer than 3 valid super questions (%d), using fallback", len(super_questions))
+    # ── Super questions (3 expert level) ────────────────────────────────────
+    if mode in ("all", "super"):
+        super_prompt = f"Сгенерируй 3 СУПЕР-вопроса повышенной сложности на дату {puzzle_date.isoformat()}.{_build_used_context(all_used_keys)}"
+        try:
+            response_text_super, _ = await router.get_response(
+                preferred_model=model_name,
+                history=[{"role": "user", "parts": [{"text": super_prompt}]}],
+                system_instruction=SYSTEM_PROMPT_SUPER_TRIVIA,
+                timeout=45.0,
+            )
+            start_idx = response_text_super.find("[")
+            end_idx = response_text_super.rfind("]")
+            clean_json_super = response_text_super[start_idx: end_idx + 1] if start_idx != -1 and end_idx != -1 and start_idx < end_idx else response_text_super.strip()
+            parsed_super = json.loads(clean_json_super)
+            if not isinstance(parsed_super, list):
+                raise ValueError("Parsed super LLM output is not a JSON list")
+            for item in parsed_super:
+                if isinstance(item, dict):
+                    k = item.get("key")
+                    if isinstance(k, dict) and k.get("object") and k.get("subobject"):
+                        keys_to_save.append({"object": str(k["object"]), "subobject": str(k["subobject"])})
+            super_questions = shuffle_options_and_update_correct_index(parsed_super)
+            if len(super_questions) < 3:
+                logger.warning("LLM generated fewer than 3 valid super questions (%d), using fallback", len(super_questions))
+                super_questions = _get_fallback_super_questions()
+        except Exception as e:
+            logger.error("Failed to generate Daily Super Trivia via LLM for date %s: %s", puzzle_date, e, exc_info=True)
             super_questions = _get_fallback_super_questions()
+    else:
+        # mode == "main": keep existing super questions untouched
+        super_questions = existing.super_questions if (existing and existing.super_questions) else _get_fallback_super_questions()
 
-    except Exception as e:
-        logger.error("Failed to generate Daily Super Trivia via LLM for date %s: %s", puzzle_date, e, exc_info=True)
-        super_questions = _get_fallback_super_questions()
-
+    # ── Persist ──────────────────────────────────────────────────────────────
     puzzle = await repo.save_puzzle(puzzle_date, questions, super_questions=super_questions, status="ready")
 
     if keys_to_save:
@@ -249,6 +250,7 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> rep
             logger.warning("Failed to save trivia used keys for date %s: %s", puzzle_date, ex)
 
     return puzzle
+
 
 
 def _get_fallback_questions() -> list[repo.TriviaQuestion]:
