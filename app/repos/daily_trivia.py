@@ -403,7 +403,44 @@ async def update_super_result_answer(
     status: str = "active",
     finished: bool = False,
 ) -> DailySuperResult:
+    from app import database as _db
+
     answers_json = json.dumps(answers)
+
+    if finished and _db.db_manager.pool:
+        # Both UPDATEs must be atomic: if only the first succeeds the daily
+        # score will never reflect the super-game delta.
+        async with _db.db_manager.pool.acquire() as conn, conn.transaction():
+            rows = await conn.fetch(
+                """
+                UPDATE public.daily_trivia_super_results
+                SET delta_score = $3,
+                    correct_count = $4,
+                    elapsed_ms = $5,
+                    answers = $6::jsonb,
+                    status = $7,
+                    finished_at = CASE WHEN $8::boolean THEN NOW() ELSE finished_at END
+                WHERE user_id = $1 AND puzzle_date = $2
+                RETURNING user_id, puzzle_date, status, delta_score, correct_count,
+                          elapsed_ms, answers, started_at, finished_at
+                """,
+                user_id, puzzle_date, delta_score, correct_count, elapsed_ms,
+                answers_json, status, finished,
+            )
+            await conn.execute(
+                """
+                UPDATE public.daily_trivia_results
+                SET final_score = GREATEST(0, final_score + $3),
+                    super_delta = $3,
+                    super_correct = $4,
+                    updated_at = NOW()
+                WHERE user_id = $1 AND puzzle_date = $2
+                """,
+                user_id, puzzle_date, delta_score, correct_count,
+            )
+        return _row_to_super_result([dict(r) for r in rows][0])
+
+    # Non-finished path: single UPDATE, no transaction needed.
     rows = await db.db_query(
         """
         UPDATE public.daily_trivia_super_results
@@ -419,18 +456,6 @@ async def update_super_result_answer(
         """,
         (user_id, puzzle_date, delta_score, correct_count, elapsed_ms, answers_json, status, finished),
     )
-    if finished:
-        await db.db_query(
-            """
-            UPDATE public.daily_trivia_results
-            SET final_score = GREATEST(0, final_score + $3),
-                super_delta = $3,
-                super_correct = $4,
-                updated_at = NOW()
-            WHERE user_id = $1 AND puzzle_date = $2
-            """,
-            (user_id, puzzle_date, delta_score, correct_count),
-        )
     return _row_to_super_result(rows[0])
 
 
@@ -460,7 +485,7 @@ async def get_question_by_date_and_index(
 async def get_puzzles_range(start_date: date, end_date: date, *, conn=None) -> list[DailyTriviaPuzzle]:
     rows = await db.db_query(
         """
-        SELECT puzzle_date, questions, status, prepared_at
+        SELECT puzzle_date, questions, super_questions, status, prepared_at
         FROM public.daily_trivia_puzzles
         WHERE puzzle_date >= $1 AND puzzle_date <= $2
         ORDER BY puzzle_date DESC

@@ -898,6 +898,7 @@
     // --- Super Game Logic ---
 
     function startSuperGame() {
+      if (userSuperResult && userSuperResult.status === 'completed') return;
       document.getElementById('finishView').style.display = 'none';
       document.getElementById('superView').style.display = 'block';
       currentSuperIdx = 0;
