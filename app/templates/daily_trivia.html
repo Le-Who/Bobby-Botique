@@ -214,7 +214,7 @@
       color: #cbd5e1;
     }
 
-    /* Next button */
+    /* Buttons */
     .btn-primary {
       width: 100%;
       background: linear-gradient(135deg, #38bdf8, #8b5cf6);
@@ -233,6 +233,25 @@
 
     .btn-primary:active {
       opacity: 0.85;
+    }
+
+    .btn-secondary {
+      width: 100%;
+      background: transparent;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 14px;
+      color: var(--text-muted);
+      font-family: 'Outfit', sans-serif;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      margin-top: 12px;
+    }
+
+    .btn-secondary:active {
+      opacity: 0.75;
     }
 
     /* Finish Screen */
@@ -266,6 +285,175 @@
       margin-bottom: 30px;
     }
 
+    /* Review Screen */
+    .review-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .review-back-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 8px 12px;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .review-back-btn:active {
+      opacity: 0.7;
+    }
+
+    .review-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    /* Accordion item */
+    .accordion-item {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      margin-bottom: 10px;
+      overflow: hidden;
+      transition: border-color 0.2s ease;
+    }
+
+    .accordion-item.correct-item {
+      border-color: rgba(16, 185, 129, 0.3);
+    }
+
+    .accordion-item.wrong-item {
+      border-color: rgba(244, 63, 94, 0.25);
+    }
+
+    .accordion-trigger {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      cursor: pointer;
+      width: 100%;
+      background: none;
+      border: none;
+      text-align: left;
+      color: var(--text-main);
+    }
+
+    .accordion-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      font-weight: 800;
+      flex-shrink: 0;
+    }
+
+    .icon-correct {
+      background: var(--correct-bg);
+      color: var(--correct);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+
+    .icon-wrong {
+      background: var(--wrong-bg);
+      color: var(--wrong);
+      border: 1px solid rgba(244, 63, 94, 0.4);
+    }
+
+    .accordion-question-text {
+      flex: 1;
+      font-size: 0.9rem;
+      font-weight: 500;
+      line-height: 1.4;
+      color: var(--text-main);
+    }
+
+    .accordion-chevron {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      transition: transform 0.25s ease;
+      flex-shrink: 0;
+    }
+
+    .accordion-item.open .accordion-chevron {
+      transform: rotate(180deg);
+    }
+
+    .accordion-body {
+      display: none;
+      padding: 0 16px 16px 16px;
+      animation: fadeIn 0.2s ease;
+    }
+
+    .accordion-item.open .accordion-body {
+      display: block;
+    }
+
+    .review-options {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .review-option {
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      border: 1px solid transparent;
+    }
+
+    .review-option.ro-correct {
+      background: var(--correct-bg);
+      border-color: rgba(16, 185, 129, 0.35);
+      color: #a7f3d0;
+    }
+
+    .review-option.ro-wrong-selected {
+      background: var(--wrong-bg);
+      border-color: rgba(244, 63, 94, 0.35);
+      color: #fecdd3;
+    }
+
+    .review-option.ro-neutral {
+      background: rgba(255, 255, 255, 0.03);
+      border-color: var(--border-color);
+      color: var(--text-muted);
+    }
+
+    .review-fact {
+      background: rgba(56, 189, 248, 0.06);
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+
+    .review-fact-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 5px;
+    }
+
+    .review-fact-body {
+      font-size: 0.875rem;
+      line-height: 1.5;
+      color: #cbd5e1;
+    }
+
     @keyframes fadeIn {
       from {
         opacity: 0;
@@ -292,6 +480,7 @@
       <div class="progress-fill" id="progressFill"></div>
     </div>
 
+    <!-- Game Screen -->
     <div id="gameView">
       <div class="question-card">
         <div class="topic-badge" id="topicBadge">Загрузка...</div>
@@ -305,14 +494,25 @@
         <div class="explanation-body" id="explanationText"></div>
       </div>
 
-      <button class="btn-primary" id="nextBtn" style="display: none;" onclick="nextQuestion()">Продолжить</button>
+      <button class="btn-primary" id="nextBtn" style="display: none;" id="nextQuestionBtn">Продолжить</button>
     </div>
 
+    <!-- Finish Screen -->
     <div id="finishView" style="display: none;" class="question-card finish-card">
       <div class="finish-title">Викторина завершена!</div>
       <div class="finish-score" id="finalScore">0</div>
       <div class="finish-subtitle" id="finalDetails">Вы правильно ответили на 0 из 5 вопросов</div>
-      <button class="btn-primary" onclick="Telegram.WebApp.close()">Закрыть</button>
+      <button class="btn-primary" id="closeBtn">Закрыть</button>
+      <button class="btn-secondary" id="reviewBtn">📋 Просмотреть ответы</button>
+    </div>
+
+    <!-- Review Screen -->
+    <div id="reviewView" style="display: none;">
+      <div class="review-header">
+        <button class="review-back-btn" id="backToFinishBtn">← Назад</button>
+        <div class="review-title">Разбор ответов</div>
+      </div>
+      <div id="reviewAccordion"></div>
     </div>
   </div>
 
@@ -324,11 +524,23 @@
     }
 
     let questions = [];
+    let playerAnswers = []; // {selectedIdx, isCorrect} per question index
     let currentIdx = 0;
     let totalScore = 0;
     let correctCount = 0;
     let startTime = 0;
     let answered = false;
+
+    // Wire up static buttons via addEventListener (CSP-safe)
+    document.getElementById('nextBtn').addEventListener('click', nextQuestion);
+    document.getElementById('closeBtn').addEventListener('click', function () {
+      if (tg) tg.close(); else window.close();
+    });
+    document.getElementById('reviewBtn').addEventListener('click', showReviewScreen);
+    document.getElementById('backToFinishBtn').addEventListener('click', function () {
+      document.getElementById('reviewView').style.display = 'none';
+      document.getElementById('finishView').style.display = 'block';
+    });
 
     async function defInit() {
       try {
@@ -338,12 +550,13 @@
         const data = await response.json();
         if (data.questions && data.questions.length > 0) {
           questions = data.questions;
+          playerAnswers = new Array(questions.length).fill(null);
           renderQuestion();
         } else {
-          document.getElementById('questionText').innerText = "Не удалось загрузить вопросы на сегодня.";
+          document.getElementById('questionText').innerText = 'Не удалось загрузить вопросы на сегодня.';
         }
       } catch (e) {
-        document.getElementById('questionText').innerText = "Ошибка соединения.";
+        document.getElementById('questionText').innerText = 'Ошибка соединения.';
       }
     }
 
@@ -357,7 +570,7 @@
       const q = questions[currentIdx];
 
       document.getElementById('qCounter').innerText = `Вопрос ${currentIdx + 1}/${questions.length}`;
-      document.getElementById('progressFill').style.width = `${((currentIdx) / questions.length) * 100}%`;
+      document.getElementById('progressFill').style.width = `${(currentIdx / questions.length) * 100}%`;
       document.getElementById('topicBadge').innerText = q.topic || 'Тривиа';
       document.getElementById('questionText').innerText = q.question;
       document.getElementById('explanationCard').style.display = 'none';
@@ -370,10 +583,11 @@
         const btn = document.createElement('button');
         btn.className = 'option-btn';
         btn.innerText = optText;
-        btn.onclick = () => selectAnswer(idx);
+        btn.addEventListener('click', function () { selectAnswer(idx); });
         grid.appendChild(btn);
       });
 
+      // Start timer AFTER DOM is ready — reading fact does NOT eat into next question's time
       startTime = Date.now();
     }
 
@@ -384,6 +598,9 @@
       const elapsedMs = Date.now() - startTime;
       const q = questions[currentIdx];
       const isCorrect = (selectedIdx === q.correct_index);
+
+      // Record answer for review screen
+      playerAnswers[currentIdx] = { selectedIdx, isCorrect };
 
       const grid = document.getElementById('optionsGrid');
       const buttons = grid.children;
@@ -398,7 +615,6 @@
       if (isCorrect) {
         buttons[selectedIdx].classList.add('selected-correct');
         correctCount++;
-        // Score calculation
         let qScore = 200;
         if (elapsedMs < 15000) {
           qScore += Math.floor(100 * ((15000 - elapsedMs) / 15000));
@@ -410,11 +626,11 @@
       }
 
       // Show explanation
-      document.getElementById('explanationText').innerText = q.explanation || "Отличный факт!";
+      document.getElementById('explanationText').innerText = q.explanation || 'Отличный факт!';
       document.getElementById('explanationCard').style.display = 'block';
       document.getElementById('nextBtn').style.display = 'block';
 
-      // Async submit score to backend
+      // Async submit
       fetch('/webapp/api/miniapp/trivia/submit_answer', {
         method: 'POST',
         headers: {
@@ -428,7 +644,7 @@
           elapsed_ms: elapsedMs,
           total_score: totalScore
         })
-      }).catch(() => { });
+      }).catch(function () { });
     }
 
     function nextQuestion() {
@@ -440,8 +656,100 @@
       document.getElementById('gameView').style.display = 'none';
       document.getElementById('progressFill').style.width = '100%';
       document.getElementById('finalScore').innerText = totalScore;
-      document.getElementById('finalDetails').innerText = `Вы правильно ответили на ${correctCount} из ${questions.length} вопросов`;
+      document.getElementById('finalDetails').innerText =
+        `Вы правильно ответили на ${correctCount} из ${questions.length} вопросов`;
       document.getElementById('finishView').style.display = 'block';
+    }
+
+    function showReviewScreen() {
+      document.getElementById('finishView').style.display = 'none';
+      buildAccordion();
+      document.getElementById('reviewView').style.display = 'block';
+    }
+
+    function buildAccordion() {
+      const container = document.getElementById('reviewAccordion');
+      container.innerHTML = '';
+
+      questions.forEach(function (q, idx) {
+        const answer = playerAnswers[idx];
+        const isCorrect = answer && answer.isCorrect;
+        const selectedIdx = answer ? answer.selectedIdx : -1;
+
+        const item = document.createElement('div');
+        item.className = 'accordion-item ' + (isCorrect ? 'correct-item' : 'wrong-item');
+        item.id = 'acc-item-' + idx;
+
+        // Header (trigger)
+        const trigger = document.createElement('button');
+        trigger.className = 'accordion-trigger';
+
+        const icon = document.createElement('span');
+        icon.className = 'accordion-icon ' + (isCorrect ? 'icon-correct' : 'icon-wrong');
+        icon.innerText = isCorrect ? '✓' : '✗';
+
+        const qText = document.createElement('span');
+        qText.className = 'accordion-question-text';
+        qText.innerText = q.question;
+
+        const chevron = document.createElement('span');
+        chevron.className = 'accordion-chevron';
+        chevron.innerHTML = '&#9660;';
+
+        trigger.appendChild(icon);
+        trigger.appendChild(qText);
+        trigger.appendChild(chevron);
+
+        trigger.addEventListener('click', function () {
+          const isOpen = item.classList.contains('open');
+          item.classList.toggle('open', !isOpen);
+        });
+
+        // Body
+        const body = document.createElement('div');
+        body.className = 'accordion-body';
+
+        // Options list
+        const optsList = document.createElement('div');
+        optsList.className = 'review-options';
+
+        q.options.forEach(function (optText, optIdx) {
+          const opt = document.createElement('div');
+          opt.className = 'review-option';
+          if (optIdx === q.correct_index) {
+            opt.classList.add('ro-correct');
+            opt.innerText = '✓ ' + optText;
+          } else if (optIdx === selectedIdx && !isCorrect) {
+            opt.classList.add('ro-wrong-selected');
+            opt.innerText = '✗ ' + optText;
+          } else {
+            opt.classList.add('ro-neutral');
+            opt.innerText = optText;
+          }
+          optsList.appendChild(opt);
+        });
+
+        body.appendChild(optsList);
+
+        // Fact
+        if (q.explanation) {
+          const factBox = document.createElement('div');
+          factBox.className = 'review-fact';
+          const factLabel = document.createElement('div');
+          factLabel.className = 'review-fact-label';
+          factLabel.innerText = '💡 Знаете ли вы?';
+          const factBody = document.createElement('div');
+          factBody.className = 'review-fact-body';
+          factBody.innerText = q.explanation;
+          factBox.appendChild(factLabel);
+          factBox.appendChild(factBody);
+          body.appendChild(factBox);
+        }
+
+        item.appendChild(trigger);
+        item.appendChild(body);
+        container.appendChild(item);
+      });
     }
 
     defInit();
