@@ -157,6 +157,55 @@ async def daily_trivia_command(update: Update, context: ContextTypes.DEFAULT_TYP
     pref = await daily_delivery_repo.get_preference(user_id)
     is_subscribed = bool(pref and pref.get("is_subscribed"))
 
+    # If the user already finished today's trivia, show the result directly
+    # instead of the play-invite. Register the sent message as the new active
+    # prompt so that send_trivia_result_message can keep it up to date.
+    result = await trivia_repo.get_result_if_exists(user_id, today)
+    if result is not None and result.status == "completed":
+        from app.games.daily_trivia_telegram import _send_result_photo, render_result_body
+
+        text, keyboard = await render_result_body(user_id, today)
+        from telegram import InputMediaPhoto
+
+        from app.games import cover_photo as _cover_photo
+
+        cover = await _cover_photo.get_cover_photo("dailytrivia")
+        send_kwargs = {
+            "chat_id": user_id,
+            "parse_mode": ParseMode.HTML,
+            "reply_markup": keyboard,
+        }
+        if update.effective_message.message_id:
+            send_kwargs["reply_to_message_id"] = update.effective_message.message_id
+
+        sent_message = None
+        if cover:
+            try:
+                sent_message = await context.bot.send_photo(
+                    photo=cover, caption=text, **send_kwargs
+                )
+                await _cover_photo.remember_cover_file_id("dailytrivia", sent_message)
+            except Exception as exc:
+                logger.warning("daily trivia result photo failed user=%s: %s", user_id, exc)
+                sent_message = None
+        if sent_message is None:
+            try:
+                sent_message = await context.bot.send_message(text=text, **send_kwargs)
+            except Exception as exc:
+                logger.warning("daily trivia result text failed user=%s: %s", user_id, exc)
+
+        if sent_message is not None:
+            try:
+                await trivia_repo.register_prompt_message(
+                    user_id=user_id,
+                    puzzle_date=today,
+                    chat_id=sent_message.chat_id,
+                    message_id=sent_message.message_id,
+                )
+            except Exception as exc:
+                logger.warning("daily trivia: register_prompt_message (result) failed user=%s: %s", user_id, exc)
+        return
+
     await send_daily_trivia_entry(
         context.bot,
         user_id,
