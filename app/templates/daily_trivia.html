@@ -566,6 +566,7 @@
 
     let questions = [];
     let playerAnswers = []; // {selectedIdx, isCorrect} per question index
+    let puzzleDate = '';   // YYYY-MM-DD from API, used in deep links
     let currentIdx = 0;
     let totalScore = 0;
     let correctCount = 0;
@@ -596,6 +597,7 @@
         }
 
         questions = data.questions;
+        puzzleDate = data.date || '';   // store for deep links
         playerAnswers = new Array(questions.length).fill(null);
 
         // If the user already completed the game today, skip straight to the
@@ -821,8 +823,10 @@
         }
 
         // "Узнать больше (ИИ)" button — opens bot DM with AI expansion of the fact
-        if (BOT_USERNAME && q.id) {
-          const deepLink = 'https://t.me/' + BOT_USERNAME + '?start=trivia_q_' + q.id;
+        // Payload format: trivia_q_{YYYY-MM-DD}_{question_index}
+        // Using date+index (not q.id) because q.id is 1-5 per puzzle (non-unique globally).
+        if (BOT_USERNAME && puzzleDate) {
+          const deepLink = 'https://t.me/' + BOT_USERNAME + '?start=trivia_q_' + puzzleDate.replace(/-/g, '') + '_' + idx;
           const aiBtn = document.createElement('a');
           aiBtn.href = deepLink;
           aiBtn.className = 'btn-ai-more';

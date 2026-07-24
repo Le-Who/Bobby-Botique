@@ -91,24 +91,27 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if payload.startswith("trivia_q_"):
         # "Узнать больше (ИИ)" deep link from Daily Trivia review screen.
-        # Payload format: trivia_q_<question_id>
-        # Fetch question from PostgreSQL, ask AI to expand on the explanation,
-        # write the exchange to chat history, send the reply.
+        # Payload format: trivia_q_{YYYYMMDD}_{question_index}
+        # e.g.  trivia_q_20260724_2  → puzzle 2026-07-24, question index 2
         import html as _html
+        from datetime import date as _date
 
-        from app.repos.daily_trivia import get_question_by_id
+        from app.repos.daily_trivia import get_question_by_date_and_index
 
+        parts = payload[9:].rsplit("_", 1)  # strip "trivia_q_", split on last "_"
         try:
-            question_id = int(payload[9:])  # strip "trivia_q_"
-        except ValueError:
+            date_str, idx_str = parts
+            puzzle_date = _date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
+            question_index = int(idx_str)
+        except (ValueError, IndexError):
             await update.message.reply_text("❌ Некорректная ссылка.", parse_mode="HTML")
             return
 
-        q = await get_question_by_id(question_id)
+        q = await get_question_by_date_and_index(puzzle_date, question_index)
         if q is None:
             await update.message.reply_text(
                 "❌ <b>Вопрос не найден.</b>\n"
-                "Возможно, он был обновлён. Открой Викторину и попробуй снова.",
+                "Возможно, данные обновились. Открой Викторину и попробуй снова.",
                 parse_mode="HTML",
             )
             return
@@ -130,19 +133,20 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             router = get_provider_router()
             ai_history = [{"role": "user", "parts": [ai_prompt]}]
             ai_response, _ = await router.get_response(
-                _settings.GEMINI_PRIMARY_MODEL,
+                _settings.DEFAULT_MODEL,
                 ai_history,
                 user_id=user_id,
             )
         except Exception as exc:
             logging.warning("trivia_q deep link AI failed user=%s: %s", user_id, exc)
-            ai_response = (
-                f"📚 <b>{_html.escape(q.question)}</b>\n\n"
-                f"<b>Ответ:</b> {_html.escape(correct_answer)}\n\n"
-                f"💡 {_html.escape(q.explanation)}"
-            )
             await thinking_msg.delete()
-            await update.message.reply_text(ai_response, parse_mode="HTML")
+            # Fallback: show the fact directly, cleanly formatted
+            await update.message.reply_text(
+                f"🧠 <b>{_html.escape(q.question)}</b>\n"
+                f"<i>Правильный ответ: {_html.escape(correct_answer)}</i>\n\n"
+                f"💡 {_html.escape(q.explanation)}",
+                parse_mode="HTML",
+            )
             return
 
         # Write q+a to history so the user can continue the conversation
@@ -164,7 +168,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             full_text = full_text[:4090] + "…"
         await update.message.reply_text(full_text, parse_mode="HTML")
         return
-        
+
     if payload.startswith("subscribe_horoscope_"):
         from app.handlers.horoscope_subscription import start_subscribe_horoscope
 

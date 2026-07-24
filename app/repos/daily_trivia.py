@@ -280,31 +280,32 @@ async def update_result_answer(
     return _row_to_result(rows[0])
 
 
-async def get_question_by_id(question_id: int, *, conn=None) -> TriviaQuestion | None:
-    """Find a single trivia question by its id across all stored puzzles.
+async def get_question_by_date_and_index(
+    puzzle_date: date, question_index: int, *, conn=None
+) -> TriviaQuestion | None:
+    """Fetch a specific trivia question by puzzle date and 0-based question index.
+
+    Uses puzzle_date + question_index (not question.id) because question IDs
+    are 1-5 per puzzle and are NOT globally unique across puzzles.
 
     Questions may be stored as a JSONB string scalar (double-serialised) or as
-    a native JSONB array, depending on the asyncpg / PostgreSQL version.
-    We read the raw column value and parse it with normalize_questions() —
-    the same helper used everywhere else in this repo — to avoid the
-    'cannot extract elements from a scalar' error from jsonb_array_elements().
+    a native JSONB array — handled transparently by normalize_questions().
     """
     rows = await db.db_query(
         """
         SELECT questions
         FROM public.daily_trivia_puzzles
-        WHERE questions::text != '[]'
-        ORDER BY puzzle_date DESC
+        WHERE puzzle_date = $1
         """,
-        (),
+        (puzzle_date,),
         conn=conn,
     )
-    for row in rows:
-        qs = normalize_questions(row["questions"])
-        for q in qs:
-            if q.id == question_id:
-                return q
-    return None
+    if not rows:
+        return None
+    qs = normalize_questions(rows[0]["questions"])
+    if question_index < 0 or question_index >= len(qs):
+        return None
+    return qs[question_index]
 
 
 async def get_puzzles_range(start_date: date, end_date: date, *, conn=None) -> list[DailyTriviaPuzzle]:
