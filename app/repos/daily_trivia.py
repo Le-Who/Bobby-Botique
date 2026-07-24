@@ -177,6 +177,25 @@ async def save_puzzle(
     return _row_to_puzzle(rows[0])
 
 
+async def get_result_if_exists(user_id: int, puzzle_date: date, *, conn=None) -> DailyTriviaResult | None:
+    """Return the user's trivia result for today if it exists, else None.
+
+    Unlike get_or_create_result this never inserts a row — safe to call on
+    every page load without polluting the results table.
+    """
+    rows = await db.db_query(
+        """
+        SELECT user_id, puzzle_date, status, current_question, correct_count,
+               final_score, elapsed_ms, answers, started_at, finished_at
+        FROM public.daily_trivia_results
+        WHERE user_id = $1 AND puzzle_date = $2
+        """,
+        (user_id, puzzle_date),
+        conn=conn,
+    )
+    return _row_to_result(rows[0]) if rows else None
+
+
 async def get_or_create_result(user_id: int, puzzle_date: date, *, conn=None) -> DailyTriviaResult:
     rows = await db.db_query(
         """

@@ -96,7 +96,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # write the exchange to chat history, send the reply.
         import html as _html
 
-        from app.providers.router import ProviderRouter
         from app.repos.daily_trivia import get_question_by_id
 
         try:
@@ -127,11 +126,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         try:
             from app.config import settings as _settings
-            router = ProviderRouter()
+            from app.providers import get_provider_router
+            router = get_provider_router()
             ai_history = [{"role": "user", "parts": [ai_prompt]}]
             ai_response, _ = await router.get_response(
-                preferred_model=_settings.GEMINI_PRIMARY_MODEL,
-                history=ai_history,
+                _settings.GEMINI_PRIMARY_MODEL,
+                ai_history,
                 user_id=user_id,
             )
         except Exception as exc:

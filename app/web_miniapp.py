@@ -1368,7 +1368,10 @@ async def game_page():
     if game_id in {"daily2048", "2048"} or mode in {"daily2048", "2048"}:
         return await render_template("daily_2048.html")
     if game_id in {"dailytrivia", "trivia"} or mode in {"dailytrivia", "trivia"}:
-        return await render_template("daily_trivia.html")
+        from app.bot_instance import get_bot as _get_bot
+        _bot = _get_bot()
+        _bot_username = getattr(_bot, "username", "") if _bot else ""
+        return await render_template("daily_trivia.html", bot_username=_bot_username)
     return await render_template("crocodile.html", game_id=game_id, mode=mode)
 
 
@@ -1398,7 +1401,7 @@ async def api_miniapp_trivia_today():
 
     from app.games.daily_trivia import prepare_daily_puzzle
     from app.repos.crocodile_daily import today_puzzle_date
-    from app.repos.daily_trivia import get_or_create_result
+    from app.repos.daily_trivia import get_result_if_exists
 
     today = today_puzzle_date()
     puzzle = await prepare_daily_puzzle(today)
@@ -1406,6 +1409,7 @@ async def api_miniapp_trivia_today():
     # Check if the authenticated user already completed today's game.
     # If so, include their result so the frontend can skip straight to the
     # finish screen without re-playing.
+    # NOTE: uses get_result_if_exists (pure SELECT) — never creates rows on load.
     user_result = None
     raw_init = request.headers.get("X-TG-INIT-DATA", "")
     if raw_init:
@@ -1414,8 +1418,8 @@ async def api_miniapp_trivia_today():
         if validated:
             uid = _extract_user_id(validated) or 0
             if uid > 0:
-                result = await get_or_create_result(uid, today)
-                if result.status == "completed":
+                result = await get_result_if_exists(uid, today)
+                if result is not None and result.status == "completed":
                     user_result = {
                         "status": "completed",
                         "final_score": result.final_score,
