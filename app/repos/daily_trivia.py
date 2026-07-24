@@ -602,4 +602,51 @@ async def deactivate_prompt_message(user_id: int, puzzle_date: date) -> None:
     )
 
 
+async def mark_prompt_refreshed(user_id: int, puzzle_date: date) -> None:
+    """Record that the result message was just edited; keep the prompt active.
 
+    Called instead of deactivate_prompt_message after a successful leaderboard
+    edit, so the record stays alive for future throttled refreshes.
+    """
+    await db.db_query(
+        """
+        UPDATE public.daily_trivia_prompt_messages
+        SET last_refreshed_at = NOW(),
+            updated_at        = NOW()
+        WHERE user_id = $1 AND puzzle_date = $2 AND is_active = TRUE
+        """,
+        (user_id, puzzle_date),
+    )
+
+
+async def get_stale_active_prompts(
+    puzzle_date: date,
+    stale_seconds: int = 600,
+) -> list[dict[str, Any]]:
+    """Return active prompt messages for completed users that are due a refresh.
+
+    A message is considered stale when:
+      - last_refreshed_at IS NULL  (never refreshed since being registered), OR
+      - last_refreshed_at < NOW() - stale_seconds
+
+    Only returns records for users whose daily result is 'completed', so we
+    never try to edit the prompt of someone who is mid-game.
+    """
+    rows = await db.db_query(
+        """
+        SELECT p.id, p.user_id, p.puzzle_date, p.chat_id, p.message_id
+        FROM public.daily_trivia_prompt_messages p
+        JOIN public.daily_trivia_results r
+          ON r.user_id = p.user_id AND r.puzzle_date = p.puzzle_date
+        WHERE p.puzzle_date = $1
+          AND p.is_active   = TRUE
+          AND r.status      = 'completed'
+          AND (
+              p.last_refreshed_at IS NULL
+              OR p.last_refreshed_at < NOW() - ($2 * INTERVAL '1 second')
+          )
+        ORDER BY p.last_refreshed_at NULLS FIRST
+        """,
+        (puzzle_date, stale_seconds),
+    )
+    return list(rows)

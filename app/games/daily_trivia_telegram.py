@@ -193,17 +193,79 @@ async def _send_result_photo(
 async def send_trivia_result_message(bot, user_id: int, puzzle_date: date) -> None:
     """Edit the daily invite message to show the final result.
 
-    Mirrors daily_2048_telegram.send_daily2048_result_message:
-      1. Render the result text + keyboard.
-      2. Look up the stored prompt message and try to edit it in-place.
+    After editing the triggering user's message, also refreshes all other
+    players' result messages that are stale (haven't been updated in 10+ min).
+    This keeps everyone's leaderboard up to date without flooding the API.
+
+    Flow:
+      1. Render result text + keyboard for user_id.
+      2. Look up their stored prompt message and try to edit it in-place.
       3. If no stored message (or edit fails), send a new result message.
-      4. Deactivate the stored prompt record to avoid double-edits.
+      4. Mark the prompt as refreshed (keep active for future refreshes).
+      5. Batch-refresh all other stale active result messages for today.
     """
     text, keyboard = await render_result_body(user_id, puzzle_date)
     prompt = await repo.get_active_prompt_message(user_id, puzzle_date)
     edited = False
     if prompt:
         edited = await _edit_prompt_to_result(bot, prompt, text, keyboard)
-        await repo.deactivate_prompt_message(user_id, puzzle_date)
+        if edited:
+            await repo.mark_prompt_refreshed(user_id, puzzle_date)
+        else:
+            await repo.deactivate_prompt_message(user_id, puzzle_date)
     if not edited:
         await _send_result_photo(bot, user_id, text, keyboard)
+
+    # Batch-refresh all other players' result messages that are stale (>10 min).
+    await refresh_stale_result_messages(bot, puzzle_date, exclude_user_id=user_id)
+
+
+# ---------------------------------------------------------------------------
+# Throttled leaderboard refresh for all players
+# ---------------------------------------------------------------------------
+
+_REFRESH_STALE_SECONDS = 600  # 10 minutes
+
+
+async def refresh_stale_result_messages(
+    bot,
+    puzzle_date: date,
+    *,
+    exclude_user_id: int | None = None,
+    stale_seconds: int = _REFRESH_STALE_SECONDS,
+) -> None:
+    """Edit result messages of all players whose leaderboard view is stale.
+
+    Called after each new game completion so that players who finished earlier
+    see an updated leaderboard without having to re-send /trivia.
+
+    Throttle: each player's message is refreshed at most once per stale_seconds
+    (default 10 min).  Messages that cannot be edited are deactivated so we
+    stop trying.
+
+    Args:
+        exclude_user_id: skip this user (they were just handled by the caller).
+        stale_seconds: minimum seconds since last refresh.
+    """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    stale_prompts = await repo.get_stale_active_prompts(puzzle_date, stale_seconds)
+
+    for prompt in stale_prompts:
+        uid = int(prompt["user_id"])
+        if uid == exclude_user_id:
+            continue
+        try:
+            text, keyboard = await render_result_body(uid, puzzle_date)
+            ok = await _edit_prompt_to_result(bot, prompt, text, keyboard)
+            if ok:
+                await repo.mark_prompt_refreshed(uid, puzzle_date)
+            else:
+                await repo.deactivate_prompt_message(uid, puzzle_date)
+        except Exception as exc:
+            _log.warning("trivia: stale refresh failed user=%s: %s", uid, exc)
+            try:
+                await repo.deactivate_prompt_message(uid, puzzle_date)
+            except Exception:
+                pass
