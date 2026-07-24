@@ -95,6 +95,20 @@ async def render_result_body(
     else:
         lines.append("Пока нет завершённых результатов.")
 
+    # Monthly top-3
+    monthly_lb = await repo.get_monthly_leaderboard(puzzle_date.year, puzzle_date.month, limit=3)
+    if monthly_lb:
+        month_medals = ["🥇", "🥈", "🥉"]
+        lines.append("")
+        lines.append(f"📅 <b>Топ-3 месяца</b> ({puzzle_date.strftime('%B %Y')})")
+        for midx, mrow in enumerate(monthly_lb):
+            mname = html.escape(
+                (mrow.get("name") or "").strip()
+                or _user_label(int(mrow["user_id"]))
+            )
+            medal = month_medals[midx] if midx < len(month_medals) else f"{midx + 1}."
+            lines.append(f"{medal} {mname} — <b>{int(mrow['score'])}</b> ({int(mrow['games_played'])} игр)")
+
     lines.extend(["", "Возвращайтесь завтра за новыми вопросами! 📅"])
 
     keyboard = InlineKeyboardMarkup(
@@ -109,6 +123,7 @@ async def render_result_body(
         ]
     )
     return "\n".join(lines), keyboard
+
 
 
 async def _edit_prompt_to_result(

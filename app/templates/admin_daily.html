@@ -1069,9 +1069,19 @@ input:checked + .slider:before { transform: translateX(16px); }
           <!-- 5 question forms rendered here -->
         </div>
 
-        <div class="s2048-actions" style="margin-top: 14px;">
+        <!-- Super questions read-only section -->
+        <div id="trivia-super-questions-section" style="margin-top: 20px; display: none;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+            <span style="font-size:0.85rem; font-weight:700; color:#ff80bf;">⚡ СУПЕРИГРА — вопросы (только просмотр)</span>
+          </div>
+          <div id="trivia-editor-super-questions" style="display: flex; flex-direction: column; gap: 10px;">
+          </div>
+        </div>
+
+        <div class="s2048-actions" style="margin-top: 14px; flex-wrap: wrap; gap: 6px;">
           <button class="s2048-btn primary" id="trivia-btn-save" style="flex:1;">💾 Сохранить</button>
           <button class="s2048-btn danger" id="trivia-btn-regen" style="flex:1;">🤖 Регенерировать (AI)</button>
+          <button class="s2048-btn" id="trivia-btn-clear-keys" style="flex:1; font-size:0.75rem; border-color: var(--text-dim); color: var(--text-muted);">🗑️ Очистить ключи этого дня</button>
         </div>
       </aside>
     </section>
@@ -2214,7 +2224,7 @@ const TriviaModule = (() => {
     document.getElementById('trivia-editor-title').textContent = `Викторина на ${p.date}`;
     document.getElementById('trivia-editor-status').textContent = p.status || 'draft';
 
-    renderEditorQuestions(p.questions || []);
+    renderEditorQuestions(p.questions || [], p.super_questions || []);
   }
 
   function closeEditor() {
@@ -2225,7 +2235,7 @@ const TriviaModule = (() => {
     document.querySelectorAll('#trivia-puzzles-list .s2048-puzzle').forEach(el => el.classList.remove('active'));
   }
 
-  function renderEditorQuestions(questions) {
+  function renderEditorQuestions(questions, superQuestions) {
     const container = document.getElementById('trivia-editor-questions');
     const qList = [];
     for (let i = 0; i < 5; i++) {
@@ -2271,7 +2281,34 @@ const TriviaModule = (() => {
         </div>
       `;
     }).join('');
+
+    // Render super questions (read-only)
+    const superSection = document.getElementById('trivia-super-questions-section');
+    const superContainer = document.getElementById('trivia-editor-super-questions');
+    if (superQuestions && superQuestions.length > 0) {
+      superSection.style.display = 'block';
+      superContainer.innerHTML = superQuestions.map((q, i) => {
+        const opts = q.options || [];
+        return `
+          <div style="border:1px solid rgba(255,128,191,0.3); border-radius:8px; padding:10px; background:rgba(255,0,128,0.04);">
+            <div style="font-weight:700; font-size:0.8rem; color:#ff80bf; margin-bottom:6px;">⚡ Супервопрос #${i + 1} — ${escapeHtml(q.topic || '')}</div>
+            <div style="font-size:0.85rem; margin-bottom:8px; color:var(--text);">${escapeHtml(q.question || '')}</div>
+            <div style="display:flex; flex-direction:column; gap:3px; font-size:0.8rem;">
+              ${opts.map((opt, optIdx) => `
+                <div style="padding:3px 6px; border-radius:4px; ${optIdx === q.correct_index ? 'background:rgba(16,185,129,0.15); color:#10b981; font-weight:600;' : 'color:var(--text-muted);'}">
+                  ${optIdx === q.correct_index ? '✓ ' : ''}${escapeHtml(opt)}
+                </div>
+              `).join('')}
+            </div>
+            ${q.explanation ? `<div style="font-size:0.78rem; color:var(--text-muted); margin-top:6px; font-style:italic;">💡 ${escapeHtml(q.explanation)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+    } else {
+      superSection.style.display = 'none';
+    }
   }
+
 
   function getFormQuestions() {
     const container = document.getElementById('trivia-editor-questions');
@@ -2439,11 +2476,38 @@ const TriviaModule = (() => {
     document.getElementById('trivia-btn-save').addEventListener('click', save);
     document.getElementById('trivia-btn-regen').addEventListener('click', regenerate);
     document.getElementById('trivia-btn-close').addEventListener('click', closeEditor);
+    document.getElementById('trivia-btn-clear-keys').addEventListener('click', clearKeys);
     document.getElementById('trivia-lb-btn-daily').addEventListener('click', () => loadLeaderboard('daily'));
     document.getElementById('trivia-lb-btn-monthly').addEventListener('click', () => loadLeaderboard('monthly'));
     document.getElementById('trivia-model-select').addEventListener('change', (e) => updateModel(e.target.value));
 
     loadLeaderboard('daily');
+  }
+
+  async function clearKeys() {
+    if (!selectedDate) { showToast('Выберите дату', 'error'); return; }
+    const confirmed = await showConfirm('Очистить ключи', `Удалить все использованные ключи тем для ${selectedDate}?\nПосле этого при регенерации темы этого дня вновь станут доступны для других дней.`);
+    if (!confirmed) return;
+
+    const btn = document.getElementById('trivia-btn-clear-keys');
+    btn.disabled = true;
+    btn.textContent = '⏳ Очистка...';
+
+    try {
+      const res = await fetch('/api/admin/dailytrivia/clear_used_keys', {
+        method: 'POST',
+        headers: apiHeaders,
+        body: JSON.stringify({ date: selectedDate })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      showToast(`Удалено ${data.deleted ?? 0} ключей для ${selectedDate}`, 'success');
+    } catch (e) {
+      showToast(`Ошибка: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🗑️ Очистить ключи этого дня';
+    }
   }
 
   return { init };

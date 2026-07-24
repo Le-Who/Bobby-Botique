@@ -717,6 +717,25 @@ async def cleanup_old_used_keys(days: int = 90, *, conn=None) -> int:
     return len(result) if result else 0
 
 
+async def delete_used_keys_for_date(p_date: date, *, conn=None) -> int:
+    """Delete all used_keys entries for a specific puzzle date.
+
+    Called before force-regenerating questions for a date so that stale
+    topic/subobject pairs from the old (discarded) puzzle are removed from
+    the bank and do not pollute the deduplication context for future days.
+    """
+    result = await db.db_query(
+        """
+        DELETE FROM public.daily_trivia_used_keys
+        WHERE used_at = $1
+        """,
+        (p_date,),
+        conn=conn,
+    )
+    return len(result) if result else 0
+
+
+
 # ---------------------------------------------------------------------------
 # Prompt-message tracking (for in-place result editing)
 # ---------------------------------------------------------------------------

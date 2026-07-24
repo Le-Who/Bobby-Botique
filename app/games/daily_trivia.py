@@ -137,12 +137,23 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> rep
     ):
         return existing
 
+    if force:
+        # Remove old used_keys for this date before generating new ones so the
+        # discarded puzzle's topics don't permanently occupy slots in the bank.
+        try:
+            deleted = await repo.delete_used_keys_for_date(puzzle_date)
+            if deleted:
+                logger.info("trivia: cleared %d stale used_keys for %s before regen", deleted, puzzle_date)
+        except Exception as exc:
+            logger.warning("trivia: failed to clear used_keys for %s: %s", puzzle_date, exc)
+
     router = get_provider_router()
 
     from app.repos.settings_repo import get_global_setting
     model_name = await get_global_setting("daily_trivia_llm_model", TRIVIA_MODEL)
 
     used_keys = await repo.get_used_keys(days=90)
+
     all_used_keys = list(used_keys)
 
     def _build_used_context(keys_list: list[dict[str, str]]) -> str:

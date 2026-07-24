@@ -1272,7 +1272,19 @@ def _serialize_daily_trivia_puzzle(puzzle):
             }
             for q in puzzle.questions
         ],
+        "super_questions": [
+            {
+                "id": q.id,
+                "topic": q.topic,
+                "question": q.question,
+                "options": q.options,
+                "correct_index": q.correct_index,
+                "explanation": q.explanation,
+            }
+            for q in puzzle.super_questions
+        ],
     }
+
 
 
 @quart_app.route("/api/admin/dailytrivia/stats", methods=["GET"])
@@ -1406,6 +1418,20 @@ async def api_admin_dailytrivia_save():
     puzzle = await daily_trivia_repo.save_puzzle(p_date, questions, status=status)
     return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
 
+
+@quart_app.route("/api/admin/dailytrivia/clear_used_keys", methods=["POST"])
+@require_auth
+@rate_limit_api
+async def api_admin_dailytrivia_clear_used_keys():
+    from app.repos import daily_trivia as daily_trivia_repo
+    from app.repos.crocodile_daily import today_puzzle_date
+    data = await request.get_json() or {}
+    try:
+        p_date = datetime.date.fromisoformat(str(data.get("date") or today_puzzle_date()))
+    except ValueError:
+        return jsonify({"error": "invalid date"}), 400
+    deleted = await daily_trivia_repo.delete_used_keys_for_date(p_date)
+    return jsonify({"success": True, "deleted": deleted})
 
 
 # ── Broadcast Center API ──────────────────────────────────────────────────────
