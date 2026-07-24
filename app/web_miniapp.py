@@ -1390,13 +1390,37 @@ async def dailytrivia_page():
 
 @miniapp_blueprint.route("/api/miniapp/trivia/today", methods=["GET"])
 async def api_miniapp_trivia_today():
-    from quart import jsonify
+    from quart import jsonify, request
 
     from app.games.daily_trivia import prepare_daily_puzzle
     from app.repos.crocodile_daily import today_puzzle_date
+    from app.repos.daily_trivia import get_or_create_result
 
     today = today_puzzle_date()
     puzzle = await prepare_daily_puzzle(today)
+
+    # Check if the authenticated user already completed today's game.
+    # If so, include their result so the frontend can skip straight to the
+    # finish screen without re-playing.
+    user_result = None
+    raw_init = request.headers.get("X-TG-INIT-DATA", "")
+    if raw_init:
+        bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+        validated = _validate_init_data(raw_init, bot_token) if bot_token else None
+        if validated:
+            uid = _extract_user_id(validated) or 0
+            if uid > 0:
+                result = await get_or_create_result(uid, today)
+                if result.status == "completed":
+                    user_result = {
+                        "status": "completed",
+                        "final_score": result.final_score,
+                        "correct_count": result.correct_count,
+                        "elapsed_ms": result.elapsed_ms,
+                        # answers list: [{question_index, selected_index, is_correct}, ...]
+                        "answers": result.answers or [],
+                    }
+
     return jsonify(
         {
             "date": puzzle.puzzle_date.isoformat(),
@@ -1411,8 +1435,10 @@ async def api_miniapp_trivia_today():
                 }
                 for q in puzzle.questions
             ],
+            "user_result": user_result,  # None if not yet played or not authenticated
         }
     )
+
 
 
 @miniapp_blueprint.route("/api/miniapp/trivia/submit_answer", methods=["POST"])
