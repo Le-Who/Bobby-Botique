@@ -1369,6 +1369,7 @@ async def game_page():
         return await render_template("daily_2048.html")
     if game_id in {"dailytrivia", "trivia"} or mode in {"dailytrivia", "trivia"}:
         from app.bot_instance import get_bot as _get_bot
+
         _bot = _get_bot()
         _bot_username = getattr(_bot, "username", "") if _bot else ""
         return await render_template("daily_trivia.html", bot_username=_bot_username)
@@ -1401,16 +1402,13 @@ async def api_miniapp_trivia_today():
 
     from app.games.daily_trivia import prepare_daily_puzzle
     from app.repos.crocodile_daily import today_puzzle_date
-    from app.repos.daily_trivia import get_result_if_exists
+    from app.repos.daily_trivia import get_result_if_exists, get_super_result_if_exists
 
     today = today_puzzle_date()
     puzzle = await prepare_daily_puzzle(today)
 
-    # Check if the authenticated user already completed today's game.
-    # If so, include their result so the frontend can skip straight to the
-    # finish screen without re-playing.
-    # NOTE: uses get_result_if_exists (pure SELECT) — never creates rows on load.
     user_result = None
+    user_super_result = None
     raw_init = request.headers.get("X-TG-INIT-DATA", "")
     if raw_init:
         bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
@@ -1425,8 +1423,18 @@ async def api_miniapp_trivia_today():
                         "final_score": result.final_score,
                         "correct_count": result.correct_count,
                         "elapsed_ms": result.elapsed_ms,
-                        # answers list: [{question_index, selected_index, is_correct}, ...]
                         "answers": result.answers or [],
+                        "super_delta": result.super_delta,
+                        "super_correct": result.super_correct,
+                    }
+                super_res = await get_super_result_if_exists(uid, today)
+                if super_res is not None and super_res.status == "completed":
+                    user_super_result = {
+                        "status": "completed",
+                        "delta_score": super_res.delta_score,
+                        "correct_count": super_res.correct_count,
+                        "elapsed_ms": super_res.elapsed_ms,
+                        "answers": super_res.answers or [],
                     }
 
     return jsonify(
@@ -1443,10 +1451,21 @@ async def api_miniapp_trivia_today():
                 }
                 for q in puzzle.questions
             ],
-            "user_result": user_result,  # None if not yet played or not authenticated
+            "super_questions": [
+                {
+                    "id": q.id,
+                    "topic": q.topic,
+                    "question": q.question,
+                    "options": q.options,
+                    "correct_index": q.correct_index,
+                    "explanation": q.explanation,
+                }
+                for q in puzzle.super_questions
+            ],
+            "user_result": user_result,
+            "user_super_result": user_super_result,
         }
     )
-
 
 
 @miniapp_blueprint.route("/api/miniapp/trivia/submit_answer", methods=["POST"])
@@ -1476,7 +1495,6 @@ async def api_miniapp_trivia_submit_answer():
         result = await get_or_create_result(user_id, today)
 
         # Guard: game already completed — ignore further submissions.
-        # This prevents correct_count accumulation and score overwrites on replay.
         if result.status == "completed":
             return jsonify({"success": True, "already_completed": True})
 
@@ -1516,6 +1534,89 @@ async def api_miniapp_trivia_submit_answer():
                 import logging as _logging
                 _logging.getLogger(__name__).warning(
                     "trivia: result message failed user=%s: %s", user_id, exc
+                )
+
+    return jsonify({"success": True})
+
+
+@miniapp_blueprint.route("/api/miniapp/trivia/submit_super_answer", methods=["POST"])
+async def api_miniapp_trivia_submit_super_answer():
+    from quart import jsonify, request
+
+    from app.repos.crocodile_daily import today_puzzle_date
+    from app.repos.daily_trivia import (
+        get_or_create_super_result,
+        get_result_if_exists,
+        update_super_result_answer,
+    )
+
+    data = await request.get_json() or {}
+    q_idx = int(data.get("question_index", 0))
+    selected_idx = int(data.get("selected_index", 0))
+    is_correct = bool(data.get("is_correct", False))
+    elapsed_ms = int(data.get("elapsed_ms", 0))
+    base_question_score = int(data.get("base_score", 0))
+
+    user_id = 0
+    raw_init = request.headers.get("X-TG-INIT-DATA", "")
+    if raw_init:
+        bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+        validated = _validate_init_data(raw_init, bot_token) if bot_token else None
+        if validated:
+            user_id = _extract_user_id(validated) or 0
+
+    if user_id > 0:
+        today = today_puzzle_date()
+        main_result = await get_result_if_exists(user_id, today)
+        if main_result is None or main_result.status != "completed":
+            return jsonify({"success": False, "error": "Main game not completed"})
+
+        super_result = await get_or_create_super_result(user_id, today)
+        if super_result.status == "completed":
+            return jsonify({"success": True, "already_completed": True})
+
+        q_delta = (base_question_score * 2) if is_correct else (-base_question_score * 2)
+
+        new_answers = list(super_result.answers)
+        new_answers.append(
+            {
+                "question_index": q_idx,
+                "selected_index": selected_idx,
+                "is_correct": is_correct,
+                "elapsed_ms": elapsed_ms,
+                "delta_score": q_delta,
+            }
+        )
+
+        new_delta = super_result.delta_score + q_delta
+        correct_count = super_result.correct_count + (1 if is_correct else 0)
+        is_finished = q_idx >= 2
+        status = "completed" if is_finished else "active"
+
+        await update_super_result_answer(
+            user_id,
+            today,
+            delta_score=new_delta,
+            correct_count=correct_count,
+            elapsed_ms=super_result.elapsed_ms + elapsed_ms,
+            answers=new_answers,
+            status=status,
+            finished=is_finished,
+        )
+
+        if is_finished:
+            try:
+                from app.bot_instance import get_bot
+                from app.games.daily_trivia_telegram import send_trivia_result_message
+
+                bot = get_bot()
+                if bot:
+                    await send_trivia_result_message(bot, user_id, today)
+            except Exception as exc:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "super trivia: result message failed user=%s: %s", user_id, exc
                 )
 
     return jsonify({"success": True})

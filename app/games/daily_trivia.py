@@ -97,10 +97,44 @@ SYSTEM_PROMPT_TRIVIA = """Ты — эксперт по составлению и
 ]
 """
 
+SYSTEM_PROMPT_SUPER_TRIVIA = """Ты — эксперт по составлению интеллектуальных викторин высшего уровня сложности (СУПЕРИГРА).
+Сгенерируй ровно 3 УНИКАЛЬНЫХ, ПОВЫШЕННОЙ СЛОЖНОСТИ (expert-level) вопроса для Суперигры.
+
+ТРЕБОВАНИЯ К ВОПРОСАМ:
+1. Качество и уровень: Вопросы должны быть сложными, глубокими и нетривиальными. Избегай общеизвестных фактов.
+2. Варианты ответа (options): РОВНО 4 варианта ответа на каждый вопрос.
+3. Правдоподобные дистракторы: Все варианты должны звучать максимально убедительно.
+4. Объяснение (explanation): Познавательное объяснение на 2-3 предложения с интересными деталями.
+5. Ключевая пара (key): Для каждого вопроса ОБЯЗАТЕЛЬНО укажи объект и конкретный факт/аспект (субобъект).
+6. Язык: Русский.
+
+ОТВЕТ ДОЛЖЕН БЫТЬ СТРОГО В ФОРМАТЕ JSON:
+[
+  {
+    "id": 1,
+    "topic": "История науки",
+    "question": "Текст сложного вопроса...",
+    "options": ["Вариант A", "Вариант B", "Вариант C", "Вариант D"],
+    "correct_index": 0,
+    "explanation": "Подробное познавательное объяснение...",
+    "key": { "object": "Объект", "subobject": "Аспект" }
+  },
+  ...
+]
+"""
+
 
 async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> repo.DailyTriviaPuzzle:
     existing = await repo.get_puzzle(puzzle_date)
-    if existing and existing.questions and not force and existing.status == "ready":
+    if (
+        existing
+        and existing.questions
+        and len(existing.questions) >= 5
+        and existing.super_questions
+        and len(existing.super_questions) >= 3
+        and not force
+        and existing.status == "ready"
+    ):
         return existing
 
     router = get_provider_router()
@@ -109,14 +143,19 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> rep
     model_name = await get_global_setting("daily_trivia_llm_model", TRIVIA_MODEL)
 
     used_keys = await repo.get_used_keys(days=90)
-    used_keys_context = ""
-    if used_keys:
-        formatted = "\n".join(f"- {k['object']} → {k['subobject']}" for k in used_keys[:40])
-        used_keys_context = f"\n\nУЖЕ ИССЛЕДОВАННЫЕ ТЕМЫ И ФАКТЫ (НЕ ПОВТОРЯЙ ИХ):\n{formatted}"
+    all_used_keys = list(used_keys)
 
-    prompt = f"Сгенерируй 5 вопросов для тривиа-викторины на дату {puzzle_date.isoformat()}.{used_keys_context}"
+    def _build_used_context(keys_list: list[dict[str, str]]) -> str:
+        if not keys_list:
+            return ""
+        formatted = "\n".join(f"- {k['object']} → {k['subobject']}" for k in keys_list[:40])
+        return f"\n\nУЖЕ ИССЛЕДОВАННЫЕ ТЕМЫ И ФАКТЫ (НЕ ПОВТОРЯЙ ИХ):\n{formatted}"
 
     keys_to_save: list[dict[str, str]] = []
+
+    # 1. Regular questions (5)
+    prompt = f"Сгенерируй 5 вопросов для тривиа-викторины на дату {puzzle_date.isoformat()}.{_build_used_context(all_used_keys)}"
+
     try:
         response_text, _ = await router.get_response(
             preferred_model=model_name,
@@ -140,7 +179,9 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> rep
             if isinstance(item, dict):
                 k = item.get("key")
                 if isinstance(k, dict) and k.get("object") and k.get("subobject"):
-                    keys_to_save.append({"object": str(k["object"]), "subobject": str(k["subobject"])})
+                    k_obj = {"object": str(k["object"]), "subobject": str(k["subobject"])}
+                    keys_to_save.append(k_obj)
+                    all_used_keys.append(k_obj)
 
         questions = shuffle_options_and_update_correct_index(parsed)
         if len(questions) < 5:
@@ -151,7 +192,44 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False) -> rep
         logger.error("Failed to generate Daily Trivia via LLM for date %s: %s", puzzle_date, e, exc_info=True)
         questions = _get_fallback_questions()
 
-    puzzle = await repo.save_puzzle(puzzle_date, questions, status="ready")
+    # 2. Super questions (3 expert level)
+    super_prompt = f"Сгенерируй 3 СУПЕР-вопроса повышенной сложности на дату {puzzle_date.isoformat()}.{_build_used_context(all_used_keys)}"
+
+    try:
+        response_text_super, _ = await router.get_response(
+            preferred_model=model_name,
+            history=[{"role": "user", "parts": [{"text": super_prompt}]}],
+            system_instruction=SYSTEM_PROMPT_SUPER_TRIVIA,
+            timeout=45.0,
+        )
+
+        start_idx = response_text_super.find("[")
+        end_idx = response_text_super.rfind("]")
+        if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+            clean_json_super = response_text_super[start_idx : end_idx + 1]
+        else:
+            clean_json_super = response_text_super.strip()
+
+        parsed_super = json.loads(clean_json_super)
+        if not isinstance(parsed_super, list):
+            raise ValueError("Parsed super LLM output is not a JSON list")
+
+        for item in parsed_super:
+            if isinstance(item, dict):
+                k = item.get("key")
+                if isinstance(k, dict) and k.get("object") and k.get("subobject"):
+                    keys_to_save.append({"object": str(k["object"]), "subobject": str(k["subobject"])})
+
+        super_questions = shuffle_options_and_update_correct_index(parsed_super)
+        if len(super_questions) < 3:
+            logger.warning("LLM generated fewer than 3 valid super questions (%d), using fallback", len(super_questions))
+            super_questions = _get_fallback_super_questions()
+
+    except Exception as e:
+        logger.error("Failed to generate Daily Super Trivia via LLM for date %s: %s", puzzle_date, e, exc_info=True)
+        super_questions = _get_fallback_super_questions()
+
+    puzzle = await repo.save_puzzle(puzzle_date, questions, super_questions=super_questions, status="ready")
 
     if keys_to_save:
         try:
@@ -209,9 +287,41 @@ def _get_fallback_questions() -> list[repo.TriviaQuestion]:
     return shuffle_options_and_update_correct_index(fallbacks)
 
 
+def _get_fallback_super_questions() -> list[repo.TriviaQuestion]:
+    """Fallback static super trivia set in case LLM is completely unreachable."""
+    fallbacks = [
+        {
+            "id": 1,
+            "topic": "Квантовая физика",
+            "question": "Какой ученый впервые предсказал существование антиматерии на основе математического уравнения?",
+            "options": ["Поль Дирак", "Вернер Гейзенберг", "Эрвин Шрёдингер", "Ричард Фейнман"],
+            "correct_index": 0,
+            "explanation": "В 1928 году Поль Дирак вывел уравнение, объединившее квантовую механику и специальную теорию относительности, которое предсказывало существование позитрона.",
+        },
+        {
+            "id": 2,
+            "topic": "Древняя история",
+            "question": "Какая из этих древних цивилизаций использовала систему счисления с основанием 60?",
+            "options": ["Шумеры", "Древние египтяне", "Майя", "Хетты"],
+            "correct_index": 0,
+            "explanation": "Шумеры и вавилоняне использовали шестидесятеричную систему счисления, благодаря которой мы до сих пор делим час на 60 минут, а круг — на 360 градусов.",
+        },
+        {
+            "id": 3,
+            "topic": "Лингвистика",
+            "question": "Какой язык считается единственным сохранившимся доиндоевропейским языком Западной Европы?",
+            "options": ["Баскский", "Ирландский", "Албанский", "Мальтийский"],
+            "correct_index": 0,
+            "explanation": "Баскский язык (эускара) является изолированным языком и существовал в Европе еще до прихода индоевропейских племен.",
+        },
+    ]
+    return shuffle_options_and_update_correct_index(fallbacks)
+
+
 async def ensure_prepared_puzzles(*, now: datetime | None = None) -> list[repo.DailyTriviaPuzzle]:
     from app.repos.crocodile_daily import today_puzzle_date
 
     start_date = today_puzzle_date(now)
     dates = [start_date + timedelta(days=offset) for offset in range(repo.DAILY_TRIVIA_PREP_DAYS_AHEAD + 1)]
     return list(await asyncio.gather(*[prepare_daily_puzzle(d) for d in dates]))
+

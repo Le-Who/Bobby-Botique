@@ -102,12 +102,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         try:
             date_str, idx_str = parts
             puzzle_date = _date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
-            question_index = int(idx_str)
+            is_super = idx_str.startswith("s")
+            question_index = int(idx_str[1:] if is_super else idx_str)
         except (ValueError, IndexError):
             await update.message.reply_text("❌ Некорректная ссылка.", parse_mode="HTML")
             return
 
-        q = await get_question_by_date_and_index(puzzle_date, question_index)
+        q = await get_question_by_date_and_index(puzzle_date, question_index, is_super=is_super)
         if q is None:
             await update.message.reply_text(
                 "❌ <b>Вопрос не найден.</b>\n"

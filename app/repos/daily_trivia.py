@@ -27,6 +27,7 @@ class TriviaQuestion:
 class DailyTriviaPuzzle:
     puzzle_date: date
     questions: list[TriviaQuestion]
+    super_questions: list[TriviaQuestion]
     status: str
     prepared_at: datetime | None
 
@@ -39,6 +40,21 @@ class DailyTriviaResult:
     current_question: int
     correct_count: int
     final_score: int
+    elapsed_ms: int
+    answers: list[dict[str, Any]]
+    started_at: datetime
+    finished_at: datetime | None
+    super_delta: int | None = None
+    super_correct: int | None = None
+
+
+@dataclass(frozen=True)
+class DailySuperResult:
+    user_id: int
+    puzzle_date: date
+    status: str
+    delta_score: int
+    correct_count: int
     elapsed_ms: int
     answers: list[dict[str, Any]]
     started_at: datetime
@@ -106,6 +122,7 @@ def _row_to_puzzle(row: Any) -> DailyTriviaPuzzle:
     return DailyTriviaPuzzle(
         puzzle_date=_row_get(row, "puzzle_date"),
         questions=normalize_questions(_row_get(row, "questions")),
+        super_questions=normalize_questions(_row_get(row, "super_questions")),
         status=str(_row_get(row, "status", "ready") or "ready"),
         prepared_at=_row_get(row, "prepared_at"),
     )
@@ -121,6 +138,8 @@ def _row_to_result(row: Any) -> DailyTriviaResult:
             answers_raw = json.loads(answers_raw)
         except Exception:
             answers_raw = []
+    super_delta_raw = _row_get(row, "super_delta")
+    super_correct_raw = _row_get(row, "super_correct")
     return DailyTriviaResult(
         user_id=int(_row_get(row, "user_id") or 0),
         puzzle_date=_row_get(row, "puzzle_date"),
@@ -132,13 +151,38 @@ def _row_to_result(row: Any) -> DailyTriviaResult:
         answers=answers_raw if isinstance(answers_raw, list) else [],
         started_at=started_at,
         finished_at=_row_get(row, "finished_at"),
+        super_delta=int(super_delta_raw) if super_delta_raw is not None else None,
+        super_correct=int(super_correct_raw) if super_correct_raw is not None else None,
+    )
+
+
+def _row_to_super_result(row: Any) -> DailySuperResult:
+    started_at = _row_get(row, "started_at") or datetime.now(tz=UTC)
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=UTC)
+    answers_raw = _row_get(row, "answers", [])
+    if isinstance(answers_raw, str):
+        try:
+            answers_raw = json.loads(answers_raw)
+        except Exception:
+            answers_raw = []
+    return DailySuperResult(
+        user_id=int(_row_get(row, "user_id") or 0),
+        puzzle_date=_row_get(row, "puzzle_date"),
+        status=str(_row_get(row, "status", "active") or "active"),
+        delta_score=int(_row_get(row, "delta_score", 0) or 0),
+        correct_count=int(_row_get(row, "correct_count", 0) or 0),
+        elapsed_ms=int(_row_get(row, "elapsed_ms", 0) or 0),
+        answers=answers_raw if isinstance(answers_raw, list) else [],
+        started_at=started_at,
+        finished_at=_row_get(row, "finished_at"),
     )
 
 
 async def get_puzzle(puzzle_date: date, *, conn=None) -> DailyTriviaPuzzle | None:
     rows = await db.db_query(
         """
-        SELECT puzzle_date, questions, status, prepared_at
+        SELECT puzzle_date, questions, super_questions, status, prepared_at
         FROM public.daily_trivia_puzzles
         WHERE puzzle_date = $1
         """,
@@ -153,25 +197,29 @@ async def get_puzzle(puzzle_date: date, *, conn=None) -> DailyTriviaPuzzle | Non
 async def save_puzzle(
     puzzle_date: date,
     questions: list[TriviaQuestion],
+    super_questions: list[TriviaQuestion] | None = None,
     status: str = "ready",
     *,
     conn=None,
 ) -> DailyTriviaPuzzle:
     q_dict = questions_to_dict_list(questions)
     q_json = json.dumps(q_dict)
+    sq_dict = questions_to_dict_list(super_questions or [])
+    sq_json = json.dumps(sq_dict)
     now = datetime.now(tz=UTC)
     rows = await db.db_query(
         """
-        INSERT INTO public.daily_trivia_puzzles (puzzle_date, questions, status, prepared_at)
-        VALUES ($1, $2::jsonb, $3, $4)
+        INSERT INTO public.daily_trivia_puzzles (puzzle_date, questions, super_questions, status, prepared_at)
+        VALUES ($1, $2::jsonb, $3::jsonb, $4, $5)
         ON CONFLICT (puzzle_date) DO UPDATE
         SET questions = EXCLUDED.questions,
+            super_questions = EXCLUDED.super_questions,
             status = EXCLUDED.status,
             prepared_at = EXCLUDED.prepared_at,
             updated_at = NOW()
-        RETURNING puzzle_date, questions, status, prepared_at
+        RETURNING puzzle_date, questions, super_questions, status, prepared_at
         """,
-        (puzzle_date, q_json, status, now if status == "ready" else None),
+        (puzzle_date, q_json, sq_json, status, now if status == "ready" else None),
         conn=conn,
     )
     return _row_to_puzzle(rows[0])
@@ -186,7 +234,8 @@ async def get_result_if_exists(user_id: int, puzzle_date: date, *, conn=None) ->
     rows = await db.db_query(
         """
         SELECT user_id, puzzle_date, status, current_question, correct_count,
-               final_score, elapsed_ms, answers, started_at, finished_at
+               final_score, elapsed_ms, answers, started_at, finished_at,
+               super_delta, super_correct
         FROM public.daily_trivia_results
         WHERE user_id = $1 AND puzzle_date = $2
         """,
@@ -200,7 +249,8 @@ async def get_or_create_result(user_id: int, puzzle_date: date, *, conn=None) ->
     rows = await db.db_query(
         """
         SELECT user_id, puzzle_date, status, current_question, correct_count,
-               final_score, elapsed_ms, answers, started_at, finished_at
+               final_score, elapsed_ms, answers, started_at, finished_at,
+               super_delta, super_correct
         FROM public.daily_trivia_results
         WHERE user_id = $1 AND puzzle_date = $2
         """,
@@ -216,7 +266,8 @@ async def get_or_create_result(user_id: int, puzzle_date: date, *, conn=None) ->
         VALUES ($1, $2)
         ON CONFLICT (user_id, puzzle_date) DO NOTHING
         RETURNING user_id, puzzle_date, status, current_question, correct_count,
-                  final_score, elapsed_ms, answers, started_at, finished_at
+                  final_score, elapsed_ms, answers, started_at, finished_at,
+                  super_delta, super_correct
         """,
         (user_id, puzzle_date),
         conn=conn,
@@ -227,7 +278,8 @@ async def get_or_create_result(user_id: int, puzzle_date: date, *, conn=None) ->
     res = await db.db_query(
         """
         SELECT user_id, puzzle_date, status, current_question, correct_count,
-               final_score, elapsed_ms, answers, started_at, finished_at
+               final_score, elapsed_ms, answers, started_at, finished_at,
+               super_delta, super_correct
         FROM public.daily_trivia_results
         WHERE user_id = $1 AND puzzle_date = $2
         """,
@@ -263,7 +315,8 @@ async def update_result_answer(
             updated_at = NOW()
         WHERE user_id = $1 AND puzzle_date = $2
         RETURNING user_id, puzzle_date, status, current_question, correct_count,
-                  final_score, elapsed_ms, answers, started_at, finished_at
+                  final_score, elapsed_ms, answers, started_at, finished_at,
+                  super_delta, super_correct
         """,
         (
             user_id,
@@ -280,20 +333,115 @@ async def update_result_answer(
     return _row_to_result(rows[0])
 
 
-async def get_question_by_date_and_index(
-    puzzle_date: date, question_index: int, *, conn=None
-) -> TriviaQuestion | None:
-    """Fetch a specific trivia question by puzzle date and 0-based question index.
-
-    Uses puzzle_date + question_index (not question.id) because question IDs
-    are 1-5 per puzzle and are NOT globally unique across puzzles.
-
-    Questions may be stored as a JSONB string scalar (double-serialised) or as
-    a native JSONB array — handled transparently by normalize_questions().
-    """
+async def get_super_result_if_exists(
+    user_id: int, puzzle_date: date, *, conn=None
+) -> DailySuperResult | None:
     rows = await db.db_query(
         """
-        SELECT questions
+        SELECT user_id, puzzle_date, status, delta_score, correct_count,
+               elapsed_ms, answers, started_at, finished_at
+        FROM public.daily_trivia_super_results
+        WHERE user_id = $1 AND puzzle_date = $2
+        """,
+        (user_id, puzzle_date),
+        conn=conn,
+    )
+    return _row_to_super_result(rows[0]) if rows else None
+
+
+async def get_or_create_super_result(
+    user_id: int, puzzle_date: date, *, conn=None
+) -> DailySuperResult:
+    rows = await db.db_query(
+        """
+        SELECT user_id, puzzle_date, status, delta_score, correct_count,
+               elapsed_ms, answers, started_at, finished_at
+        FROM public.daily_trivia_super_results
+        WHERE user_id = $1 AND puzzle_date = $2
+        """,
+        (user_id, puzzle_date),
+        conn=conn,
+    )
+    if rows:
+        return _row_to_super_result(rows[0])
+
+    rows = await db.db_query(
+        """
+        INSERT INTO public.daily_trivia_super_results (user_id, puzzle_date)
+        VALUES ($1, $2)
+        ON CONFLICT (user_id, puzzle_date) DO NOTHING
+        RETURNING user_id, puzzle_date, status, delta_score, correct_count,
+                  elapsed_ms, answers, started_at, finished_at
+        """,
+        (user_id, puzzle_date),
+        conn=conn,
+    )
+    if rows:
+        return _row_to_super_result(rows[0])
+
+    res = await db.db_query(
+        """
+        SELECT user_id, puzzle_date, status, delta_score, correct_count,
+               elapsed_ms, answers, started_at, finished_at
+        FROM public.daily_trivia_super_results
+        WHERE user_id = $1 AND puzzle_date = $2
+        """,
+        (user_id, puzzle_date),
+        conn=conn,
+    )
+    return _row_to_super_result(res[0])
+
+
+async def update_super_result_answer(
+    user_id: int,
+    puzzle_date: date,
+    *,
+    delta_score: int,
+    correct_count: int,
+    elapsed_ms: int,
+    answers: list[dict[str, Any]],
+    status: str = "active",
+    finished: bool = False,
+) -> DailySuperResult:
+    answers_json = json.dumps(answers)
+    rows = await db.db_query(
+        """
+        UPDATE public.daily_trivia_super_results
+        SET delta_score = $3,
+            correct_count = $4,
+            elapsed_ms = $5,
+            answers = $6::jsonb,
+            status = $7,
+            finished_at = CASE WHEN $8::boolean THEN NOW() ELSE finished_at END
+        WHERE user_id = $1 AND puzzle_date = $2
+        RETURNING user_id, puzzle_date, status, delta_score, correct_count,
+                  elapsed_ms, answers, started_at, finished_at
+        """,
+        (user_id, puzzle_date, delta_score, correct_count, elapsed_ms, answers_json, status, finished),
+    )
+    if finished:
+        await db.db_query(
+            """
+            UPDATE public.daily_trivia_results
+            SET final_score = GREATEST(0, final_score + $3),
+                super_delta = $3,
+                super_correct = $4,
+                updated_at = NOW()
+            WHERE user_id = $1 AND puzzle_date = $2
+            """,
+            (user_id, puzzle_date, delta_score, correct_count),
+        )
+    return _row_to_super_result(rows[0])
+
+
+async def get_question_by_date_and_index(
+    puzzle_date: date, question_index: int, *, is_super: bool = False, conn=None
+) -> TriviaQuestion | None:
+    """Fetch a specific trivia question by puzzle date and 0-based question index."""
+    col = "super_questions" if is_super else "questions"
+    rows = await db.db_query(
+        f"""
+        SELECT {col} AS target_questions
         FROM public.daily_trivia_puzzles
         WHERE puzzle_date = $1
         """,
@@ -302,10 +450,11 @@ async def get_question_by_date_and_index(
     )
     if not rows:
         return None
-    qs = normalize_questions(rows[0]["questions"])
+    qs = normalize_questions(rows[0]["target_questions"])
     if question_index < 0 or question_index >= len(qs):
         return None
     return qs[question_index]
+
 
 
 async def get_puzzles_range(start_date: date, end_date: date, *, conn=None) -> list[DailyTriviaPuzzle]:

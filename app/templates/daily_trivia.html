@@ -491,6 +491,93 @@
       opacity: 0.75;
     }
 
+    /* Super Game Styles */
+    @keyframes superRainbow {
+      0%   { background-position: 0% 50%; }
+      50%  { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    .super-title {
+      background: linear-gradient(90deg, #ff0080, #ff8c00, #ffe600, #00e5ff, #8000ff, #ff0080);
+      background-size: 300%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: superRainbow 3s linear infinite;
+      font-weight: 900;
+      font-family: 'Outfit', sans-serif;
+    }
+
+    .super-badge-header {
+      background: linear-gradient(135deg, rgba(255, 0, 128, 0.2), rgba(0, 229, 255, 0.2));
+      border: 1px solid rgba(255, 0, 128, 0.4);
+      color: #ff80bf;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 800;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .btn-super {
+      width: 100%;
+      background: linear-gradient(90deg, #ff0080, #ff8c00, #00e5ff, #8000ff);
+      background-size: 300%;
+      animation: superRainbow 4s linear infinite;
+      border: none;
+      border-radius: var(--radius);
+      padding: 16px;
+      color: #ffffff;
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.1rem;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(255, 0, 128, 0.4);
+      margin-top: 14px;
+      transition: opacity 0.2s ease;
+    }
+
+    .btn-super:active {
+      opacity: 0.85;
+    }
+
+    .super-divider {
+      margin: 24px 0 16px 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .super-divider-line {
+      flex: 1;
+      height: 1px;
+      background: rgba(255, 0, 128, 0.3);
+    }
+
+    .super-divider-text {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 800;
+      font-size: 0.9rem;
+      letter-spacing: 0.05em;
+    }
+
+    .super-locked-box {
+      background: rgba(255, 0, 128, 0.05);
+      border: 1px dashed rgba(255, 0, 128, 0.3);
+      border-radius: var(--radius);
+      padding: 20px;
+      text-align: center;
+      margin-top: 10px;
+    }
+
+    .super-locked-text {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
     @keyframes fadeIn {
       from {
         opacity: 0;
@@ -534,14 +621,45 @@
       <button class="btn-primary" id="nextBtn" style="display: none;">Продолжить</button>
     </div>
 
+    <!-- Super Game Screen -->
+    <div id="superView" style="display: none;">
+      <div class="question-card" style="border-color: rgba(255, 0, 128, 0.3);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <div class="topic-badge super-title" id="superTopicBadge">⚡ СУПЕРИГРА</div>
+          <div class="super-badge-header">⚡ Ставки ×2</div>
+        </div>
+        <div class="question-text" id="superQuestionText">...</div>
+      </div>
+
+      <div class="options-grid" id="superOptionsGrid"></div>
+
+      <div class="explanation-card" id="superExplanationCard" style="display: none; border-color: rgba(255, 0, 128, 0.3); background: rgba(255, 0, 128, 0.06);">
+        <div class="explanation-title" style="color: #ff80bf;">💡 Знаете ли вы?</div>
+        <div class="explanation-body" id="superExplanationText"></div>
+      </div>
+
+      <button class="btn-super" id="superNextBtn" style="display: none;">Продолжить</button>
+    </div>
+
     <!-- Finish Screen -->
     <div id="finishView" style="display: none;" class="question-card finish-card">
       <div id="alreadyDoneBadge" class="already-done-badge" style="display: none;">✓ Уже пройдено сегодня</div>
       <div class="finish-title">Викторина завершена!</div>
       <div class="finish-score" id="finalScore">0</div>
       <div class="finish-subtitle" id="finalDetails">Вы правильно ответили на 0 из 5 вопросов</div>
-      <button class="btn-primary" id="closeBtn">Закрыть</button>
+      <button class="btn-super" id="superStartBtn">⚡ Сыграть Суперигру (×2 очка)</button>
+      <div id="superDoneStatus" style="display: none; margin-top: 10px;" class="already-done-badge">✓ Суперигра пройдена</div>
+      <button class="btn-primary" id="closeBtn" style="margin-top: 12px;">Закрыть</button>
       <button class="btn-secondary" id="reviewBtn">📋 Просмотреть ответы</button>
+    </div>
+
+    <!-- Super Finish Screen -->
+    <div id="superFinishView" style="display: none;" class="question-card finish-card">
+      <div class="super-title" style="font-size: 1.8rem; margin-bottom: 12px;">⚡ Суперигра завершена!</div>
+      <div class="finish-score" id="superDeltaDisplay" style="color: #ff80bf;">+0</div>
+      <div class="finish-subtitle" id="superFinishSubtitle">Итоговый результат дня: 0 очков</div>
+      <button class="btn-primary" id="superCloseBtn">Закрыть</button>
+      <button class="btn-secondary" id="superReviewBtn">📋 Просмотреть ответы</button>
     </div>
 
     <!-- Review Screen -->
@@ -559,29 +677,44 @@
     if (tg) {
       tg.expand();
       tg.ready();
-      // Fix miniapp title shown in Telegram header (Bot API 7.10+)
       if (tg.setTitle) tg.setTitle('Daily Trivia');
       if (tg.setHeaderColor) tg.setHeaderColor('bg_color');
     }
 
     let questions = [];
-    let playerAnswers = []; // {selectedIdx, isCorrect} per question index
-    let puzzleDate = '';   // YYYY-MM-DD from API, used in deep links
+    let superQuestions = [];
+    let playerAnswers = [];
+    let superPlayerAnswers = [];
+    let puzzleDate = '';
     let currentIdx = 0;
+    let currentSuperIdx = 0;
     let totalScore = 0;
     let correctCount = 0;
+    let superDeltaScore = 0;
+    let superCorrectCount = 0;
+    let userSuperResult = null;
     let startTime = 0;
     let answered = false;
 
     // Wire up static buttons via addEventListener (CSP-safe)
     document.getElementById('nextBtn').addEventListener('click', nextQuestion);
+    document.getElementById('superNextBtn').addEventListener('click', nextSuperQuestion);
+    document.getElementById('superStartBtn').addEventListener('click', startSuperGame);
     document.getElementById('closeBtn').addEventListener('click', function () {
       if (tg) tg.close(); else window.close();
     });
+    document.getElementById('superCloseBtn').addEventListener('click', function () {
+      if (tg) tg.close(); else window.close();
+    });
     document.getElementById('reviewBtn').addEventListener('click', showReviewScreen);
+    document.getElementById('superReviewBtn').addEventListener('click', showReviewScreen);
     document.getElementById('backToFinishBtn').addEventListener('click', function () {
       document.getElementById('reviewView').style.display = 'none';
-      document.getElementById('finishView').style.display = 'block';
+      if (userSuperResult && userSuperResult.status === 'completed') {
+        document.getElementById('superFinishView').style.display = 'block';
+      } else {
+        document.getElementById('finishView').style.display = 'block';
+      }
     });
 
     async function defInit() {
@@ -597,17 +730,33 @@
         }
 
         questions = data.questions;
-        puzzleDate = data.date || '';   // store for deep links
+        superQuestions = data.super_questions || [];
+        puzzleDate = data.date || '';
         playerAnswers = new Array(questions.length).fill(null);
+        superPlayerAnswers = new Array(superQuestions.length).fill(null);
 
-        // If the user already completed the game today, skip straight to the
-        // finish screen and reconstruct their answers for the review screen.
+        userSuperResult = data.user_super_result || null;
+        if (userSuperResult && userSuperResult.status === 'completed') {
+          superDeltaScore = userSuperResult.delta_score || 0;
+          superCorrectCount = userSuperResult.correct_count || 0;
+          if (Array.isArray(userSuperResult.answers)) {
+            userSuperResult.answers.forEach(function (a) {
+              const qi = a.question_index;
+              if (qi >= 0 && qi < superQuestions.length) {
+                superPlayerAnswers[qi] = {
+                  selectedIdx: a.selected_index,
+                  isCorrect: a.is_correct
+                };
+              }
+            });
+          }
+        }
+
         if (data.user_result && data.user_result.status === 'completed') {
           const r = data.user_result;
           totalScore = r.final_score || 0;
           correctCount = r.correct_count || 0;
 
-          // Reconstruct playerAnswers from stored answers array
           if (Array.isArray(r.answers)) {
             r.answers.forEach(function (a) {
               const qi = a.question_index;
@@ -657,8 +806,6 @@
         grid.appendChild(btn);
       });
 
-      // Timer starts AFTER full DOM render — reading the previous fact does NOT
-      // consume time for this question.
       startTime = Date.now();
     }
 
@@ -670,7 +817,6 @@
       const q = questions[currentIdx];
       const isCorrect = (selectedIdx === q.correct_index);
 
-      // Record answer for review screen
       playerAnswers[currentIdx] = { selectedIdx: selectedIdx, isCorrect: isCorrect };
 
       const grid = document.getElementById('optionsGrid');
@@ -694,19 +840,14 @@
         buttons[selectedIdx].classList.add('selected-wrong');
       }
 
-      // Show explanation
       document.getElementById('explanationText').innerText = q.explanation || 'Отличный факт!';
       document.getElementById('explanationCard').style.display = 'block';
       document.getElementById('nextBtn').style.display = 'block';
 
-      // Scroll the "Продолжить" button into view so the user immediately sees it
-      // without having to hunt for it. The user can still scroll up freely to
-      // re-read the question / fact.
       setTimeout(function () {
         document.getElementById('nextBtn').scrollIntoView({ behavior: 'smooth', block: 'end' });
       }, 120);
 
-      // Async submit
       fetch('/webapp/api/miniapp/trivia/submit_answer', {
         method: 'POST',
         headers: {
@@ -726,12 +867,12 @@
     function nextQuestion() {
       currentIdx++;
       renderQuestion();
-      // Scroll back to the top so the new question is immediately visible
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
     function showFinishScreen(alreadyDone) {
       document.getElementById('gameView').style.display = 'none';
+      document.getElementById('superView').style.display = 'none';
       document.getElementById('progressFill').style.width = '100%';
       document.getElementById('finalScore').innerText = totalScore;
       document.getElementById('finalDetails').innerText =
@@ -739,11 +880,150 @@
       if (alreadyDone) {
         document.getElementById('alreadyDoneBadge').style.display = 'inline-block';
       }
+
+      if (userSuperResult && userSuperResult.status === 'completed') {
+        document.getElementById('superStartBtn').style.display = 'none';
+        const doneBadge = document.getElementById('superDoneStatus');
+        doneBadge.style.display = 'inline-block';
+        const dStr = superDeltaScore >= 0 ? `+${superDeltaScore}` : `${superDeltaScore}`;
+        doneBadge.innerText = `✓ Суперигра пройдена (${dStr} очков)`;
+      } else {
+        document.getElementById('superStartBtn').style.display = 'block';
+        document.getElementById('superDoneStatus').style.display = 'none';
+      }
+
       document.getElementById('finishView').style.display = 'block';
     }
 
+    // --- Super Game Logic ---
+
+    function startSuperGame() {
+      document.getElementById('finishView').style.display = 'none';
+      document.getElementById('superView').style.display = 'block';
+      currentSuperIdx = 0;
+      superDeltaScore = 0;
+      superCorrectCount = 0;
+      renderSuperQuestion();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function renderSuperQuestion() {
+      if (currentSuperIdx >= superQuestions.length) {
+        finishSuperGame();
+        return;
+      }
+
+      answered = false;
+      const q = superQuestions[currentSuperIdx];
+
+      document.getElementById('qCounter').innerText = `Супервопрос ${currentSuperIdx + 1}/${superQuestions.length}`;
+      document.getElementById('progressFill').style.width = `${((currentSuperIdx) / superQuestions.length) * 100}%`;
+      document.getElementById('superTopicBadge').innerText = `⚡ ${q.topic || 'Суперигра'}`;
+      document.getElementById('superQuestionText').innerText = q.question;
+      document.getElementById('superExplanationCard').style.display = 'none';
+      document.getElementById('superNextBtn').style.display = 'none';
+
+      const grid = document.getElementById('superOptionsGrid');
+      grid.innerHTML = '';
+
+      q.options.forEach(function (optText, idx) {
+        const btn = document.createElement('button');
+        btn.className = 'option-btn';
+        btn.innerText = optText;
+        btn.addEventListener('click', function () { selectSuperAnswer(idx); });
+        grid.appendChild(btn);
+      });
+
+      startTime = Date.now();
+    }
+
+    function selectSuperAnswer(selectedIdx) {
+      if (answered) return;
+      answered = true;
+
+      const elapsedMs = Date.now() - startTime;
+      const q = superQuestions[currentSuperIdx];
+      const isCorrect = (selectedIdx === q.correct_index);
+
+      superPlayerAnswers[currentSuperIdx] = { selectedIdx: selectedIdx, isCorrect: isCorrect };
+
+      const grid = document.getElementById('superOptionsGrid');
+      const buttons = grid.children;
+
+      for (let i = 0; i < buttons.length; i++) {
+        buttons[i].classList.add('disabled');
+        if (i === q.correct_index) buttons[i].classList.add('reveal-correct');
+      }
+
+      let baseScore = 200;
+      if (elapsedMs < 15000) {
+        baseScore += Math.floor(100 * ((15000 - elapsedMs) / 15000));
+      }
+
+      const qDelta = isCorrect ? (baseScore * 2) : (-baseScore * 2);
+
+      if (isCorrect) {
+        buttons[selectedIdx].classList.add('selected-correct');
+        superCorrectCount++;
+      } else {
+        buttons[selectedIdx].classList.add('selected-wrong');
+      }
+
+      superDeltaScore += qDelta;
+
+      document.getElementById('superExplanationText').innerText = q.explanation || 'Отличный факт!';
+      document.getElementById('superExplanationCard').style.display = 'block';
+      document.getElementById('superNextBtn').style.display = 'block';
+
+      setTimeout(function () {
+        document.getElementById('superNextBtn').scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }, 120);
+
+      fetch('/webapp/api/miniapp/trivia/submit_super_answer', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-TG-INIT-DATA': tg ? tg.initData : ''
+        },
+        body: JSON.stringify({
+          question_index: currentSuperIdx,
+          selected_index: selectedIdx,
+          is_correct: isCorrect,
+          elapsed_ms: elapsedMs,
+          base_score: baseScore
+        })
+      }).catch(function () { });
+    }
+
+    function nextSuperQuestion() {
+      currentSuperIdx++;
+      renderSuperQuestion();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function finishSuperGame() {
+      document.getElementById('superView').style.display = 'none';
+      userSuperResult = { status: 'completed', delta_score: superDeltaScore, correct_count: superCorrectCount };
+
+      totalScore = Math.max(0, totalScore + superDeltaScore);
+
+      const dDisplay = document.getElementById('superDeltaDisplay');
+      const dStr = superDeltaScore >= 0 ? `+${superDeltaScore}` : `${superDeltaScore}`;
+      dDisplay.innerText = dStr;
+      dDisplay.style.color = superDeltaScore >= 0 ? '#10b981' : '#f43f5e';
+
+      document.getElementById('superFinishSubtitle').innerText =
+        `Итоговый результат дня: ${totalScore} очков (${superCorrectCount}/3 в Суперигре)`;
+
+      document.getElementById('superFinishView').style.display = 'block';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // --- Review Screen Logic ---
+
     function showReviewScreen() {
       document.getElementById('finishView').style.display = 'none';
+      document.getElementById('superFinishView').style.display = 'none';
       buildAccordion();
       document.getElementById('reviewView').style.display = 'block';
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -753,6 +1033,7 @@
       const container = document.getElementById('reviewAccordion');
       container.innerHTML = '';
 
+      // 1. Regular 5 questions
       questions.forEach(function (q, idx) {
         const answer = playerAnswers[idx];
         const isCorrect = answer && answer.isCorrect;
@@ -761,7 +1042,6 @@
         const item = document.createElement('div');
         item.className = 'accordion-item ' + (isCorrect ? 'correct-item' : 'wrong-item');
 
-        // Trigger button
         const trigger = document.createElement('button');
         trigger.className = 'accordion-trigger';
 
@@ -784,7 +1064,6 @@
           item.classList.toggle('open');
         });
 
-        // Body
         const body = document.createElement('div');
         body.className = 'accordion-body';
 
@@ -822,9 +1101,6 @@
           body.appendChild(factBox);
         }
 
-        // "Узнать больше (ИИ)" button — opens bot DM with AI expansion of the fact
-        // Payload format: trivia_q_{YYYY-MM-DD}_{question_index}
-        // Using date+index (not q.id) because q.id is 1-5 per puzzle (non-unique globally).
         if (BOT_USERNAME && puzzleDate) {
           const deepLink = 'https://t.me/' + BOT_USERNAME + '?start=trivia_q_' + puzzleDate.replace(/-/g, '') + '_' + idx;
           const aiBtn = document.createElement('a');
@@ -848,6 +1124,131 @@
         item.appendChild(body);
         container.appendChild(item);
       });
+
+      // 2. Super Game Divider
+      const divContainer = document.createElement('div');
+      divContainer.className = 'super-divider';
+      divContainer.innerHTML = '<div class="super-divider-line"></div><div class="super-divider-text super-title">⚡ СУПЕРИГРА</div><div class="super-divider-line"></div>';
+      container.appendChild(divContainer);
+
+      // 3. Super Game Section (Locked or Accordion)
+      const isSuperCompleted = userSuperResult && userSuperResult.status === 'completed';
+
+      if (!isSuperCompleted) {
+        const lockBox = document.createElement('div');
+        lockBox.className = 'super-locked-box';
+        lockBox.innerHTML = `
+          <div style="font-size: 2rem; margin-bottom: 8px;">🔒</div>
+          <div class="super-locked-text">Пройдите Суперигру, чтобы открыть разбор этих вопросов!</div>
+        `;
+        const lockBtn = document.createElement('button');
+        lockBtn.className = 'btn-super';
+        lockBtn.style.padding = '12px 20px';
+        lockBtn.innerText = '⚡ Сыграть Суперигру';
+        lockBtn.addEventListener('click', function () {
+          document.getElementById('reviewView').style.display = 'none';
+          startSuperGame();
+        });
+        lockBox.appendChild(lockBtn);
+        container.appendChild(lockBox);
+      } else {
+        superQuestions.forEach(function (sq, sIdx) {
+          const answer = superPlayerAnswers[sIdx];
+          const isCorrect = answer && answer.isCorrect;
+          const selectedIdx = answer ? answer.selectedIdx : -1;
+
+          const item = document.createElement('div');
+          item.className = 'accordion-item ' + (isCorrect ? 'correct-item' : 'wrong-item');
+          item.style.borderColor = isCorrect ? 'rgba(255, 0, 128, 0.4)' : 'rgba(244, 63, 94, 0.4)';
+
+          const trigger = document.createElement('button');
+          trigger.className = 'accordion-trigger';
+
+          const icon = document.createElement('span');
+          icon.className = 'accordion-icon ' + (isCorrect ? 'icon-correct' : 'icon-wrong');
+          icon.innerText = isCorrect ? '✓' : '✗';
+
+          const qText = document.createElement('span');
+          qText.className = 'accordion-question-text';
+          qText.innerText = `[⚡] ${sq.question}`;
+
+          const chevron = document.createElement('span');
+          chevron.className = 'accordion-chevron';
+          chevron.innerHTML = '&#9660;';
+
+          trigger.appendChild(icon);
+          trigger.appendChild(qText);
+          trigger.appendChild(chevron);
+          trigger.addEventListener('click', function () {
+            item.classList.toggle('open');
+          });
+
+          const body = document.createElement('div');
+          body.className = 'accordion-body';
+
+          const optsList = document.createElement('div');
+          optsList.className = 'review-options';
+
+          sq.options.forEach(function (optText, optIdx) {
+            const opt = document.createElement('div');
+            opt.className = 'review-option';
+            if (optIdx === sq.correct_index) {
+              opt.classList.add('ro-correct');
+              opt.innerText = '✓ ' + optText;
+            } else if (optIdx === selectedIdx && !isCorrect) {
+              opt.classList.add('ro-wrong-selected');
+              opt.innerText = '✗ ' + optText;
+            } else {
+              opt.classList.add('ro-neutral');
+              opt.innerText = optText;
+            }
+            optsList.appendChild(opt);
+          });
+          body.appendChild(optsList);
+
+          if (sq.explanation) {
+            const factBox = document.createElement('div');
+            factBox.className = 'review-fact';
+            factBox.style.borderColor = 'rgba(255, 0, 128, 0.3)';
+            factBox.style.background = 'rgba(255, 0, 128, 0.05)';
+            const factLabel = document.createElement('div');
+            factLabel.className = 'review-fact-label';
+            factLabel.style.color = '#ff80bf';
+            factLabel.innerText = '💡 Знаете ли вы?';
+            const factBody = document.createElement('div');
+            factBody.className = 'review-fact-body';
+            factBody.innerText = sq.explanation;
+            factBox.appendChild(factLabel);
+            factBox.appendChild(factBody);
+            body.appendChild(factBox);
+          }
+
+          if (BOT_USERNAME && puzzleDate) {
+            const deepLink = 'https://t.me/' + BOT_USERNAME + '?start=trivia_q_' + puzzleDate.replace(/-/g, '') + '_s' + sIdx;
+            const aiBtn = document.createElement('a');
+            aiBtn.href = deepLink;
+            aiBtn.className = 'btn-ai-more';
+            aiBtn.style.borderColor = 'rgba(255, 0, 128, 0.4)';
+            aiBtn.style.color = '#ff80bf';
+            aiBtn.target = '_blank';
+            aiBtn.rel = 'noopener noreferrer';
+            aiBtn.innerHTML = '🤖 Узнать больше';
+            aiBtn.addEventListener('click', function (e) {
+              e.preventDefault();
+              if (tg && tg.openTelegramLink) {
+                tg.openTelegramLink(deepLink);
+              } else {
+                window.open(deepLink, '_blank');
+              }
+            });
+            body.appendChild(aiBtn);
+          }
+
+          item.appendChild(trigger);
+          item.appendChild(body);
+          container.appendChild(item);
+        });
+      }
     }
 
     defInit();

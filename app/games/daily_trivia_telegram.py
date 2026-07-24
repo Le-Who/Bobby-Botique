@@ -67,12 +67,17 @@ async def render_result_body(
             break
 
     rank_line = f"\n🏆 <b>Место дня:</b> #{rank}" if rank else ""
+    super_line = ""
+    if result.super_delta is not None:
+        delta_str = f"+{result.super_delta}" if result.super_delta >= 0 else str(result.super_delta)
+        super_correct = result.super_correct if result.super_correct is not None else 0
+        super_line = f"\n⚡ <b>Суперигра:</b> {delta_str} очков ({super_correct}/3)"
 
     lines = [
         f"🧠 <b>Daily Trivia</b> · <code>{puzzle_date.isoformat()}</code>",
         "",
         f"🏁 <b>Результат:</b> <b>{result.final_score}</b> очков{rank_line}",
-        f"✅ <b>Правильных:</b> {result.correct_count}/5",
+        f"✅ <b>Правильных:</b> {result.correct_count}/5{super_line}",
         f"⚡ <b>Время:</b> {_format_duration(result.elapsed_ms)}",
         "",
         "🏆 <b>Лучшие сегодня</b>",
