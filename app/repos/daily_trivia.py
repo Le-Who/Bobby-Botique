@@ -261,6 +261,50 @@ async def update_result_answer(
     return _row_to_result(rows[0])
 
 
+async def get_question_by_id(question_id: int, *, conn=None) -> TriviaQuestion | None:
+    """Find a single trivia question by its id across all stored puzzles.
+
+    Questions are stored as a JSONB array inside daily_trivia_puzzles.
+    We use jsonb_array_elements to search across all puzzles without needing
+    a separate table.  Returns None if not found.
+    """
+    rows = await db.db_query(
+        """
+        SELECT elem
+        FROM public.daily_trivia_puzzles,
+             jsonb_array_elements(questions) AS elem
+        WHERE (elem->>'id')::int = $1
+        LIMIT 1
+        """,
+        (question_id,),
+        conn=conn,
+    )
+    if not rows:
+        return None
+    item = rows[0]["elem"]
+    if isinstance(item, str):
+        import json as _json
+        try:
+            item = _json.loads(item)
+        except Exception:
+            return None
+    opts = item.get("options", [])
+    if not isinstance(opts, list):
+        opts = [str(opts)]
+    opts_clean = [str(o) for o in opts]
+    correct_idx = int(item.get("correct_index", 0))
+    if correct_idx < 0 or correct_idx >= len(opts_clean):
+        correct_idx = 0
+    return TriviaQuestion(
+        id=int(item.get("id", question_id)),
+        topic=str(item.get("topic", "Общие знания")),
+        question=str(item.get("question", "")),
+        options=opts_clean,
+        correct_index=correct_idx,
+        explanation=str(item.get("explanation", "")),
+    )
+
+
 async def get_puzzles_range(start_date: date, end_date: date, *, conn=None) -> list[DailyTriviaPuzzle]:
     rows = await db.db_query(
         """

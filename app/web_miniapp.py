@@ -1385,7 +1385,11 @@ async def dailytrivia_page():
     """Serve the Daily Trivia Mini App HTML shell."""
     from quart import render_template
 
-    return await render_template("daily_trivia.html")
+    from app.bot_instance import get_bot
+
+    bot = get_bot()
+    bot_username = getattr(bot, "username", "") if bot else ""
+    return await render_template("daily_trivia.html", bot_username=bot_username)
 
 
 @miniapp_blueprint.route("/api/miniapp/trivia/today", methods=["GET"])

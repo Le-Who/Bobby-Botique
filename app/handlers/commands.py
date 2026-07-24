@@ -88,6 +88,82 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             parse_mode="HTML",
         )
         return
+
+    if payload.startswith("trivia_q_"):
+        # "Узнать больше (ИИ)" deep link from Daily Trivia review screen.
+        # Payload format: trivia_q_<question_id>
+        # Fetch question from PostgreSQL, ask AI to expand on the explanation,
+        # write the exchange to chat history, send the reply.
+        import html as _html
+
+        from app.providers.router import ProviderRouter
+        from app.repos.daily_trivia import get_question_by_id
+
+        try:
+            question_id = int(payload[9:])  # strip "trivia_q_"
+        except ValueError:
+            await update.message.reply_text("❌ Некорректная ссылка.", parse_mode="HTML")
+            return
+
+        q = await get_question_by_id(question_id)
+        if q is None:
+            await update.message.reply_text(
+                "❌ <b>Вопрос не найден.</b>\n"
+                "Возможно, он был обновлён. Открой Викторину и попробуй снова.",
+                parse_mode="HTML",
+            )
+            return
+
+        correct_answer = q.options[q.correct_index] if 0 <= q.correct_index < len(q.options) else ""
+        ai_prompt = (
+            f"Вопрос викторины: «{q.question}»\n"
+            f"Правильный ответ: «{correct_answer}»\n"
+            f"Краткий факт: «{q.explanation}»\n\n"
+            "Расскажи об этом подробнее — интересно, живо, с реальными деталями. "
+            "Около 150–200 слов, без лишних вступлений."
+        )
+
+        thinking_msg = await update.message.reply_text("🔍 Узнаю подробности…")
+
+        try:
+            from app.config import settings as _settings
+            router = ProviderRouter()
+            ai_history = [{"role": "user", "parts": [ai_prompt]}]
+            ai_response, _ = await router.get_response(
+                preferred_model=_settings.GEMINI_PRIMARY_MODEL,
+                history=ai_history,
+                user_id=user_id,
+            )
+        except Exception as exc:
+            logging.warning("trivia_q deep link AI failed user=%s: %s", user_id, exc)
+            ai_response = (
+                f"📚 <b>{_html.escape(q.question)}</b>\n\n"
+                f"<b>Ответ:</b> {_html.escape(correct_answer)}\n\n"
+                f"💡 {_html.escape(q.explanation)}"
+            )
+            await thinking_msg.delete()
+            await update.message.reply_text(ai_response, parse_mode="HTML")
+            return
+
+        # Write q+a to history so the user can continue the conversation
+        chat_state = await get_user_chat(user_id)
+        chat_state.history = chat_state.history[-20:] + [
+            {"role": "user", "parts": [ai_prompt]},
+            {"role": "model", "parts": [ai_response]},
+        ]
+        chat_state._original_length = 0
+        await update_user_chat(user_id, chat_state)
+
+        await thinking_msg.delete()
+        header = (
+            f"🧠 <b>{_html.escape(q.question)}</b>\n"
+            f"<i>Правильный ответ: {_html.escape(correct_answer)}</i>\n\n"
+        )
+        full_text = header + ai_response
+        if len(full_text) > 4096:
+            full_text = full_text[:4090] + "…"
+        await update.message.reply_text(full_text, parse_mode="HTML")
+        return
         
     if payload.startswith("subscribe_horoscope_"):
         from app.handlers.horoscope_subscription import start_subscribe_horoscope

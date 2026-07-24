@@ -7,6 +7,8 @@
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Daily Trivia</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <!-- bot_username injected by Jinja2 for deep links -->
+  <script>const BOT_USERNAME = "{{ bot_username }}";</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
@@ -467,6 +469,28 @@
       color: #cbd5e1;
     }
 
+    /* AI deep-dive button inside accordion */
+    .btn-ai-more {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      padding: 8px 14px;
+      background: rgba(139, 92, 246, 0.12);
+      border: 1px solid rgba(139, 92, 246, 0.35);
+      border-radius: 10px;
+      color: #c4b5fd;
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+
+    .btn-ai-more:active {
+      opacity: 0.75;
+    }
+
     @keyframes fadeIn {
       from {
         opacity: 0;
@@ -794,6 +818,26 @@
           factBox.appendChild(factLabel);
           factBox.appendChild(factBody);
           body.appendChild(factBox);
+        }
+
+        // "Узнать больше (ИИ)" button — opens bot DM with AI expansion of the fact
+        if (BOT_USERNAME && q.id) {
+          const deepLink = 'https://t.me/' + BOT_USERNAME + '?start=trivia_q_' + q.id;
+          const aiBtn = document.createElement('a');
+          aiBtn.href = deepLink;
+          aiBtn.className = 'btn-ai-more';
+          aiBtn.target = '_blank';
+          aiBtn.rel = 'noopener noreferrer';
+          aiBtn.innerHTML = '🤖 Узнать больше';
+          aiBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (tg && tg.openTelegramLink) {
+              tg.openTelegramLink(deepLink);
+            } else {
+              window.open(deepLink, '_blank');
+            }
+          });
+          body.appendChild(aiBtn);
         }
 
         item.appendChild(trigger);
