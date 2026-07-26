@@ -647,7 +647,7 @@
       <div class="finish-title">Викторина завершена!</div>
       <div class="finish-score" id="finalScore">0</div>
       <div class="finish-subtitle" id="finalDetails">Вы правильно ответили на 0 из 5 вопросов</div>
-      <button class="btn-super" id="superStartBtn">⚡ Сыграть Суперигру (×2 очка)</button>
+      <button class="btn-super" id="superStartBtn">⚡ Сыграть Суперигру (×2 ставки)</button>
       <div id="superDoneStatus" style="display: none; margin-top: 10px;" class="already-done-badge">✓ Суперигра пройдена</div>
       <button class="btn-primary" id="closeBtn" style="margin-top: 12px;">Закрыть</button>
       <button class="btn-secondary" id="reviewBtn">📋 Просмотреть ответы</button>
@@ -904,8 +904,26 @@
       currentSuperIdx = 0;
       superDeltaScore = 0;
       superCorrectCount = 0;
+      updateSuperScoreBadge();
       renderSuperQuestion();
       window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function updateSuperScoreBadge() {
+      const badge = document.getElementById('scoreBadge');
+      if (superDeltaScore === 0) {
+        badge.innerText = `⭐ ${totalScore}`;
+        badge.style.background = '';
+        badge.style.color = '';
+      } else if (superDeltaScore > 0) {
+        badge.innerText = `⭐ ${totalScore} (+${superDeltaScore})`;
+        badge.style.background = 'rgba(16,185,129,0.18)';
+        badge.style.color = '#10b981';
+      } else {
+        badge.innerText = `⭐ ${totalScore} (${superDeltaScore})`;
+        badge.style.background = 'rgba(244,63,94,0.18)';
+        badge.style.color = '#f43f5e';
+      }
     }
 
     function renderSuperQuestion() {
@@ -971,6 +989,7 @@
       }
 
       superDeltaScore += qDelta;
+      updateSuperScoreBadge();
 
       document.getElementById('superExplanationText').innerText = q.explanation || 'Отличный факт!';
       document.getElementById('superExplanationCard').style.display = 'block';
@@ -1007,6 +1026,12 @@
       userSuperResult = { status: 'completed', delta_score: superDeltaScore, correct_count: superCorrectCount };
 
       totalScore = Math.max(0, totalScore + superDeltaScore);
+
+      // Reset score badge to plain style showing final total
+      const badge = document.getElementById('scoreBadge');
+      badge.innerText = `⭐ ${totalScore}`;
+      badge.style.background = '';
+      badge.style.color = '';
 
       const dDisplay = document.getElementById('superDeltaDisplay');
       const dStr = superDeltaScore >= 0 ? `+${superDeltaScore}` : `${superDeltaScore}`;
