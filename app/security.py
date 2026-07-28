@@ -8,6 +8,7 @@ import html
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -218,6 +219,18 @@ class InputSanitizer:
             raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
         except ValueError:
             # Not an IP address, continue
+            pass
+
+        # Prevent SSRF / DNS rebinding to local IPs
+        try:
+            addrinfo = socket.getaddrinfo(hostname, None)
+            for _, _, _, _, sockaddr in addrinfo:
+                ip = sockaddr[0]
+                ip_obj = ipaddress.ip_address(ip)
+                if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+                    raise InputSanitizationError(f"Domain resolves to a local or private IP: {hostname} ({ip})")
+        except socket.gaierror:
+            # Could not resolve hostname; it will fail to connect anyway.
             pass
 
         return url
