@@ -525,16 +525,16 @@ body {
 </div>
 
 <!-- Tab Bar -->
-<div class="tab-bar">
-  <div class="tab-btn" id="tab-settings" onclick="switchTab('settings')">
+<div class="tab-bar" role="tablist">
+  <div class="tab-btn" id="tab-settings" onclick="switchTab('settings')" onkeydown="handleTabKeyDown(event, 'settings')" role="tab" tabindex="0" aria-controls="page-settings" aria-selected="false">
     <span class="tab-btn-icon">⚙️</span>
     <span>Настройки</span>
   </div>
-  <div class="tab-btn" id="tab-graph" onclick="switchTab('graph')">
+  <div class="tab-btn" id="tab-graph" onclick="switchTab('graph')" onkeydown="handleTabKeyDown(event, 'graph')" role="tab" tabindex="0" aria-controls="page-graph" aria-selected="false">
     <span class="tab-btn-icon">🕸️</span>
     <span>Граф</span>
   </div>
-  <div class="tab-btn active" id="tab-memories" onclick="switchTab('memories')">
+  <div class="tab-btn active" id="tab-memories" onclick="switchTab('memories')" onkeydown="handleTabKeyDown(event, 'memories')" role="tab" tabindex="0" aria-controls="page-memories" aria-selected="true">
     <span class="tab-btn-icon">🧠</span>
     <span>Память</span>
   </div>
@@ -1358,6 +1358,13 @@ if (tabParam === 'settings') {
 initObserver();
 
 // ── Tab Switcher ──
+function handleTabKeyDown(e, tab) {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    switchTab(tab);
+  }
+}
+
 function switchTab(tab) {
   if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
   const map = {
@@ -1373,8 +1380,15 @@ function switchTab(tab) {
   tg.BackButton.hide();
   
   // Active tab button
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.remove('active');
+    b.setAttribute('aria-selected', 'false');
+  });
+  const activeBtn = document.getElementById('tab-' + tab);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+    activeBtn.setAttribute('aria-selected', 'true');
+  }
   
   if (tab === 'settings' && !settingsData) loadSettings();
   if (tab === 'graph' && !graphLoaded) loadGraph();
