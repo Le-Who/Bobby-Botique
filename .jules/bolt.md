@@ -5,3 +5,7 @@
 ## 2025-05-18 - Consolidating N+1 User Stats Queries
 **Learning:** Fetching user documents entirely (`await get_user_documents(user_id)`) just to determine `len(docs)` creates a massive memory overhead and blocks the thread during `/start` menu rendering, especially for users with many large documents. Coupled with multiple distinct `await db_query()` calls for requests and conversations, this increases latency.
 **Action:** Always consolidate aggregate counts into a single atomic SQL query using subqueries (`SELECT (SELECT COUNT(*)...), (SELECT COUNT(*)...)`), and never fetch full records into Python memory if only `COUNT(*)` is required.
+
+## 2025-06-11 - Optimizing prompt length calculation in Gemini Provider
+**Learning:** Using `len(str(part))` on dictionary objects or binary parts triggers massive memory allocations and latency, especially if they contain large binary payloads or dictionaries, similar to the summarizer issue.
+**Action:** Use explicit type checking (`isinstance(part, dict)`) to evaluate the length of the `text` field specifically when calculating `prompt_length`.
