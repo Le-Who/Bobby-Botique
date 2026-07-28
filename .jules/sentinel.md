@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-25 - [SSRF] DNS Rebinding and IP Obfuscation
+**Vulnerability:** The `sanitize_url` function failed to resolve hostnames, only checking if the exact string matched an IP address format. This allowed Server-Side Request Forgery (SSRF) bypasses using integer IPs (`http://2130706433`), hex IPs, or DNS resolution to loopback addresses (like `127.0.0.1.nip.io`).
+**Learning:** Basic string or regex checks on hostnames are insufficient. Attackers can use various IP encodings or malicious DNS records to resolve external-looking domains to internal IP addresses.
+**Prevention:** Always use `socket.getaddrinfo` to resolve the hostname to its underlying IP addresses and validate all returned IPs against private, loopback, link-local, and reserved ranges using the `ipaddress` module to prevent SSRF and DNS rebinding.
