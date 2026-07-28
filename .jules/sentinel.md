@@ -22,3 +22,13 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-06-26 - [SSRF Mitigation] DNS Resolution Check in URL Sanitization
+**Vulnerability:** The `sanitize_url` function relied on string matching and literal IP parsing to block local and internal addresses. A malicious user could bypass this by using custom domains resolving to `127.0.0.1` (e.g., `localtest.me` or `127.0.0.1.nip.io`).
+**Learning:** URL validation solely based on string manipulation is vulnerable to Server-Side Request Forgery (SSRF) and DNS rebinding attacks. Attackers can obscure malicious IP addresses behind domain names.
+**Prevention:** Always resolve the hostname using `socket.getaddrinfo` and explicitly validate all returned IP addresses against private, loopback, and link-local ranges. Do not rely on string matching for hostnames.
+
+## 2025-06-26 - [DoS & TOCTOU] Flaws in Initial SSRF Mitigation
+**Vulnerability:** The initial `socket.getaddrinfo` mitigation for SSRF introduced two new vulnerabilities: a Denial of Service (DoS) risk because it lacked a timeout and would block if the attacker provided a maliciously slow DNS server, and a Time-of-Check to Time-of-Use (TOCTOU) risk where an attacker's DNS server could return a safe IP during validation but return an internal IP when the application actually made the HTTP request. Additionally, the IP `0.0.0.0` was not caught by `is_private` or `is_loopback` and was allowed.
+**Learning:** Security fixes must be carefully evaluated for side effects. Network calls like DNS resolution must always have timeouts. Mitigating DNS rebinding (TOCTOU) requires either pinning the validated IP address and using it for the actual HTTP request, or strictly blocking all IP addresses as was the original policy. Python's `ipaddress` module has edge cases (`is_unspecified`, `is_multicast`) that must be explicitly checked.
+**Prevention:** Always set timeouts on synchronous network calls like `socket.getaddrinfo`. When validating URLs to prevent SSRF, ensure you check against `0.0.0.0` (`is_unspecified`). If the policy is to block all IPs, maintain that policy even after adding DNS resolution to avoid inadvertently allowing public IPs.
