@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-06-07 - [Cross-Site Scripting (XSS) / Data Loss] Nullish Coalescing in Escaping Functions
+**Vulnerability:** The HTML escape function `esc(s)` used `s || ''` instead of `s ?? ''`. While this stops XSS, it causes valid numeric zeros `0` (which are falsy) to be incorrectly truncated to an empty string when rendering dynamic content.
+**Learning:** When sanitizing dynamic data for frontend rendering, be extremely careful with falsy fallbacks. `||` incorrectly drops `0` and `false`.
+**Prevention:** Use the nullish coalescing operator `??` to correctly preserve numeric `0` and `false` values while falling back to an empty string only for `null` or `undefined`.
