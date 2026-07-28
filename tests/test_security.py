@@ -1,5 +1,7 @@
 """Tests for app.security — InputSanitizer and RateLimiter (pure logic, zero DB)."""
 
+import socket
+
 import pytest
 
 from app.errors import InputSanitizationError
@@ -139,6 +141,25 @@ class TestSanitizeUrl:
     def test_rejects_ip_address(self):
         with pytest.raises(InputSanitizationError, match="IP"):
             self.s.sanitize_url("http://192.168.1.1/admin")
+
+    def test_rejects_ssrf_via_dns(self):
+        from unittest.mock import patch
+
+        with patch("socket.getaddrinfo") as mock_getaddrinfo:
+            # Mock DNS resolving to a loopback address
+            mock_getaddrinfo.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+            with pytest.raises(InputSanitizationError, match="private/loopback IP"):
+                self.s.sanitize_url("http://127.0.0.1.nip.io/admin")
+
+            # Mock DNS resolving to a private network address
+            mock_getaddrinfo.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.100", 0))]
+            with pytest.raises(InputSanitizationError, match="private/loopback IP"):
+                self.s.sanitize_url("http://my-internal-server.local/admin")
+
+            # Mock DNS resolving to a valid external IP
+            mock_getaddrinfo.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 0))]
+            url = "http://example.com/admin"
+            assert self.s.sanitize_url(url) == url
 
     def test_rejects_too_long_url(self):
         with pytest.raises(InputSanitizationError, match="too long"):
