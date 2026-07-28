@@ -14,7 +14,6 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from app.handlers import menus
 from app.i18n import t
 from app.repos.chats import get_user_chat, update_user_chat
-from app.repos.conversations import get_conversation_count
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
 
@@ -437,7 +436,9 @@ async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Add conversation count
     try:
-        conv_count = await get_conversation_count(user_id)
+        from app.repos.user_stats import get_user_activity_summary
+
+        _, _, conv_count = await get_user_activity_summary(user_id)
         user_data["total_conversations"] = conv_count
     except Exception:
         user_data["total_conversations"] = "unknown"
