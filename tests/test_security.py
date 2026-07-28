@@ -112,12 +112,14 @@ class TestSanitizeUrl:
     def setup_method(self):
         self.s = InputSanitizer()
 
-    def test_valid_https_url(self):
+    def test_valid_https_url(self, monkeypatch):
         url = "https://example.com/page"
+        monkeypatch.setattr("socket.getaddrinfo", lambda *args, **kwargs: [(2, 1, 6, "", ("93.184.216.34", 0))])
         assert self.s.sanitize_url(url) == url
 
-    def test_valid_http_url(self):
+    def test_valid_http_url(self, monkeypatch):
         url = "http://example.com"
+        monkeypatch.setattr("socket.getaddrinfo", lambda *args, **kwargs: [(2, 1, 6, "", ("93.184.216.34", 0))])
         assert self.s.sanitize_url(url) == url
 
     def test_rejects_javascript_protocol(self):

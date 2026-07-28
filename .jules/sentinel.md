@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-24 - [SSRF Mitigation and SNI]
+**Vulnerability:** The `sanitize_url` function blocked string representation of localhost and parsed literal IP addresses, but was vulnerable to Server-Side Request Forgery (SSRF) and DNS rebinding attacks because it did not resolve hostnames to IPs and check them against forbidden IP ranges.
+**Learning:** Checking for 'localhost' string and direct IP strings is insufficient for SSRF protection because attackers can use DNS records to point to private IPs. However, rebuilding the target URL with the validated IP address to prevent TOCTOU DNS rebinding attacks breaks Server Name Indication (SNI) for HTTPS and HTTP Virtual Hosting, which require the original domain name in the Host header. Furthermore, setting a global default socket timeout alters the timeout for the entire process, impacting unrelated background tasks or API calls.
+**Prevention:** Resolve the hostname using `socket.getaddrinfo` and validate all returned IP addresses against forbidden ranges (private, loopback, link-local, unspecified, multicast) without mutating the original URL or changing global configurations.
