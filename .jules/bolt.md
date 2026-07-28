@@ -5,3 +5,7 @@
 ## 2025-05-18 - Consolidating N+1 User Stats Queries
 **Learning:** Fetching user documents entirely (`await get_user_documents(user_id)`) just to determine `len(docs)` creates a massive memory overhead and blocks the thread during `/start` menu rendering, especially for users with many large documents. Coupled with multiple distinct `await db_query()` calls for requests and conversations, this increases latency.
 **Action:** Always consolidate aggregate counts into a single atomic SQL query using subqueries (`SELECT (SELECT COUNT(*)...), (SELECT COUNT(*)...)`), and never fetch full records into Python memory if only `COUNT(*)` is required.
+
+## 2025-06-21 - Optimizing Provider Metrics Extraction
+**Learning:** Blindly stringifying dictionaries with `len(str(part))` for LLM token estimation is a massive performance trap when parts contain base64 bytes or Image objects. The `str(dict)` call stringifies the entire dictionary, including huge binary data, blocking the event loop and wasting memory.
+**Action:** Explicitly extract the text field (`part.get("text")`) when `isinstance(part, dict)` to compute prompt length, avoiding the costly fallback.
