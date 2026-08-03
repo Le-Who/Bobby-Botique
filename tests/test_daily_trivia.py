@@ -365,6 +365,63 @@ async def test_publish_revision_rejects_stale_admin_edit() -> None:
         )
 
 
+async def test_publish_revision_passes_python_values_to_registered_jsonb_codec() -> None:
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.fact_id = 0
+            self.variant_id = 0
+
+        async def fetchrow(self, sql: str, *args):
+            if "SELECT revision" in sql and "FOR UPDATE" in sql:
+                return {"revision": 0}
+            if "INSERT INTO public.daily_trivia_puzzle_revisions" in sql:
+                return {"revision_id": 91}
+            if "INSERT INTO public.daily_trivia_facts" in sql:
+                self.fact_id += 1
+                return {"fact_id": self.fact_id}
+            if "INSERT INTO public.daily_trivia_question_variants" in sql:
+                assert isinstance(args[3], list)
+                self.variant_id += 1
+                return {"variant_id": self.variant_id}
+            if "UPDATE public.daily_trivia_puzzles" in sql:
+                assert isinstance(args[1], list)
+                assert isinstance(args[2], list)
+                return {
+                    "puzzle_date": args[0],
+                    "questions": args[1],
+                    "super_questions": args[2],
+                    "status": args[3],
+                    "prepared_at": None,
+                    "revision": args[4],
+                    "published_revision_id": args[5],
+                }
+            raise AssertionError(sql)
+
+        async def execute(self, sql: str, *args):
+            assert "daily_trivia_question_occurrences" in sql
+
+    main = [
+        _identified_question(index, f"Объект {index}", "свойство", f"Ответ {index}")
+        for index in range(1, 6)
+    ]
+    super_questions = [
+        _identified_question(index, f"Супер объект {index}", "свойство", f"Супер ответ {index}")
+        for index in range(1, 4)
+    ]
+
+    puzzle = await repo._publish_revision_on_conn(
+        FakeConnection(),
+        date(2026, 8, 3),
+        main,
+        super_questions,
+        expected_revision=0,
+    )
+
+    assert puzzle.questions == main
+    assert puzzle.super_questions == super_questions
+    assert puzzle.published_revision_id == 91
+
+
 async def test_load_bank_facts_reads_main_and_super_occurrences(monkeypatch) -> None:
     async def fake_db_query(sql: str, params: tuple = (), conn=None):
         assert "daily_trivia_question_occurrences" in sql
