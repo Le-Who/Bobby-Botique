@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import random
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from app.config import GEMINI_ECONOMY_MODEL
+from app.games.trivia_similarity import FactIdentity
 from app.providers.router import get_provider_router
 from app.repos import daily_trivia as repo
 from app.utils.json_compat import json
@@ -17,6 +17,7 @@ TRIVIA_MODEL = GEMINI_ECONOMY_MODEL
 MAX_TIME_PER_QUESTION_MS = 15000
 BASE_CORRECT_POINTS = 200
 MAX_SPEED_BONUS = 100
+GENERATION_ATTEMPTS = 3
 
 
 def calculate_question_score(is_correct: bool, elapsed_ms: int) -> int:
@@ -42,7 +43,7 @@ def shuffle_options_and_update_correct_index(questions_raw: list[dict[str, Any]]
         options = [str(opt).strip() for opt in raw.get("options", []) if str(opt).strip()]
         explanation = str(raw.get("explanation", "")).strip()
 
-        if len(options) < 2 or not question_text:
+        if len(options) != 4 or not question_text:
             continue
 
         raw_correct_idx = int(raw.get("correct_index", 0))
@@ -50,6 +51,15 @@ def shuffle_options_and_update_correct_index(questions_raw: list[dict[str, Any]]
             raw_correct_idx = 0
 
         correct_option_text = options[raw_correct_idx]
+
+        identity = None
+        key = raw.get("key") or raw.get("identity")
+        if isinstance(key, dict):
+            subject = str(key.get("subject") or key.get("object") or "").strip()
+            relation = str(key.get("relation") or key.get("subobject") or "").strip()
+            answer = str(key.get("answer") or correct_option_text).strip()
+            if subject and relation and answer:
+                identity = FactIdentity.create(subject=subject, relation=relation, answer=answer)
 
         # Shuffle options randomly
         shuffled_options = list(options)
@@ -65,6 +75,7 @@ def shuffle_options_and_update_correct_index(questions_raw: list[dict[str, Any]]
                 options=shuffled_options,
                 correct_index=new_correct_idx,
                 explanation=explanation,
+                identity=identity,
             )
         )
 
@@ -80,7 +91,7 @@ SYSTEM_PROMPT_TRIVIA = """Ты — эксперт по составлению и
 3. Сложность: Вопросы должны быть интересными и нетривиальными — не слишком очевидными (вроде «Какой цвет у снега?» или «Столица Франции»), но и не экспертными. Целься в уровень «любопытный, начитанный человек». Дистракторы ДОЛЖНЫ быть правдоподобными — схожими по длине, категории и стилю с правильным ответом.
 4. Язык и стиль (ВАЖНО): Пиши простым, живым языком — так, чтобы вопрос и объяснение понял человек любого возраста и без специальных знаний. Одно короткое предложение вопроса. Никакого академического или витиеватого слога, никаких профессиональных терминов без объяснения прямо в тексте. Если идея сложная — упрости формулировку, но сохрани суть.
 5. Объяснение (explanation): 2-3 простых предложения. Раскрывает суть ответа + 1-2 любопытных факта. Тон — дружелюбный и увлекательный, как у умного друга.
-6. Ключевая пара (key): Для каждого вопроса ОБЯЗАТЕЛЬНО укажи объект и конкретный факт/аспект (субобъект), о котором задан вопрос. Избегай широких категорий!
+6. Идентичность факта (key): Для каждого вопроса ОБЯЗАТЕЛЬНО укажи subject (конкретная сущность), relation (что именно о ней спрашивается) и answer (канонический правильный ответ). Это идентификатор факта, а не тема вопроса.
 7. Язык: Русский.
 
 ОТВЕТ ДОЛЖЕН БЫТЬ СТРОГО В ФОРМАТЕ JSON (БЕЗ ЛИШНЕГО ТЕКСТА) СО СЛЕДУЮЩЕЙ СТРУКТУРОЙ:
@@ -92,7 +103,7 @@ SYSTEM_PROMPT_TRIVIA = """Ты — эксперт по составлению и
     "options": ["Вариант A", "Вариант B", "Вариант C", "Вариант D"],
     "correct_index": 0,
     "explanation": "Познавательное объяснение простым языком...",
-    "key": { "object": "Bluetooth", "subobject": "происхождение названия" }
+    "key": { "subject": "Bluetooth", "relation": "происхождение названия", "answer": "король Харальд Синезубый" }
   },
   ...
 ]
@@ -107,7 +118,7 @@ SYSTEM_PROMPT_SUPER_TRIVIA = """Ты — эксперт по составлен�
 2. Варианты ответа (options): РОВНО 4 варианта ответа на каждый вопрос.
 3. Правдоподобные дистракторы: Все варианты должны звучать максимально убедительно.
 4. Объяснение (explanation): Познавательное объяснение на 2-3 предложения с интересными деталями.
-5. Ключевая пара (key): Для каждого вопроса ОБЯЗАТЕЛЬНО укажи объект и конкретный факт/аспект (субобъект).
+5. Идентичность факта (key): Для каждого вопроса ОБЯЗАТЕЛЬНО укажи subject, relation и канонический answer. Не используй широкую тему вместо конкретного факта.
 6. Язык: Русский.
 
 ОТВЕТ ДОЛЖЕН БЫТЬ СТРОГО В ФОРМАТЕ JSON:
@@ -119,139 +130,135 @@ SYSTEM_PROMPT_SUPER_TRIVIA = """Ты — эксперт по составлен�
     "options": ["Вариант A", "Вариант B", "Вариант C", "Вариант D"],
     "correct_index": 0,
     "explanation": "Подробное познавательное объяснение...",
-    "key": { "object": "Объект", "subobject": "Аспект" }
+    "key": { "subject": "Объект", "relation": "Конкретное отношение", "answer": "Канонический ответ" }
   },
   ...
 ]
 """
 
 
+def _bank_context(facts: list[repo.StoredTriviaFact]) -> str:
+    if not facts:
+        return ""
+    claims = "\n".join(f"- {fact.identity.canonical_claim}" for fact in facts[:400])
+    return (
+        "\n\nФАКТЫ ИЗ БАНКА, КОТОРЫЕ НЕЛЬЗЯ ПОВТОРЯТЬ ИЛИ ПЕРЕФРАЗИРОВАТЬ:\n"
+        f"{claims}"
+    )
+
+
+async def generate_question_lane(
+    puzzle_date: date,
+    *,
+    lane: str,
+    model_name: str,
+    router=None,
+) -> list[repo.TriviaQuestion]:
+    """Generate one lane; publication and cross-lane checks happen separately."""
+    if lane not in {"main", "super"}:
+        raise ValueError("lane must be 'main' or 'super'")
+    count = 5 if lane == "main" else 3
+    system_prompt = SYSTEM_PROMPT_TRIVIA if lane == "main" else SYSTEM_PROMPT_SUPER_TRIVIA
+    label = "обычных вопросов" if lane == "main" else "СУПЕР-вопросов"
+    bank = await repo.get_recent_bank_facts(reference_date=puzzle_date, days=90)
+    prompt = (
+        f"Сгенерируй ровно {count} {label} на дату {puzzle_date.isoformat()}."
+        f"{_bank_context(bank)}"
+    )
+    provider_router = router or get_provider_router()
+    last_error: Exception | None = None
+    for attempt in range(1, GENERATION_ATTEMPTS + 1):
+        try:
+            response_text, _ = await provider_router.get_response(
+                preferred_model=model_name,
+                history=[{"role": "user", "parts": [{"text": prompt}]}],
+                system_instruction=system_prompt,
+                timeout=45.0,
+            )
+            start_idx = response_text.find("[")
+            end_idx = response_text.rfind("]")
+            clean_json = (
+                response_text[start_idx : end_idx + 1]
+                if start_idx >= 0 and end_idx > start_idx
+                else response_text.strip()
+            )
+            parsed = json.loads(clean_json)
+            if not isinstance(parsed, list):
+                raise ValueError("LLM output is not a JSON list")
+            questions = shuffle_options_and_update_correct_index(parsed)
+            if len(questions) != count or any(question.identity is None for question in questions):
+                raise ValueError(f"LLM returned {len(questions)}/{count} valid identified questions")
+            return questions
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "trivia: %s generation attempt %d/%d failed for %s: %s",
+                lane,
+                attempt,
+                GENERATION_ATTEMPTS,
+                puzzle_date,
+                exc,
+            )
+    assert last_error is not None
+    raise last_error
+
+
 async def prepare_daily_puzzle(
     puzzle_date: date, *, force: bool = False, mode: str = "all"
 ) -> repo.DailyTriviaPuzzle:
-    """Generate/return the daily trivia puzzle.
-
-    mode: "all"   – regenerate both main (5) and super (3) questions (default)
-          "main"  – regenerate only the 5 regular questions; keep existing super
-          "super" – regenerate only the 3 expert questions; keep existing main
-    """
+    """Generate, validate against the bank, and atomically publish one day."""
+    if mode not in {"all", "main", "super"}:
+        raise ValueError("mode must be 'all', 'main', or 'super'")
     existing = await repo.get_puzzle(puzzle_date)
-
-    # Quick-return if everything already exists and we're not forcing
     if (
         existing
-        and existing.questions
-        and len(existing.questions) >= 5
-        and existing.super_questions
-        and len(existing.super_questions) >= 3
+        and len(existing.questions) == 5
+        and len(existing.super_questions) == 3
         and not force
         and existing.status == "ready"
     ):
         return existing
 
-    if force:
-        # Remove only the used_keys that correspond to the parts being regenerated.
-        # "all" or "main": delete all for this date (main keys will be re-saved).
-        # "super": we also delete to allow fresh super-topic selection.
-        try:
-            deleted = await repo.delete_used_keys_for_date(puzzle_date)
-            if deleted:
-                logger.info("trivia: cleared %d stale used_keys for %s (mode=%s)", deleted, puzzle_date, mode)
-        except Exception as exc:
-            logger.warning("trivia: failed to clear used_keys for %s: %s", puzzle_date, exc)
-
-    router = get_provider_router()
-
+    from app.games import daily_trivia_authoring as authoring
     from app.repos.settings_repo import get_global_setting
+
     model_name = await get_global_setting("daily_trivia_llm_model", TRIVIA_MODEL)
+    expected_revision = existing.revision if existing else 0
+    regenerate_main = mode in {"all", "main"} or not existing or len(existing.questions) != 5
+    regenerate_super = mode in {"all", "super"} or not existing or len(existing.super_questions) != 3
+    last_conflict: authoring.DuplicateQuestionError | None = None
 
-    used_keys = await repo.get_used_keys(days=90)
-    all_used_keys = list(used_keys)
-
-    def _build_used_context(keys_list: list[dict[str, str]]) -> str:
-        if not keys_list:
-            return ""
-        formatted = "\n".join(f"- {k['object']} → {k['subobject']}" for k in keys_list[:40])
-        return f"\n\nУЖЕ ИССЛЕДОВАННЫЕ ТЕМЫ И ФАКТЫ (НЕ ПОВТОРЯЙ ИХ):\n{formatted}"
-
-    keys_to_save: list[dict[str, str]] = []
-
-    # ── Regular questions (5) ────────────────────────────────────────────────
-    if mode in ("all", "main"):
-        prompt = f"Сгенерируй 5 вопросов для тривиа-викторины на дату {puzzle_date.isoformat()}.{_build_used_context(all_used_keys)}"
+    for attempt in range(1, GENERATION_ATTEMPTS + 1):
+        questions = (
+            await generate_question_lane(puzzle_date, lane="main", model_name=model_name)
+            if regenerate_main
+            else list(existing.questions)
+        )
+        super_questions = (
+            await generate_question_lane(puzzle_date, lane="super", model_name=model_name)
+            if regenerate_super
+            else list(existing.super_questions)
+        )
         try:
-            response_text, _ = await router.get_response(
-                preferred_model=model_name,
-                history=[{"role": "user", "parts": [{"text": prompt}]}],
-                system_instruction=SYSTEM_PROMPT_TRIVIA,
-                timeout=45.0,
+            return await authoring.publish_authored_day(
+                puzzle_date,
+                main=questions,
+                super_questions=super_questions,
+                model_name=model_name,
+                expected_revision=expected_revision,
+                actor="admin" if force else "scheduler",
             )
-            start_idx = response_text.find("[")
-            end_idx = response_text.rfind("]")
-            clean_json = response_text[start_idx: end_idx + 1] if start_idx != -1 and end_idx != -1 and start_idx < end_idx else response_text.strip()
-            parsed = json.loads(clean_json)
-            if not isinstance(parsed, list):
-                raise ValueError("Parsed LLM output is not a JSON list")
-            for item in parsed:
-                if isinstance(item, dict):
-                    k = item.get("key")
-                    if isinstance(k, dict) and k.get("object") and k.get("subobject"):
-                        k_obj = {"object": str(k["object"]), "subobject": str(k["subobject"])}
-                        keys_to_save.append(k_obj)
-                        all_used_keys.append(k_obj)
-            questions = shuffle_options_and_update_correct_index(parsed)
-            if len(questions) < 5:
-                logger.warning("LLM generated fewer than 5 valid trivia questions (%d), using fallback", len(questions))
-                questions = _get_fallback_questions()
-        except Exception as e:
-            logger.error("Failed to generate Daily Trivia via LLM for date %s: %s", puzzle_date, e, exc_info=True)
-            questions = _get_fallback_questions()
-    else:
-        # mode == "super": keep existing main questions untouched
-        questions = existing.questions if (existing and existing.questions) else _get_fallback_questions()
-
-    # ── Super questions (3 expert level) ────────────────────────────────────
-    if mode in ("all", "super"):
-        super_prompt = f"Сгенерируй 3 СУПЕР-вопроса повышенной сложности на дату {puzzle_date.isoformat()}.{_build_used_context(all_used_keys)}"
-        try:
-            response_text_super, _ = await router.get_response(
-                preferred_model=model_name,
-                history=[{"role": "user", "parts": [{"text": super_prompt}]}],
-                system_instruction=SYSTEM_PROMPT_SUPER_TRIVIA,
-                timeout=45.0,
+        except authoring.DuplicateQuestionError as exc:
+            last_conflict = exc
+            logger.warning(
+                "trivia: duplicate candidate on authoring attempt %d/%d for %s: %s",
+                attempt,
+                GENERATION_ATTEMPTS,
+                puzzle_date,
+                exc,
             )
-            start_idx = response_text_super.find("[")
-            end_idx = response_text_super.rfind("]")
-            clean_json_super = response_text_super[start_idx: end_idx + 1] if start_idx != -1 and end_idx != -1 and start_idx < end_idx else response_text_super.strip()
-            parsed_super = json.loads(clean_json_super)
-            if not isinstance(parsed_super, list):
-                raise ValueError("Parsed super LLM output is not a JSON list")
-            for item in parsed_super:
-                if isinstance(item, dict):
-                    k = item.get("key")
-                    if isinstance(k, dict) and k.get("object") and k.get("subobject"):
-                        keys_to_save.append({"object": str(k["object"]), "subobject": str(k["subobject"])})
-            super_questions = shuffle_options_and_update_correct_index(parsed_super)
-            if len(super_questions) < 3:
-                logger.warning("LLM generated fewer than 3 valid super questions (%d), using fallback", len(super_questions))
-                super_questions = _get_fallback_super_questions()
-        except Exception as e:
-            logger.error("Failed to generate Daily Super Trivia via LLM for date %s: %s", puzzle_date, e, exc_info=True)
-            super_questions = _get_fallback_super_questions()
-    else:
-        # mode == "main": keep existing super questions untouched
-        super_questions = existing.super_questions if (existing and existing.super_questions) else _get_fallback_super_questions()
-
-    # ── Persist ──────────────────────────────────────────────────────────────
-    puzzle = await repo.save_puzzle(puzzle_date, questions, super_questions=super_questions, status="ready")
-
-    if keys_to_save:
-        try:
-            await repo.save_used_keys(keys_to_save, puzzle_date)
-        except Exception as ex:
-            logger.warning("Failed to save trivia used keys for date %s: %s", puzzle_date, ex)
-
-    return puzzle
+    assert last_conflict is not None
+    raise last_conflict
 
 
 
@@ -338,5 +345,7 @@ async def ensure_prepared_puzzles(*, now: datetime | None = None) -> list[repo.D
 
     start_date = today_puzzle_date(now)
     dates = [start_date + timedelta(days=offset) for offset in range(repo.DAILY_TRIVIA_PREP_DAYS_AHEAD + 1)]
-    return list(await asyncio.gather(*[prepare_daily_puzzle(d) for d in dates]))
-
+    puzzles: list[repo.DailyTriviaPuzzle] = []
+    for puzzle_date in dates:
+        puzzles.append(await prepare_daily_puzzle(puzzle_date))
+    return puzzles

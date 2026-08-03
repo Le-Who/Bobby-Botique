@@ -1254,13 +1254,69 @@ async def api_admin_daily_mode():
     return jsonify({"success": True, "mode": mode})
 
 
+def _parse_admin_trivia_question(raw, index: int):
+    from app.games.trivia_similarity import FactIdentity
+    from app.repos import daily_trivia as daily_trivia_repo
+
+    options = [str(option).strip() for option in raw.get("options", [])]
+    correct_index = int(raw.get("correct_index", 0))
+    correct_answer = options[correct_index] if 0 <= correct_index < len(options) else ""
+    identity_raw = raw.get("identity") if isinstance(raw.get("identity"), dict) else {}
+    subject = str(identity_raw.get("subject") or raw.get("question") or "").strip()
+    relation = str(identity_raw.get("relation") or "правильный ответ").strip()
+    identity = (
+        FactIdentity.create(subject=subject, relation=relation, answer=correct_answer)
+        if subject and relation and correct_answer
+        else None
+    )
+    return daily_trivia_repo.TriviaQuestion(
+        id=int(raw.get("id", index + 1)),
+        topic=str(raw.get("topic", "")).strip(),
+        question=str(raw.get("question", "")).strip(),
+        options=options,
+        correct_index=correct_index,
+        explanation=str(raw.get("explanation", "")).strip(),
+        identity=identity,
+    )
+
+
+def _serialize_trivia_conflict(exc):
+    conflict = exc.conflict
+    return {
+        "message": str(exc),
+        "method": conflict.match.method,
+        "confidence": conflict.match.score,
+        "reason": conflict.match.reason,
+        "existing": {
+            "date": conflict.existing.puzzle_date.isoformat() if conflict.existing.puzzle_date else None,
+            "lane": conflict.existing.lane,
+            "position": conflict.existing.position,
+            "question": conflict.existing.question,
+            "identity": {
+                "subject": conflict.existing.identity.subject,
+                "relation": conflict.existing.identity.relation,
+                "answer": conflict.existing.identity.answer,
+            },
+        },
+    }
+
+
 def _serialize_daily_trivia_puzzle(puzzle):
     if not puzzle:
         return None
+    main_count = len(puzzle.questions)
+    super_count = len(puzzle.super_questions)
     return {
         "date": puzzle.puzzle_date.isoformat(),
         "status": puzzle.status,
         "prepared_at": puzzle.prepared_at.isoformat() if puzzle.prepared_at else None,
+        "revision": puzzle.revision,
+        "published_revision_id": puzzle.published_revision_id,
+        "readiness": {
+            "main": {"count": main_count, "required": 5, "ready": main_count == 5},
+            "super": {"count": super_count, "required": 3, "ready": super_count == 3},
+            "publishable": main_count == 5 and super_count == 3,
+        },
         "questions": [
             {
                 "id": q.id,
@@ -1269,6 +1325,16 @@ def _serialize_daily_trivia_puzzle(puzzle):
                 "options": q.options,
                 "correct_index": q.correct_index,
                 "explanation": q.explanation,
+                "identity": (
+                    {
+                        "subject": q.identity.subject,
+                        "relation": q.identity.relation,
+                        "answer": q.identity.answer,
+                        "identity_hash": q.identity.identity_hash,
+                    }
+                    if q.identity
+                    else None
+                ),
             }
             for q in puzzle.questions
         ],
@@ -1280,6 +1346,16 @@ def _serialize_daily_trivia_puzzle(puzzle):
                 "options": q.options,
                 "correct_index": q.correct_index,
                 "explanation": q.explanation,
+                "identity": (
+                    {
+                        "subject": q.identity.subject,
+                        "relation": q.identity.relation,
+                        "answer": q.identity.answer,
+                        "identity_hash": q.identity.identity_hash,
+                    }
+                    if q.identity
+                    else None
+                ),
             }
             for q in puzzle.super_questions
         ],
@@ -1360,7 +1436,15 @@ async def api_admin_dailytrivia_list():
                 "date": curr.isoformat(),
                 "status": "missing",
                 "prepared_at": None,
+                "revision": 0,
+                "published_revision_id": None,
                 "questions": [],
+                "super_questions": [],
+                "readiness": {
+                    "main": {"count": 0, "required": 5, "ready": False},
+                    "super": {"count": 0, "required": 3, "ready": False},
+                    "publishable": False,
+                },
             })
         curr += datetime.timedelta(days=1)
         
@@ -1377,6 +1461,7 @@ async def api_admin_dailytrivia_list():
 @rate_limit_api
 async def api_admin_dailytrivia_regenerate():
     from app.games import daily_trivia as daily_trivia_game
+    from app.games import daily_trivia_authoring as authoring
     from app.repos.crocodile_daily import today_puzzle_date
     data = await request.get_json() or {}
     try:
@@ -1386,7 +1471,10 @@ async def api_admin_dailytrivia_regenerate():
     mode = str(data.get("mode") or "all").strip().lower()
     if mode not in ("all", "main", "super"):
         return jsonify({"error": "mode must be 'all', 'main', or 'super'"}), 400
-    puzzle = await daily_trivia_game.prepare_daily_puzzle(p_date, force=True, mode=mode)
+    try:
+        puzzle = await daily_trivia_game.prepare_daily_puzzle(p_date, force=True, mode=mode)
+    except authoring.DuplicateQuestionError as exc:
+        return jsonify({"error": str(exc), "conflict": _serialize_trivia_conflict(exc)}), 409
     return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
 
 
@@ -1394,31 +1482,39 @@ async def api_admin_dailytrivia_regenerate():
 @require_auth
 @rate_limit_api
 async def api_admin_dailytrivia_save():
+    from app.games import daily_trivia_authoring as authoring
     from app.repos import daily_trivia as daily_trivia_repo
+    from app.repos.settings_repo import get_global_setting
     data = await request.get_json()
     if not data:
         return jsonify({"error": "invalid json"}), 400
     try:
         p_date = datetime.date.fromisoformat(str(data.get("date") or ""))
         raw_questions = data.get("questions") or []
-        status = str(data.get("status") or "ready").strip().lower()
+        expected_revision = int(data["revision"]) if data.get("revision") is not None else None
     except (TypeError, ValueError):
         return jsonify({"error": "invalid payload"}), 400
 
-    questions = []
-    for idx, q in enumerate(raw_questions):
-        questions.append(
-            daily_trivia_repo.TriviaQuestion(
-                id=int(q.get("id", idx + 1)),
-                topic=str(q.get("topic", "")).strip(),
-                question=str(q.get("question", "")).strip(),
-                options=[str(opt).strip() for opt in q.get("options", [])],
-                correct_index=int(q.get("correct_index", 0)),
-                explanation=str(q.get("explanation", "")).strip(),
-            )
+    existing = await daily_trivia_repo.get_puzzle(p_date)
+    if not existing or len(existing.super_questions) != 3:
+        return jsonify({"error": "Нельзя опубликовать обычные вопросы: суперигра должна содержать 3 вопроса"}), 409
+    questions = [_parse_admin_trivia_question(q, idx) for idx, q in enumerate(raw_questions)]
+    model_name = await get_global_setting("daily_trivia_llm_model", "gemini-economy")
+    try:
+        puzzle = await authoring.publish_authored_day(
+            p_date,
+            main=questions,
+            super_questions=existing.super_questions,
+            model_name=model_name,
+            expected_revision=expected_revision,
+            actor="admin",
         )
-
-    puzzle = await daily_trivia_repo.save_puzzle(p_date, questions, status=status)
+    except daily_trivia_repo.RevisionConflictError as exc:
+        return jsonify({"error": str(exc), "current_revision": exc.actual}), 409
+    except authoring.DuplicateQuestionError as exc:
+        return jsonify({"error": str(exc), "conflict": _serialize_trivia_conflict(exc)}), 409
+    except (authoring.InvalidQuestionSetError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 422
     return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
 
 
@@ -1427,30 +1523,39 @@ async def api_admin_dailytrivia_save():
 @rate_limit_api
 async def api_admin_dailytrivia_save_super():
     """Save manually edited super questions for a puzzle date."""
+    from app.games import daily_trivia_authoring as authoring
     from app.repos import daily_trivia as daily_trivia_repo
+    from app.repos.settings_repo import get_global_setting
     data = await request.get_json()
     if not data:
         return jsonify({"error": "invalid json"}), 400
     try:
         p_date = datetime.date.fromisoformat(str(data.get("date") or ""))
         raw_questions = data.get("super_questions") or []
+        expected_revision = int(data["revision"]) if data.get("revision") is not None else None
     except (TypeError, ValueError):
         return jsonify({"error": "invalid payload"}), 400
 
-    super_questions = []
-    for idx, q in enumerate(raw_questions):
-        super_questions.append(
-            daily_trivia_repo.TriviaQuestion(
-                id=int(q.get("id", idx + 1)),
-                topic=str(q.get("topic", "")).strip(),
-                question=str(q.get("question", "")).strip(),
-                options=[str(opt).strip() for opt in q.get("options", [])],
-                correct_index=int(q.get("correct_index", 0)),
-                explanation=str(q.get("explanation", "")).strip(),
-            )
+    existing = await daily_trivia_repo.get_puzzle(p_date)
+    if not existing or len(existing.questions) != 5:
+        return jsonify({"error": "Нельзя опубликовать суперигру: обычная игра должна содержать 5 вопросов"}), 409
+    super_questions = [_parse_admin_trivia_question(q, idx) for idx, q in enumerate(raw_questions)]
+    model_name = await get_global_setting("daily_trivia_llm_model", "gemini-economy")
+    try:
+        puzzle = await authoring.publish_authored_day(
+            p_date,
+            main=existing.questions,
+            super_questions=super_questions,
+            model_name=model_name,
+            expected_revision=expected_revision,
+            actor="admin",
         )
-
-    puzzle = await daily_trivia_repo.save_super_questions(p_date, super_questions)
+    except daily_trivia_repo.RevisionConflictError as exc:
+        return jsonify({"error": str(exc), "current_revision": exc.actual}), 409
+    except authoring.DuplicateQuestionError as exc:
+        return jsonify({"error": str(exc), "conflict": _serialize_trivia_conflict(exc)}), 409
+    except (authoring.InvalidQuestionSetError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 422
     return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
 
 

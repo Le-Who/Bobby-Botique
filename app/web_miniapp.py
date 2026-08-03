@@ -1402,13 +1402,18 @@ async def api_miniapp_trivia_today():
 
     from app.games.daily_trivia import prepare_daily_puzzle
     from app.repos.crocodile_daily import today_puzzle_date
-    from app.repos.daily_trivia import get_result_if_exists, get_super_result_if_exists
+    from app.repos.daily_trivia import (
+        get_puzzle_revision,
+        get_result_if_exists,
+        get_super_result_if_exists,
+    )
 
     today = today_puzzle_date()
-    puzzle = await prepare_daily_puzzle(today)
 
     user_result = None
     user_super_result = None
+    result = None
+    super_res = None
     raw_init = request.headers.get("X-TG-INIT-DATA", "")
     if raw_init:
         bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
@@ -1437,9 +1442,21 @@ async def api_miniapp_trivia_today():
                         "answers": super_res.answers or [],
                     }
 
+    pinned_revision_id = (
+        result.puzzle_revision_id
+        if result is not None and result.puzzle_revision_id is not None
+        else super_res.puzzle_revision_id
+        if super_res is not None and super_res.puzzle_revision_id is not None
+        else None
+    )
+    puzzle = await get_puzzle_revision(pinned_revision_id) if pinned_revision_id else None
+    if puzzle is None:
+        puzzle = await prepare_daily_puzzle(today)
+
     return jsonify(
         {
             "date": puzzle.puzzle_date.isoformat(),
+            "revision_id": puzzle.published_revision_id,
             "questions": [
                 {
                     "id": q.id,
@@ -1481,6 +1498,7 @@ async def api_miniapp_trivia_submit_answer():
     is_correct = bool(data.get("is_correct", False))
     elapsed_ms = int(data.get("elapsed_ms", 0))
     total_score = int(data.get("total_score", 0))
+    puzzle_revision_id = int(data["revision_id"]) if data.get("revision_id") is not None else None
 
     user_id = 0
     raw_init = request.headers.get("X-TG-INIT-DATA", "")
@@ -1492,7 +1510,11 @@ async def api_miniapp_trivia_submit_answer():
 
     if user_id > 0:
         today = today_puzzle_date()
-        result = await get_or_create_result(user_id, today)
+        result = await get_or_create_result(
+            user_id,
+            today,
+            puzzle_revision_id=puzzle_revision_id,
+        )
 
         # Guard: game already completed — ignore further submissions.
         if result.status == "completed":
@@ -1556,6 +1578,7 @@ async def api_miniapp_trivia_submit_super_answer():
     is_correct = bool(data.get("is_correct", False))
     elapsed_ms = int(data.get("elapsed_ms", 0))
     base_question_score = int(data.get("base_score", 0))
+    puzzle_revision_id = int(data["revision_id"]) if data.get("revision_id") is not None else None
 
     user_id = 0
     raw_init = request.headers.get("X-TG-INIT-DATA", "")
@@ -1571,7 +1594,11 @@ async def api_miniapp_trivia_submit_super_answer():
         if main_result is None or main_result.status != "completed":
             return jsonify({"success": False, "error": "Main game not completed"})
 
-        super_result = await get_or_create_super_result(user_id, today)
+        super_result = await get_or_create_super_result(
+            user_id,
+            today,
+            puzzle_revision_id=puzzle_revision_id,
+        )
         if super_result.status == "completed":
             return jsonify({"success": True, "already_completed": True})
 

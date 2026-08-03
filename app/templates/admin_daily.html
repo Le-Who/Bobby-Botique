@@ -1010,6 +1010,11 @@ input:checked + .slider:before { transform: translateX(16px); }
         <div class="stat-card-sub">Готовых дней</div>
       </div>
       <div class="stat-card">
+        <div class="stat-card-title">Банк фактов</div>
+        <div class="stat-card-value" id="trivia-stats-bank">—</div>
+        <div class="stat-card-sub" id="trivia-stats-bank-detail">За 90 дней: —</div>
+      </div>
+      <div class="stat-card">
         <div class="stat-card-title">Модель LLM</div>
         <div style="margin-top:6px;">
           <select id="trivia-model-select" style="padding:4px 8px; font-size:0.85rem; width:100%; background:var(--bg-surface); color:var(--text); border:1px solid var(--border); border-radius:6px;">
@@ -1018,7 +1023,7 @@ input:checked + .slider:before { transform: translateX(16px); }
             <option value="opencode">opencode</option>
           </select>
         </div>
-        <div class="stat-card-sub" style="margin-top:4px;">5 вопросов в день</div>
+        <div class="stat-card-sub" style="margin-top:4px;">5 обычных + 3 супер</div>
       </div>
       <div class="stat-card">
         <div class="stat-card-title">Баннер Trivia</div>
@@ -1092,7 +1097,6 @@ input:checked + .slider:before { transform: translateX(16px); }
           </div>
           <div style="display:flex; gap:6px; flex-wrap:wrap;">
             <button class="s2048-btn danger" id="trivia-btn-regen" style="flex:1;">🤖 Регенерировать (AI)</button>
-            <button class="s2048-btn" id="trivia-btn-clear-keys" style="flex:1; font-size:0.75rem; border-color: var(--text-dim); color: var(--text-muted);">🗑️ Очистить ключи этого дня</button>
           </div>
         </div>
 
@@ -2126,6 +2130,8 @@ const TriviaModule = (() => {
       document.getElementById('trivia-stats-games').textContent = data.played_today || '0';
       document.getElementById('trivia-stats-games-detail').textContent = `Завершено: ${data.finished_today ?? 0} | В игре: ${data.active_today ?? 0}`;
       document.getElementById('trivia-stats-puzzles-ahead').textContent = data.ready_puzzles_ahead ?? '0';
+      document.getElementById('trivia-stats-bank').textContent = data.bank_fact_count ?? '0';
+      document.getElementById('trivia-stats-bank-detail').textContent = `За 90 дней: ${data.recent_bank_fact_count ?? 0}`;
 
       const modelSelect = document.getElementById('trivia-model-select');
       if (modelSelect && data.llm_model) {
@@ -2185,11 +2191,12 @@ const TriviaModule = (() => {
       const isSelected = selectedDate === p.date;
       const isReady = p.status === 'ready';
       const qCount = (p.questions || []).length;
+      const superCount = (p.super_questions || []).length;
       return `
         <div class="s2048-puzzle ${isSelected ? 'active' : ''}" data-date="${p.date}">
           <div class="s2048-puzzle-head">
             <span class="s2048-date">${p.date}${isToday ? ' <span class="today-badge">СЕГОДНЯ</span>' : ''}</span>
-            <span class="s2048-badge">${isReady ? '✅ ' + qCount + ' вопр.' : '⚠️ draft'}</span>
+            <span class="s2048-badge">${isReady && qCount === 5 && superCount === 3 ? '✅ 5/5 + 3/3' : `⚠️ ${qCount}/5 + ${superCount}/3`}</span>
           </div>
           <div style="font-size:0.75rem; color:var(--text-muted); margin-top:6px;">
             ${(p.questions && p.questions[0]) ? '1. ' + escapeHtml(p.questions[0].question.slice(0, 45)) + '...' : 'Вопросы не сгенерированы'}
@@ -2238,8 +2245,10 @@ const TriviaModule = (() => {
       el.classList.toggle('active', el.dataset.date === p.date);
     });
 
-    document.getElementById('trivia-editor-title').textContent = `Викторина на ${p.date}`;
-    document.getElementById('trivia-editor-status').textContent = p.status || 'draft';
+    document.getElementById('trivia-editor-title').textContent = `Викторина на ${p.date} · ревизия ${p.revision || 0}`;
+    const mainCount = (p.questions || []).length;
+    const superCount = (p.super_questions || []).length;
+    document.getElementById('trivia-editor-status').textContent = `${p.status || 'draft'} · обычные ${mainCount}/5 · супер ${superCount}/3`;
 
     renderEditorQuestions(p.questions || [], p.super_questions || []);
   }
@@ -2279,6 +2288,16 @@ const TriviaModule = (() => {
           <div class="field" style="margin-bottom:6px;">
             <label>Текст вопроса</label>
             <textarea class="t-q-text" data-idx="${i}" style="min-height:50px;">${escapeHtml(q.question || '')}</textarea>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
+            <div class="field">
+              <label>Сущность факта</label>
+              <input type="text" class="t-q-subject" data-idx="${i}" value="${escapeHtml(q.identity?.subject || q.question || '')}" placeholder="Напр. Пенициллин">
+            </div>
+            <div class="field">
+              <label>Что спрашиваем</label>
+              <input type="text" class="t-q-relation" data-idx="${i}" value="${escapeHtml(q.identity?.relation || 'правильный ответ')}" placeholder="Напр. первооткрыватель">
+            </div>
           </div>
           <div class="field" style="margin-bottom:6px;">
             <label>Варианты ответа (отметьте точкой верный):</label>
@@ -2324,6 +2343,16 @@ const TriviaModule = (() => {
               <label>Текст вопроса</label>
               <textarea class="t-sq-text" data-idx="${i}" style="min-height:50px;">${escapeHtml(q.question || '')}</textarea>
             </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
+              <div class="field">
+                <label>Сущность факта</label>
+                <input type="text" class="t-sq-subject" data-idx="${i}" value="${escapeHtml(q.identity?.subject || q.question || '')}" placeholder="Конкретная сущность">
+              </div>
+              <div class="field">
+                <label>Что спрашиваем</label>
+                <input type="text" class="t-sq-relation" data-idx="${i}" value="${escapeHtml(q.identity?.relation || 'правильный ответ')}" placeholder="Конкретное отношение">
+              </div>
+            </div>
             <div class="field" style="margin-bottom:6px;">
               <label>Варианты ответа (отметьте точкой верный):</label>
               <div style="display:flex; flex-direction:column; gap:4px;">
@@ -2361,6 +2390,8 @@ const TriviaModule = (() => {
       const correctRadio = container.querySelector(`input[name="t-q-correct-${i}"]:checked`);
       const correct_index = correctRadio ? parseInt(correctRadio.value) : 0;
       const explanation = container.querySelector(`.t-q-exp[data-idx="${i}"]`)?.value.trim() || '';
+      const subject = container.querySelector(`.t-q-subject[data-idx="${i}"]`)?.value.trim() || question;
+      const relation = container.querySelector(`.t-q-relation[data-idx="${i}"]`)?.value.trim() || 'правильный ответ';
 
       questions.push({
         id: i + 1,
@@ -2368,7 +2399,8 @@ const TriviaModule = (() => {
         question,
         options: [opt0, opt1, opt2, opt3],
         correct_index,
-        explanation
+        explanation,
+        identity: { subject, relation, answer: [opt0, opt1, opt2, opt3][correct_index] || '' }
       });
     }
     return questions;
@@ -2387,7 +2419,9 @@ const TriviaModule = (() => {
       const correctRadio = container.querySelector(`input[name="t-sq-correct-${i}"]:checked`);
       const correct_index = correctRadio ? parseInt(correctRadio.value) : 0;
       const explanation = container.querySelector(`.t-sq-exp[data-idx="${i}"]`)?.value.trim() || '';
-      questions.push({ id: i + 1, topic, question, options: [opt0, opt1, opt2, opt3], correct_index, explanation });
+      const subject = container.querySelector(`.t-sq-subject[data-idx="${i}"]`)?.value.trim() || question;
+      const relation = container.querySelector(`.t-sq-relation[data-idx="${i}"]`)?.value.trim() || 'правильный ответ';
+      questions.push({ id: i + 1, topic, question, options: [opt0, opt1, opt2, opt3], correct_index, explanation, identity: { subject, relation, answer: [opt0, opt1, opt2, opt3][correct_index] || '' } });
     }
     return questions;
   }
@@ -2404,7 +2438,7 @@ const TriviaModule = (() => {
       const res = await fetch('/api/admin/dailytrivia/save', {
         method: 'POST',
         headers: apiHeaders,
-        body: JSON.stringify({ date: selectedDate, questions, status: 'ready' })
+        body: JSON.stringify({ date: selectedDate, revision: selectedPuzzle?.revision ?? 0, questions, status: 'ready' })
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
@@ -2430,7 +2464,7 @@ const TriviaModule = (() => {
       const res = await fetch('/api/admin/dailytrivia/save_super', {
         method: 'POST',
         headers: apiHeaders,
-        body: JSON.stringify({ date: selectedDate, super_questions })
+        body: JSON.stringify({ date: selectedDate, revision: selectedPuzzle?.revision ?? 0, super_questions })
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
@@ -2565,38 +2599,11 @@ const TriviaModule = (() => {
     document.getElementById('trivia-btn-save-super').addEventListener('click', saveSuperQuestions);
     document.getElementById('trivia-btn-regen').addEventListener('click', regenerate);
     document.getElementById('trivia-btn-close').addEventListener('click', closeEditor);
-    document.getElementById('trivia-btn-clear-keys').addEventListener('click', clearKeys);
     document.getElementById('trivia-lb-btn-daily').addEventListener('click', () => loadLeaderboard('daily'));
     document.getElementById('trivia-lb-btn-monthly').addEventListener('click', () => loadLeaderboard('monthly'));
     document.getElementById('trivia-model-select').addEventListener('change', (e) => updateModel(e.target.value));
 
     loadLeaderboard('daily');
-  }
-
-  async function clearKeys() {
-    if (!selectedDate) { showToast('Выберите дату', 'error'); return; }
-    const confirmed = await showConfirm('Очистить ключи', `Удалить все использованные ключи тем для ${selectedDate}?\nПосле этого при регенерации темы этого дня вновь станут доступны для других дней.`);
-    if (!confirmed) return;
-
-    const btn = document.getElementById('trivia-btn-clear-keys');
-    btn.disabled = true;
-    btn.textContent = '⏳ Очистка...';
-
-    try {
-      const res = await fetch('/api/admin/dailytrivia/clear_used_keys', {
-        method: 'POST',
-        headers: apiHeaders,
-        body: JSON.stringify({ date: selectedDate })
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-      showToast(`Удалено ${data.deleted ?? 0} ключей для ${selectedDate}`, 'success');
-    } catch (e) {
-      showToast(`Ошибка: ${e.message}`, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '🗑️ Очистить ключи этого дня';
-    }
   }
 
   return { init };

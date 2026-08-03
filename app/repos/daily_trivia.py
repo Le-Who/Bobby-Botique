@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 
 from app import database as db
+from app.games.trivia_similarity import FactIdentity
 from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
@@ -21,6 +23,7 @@ class TriviaQuestion:
     options: list[str]
     correct_index: int
     explanation: str
+    identity: FactIdentity | None = None
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,8 @@ class DailyTriviaPuzzle:
     super_questions: list[TriviaQuestion]
     status: str
     prepared_at: datetime | None
+    revision: int = 0
+    published_revision_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +51,7 @@ class DailyTriviaResult:
     finished_at: datetime | None
     super_delta: int | None = None
     super_correct: int | None = None
+    puzzle_revision_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +65,23 @@ class DailySuperResult:
     answers: list[dict[str, Any]]
     started_at: datetime
     finished_at: datetime | None
+    puzzle_revision_id: int | None = None
+
+
+@dataclass(frozen=True)
+class StoredTriviaFact:
+    identity: FactIdentity
+    question: str
+    puzzle_date: date
+    lane: str
+    position: int
+
+
+class RevisionConflictError(RuntimeError):
+    def __init__(self, *, expected: int, actual: int):
+        self.expected = expected
+        self.actual = actual
+        super().__init__(f"Puzzle revision changed: expected {expected}, actual {actual}")
 
 
 def _row_get(row: Any, key: str, default: Any = None) -> Any:
@@ -91,6 +114,14 @@ def normalize_questions(raw: Any) -> list[TriviaQuestion]:
         correct_idx = int(item.get("correct_index", 0))
         if correct_idx < 0 or correct_idx >= len(opts_clean):
             correct_idx = 0
+        identity = None
+        identity_raw = item.get("identity") or item.get("key")
+        if isinstance(identity_raw, dict):
+            subject = str(identity_raw.get("subject") or identity_raw.get("object") or "").strip()
+            relation = str(identity_raw.get("relation") or identity_raw.get("subobject") or "").strip()
+            answer = str(identity_raw.get("answer") or (opts_clean[correct_idx] if opts_clean else "")).strip()
+            if subject and relation and answer:
+                identity = FactIdentity.create(subject=subject, relation=relation, answer=answer)
         result.append(
             TriviaQuestion(
                 id=int(item.get("id", idx + 1)),
@@ -99,6 +130,7 @@ def normalize_questions(raw: Any) -> list[TriviaQuestion]:
                 options=opts_clean,
                 correct_index=correct_idx,
                 explanation=str(item.get("explanation", "")),
+                identity=identity,
             )
         )
     return result
@@ -113,6 +145,16 @@ def questions_to_dict_list(questions: list[TriviaQuestion]) -> list[dict[str, An
             "options": q.options,
             "correct_index": q.correct_index,
             "explanation": q.explanation,
+            "identity": (
+                {
+                    "subject": q.identity.subject,
+                    "relation": q.identity.relation,
+                    "answer": q.identity.answer,
+                    "identity_hash": q.identity.identity_hash,
+                }
+                if q.identity
+                else None
+            ),
         }
         for q in questions
     ]
@@ -125,6 +167,12 @@ def _row_to_puzzle(row: Any) -> DailyTriviaPuzzle:
         super_questions=normalize_questions(_row_get(row, "super_questions")),
         status=str(_row_get(row, "status", "ready") or "ready"),
         prepared_at=_row_get(row, "prepared_at"),
+        revision=int(_row_get(row, "revision", 0) or 0),
+        published_revision_id=(
+            int(_row_get(row, "published_revision_id"))
+            if _row_get(row, "published_revision_id") is not None
+            else None
+        ),
     )
 
 
@@ -153,6 +201,11 @@ def _row_to_result(row: Any) -> DailyTriviaResult:
         finished_at=_row_get(row, "finished_at"),
         super_delta=int(super_delta_raw) if super_delta_raw is not None else None,
         super_correct=int(super_correct_raw) if super_correct_raw is not None else None,
+        puzzle_revision_id=(
+            int(_row_get(row, "puzzle_revision_id"))
+            if _row_get(row, "puzzle_revision_id") is not None
+            else None
+        ),
     )
 
 
@@ -176,13 +229,19 @@ def _row_to_super_result(row: Any) -> DailySuperResult:
         answers=answers_raw if isinstance(answers_raw, list) else [],
         started_at=started_at,
         finished_at=_row_get(row, "finished_at"),
+        puzzle_revision_id=(
+            int(_row_get(row, "puzzle_revision_id"))
+            if _row_get(row, "puzzle_revision_id") is not None
+            else None
+        ),
     )
 
 
 async def get_puzzle(puzzle_date: date, *, conn=None) -> DailyTriviaPuzzle | None:
     rows = await db.db_query(
         """
-        SELECT puzzle_date, questions, super_questions, status, prepared_at
+        SELECT puzzle_date, questions, super_questions, status, prepared_at,
+               revision, published_revision_id
         FROM public.daily_trivia_puzzles
         WHERE puzzle_date = $1
         """,
@@ -192,6 +251,62 @@ async def get_puzzle(puzzle_date: date, *, conn=None) -> DailyTriviaPuzzle | Non
     if not rows:
         return None
     return _row_to_puzzle(rows[0])
+
+
+async def get_puzzle_revision(revision_id: int, *, conn=None) -> DailyTriviaPuzzle | None:
+    """Reconstruct the immutable snapshot pinned to a player's result."""
+    rows = await db.db_query(
+        """
+        SELECT r.puzzle_date, r.revision_no, r.revision_id, r.status, r.published_at,
+               o.lane, o.position, v.topic, v.question, v.options,
+               v.correct_index, v.explanation,
+               f.subject_norm, f.relation_norm, f.answer_norm, f.identity_hash
+        FROM public.daily_trivia_puzzle_revisions r
+        JOIN public.daily_trivia_question_occurrences o ON o.revision_id = r.revision_id
+        JOIN public.daily_trivia_question_variants v ON v.variant_id = o.variant_id
+        JOIN public.daily_trivia_facts f ON f.fact_id = v.fact_id
+        WHERE r.revision_id = $1
+        ORDER BY CASE o.lane WHEN 'main' THEN 0 ELSE 1 END, o.position
+        """,
+        (revision_id,),
+        conn=conn,
+    )
+    if not rows:
+        return None
+
+    lanes: dict[str, list[TriviaQuestion]] = {"main": [], "super": []}
+    for row in rows:
+        options_raw = _row_get(row, "options", [])
+        if isinstance(options_raw, str):
+            options_raw = json.loads(options_raw)
+        identity = FactIdentity(
+            subject=str(_row_get(row, "subject_norm", "")),
+            relation=str(_row_get(row, "relation_norm", "")),
+            answer=str(_row_get(row, "answer_norm", "")),
+            identity_hash=str(_row_get(row, "identity_hash", "")),
+        )
+        lane = str(_row_get(row, "lane", "main"))
+        lanes.setdefault(lane, []).append(
+            TriviaQuestion(
+                id=int(_row_get(row, "position", 0) or 0),
+                topic=str(_row_get(row, "topic", "Общие знания")),
+                question=str(_row_get(row, "question", "")),
+                options=[str(option) for option in options_raw],
+                correct_index=int(_row_get(row, "correct_index", 0) or 0),
+                explanation=str(_row_get(row, "explanation", "")),
+                identity=identity,
+            )
+        )
+    head = rows[0]
+    return DailyTriviaPuzzle(
+        puzzle_date=_row_get(head, "puzzle_date"),
+        questions=lanes.get("main", []),
+        super_questions=lanes.get("super", []),
+        status=str(_row_get(head, "status", "ready")),
+        prepared_at=_row_get(head, "published_at"),
+        revision=int(_row_get(head, "revision_no", 0) or 0),
+        published_revision_id=int(_row_get(head, "revision_id")),
+    )
 
 
 async def save_puzzle(
@@ -217,9 +332,38 @@ async def save_puzzle(
             status = EXCLUDED.status,
             prepared_at = EXCLUDED.prepared_at,
             updated_at = NOW()
-        RETURNING puzzle_date, questions, super_questions, status, prepared_at
+        RETURNING puzzle_date, questions, super_questions, status, prepared_at,
+                  revision, published_revision_id
         """,
         (puzzle_date, q_json, sq_json, status, now if status == "ready" else None),
+        conn=conn,
+    )
+    return _row_to_puzzle(rows[0])
+
+
+async def save_main_questions(
+    puzzle_date: date,
+    questions: list[TriviaQuestion],
+    status: str = "ready",
+    *,
+    conn=None,
+) -> DailyTriviaPuzzle:
+    """Update regular questions without touching the super-game questions."""
+    q_json = json.dumps(questions_to_dict_list(questions))
+    now = datetime.now(tz=UTC)
+    rows = await db.db_query(
+        """
+        INSERT INTO public.daily_trivia_puzzles (puzzle_date, questions, super_questions, status, prepared_at)
+        VALUES ($1, $2::jsonb, '[]'::jsonb, $3, $4)
+        ON CONFLICT (puzzle_date) DO UPDATE
+        SET questions = EXCLUDED.questions,
+            status = EXCLUDED.status,
+            prepared_at = EXCLUDED.prepared_at,
+            updated_at = NOW()
+        RETURNING puzzle_date, questions, super_questions, status, prepared_at,
+                  revision, published_revision_id
+        """,
+        (puzzle_date, q_json, status, now if status == "ready" else None),
         conn=conn,
     )
     return _row_to_puzzle(rows[0])
@@ -246,12 +390,256 @@ async def save_super_questions(
         ON CONFLICT (puzzle_date) DO UPDATE
         SET super_questions = EXCLUDED.super_questions,
             updated_at = NOW()
-        RETURNING puzzle_date, questions, super_questions, status, prepared_at
+        RETURNING puzzle_date, questions, super_questions, status, prepared_at,
+                  revision, published_revision_id
         """,
         (puzzle_date, sq_json),
         conn=conn,
     )
     return _row_to_puzzle(rows[0])
+
+
+async def get_recent_bank_facts(
+    *,
+    reference_date: date,
+    days: int = 90,
+    exclude_puzzle_date: date | None = None,
+    conn=None,
+) -> list[StoredTriviaFact]:
+    """Return published facts from both lanes, including prepared future days."""
+    rows = await db.db_query(
+        """
+        SELECT f.subject_norm, f.relation_norm, f.answer_norm, f.identity_hash,
+               v.question, r.puzzle_date, o.lane, o.position
+        FROM public.daily_trivia_question_occurrences o
+        JOIN public.daily_trivia_puzzle_revisions r ON r.revision_id = o.revision_id
+        JOIN public.daily_trivia_question_variants v ON v.variant_id = o.variant_id
+        JOIN public.daily_trivia_facts f ON f.fact_id = v.fact_id
+        JOIN public.daily_trivia_puzzles p
+          ON p.puzzle_date = r.puzzle_date
+         AND p.published_revision_id = r.revision_id
+        WHERE r.status = 'ready'
+          AND r.puzzle_date >= $1::date - $2::integer
+          AND ($3::date IS NULL OR r.puzzle_date <> $3::date)
+        ORDER BY r.puzzle_date DESC, o.lane, o.position
+        """,
+        (reference_date, max(1, int(days)), exclude_puzzle_date),
+        conn=conn,
+    )
+    return [
+        StoredTriviaFact(
+            identity=FactIdentity(
+                subject=str(_row_get(row, "subject_norm", "")),
+                relation=str(_row_get(row, "relation_norm", "")),
+                answer=str(_row_get(row, "answer_norm", "")),
+                identity_hash=str(_row_get(row, "identity_hash", "")),
+            ),
+            question=str(_row_get(row, "question", "")),
+            puzzle_date=_row_get(row, "puzzle_date"),
+            lane=str(_row_get(row, "lane", "")),
+            position=int(_row_get(row, "position", 0) or 0),
+        )
+        for row in rows
+    ]
+
+
+def _question_content_hash(question: TriviaQuestion, lane: str) -> str:
+    payload = {
+        "lane": lane,
+        "identity_hash": question.identity.identity_hash if question.identity else None,
+        "topic": question.topic,
+        "question": question.question,
+        "options": question.options,
+        "correct_index": question.correct_index,
+        "explanation": question.explanation,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+async def _publish_revision_on_conn(
+    conn,
+    puzzle_date: date,
+    questions: list[TriviaQuestion],
+    super_questions: list[TriviaQuestion],
+    *,
+    expected_revision: int | None = None,
+    actor: str = "scheduler",
+    status: str = "ready",
+) -> DailyTriviaPuzzle:
+    """Publish a complete immutable revision using an existing transaction."""
+    if len(questions) != 5 or len(super_questions) != 3:
+        raise ValueError("A published Daily Trivia revision requires exactly 5 main and 3 super questions")
+    if any(question.identity is None for question in [*questions, *super_questions]):
+        raise ValueError("Every published question must have a fact identity")
+
+    current = await conn.fetchrow(
+        """
+        SELECT revision
+        FROM public.daily_trivia_puzzles
+        WHERE puzzle_date = $1
+        FOR UPDATE
+        """,
+        puzzle_date,
+    )
+    if current is None:
+        await conn.execute(
+            """
+            INSERT INTO public.daily_trivia_puzzles (
+                puzzle_date, questions, super_questions, status, revision
+            ) VALUES ($1, '[]'::jsonb, '[]'::jsonb, 'draft', 0)
+            ON CONFLICT (puzzle_date) DO NOTHING
+            """,
+            puzzle_date,
+        )
+        current = await conn.fetchrow(
+            """
+            SELECT revision
+            FROM public.daily_trivia_puzzles
+            WHERE puzzle_date = $1
+            FOR UPDATE
+            """,
+            puzzle_date,
+        )
+    current_revision = int(_row_get(current, "revision", 0) or 0)
+    if expected_revision is not None and current_revision != expected_revision:
+        raise RevisionConflictError(expected=expected_revision, actual=current_revision)
+
+    revision_no = current_revision + 1
+    revision_row = await conn.fetchrow(
+        """
+        INSERT INTO public.daily_trivia_puzzle_revisions (
+            puzzle_date, revision_no, status, actor, published_at
+        ) VALUES ($1, $2, $3, $4, CASE WHEN $3 = 'ready' THEN NOW() END)
+        RETURNING revision_id
+        """,
+        puzzle_date,
+        revision_no,
+        status,
+        actor,
+    )
+    revision_id = int(_row_get(revision_row, "revision_id"))
+
+    for lane, lane_questions in (("main", questions), ("super", super_questions)):
+        for position, question in enumerate(lane_questions, start=1):
+            identity = question.identity
+            assert identity is not None
+            fact_row = await conn.fetchrow(
+                """
+                INSERT INTO public.daily_trivia_facts (
+                    subject_norm, relation_norm, answer_norm, identity_hash,
+                    canonical_claim, first_used_at, last_used_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $6)
+                ON CONFLICT (identity_hash) DO UPDATE
+                SET first_used_at = LEAST(
+                        COALESCE(public.daily_trivia_facts.first_used_at, EXCLUDED.first_used_at),
+                        EXCLUDED.first_used_at
+                    ),
+                    last_used_at = GREATEST(
+                        COALESCE(public.daily_trivia_facts.last_used_at, EXCLUDED.last_used_at),
+                        EXCLUDED.last_used_at
+                    ),
+                    updated_at = NOW()
+                RETURNING fact_id
+                """,
+                identity.subject,
+                identity.relation,
+                identity.answer,
+                identity.identity_hash,
+                identity.canonical_claim,
+                puzzle_date,
+            )
+            fact_id = int(_row_get(fact_row, "fact_id"))
+            content_hash = _question_content_hash(question, lane)
+            variant_row = await conn.fetchrow(
+                """
+                INSERT INTO public.daily_trivia_question_variants (
+                    fact_id, topic, question, options, correct_index, explanation,
+                    difficulty, content_hash, source
+                ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9)
+                ON CONFLICT (content_hash) DO UPDATE
+                SET content_hash = EXCLUDED.content_hash
+                RETURNING variant_id
+                """,
+                fact_id,
+                question.topic,
+                question.question,
+                json.dumps(question.options),
+                question.correct_index,
+                question.explanation,
+                lane,
+                content_hash,
+                "admin" if actor == "admin" else "llm",
+            )
+            variant_id = int(_row_get(variant_row, "variant_id"))
+            await conn.execute(
+                """
+                INSERT INTO public.daily_trivia_question_occurrences (
+                    revision_id, lane, position, variant_id
+                ) VALUES ($1, $2, $3, $4)
+                """,
+                revision_id,
+                lane,
+                position,
+                variant_id,
+            )
+
+    puzzle_row = await conn.fetchrow(
+        """
+        UPDATE public.daily_trivia_puzzles
+        SET questions = $2::jsonb,
+            super_questions = $3::jsonb,
+            status = $4,
+            prepared_at = CASE WHEN $4 = 'ready' THEN NOW() ELSE NULL END,
+            revision = $5,
+            published_revision_id = $6,
+            updated_at = NOW()
+        WHERE puzzle_date = $1
+        RETURNING puzzle_date, questions, super_questions, status, prepared_at,
+                  revision, published_revision_id
+        """,
+        puzzle_date,
+        json.dumps(questions_to_dict_list(questions)),
+        json.dumps(questions_to_dict_list(super_questions)),
+        status,
+        revision_no,
+        revision_id,
+    )
+    return _row_to_puzzle(puzzle_row)
+
+
+async def publish_revision(
+    puzzle_date: date,
+    questions: list[TriviaQuestion],
+    super_questions: list[TriviaQuestion],
+    *,
+    expected_revision: int | None = None,
+    actor: str = "scheduler",
+    status: str = "ready",
+    conn=None,
+) -> DailyTriviaPuzzle:
+    """Atomically publish all 5+3 questions and advance the puzzle revision."""
+    if conn is not None:
+        return await _publish_revision_on_conn(
+            conn,
+            puzzle_date,
+            questions,
+            super_questions,
+            expected_revision=expected_revision,
+            actor=actor,
+            status=status,
+        )
+    if not db.db_manager.pool:
+        raise RuntimeError("Database pool is required for atomic Daily Trivia publication")
+    async with db.db_manager.pool.acquire() as acquired, acquired.transaction():
+        return await _publish_revision_on_conn(
+            acquired,
+            puzzle_date,
+            questions,
+            super_questions,
+            expected_revision=expected_revision,
+            actor=actor,
+            status=status,
+        )
 
 
 
@@ -265,7 +653,7 @@ async def get_result_if_exists(user_id: int, puzzle_date: date, *, conn=None) ->
         """
         SELECT user_id, puzzle_date, status, current_question, correct_count,
                final_score, elapsed_ms, answers, started_at, finished_at,
-               super_delta, super_correct
+               super_delta, super_correct, puzzle_revision_id
         FROM public.daily_trivia_results
         WHERE user_id = $1 AND puzzle_date = $2
         """,
@@ -275,12 +663,18 @@ async def get_result_if_exists(user_id: int, puzzle_date: date, *, conn=None) ->
     return _row_to_result(rows[0]) if rows else None
 
 
-async def get_or_create_result(user_id: int, puzzle_date: date, *, conn=None) -> DailyTriviaResult:
+async def get_or_create_result(
+    user_id: int,
+    puzzle_date: date,
+    *,
+    puzzle_revision_id: int | None = None,
+    conn=None,
+) -> DailyTriviaResult:
     rows = await db.db_query(
         """
         SELECT user_id, puzzle_date, status, current_question, correct_count,
                final_score, elapsed_ms, answers, started_at, finished_at,
-               super_delta, super_correct
+               super_delta, super_correct, puzzle_revision_id
         FROM public.daily_trivia_results
         WHERE user_id = $1 AND puzzle_date = $2
         """,
@@ -292,14 +686,18 @@ async def get_or_create_result(user_id: int, puzzle_date: date, *, conn=None) ->
 
     rows = await db.db_query(
         """
-        INSERT INTO public.daily_trivia_results (user_id, puzzle_date)
-        VALUES ($1, $2)
+        INSERT INTO public.daily_trivia_results (user_id, puzzle_date, puzzle_revision_id)
+        SELECT $1, $2, COALESCE(requested.revision_id, p.published_revision_id)
+        FROM public.daily_trivia_puzzles p
+        LEFT JOIN public.daily_trivia_puzzle_revisions requested
+          ON requested.revision_id = $3 AND requested.puzzle_date = $2
+        WHERE p.puzzle_date = $2
         ON CONFLICT (user_id, puzzle_date) DO NOTHING
         RETURNING user_id, puzzle_date, status, current_question, correct_count,
                   final_score, elapsed_ms, answers, started_at, finished_at,
-                  super_delta, super_correct
+                  super_delta, super_correct, puzzle_revision_id
         """,
-        (user_id, puzzle_date),
+        (user_id, puzzle_date, puzzle_revision_id),
         conn=conn,
     )
     if rows:
@@ -309,7 +707,7 @@ async def get_or_create_result(user_id: int, puzzle_date: date, *, conn=None) ->
         """
         SELECT user_id, puzzle_date, status, current_question, correct_count,
                final_score, elapsed_ms, answers, started_at, finished_at,
-               super_delta, super_correct
+               super_delta, super_correct, puzzle_revision_id
         FROM public.daily_trivia_results
         WHERE user_id = $1 AND puzzle_date = $2
         """,
@@ -346,7 +744,7 @@ async def update_result_answer(
         WHERE user_id = $1 AND puzzle_date = $2
         RETURNING user_id, puzzle_date, status, current_question, correct_count,
                   final_score, elapsed_ms, answers, started_at, finished_at,
-                  super_delta, super_correct
+                  super_delta, super_correct, puzzle_revision_id
         """,
         (
             user_id,
@@ -369,7 +767,7 @@ async def get_super_result_if_exists(
     rows = await db.db_query(
         """
         SELECT user_id, puzzle_date, status, delta_score, correct_count,
-               elapsed_ms, answers, started_at, finished_at
+               elapsed_ms, answers, started_at, finished_at, puzzle_revision_id
         FROM public.daily_trivia_super_results
         WHERE user_id = $1 AND puzzle_date = $2
         """,
@@ -380,12 +778,16 @@ async def get_super_result_if_exists(
 
 
 async def get_or_create_super_result(
-    user_id: int, puzzle_date: date, *, conn=None
+    user_id: int,
+    puzzle_date: date,
+    *,
+    puzzle_revision_id: int | None = None,
+    conn=None,
 ) -> DailySuperResult:
     rows = await db.db_query(
         """
         SELECT user_id, puzzle_date, status, delta_score, correct_count,
-               elapsed_ms, answers, started_at, finished_at
+               elapsed_ms, answers, started_at, finished_at, puzzle_revision_id
         FROM public.daily_trivia_super_results
         WHERE user_id = $1 AND puzzle_date = $2
         """,
@@ -397,13 +799,23 @@ async def get_or_create_super_result(
 
     rows = await db.db_query(
         """
-        INSERT INTO public.daily_trivia_super_results (user_id, puzzle_date)
-        VALUES ($1, $2)
+        INSERT INTO public.daily_trivia_super_results (user_id, puzzle_date, puzzle_revision_id)
+        SELECT $1, $2, COALESCE(
+            main_result.puzzle_revision_id,
+            requested.revision_id,
+            p.published_revision_id
+        )
+        FROM public.daily_trivia_puzzles p
+        LEFT JOIN public.daily_trivia_results main_result
+          ON main_result.user_id = $1 AND main_result.puzzle_date = $2
+        LEFT JOIN public.daily_trivia_puzzle_revisions requested
+          ON requested.revision_id = $3 AND requested.puzzle_date = $2
+        WHERE p.puzzle_date = $2
         ON CONFLICT (user_id, puzzle_date) DO NOTHING
         RETURNING user_id, puzzle_date, status, delta_score, correct_count,
-                  elapsed_ms, answers, started_at, finished_at
+                  elapsed_ms, answers, started_at, finished_at, puzzle_revision_id
         """,
-        (user_id, puzzle_date),
+        (user_id, puzzle_date, puzzle_revision_id),
         conn=conn,
     )
     if rows:
@@ -412,7 +824,7 @@ async def get_or_create_super_result(
     res = await db.db_query(
         """
         SELECT user_id, puzzle_date, status, delta_score, correct_count,
-               elapsed_ms, answers, started_at, finished_at
+               elapsed_ms, answers, started_at, finished_at, puzzle_revision_id
         FROM public.daily_trivia_super_results
         WHERE user_id = $1 AND puzzle_date = $2
         """,
@@ -452,7 +864,7 @@ async def update_super_result_answer(
                     finished_at = CASE WHEN $8::boolean THEN NOW() ELSE finished_at END
                 WHERE user_id = $1 AND puzzle_date = $2
                 RETURNING user_id, puzzle_date, status, delta_score, correct_count,
-                          elapsed_ms, answers, started_at, finished_at
+                          elapsed_ms, answers, started_at, finished_at, puzzle_revision_id
                 """,
                 user_id, puzzle_date, delta_score, correct_count, elapsed_ms,
                 answers_json, status, finished,
@@ -482,7 +894,7 @@ async def update_super_result_answer(
             finished_at = CASE WHEN $8::boolean THEN NOW() ELSE finished_at END
         WHERE user_id = $1 AND puzzle_date = $2
         RETURNING user_id, puzzle_date, status, delta_score, correct_count,
-                  elapsed_ms, answers, started_at, finished_at
+                  elapsed_ms, answers, started_at, finished_at, puzzle_revision_id
         """,
         (user_id, puzzle_date, delta_score, correct_count, elapsed_ms, answers_json, status, finished),
     )
@@ -515,7 +927,8 @@ async def get_question_by_date_and_index(
 async def get_puzzles_range(start_date: date, end_date: date, *, conn=None) -> list[DailyTriviaPuzzle]:
     rows = await db.db_query(
         """
-        SELECT puzzle_date, questions, super_questions, status, prepared_at
+        SELECT puzzle_date, questions, super_questions, status, prepared_at,
+               revision, published_revision_id
         FROM public.daily_trivia_puzzles
         WHERE puzzle_date >= $1 AND puzzle_date <= $2
         ORDER BY puzzle_date DESC
@@ -646,12 +1059,26 @@ async def get_admin_stats(today: date, *, conn=None) -> dict[str, Any]:
     )
     ready_puzzles = int(_row_get(puzzle_rows[0], "cnt", 0) if puzzle_rows else 0)
 
+    bank_rows = await db.db_query(
+        """
+        SELECT COUNT(*) AS fact_count,
+               COUNT(*) FILTER (WHERE last_used_at >= $1::date - 90) AS recent_fact_count
+        FROM public.daily_trivia_facts
+        """,
+        (today,),
+        conn=conn,
+    )
+    bank_fact_count = int(_row_get(bank_rows[0], "fact_count", 0) or 0) if bank_rows else 0
+    recent_bank_fact_count = int(_row_get(bank_rows[0], "recent_fact_count", 0) or 0) if bank_rows else 0
+
     return {
         "total_subscribed": total_subbed,
         "played_today": total_played,
         "finished_today": finished_count,
         "active_today": active_count,
         "ready_puzzles_ahead": ready_puzzles,
+        "bank_fact_count": bank_fact_count,
+        "recent_bank_fact_count": recent_bank_fact_count,
     }
 
 

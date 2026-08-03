@@ -686,6 +686,7 @@
     let playerAnswers = [];
     let superPlayerAnswers = [];
     let puzzleDate = '';
+    let puzzleRevisionId = null;
     let currentIdx = 0;
     let currentSuperIdx = 0;
     let totalScore = 0;
@@ -732,6 +733,7 @@
         questions = data.questions;
         superQuestions = data.super_questions || [];
         puzzleDate = data.date || '';
+        puzzleRevisionId = data.revision_id ?? null;
         playerAnswers = new Array(questions.length).fill(null);
         superPlayerAnswers = new Array(superQuestions.length).fill(null);
 
@@ -859,7 +861,8 @@
           selected_index: selectedIdx,
           is_correct: isCorrect,
           elapsed_ms: elapsedMs,
-          total_score: totalScore
+          total_score: totalScore,
+          revision_id: puzzleRevisionId
         })
       }).catch(function () { });
     }
@@ -1010,7 +1013,8 @@
           selected_index: selectedIdx,
           is_correct: isCorrect,
           elapsed_ms: elapsedMs,
-          base_score: baseScore
+          base_score: baseScore,
+          revision_id: puzzleRevisionId
         })
       }).catch(function () { });
     }
