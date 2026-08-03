@@ -1462,6 +1462,7 @@ async def api_admin_dailytrivia_list():
 async def api_admin_dailytrivia_regenerate():
     from app.games import daily_trivia as daily_trivia_game
     from app.games import daily_trivia_authoring as authoring
+    from app.repos import daily_trivia as daily_trivia_repo
     from app.repos.crocodile_daily import today_puzzle_date
     data = await request.get_json() or {}
     try:
@@ -1473,6 +1474,13 @@ async def api_admin_dailytrivia_regenerate():
         return jsonify({"error": "mode must be 'all', 'main', or 'super'"}), 400
     try:
         puzzle = await daily_trivia_game.prepare_daily_puzzle(p_date, force=True, mode=mode)
+    except daily_trivia_repo.RevisionConflictError as exc:
+        current = await daily_trivia_repo.get_puzzle(p_date)
+        return jsonify({
+            "error": "Викторина уже была обновлена другим процессом. Загружена актуальная ревизия.",
+            "current_revision": exc.actual,
+            "puzzle": _serialize_daily_trivia_puzzle(current) if current else None,
+        }), 409
     except authoring.DuplicateQuestionError as exc:
         return jsonify({"error": str(exc), "conflict": _serialize_trivia_conflict(exc)}), 409
     return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})

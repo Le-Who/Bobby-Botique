@@ -5,7 +5,7 @@ import importlib
 import importlib.util
 from datetime import date, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from app.games import daily_trivia as game
 from app.repos import daily_trivia as repo
@@ -499,6 +499,49 @@ async def test_main_regeneration_publishes_with_untouched_super_lane(monkeypatch
     publish.assert_awaited_once()
     assert publish.await_args.kwargs["super_questions"] == existing_super
     assert publish.await_args.kwargs["expected_revision"] == 7
+
+
+async def test_admin_regenerate_returns_latest_puzzle_on_revision_conflict() -> None:
+    web_module = __import__("app.web", fromlist=["quart_app"])
+    current = repo.DailyTriviaPuzzle(
+        puzzle_date=date(2026, 8, 3),
+        questions=[_identified_question(i, f"Объект {i}", "свойство", f"Ответ {i}") for i in range(1, 6)],
+        super_questions=[
+            _identified_question(i, f"Супер объект {i}", "свойство", f"Супер ответ {i}")
+            for i in range(1, 4)
+        ],
+        status="ready",
+        prepared_at=None,
+        revision=1,
+        published_revision_id=91,
+    )
+
+    with (
+        patch("app.web._is_authenticated", return_value=True),
+        patch(
+            "app.games.daily_trivia.prepare_daily_puzzle",
+            new_callable=AsyncMock,
+            side_effect=repo.RevisionConflictError(expected=0, actual=1),
+        ),
+        patch("app.repos.daily_trivia.get_puzzle", new_callable=AsyncMock, return_value=current),
+    ):
+        response = await web_module.quart_app.test_client().post(
+            "/api/admin/dailytrivia/regenerate",
+            json={"date": "2026-08-03", "mode": "all"},
+        )
+
+    body = await response.get_json()
+    assert response.status_code == 409
+    assert body["current_revision"] == 1
+    assert body["puzzle"]["revision"] == 1
+    assert body["puzzle"]["readiness"]["publishable"] is True
+
+
+def test_admin_trivia_ui_recovers_from_revision_conflict_without_reload() -> None:
+    template = (Path(__file__).parents[1] / "app" / "templates" / "admin_daily.html").read_text(encoding="utf-8")
+
+    assert "res.status === 409 && data.puzzle" in template
+    assert "selectPuzzle(data.puzzle, true)" in template
 
 
 def test_admin_question_parser_keeps_structured_fact_identity() -> None:

@@ -2499,6 +2499,13 @@ const TriviaModule = (() => {
         body: JSON.stringify({ date: selectedDate, mode })
       });
       const data = await res.json();
+      if (res.status === 409 && data.puzzle) {
+        selectPuzzle(data.puzzle, true);
+        showToast('Вопросы уже обновлены другим процессом — загружена актуальная ревизия.', 'info');
+        await loadPuzzles();
+        loadStats();
+        return;
+      }
       if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
       showToast(`Перегенерировано (${mode}): ${selectedDate}`, 'success');
       const p = data.puzzle;
