@@ -143,6 +143,19 @@ CREATE INDEX IF NOT EXISTS daily_trivia_facts_embedding_idx
 
 -- Idempotent legacy backfill. Historical result rows are deliberately not
 -- updated; NULL puzzle_revision_id means "resolve the immutable legacy day".
+--
+-- Older asyncpg write paths double-encoded these JSONB arrays, leaving a JSON
+-- string that contains the serialized array.  Unwrap that representation
+-- before expanding it, then guard every expansion so NULL/object/scalar rows
+-- are skipped instead of aborting the whole transactional migration.
+UPDATE public.daily_trivia_puzzles
+SET questions = (questions #>> '{}')::jsonb
+WHERE jsonb_typeof(questions) = 'string';
+
+UPDATE public.daily_trivia_puzzles
+SET super_questions = (super_questions #>> '{}')::jsonb
+WHERE jsonb_typeof(super_questions) = 'string';
+
 INSERT INTO public.daily_trivia_puzzle_revisions (
     puzzle_date, revision_no, status, actor, created_at, published_at
 )
@@ -169,10 +182,14 @@ WITH legacy_questions AS (
     FROM public.daily_trivia_puzzles p
     CROSS JOIN LATERAL (
         SELECT 'main'::TEXT AS lane, value, ordinality
-        FROM jsonb_array_elements(p.questions) WITH ORDINALITY
+        FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(p.questions) = 'array' THEN p.questions ELSE '[]'::jsonb END
+        ) WITH ORDINALITY
         UNION ALL
         SELECT 'super'::TEXT AS lane, value, ordinality
-        FROM jsonb_array_elements(p.super_questions) WITH ORDINALITY
+        FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(p.super_questions) = 'array' THEN p.super_questions ELSE '[]'::jsonb END
+        ) WITH ORDINALITY
     ) q
 ), identities AS (
     SELECT *, MD5(question_norm || CHR(31) || answer_norm) AS legacy_identity_hash
@@ -212,10 +229,14 @@ WITH legacy_questions AS (
     FROM public.daily_trivia_puzzles p
     CROSS JOIN LATERAL (
         SELECT 'main'::TEXT AS lane, value, ordinality
-        FROM jsonb_array_elements(p.questions) WITH ORDINALITY
+        FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(p.questions) = 'array' THEN p.questions ELSE '[]'::jsonb END
+        ) WITH ORDINALITY
         UNION ALL
         SELECT 'super'::TEXT AS lane, value, ordinality
-        FROM jsonb_array_elements(p.super_questions) WITH ORDINALITY
+        FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(p.super_questions) = 'array' THEN p.super_questions ELSE '[]'::jsonb END
+        ) WITH ORDINALITY
     ) q
 ), prepared AS (
     SELECT *,
@@ -253,10 +274,14 @@ WITH legacy_questions AS (
     FROM public.daily_trivia_puzzles p
     CROSS JOIN LATERAL (
         SELECT 'main'::TEXT AS lane, value, ordinality
-        FROM jsonb_array_elements(p.questions) WITH ORDINALITY
+        FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(p.questions) = 'array' THEN p.questions ELSE '[]'::jsonb END
+        ) WITH ORDINALITY
         UNION ALL
         SELECT 'super'::TEXT AS lane, value, ordinality
-        FROM jsonb_array_elements(p.super_questions) WITH ORDINALITY
+        FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(p.super_questions) = 'array' THEN p.super_questions ELSE '[]'::jsonb END
+        ) WITH ORDINALITY
     ) q
 )
 INSERT INTO public.daily_trivia_question_occurrences (revision_id, lane, position, variant_id)

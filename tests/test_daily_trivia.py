@@ -576,3 +576,22 @@ def test_cutover_migration_preserves_every_result_before_today() -> None:
     assert "DELETE FROM public.daily_trivia_super_results\n    WHERE puzzle_date >= cutoff_date" in migration
     assert "WHERE puzzle_date < cutoff_date" not in migration
     assert "WHERE puzzle_date <= cutoff_date" not in migration
+
+
+def test_question_bank_migration_unwraps_and_guards_legacy_json_scalars() -> None:
+    migration = (
+        Path(__file__).parents[1] / "scripts" / "migrations" / "065_daily_trivia_question_bank.sql"
+    ).read_text(encoding="utf-8")
+
+    first_array_expansion = migration.index("jsonb_array_elements")
+    questions_repair = migration.index("SET questions = (questions #>> '{}')::jsonb")
+    super_repair = migration.index("SET super_questions = (super_questions #>> '{}')::jsonb")
+
+    assert questions_repair < first_array_expansion
+    assert super_repair < first_array_expansion
+    assert migration.count(
+        "CASE WHEN jsonb_typeof(p.questions) = 'array' THEN p.questions ELSE '[]'::jsonb END"
+    ) == 3
+    assert migration.count(
+        "CASE WHEN jsonb_typeof(p.super_questions) = 'array' THEN p.super_questions ELSE '[]'::jsonb END"
+    ) == 3
