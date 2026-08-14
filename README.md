@@ -68,7 +68,7 @@ Additional Codex and API capacity would be used for maintainer work on this publ
   - **Interactive Canvas UX**: Features full, unrestricted prompt display (up to 800 characters) across the entire UI. Heartbeat animation (`ChatAction.UPLOAD_PHOTO` refreshed every 4.5 s) during generation, followed by an inline keyboard for one-tap regeneration, aspect ratio switching (1:1, 3:4, 4:3, 9:16, 16:9), and dynamic model switching. Includes a native "✏️  Изменить промпт" pasteboard workflow for frictionless prompt editing. The model selection buttons are auto-generated from environment variables (`IMAGE_MODELS`) with smart column-balancing.
 - **Document Understanding**: Extracts text from PDF/DOCX files and uses it for context-aware Q&A.
 - **Multimodal Processing Pipeline**: Voice messages transcribed via `gemini-3.1-flash-lite` (high thinking budget for ASR quality) with intent-aware routing (`INTENT:CONVERSATIONAL`, `INTENT:TRANSCRIPTION`, `INTENT:SEARCH`). Features **Smart Voice Auto-Routing** (bypasses manual confirmation UI for low-complexity transcripts) with regex-based fluff tolerance, **Voice-to-Search Auto-Routing** (when `INTENT:SEARCH` is detected, directly invokes **WeatherAPI.com** for weather (1 request, localized RU conditions + "feels like"), **ExchangeRate-API** for fiat currency (RUB/KZT/UAH support), and **CoinGecko** for crypto (BTC/ETH/SOL/TON with Russian aliases) — zero LLM cost — then falls back to **QnA Grounded Search** via `gemini-2.5-flash-lite` with native Google Search Grounding for general factual queries; for users in deep-dive or search-enabled mode, routes to the full **Agentic Research Pipeline** instead), **QnA History Persistence** (QnA voice search results are saved to `chat_state.history` and persisted via `update_user_chat`, matching the deep research path — previously these turns were silently dropped), and **Show & Tell** (voice-replies to photos dynamically inject the image into the LLM context). The **Voice Engine 5.0** pipeline powers outbound voice replies using **ElevenLabs TTS** as the primary provider with atomic fallback to Gemini REST TTS (`gemini-2.5-flash-preview-tts`). Audio is transcoded into Telegram-compliant PCM→OGG Opus via `ffmpeg` at **24k bitrate** (optimized for speech). The Gemini TTS engine uses **Parallel Batch Chunking** (800 max bytes, up to 2 chunks concurrently via `asyncio.gather`) to prevent API timeouts while conserving the 15 RPD (Requests Per Day) budget per key, and features a **Future-Based Pre-Generation** architecture: TTS generation starts immediately at enqueue time across all queued messages, while per-user delivery order is preserved by a FIFO worker that simply awaits pre-computed audio futures. If the pre-generation future fails (including `asyncio.CancelledError`, which is a `BaseException` in Python 3.14), the worker gracefully falls back to synchronous retry. Combined with **Asynchronous Race Requests** (2 keys per chunk, first-to-finish wins), this eliminates serialisation bottlenecks when multiple voice replies are pending. Concurrency is capped at 3 simultaneous TTS jobs (`GEMINI_TTS_CONCURRENCY=3`) to ensure worst-case burst (3 jobs × 2 chunks × 2 key-racing = 12 RPD) consumes at most 1 key from the 10–12 key pool. A highly optimized Steerable Voice prompt enforces **Strict Verbatim Constraints** and features **Dynamic Personalities** tied directly to the MiniApp's **Independent TTS Temperature** slider (shifting between strict news-anchor, conversational, or highly engaging storytelling). Finished with a low-threshold PCM silence trimming gate (400 amplitude). Featuring **Zero-Latency Voice Intent Detection** (`[VOICE]` tag stripping). Users can hit the **Re-transcribe (Flash)** button for stubborn transcriptions. Media types stored as long-term memories via `submit_retryable()` tasks.
-- **Resilient Streaming & Mid-Stream Error Recovery**: Gracefully handles API failures (like 503 Service Unavailable) that occur *during* active streaming. The payload stops, the chunking layer intercepts the error, and a localized footer (`⚠️  ответ был прерван из-за ошибки сервера`) is appended. Users are immediately shown `[▶️  Продолжить]` and `[🔄 Заново]` recovery buttons to seamlessly inject partial output back into the conversation context, allowing the LLM to resume generation without context loss. Features a stabilized streaming state machine that eliminates legacy UI placeholder overrides (Phantom Draft Mode cleanup). **Delayed UX Feedback**: if no chunks arrive within 5 seconds, a transparent status toast (`⏳ Запрос в обработке...`) with a `[⚙️ Отменить]` inline button replaces silent waiting. **TTFB-based Stall Tracking**: detects genuinely stalled connections (>15s waiting for HTTP headers) and allows new user messages to cancel only stale tasks while preserving healthy active streams. **Gemini Search Hallucination Filter** (v2.12.11): `StreamingWriter.write()` now strips only explicit leaked internal `[tool_code] ... google_search.search(...)` traces while preserving legitimate fenced code samples and explanatory references.
+- **Typed Response Delivery & Mid-Stream Recovery**: Provider streams emit typed text, completion, failure, deferred, grounding, usage, and route events. A single Telegram delivery boundary owns progressive edits and the final response keyboard, so Reader/Telegraph links cannot be erased by later handler edits. Mid-stream failures preserve partial content and show `[▶️ Продолжить]` / `[🔄 Заново]`; delayed feedback still appears after 5 seconds with `[❌ Отменить]`, and TTFB stall tracking remains active. Long responses use one fallback chain: Redis Reader → Telegraph → safe Telegram split. The renderer strips only explicit leaked `[tool_code] ... google_search.search(...)` traces while preserving legitimate code and prose.
 - **Internationalization (i18n)**: Content-based language detection (Cyrillic density heuristic) with full bilingual UI (Russian/English). All user-facing strings externalized to `app/i18n.py` registry with `t(key, lang, **kwargs)` lookup. Language detected from message content, not Telegram settings.
 - **Python 3.14 Deprecation Cleanup**: Runtime callback awaitability checks now use `inspect.iscoroutinefunction()` in the remaining helper paths instead of deprecated `asyncio.iscoroutinefunction()`, reducing deprecation noise and keeping the code aligned with Python 3.14+ guidance.
 - **Persistent GraphRAG Memory**: Semantic recall via `pgvector` (`halfvec(768)`) with **Adaptive Thresholding RRF** retrieval (cosine similarity + `pg_trgm`, over-fetch ×2 then gap-filter ≤15pp from top score). **LLM-as-Judge Fallback**: when primary search (floor ~0.48) returns nothing, a second pass at floor 0.42 feeds low-confidence candidates to Flash-Lite, which judges each for genuine relevance — a "recollection path" inspired by RF-Mem (2025) dual-process memory. **2-Hop Knowledge Graph Traversal** (SQL CTE `hop1 ∪ hop2`) surfaces indirect relationships, e.g. FastAPI when asking about Python. **Multi-Query Expansion** rewrites vague queries (Flash-Lite LLM, ~200ms) into keyword-dense search phrases before embedding. **Semantic Edge Deduplication** (cosine < 0.25) merges near-identical predicates at consolidation time. **Core Persona Protection**: edges marked `is_core=TRUE` (name, profession, allergies) bypass time-decay and always rank first in graph context. Features **Semantic Entity Resolution** (`< 0.12` distance merging) to prevent graph fragmentation, and **Temporal Edge Upserts** (`ON CONFLICT` updates). Voice and media memories are **Enriched with Modality/Tone Tags** (e.g., `[VOICE, Tone: X]`) via dedicated system prompts. System clusters relational knowledge into dual tables (`memory_nodes`, `memory_edges`) for entity graphing. Memories injected into `system_instruction` as structured `<memory_palace>` XML tags (Context Engineering). Only user intent is embedded for maximum vector density (`source_type='user_intent'`). Dynamic consolidation triggers at ~8,000 tokens or 7 days, extracting atomic persona facts and relationships via LLM. User-manageable via `/memory` (paginated inline UI with per-item delete) and toggleable via `/settings`.
@@ -352,12 +352,12 @@ When configured, the bot communicates with a self-hosted Local Bot API Server in
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
 | `GEMINI_API_KEYS` | ✅ | `key1,key2,key3` | — | Comma-separated Google AI Studio API keys. The system rotates through them automatically on quota exhaustion or 503 errors for Gemini chat/judge/fallback paths. Each key has an independent daily request budget tracked in the DB. Minimum 1 key required. Live Audio no longer consumes this pool. |
-| `GEMINI_AVAILABLE_MODELS` | ⚙️ | `gemini-2.5-flash,gemini-3.1-flash-lite` | See `config.py` | Controls which Gemini models appear in the `/model` selector for users. If a `DEFAULT_MODEL` is not in this list, it is added automatically with a warning at startup. |
-| `DEFAULT_MODEL` | ⚙️ | `gemini-3.1-flash-lite` | `gemini-3.1-flash-lite` | Model used for standard conversational messages. Recommended: `gemini-3.1-flash-lite` (fast + cheap) or `gemini-2.5-flash` (smarter, higher cost). |
-| `QNA_MODEL` | ⚙️ | `gemini-2.5-flash-lite` | `gemini-2.5-flash-lite` | Model used for quick Q&A web search queries (`?` prefix). Optimized for fast factual one-shot answers. |
-| `RESEARCH_MODEL` | ⚙️ | `gemini-3.1-flash-lite` | `gemini-3.1-flash-lite` | Model used for synthesizing Tavily search results into a final research answer. |
-| `URL_SELECTION_MODEL` | ⚙️ | `gemini-3.1-flash-lite` | `gemini-3.1-flash-lite` | Lightweight model that scores and filters candidate URLs during agentic web research before full content extraction. |
-| `TAXONOMY_MODEL` | ⚙️ | `gemini-3.1-flash-lite` | `gemini-3.1-flash-lite` | Model used by MemPalace to classify memories into the Wing/Room taxonomy and to judge temporal contradictions (LLM-as-Judge). Can be set to a cheaper model without quality loss. |
+| `GEMINI_AVAILABLE_MODELS` | ⚙️ | `gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash-lite` | `gemini-3.6-flash,gemini-3.5-flash-lite` | Exact, ordered Gemini list shown in `/model`. Future syntactically valid `gemini-*` IDs are accepted without a code release. Role models such as `DEFAULT_MODEL` are not added to this selector automatically. Use the single token `none` for an intentionally empty list. |
+| `DEFAULT_MODEL` | ⚙️ | `gemini-3.6-flash` | `gemini-3.6-flash` | Internal model used for standard conversational messages. It may be intentionally hidden from the user-selectable list. |
+| `QNA_MODEL` | ⚙️ | `gemini-3.5-flash-lite` | `gemini-3.5-flash-lite` | Internal model used for quick Q&A web search queries (`?` prefix). |
+| `RESEARCH_MODEL` | ⚙️ | `gemini-3.6-flash` | `gemini-3.6-flash` | Internal model used for synthesizing Tavily search results into a final research answer. |
+| `URL_SELECTION_MODEL` | ⚙️ | `gemini-3.5-flash-lite` | `gemini-3.5-flash-lite` | Lightweight internal model that scores and filters candidate URLs during agentic web research before full content extraction. |
+| `TAXONOMY_MODEL` | ⚙️ | `gemini-3.5-flash-lite` | `gemini-3.5-flash-lite` | Internal model used by MemPalace to classify memories into the Wing/Room taxonomy and to judge temporal contradictions (LLM-as-Judge). |
 
 ---
 
@@ -381,7 +381,7 @@ For that experimental live route, `VERTEX_AI_PROJECT` and `VERTEX_AI_LOCATION` a
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
 | `OPENCODE_API_KEYS` | ? | `sk-abc,sk-xyz` | `[]` | Comma-separated Opencode Go API keys. When set and `PRIMARY_PROVIDER=opencode`, routes standard chat/search/inline through `opencode.ai/zen/go/v1` using Bearer auth. Key rotation works identically to Gemini keys. |
-| `OPENCODE_AVAILABLE_MODELS` | ? | `opencode-go/minimax-m2.7,opencode-go/qwen3.5-plus` | `[]` | Models shown in the `/model` selector when Opencode is the active provider. If empty, defaults to the 7 canonical Opencode models. Changes made via `/models` admin wizard are stored here. |
+| `OPENCODE_AVAILABLE_MODELS` | ? | `opencode-go/minimax-m2.7,opencode-go/qwen3.5-plus` | Role-model defaults | Exact, ordered Opencode list shown in `/model`. Use `none` for an intentionally empty list. |
 | `PRIMARY_PROVIDER` | ? | `opencode` / `gemini` | `opencode` | Runtime LLM provider switch. `opencode` routes through Opencode Go (with Gemini fallback). `gemini` bypasses Opencode entirely. Changed at runtime via `/set_provider` — persisted in `global_settings`, no restart required. |
 | `OPENCODE_DEFAULT_MODEL` | ? | `opencode-go/minimax-m2.7` | `opencode-go/minimax-m2.7` | Flagship chat model. |
 | `OPENCODE_QNA_MODEL` | ? | `opencode-go/qwen3.5-plus` | `opencode-go/qwen3.5-plus` | Model for quick Q&A search synthesis (`?` prefix). |
@@ -399,7 +399,7 @@ For that experimental live route, `VERTEX_AI_PROJECT` and `VERTEX_AI_LOCATION` a
 |---|---|---|---|---|
 | `OPENROUTER_API_KEYS` | ⚙️ | `sk-or-v1-abc,sk-or-v1-xyz` | `[]` | Comma-separated OpenRouter API keys. Required if `USE_OPENROUTER=true`. Rotated same as Gemini keys. Note: OpenRouter is **disabled for multimodal (image) requests** — Gemini is always used for vision. |
 | `USE_OPENROUTER` | ⚙️ | `true` / `false` | `false` | If `true`, routes all standard chat, research, and Q&A operations through OpenRouter instead of Gemini. Overrides `DEFAULT_MODEL` etc. with their `OPENROUTER_*` counterparts. Gemini keys are still needed for embeddings and TTS. |
-| `OPENROUTER_AVAILABLE_MODELS` | ⚙️ | `stepfun/step-3.5-flash:free,qwen/qwen3-4b:free` | `[]` | Models shown in /model selector when OpenRouter is active. |
+| `OPENROUTER_AVAILABLE_MODELS` | ⚙️ | `stepfun/step-3.5-flash:free,qwen/qwen3-4b:free` | `OPENROUTER_DEFAULT_MODEL` | Exact, ordered OpenRouter list shown in `/model` when at least one OpenRouter key is configured. Use `none` for an intentionally empty list. |
 | `OPENROUTER_DEFAULT_MODEL` | ⚙️ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | Default model for standard chat on OpenRouter. |
 | `OPENROUTER_QNA_MODEL` | ⚙️ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | OpenRouter model for quick Q&A search synthesis. |
 | `OPENROUTER_RESEARCH_MODEL` | ⚙️ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | OpenRouter model for agentic research synthesis. |
@@ -412,8 +412,18 @@ For that experimental live route, `VERTEX_AI_PROJECT` and `VERTEX_AI_LOCATION` a
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
 | `FREETHEAI_API_KEYS` | ⚙️ | `sk-freetheai-1,sk-freetheai-2` | `[]` | Comma-separated API keys for FreeTheAI. Provides advanced multimodal image generation and Lyria-based audio music models. |
-| `FREETHEAI_AVAILABLE_MODELS` | ⚙️ | `vhr/gpt_image_2,or/google/lyria-3-pro-preview` | `[]` | List of models provided by FreeTheAI router. Handled natively to prevent collisions with OpenRouter. |
+| `FREETHEAI_AVAILABLE_MODELS` | ⚙️ | `cat/claude-4-6-sonnet,yng/deepseek-r1` | `FREETHEAI_DEFAULT_MODEL` | Exact, ordered FreeTheAI chat-model list shown in `/model`. Image/audio IDs are not selectable here. Use `none` for an intentionally empty list. |
 | `FREETHEAI_DEFAULT_MODEL` | ⚙️ | `cat/claude-4-6-sonnet` | `cat/claude-4-6-sonnet` | Default chat model via FreeTheAI. |
+
+For every `*_AVAILABLE_MODELS` variable, an unset or whitespace-only value uses
+the provider defaults; a space is therefore **not** a way to clear the list.
+Set the value to the single case-insensitive token `none` to make that
+provider's user-selectable list empty. `/models` changes create an explicit
+database override, which takes precedence over env/Secrets across restarts.
+The provider view shows the active source. **Reset to .env** deletes that
+override and immediately reloads the current env/Secret value. Legacy
+automatically seeded DB lists are discarded so they cannot mask a newly
+deployed Secret.
 
 ---
 
@@ -652,7 +662,7 @@ Relational knowledge is stored as a directed graph in dual tables:
 
 ## Testing
 
-The application features a heavily engineered test suite (**1,845+ unit and integration tests, 100% stable CI-ready**) with **parallel execution** via `pytest-xdist`.
+The application features a heavily engineered test suite (**2,400+ unit and integration tests, 100% stable CI-ready**) with **parallel execution** via `pytest-xdist`.
 
 - **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections via `@pytest.mark.integration`), E2E tests.
 - **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-xdist`, `pytest-cov`.
@@ -702,7 +712,7 @@ The application features a heavily engineered test suite (**1,845+ unit and inte
   - `/checkgeminikeys` — Async parallel health check of all Gemini API keys against the Google API.
   - `/set_inline_thinking <level>` — Set inline generation `thinking_level` at runtime (stored in `global_settings` DB table, no restart required). Valid: `minimal`, `low`, `medium`, `high`.
   - `/set_provider <name>` - Switch the primary LLM provider at runtime without restart. Valid: `opencode`, `gemini`, `openrouter`. Stored in `global_settings` and takes effect immediately via in-process cache invalidation. Primary tool for live provider failover.
-  - `/models` — Runtime model management wizard. Add, remove, or reset the active Gemini and OpenRouter model lists without container restarts. Changes persist in `global_settings` and sync immediately to all users.
+  - `/models` — Runtime model management wizard for Gemini, Opencode, OpenRouter, and FreeTheAI. Add or remove individual selectable models, inspect whether env or an admin override is active, and reset by deleting the override and restoring the current env/Secret list. New Gemini additions are checked for `generateContent` support before persistence.
   - `/registergroup` — Authorize the bot for use in a specific Telegram group.
   - `/reloadconfig` — Trigger an immediate hot-reload of the environment configuration.
 
@@ -720,7 +730,7 @@ The application features a heavily engineered test suite (**1,845+ unit and inte
 
 - **Inline Mode**
   - _Preconditions_: `/setinline` + `/setinlinefeedback` (100%) configured in BotFather.
-  - _Steps_: From any Telegram chat, user types `@gemaibotv2 <query>`. Bot returns 3 tone options + up to 5 image mode buttons (auto-detected via smart routing). User selects tone → placeholder with `🔎 ищет в интернете…` sent to chat. Bot receives `ChosenInlineResult`, runs `_stream_inline_fast()` in background via `TaskManager`: **Vertex AI Express** (`gemini-3.1-flash-lite`) is the primary slot with **Google Search Grounding** (`enable_web_search=True`); 2 AI Studio keys (`gemini-2.5-flash-lite`) race as fallback slots. First valid response wins. Grounding citations from the winner are captured via `_GroundingMeta` sentinel and appended as an expandable `📎 Источники` blockquote (up to 3 URLs). Image prompts auto-route to the best Pollinations model based on intent (quoted text → wan-image, edit verbs → klein).
+  - _Steps_: From any Telegram chat, user types `@gemaibotv2 <query>`. Bot returns 3 tone options + up to 5 image mode buttons (auto-detected via smart routing). User selects tone → placeholder with `🔎 ищет в интернете…` sent to chat. Bot receives `ChosenInlineResult`, runs `_stream_inline_fast()` in background via `TaskManager`: **Vertex AI Express** (`gemini-3.1-flash-lite`) is the primary slot with **Google Search Grounding** (`enable_web_search=True`); 2 AI Studio keys (`gemini-2.5-flash-lite`) race as fallback slots. First valid response wins. Grounding citations are taken from the winning typed `StreamCompleted` event and appended as an expandable `📎 Источники` blockquote (up to 3 URLs). Image prompts auto-route to the best Pollinations model based on intent (quoted text → wan-image, edit verbs → klein).
   - _Expected Outcome_: Full AI answer (with real-time web data + citation sources) appears in the original chat, in-place, within ~5—15 s. On all-rounds failure, user can retry with one tap (`🔄 Повторить`, 5-min TTL).
 - **Standard Conversation**
   - _Preconditions_: User selects `/newchat`.
@@ -759,8 +769,8 @@ Key implementation decisions that frequently need re-discovery:
 ### Error Tagging
 Telegram messages carry invisible `ErrorCode` tags via zero-width space characters (`\u200b` + enum value). This enables O(1) error classification from user-visible messages without fragile text/emoji parsing. See `tag_error()` and `classify_from_message()` in `app/errors.py`.
 
-### Streaming Message Overflow
-When a streaming AI response exceeds Telegram's ~4000 char limit, `StreamingWriter` finalizes the current message and creates a new one via `reply_new_message()`. The split preserves markdown continuity: `_detect_open_markdown()` closes unclosed code blocks/bold/italic in the frozen message and reopens them in the continuation. All regex patterns used by `_detect_open_markdown()` are compiled once at module level (`_MD_FENCE_RE`, `_MD_STRIP_FENCES_RE`, etc.) — not per-call — to avoid redundant C-level compilation overhead at streaming split boundaries.
+### Response Delivery and Long Read
+`TelegramResponseDelivery` is the only owner of final AI response text and keyboard composition. The renderer checks Telegram's ~4000-character limit after Markdown-to-HTML formatting and sanitization. Oversized responses use Redis Reader first, Telegraph second, and a safe Telegram split as the final fallback. Publication actions are prepended to the normal or recovery action rows, and split messages attach actions only to the last message.
 
 ### Memory Consolidation Triggers
 Consolidation fires when raw memories exceed ~8,000 tokens OR 7 days since last consolidation. A debounce gate (`should_check_consolidation()`) prevents DB queries on every message — it checks only every 20th message or every 15 minutes.
@@ -796,7 +806,8 @@ tests/
 ├── test_factories.py            # Factory correctness (structure, independence)
 ├── test_formatting.py           # TelegramFormatter, escape_format_chars (AAA)
 ├── test_semaphore_invariants.py # GlobalLLMSemaphore: release on success/exception/cancel
-├── test_streaming_writer.py     # StreamingWriter: write/finalize, rate-limit retry, overflow
+├── test_telegram_renderer.py    # Progressive edits, retry, Reader/Telegraph/split fallback
+├── test_response_coordinator.py # Typed stream lifecycle, partial/failure/deferred outcomes
 ├── test_text_format_aaa.py      # markdown_to_html, sanitize_html_tags, split_text_safe
 └── test_thinking_classifier.py  # classify_thinking_level, resolve_thinking_level
 ```

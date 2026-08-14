@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+from app.config import GEMINI_ECONOMY_MODEL, GEMINI_PRIMARY_MODEL
 from app.handlers.ai_photo import _build_ocr_prompt, _pick_ocr_model
 
 
@@ -20,43 +21,43 @@ def test_build_ocr_prompt_without_caption():
     assert "без какого-либо описания" in prompt.lower() or "только текст" in prompt.lower()
 
 
-def test_pick_ocr_model_prefer_3_5():
-    """_pick_ocr_model should prefer gemini-3.5-flash if available."""
+def test_pick_ocr_model_prefers_current_primary():
+    """_pick_ocr_model should prefer the current primary model if available."""
     mock_settings = MagicMock()
-    mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
+    mock_settings.AVAILABLE_MODELS = [GEMINI_ECONOMY_MODEL, GEMINI_PRIMARY_MODEL]
 
     with patch("app.handlers.ai_photo.settings", mock_settings):
         model = _pick_ocr_model()
-        assert model == "gemini-3.5-flash"
+        assert model == GEMINI_PRIMARY_MODEL
 
 
-def test_pick_ocr_model_fallback_3_1_lite():
-    """_pick_ocr_model should fall back to gemini-3.1-flash-lite if 3.5 is not available."""
+def test_pick_ocr_model_falls_back_to_current_economy():
+    """_pick_ocr_model should use the current economy model if primary is unavailable."""
     mock_settings = MagicMock()
-    mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite"]
+    mock_settings.AVAILABLE_MODELS = [GEMINI_ECONOMY_MODEL]
 
     with patch("app.handlers.ai_photo.settings", mock_settings):
         model = _pick_ocr_model()
-        assert model == "gemini-3.1-flash-lite"
+        assert model == GEMINI_ECONOMY_MODEL
 
 
-def test_pick_ocr_model_ignores_stale_models_and_uses_primary_default():
-    """_pick_ocr_model should never select stale Gemini chat models."""
+def test_pick_ocr_model_ignores_invalid_models_and_uses_primary_default():
+    """_pick_ocr_model must reject syntactically invalid Gemini model IDs."""
     mock_settings = MagicMock()
-    mock_settings.AVAILABLE_MODELS = ["gemini-2.5-flash", "gemini-3-flash-preview"]
-    mock_settings.DEFAULT_MODEL = "gemini-2.5-flash"
+    mock_settings.AVAILABLE_MODELS = ["not-gemini", "gemini bad id"]
+    mock_settings.DEFAULT_MODEL = "gemini bad id"
 
     with patch("app.handlers.ai_photo.settings", mock_settings):
         model = _pick_ocr_model()
-        assert model == "gemini-3.5-flash"
+        assert model == GEMINI_PRIMARY_MODEL
 
 
 def test_pick_ocr_model_final_fallback():
     """_pick_ocr_model should fall back to the first available model or default model."""
     mock_settings = MagicMock()
-    mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite"]
-    mock_settings.DEFAULT_MODEL = "gemini-3.1-flash-lite"
+    mock_settings.AVAILABLE_MODELS = [GEMINI_ECONOMY_MODEL]
+    mock_settings.DEFAULT_MODEL = GEMINI_ECONOMY_MODEL
 
     with patch("app.handlers.ai_photo.settings", mock_settings):
         model = _pick_ocr_model()
-        assert model == "gemini-3.1-flash-lite"
+        assert model == GEMINI_ECONOMY_MODEL

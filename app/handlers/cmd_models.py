@@ -2,7 +2,7 @@
 """Admin /models wizard — zero-downtime model list management.
 
 Flow:
-  /models → provider selector  (Gemini | OpenRouter)
+  /models → provider selector  (Gemini | Opencode | OpenRouter | FreeTheAI)
       → provider view: numbered model list + action buttons
           [➕ Добавить] [🔃 Сбросить к .env] [◀️ Назад]
           + individual [❌] buttons per model for removal
@@ -22,7 +22,15 @@ from telegram.ext import (
     filters,
 )
 
-from app.repos.models_repo import add_model, get_models, remove_model, reset_models_to_env
+from app.config import get_model_hash
+from app.repos.models_repo import (
+    ModelCatalogSource,
+    ModelMutationCode,
+    add_model,
+    get_model_catalog,
+    remove_model,
+    reset_models_to_env,
+)
 from app.utils.decorators import admin_only
 from app.utils.formatting import TelegramFormatter
 
@@ -35,6 +43,7 @@ _PROVIDERS = {
     "gemini": "🤖 Gemini",
     "opencode": "⚡ Opencode Go",
     "openrouter": "🌐 OpenRouter",
+    "freetheai": "🚀 FreeTheAI",
 }
 
 
@@ -52,10 +61,12 @@ async def models_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 def _build_provider_selector() -> InlineKeyboardMarkup:
+    buttons = [
+        InlineKeyboardButton(label, callback_data=f"models:show:{name}")
+        for name, label in _PROVIDERS.items()
+    ]
     return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton(label, callback_data=f"models:show:{name}") for name, label in _PROVIDERS.items()],
-        ]
+        [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
     )
 
 
@@ -73,10 +84,10 @@ async def models_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return await _show_provider_view(query, provider)
 
     if data.startswith("models:remove:"):
-        # payload: models:remove:<provider>:<model_name>
+        # payload: models:remove:<provider>:<short_model_token>
         parts = data.split(":", 3)
-        provider, model_name = parts[2], parts[3]
-        return await _handle_remove(query, provider, model_name)
+        provider, model_token = parts[2], parts[3]
+        return await _handle_remove(query, provider, model_token)
 
     if data.startswith("models:add:"):
         provider = data.split(":", 2)[2]
@@ -108,21 +119,32 @@ async def models_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # ── Provider view ─────────────────────────────────────────────────────────────
 
 
-async def _show_provider_view(query, provider: str) -> int:
+async def _show_provider_view(query, provider: str, *, notice: str | None = None) -> int:
     """Render the model list plus action buttons for a provider."""
     label = _PROVIDERS.get(provider, provider)
-    models = await get_models(provider)
+    catalog = await get_model_catalog(provider)
+    models = list(catalog.models)
+    source = ".env / Secret" if catalog.source is ModelCatalogSource.ENV else "/models override"
 
     if models:
         numbered = "\n".join(f"`{i + 1}.` `{m}`" for i, m in enumerate(models))
-        text = f"🧠 **{label}**\n\n{numbered}"
+        text = f"🧠 **{label}**\nИсточник: `{source}`\n\n{numbered}"
     else:
-        text = f"🧠 **{label}**\n\n_Список пуст_"
+        text = f"🧠 **{label}**\nИсточник: `{source}`\n\n_Список пуст_"
+    if notice:
+        text = f"{notice}\n\n{text}"
 
     fmt, pm = TelegramFormatter.format_text(text)
 
-    # Build per-model ❌ remove buttons
-    remove_rows = [[InlineKeyboardButton(f"❌ {m}", callback_data=f"models:remove:{provider}:{m}")] for m in models]
+    remove_rows = [
+        [
+            InlineKeyboardButton(
+                f"❌ {model}",
+                callback_data=f"models:remove:{provider}:{get_model_hash(model)}",
+            )
+        ]
+        for model in models
+    ]
 
     action_row = [
         InlineKeyboardButton("➕ Добавить", callback_data=f"models:add:{provider}"),
@@ -131,26 +153,41 @@ async def _show_provider_view(query, provider: str) -> int:
     back_row = [InlineKeyboardButton("◀️ Назад", callback_data="models:back")]
 
     keyboard = InlineKeyboardMarkup(remove_rows + [action_row, back_row])
-    await query.edit_message_text(fmt, parse_mode=pm, reply_markup=keyboard)
+    await query.edit_message_text(text=fmt, parse_mode=pm, reply_markup=keyboard)
     return ConversationHandler.END
 
 
 # ── Remove handler ────────────────────────────────────────────────────────────
 
 
-async def _handle_remove(query, provider: str, model_name: str) -> int:
-    removed = await remove_model(provider, model_name)
+def _resolve_model_token(models: tuple[str, ...], token: str) -> str | None:
+    matches = [model for model in models if get_model_hash(model) == token]
+    return matches[0] if len(matches) == 1 else None
+
+
+async def _handle_remove(query, provider: str, model_token: str) -> int:
     label = _PROVIDERS.get(provider, provider)
+    try:
+        catalog = await get_model_catalog(provider)
+    except ValueError:
+        return await _show_provider_view(query, "gemini", notice="⚠️ Неизвестный провайдер моделей.")
 
-    if removed:
-        text = f"❌ **{label}**: модель `{model_name}` удалена из ротации."
+    model_name = _resolve_model_token(catalog.models, model_token)
+    if model_name is None:
+        return await _show_provider_view(
+            query,
+            provider,
+            notice="⚠️ Список моделей уже изменился. Показана актуальная версия.",
+        )
+
+    result = await remove_model(provider, model_name)
+    if result.code is ModelMutationCode.REMOVED:
+        notice = f"❌ **{label}**: модель `{model_name}` удалена из ротации."
+    elif result.code is ModelMutationCode.NOT_FOUND:
+        notice = f"⚠️ **{label}**: модель `{model_name}` уже отсутствует."
     else:
-        text = f"⚠️ **{label}**: модель `{model_name}` не найдена."
-
-    fmt, pm = TelegramFormatter.format_text(text)
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ К списку", callback_data=f"models:show:{provider}")]])
-    await query.edit_message_text(fmt, parse_mode=pm, reply_markup=keyboard)
-    return ConversationHandler.END
+        notice = f"⚠️ **{label}**: не удалось удалить модель `{model_name}`."
+    return await _show_provider_view(query, provider, notice=notice)
 
 
 # ── Reset handler ─────────────────────────────────────────────────────────────
@@ -164,7 +201,7 @@ async def _handle_reset(query, provider: str) -> int:
         names = "\n".join(f"`{m}`" for m in restored)
         text = f"🔃 **{label}** — сброс к .env:\n\n{names}"
     else:
-        text = f"🔃 **{label}** — .env список пустой, изменений нет."
+        text = f"🔃 **{label}** — сброс к .env выполнен. Пользовательский список пуст."
 
     fmt, pm = TelegramFormatter.format_text(text)
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ К списку", callback_data=f"models:show:{provider}")]])
@@ -198,10 +235,21 @@ async def receive_model_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     with contextlib.suppress(Exception):
         await update.message.delete()
 
-    if added:
+    if added.code is ModelMutationCode.ADDED:
         text = f"✅ Модель `{model_name}` добавлена в **{label}**.\nПользователи увидят её немедленно."
-    else:
+    elif added.code is ModelMutationCode.DUPLICATE:
         text = f"⚠️ Модель `{model_name}` уже есть в списке **{label}**."
+    elif added.code is ModelMutationCode.UNSUPPORTED:
+        text = f"❌ Модель `{model_name}` не поддерживает generateContent в Gemini API."
+    elif added.code is ModelMutationCode.VALIDATION_UNAVAILABLE:
+        text = (
+            f"⚠️ Не удалось проверить модель `{model_name}` через Gemini API. "
+            "Список не изменён; повторите позже."
+        )
+    elif added.code is ModelMutationCode.UNKNOWN_PROVIDER:
+        text = "❌ Неизвестный провайдер моделей."
+    else:
+        text = f"❌ Некорректное название модели `{model_name}` для **{label}**."
 
     fmt, pm = TelegramFormatter.format_text(text)
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ К списку", callback_data=f"models:show:{provider}")]])

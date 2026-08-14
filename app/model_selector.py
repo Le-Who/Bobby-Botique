@@ -111,7 +111,8 @@ def select_model(
     """
     # Performance: read the live list directly — _find_model() only iterates, never
     # mutates, so there is no need for a defensive list() copy on every call.
-    available = (getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else None) or DEFAULT_GEMINI_MODELS
+    configured = getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else None
+    available = configured if isinstance(configured, list) else DEFAULT_GEMINI_MODELS
     if not available:
         return None
 

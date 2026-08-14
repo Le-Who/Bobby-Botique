@@ -22,6 +22,7 @@ from app.database import (
     reconnect_database,
     set_user_context,
 )
+from app.providers.base import is_freetheai_model, is_opencode_model, is_openrouter_model
 from app.utils.logging_config import timed_operation
 
 
@@ -271,10 +272,11 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
 
 
 async def migrate_invalid_models(
-    available_models: set,
+    available_models: set[str] | list[str],
     default_gemini_model: str,
     default_openrouter_model: str,
     default_opencode_model: str = "",
+    default_freetheai_model: str = "",
 ) -> int:
     """Migrate users whose active model is no longer in the available set.
 
@@ -283,7 +285,26 @@ async def migrate_invalid_models(
     if not available_models or not db_manager.is_connected:
         return 0
 
-    placeholders = ",".join([f"${i + 1}" for i in range(len(available_models))])
+    available_order = sorted(available_models) if isinstance(available_models, set) else list(available_models)
+    available_order = list(dict.fromkeys(available_order))
+    available_set = set(available_order)
+
+    def migration_target(default_model: str, predicate) -> str:
+        if default_model in available_set:
+            return default_model
+        return next((model for model in available_order if predicate(model)), available_order[0])
+
+    gemini_target = migration_target(
+        default_gemini_model,
+        lambda model: not is_opencode_model(model)
+        and not is_freetheai_model(model)
+        and not is_openrouter_model(model),
+    )
+    openrouter_target = migration_target(default_openrouter_model, is_openrouter_model)
+    opencode_target = migration_target(default_opencode_model, is_opencode_model)
+    freetheai_target = migration_target(default_freetheai_model, is_freetheai_model)
+
+    placeholders = ",".join([f"${i + 1}" for i in range(len(available_order))])
     invalid_chats = await db_query(
         f"""
         SELECT user_id, model
@@ -291,20 +312,22 @@ async def migrate_invalid_models(
         WHERE model IS NOT NULL
         AND model NOT IN ({placeholders})
         """,
-        tuple(available_models),
+        tuple(available_order),
     )
 
     migrated = 0
     gemini_users = []
     openrouter_users = []
     opencode_users = []
+    freetheai_users = []
     for chat in invalid_chats:
         user_id = chat["user_id"]
         old_model = chat["model"]
-        # Detection order matters: opencode-go/* also contains '/', so check it first
-        if old_model.startswith("opencode-go/"):
+        if is_opencode_model(old_model):
             opencode_users.append(user_id)
-        elif "/" in old_model:
+        elif is_freetheai_model(old_model):
+            freetheai_users.append(user_id)
+        elif is_openrouter_model(old_model):
             openrouter_users.append(user_id)
         else:
             gemini_users.append(user_id)
@@ -313,25 +336,30 @@ async def migrate_invalid_models(
     if gemini_users:
         await db_query(
             "UPDATE public.chats SET model = $1 WHERE user_id = ANY($2)",
-            (default_gemini_model, gemini_users),
+            (gemini_target, gemini_users),
         )
         migrated += len(gemini_users)
 
     if openrouter_users:
         await db_query(
             "UPDATE public.chats SET model = $1 WHERE user_id = ANY($2)",
-            (default_openrouter_model, openrouter_users),
+            (openrouter_target, openrouter_users),
         )
         migrated += len(openrouter_users)
 
     if opencode_users:
-        # If no opencode default provided, fall back to gemini default
-        target_model = default_opencode_model or default_gemini_model
         await db_query(
             "UPDATE public.chats SET model = $1 WHERE user_id = ANY($2)",
-            (target_model, opencode_users),
+            (opencode_target, opencode_users),
         )
         migrated += len(opencode_users)
+
+    if freetheai_users:
+        await db_query(
+            "UPDATE public.chats SET model = $1 WHERE user_id = ANY($2)",
+            (freetheai_target, freetheai_users),
+        )
+        migrated += len(freetheai_users)
 
     if migrated:
         logging.warning("Migrated %d users to default models after config reload", migrated)
@@ -345,20 +373,26 @@ async def model_migration_watcher(old_settings, new_settings) -> None:
     never imports from the DB/repos layer directly (AR-4).
     """
     try:
-        all_available = set()
-        if new_settings.AVAILABLE_MODELS:
-            all_available.update(new_settings.AVAILABLE_MODELS)
-        if new_settings.OPENROUTER_AVAILABLE_MODELS:
-            all_available.update(new_settings.OPENROUTER_AVAILABLE_MODELS)
-        # Include Opencode models so users with opencode-go/* models survive hot reload
-        if new_settings.OPENCODE_AVAILABLE_MODELS:
-            all_available.update(new_settings.OPENCODE_AVAILABLE_MODELS)
+        from app.repos.models_repo import sync_models_from_db
+
+        await sync_models_from_db(new_settings)
+        all_available = list(
+            dict.fromkeys(
+                [
+                    *new_settings.AVAILABLE_MODELS,
+                    *new_settings.OPENROUTER_AVAILABLE_MODELS,
+                    *new_settings.OPENCODE_AVAILABLE_MODELS,
+                    *new_settings.FREETHEAI_AVAILABLE_MODELS,
+                ]
+            )
+        )
 
         await migrate_invalid_models(
             available_models=all_available,
             default_gemini_model=new_settings.DEFAULT_MODEL,
             default_openrouter_model=new_settings.OPENROUTER_DEFAULT_MODEL,
             default_opencode_model=new_settings.OPENCODE_DEFAULT_MODEL,
+            default_freetheai_model=new_settings.FREETHEAI_DEFAULT_MODEL,
         )
     except Exception as e:
         logging.error("Model migration watcher error: %s", e)

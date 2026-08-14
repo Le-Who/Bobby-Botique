@@ -121,8 +121,8 @@ Handler
                               └─ тот же TelegramRenderer session
 
 TelegramRenderer
-  ├─ internal StreamingWriter
-  └─ internal LongReadDelivery
+  ├─ stateful TelegramRenderSession
+  └─ one Long Read fallback chain
        ├─ Redis Reader
        ├─ Telegraph
        └─ Telegram split
@@ -300,7 +300,7 @@ footer и Long Read title. Actions остаются Telegram-native
 generation failures возвращаются typed outcome. Если Telegram после bounded
 recovery не может ни edit, ни send, выбрасывается `TelegramDeliveryError`.
 
-## 8. Telegram renderer и StreamingWriter
+## 8. Telegram renderer session
 
 Renderer session имеет внутреннее состояние:
 
@@ -311,7 +311,7 @@ OPEN -------------> FINALIZED -> CLOSED
 
 Второй finalize или append после finalize является protocol error.
 
-`StreamingWriter` остаётся полезным deep internal module и владеет:
+`TelegramRenderSession` владеет:
 
 - raw/current/full buffers;
 - formatting и sanitization;
@@ -322,10 +322,11 @@ OPEN -------------> FINALIZED -> CLOSED
 - current Telegram target;
 - explicit delivery state.
 
-Coordinator не читает и не меняет private state. Boolean
-`_telegraph_engaged` заменяется explicit state. Final content replacement и
-notice append выполняются публичными внутренними operations writer, которые
-сохраняют invariant: current buffer является корректным хвостом full content.
+Старый `StreamingWriter` не сохраняется даже как внутренний compatibility
+layer: его ответственность перенесена в renderer session и Long Read fallback.
+Coordinator не читает и не меняет private state. Final content replacement и
+notice append выполняются session interface, сохраняющим invariant: terminal
+prepared value является authoritative, даже если progressive draft отличался.
 
 Публичный `StreamingUIAdapter` удаляется. Telegram transport остаётся private
 test seam renderer с production и recording adapters.

@@ -8,6 +8,7 @@ Also provides the module-level convenience functions:
 
 import asyncio
 import logging
+from collections.abc import Iterable
 from typing import Any
 
 from app.config import (
@@ -17,7 +18,7 @@ from app.config import (
     GEMINI_GROUNDING_FALLBACK_MODEL,
     GEMINI_GROUNDING_MODEL,
     GEMINI_PRIMARY_MODEL,
-    RUNTIME_GEMINI_MODELS,
+    is_gemini_chat_model_id,
     normalize_gemini_chat_model,
     normalize_gemini_runtime_model,
     settings,
@@ -33,6 +34,20 @@ from app.errors import (
 )
 from app.providers.base import is_freetheai_model, is_opencode_model
 from app.providers.openrouter import _has_multimodal_content
+from app.providers.stream_types import (
+    FailurePhase,
+    GenerationEvent,
+    GenerationRequest,
+    KeyDisposition,
+    ProviderStreamProtocolError,
+    RetryDisposition,
+    StreamCompleted,
+    StreamDeferred,
+    StreamFailed,
+    TextDelta,
+    Workload,
+    is_terminal_event,
+)
 
 
 def _setting(name: str, fallback: str) -> str:
@@ -46,7 +61,21 @@ def _gemini_setting(name: str, fallback: str) -> str:
 
 def _available_models() -> list[str]:
     value = getattr(settings, "AVAILABLE_MODELS", None) if settings is not None else None
-    return value if isinstance(value, list) and value else DEFAULT_GEMINI_MODELS
+    return value if isinstance(value, list) else DEFAULT_GEMINI_MODELS
+
+
+def _runtime_gemini_models() -> list[str]:
+    """Return configured and internal Gemini runtime candidates without static eligibility checks."""
+    configured = _available_models()
+    role_models = [
+        getattr(settings, name, None)
+        for name in ("RESEARCH_MODEL", "DEFAULT_MODEL", "QNA_MODEL", "INLINE_MODEL")
+    ]
+    return [
+        model
+        for model in _dedupe_models([*configured, *role_models])
+        if is_gemini_chat_model_id(model)
+    ]
 
 
 # ── Opencode Go → Gemini cross-provider fallback map ──────────────────────────
@@ -84,7 +113,7 @@ def _get_opencode_gemini_fallback() -> dict[str, str]:
     }
 
 
-def _dedupe_models(models: list[str | None], *, exclude: str | None = None) -> list[str]:
+def _dedupe_models(models: Iterable[str | None], *, exclude: str | None = None) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for model in models:
@@ -106,22 +135,11 @@ def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
     if runtime_failed_model == GEMINI_GROUNDING_FALLBACK_MODEL:
         return []
 
-    available = [
-        model
-        for model in (list(getattr(settings, "AVAILABLE_MODELS", []) or []) if settings is not None else [])
-        if model in CURRENT_GEMINI_MODELS
-    ]
-    if not available:
-        available = list(CURRENT_GEMINI_MODELS)
+    available = _runtime_gemini_models()
     available_set = set(available)
     failed_model_norm = normalize_gemini_chat_model(runtime_failed_model, fallback=failed_model)
 
-    chain = [
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-    ]
+    chain = list(CURRENT_GEMINI_MODELS)
 
     preferred: list[str] = []
     if failed_model_norm in chain:
@@ -141,7 +159,7 @@ def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
     ordered = [
         model
         for model in _dedupe_models(preferred, exclude=failed_model_norm)
-        if model in available_set and model in CURRENT_GEMINI_MODELS
+        if model in available_set and is_gemini_chat_model_id(model)
     ]
     ordered.extend(model for model in available if model != failed_model_norm and model not in ordered)
     return ordered
@@ -537,531 +555,459 @@ class ProviderRouter:
             None,
         )
 
-    async def stream_response(
-        self,
-        preferred_model: str,
-        history: list,
-        system_instruction: str | None = None,
-        user_id: int | None = None,
-        chat_id: int | None = None,
-        use_openrouter: bool | None = None,
-        max_key_retries: int = 3,
-        thinking_level: str | None = None,
-        enable_web_search: bool = False,
-        force_grounding: bool = False,
-        *,
-        _is_fallback: bool = False,
-    ):
-
-        """
-        Stream AI response with Race Requests and automatic key rotation.
-
-        Race Requests: on each attempt, resolves up to 2 keys and fires them
-        in parallel. The first key to yield a chunk wins; the loser is cancelled.
-        Zero artificial delays between retries for maximum speed.
-
-        After exhausting all retries for transient errors (503), cascades to a
-        lighter fallback model before returning an error to the user.
-
-        Yields chunks of text.
-        """
-
+    async def stream(self, request: GenerationRequest):
+        """Route a typed generation stream and emit exactly one terminal event."""
         from app.agent_use_cases import AgentRequestUseCase
         from app.providers.base import get_provider_for_model
+        from app.providers.request_factory import deferred_history_from_request
         from app.repos.keys import get_key_status_manager
 
-        if user_id and not await self._rate_limiter.check_rate_limit(user_id):
-            yield tag_error(
-                ErrorCode.RATE_LIMIT,
-                "⏳ Слишком много запросов. Пожалуйста, подождите минуту.",
+        scope = request.scope
+        if scope.user_id and not await self._rate_limiter.check_rate_limit(scope.user_id):
+            yield StreamFailed(
+                code=ErrorCode.RATE_LIMIT,
+                phase=FailurePhase.BEFORE_TEXT,
+                retry=RetryDisposition.RETRY_LATER,
+                key=KeyDisposition.UNCHANGED,
+                diagnostic="Per-user provider rate limit rejected request",
             )
             return
 
-        if use_openrouter is None and _has_multimodal_content(history) and not is_opencode_model(preferred_model):
-            use_openrouter = False
-
         use_case = AgentRequestUseCase()
         status_mgr = get_key_status_manager()
-        failed_keys: set[str] = set()
-        all_permanent: bool = True
-        had_transient: bool = False  # Track if any 503/transient errors occurred
+        model_queue = list(request.models)
+        attempted_models: set[str] = set()
+        overall_had_transient = False
+        last_failure: StreamFailed | None = None
+        _VERTEX_KH = "__vertex_ai__"
 
-        for _attempt in range(max_key_retries):
-            # ── Race Requests: resolve up to 2 keys in parallel ──────────
-            keys_to_race: list[dict] = []
-            resolved_model: str | None = None
+        def _failure_category(failure: StreamFailed) -> str:
+            return {
+                KeyDisposition.INVALID: "permanent",
+                KeyDisposition.EXHAUSTED: "quota",
+                KeyDisposition.RATE_LIMITED: "rate_limit",
+                KeyDisposition.TRANSIENT_FAILURE: "transient",
+                KeyDisposition.UNCHANGED: "transient",
+            }[failure.key]
+
+        async def _record_success(key_data: dict, model_name: str) -> None:
+            key_hash = key_data["key_hash"]
+            try:
+                if (
+                    key_hash != _VERTEX_KH
+                    and not is_opencode_model(model_name)
+                    and not is_freetheai_model(model_name)
+                ):
+                    await status_mgr.record_success(key_hash, model_name)
+                if key_hash != _VERTEX_KH:
+                    await use_case.increment_key_usage(key_hash, model_name, None)
+            except Exception as exc:
+                logging.debug("Non-critical typed-stream stats update failed: %s", exc)
+
+        async def _record_failure(
+            key_data: dict,
+            model_name: str,
+            failure: StreamFailed,
+        ) -> str:
+            category = _failure_category(failure)
+            key_hash = key_data["key_hash"]
+            try:
+                if key_hash == _VERTEX_KH:
+                    from app.providers.gemini import report_vertex_error
+
+                    report_vertex_error(RuntimeError(failure.diagnostic))
+                elif not is_opencode_model(model_name) and not is_freetheai_model(model_name):
+                    await status_mgr.suspend_key(
+                        key_hash,
+                        model_name,
+                        category,
+                        failure.diagnostic[:200],
+                    )
+            except Exception as exc:
+                logging.warning("Failed to apply typed-stream key disposition: %s", exc)
+            return category
+
+        while model_queue:
+            preferred_model = model_queue.pop(0)
+            if preferred_model in attempted_models:
+                continue
+            attempted_models.add(preferred_model)
+
+            failed_keys: set[str] = set()
+            model_had_transient = False
+            model_all_permanent = True
             resolution_status: str | None = None
 
-            for _race_idx in range(2):
-                key_data, model_used, _resolution = await use_case.resolve_ai_request(
-                    preferred_model,
-                    use_openrouter=use_openrouter,
-                    excluded_key_hashes=failed_keys | {k["key_hash"] for k in keys_to_race},
-                )
-                resolution_status = _resolution
-                if key_data and model_used:
+            for attempt in range(request.key_attempt_rounds):
+                keys_to_race: list[dict] = []
+                resolved_model: str | None = None
+
+                for _race_idx in range(2):
+                    key_data, model_used, resolution_status = await use_case.resolve_ai_request(
+                        preferred_model,
+                        use_openrouter=None,
+                        excluded_key_hashes=failed_keys
+                        | {key["key_hash"] for key in keys_to_race},
+                    )
+                    if not key_data or not model_used:
+                        break
                     keys_to_race.append(key_data)
                     resolved_model = model_used
-                else:
-                    break  # No more keys available
 
-            # ── Inject Vertex AI Express Slot ─────────────────────────
-            # Only for supported models (currently gemini-3.1-flash-lite)
-            # and only if we have at least one valid Gemini key to race alongside it.
-            _VERTEX_KH = "__vertex_ai__"
-            if keys_to_race and resolved_model and "gemini-3.1-flash-lite" in resolved_model:
-                from app.providers.gemini import is_vertex_client_available
+                if (
+                    keys_to_race
+                    and resolved_model
+                    and "gemini-3.1-flash-lite" in resolved_model
+                ):
+                    from app.providers.gemini import is_vertex_client_available
 
-                if is_vertex_client_available() and _VERTEX_KH not in failed_keys:
-                    keys_to_race.append({"api_key": "vertex", "key_hash": _VERTEX_KH})
+                    if is_vertex_client_available() and _VERTEX_KH not in failed_keys:
+                        keys_to_race.append(
+                            {"api_key": "vertex", "key_hash": _VERTEX_KH}
+                        )
 
-            if not keys_to_race or not resolved_model:
-                if resolution_status == "decryption_failed":
-                    yield tag_error(
-                        ErrorCode.DECRYPTION_FAILED,
-                        "🔐 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET).",
-                    )
-                    return
-                # ── Cross-provider fallback: Opencode Go → Gemini (streaming) ─────
-                if is_opencode_model(preferred_model) and not _is_fallback:
-                    gemini_fallback = _get_opencode_gemini_fallback().get(
-                        preferred_model,
-                        _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
-                    )
-                    logging.warning(
-                        "Opencode stream keys unavailable for %s, cascading to Gemini %s",
-                        preferred_model,
-                        gemini_fallback,
-                    )
-                    async for chunk in self.stream_response(
-                        preferred_model=gemini_fallback,
-                        history=history,
-                        system_instruction=system_instruction,
-                        user_id=user_id,
-                        chat_id=chat_id,
-                        use_openrouter=False,
-                        max_key_retries=max_key_retries,
-                        thinking_level=thinking_level,
-                        enable_web_search=enable_web_search,
-                        force_grounding=force_grounding,
-                        _is_fallback=True,
+                if not keys_to_race or not resolved_model:
+                    if resolution_status == "decryption_failed":
+                        last_failure = StreamFailed(
+                            code=ErrorCode.DECRYPTION_FAILED,
+                            phase=FailurePhase.BEFORE_TEXT,
+                            retry=RetryDisposition.DO_NOT_RETRY,
+                            key=KeyDisposition.UNCHANGED,
+                            diagnostic="Provider key decryption failed during routing",
+                        )
+                    elif last_failure is None:
+                        last_failure = StreamFailed(
+                            code=ErrorCode.KEYS_EXHAUSTED,
+                            phase=FailurePhase.BEFORE_TEXT,
+                            retry=RetryDisposition.RETRY_LATER,
+                            key=KeyDisposition.EXHAUSTED,
+                            diagnostic=f"No usable keys resolved for {preferred_model}",
+                        )
+                    break
 
-                    ):
-                        yield chunk
-                    return
-                is_or = (
-                    use_openrouter
-                    if use_openrouter is not None
-                    else (
-                        "/" in preferred_model
-                        and not is_opencode_model(preferred_model)
-                        and not is_freetheai_model(preferred_model)
-                    )
-                )
-                provider_name = (
-                    "Opencode Go"
-                    if is_opencode_model(preferred_model)
-                    else (
-                        "FreeTheAI"
-                        if is_freetheai_model(preferred_model)
-                        else ("OpenRouter" if is_or else "Gemini")
-                    )
-                )
-                yield tag_error(
-                    ErrorCode.KEYS_EXHAUSTED,
-                    f"🚫 Все ключи {provider_name} недоступны.",
-                )
-                return
-
-            model_used = resolved_model
-
-            if len(keys_to_race) == 1:
-                # Single key available — use direct streaming (no race overhead)
-                key_data = keys_to_race[0]
-                kh = key_data["key_hash"][:8]
-                raw_key = key_data.get("api_key", "")
-                key_suffix = raw_key[-4:] if len(raw_key) >= 4 else "????"
+                model_used = resolved_model
                 logging.info(
-                    "Streaming: model=%s key=%s…(…%s) attempt=%d/%d",
+                    "Typed stream route: model=%s keys=%s attempt=%d/%d",
                     model_used,
-                    kh,
-                    key_suffix,
-                    _attempt + 1,
-                    max_key_retries,
+                    [key["key_hash"][:8] for key in keys_to_race],
+                    attempt + 1,
+                    request.key_attempt_rounds,
                 )
 
-                provider = get_provider_for_model(model_used, key_data["api_key"])
-                stream_started = False
-                try:
-                    async for chunk in provider.stream_response(  # type: ignore[attr-defined]
-                        history=history,
-                        model_name=model_used,
-                        system_instruction=system_instruction,
-                        thinking_level=thinking_level,
-                        enable_web_search=enable_web_search,
-                        force_grounding=force_grounding,
-                    ):
+                if len(keys_to_race) == 1:
+                    key_data = keys_to_race[0]
+                    provider = get_provider_for_model(model_used, key_data["api_key"])
+                    saw_text = False
+                    terminal_seen = False
+                    failure: StreamFailed | None = None
+                    terminal_result: GenerationEvent | None = None
 
-                        # Guard: provider may yield a tagged error string instead of
-                        # raising an exception (e.g. OpenRouter 429 → RATE_LIMIT tag).
-                        # Treat that as a stream-level failure so key rotation kicks in.
-                        if not stream_started and is_error_message(chunk):
-                            raise RuntimeError(f"Provider yielded error tag before streaming: {chunk[:200]}")
-
-                        if not stream_started:
-                            stream_started = True
-                            try:
-                                # Opencode/FTA keys are in-memory only — skip DB writes
-                                if not is_opencode_model(model_used) and not is_freetheai_model(model_used):
-                                    await status_mgr.record_success(key_data["key_hash"], model_used)
-                                await use_case.increment_key_usage(key_data["key_hash"], model_used, use_openrouter)
-                            except Exception as e:
-                                logging.debug("Non-critical stats update failed: %s", e)
-                        yield chunk
-
-                    if stream_started:
-                        return
-
-                except Exception as e:
-                    if stream_started:
-                        logging.error("Stream failed mid-flight, escalating to streaming layer: %s", e)
-                        raise
-
-                    error_msg = str(e)
-                    # Use the error tag (if present) to determine the correct penalty
-                    # category rather than always hard-coding "transient".
-                    # e.g. RATE_LIMIT → "rate_limit" (15 s cooldown),
-                    #      QUOTA_EXCEEDED → "quota" (until midnight PT).
-                    inner_tag = error_msg[error_msg.find("\u200b[") :] if "\u200b[" in error_msg else error_msg
-                    error_category = classify_key_error(inner_tag)
-                    if error_category == "transient":
-                        had_transient = True
-                    if error_category != "permanent":
-                        all_permanent = False
-
-                    failed_keys.add(key_data["key_hash"])
-                    logging.warning(
-                        "Single-key stream failed (category=%s) for key=%s… model=%s: %s",
-                        error_category,
-                        key_data["key_hash"][:8],
-                        model_used,
-                        error_msg[:120],
-                    )
-                    try:
-                        # Opencode/FTA keys are in-memory only — skip DB suspension writes
-                        if not is_opencode_model(model_used) and not is_freetheai_model(model_used):
-                            await status_mgr.suspend_key(
-                                key_data["key_hash"],
-                                model_used,
-                                error_category,
-                                error_msg[:200],
+                    async for event in provider.stream(request, model_name=model_used):
+                        if terminal_seen:
+                            raise ProviderStreamProtocolError(
+                                f"{provider.provider_name} emitted an event after terminal"
                             )
-                    except Exception as db_e:
-                        logging.warning("Failed to suspend key: %s", db_e)
-                    continue  # Next retry attempt — no sleep!
-
-            else:
-                # ── Race: 2 keys in parallel ─────────────────────────────
-                #
-                # Strategy: fire both streams as tasks. The first to yield a chunk
-                # wins — we cancel the loser and forward the winner's chunks.
-                # If both fail before yielding, mark both as failed and retry.
-                # Sentinel-based completion: each racer puts a _StreamEndSignal after
-                # all chunks, so the consumer never relies on task.done() which
-                # has a TOCTOU race (task finishes while last chunk is still in queue).
-                # _StreamEndSignal also carries finish_reason from the task's own ContextVar
-                # (asyncio.create_task copies ContextVars so mutations inside the task
-                # are invisible to the parent).
-
-                class _StreamEndSignal:
-                    """Sentinel put by the producer after all chunks.
-
-                    Carries finish_reason extracted from within the task's own context,
-                    since asyncio.create_task copies ContextVars and mutations inside
-                    the task are invisible to the parent context.
-                    """
-
-                    __slots__ = ("finish_reason",)
-
-                    def __init__(self, finish_reason: str | None) -> None:
-                        self.finish_reason = finish_reason
-
-                winner_queue: asyncio.Queue[tuple[int, str | object | None, Exception | None]] = asyncio.Queue()
-
-                async def _race_stream(
-                    idx: int,
-                    kd: dict,
-                    mod: str = str(model_used),
-                    q: asyncio.Queue = winner_queue,
-                ) -> None:
-                    """Race participant: stream from one key, push chunks + sentinel to queue."""
-                    first_chunk_seen = False
-                    try:
-                        prov = get_provider_for_model(mod, kd["api_key"])
-                        async for chunk in prov.stream_response(  # type: ignore[attr-defined]
-                            history=history,
-                            model_name=mod,
-                            system_instruction=system_instruction,
-                            thinking_level=thinking_level,
-                            enable_web_search=enable_web_search,
-                            force_grounding=force_grounding,
-                        ):
-
-                            # Guard: provider may yield a tagged error string instead of
-                            # raising an exception — treat it as a race failure so the
-                            # partner key can win the race and serve the user.
-                            if not first_chunk_seen and is_error_message(chunk):
-                                raise RuntimeError(f"Provider yielded error tag before streaming: {chunk[:200]}")
-                            first_chunk_seen = True
-                            await q.put((idx, chunk, None))
-                    except asyncio.CancelledError:
-                        # Loser was cancelled — put sentinel so consumer doesn't hang
-                        await q.put((idx, _StreamEndSignal(None), None))
-                        return
-                    except Exception as exc_:
-                        await q.put((idx, None, exc_))
-                        return
-                    # Normal completion: read finish_reason from this task's own ContextVar
-                    # and carry it in the sentinel so the parent context can apply it.
-                    from app.streaming import _last_finish_reason as _fr_var
-
-                    own_fr = _fr_var.get()
-                    await q.put((idx, _StreamEndSignal(own_fr), None))
-
-                # Log race participants
-                khs = [kd["key_hash"][:8] for kd in keys_to_race]
-                logging.info(
-                    "Race Requests: model=%s keys=%s attempt=%d/%d",
-                    model_used,
-                    khs,
-                    _attempt + 1,
-                    max_key_retries,
-                )
-
-                tasks = [asyncio.create_task(_race_stream(i, kd)) for i, kd in enumerate(keys_to_race)]
-
-                winner_idx: int | None = None
-                race_errors: dict[int, Exception] = {}
-
-                # Wait for the first signal from either racer
-                while winner_idx is None and len(race_errors) < len(keys_to_race):
-                    try:
-                        idx, chunk, exc = await asyncio.wait_for(winner_queue.get(), timeout=30.0)
-                    except TimeoutError:
-                        # Both racers hung — cancel both and retry
-                        for t in tasks:
-                            t.cancel()
-                        for kd in keys_to_race:
-                            failed_keys.add(kd["key_hash"])
-                        had_transient = True
-                        all_permanent = False
-                        break
-                    if exc is not None:
-                        race_errors[idx] = exc
-                        continue
-                    if isinstance(chunk, _StreamEndSignal):
-                        # Racer finished without yielding any real chunk — treat as error
-                        race_errors[idx] = RuntimeError("stream ended without chunks")
-                        continue
-                    # We have a winner!
-                    winner_idx = idx
-
-                if winner_idx is None:
-                    # Both failed (or timed out) — mark keys as failed, no sleep, retry
-                    for t in tasks:
-                        t.cancel()
-                    for i, kd in enumerate(keys_to_race):
-                        failed_keys.add(kd["key_hash"])
-                        # Safe default: treat unknown errors as transient
-                        err_category = "transient"
-                        try:
-                            raw_err = str(race_errors.get(i, "race timeout"))
-                            # Derive penalty category from the error tag embedded in the
-                            # message (e.g. RATE_LIMIT, QUOTA_EXCEEDED) rather than always
-                            # defaulting to "transient", so cooldown durations are accurate.
-                            inner_tag = raw_err[raw_err.find("\u200b[") :] if "\u200b[" in raw_err else raw_err
-                            err_category = classify_key_error(inner_tag)
-                            logging.warning(
-                                "Race key=%s… failed (category=%s): %s",
-                                kd["key_hash"][:8],
-                                err_category,
-                                raw_err[:120],
+                        if isinstance(event, TextDelta):
+                            if not saw_text:
+                                saw_text = True
+                                await _record_success(key_data, model_used)
+                            yield event
+                            continue
+                        if not is_terminal_event(event):
+                            raise ProviderStreamProtocolError(
+                                f"Unsupported provider event: {type(event).__name__}"
                             )
-                            if kd["key_hash"] == _VERTEX_KH:
-                                from app.providers.gemini import report_vertex_error
-
-                                report_vertex_error(RuntimeError(raw_err))
-                            elif not is_opencode_model(model_used) and not is_freetheai_model(model_used):
-                                await status_mgr.suspend_key(
-                                    kd["key_hash"], model_used, err_category, raw_err[:200]
+                        terminal_seen = True
+                        if isinstance(event, StreamCompleted):
+                            if not saw_text:
+                                failure = StreamFailed(
+                                    code=ErrorCode.EMPTY_RESPONSE,
+                                    phase=FailurePhase.BEFORE_TEXT,
+                                    retry=RetryDisposition.TRY_NEXT_KEY,
+                                    key=KeyDisposition.TRANSIENT_FAILURE,
+                                    diagnostic="Provider completed before emitting visible text",
+                                    route=event.route,
                                 )
-                        except Exception:
-                            pass
-                        # Update outer flags regardless of whether suspend_key succeeded
-                        if err_category == "transient":
-                            had_transient = True
-                        if err_category != "permanent":
-                            all_permanent = False
-                    continue  # Next retry — zero delay!
+                            else:
+                                terminal_result = event
+                        elif isinstance(event, StreamDeferred):
+                            if saw_text:
+                                raise ProviderStreamProtocolError(
+                                    "Provider deferred after emitting visible text"
+                                )
+                            terminal_result = event
+                        elif isinstance(event, StreamFailed):
+                            if saw_text:
+                                if event.phase is not FailurePhase.AFTER_TEXT:
+                                    raise ProviderStreamProtocolError(
+                                        "Provider reported BEFORE_TEXT after text"
+                                    )
+                                terminal_result = event
+                            failure = event
 
-                # Cancel the losers
-                for i, t in enumerate(tasks):
-                    if i != winner_idx:
-                        t.cancel()
-                winner_key = keys_to_race[winner_idx]
+                    if not terminal_seen:
+                        raise ProviderStreamProtocolError(
+                            f"{getattr(provider, 'provider_name', type(provider).__name__)} ended without terminal event"
+                        )
+                    if terminal_result is not None:
+                        yield terminal_result
+                        return
+                    assert failure is not None
+                    failed_keys.add(key_data["key_hash"])
+                    category = await _record_failure(key_data, model_used, failure)
+                    model_had_transient |= category == "transient"
+                    model_all_permanent &= category == "permanent"
+                    last_failure = failure
+                    continue
 
-                # Record success for the winner.
-                # Skip DB writes for the Vertex AI pseudo-key — it is a sentinel
-                # (not a row in api_keys) and the FK on key_usage would fire.
-                # Same guard as inline.py:1230.
-                if winner_key["key_hash"] != _VERTEX_KH:
+                queue: asyncio.Queue[
+                    tuple[int, GenerationEvent | None, BaseException | None, bool]
+                ] = asyncio.Queue()
+
+                async def _race_provider(
+                    idx: int,
+                    key_data: dict,
+                    *,
+                    race_model: str,
+                    race_queue: asyncio.Queue[
+                        tuple[int, GenerationEvent | None, BaseException | None, bool]
+                    ],
+                ) -> None:
+                    terminal: GenerationEvent | None = None
+                    provider = get_provider_for_model(race_model, key_data["api_key"])
                     try:
-                        if not is_opencode_model(model_used) and not is_freetheai_model(model_used):
-                            await status_mgr.record_success(winner_key["key_hash"], model_used)
-                        await use_case.increment_key_usage(winner_key["key_hash"], model_used, use_openrouter)
-                    except Exception as e:
-                        logging.debug("Non-critical stats update failed: %s", e)
+                        async for event in provider.stream(request, model_name=race_model):
+                            if terminal is not None:
+                                raise ProviderStreamProtocolError(
+                                    f"{provider.provider_name} emitted an event after terminal"
+                                )
+                            if isinstance(event, TextDelta):
+                                race_queue.put_nowait((idx, event, None, False))
+                            elif is_terminal_event(event):
+                                terminal = event
+                            else:
+                                raise ProviderStreamProtocolError(
+                                    f"Unsupported provider event: {type(event).__name__}"
+                                )
+                        if terminal is None:
+                            raise ProviderStreamProtocolError(
+                                f"{provider.provider_name} ended without terminal event"
+                            )
+                        race_queue.put_nowait((idx, terminal, None, False))
+                    except asyncio.CancelledError:
+                        raise
+                    except BaseException as provider_error:
+                        race_queue.put_nowait((idx, None, provider_error, False))
+                    finally:
+                        race_queue.put_nowait((idx, None, None, True))
 
-                loser_khs = [k["key_hash"][:8] for i, k in enumerate(keys_to_race) if i != winner_idx]
-                logging.info(
-                    "Race winner: key=%s… (losers %s cancelled)",
-                    winner_key["key_hash"][:8],
-                    loser_khs,
-                )
+                tasks = [
+                    asyncio.create_task(
+                        _race_provider(
+                            index,
+                            key_data,
+                            race_model=model_used,
+                            race_queue=queue,
+                        )
+                    )
+                    for index, key_data in enumerate(keys_to_race)
+                ]
+                winner_idx: int | None = None
+                pre_text_terminals: dict[int, GenerationEvent] = {}
+                done: set[int] = set()
 
-                # Yield the first winning chunk
-                assert chunk is not None
-                yield chunk
-
-                # Forward remaining chunks from winner — break only on sentinel
                 try:
+                    while winner_idx is None and len(done) < len(tasks):
+                        try:
+                            race_idx, race_event, race_error, race_done = await asyncio.wait_for(
+                                queue.get(), timeout=30.0
+                            )
+                        except TimeoutError:
+                            timeout_failure = StreamFailed(
+                                code=ErrorCode.TIMEOUT,
+                                phase=FailurePhase.BEFORE_TEXT,
+                                retry=RetryDisposition.TRY_NEXT_KEY,
+                                key=KeyDisposition.TRANSIENT_FAILURE,
+                                diagnostic="Provider key race timed out before first text",
+                            )
+                            for index in range(len(keys_to_race)):
+                                pre_text_terminals.setdefault(index, timeout_failure)
+                            break
+                        if race_done:
+                            done.add(race_idx)
+                            continue
+                        if race_error is not None:
+                            raise race_error
+                        assert race_event is not None
+                        if isinstance(race_event, TextDelta):
+                            winner_idx = race_idx
+                            first_delta = race_event
+                            break
+                        pre_text_terminals[race_idx] = race_event
+
+                    if winner_idx is None:
+                        deferred = next(
+                            (
+                                event
+                                for event in pre_text_terminals.values()
+                                if isinstance(event, StreamDeferred)
+                            ),
+                            None,
+                        )
+                        if deferred is not None:
+                            yield deferred
+                            return
+
+                        for index, key_data in enumerate(keys_to_race):
+                            terminal = pre_text_terminals.get(index)
+                            if isinstance(terminal, StreamCompleted):
+                                terminal = StreamFailed(
+                                    code=ErrorCode.EMPTY_RESPONSE,
+                                    phase=FailurePhase.BEFORE_TEXT,
+                                    retry=RetryDisposition.TRY_NEXT_KEY,
+                                    key=KeyDisposition.TRANSIENT_FAILURE,
+                                    diagnostic="Raced provider completed without visible text",
+                                    route=terminal.route,
+                                )
+                            if not isinstance(terminal, StreamFailed):
+                                terminal = StreamFailed(
+                                    code=ErrorCode.EMPTY_RESPONSE,
+                                    phase=FailurePhase.BEFORE_TEXT,
+                                    retry=RetryDisposition.TRY_NEXT_KEY,
+                                    key=KeyDisposition.TRANSIENT_FAILURE,
+                                    diagnostic="Raced provider ended without visible text",
+                                )
+                            failed_keys.add(key_data["key_hash"])
+                            category = await _record_failure(
+                                key_data,
+                                model_used,
+                                terminal,
+                            )
+                            model_had_transient |= category == "transient"
+                            model_all_permanent &= category == "permanent"
+                            last_failure = terminal
+                        continue
+
+                    for index, task in enumerate(tasks):
+                        if index != winner_idx:
+                            task.cancel()
+                    winner_key = keys_to_race[winner_idx]
+                    await _record_success(winner_key, model_used)
+                    yield first_delta
+
                     while True:
                         try:
-                            idx, chunk, exc = await asyncio.wait_for(winner_queue.get(), timeout=120.0)
-                        except TimeoutError:
-                            logging.warning("Race drain timed out after 120s — forcing exit")
-                            break
-                        if idx != winner_idx:
-                            continue  # Stale chunk from loser
-                        if isinstance(chunk, _StreamEndSignal):
-                            # Winner stream completed — apply finish_reason to parent context
-                            if chunk.finish_reason:
-                                from app.streaming import set_last_finish_reason
-
-                                set_last_finish_reason(chunk.finish_reason)
-                            break  # All chunks delivered
-                        if exc is not None:
-                            raise exc
-                        if chunk is not None:
-                            yield chunk
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    logging.error("Race winner stream failed mid-flight: %s", e)
-                    raise
+                            winner_event = await asyncio.wait_for(
+                                queue.get(), timeout=120.0
+                            )
+                        except TimeoutError as exc:
+                            raise ProviderStreamProtocolError(
+                                "Winning provider did not emit a terminal event"
+                            ) from exc
+                        winner_event_idx, terminal_event, winner_error, is_done = winner_event
+                        if winner_event_idx != winner_idx:
+                            continue
+                        if winner_error is not None:
+                            raise winner_error
+                        if is_done:
+                            raise ProviderStreamProtocolError(
+                                "Winning provider ended before terminal delivery"
+                            )
+                        assert terminal_event is not None
+                        if isinstance(terminal_event, TextDelta):
+                            yield terminal_event
+                            continue
+                        if isinstance(terminal_event, StreamDeferred):
+                            raise ProviderStreamProtocolError(
+                                "Winning provider deferred after visible text"
+                            )
+                        if (
+                            isinstance(terminal_event, StreamFailed)
+                            and terminal_event.phase is not FailurePhase.AFTER_TEXT
+                        ):
+                            raise ProviderStreamProtocolError(
+                                "Winning provider reported BEFORE_TEXT after text"
+                            )
+                        yield terminal_event
+                        return
                 finally:
-                    # Suppress unhandled-task-exception warning from loser
-                    for t in tasks:
-                        if not t.done():
-                            t.cancel()
-                    try:
-                        await asyncio.wait(tasks, timeout=0.5)
-                    except Exception:
-                        pass
-                return  # Race completed successfully
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
-        # ── Exhausted retries — try model fallback ───────────────────────
-        # For transient errors (503), cascade to lighter model before giving up.
-        # This is the key UX improvement: user gets an answer from lite model
-        # instead of a cold error message.
-        if not _is_fallback and had_transient:
-            # Determine fallback model — prefer lite variant of same family
-            fallback_model = self._pick_transient_fallback_model(preferred_model, use_openrouter)
-            if fallback_model:
-                logging.info(
-                    "Cascade fallback: %s → %s (all keys returned transient errors)",
+            overall_had_transient |= model_had_transient
+
+            if is_opencode_model(preferred_model):
+                gemini_fallback = _get_opencode_gemini_fallback().get(
                     preferred_model,
-                    fallback_model,
+                    _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
                 )
-                async for chunk in self.stream_response(
-                    preferred_model=fallback_model,
-                    history=history,
-                    system_instruction=system_instruction,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    use_openrouter=use_openrouter,
-                    max_key_retries=2,  # Fewer retries for fallback
-                    thinking_level=thinking_level,
-                    enable_web_search=enable_web_search,
-                    force_grounding=force_grounding,
-                    _is_fallback=True,
+                if gemini_fallback not in attempted_models and gemini_fallback not in model_queue:
+                    model_queue.append(gemini_fallback)
 
+            if model_had_transient:
+                transient_fallback = self._pick_transient_fallback_model(
+                    preferred_model,
+                    None,
+                )
+                if (
+                    transient_fallback
+                    and transient_fallback not in attempted_models
+                    and transient_fallback not in model_queue
                 ):
-                    yield chunk
-                return
+                    model_queue.append(transient_fallback)
 
-        # Permanent-error model fallback (existing behavior)
-        if all_permanent and failed_keys:
-            fallback_result = await self._try_model_fallback(
-                preferred_model,
-                history,
-                system_instruction,
-                user_id,
-                chat_id,
-                use_openrouter,
-                use_case,
-                status_mgr,
-            )
-            if fallback_result is not None:
-                yield fallback_result[0]
-                return
+            if model_all_permanent and last_failure is not None:
+                for fallback in _ordered_gemini_fallback_models(preferred_model):
+                    if fallback not in attempted_models and fallback not in model_queue:
+                        model_queue.append(fallback)
 
-        # ── Deferred Queue (Plan §5): last resort before hard error ──────
-        # If user_id and chat_id are available, enqueue for background retry
-        # instead of showing a cold error.
-        if user_id and chat_id and had_transient:
+        if (
+            request.allow_deferred
+            and request.workload is not Workload.DEFERRED_RETRY
+            and scope.user_id
+            and scope.chat_id
+            and overall_had_transient
+        ):
             try:
                 from app.deferred_response import enqueue_deferred_generation
 
                 task_id = await enqueue_deferred_generation(
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    history=history,
-                    model_name=preferred_model,
-                    system_instruction=system_instruction,
+                    user_id=scope.user_id,
+                    chat_id=scope.chat_id,
+                    history=deferred_history_from_request(request),
+                    model_name=request.models[0],
+                    system_instruction=request.system_instruction,
                 )
                 if task_id:
-                    yield tag_error(
-                        ErrorCode.KEYS_EXHAUSTED,
-                        "⏳ Серверы AI временно перегружены. Я отправлю ответ, как только они освободятся.",
-                    )
+                    yield StreamDeferred(task_id=task_id)
                     return
-            except Exception as e:
-                logging.warning("Deferred queue fallback failed: %s", e)
+            except Exception as exc:
+                logging.warning("Typed deferred queue fallback failed: %s", exc)
 
-        is_or = (
-            use_openrouter
-            if use_openrouter is not None
-            else (
-                "/" in preferred_model
-                and not is_opencode_model(preferred_model)
-                and not is_freetheai_model(preferred_model)
+        if last_failure is not None:
+            yield StreamFailed(
+                code=last_failure.code,
+                phase=FailurePhase.BEFORE_TEXT,
+                retry=(
+                    RetryDisposition.RETRY_LATER
+                    if overall_had_transient
+                    else RetryDisposition.DO_NOT_RETRY
+                ),
+                key=last_failure.key,
+                diagnostic=last_failure.diagnostic,
+                route=last_failure.route,
             )
+            return
+
+        yield StreamFailed(
+            code=ErrorCode.KEYS_EXHAUSTED,
+            phase=FailurePhase.BEFORE_TEXT,
+            retry=RetryDisposition.RETRY_LATER,
+            key=KeyDisposition.EXHAUSTED,
+            diagnostic="All provider routes exhausted without a terminal response",
         )
-        provider_name = (
-            "Opencode Go"
-            if is_opencode_model(preferred_model)
-            else (
-                "FreeTheAI"
-                if is_freetheai_model(preferred_model)
-                else ("OpenRouter" if is_or else "Gemini")
-            )
-        )
-        yield tag_error(
-            ErrorCode.KEYS_EXHAUSTED,
-            f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже.",
-        )
-        return
 
     def _pick_transient_fallback_model(
         self,
@@ -1087,7 +1033,7 @@ class ProviderRouter:
                 failed_model,
                 _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
             )
-            if gemini_fallback in _available_models():
+            if gemini_fallback in _runtime_gemini_models():
                 return gemini_fallback
             return None
 
@@ -1101,11 +1047,14 @@ class ProviderRouter:
 
         gemini_failed_model = normalize_gemini_runtime_model(failed_model)
         fallback = _GEMINI_CASCADE.get(gemini_failed_model)
+        if fallback is None:
+            ordered_fallbacks = _ordered_gemini_fallback_models(gemini_failed_model)
+            fallback = ordered_fallbacks[0] if ordered_fallbacks else None
         if fallback:
             if fallback in (GEMINI_GROUNDING_FALLBACK_MODEL,):
                 return fallback
             # Verify the fallback model is actually in our available models list
-            available = [model for model in _available_models() if model in RUNTIME_GEMINI_MODELS]
+            available = _runtime_gemini_models()
             if fallback in available:
                 return fallback
 

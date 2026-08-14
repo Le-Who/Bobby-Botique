@@ -53,7 +53,7 @@ _HIGH_DEBUG = re.compile(
     re.IGNORECASE,
 )
 _HIGH_LONG_FORM_WRITING = re.compile(
-    r"(?:сочинени|сачыненне|эссе|доклад|реферат|курсовая|диплом|essay|report|thesis|dissertation|статью|лонгрид)",
+    r"(?:сочинени|сачыненне|сказк|эссе|доклад|реферат|курсовая|диплом|essay|report|thesis|dissertation|статью|лонгрид)",
     re.IGNORECASE,
 )
 

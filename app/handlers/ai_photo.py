@@ -20,7 +20,6 @@ from app.config import (
 from app.database import ChatState
 from app.handlers.ai_core import (
     _get_ai_response_with_routing,
-    _resolve_ai_request,
     handle_ai_response_error,
 )
 from app.handlers.ai_search import (
@@ -29,16 +28,11 @@ from app.handlers.ai_search import (
 )
 from app.prompt_registry import FORMATTING_RULES_COMPACT, get_registry
 from app.repos.chats import get_user_chat, update_user_chat
-from app.streaming import stream_and_display
 from app.utils.heartbeat import stop_heartbeat
 from app.utils.image_utils import TaggedImage, save_image_as_bytes
-from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_PHOTO, update_stage
 from app.utils.tg_file import get_file_bytes
 from app.utils.vision_intent import classify_vision_intent
-
-# Sentinel returned by _process_ai_vision when error was already displayed to user.
-_VISION_ERROR_HANDLED = object()
 
 # ── Shared helpers (DRY) ─────────────────────────────────────────────────────
 
@@ -162,30 +156,6 @@ def _vision_reply_markup() -> InlineKeyboardMarkup:
     )
 
 
-async def _send_vision_response(
-    placeholder_message: Message,
-    response_text: str | None,
-    streamed: bool,
-    stream_last_msg: Message | None,
-    error_fallback: str = "Не удалось обработать изображение.",
-) -> bool:
-    """Attach action buttons and send/edit the AI vision response.
-
-    Returns:
-        ``True`` if a valid response was sent, ``False`` if fallback error was used.
-    """
-    reply_markup = _vision_reply_markup()
-
-    if response_text and response_text.strip():
-        if not streamed:
-            await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
-        return True
-
-    # Empty/None response — send error fallback
-    await send_long_message(placeholder_message, error_fallback, reply_markup=reply_markup)
-    return False
-
-
 async def _process_ai_vision(
     placeholder_message: Message,
     parts: list,
@@ -193,15 +163,8 @@ async def _process_ai_vision(
     user_id: int | None = None,
     chat_id: int | None = None,
     is_ocr: bool = False,
-) -> tuple[str | None | object, bool, Message | None]:
-    """Shared AI vision processing: resolve model → stream → fallback → error check.
-
-    Returns:
-        Tuple of ``(response_text, streamed, stream_last_msg)``.
-        ``response_text`` is ``_VISION_ERROR_HANDLED`` sentinel if an error was
-        already displayed to the user.  It may be ``None`` or empty string for
-        genuinely empty AI responses — callers must handle that case.
-    """
+):
+    """Generate and deliver one vision response, returning its typed outcome."""
     from app.providers.freetheai_image import FTA_IMAGE_MODELS
 
     if is_ocr:
@@ -219,53 +182,58 @@ async def _process_ai_vision(
             )
             raw_model = default_model
 
-    _key_data, model_used, resolution = await _resolve_ai_request(raw_model)
-
-    if resolution in ("all_exhausted", "decryption_failed"):
-        from app.handlers.chat_logic import classify_resolution
-        result = classify_resolution(resolution, raw_model)
-        try:
-            await placeholder_message.edit_text(result.user_message or "")
-        except Exception as edit_error:
-            logging.error("Could not edit placeholder message: %s", edit_error)
-        return _VISION_ERROR_HANDLED, False, None
-
     history = [{"role": "user", "parts": parts}]
     _vision_t0 = time.monotonic()
 
-    response_text, success, stream_last_msg, _tokens, _was_interrupted, _voice_req = await stream_and_display(
-        placeholder_message,
-        model_name=model_used,
-        history=history,
-        system_instruction=None,
-        thinking_level=chat_state.thinking_level,
-        user_id=user_id,
-        bot=placeholder_message.get_bot(),
-        chat_id=chat_id or 0,
-        reply_markup=_vision_reply_markup(),
+    from app.providers.request_factory import generation_request_from_history
+    from app.providers.stream_types import Workload
+    from app.response_delivery.delivery import (
+        TelegramTarget,
+        get_telegram_response_delivery,
     )
+    from app.response_delivery.outcomes import CompleteDelivery, PartialDelivery
+    from app.response_delivery.presentation import FixedPresentation
 
-    streamed = bool(success and response_text)
-
-    if not streamed:
-        response_text, _ = await _get_ai_response_with_routing(
-            model_used,
-            history,
-            user_id=user_id,
+    request = await generation_request_from_history(
+        models=(raw_model,),
+        history=history,
+        user_id=user_id,
+        chat_id=chat_id,
+        thinking_level=chat_state.thinking_level,
+        workload=Workload.INTERACTIVE,
+        allow_deferred=True,
+    )
+    outcome = await get_telegram_response_delivery().stream(
+        TelegramTarget(
+            placeholder_message=placeholder_message,
+            bot=placeholder_message.get_bot(),
             chat_id=chat_id,
+        ),
+        request,
+        presentation=FixedPresentation(
+            actions=_vision_reply_markup(),
+            recovery_actions=_vision_reply_markup(),
+            failure_actions=_vision_reply_markup(),
+            long_read_title="Анализ изображения",
+        ),
+    )
+    if isinstance(outcome, (CompleteDelivery, PartialDelivery)):
+        model_used = raw_model
+        metadata = (
+            outcome.completion
+            if isinstance(outcome, CompleteDelivery)
+            else outcome.terminal
         )
+        route = getattr(metadata, "route", None)
+        if route is not None:
+            model_used = route.actual_model
 
-    # Check ошибки от роутера — if handled, return sentinel
-    if await handle_ai_response_error(response_text, placeholder_message):
-        return _VISION_ERROR_HANDLED, False, None
+        from app.metrics import metrics_collector as _mc
 
-    # ── Metrics ───────────────────────────────────────────────────
-    from app.metrics import metrics_collector as _mc
+        await _mc.record_api_call("gemini_vision", model_used, user_id=user_id)
+        await _mc.record_request("photo", time.monotonic() - _vision_t0, success=True)
 
-    await _mc.record_api_call("gemini_vision", model_used, user_id=user_id)
-    await _mc.record_request("photo", time.monotonic() - _vision_t0, success=streamed)
-
-    return response_text, streamed, stream_last_msg
+    return outcome
 
 
 # ── Single photo handler ────────────────────────────────────────────────────
@@ -309,7 +277,7 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
         user_id = original_message.from_user.id
         chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
-        response_text, streamed, stream_last_msg = await _process_ai_vision(
+        outcome = await _process_ai_vision(
             placeholder_message,
             parts,
             chat_state,
@@ -318,45 +286,35 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
             is_ocr=is_ocr,
         )
 
-        if response_text is _VISION_ERROR_HANDLED:
-            # Error already displayed to user by _process_ai_vision
+        from app.response_delivery.outcomes import CompleteDelivery, PartialDelivery
+
+        if not isinstance(outcome, (CompleteDelivery, PartialDelivery)):
             return
 
-        sent_ok = await _send_vision_response(
-            placeholder_message,
-            response_text,  # type: ignore[arg-type]
-            streamed,
-            stream_last_msg,
-            error_fallback="Не удалось обработать изображение.",
-        )
+        response_text = outcome.content_text
+        chat_state.history.append({"role": "user", "parts": [formatted_prompt]})
+        chat_state.history.append({"role": "model", "parts": [response_text]})
+        await update_user_chat(user_id, chat_state)
 
-        if sent_ok:
-            # Save context in history
-            chat_state.history.append({"role": "user", "parts": [formatted_prompt]})
-            chat_state.history.append({"role": "model", "parts": [response_text]})
-            await update_user_chat(user_id, chat_state)
+        # ── Store photo description in long-term memory (background) ──
+        _photo_bytes = compressed or img_raw
+        if _photo_bytes and chat_state.ltm_enabled:
+            from app.utils.background_tasks import submit_retryable
 
-            # ── Store photo description in long-term memory (background) ──
-            _photo_bytes = compressed or img_raw
-            if _photo_bytes and chat_state.ltm_enabled:
-                from app.utils.background_tasks import submit_retryable
+            def _bg_photo_ltm():
+                async def _store():
+                    from app.utils.multimodal_processor import process_media_for_memory
 
-                def _bg_photo_ltm():
-                    async def _store():
-                        from app.utils.multimodal_processor import process_media_for_memory
+                    await process_media_for_memory(
+                        _photo_bytes,
+                        user_id,
+                        media_type="image",
+                        telegram_file_id=file_unique_id,
+                    )
 
-                        await process_media_for_memory(
-                            _photo_bytes,
-                            user_id,
-                            media_type="image",
-                            telegram_file_id=file_unique_id,
-                        )
+                return _store()
 
-                    return _store()
-
-                submit_retryable(_bg_photo_ltm, retry=2)
-        else:
-            logging.warning("Empty response from Gemini API for image processing by user %s", user_id)
+            submit_retryable(_bg_photo_ltm, retry=2)
 
     except Exception as e:
         logging.error("Error processing photo: %s", e, exc_info=True)
@@ -516,7 +474,7 @@ async def _handle_media_group_photos(
         user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
         chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
-        response_text, streamed, stream_last_msg = await _process_ai_vision(
+        outcome = await _process_ai_vision(
             placeholder_message,
             parts,
             chat_state,
@@ -525,17 +483,10 @@ async def _handle_media_group_photos(
             is_ocr=is_ocr,
         )
 
-        if response_text is _VISION_ERROR_HANDLED:
-            # Error already displayed to user
-            return
+        from app.response_delivery.outcomes import CompleteDelivery, PartialDelivery
 
-        await _send_vision_response(
-            placeholder_message,
-            response_text,  # type: ignore[arg-type]
-            streamed,
-            stream_last_msg,
-            error_fallback="Не удалось обработать группу изображений.",
-        )
+        if not isinstance(outcome, (CompleteDelivery, PartialDelivery)):
+            return
 
         logging.info("✅ Группа из %s изображений обработана успешно", image_count)
 

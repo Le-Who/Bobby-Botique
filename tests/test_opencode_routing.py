@@ -189,41 +189,50 @@ class TestOpencodeGoProvider:
         assert sent_payload["messages"] == [{"role": "user", "content": "hello"}]
 
     @pytest.mark.asyncio
-    async def test_messages_stream_response_parses_text_deltas(self):
-        p = self._make_provider()
+    async def test_messages_typed_stream_emits_terminal_usage(self):
+        from app.providers.stream_types import (
+            FinishKind,
+            GenerationRequest,
+            PromptRole,
+            PromptTurn,
+            StreamCompleted,
+            TextDelta,
+            TextPart,
+        )
+
+        provider = self._make_provider()
         lines = [
-            "event: message_start",
-            'data: {"type":"message_start","message":{"content":[]}}',
-            "",
-            "event: content_block_start",
-            'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
-            "",
             "event: content_block_delta",
-            'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}',
-            "",
-            "event: content_block_delta",
-            'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}}',
+            'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}',
             "",
             "event: message_delta",
-            'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}',
+            'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}',
             "",
             "event: message_stop",
             'data: {"type":"message_stop"}',
             "",
         ]
-        mock_client = MagicMock()
-        mock_client.stream = MagicMock(return_value=self._FakeStreamResponse(lines))
+        client = MagicMock()
+        client.stream.return_value = self._FakeStreamResponse(lines)
+        request = GenerationRequest(
+            models=("opencode-go/minimax-m2.7",),
+            turns=(PromptTurn(PromptRole.USER, (TextPart("hello"),)),),
+        )
 
-        with patch("app.providers.openrouter._openrouter_http_client", mock_client):
-            chunks: list[str] = []
-            async for chunk in p.stream_response(
-                history=[{"role": "user", "parts": ["hello"]}],
-                model_name="opencode-go/minimax-m2.7",
-                timeout=30.0,
-            ):
-                chunks.append(chunk)
+        with patch("app.providers.openrouter._openrouter_http_client", client):
+            events = [
+                event
+                async for event in provider.stream(
+                    request,
+                    model_name="opencode-go/minimax-m2.7",
+                )
+            ]
 
-        assert "".join(chunks) == "Hello!"
+        assert events[0] == TextDelta("Hello")
+        assert isinstance(events[1], StreamCompleted)
+        assert events[1].finish_reason.kind is FinishKind.STOP
+        assert events[1].usage.completion == 2
+        assert events[1].route.provider.value == "opencode"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -476,18 +485,16 @@ class TestMultimodalGuard:
 
     def test_fallback_values_are_canonical_gemini_models(self):
         """Guard: all Gemini fallback values use only the canonical Gemini chat model list."""
+        from app.config import CURRENT_GEMINI_MODELS
         from app.providers.router import _get_opencode_gemini_fallback
 
-        _CANONICAL_GEMINI = {
-            "gemini-3.5-flash",
-            "gemini-3.1-flash-lite",
-        }
+        canonical_gemini = set(CURRENT_GEMINI_MODELS)
         for opencode_model, gemini_fallback in _get_opencode_gemini_fallback().items():
             # Values are settings.DEFAULT_MODEL etc. — resolved fresh each call
             assert isinstance(gemini_fallback, str)
-            assert gemini_fallback in _CANONICAL_GEMINI, (
+            assert gemini_fallback in canonical_gemini, (
                 f"Fallback for {opencode_model!r} is {gemini_fallback!r}, "
-                f"which is not in the canonical Gemini list: {sorted(_CANONICAL_GEMINI)}"
+                f"which is not in the canonical Gemini list: {sorted(canonical_gemini)}"
             )
 
 

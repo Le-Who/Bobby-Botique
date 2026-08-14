@@ -837,18 +837,6 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
         
     astro_context = get_astro_context(dt)
 
-    # Resolve a Gemini model dynamically
-    from app.agent_use_cases import AgentRequestUseCase
-    use_case = AgentRequestUseCase()
-
-    kd, mdl, _ = await use_case.resolve_ai_request("gemini-3.5-flash")
-    if not kd or not mdl:
-        logging.error("Failed to resolve Gemini key for horoscope intent")
-        return None
-
-    from app.providers.base import get_provider_for_model
-    provider = get_provider_for_model(mdl, kd["api_key"])
-
     logging.info("Generating horoscope using local astrological data")
     system_instruction = _build_horoscope_system_instruction(
         user_text=text,
@@ -858,17 +846,27 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
     )
     prompt = f"Запрос пользователя: {text}"
     try:
-        chunks = []
-        async for chunk in provider.stream_response(  # type: ignore[attr-defined]
+        from app.providers import get_provider_router
+        from app.providers.request_factory import generation_request_from_history
+        from app.providers.stream_types import StreamCompleted, TextDelta, Workload
+
+        request = await generation_request_from_history(
+            models=("gemini-3.5-flash",),
             history=[{"role": "user", "parts": [prompt]}],
-            model_name=mdl,
             system_instruction=system_instruction,
-            thinking_level="off"
-        ):
-            if isinstance(chunk, str):
-                chunks.append(chunk)
+            thinking_level="off",
+            workload=Workload.INTERACTIVE,
+            allow_deferred=False,
+        )
+        chunks: list[str] = []
+        terminal = None
+        async for event in get_provider_router().stream(request):
+            if isinstance(event, TextDelta):
+                chunks.append(event.text)
+            else:
+                terminal = event
         result_text = "".join(chunks).strip()
-        if result_text:
+        if result_text and isinstance(terminal, StreamCompleted):
             logging.info("Gemini direct generation completed successfully")
             return IntentResult(_format_horoscope_response(
                 sign_displays=sign_displays,

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.agent_use_cases import AgentRequestUseCase
+from app.agent_use_cases import AgentRequestUseCase, _gemini_fallback_priority
 
 
 @pytest.fixture
@@ -24,6 +24,19 @@ def mock_settings():
     s.OPENROUTER_RESEARCH_MODEL = "stepfun/step-3.5-flash:free"
     s.OPENROUTER_URL_SELECTION_MODEL = "stepfun/step-3.5-flash:free"
     return s
+
+
+def test_dynamic_gemini_role_model_remains_eligible_for_key_fallback(mock_settings):
+    mock_settings.AVAILABLE_MODELS = ["gemini-3.7-flash"]
+    mock_settings.DEFAULT_MODEL = "gemini-3.7-flash"
+    mock_settings.RESEARCH_MODEL = "gemini-3.7-flash"
+    mock_settings.QNA_MODEL = "gemini-3.7-flash"
+    mock_settings.INLINE_MODEL = "gemini-3.7-flash"
+
+    with patch("app.agent_use_cases.settings", mock_settings):
+        fallbacks = _gemini_fallback_priority("gemini-3.6-flash")
+
+    assert "gemini-3.7-flash" in fallbacks
 
 
 # ── resolve_ai_request ───────────────────────────────────────────────────────

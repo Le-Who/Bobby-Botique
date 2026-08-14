@@ -1,5 +1,6 @@
 import hashlib
 import logging
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -13,6 +14,7 @@ from app.config import (
     get_opencode_keys,
     get_openrouter_keys,
     get_use_openrouter,
+    is_gemini_chat_model_id,
     normalize_gemini_runtime_model,
     settings,
 )
@@ -36,7 +38,7 @@ _freetheai_key_health: dict[str, datetime] = {}
 _FREETHEAI_COOLDOWN = timedelta(seconds=30)
 
 
-def _dedupe_models(models: list[str | None], *, exclude: str | None = None) -> list[str]:
+def _dedupe_models(models: Iterable[str | None], *, exclude: str | None = None) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for model in models:
@@ -51,27 +53,36 @@ def _dedupe_models(models: list[str | None], *, exclude: str | None = None) -> l
 
 
 def _gemini_fallback_priority(preferred_model: str) -> list[str]:
-    """Return Gemini fallback order with 3.5 Flash → 3.1 Flash Lite as the first downgrade."""
+    """Return ordered configured/role fallbacks without a version allowlist."""
     preferred_model = normalize_gemini_runtime_model(preferred_model)
     if preferred_model == GEMINI_GROUNDING_MODEL:
         return [GEMINI_GROUNDING_FALLBACK_MODEL]
     if preferred_model == GEMINI_GROUNDING_FALLBACK_MODEL:
         return []
-    priority: list[str | None] = []
-    if preferred_model == GEMINI_PRIMARY_MODEL:
-        priority.append(GEMINI_ECONOMY_MODEL)
+    chain = list(CURRENT_GEMINI_MODELS)
+    if preferred_model in chain:
+        priority = chain[chain.index(preferred_model) + 1 :]
     else:
-        priority.extend([GEMINI_PRIMARY_MODEL, GEMINI_ECONOMY_MODEL])
-    priority.extend(
-        [
+        priority = [model for model in chain if model != preferred_model]
+    role_models = [
+        model
+        for model in (
             getattr(settings, "RESEARCH_MODEL", None),
             getattr(settings, "DEFAULT_MODEL", None),
             getattr(settings, "QNA_MODEL", None),
             getattr(settings, "INLINE_MODEL", None),
-        ]
-    )
-    current = set(CURRENT_GEMINI_MODELS)
-    return [model for model in _dedupe_models(priority, exclude=preferred_model) if model in current]
+        )
+        if isinstance(model, str)
+    ]
+    configured = getattr(settings, "AVAILABLE_MODELS", [])
+    configured_models = configured if isinstance(configured, list) else []
+    candidates = set(_dedupe_models([*configured_models, *role_models]))
+    priority.extend([*role_models, *configured_models])
+    return [
+        model
+        for model in _dedupe_models(priority, exclude=preferred_model)
+        if model in candidates and is_gemini_chat_model_id(model)
+    ]
 
 
 def suspend_freetheai_key(key_hash: str, cooldown: timedelta | None = None) -> None:

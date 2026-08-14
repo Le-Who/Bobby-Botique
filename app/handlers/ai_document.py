@@ -8,14 +8,9 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.config import settings
 from app.database import ChatState
-from app.handlers.ai_core import (
-    _get_ai_response_with_routing,
-    handle_ai_response_error,
-)
 from app.i18n import t
 from app.metrics import metrics_collector
 from app.utils.heartbeat import stop_heartbeat
-from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_DOCUMENT, update_stage
 
 
@@ -133,88 +128,50 @@ async def _handle_document_question(
 
 Ответь на вопрос пользователя, основываясь на содержимом документа."""
 
-        # Stream via unified ProviderRouter using the same resolved model for
-        # both the streaming path and the non-stream fallback.
-        from app.handlers.ai_core import _resolve_ai_request
-        from app.streaming import stream_and_display
-
-        _, model_used, resolution = await _resolve_ai_request(settings.DEFAULT_MODEL)
-        
-        if resolution in ("all_exhausted", "decryption_failed"):
-            from app.handlers.chat_logic import classify_resolution
-            result = classify_resolution(resolution, settings.DEFAULT_MODEL)
-            try:
-                await placeholder_message.edit_text(result.user_message or "")
-            except Exception as edit_error:
-                logging.error("Could not edit placeholder message: %s", edit_error)
-            return
-
-        stream_model = model_used or chat_state.model or settings.DEFAULT_MODEL
-
         parts = [document_prompt] if document_prompt else []
         history = [{"role": "user", "parts": parts}]
-        reply_markup = _document_reply_markup()
 
-        response_text, success, _stream_last_msg, _tokens, _was_interrupted, _voice_req = await stream_and_display(
-            placeholder_message,
-            model_name=stream_model,
-            history=history,
-            system_instruction=None,
-            thinking_level=chat_state.thinking_level,
-            user_id=user_id,
-            bot=placeholder_message.get_bot(),
-            chat_id=placeholder_message.chat_id,
-            reply_markup=reply_markup,
+        from app.providers.request_factory import generation_request_from_history
+        from app.providers.stream_types import Workload
+        from app.response_delivery.delivery import (
+            TelegramTarget,
+            get_telegram_response_delivery,
         )
+        from app.response_delivery.outcomes import CompleteDelivery, PartialDelivery
+        from app.response_delivery.presentation import FixedPresentation
 
-        streamed = bool(success and response_text)
-
-        if not streamed:
-            response_text, _ = await _get_ai_response_with_routing(
-                stream_model,
-                history,
-                user_id=user_id,
-                chat_id=(placeholder_message.chat.id if placeholder_message.chat else None),
+        request = await generation_request_from_history(
+            models=(settings.DEFAULT_MODEL,),
+            history=history,
+            user_id=user_id,
+            chat_id=placeholder_message.chat_id,
+            thinking_level=chat_state.thinking_level,
+            workload=Workload.INTERACTIVE,
+            allow_deferred=True,
+        )
+        outcome = await get_telegram_response_delivery().stream(
+            TelegramTarget(
+                placeholder_message=placeholder_message,
+                bot=placeholder_message.get_bot(),
+                chat_id=placeholder_message.chat_id,
+            ),
+            request,
+            presentation=FixedPresentation(
+                actions=_document_reply_markup(),
+                long_read_title=latest_document["filename"] or "Ответ по документу",
+            ),
+        )
+        if isinstance(outcome, (CompleteDelivery, PartialDelivery)):
+            model_used = settings.DEFAULT_MODEL
+            metadata = (
+                outcome.completion
+                if isinstance(outcome, CompleteDelivery)
+                else outcome.terminal
             )
-
-        if response_text:
-            # Check, является ли response ошибкой
-            from app.errors import build_retry_and_roles_keyboard
-
-            # Используем универсальную функцию обработки ошибок
-            if await handle_ai_response_error(response_text, placeholder_message):
-                return  # Error обработана, выходим
-            else:
-                # Send response с buttonми (update existing if streamed, otherwise send new)
-                if not streamed:
-                    await send_long_message(
-                        placeholder_message,
-                        response_text,
-                        reply_markup=reply_markup,
-                    )
-
-                await metrics_collector.record_api_call("document_question", settings.DEFAULT_MODEL)
-        else:
-            try:
-                from app.errors import build_retry_and_roles_keyboard
-
-                await placeholder_message.edit_text(
-                    "❌ Не удалось получить ответ от AI.",
-                    reply_markup=build_retry_and_roles_keyboard(),
-                )
-            except Exception as edit_error:
-                logging.error("Could not edit placeholder message: %s", edit_error)
-                # Fallback на new message
-                try:
-                    from app.errors import build_retry_and_roles_keyboard
-
-                    await placeholder_message.reply_text(
-                        "❌ Не удалось получить ответ от AI.",
-                        reply_markup=build_retry_and_roles_keyboard(),
-                    )
-                except Exception:
-                    pass
-
+            route = getattr(metadata, "route", None)
+            if route is not None:
+                model_used = route.actual_model
+            await metrics_collector.record_api_call("document_question", model_used)
     except Exception as e:
         logging.error("Error processing document question: %s", e, exc_info=True)
         try:

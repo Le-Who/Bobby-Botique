@@ -244,58 +244,73 @@ class TestOpencodeGetResponseCascade:
         assert tokens is None
 
 
-# ── OC-02: stream_response Opencode cascade ───────────────────────────────────
+# ── OC-02: typed Opencode stream cascade ─────────────────────────────────────
 
 
 class TestOpencodeStreamCascade:
     @pytest.mark.asyncio
     async def test_opencode_stream_exhaustion_cascades_to_gemini(self):
-        """stream_response: Opencode key exhaustion triggers Gemini stream cascade."""
+        """Typed stream routes exhausted Opencode directly to Gemini."""
+        from app.providers.stream_types import (
+            FinishReason,
+            GenerationRequest,
+            GroundingReport,
+            PromptRole,
+            PromptTurn,
+            ProviderKind,
+            RouteUsed,
+            StreamCompleted,
+            TextDelta,
+            TextPart,
+            TokenUsage,
+        )
+
         fake_status = FakeKeyStatusManager()
+        use_case = _make_use_case(
+            [
+                (None, None, "all_exhausted"),
+                ({"api_key": "gemini-key", "key_hash": "gemini-hash"}, "gemini-3.5-flash", None),
+                (None, None, "all_exhausted"),
+            ],
+            [],
+        )
+        mock_settings = MagicMock(
+            DEFAULT_MODEL="gemini-3.5-flash",
+            RESEARCH_MODEL="gemini-3.5-flash",
+            QNA_MODEL="gemini-3.1-flash-lite",
+            AVAILABLE_MODELS=["gemini-3.5-flash", "gemini-3.1-flash-lite"],
+        )
 
-        # Simulate: first call returns exhausted for Opencode
-        # The cascade calls get_response recursively with gemini model
-        # We patch stream_response to intercept the recursive call
+        class GeminiProvider:
+            provider_name = "gemini"
 
-        resolve_effects = [
-            (None, None, "all_exhausted"),  # 1st race slot — opencode exhausted
-        ]
-        use_case = _make_use_case(resolve_effects, [])
+            async def stream(self, request, *, model_name):
+                yield TextDelta("chunk from gemini")
+                yield StreamCompleted(
+                    finish_reason=FinishReason.from_raw("STOP"),
+                    usage=TokenUsage(total=4),
+                    grounding=GroundingReport(),
+                    route=RouteUsed(
+                        provider=ProviderKind.GEMINI,
+                        requested_model=request.models[0],
+                        actual_model=model_name,
+                    ),
+                )
 
-        mock_settings = MagicMock()
-        mock_settings.DEFAULT_MODEL = "gemini-3.5-flash"
-        mock_settings.RESEARCH_MODEL = "gemini-3.5-flash"
-        mock_settings.QNA_MODEL = "gemini-3.1-flash-lite"
-        mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
-
-        # Capture which models are streamed
-        streamed_models: list[str] = []
-
-        original_stream_response = ProviderRouter.stream_response
-
-        async def _fake_stream_gemini(self_inner, preferred_model, *args, **kwargs):
-            if kwargs.get("_is_fallback"):
-                streamed_models.append(preferred_model)
-                yield "chunk from gemini"
-            else:
-                async for chunk in original_stream_response(self_inner, preferred_model, *args, **kwargs):
-                    yield chunk
-
+        request = GenerationRequest(
+            models=("opencode-go/kimi-k2.5",),
+            turns=(PromptTurn(PromptRole.USER, (TextPart("stream test"),)),),
+            allow_deferred=False,
+        )
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=use_case),
             patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
             patch("app.providers.router.settings", mock_settings),
-            patch.object(ProviderRouter, "stream_response", _fake_stream_gemini),
+            patch("app.providers.base.get_provider_for_model", return_value=GeminiProvider()),
         ):
-            router = ProviderRouter()
-            chunks = []
-            async for chunk in router.stream_response(
-                "opencode-go/kimi-k2.5",
-                [{"role": "user", "parts": ["stream test"]}],
-                max_key_retries=1,
-            ):
-                chunks.append(chunk)
+            events = [event async for event in ProviderRouter().stream(request)]
 
-        # The model streamed on the cascade must be a Gemini model (not opencode)
-        # Even if we couldn't fully intercept — the important check is no crash
-        assert use_case.resolve_ai_request.call_count >= 1
+        assert events[0] == TextDelta("chunk from gemini")
+        assert isinstance(events[1], StreamCompleted)
+        assert events[1].route.actual_model == "gemini-3.5-flash"
+        assert "gemini-hash" in fake_status.successes

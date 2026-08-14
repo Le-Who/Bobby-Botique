@@ -11,6 +11,12 @@ import telegram
 
 from app.database import db_manager
 from app.handlers.agent import process_long_request
+from app.response_delivery.outcomes import CompleteDelivery
+from app.response_delivery.renderer import (
+    DeliveryKind,
+    DeliveryReceipt,
+    TelegramMessageRef,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -37,8 +43,7 @@ def mock_external_network():
     """Mock external APIs (AI HTTP boundaries) to prevent real billing/network calls."""
     with (
         patch("app.handlers.ai_chat._resolve_ai_request", new_callable=AsyncMock) as mock_resolve,
-        patch("app.streaming.stream_and_display", new_callable=AsyncMock) as mock_get_answer,
-        patch("app.handlers.ai_chat.send_long_message", new_callable=AsyncMock) as mock_send_long,
+        patch("app.response_delivery.delivery.get_telegram_response_delivery") as get_delivery,
     ):
         # Default mock successful resolutions
         mock_resolve.return_value = (
@@ -46,19 +51,25 @@ def mock_external_network():
             "gemini-2.5-flash",
             "direct",
         )
-        mock_get_answer.return_value = (
-            "Integration answer from bot",
-            True,
-            MagicMock(),
-            0,
-            False,
-            False,
+        delivery = MagicMock()
+        delivery.stream = AsyncMock(
+            return_value=CompleteDelivery(
+                content_text="Integration answer from bot",
+                displayed_text="Integration answer from bot",
+                completion=None,
+                voice_requested=False,
+                receipt=DeliveryReceipt(
+                    kind=DeliveryKind.MESSAGE,
+                    message_ids=(123,),
+                    final_message=TelegramMessageRef(chat_id=9100100, message_id=123),
+                ),
+            )
         )
+        get_delivery.return_value = delivery
 
         yield {
             "resolve": mock_resolve,
-            "get_answer": mock_get_answer,
-            "send_long": mock_send_long,
+            "delivery": delivery,
         }
 
 

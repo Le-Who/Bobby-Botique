@@ -13,16 +13,12 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.config import settings
 from app.database import ChatState
-from app.handlers.ai_core import (
-    _resolve_ai_request,
-    handle_ai_response_error,
-)
+from app.handlers.ai_core import _resolve_ai_request
 from app.handlers.chat_logic import classify_resolution
 from app.i18n import detect_language, t
 from app.prompt_registry import get_registry
 from app.repos.chats import update_user_chat
 from app.utils.formatting import TelegramFormatter
-from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_CHAT, update_stage
 from app.utils.ux_improvements import (
     make_feedback_buttons,
@@ -303,6 +299,7 @@ async def _handle_regular_chat(
             break
 
     # Assemble context within token budget
+    history_before_request = list(chat_state.history)
     assembled = assembler.assemble(
         history=chat_state.history,
         user_message=user_message,
@@ -388,27 +385,18 @@ async def _handle_regular_chat(
                 callback=_store_llm_summary,
             )
 
-    # ── Unified Streaming ────────────────────────────────────────────
-    response_text = None
-    new_token_count = 0
-    streamed = False
-    stream_last_msg = None
+    # ── Typed response delivery ───────────────────────────────────────────
     _stream_t0 = time.monotonic()
+    _footer_text = (
+        t(
+            "ltm.memories_injected",
+            detect_language(user_message),
+            count=str(_memories_injected),
+        )
+        if _memories_injected > 0
+        else ""
+    )
 
-    # ── Build memory footer if applicable ─────────────────────────────────
-    _footer_text: str | None = None
-    if _memories_injected > 0:
-        _footer_text = t("ltm.memories_injected", detect_language(user_message), count=str(_memories_injected))
-
-    # We defer stopping the heartbeat until the VERY FIRST chunk of text
-    # arrives from the AI provider. This ensures the animation keeps ticking
-    # if the provider hits rate limits (503) and takes ~45s to rotate keys.
-    def _stop_placeholder_animation() -> None:
-        from app.utils.heartbeat import stop_heartbeat
-
-        stop_heartbeat(placeholder_message.message_id)
-
-    # ── Resolve thinking level (adaptive or user-configured) ────────────
     effective_thinking_level = chat_state.thinking_level
     if _setting("ADAPTIVE_THINKING_ENABLED", True):
         from app.thinking_classifier import resolve_thinking_level
@@ -420,10 +408,6 @@ async def _handle_regular_chat(
             model=model_used,
         )
 
-    from app.streaming import stream_and_display
-
-    # ── UX: set 🔍 reaction on the *user's* message while bot processes ────
-    # placeholder_message.reply_to_message is the original user message.
     _user_msg_id: int | None = None
     _bot = placeholder_message.get_bot()
     _chat_id = placeholder_message.chat_id
@@ -431,209 +415,174 @@ async def _handle_regular_chat(
         _user_msg_id = placeholder_message.reply_to_message.message_id
         await set_thinking_reaction(_bot, _chat_id, _user_msg_id)
 
-    def _stream_post_processor(full_text: str) -> tuple[str, object | None]:
-        from app.utils.response_tags import parse_response_tags
+    from app.errors import build_retry_and_roles_keyboard
+    from app.providers.request_factory import generation_request_from_history
+    from app.providers.stream_types import StreamCompleted, Workload
+    from app.response_delivery.delivery import (
+        TelegramTarget,
+        get_telegram_response_delivery,
+    )
+    from app.response_delivery.outcomes import (
+        CompleteDelivery,
+        PartialDelivery,
+    )
+    from app.response_delivery.presentation import ChatPresentation
 
-        _clean, _intent, _sugg = parse_response_tags(full_text)
-        reply_markup = _build_chat_response_markup(
-            _clean,
-            intent=_intent,
-            suggestions=_sugg,
-            lang=detect_language(user_message),
+    request = await generation_request_from_history(
+        models=(model_used,),
+        history=chat_state.history,
+        system_instruction=system_instruction,
+        user_id=user_id,
+        chat_id=_chat_id,
+        thinking_level=effective_thinking_level,
+        workload=Workload.INTERACTIVE,
+        allow_deferred=True,
+    )
+    lang = detect_language(user_message)
+
+    def _actions(
+        content: str,
+        intent: str | None,
+        suggestions: list[dict[str, str]],
+    ) -> InlineKeyboardMarkup:
+        return _build_chat_response_markup(
+            content,
+            intent=intent,
+            suggestions=suggestions,
+            lang=lang,
             branch_id=chat_state.branch_id,
             is_deep_dive=chat_state.is_deep_dive,
             is_forward_batch=is_forward_batch,
             memories_injected=_memories_injected,
             graph_triples_count=_graph_triples_count,
         )
-        return _clean, reply_markup
 
     try:
-        (
-            response_text,
-            success,
-            stream_last_msg,
-            actual_tokens,
-            was_interrupted,
-            voice_requested,
-        ) = await stream_and_display(
-            placeholder_message,
-            model_name=model_used,
-            history=chat_state.history,
-            system_instruction=system_instruction,
-            thinking_level=effective_thinking_level,
-            user_id=user_id,
-            bot=_bot,
-            chat_id=_chat_id,
-            footer_text=_footer_text,
-            yield_hook=_stop_placeholder_animation,
-            post_processor=_stream_post_processor,
-            interrupted_reply_markup=_build_interrupted_reply_markup(detect_language(user_message)),
+        outcome = await get_telegram_response_delivery().stream(
+            TelegramTarget(
+                placeholder_message=placeholder_message,
+                bot=_bot,
+                chat_id=_chat_id,
+            ),
+            request,
+            presentation=ChatPresentation(
+                action_builder=_actions,
+                recovery_actions=_build_interrupted_reply_markup(lang),
+                failure_actions=build_retry_and_roles_keyboard(),
+                footer=_footer_text,
+            ),
         )
     finally:
-        # Safety net: stop heartbeat if stream failed completely before yielding
-        _stop_placeholder_animation()
+        # The first visible text stops the heartbeat inside delivery.  This is
+        # the failure/cancellation safety net for streams that yield no text.
+        from app.utils.heartbeat import stop_heartbeat
 
-    # ── Metrics: record every chat LLM call ────────────────────────────────
+        stop_heartbeat(placeholder_message.message_id)
+
+    terminal = (
+        outcome.completion
+        if isinstance(outcome, CompleteDelivery)
+        else outcome.terminal
+        if isinstance(outcome, PartialDelivery)
+        else None
+    )
+    route = getattr(terminal, "route", None)
+    actual_model = route.actual_model if route is not None else model_used
 
     from app.metrics import metrics_collector as _mc
     from app.providers.base import is_freetheai_model, is_opencode_model, is_openrouter_model
 
     _chat_provider = (
         "opencode_chat"
-        if is_opencode_model(model_used or "")
+        if is_opencode_model(actual_model or "")
         else "freetheai_chat"
-        if is_freetheai_model(model_used or "")
+        if is_freetheai_model(actual_model or "")
         else "openrouter_chat"
-        if is_openrouter_model(model_used or "")
+        if is_openrouter_model(actual_model or "")
         else "gemini_chat"
     )
-    await _mc.record_api_call(_chat_provider, model_used, user_id=user_id)
-    await _mc.record_request("chat", time.monotonic() - _stream_t0, success=bool(success and response_text))
+    response_text = (
+        outcome.content_text
+        if isinstance(outcome, (CompleteDelivery, PartialDelivery))
+        else ""
+    )
+    await _mc.record_api_call(_chat_provider, actual_model, user_id=user_id)
+    await _mc.record_request(
+        "chat",
+        time.monotonic() - _stream_t0,
+        success=bool(response_text),
+    )
 
-    if success and response_text:
-        streamed = True
-        # Prefer actual token count from provider; fall back to heuristic estimate
-        if actual_tokens > 0:
-            new_token_count = actual_tokens
-        else:
-            from app.prompt_registry import estimate_tokens_cyrillic
-
-            new_token_count = estimate_tokens_cyrillic(response_text)
-
-    if response_text:
-        # Check if response is an error
-        from app.errors import build_retry_and_roles_keyboard
-
-        async def cleanup_on_error() -> None:
-            chat_state.history.pop()
-            await update_user_chat(user_id, chat_state)
-
-        if await handle_ai_response_error(
-            response_text, stream_last_msg or placeholder_message, on_error_callback=cleanup_on_error
-        ):
-            return
-        else:
-            if was_interrupted:
-                # Interrupted stream: set ⚠️ reaction + show recovery keyboard
-                if _user_msg_id:
-                    await set_error_reaction(_bot, _chat_id, _user_msg_id)
-            else:
-                if not streamed:
-                    from app.utils.response_tags import parse_response_tags
-
-                    response_text, intent, suggestions = parse_response_tags(response_text)
-                    reply_markup = _build_chat_response_markup(
-                        response_text,
-                        intent=intent,
-                        suggestions=suggestions,
-                        lang=detect_language(user_message),
-                        branch_id=chat_state.branch_id,
-                        is_deep_dive=chat_state.is_deep_dive,
-                        is_forward_batch=is_forward_batch,
-                        memories_injected=_memories_injected,
-                        graph_triples_count=_graph_triples_count,
-                    )
-
-            if not streamed:
-                # Non-streaming: send_long_message as before
-                try:
-                    await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
-                except Exception as send_err:
-                    logging.warning("send_long_message failed, fallback to reply_text: %s", send_err)
-                    try:
-                        formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
-                        await placeholder_message.reply_text(
-                            formatted_text,
-                            parse_mode=parse_mode,
-                            reply_markup=reply_markup,
-                        )
-                    except Exception:
-                        await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
-            # ── UX: set ⚡ reaction on user's message after successful response ──
-            if _user_msg_id and not was_interrupted:
-                await set_done_reaction(_bot, _chat_id, _user_msg_id)
-
-            # NOTE: Feedback is now handled via inline buttons (make_feedback_buttons)
-            # appended to reply_markup above. No need for set_feedback_reactions().
-            # The old dual-reaction approach violated Bot API 1-reaction limit.
-
-            # ── Voice reply (fire-and-forget background task) ────────────
-            # Fired BEFORE state save to start TTS generation ASAP.
-            # Triggers from: (a) explicit param (voice message source) OR
-            # (b) LLM-detected intent ([VOICE] tag in response).
-            if reply_with_voice or voice_requested:
-                from app.voice_engine import fire_voice_reply
-                from app.voice_intent import build_voice_source_key
-
-                target_message = stream_last_msg or placeholder_message
-                await fire_voice_reply(
-                    bot=_bot,
-                    user_id=user_id,
-                    chat_id=_chat_id,
-                    reply_to_message_id=target_message.message_id,
-                    response_text=response_text,
-                    voice=chat_state.voice_id or "Aoede",
-                    tts_temperature=chat_state.tts_temperature,
-                    source_key=build_voice_source_key("chat_tts", _chat_id, target_message.message_id),
-                )
-
-            # Strip all LLM hidden tags from response before saving to history.
-            # Tags: [VOICE], [INTENT:xxx], [SUGGESTIONS: ...]
-            from app.utils.response_tags import parse_response_tags
-
-            clean_response = response_text
-            if voice_requested and clean_response.startswith("[VOICE]"):
-                clean_response = clean_response[len("[VOICE]") :].lstrip()
-            # Strip intent + suggestion tags
-            clean_response, _, _ = parse_response_tags(clean_response)
-
-            chat_state.history.append({"role": "model", "parts": [clean_response]})
-            chat_state.token_count = new_token_count
-            await update_user_chat(user_id, chat_state)
-
-            _store_memory_in_background(user_id, user_message)
-
-            # ── Model suggestion (non-intrusive hint) ────────────────────
-            try:
-                from app.model_selector import select_model
-
-                suggestion = select_model(
-                    user_message,
-                    current_model=model_used,
-                )
-                if suggestion and suggestion.confidence >= 0.6:
-                    hint_keyboard = InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    t("btn.try_model", detect_language(user_message), model=suggestion.model),
-                                    callback_data=f"switch_model:{suggestion.model}",
-                                )
-                            ],
-                        ]
-                    )
-                    hint_text = f"💡 _{suggestion.reason}_"
-                    fmt_text, fmt_pm = TelegramFormatter.format_text(hint_text)
-                    await placeholder_message.reply_text(
-                        fmt_text,
-                        parse_mode=fmt_pm,
-                        reply_markup=hint_keyboard,
-                    )
-            except Exception:
-                pass  # Non-critical
-    else:
-        chat_state.history.pop()
+    if not response_text:
+        chat_state.history = history_before_request
         await update_user_chat(user_id, chat_state)
-        try:
-            from app.errors import build_retry_and_roles_keyboard
+        if _user_msg_id:
+            await set_error_reaction(_bot, _chat_id, _user_msg_id)
+        return
 
-            await placeholder_message.edit_text(
-                t("error.empty_response", detect_language(user_message)),
-                reply_markup=build_retry_and_roles_keyboard(),
+    if _user_msg_id:
+        if isinstance(outcome, PartialDelivery):
+            await set_error_reaction(_bot, _chat_id, _user_msg_id)
+        else:
+            await set_done_reaction(_bot, _chat_id, _user_msg_id)
+
+    if reply_with_voice or outcome.voice_requested:
+        from app.voice_engine import fire_voice_reply
+        from app.voice_intent import build_voice_source_key
+
+        final_ref = outcome.receipt.final_message
+        await fire_voice_reply(
+            bot=_bot,
+            user_id=user_id,
+            chat_id=_chat_id,
+            reply_to_message_id=final_ref.message_id,
+            response_text=response_text,
+            voice=chat_state.voice_id or "Aoede",
+            tts_temperature=chat_state.tts_temperature,
+            source_key=build_voice_source_key(
+                "chat_tts", _chat_id, final_ref.message_id
+            ),
+        )
+
+    usage = terminal.usage if isinstance(terminal, StreamCompleted) else None
+    if usage is not None and usage.total is not None:
+        new_token_count = usage.total
+    else:
+        from app.prompt_registry import estimate_tokens_cyrillic
+
+        new_token_count = estimate_tokens_cyrillic(response_text)
+
+    chat_state.history.append({"role": "model", "parts": [response_text]})
+    chat_state.token_count = new_token_count
+    await update_user_chat(user_id, chat_state)
+
+    _store_memory_in_background(user_id, user_message)
+
+    # ── Model suggestion (non-intrusive hint) ────────────────────────────
+    try:
+        from app.model_selector import select_model
+
+        suggestion = select_model(user_message, current_model=actual_model)
+        if suggestion and suggestion.confidence >= 0.6:
+            hint_keyboard = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            t("btn.try_model", lang, model=suggestion.model),
+                            callback_data=f"switch_model:{suggestion.model}",
+                        )
+                    ],
+                ]
             )
-        except Exception as edit_error:
-            logging.error("Could not edit placeholder message: %s", edit_error)
+            hint_text = f"💡 _{suggestion.reason}_"
+            fmt_text, fmt_pm = TelegramFormatter.format_text(hint_text)
+            await placeholder_message.reply_text(
+                fmt_text,
+                parse_mode=fmt_pm,
+                reply_markup=hint_keyboard,
+            )
+    except Exception:
+        pass  # Non-critical
 
 
 async def _handle_lyria_audio(

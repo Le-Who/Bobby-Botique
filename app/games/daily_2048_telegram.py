@@ -91,12 +91,27 @@ async def render_result_body(user_id: int, puzzle_date: date) -> tuple[str, Inli
 
 
 async def _edit_prompt_to_result(bot, prompt: dict[str, Any], text: str, keyboard: InlineKeyboardMarkup) -> bool:
+    cover = await _get_cover_photo()
+    if cover is None:
+        try:
+            await bot.edit_message_text(
+                chat_id=prompt["chat_id"],
+                message_id=prompt["message_id"],
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+                disable_web_page_preview=True,
+            )
+            return True
+        except TelegramError:
+            return False
+
     try:
         await bot.edit_message_media(
             chat_id=prompt["chat_id"],
             message_id=prompt["message_id"],
             media=InputMediaPhoto(
-                media=await _get_cover_photo(),
+                media=cover,
                 caption=text,
                 parse_mode=ParseMode.HTML,
             ),
@@ -126,18 +141,20 @@ async def _edit_prompt_to_result(bot, prompt: dict[str, Any], text: str, keyboar
 
 
 async def _send_result_photo(bot, user_id: int, text: str, keyboard: InlineKeyboardMarkup) -> None:
-    try:
-        message = await bot.send_photo(
-            chat_id=user_id,
-            photo=await _get_cover_photo(),
-            caption=text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=keyboard,
-        )
-        await _remember_cover_file_id(message)
-        return
-    except (OSError, TelegramError):
-        pass
+    cover = await _get_cover_photo()
+    if cover is not None:
+        try:
+            message = await bot.send_photo(
+                chat_id=user_id,
+                photo=cover,
+                caption=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+            await _remember_cover_file_id(message)
+            return
+        except (OSError, TelegramError):
+            pass
 
     await bot.send_message(
         chat_id=user_id,

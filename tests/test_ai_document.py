@@ -6,6 +6,42 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import app.config as config
+from app.errors import ErrorCode
+from app.providers.stream_types import (
+    FinishReason,
+    GroundingReport,
+    ProviderKind,
+    RouteUsed,
+    StreamCompleted,
+    TokenUsage,
+)
+from app.response_delivery.outcomes import CompleteDelivery, FailedDelivery
+from app.response_delivery.renderer import (
+    DeliveryKind,
+    DeliveryReceipt,
+    TelegramMessageRef,
+)
+
+
+def _receipt() -> DeliveryReceipt:
+    return DeliveryReceipt(
+        kind=DeliveryKind.MESSAGE,
+        message_ids=(1,),
+        final_message=TelegramMessageRef(chat_id=456, message_id=1),
+    )
+
+
+def _completion(actual_model: str = "gemini-3.1-flash-lite") -> StreamCompleted:
+    return StreamCompleted(
+        finish_reason=FinishReason.from_raw("STOP"),
+        usage=TokenUsage(total=10),
+        grounding=GroundingReport(),
+        route=RouteUsed(
+            provider=ProviderKind.GEMINI,
+            requested_model="gemini-3.1-flash-lite",
+            actual_model=actual_model,
+        ),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -25,6 +61,7 @@ def document_test_settings(monkeypatch) -> SimpleNamespace:
     )
     monkeypatch.setattr(config, "settings", settings, raising=False)
     monkeypatch.setattr(config.config_manager, "_settings", settings, raising=False)
+    monkeypatch.setattr("app.handlers.ai_document.settings", settings)
     return settings
 
 
@@ -33,7 +70,9 @@ def make_placeholder():
     msg.edit_text = AsyncMock()
     msg.reply_text = AsyncMock()
     msg.chat.id = 456
+    msg.chat_id = 456
     msg.from_user.id = 123
+    msg.get_bot.return_value = MagicMock()
     return msg
 
 
@@ -54,11 +93,19 @@ def make_chat_state():
 
 @pytest.mark.asyncio
 async def test_document_question_success():
-    """Successfully answers a question about an uploaded document."""
+    """Successfully answers through the typed response-delivery boundary."""
     placeholder = make_placeholder()
     chat_state = make_chat_state()
-    stream_message = MagicMock()
-    stream_message.edit_reply_markup = AsyncMock()
+    delivery = MagicMock()
+    delivery.stream = AsyncMock(
+        return_value=CompleteDelivery(
+            content_text="Python is great!",
+            displayed_text="Python is great!",
+            completion=_completion(),
+            voice_requested=False,
+            receipt=_receipt(),
+        )
+    )
 
     with (
         patch(
@@ -73,26 +120,9 @@ async def test_document_question_success():
         ),
         patch("app.handlers.ai_document.update_stage", new_callable=AsyncMock),
         patch(
-            "app.streaming.stream_and_display",
-            new_callable=AsyncMock,
-            return_value=("Python is great!", True, stream_message, 0, False, False),
-        ) as mock_stream,
-        patch(
-            "app.handlers.ai_core._resolve_ai_request",
-            new_callable=AsyncMock,
-            return_value=({"key": "val"}, "gemini-3.1-flash-lite", None),
+            "app.response_delivery.delivery.get_telegram_response_delivery",
+            return_value=delivery,
         ),
-        patch(
-            "app.handlers.ai_document._get_ai_response_with_routing",
-            new_callable=AsyncMock,
-            return_value=("Python is great!", 10),
-        ),
-        patch(
-            "app.handlers.ai_document.handle_ai_response_error",
-            new_callable=AsyncMock,
-            return_value=False,
-        ),
-        patch("app.handlers.ai_document.send_long_message", new_callable=AsyncMock) as _mock_send,
         patch("app.handlers.ai_document.metrics_collector") as mock_metrics,
     ):
         mock_metrics.record_api_call = AsyncMock()
@@ -101,7 +131,9 @@ async def test_document_question_success():
 
         await _handle_document_question(placeholder, 123, "What is Python?", chat_state)
 
-    reply_markup = mock_stream.await_args.kwargs.get("reply_markup")
+    request = delivery.stream.await_args.args[1]
+    assert request.models == ("gemini-3.1-flash-lite",)
+    reply_markup = delivery.stream.await_args.kwargs["presentation"].actions
     assert reply_markup is not None
     labels = [button.text for row in reply_markup.inline_keyboard for button in row]
     assert labels == [
@@ -111,7 +143,9 @@ async def test_document_question_success():
         "🎭 Выбрать роль ИИ",
         "✨ Начать новую тему",
     ]
-    stream_message.edit_reply_markup.assert_not_awaited()
+    mock_metrics.record_api_call.assert_awaited_once_with(
+        "document_question", "gemini-3.1-flash-lite"
+    )
 
 
 # ── No documents uploaded ─────────────────────────────────────────────────────
@@ -174,9 +208,18 @@ async def test_document_question_content_missing():
 
 @pytest.mark.asyncio
 async def test_document_question_empty_ai_response():
-    """Shows error when AI returns empty response."""
+    """Does not render a second error after typed delivery handled it."""
     placeholder = make_placeholder()
     chat_state = make_chat_state()
+
+    delivery = MagicMock()
+    delivery.stream = AsyncMock(
+        return_value=FailedDelivery(
+            error_code=ErrorCode.EMPTY_RESPONSE,
+            displayed_text="Пустой ответ",
+            receipt=_receipt(),
+        )
+    )
 
     with (
         patch(
@@ -191,35 +234,34 @@ async def test_document_question_empty_ai_response():
         ),
         patch("app.handlers.ai_document.update_stage", new_callable=AsyncMock),
         patch(
-            "app.streaming.stream_and_display",
-            new_callable=AsyncMock,
-            return_value=("", False, AsyncMock(), 0, False, False),
-        ),
-        patch(
-            "app.handlers.ai_core._resolve_ai_request",
-            new_callable=AsyncMock,
-            return_value=({"key": "val"}, "gemini-3.1-flash-lite", None),
-        ),
-        patch(
-            "app.handlers.ai_document._get_ai_response_with_routing",
-            new_callable=AsyncMock,
-            return_value=(None, 0),
+            "app.response_delivery.delivery.get_telegram_response_delivery",
+            return_value=delivery,
         ),
     ):
         from app.handlers.ai_document import _handle_document_question
 
         await _handle_document_question(placeholder, 123, "Question", chat_state)
 
-    placeholder.edit_text.assert_awaited()
-    text = placeholder.edit_text.call_args[0][0]
-    assert "не удалось" in text.lower() or "ответ" in text.lower()
+    delivery.stream.assert_awaited_once()
+    placeholder.edit_text.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_document_question_fallback_reuses_resolved_stream_model():
-    """Non-stream fallback must reuse the resolved model instead of resetting to DEFAULT_MODEL."""
+async def test_document_question_records_actual_routed_model():
+    """Metrics use the exact model reported by the typed route terminal."""
     placeholder = make_placeholder()
     chat_state = make_chat_state()
+
+    delivery = MagicMock()
+    delivery.stream = AsyncMock(
+        return_value=CompleteDelivery(
+            content_text="Fallback answer",
+            displayed_text="Fallback answer",
+            completion=_completion("opencode-go/qwen3.5-plus"),
+            voice_requested=False,
+            receipt=_receipt(),
+        )
+    )
 
     with (
         patch(
@@ -234,26 +276,9 @@ async def test_document_question_fallback_reuses_resolved_stream_model():
         ),
         patch("app.handlers.ai_document.update_stage", new_callable=AsyncMock),
         patch(
-            "app.streaming.stream_and_display",
-            new_callable=AsyncMock,
-            return_value=("", False, AsyncMock(), 0, False, False),
+            "app.response_delivery.delivery.get_telegram_response_delivery",
+            return_value=delivery,
         ),
-        patch(
-            "app.handlers.ai_core._resolve_ai_request",
-            new_callable=AsyncMock,
-            return_value=({"key": "val"}, "opencode-go/qwen3.5-plus", None),
-        ),
-        patch(
-            "app.handlers.ai_document._get_ai_response_with_routing",
-            new_callable=AsyncMock,
-            return_value=("Fallback answer", 10),
-        ) as mock_fallback,
-        patch(
-            "app.handlers.ai_document.handle_ai_response_error",
-            new_callable=AsyncMock,
-            return_value=False,
-        ),
-        patch("app.handlers.ai_document.send_long_message", new_callable=AsyncMock),
         patch("app.handlers.ai_document.metrics_collector") as mock_metrics,
     ):
         mock_metrics.record_api_call = AsyncMock()
@@ -262,7 +287,9 @@ async def test_document_question_fallback_reuses_resolved_stream_model():
 
         await _handle_document_question(placeholder, 123, "Question", chat_state)
 
-    assert mock_fallback.await_args.args[0] == "opencode-go/qwen3.5-plus"
+    mock_metrics.record_api_call.assert_awaited_once_with(
+        "document_question", "opencode-go/qwen3.5-plus"
+    )
 
 
 # ── Exception during processing ───────────────────────────────────────────────

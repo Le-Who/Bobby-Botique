@@ -99,38 +99,39 @@ async def handle_deferred_ai_response(**kwargs) -> dict:
     except Exception:
         await asyncio.sleep(15.0)
 
-    from app.providers import get_provider_router
+    from app.providers.request_factory import generation_request_from_history
+    from app.providers.stream_types import Workload
+    from app.response_delivery.delivery import (
+        TelegramTarget,
+        get_telegram_response_delivery,
+    )
+    from app.response_delivery.outcomes import CompleteDelivery, PartialDelivery
+    from app.response_delivery.presentation import FixedPresentation
 
-    router = get_provider_router()
-    chunks: list[str] = []
-
-    async for chunk in router.stream_response(
-        preferred_model=model_name,
+    request = await generation_request_from_history(
+        models=(model_name,),
         history=history,
         system_instruction=system_instruction,
-        max_key_retries=2,
-    ):
-        chunks.append(chunk)
-
-    full_text = "".join(chunks)
-    if not full_text or full_text.startswith("🚫"):
-        return {"status": "failed", "error": "API still unavailable after deferred retry"}
-
-    # Deliver the result to the user
-    from telegram import Bot
-
-    from app.config import settings
+        workload=Workload.DEFERRED_RETRY,
+        allow_deferred=False,
+    )
 
     try:
         async with Bot(settings.TELEGRAM_BOT_TOKEN) as bot:
-            await bot.send_message(
-                chat_id=chat_id,
-                text=f"💬 _(отложенный ответ)_\n\n{full_text}",
-                parse_mode="Markdown",
+            outcome = await get_telegram_response_delivery().stream(
+                TelegramTarget(bot=bot, chat_id=chat_id),
+                request,
+                presentation=FixedPresentation(
+                    display_prefix="💬 _(отложенный ответ)_\n\n",
+                    long_read_title="Отложенный ответ ИИ",
+                ),
             )
-            logging.info("Deferred response delivered to chat=%s", chat_id)
     except Exception as e:
         logging.error("Failed to deliver deferred response: %s", e)
         return {"status": "failed", "error": f"Delivery failed: {e}"}
 
-    return {"status": "completed", "text_length": len(full_text)}
+    if not isinstance(outcome, (CompleteDelivery, PartialDelivery)):
+        return {"status": "failed", "error": "API still unavailable after deferred retry"}
+
+    logging.info("Deferred response delivered to chat=%s", chat_id)
+    return {"status": "completed", "text_length": len(outcome.content_text)}

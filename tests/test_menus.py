@@ -386,17 +386,15 @@ async def test_start_menu_buttons_structure():
 
 
 @pytest.mark.unit
-@patch("app.handlers.menus.get_all_available_models")
 @patch("app.handlers.menus.settings")
 @patch("app.handlers.menus.get_openrouter_keys")
-def test_get_model_menu_content_gemini_only(mock_get_keys, mock_settings_obj, mock_get_all, mock_context):
+def test_get_model_menu_content_gemini_only(mock_get_keys, mock_settings_obj, mock_context):
     """Test model menu with only Gemini models available."""
     mock_settings_obj.AVAILABLE_MODELS = ["gemini-pro", "gemini-flash"]
     mock_settings_obj.OPENCODE_AVAILABLE_MODELS = []
     mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = []
     mock_settings_obj.FREETHEAI_AVAILABLE_MODELS = []
     mock_get_keys.return_value = []
-    mock_get_all.return_value = ["gemini-pro", "gemini-flash"]
 
     chat_state = ChatState(model="gemini-pro")
 
@@ -483,15 +481,13 @@ def test_get_model_menu_content_mixed(mock_get_keys, mock_settings_obj, mock_con
 
 
 @pytest.mark.unit
-@patch("app.handlers.menus.get_all_available_models")
 @patch("app.handlers.menus.settings")
 @patch("app.handlers.menus.get_openrouter_keys")
-def test_get_model_menu_content_no_models(mock_get_keys, mock_settings_obj, mock_get_all, mock_context):
+def test_get_model_menu_content_no_models(mock_get_keys, mock_settings_obj, mock_context):
     """Test model menu when no models are available."""
     mock_settings_obj.AVAILABLE_MODELS = []
     mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = []
     mock_get_keys.return_value = []
-    mock_get_all.return_value = []
 
     chat_state = ChatState(model="nonexistent-model")
 
@@ -509,15 +505,13 @@ def test_get_model_menu_content_no_models(mock_get_keys, mock_settings_obj, mock
 
 
 @pytest.mark.unit
-@patch("app.handlers.menus.get_all_available_models")
 @patch("app.handlers.menus.settings")
 @patch("app.handlers.menus.get_openrouter_keys")
-def test_context_update(mock_get_keys, mock_settings_obj, mock_get_all, mock_context):
+def test_context_update(mock_get_keys, mock_settings_obj, mock_context):
     """Test that context.user_data is updated with model list."""
     mock_settings_obj.AVAILABLE_MODELS = ["gemini-1"]
     mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = ["or-1"]
     mock_get_keys.return_value = ["key"]
-    mock_get_all.return_value = ["gemini-1", "or-1"]
 
     chat_state = ChatState(model="gemini-1")
 
@@ -528,6 +522,27 @@ def test_context_update(mock_get_keys, mock_settings_obj, mock_get_all, mock_con
     assert "model_list" in mock_context.user_data
     assert "gemini-1" in mock_context.user_data["model_list"]
     assert "or-1" in mock_context.user_data["model_list"]
+
+
+@pytest.mark.unit
+@patch("app.handlers.menus.settings")
+@patch("app.handlers.menus.get_openrouter_keys")
+def test_context_model_order_excludes_openrouter_without_keys(
+    mock_get_keys, mock_settings_obj, mock_context
+):
+    mock_settings_obj.AVAILABLE_MODELS = ["gemini-1"]
+    mock_settings_obj.OPENCODE_AVAILABLE_MODELS = ["opencode-go/glm-5"]
+    mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = ["vendor/hidden"]
+    mock_settings_obj.FREETHEAI_AVAILABLE_MODELS = ["cat/visible"]
+    mock_get_keys.return_value = []
+    _, get_model_menu_content = get_menu_methods()
+    get_model_menu_content(ChatState(model="gemini-1"), mock_context)
+
+    assert mock_context.user_data["model_list"] == [
+        "gemini-1",
+        "opencode-go/glm-5",
+        "cat/visible",
+    ]
 
 
 # ==============================================================================

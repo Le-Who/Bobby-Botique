@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import logging
 import os
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC
@@ -130,17 +131,75 @@ def _load_single_model(env_var_name: str, fallback: str) -> str:
     return fallback
 
 
-def _filter_current_gemini_models(models: list[str], *, include_defaults: bool = True) -> list[str]:
+_GEMINI_CHAT_MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9][A-Za-z0-9._-]*$")
+_EMPTY_MODEL_LIST_SENTINEL = "none"
+_DEPRECATED_GEMINI_ROLE_MODELS = frozenset({"gemini-2.5-pro", "gemini-3-flash-preview"})
+_FREETHEAI_NON_CHAT_PREFIXES = ("vhr/", "img/", "or/google/lyria-")
+
+
+def _dedupe_models(models: list[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
-    allowed = set(CURRENT_GEMINI_MODELS)
     for model in models:
         normalized = model.strip()
-        if normalized in allowed and normalized not in seen:
+        if normalized and normalized not in seen:
             result.append(normalized)
             seen.add(normalized)
+    return result
+
+
+def is_gemini_chat_model_id(model_name: str | None) -> bool:
+    """Return whether *model_name* is a syntactically valid Gemini model ID.
+
+    Runtime additions receive a capability check through the Gemini Models API.
+    Env values are operator-controlled and intentionally use syntax-only
+    validation so a newly released model does not require a bot release.
+    """
+    return isinstance(model_name, str) and _GEMINI_CHAT_MODEL_RE.fullmatch(model_name.strip()) is not None
+
+
+def is_freetheai_chat_model_id(model_name: str | None) -> bool:
+    return bool(model_name and not model_name.startswith(_FREETHEAI_NON_CHAT_PREFIXES))
+
+
+def _load_available_models(
+    env_var_name: str,
+    defaults: list[str],
+    *,
+    validator: Callable[[str | None], bool] | None = None,
+) -> list[str]:
+    """Load a selectable model list with explicit-empty support.
+
+    Unset or whitespace-only values use *defaults*. The case-insensitive token
+    ``none`` means an intentionally empty selector list.
+    """
+    raw = os.getenv(env_var_name)
+    if raw is None or not raw.strip():
+        return _dedupe_models(defaults)
+
+    cleaned = raw.strip().strip('"').strip("'").strip()
+    if cleaned.casefold() == _EMPTY_MODEL_LIST_SENTINEL:
+        return []
+
+    models = _dedupe_models([part.strip() for part in cleaned.split(",")])
+    if validator is None:
+        return models
+
+    valid: list[str] = []
+    for model in models:
+        if validator(model):
+            valid.append(model)
+        else:
+            logging.warning("Ignoring invalid model '%s' from %s", model, env_var_name)
+    return valid
+
+
+def _filter_current_gemini_models(models: list[str], *, include_defaults: bool = True) -> list[str]:
+    """Backward-compatible Gemini normalization without a version allowlist."""
+    result = [model for model in _dedupe_models(models) if is_gemini_chat_model_id(model)]
+    seen = set(result)
     if include_defaults:
-        for model in CURRENT_GEMINI_MODELS:
+        for model in DEFAULT_GEMINI_MODELS:
             if model not in seen:
                 result.append(model)
                 seen.add(model)
@@ -148,13 +207,21 @@ def _filter_current_gemini_models(models: list[str], *, include_defaults: bool =
 
 
 def normalize_gemini_chat_model(model_name: str | None, fallback: str = GEMINI_PRIMARY_MODEL) -> str:
-    if isinstance(model_name, str) and model_name.strip() in CURRENT_GEMINI_MODELS:
+    if (
+        isinstance(model_name, str)
+        and is_gemini_chat_model_id(model_name)
+        and model_name.strip() not in _DEPRECATED_GEMINI_ROLE_MODELS
+    ):
         return model_name.strip()
     return fallback
 
 
 def normalize_gemini_runtime_model(model_name: str | None, fallback: str = GEMINI_PRIMARY_MODEL) -> str:
-    if isinstance(model_name, str) and model_name.strip() in RUNTIME_GEMINI_MODELS:
+    if (
+        isinstance(model_name, str)
+        and is_gemini_chat_model_id(model_name)
+        and model_name.strip() not in _DEPRECATED_GEMINI_ROLE_MODELS
+    ):
         return model_name.strip()
     return fallback
 
@@ -413,12 +480,52 @@ def load_settings() -> Settings:
     using the Pydantic model. This is the most robust method.
     """
     try:
-        # Значения by default for моделей
-        default_gemini_models = DEFAULT_GEMINI_MODELS.copy()
-        default_openrouter_models: list[str] = []
-        configured_gemini_models = _filter_current_gemini_models(
-            _load_and_clean_keys("GEMINI_AVAILABLE_MODELS", required=False) or default_gemini_models
+        default_model = _load_gemini_role_model("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL)
+        qna_model = _load_gemini_role_model("QNA_MODEL", GEMINI_ECONOMY_MODEL)
+        inline_model = _load_gemini_role_model("INLINE_MODEL", GEMINI_ECONOMY_MODEL)
+        research_model = _load_gemini_role_model("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL)
+        url_selection_model = _load_gemini_role_model("URL_SELECTION_MODEL", GEMINI_ECONOMY_MODEL)
+        taxonomy_model = _load_gemini_role_model("TAXONOMY_MODEL", GEMINI_ECONOMY_MODEL)
+
+        openrouter_default_model = _load_single_model("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free")
+        openrouter_qna_model = _load_single_model("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free")
+        openrouter_research_model = _load_single_model("OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free")
+        openrouter_url_selection_model = _load_single_model(
+            "OPENROUTER_URL_SELECTION_MODEL", "stepfun/step-3.5-flash:free"
         )
+
+        opencode_default_model = _load_single_model("OPENCODE_DEFAULT_MODEL", "opencode-go/qwen3.5-plus")
+        opencode_qna_model = _load_single_model("OPENCODE_QNA_MODEL", "opencode-go/qwen3.6-plus")
+        opencode_research_model = _load_single_model("OPENCODE_RESEARCH_MODEL", "opencode-go/glm-5.1")
+        opencode_url_selection_model = _load_single_model(
+            "OPENCODE_URL_SELECTION_MODEL", "opencode-go/big-pickle"
+        )
+        opencode_vision_model = _load_single_model("OPENCODE_VISION_MODEL", "opencode-go/mimo-v2-omni")
+        opencode_inline_model = _load_single_model("OPENCODE_INLINE_MODEL", "opencode-go/minimax-m2.5")
+        opencode_defaults = _dedupe_models(
+            [
+                opencode_default_model,
+                opencode_qna_model,
+                opencode_research_model,
+                opencode_vision_model,
+                opencode_inline_model,
+            ]
+        )
+
+        freetheai_default_model = _load_single_model("FREETHEAI_DEFAULT_MODEL", "cat/claude-4-6-sonnet")
+
+        configured_gemini_models = _load_available_models(
+            "GEMINI_AVAILABLE_MODELS", DEFAULT_GEMINI_MODELS, validator=is_gemini_chat_model_id
+        )
+        configured_openrouter_models = _load_available_models(
+            "OPENROUTER_AVAILABLE_MODELS", [openrouter_default_model]
+        )
+        configured_opencode_models = _load_available_models("OPENCODE_AVAILABLE_MODELS", opencode_defaults)
+        configured_freetheai_models = [
+            model
+            for model in _load_available_models("FREETHEAI_AVAILABLE_MODELS", [freetheai_default_model])
+            if is_freetheai_chat_model_id(model)
+        ]
 
         inline_thinking = os.getenv("INLINE_THINKING_LEVEL", "").strip().lower()
         if not inline_thinking:
@@ -470,35 +577,30 @@ def load_settings() -> Settings:
             "EXCHANGE_RATE_API_KEY": os.getenv("EXCHANGE_RATE_API_KEY", "").strip(),
             # Load models from env or use значения by default
             "AVAILABLE_MODELS": configured_gemini_models,
-            "OPENROUTER_AVAILABLE_MODELS": _load_and_clean_keys("OPENROUTER_AVAILABLE_MODELS", required=False)
-            or default_openrouter_models,
-            "DEFAULT_MODEL": _load_gemini_role_model("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
-            "QNA_MODEL": _load_gemini_role_model("QNA_MODEL", GEMINI_ECONOMY_MODEL),
-            "INLINE_MODEL": _load_gemini_role_model("INLINE_MODEL", GEMINI_ECONOMY_MODEL),
-            "RESEARCH_MODEL": _load_gemini_role_model("RESEARCH_MODEL", GEMINI_PRIMARY_MODEL),
-            "URL_SELECTION_MODEL": _load_gemini_role_model("URL_SELECTION_MODEL", GEMINI_ECONOMY_MODEL),
-            "TAXONOMY_MODEL": _load_gemini_role_model("TAXONOMY_MODEL", GEMINI_ECONOMY_MODEL),
-            "OPENROUTER_DEFAULT_MODEL": _load_single_model("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"),
-            "OPENROUTER_QNA_MODEL": _load_single_model("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free"),
-            "OPENROUTER_RESEARCH_MODEL": _load_single_model("OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free"),
-            "OPENROUTER_URL_SELECTION_MODEL": _load_single_model(
-                "OPENROUTER_URL_SELECTION_MODEL", "stepfun/step-3.5-flash:free"
-            ),
+            "OPENROUTER_AVAILABLE_MODELS": configured_openrouter_models,
+            "DEFAULT_MODEL": default_model,
+            "QNA_MODEL": qna_model,
+            "INLINE_MODEL": inline_model,
+            "RESEARCH_MODEL": research_model,
+            "URL_SELECTION_MODEL": url_selection_model,
+            "TAXONOMY_MODEL": taxonomy_model,
+            "OPENROUTER_DEFAULT_MODEL": openrouter_default_model,
+            "OPENROUTER_QNA_MODEL": openrouter_qna_model,
+            "OPENROUTER_RESEARCH_MODEL": openrouter_research_model,
+            "OPENROUTER_URL_SELECTION_MODEL": openrouter_url_selection_model,
             # Opencode Go provider
             "OPENCODE_API_KEYS": _load_and_clean_keys("OPENCODE_API_KEYS", required=False),
-            "OPENCODE_AVAILABLE_MODELS": _load_and_clean_keys("OPENCODE_AVAILABLE_MODELS", required=False),
-            "OPENCODE_DEFAULT_MODEL": _load_single_model("OPENCODE_DEFAULT_MODEL", "opencode-go/qwen3.5-plus"),
-            "OPENCODE_QNA_MODEL": _load_single_model("OPENCODE_QNA_MODEL", "opencode-go/qwen3.6-plus"),
-            "OPENCODE_RESEARCH_MODEL": _load_single_model("OPENCODE_RESEARCH_MODEL", "opencode-go/glm-5.1"),
-            "OPENCODE_URL_SELECTION_MODEL": _load_single_model(
-                "OPENCODE_URL_SELECTION_MODEL", "opencode-go/big-pickle"
-            ),
-            "OPENCODE_VISION_MODEL": _load_single_model("OPENCODE_VISION_MODEL", "opencode-go/mimo-v2-omni"),
-            "OPENCODE_INLINE_MODEL": _load_single_model("OPENCODE_INLINE_MODEL", "opencode-go/minimax-m2.5"),
+            "OPENCODE_AVAILABLE_MODELS": configured_opencode_models,
+            "OPENCODE_DEFAULT_MODEL": opencode_default_model,
+            "OPENCODE_QNA_MODEL": opencode_qna_model,
+            "OPENCODE_RESEARCH_MODEL": opencode_research_model,
+            "OPENCODE_URL_SELECTION_MODEL": opencode_url_selection_model,
+            "OPENCODE_VISION_MODEL": opencode_vision_model,
+            "OPENCODE_INLINE_MODEL": opencode_inline_model,
             # FreeTheAI provider
             "FREETHEAI_API_KEYS": _load_and_clean_keys("FREETHEAI_API_KEYS", required=False),
-            "FREETHEAI_AVAILABLE_MODELS": _load_and_clean_keys("FREETHEAI_AVAILABLE_MODELS", required=False),
-            "FREETHEAI_DEFAULT_MODEL": _load_single_model("FREETHEAI_DEFAULT_MODEL", "cat/claude-4-6-sonnet"),
+            "FREETHEAI_AVAILABLE_MODELS": configured_freetheai_models,
+            "FREETHEAI_DEFAULT_MODEL": freetheai_default_model,
             "PRIMARY_PROVIDER": os.getenv("PRIMARY_PROVIDER", "opencode").strip().lower(),
             "DAILY_LIMITS": _load_daily_limits(),
             "MAX_CONCURRENT_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_HEAVY_REQUESTS", "4")),
@@ -515,68 +617,7 @@ def load_settings() -> Settings:
             "INLINE_THINKING_LEVEL": inline_thinking,
         }
 
-        # Validation: проверяем, что DEFAULT_MODEL и другие константы есть в списках моделей
         settings_obj = Settings(**raw_settings)  # type: ignore[arg-type]
-
-        # Check Gemini models
-        if settings_obj.DEFAULT_MODEL not in settings_obj.AVAILABLE_MODELS:
-            logging.warning(
-                "DEFAULT_MODEL '%s' not in AVAILABLE_MODELS. Adding it.",
-                settings_obj.DEFAULT_MODEL,
-            )
-            settings_obj.AVAILABLE_MODELS.append(settings_obj.DEFAULT_MODEL)
-
-        if settings_obj.QNA_MODEL not in settings_obj.AVAILABLE_MODELS:
-            logging.info(
-                "QNA_MODEL '%s' not in AVAILABLE_MODELS. Adding it.",
-                settings_obj.QNA_MODEL,
-            )
-            settings_obj.AVAILABLE_MODELS.append(settings_obj.QNA_MODEL)
-
-        if settings_obj.INLINE_MODEL not in settings_obj.AVAILABLE_MODELS:
-            logging.info(
-                "INLINE_MODEL '%s' not in AVAILABLE_MODELS. Adding it.",
-                settings_obj.INLINE_MODEL,
-            )
-            settings_obj.AVAILABLE_MODELS.append(settings_obj.INLINE_MODEL)
-
-        if settings_obj.RESEARCH_MODEL not in settings_obj.AVAILABLE_MODELS:
-            logging.warning(
-                "RESEARCH_MODEL '%s' not in AVAILABLE_MODELS. Adding it.",
-                settings_obj.RESEARCH_MODEL,
-            )
-            settings_obj.AVAILABLE_MODELS.append(settings_obj.RESEARCH_MODEL)
-
-        # Check OpenRouter models
-        if settings_obj.OPENROUTER_DEFAULT_MODEL not in settings_obj.OPENROUTER_AVAILABLE_MODELS:
-            logging.warning(
-                f"OPENROUTER_DEFAULT_MODEL '{settings_obj.OPENROUTER_DEFAULT_MODEL}' not in OPENROUTER_AVAILABLE_MODELS. Adding it."
-            )
-            settings_obj.OPENROUTER_AVAILABLE_MODELS.append(settings_obj.OPENROUTER_DEFAULT_MODEL)
-
-        # Check Opencode Go models — auto-populate list from role models
-        for role_model in (
-            settings_obj.OPENCODE_DEFAULT_MODEL,
-            settings_obj.OPENCODE_QNA_MODEL,
-            settings_obj.OPENCODE_RESEARCH_MODEL,
-            settings_obj.OPENCODE_VISION_MODEL,
-            settings_obj.OPENCODE_INLINE_MODEL,
-        ):
-            if role_model and role_model not in settings_obj.OPENCODE_AVAILABLE_MODELS:
-                settings_obj.OPENCODE_AVAILABLE_MODELS.append(role_model)
-
-        # Check FreeTheAI models
-        # Filter out image models so they only appear in /draw, not in chat menus.
-        settings_obj.FREETHEAI_AVAILABLE_MODELS = [
-            m for m in settings_obj.FREETHEAI_AVAILABLE_MODELS
-            if not m.startswith(("vhr/", "img/"))
-        ]
-        
-        if settings_obj.FREETHEAI_DEFAULT_MODEL not in settings_obj.FREETHEAI_AVAILABLE_MODELS:
-            logging.warning(
-                f"FREETHEAI_DEFAULT_MODEL '{settings_obj.FREETHEAI_DEFAULT_MODEL}' not in FREETHEAI_AVAILABLE_MODELS. Adding it."
-            )
-            settings_obj.FREETHEAI_AVAILABLE_MODELS.append(settings_obj.FREETHEAI_DEFAULT_MODEL)
 
         # Validate PRIMARY_PROVIDER
         if settings_obj.PRIMARY_PROVIDER not in ("opencode", "gemini", "openrouter", "freetheai"):
@@ -671,12 +712,16 @@ class ConfigManager:
 
     async def _reload_config(self) -> None:
         """Reloads configuration from environment."""
+        global _settings_instance, settings
+
         async with self._lock:
             try:
                 new_settings = load_settings()  # bypass singleton cache — get_settings() returns stale instance
 
                 if self._settings is None:
                     self._settings = new_settings
+                    _settings_instance = new_settings
+                    settings = new_settings
                     self._last_reload = time.time()
                     logging.info("Configuration loaded initially via reload.")
                     return
@@ -691,27 +736,17 @@ class ConfigManager:
                 if critical_changed:
                     logging.warning("Critical configuration changed, restart may be required")
 
-                # Validate DEFAULT_MODEL exists in available models
-                all_available_models = set()
-                if new_settings.AVAILABLE_MODELS:
-                    all_available_models.update(new_settings.AVAILABLE_MODELS)
-                if new_settings.OPENROUTER_AVAILABLE_MODELS:
-                    all_available_models.update(new_settings.OPENROUTER_AVAILABLE_MODELS)
-
-                if new_settings.DEFAULT_MODEL not in all_available_models:
-                    logging.error(
-                        "DEFAULT_MODEL '%s' not in AVAILABLE_MODELS!",
-                        new_settings.DEFAULT_MODEL,
-                    )
-                    raise ValueError("DEFAULT_MODEL must be in AVAILABLE_MODELS")
-
-                # Update settings
-                old_settings = self._settings
-                self._settings = new_settings
+                # Preserve object identity because many modules import the shared
+                # settings instance directly. Watchers receive a deep snapshot.
+                old_settings = self._settings.model_copy(deep=True)
+                for field_name, value in new_settings.model_dump().items():
+                    setattr(self._settings, field_name, value)
+                _settings_instance = self._settings
+                settings = self._settings
                 self._last_reload = time.time()
 
                 # Notify watchers (including model migration)
-                await self._notify_watchers(old_settings, new_settings)
+                await self._notify_watchers(old_settings, self._settings)
 
                 logging.info("Configuration reloaded successfully.")
 

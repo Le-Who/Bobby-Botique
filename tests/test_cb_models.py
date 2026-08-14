@@ -69,12 +69,9 @@ class TestModelButtonCallback:
                 return_value=mock_chat_state,
             ),
             patch("app.handlers.cb_models.update_user_chat", new_callable=AsyncMock) as mock_update,
-            patch("app.handlers.cb_models.settings") as mock_settings,
-            patch("app.handlers.cb_models.get_openrouter_keys", return_value=None),
             patch("app.handlers.cb_models.menus") as mock_menus,
         ):
-            mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite"]
-            mock_settings.OPENROUTER_AVAILABLE_MODELS = []
+            mock_menus.get_visible_model_list.return_value = ["gemini-3.1-flash-lite"]
             mock_menus.get_model_menu_content.return_value = (
                 "text",
                 "Markdown",
@@ -87,6 +84,32 @@ class TestModelButtonCallback:
         mock_update.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_callback_uses_the_exact_model_order_saved_by_the_menu(self):
+        from app.config import get_model_hash
+        from app.handlers.cb_models import model_button_callback
+
+        selected = "cat/kat-coder-pro-v1"
+        update, _ = _make_update(f"model:2:{get_model_hash(selected)}")
+        context = MagicMock()
+        context.user_data = {
+            "model_list": ["gemini-3.7-flash", "opencode-go/glm-5", selected]
+        }
+        chat_state = MagicMock()
+
+        with (
+            patch("app.handlers.cb_models._is_user_busy", return_value=False),
+            patch("app.handlers.cb_models.get_user_chat", new_callable=AsyncMock, return_value=chat_state),
+            patch("app.handlers.cb_models.update_user_chat", new_callable=AsyncMock),
+            patch("app.handlers.cb_models.menus") as mock_menus,
+        ):
+            mock_menus.get_visible_model_list.return_value = context.user_data["model_list"]
+            mock_menus.get_model_menu_content.return_value = ("text", "Markdown", MagicMock())
+
+            await model_button_callback(update, context)
+
+        assert chat_state.model == selected
+
+    @pytest.mark.asyncio
     async def test_invalid_model_index_shows_error(self):
         """Out-of-range model index should show error message."""
         from app.handlers.cb_models import model_button_callback
@@ -95,12 +118,8 @@ class TestModelButtonCallback:
 
         with (
             patch("app.handlers.cb_models._is_user_busy", return_value=False),
-            patch("app.handlers.cb_models.settings") as mock_settings,
-            patch("app.handlers.cb_models.get_openrouter_keys", return_value=None),
+            patch("app.handlers.cb_models.menus.get_visible_model_list", return_value=["gemini-3.1-flash-lite"]),
         ):
-            mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite"]
-            mock_settings.OPENROUTER_AVAILABLE_MODELS = []
-
             await model_button_callback(update, MagicMock())
 
         query.edit_message_text.assert_awaited_once()
@@ -128,11 +147,8 @@ class TestSwitchModelCallback:
 
         with (
             patch("app.handlers.cb_models._is_user_busy", return_value=False),
-            patch("app.handlers.cb_models.settings") as mock_settings,
+            patch("app.handlers.cb_models.menus.get_visible_model_list", return_value=["gemini-3.1-flash-lite"]),
         ):
-            mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite"]
-            mock_settings.OPENROUTER_AVAILABLE_MODELS = []
-
             await switch_model_callback(update, MagicMock())
 
         query.edit_message_text.assert_awaited_once()
@@ -148,7 +164,7 @@ class TestSwitchModelCallback:
 
         with (
             patch("app.handlers.cb_models._is_user_busy", return_value=False),
-            patch("app.handlers.cb_models.settings") as mock_settings,
+            patch("app.handlers.cb_models.menus.get_visible_model_list", return_value=["gemini-3.1-flash-lite"]),
             patch(
                 "app.handlers.cb_models.get_user_chat",
                 new_callable=AsyncMock,
@@ -156,9 +172,6 @@ class TestSwitchModelCallback:
             ),
             patch("app.handlers.cb_models.update_user_chat", new_callable=AsyncMock) as mock_update,
         ):
-            mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite"]
-            mock_settings.OPENROUTER_AVAILABLE_MODELS = []
-
             await switch_model_callback(update, MagicMock())
 
         assert mock_chat_state.model == "gemini-3.1-flash-lite"

@@ -23,6 +23,22 @@ from app.errors import ErrorCode, tag_error
 from app.providers import openrouter as openrouter_provider
 from app.providers.base import AIResponse
 from app.providers.openrouter import OpenRouterProvider
+from app.providers.stream_types import (
+    FailurePhase,
+    FinishReason,
+    GenerationRequest,
+    GroundingReport,
+    KeyDisposition,
+    ProviderKind,
+    RetryDisposition,
+    RouteUsed,
+    StreamCompleted,
+    StreamFailed,
+    TextDelta,
+    TokenUsage,
+    VisibleTextBuffer,
+)
+from app.providers.typed_payloads import anthropic_messages_payload
 from app.request_context import get_request_id
 from app.utils.image_utils import TaggedImage, save_image_as_bytes
 from app.utils.json_compat import json
@@ -42,6 +58,224 @@ class OpencodeGoProvider(OpenRouterProvider):
     _ANTHROPIC_VERSION = "2023-06-01"
     _MESSAGES_MODELS = frozenset({"minimax-m2.5", "minimax-m2.7"})
     _MESSAGES_MAX_TOKENS = 8192
+
+    async def stream(self, request: GenerationRequest, *, model_name: str):
+        if not self._uses_messages_transport(model_name):
+            async for event in super().stream(request, model_name=model_name):
+                yield event
+            return
+
+        route = RouteUsed(
+            provider=ProviderKind.OPENCODE,
+            requested_model=request.models[0],
+            actual_model=model_name,
+        )
+        payload = await anthropic_messages_payload(
+            request,
+            api_model=self._strip_model_prefix(model_name),
+            max_tokens=self._MESSAGES_MAX_TOKENS,
+        )
+        if not payload["messages"]:
+            yield StreamFailed(
+                code=ErrorCode.INVALID_REQUEST,
+                phase=FailurePhase.BEFORE_TEXT,
+                retry=RetryDisposition.DO_NOT_RETRY,
+                key=KeyDisposition.UNCHANGED,
+                diagnostic="Opencode message conversion produced no messages",
+                route=route,
+            )
+            return
+        payload["stream"] = True
+
+        client = openrouter_provider._openrouter_http_client
+        if client is None:
+            yield StreamFailed(
+                code=ErrorCode.NETWORK,
+                phase=FailurePhase.BEFORE_TEXT,
+                retry=RetryDisposition.RETRY_LATER,
+                key=KeyDisposition.UNCHANGED,
+                diagnostic="Opencode HTTP client is not initialized",
+                route=route,
+            )
+            return
+
+        text_emitted = False
+        finish_reason = FinishReason.from_raw(None)
+        prompt_tokens: int | None = None
+        completion_tokens: int | None = None
+        cached_tokens: int | None = None
+        text_buffer = VisibleTextBuffer()
+
+        try:
+            async with client.stream(
+                "POST",
+                self._get_url_for_model(model_name),
+                json=payload,
+                headers=self._get_headers_for_model(model_name),
+                timeout=request.provider_timeout_seconds,
+            ) as response:
+                response.raise_for_status()
+                current_event: str | None = None
+                data_lines: list[str] = []
+
+                async def _decode_event():
+                    nonlocal finish_reason, prompt_tokens, completion_tokens, cached_tokens
+                    if not data_lines:
+                        return None
+                    data_str = "\n".join(data_lines).strip()
+                    if not data_str or data_str == "[DONE]":
+                        return None
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        return None
+
+                    event_type = current_event or data.get("type")
+                    native_usage = data.get("usage")
+                    if not isinstance(native_usage, dict):
+                        message = data.get("message")
+                        native_usage = message.get("usage") if isinstance(message, dict) else None
+                    if isinstance(native_usage, dict):
+                        value = native_usage.get("input_tokens")
+                        if isinstance(value, int) and not isinstance(value, bool):
+                            prompt_tokens = value
+                        value = native_usage.get("output_tokens")
+                        if isinstance(value, int) and not isinstance(value, bool):
+                            completion_tokens = value
+                        value = native_usage.get("cache_read_input_tokens")
+                        if isinstance(value, int) and not isinstance(value, bool):
+                            cached_tokens = value
+
+                    if event_type == "content_block_delta":
+                        delta = data.get("delta", {})
+                        if isinstance(delta, dict) and delta.get("type") == "text_delta":
+                            text = delta.get("text")
+                            return text_buffer.push(text) if isinstance(text, str) else None
+                    elif event_type == "message_delta":
+                        delta = data.get("delta", {})
+                        if isinstance(delta, dict) and delta.get("stop_reason"):
+                            finish_reason = FinishReason.from_raw(str(delta["stop_reason"]))
+                    elif event_type == "error":
+                        error = data.get("error", {})
+                        message = str(error.get("message", "")) if isinstance(error, dict) else str(error)
+                        error_type = str(error.get("type", "")) if isinstance(error, dict) else ""
+                        lowered = f"{error_type} {message}".lower()
+                        if "rate" in lowered or "limit" in lowered:
+                            code = ErrorCode.RATE_LIMIT
+                            key = KeyDisposition.RATE_LIMITED
+                        elif "overload" in lowered:
+                            code = ErrorCode.OVERLOADED
+                            key = KeyDisposition.TRANSIENT_FAILURE
+                        else:
+                            code = ErrorCode.GENERIC
+                            key = KeyDisposition.TRANSIENT_FAILURE
+                        return StreamFailed(
+                            code=code,
+                            phase=(FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT),
+                            retry=(RetryDisposition.DO_NOT_RETRY if text_emitted else RetryDisposition.TRY_NEXT_KEY),
+                            key=(KeyDisposition.UNCHANGED if text_emitted else key),
+                            diagnostic=f"Opencode SSE error: {error_type} {message}"[:500],
+                            route=route,
+                        )
+                    return None
+
+                async for raw_line in response.aiter_lines():
+                    line = raw_line.strip("\r")
+                    if line == "":
+                        event = await _decode_event()
+                        current_event = None
+                        data_lines = []
+                        if isinstance(event, TextDelta):
+                            text_emitted = True
+                            yield event
+                        elif isinstance(event, StreamFailed):
+                            yield event
+                            return
+                        continue
+                    if line.startswith("event:"):
+                        current_event = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data_lines.append(line[5:].strip())
+
+                if data_lines:
+                    event = await _decode_event()
+                    if isinstance(event, TextDelta):
+                        text_emitted = True
+                        yield event
+                    elif isinstance(event, StreamFailed):
+                        yield event
+                        return
+
+        except asyncio.CancelledError:
+            raise
+        except httpx.HTTPStatusError as exc:
+            await exc.response.aread()
+            status = exc.response.status_code
+            code = (
+                ErrorCode.RATE_LIMIT
+                if status == 429
+                else ErrorCode.OVERLOADED
+                if status in {502, 503, 504}
+                else ErrorCode.INVALID_KEY
+                if status in {401, 403}
+                else ErrorCode.INVALID_REQUEST
+                if status == 400
+                else ErrorCode.GENERIC
+            )
+            key = (
+                KeyDisposition.RATE_LIMITED
+                if status == 429
+                else KeyDisposition.INVALID
+                if status in {401, 403}
+                else KeyDisposition.TRANSIENT_FAILURE
+            )
+            yield StreamFailed(
+                code=code,
+                phase=FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT,
+                retry=(RetryDisposition.DO_NOT_RETRY if text_emitted else RetryDisposition.TRY_NEXT_KEY),
+                key=KeyDisposition.UNCHANGED if text_emitted else key,
+                diagnostic=f"Opencode HTTP {status}: {exc.response.text[:400]}",
+                route=route,
+            )
+            return
+        except Exception as exc:
+            yield StreamFailed(
+                code=ErrorCode.NETWORK if isinstance(exc, httpx.HTTPError) else ErrorCode.GENERIC,
+                phase=FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT,
+                retry=(RetryDisposition.DO_NOT_RETRY if text_emitted else RetryDisposition.TRY_NEXT_KEY),
+                key=(KeyDisposition.UNCHANGED if text_emitted else KeyDisposition.TRANSIENT_FAILURE),
+                diagnostic=f"{type(exc).__name__}: {exc}"[:500].replace(self.api_key, "[redacted]"),
+                route=route,
+            )
+            return
+
+        if not text_emitted:
+            yield StreamFailed(
+                code=ErrorCode.EMPTY_RESPONSE,
+                phase=FailurePhase.BEFORE_TEXT,
+                retry=RetryDisposition.TRY_NEXT_KEY,
+                key=KeyDisposition.TRANSIENT_FAILURE,
+                diagnostic="Opencode messages stream completed without visible text",
+                route=route,
+            )
+            return
+
+        total = (
+            prompt_tokens + completion_tokens
+            if prompt_tokens is not None and completion_tokens is not None
+            else None
+        )
+        yield StreamCompleted(
+            finish_reason=finish_reason,
+            usage=TokenUsage(
+                prompt=prompt_tokens,
+                completion=completion_tokens,
+                total=total,
+                cached=cached_tokens,
+            ),
+            grounding=GroundingReport(),
+            route=route,
+        )
 
     # Models that support reasoning_effort (OpenAI-compatible extended thinking).
     # DeepSeek V4 Pro/Flash: "low"/"medium"/"high"/"max"
@@ -143,9 +377,9 @@ class OpencodeGoProvider(OpenRouterProvider):
     def _extra_payload_params(self, model_name: str, thinking_level: str | None) -> dict:
         """Inject reasoning_effort for DeepSeek V4 and Kimi K2 models.
         Also injects tools/tool_choice when set via _pending_tools (from _execute_request
-        or stream_response).
+        or typed stream generation).
 
-        Called by OpenRouterProvider._execute_request and stream_response
+        Called by OpenRouterProvider._execute_request and typed streaming
         to enrich the payload with model-specific thinking parameters.
         """
         params: dict[str, Any] = {}
@@ -154,7 +388,7 @@ class OpencodeGoProvider(OpenRouterProvider):
             effort = self._THINKING_TO_EFFORT.get(thinking_level)
             if effort:
                 params["reasoning_effort"] = effort
-        # function calling tools (set by _execute_request / stream_response)
+        # function calling tools (set by request execution)
         pending_tools = getattr(self, "_pending_tools", None)
         if pending_tools:
             params["tools"] = pending_tools
@@ -377,89 +611,6 @@ class OpencodeGoProvider(OpenRouterProvider):
                 model=model_name,
             )
 
-    async def stream_response(
-        self,
-        history: list[dict[str, Any]],
-        model_name: str,
-        system_instruction: str | None = None,
-        thinking_level: str | None = None,
-        timeout: float = 120.0,
-        enable_web_search: bool = False,
-        force_grounding: bool = False,  # no-op: Opencode has no native Search grounding
-        tools: list[dict[str, Any]] | None = None,
-        tool_choice: str | dict | None = None,
-    ):
-        if not self._uses_messages_transport(model_name):
-            # Store tools so _extra_payload_params picks them up inside super()
-            self._pending_tools = tools if (tools and self._supports_tools(model_name)) else None
-            self._pending_tool_choice = tool_choice if self._pending_tools else None
-            try:
-                async for chunk in super().stream_response(
-                    history=history,
-                    model_name=model_name,
-                    system_instruction=system_instruction,
-                    thinking_level=thinking_level,
-                    timeout=timeout,
-                    enable_web_search=enable_web_search,
-                ):
-                    yield chunk
-            finally:
-                self._pending_tools = None
-                self._pending_tool_choice = None
-            return
-
-        payload = await self._build_messages_payload(history, model_name, system_instruction)
-        if not payload["messages"]:
-            yield tag_error(ErrorCode.GENERIC, "❌ Failed to create valid messages for Opencode")
-            return
-
-        url = self._get_url_for_model(model_name)
-        headers = self._get_headers_for_model(model_name)
-        payload["stream"] = True
-
-        client = openrouter_provider._openrouter_http_client
-        if client is None:
-            yield tag_error(ErrorCode.GENERIC, "❌ OpenRouter HTTP client not initialized")
-            return
-
-        try:
-            async with client.stream("POST", url, json=payload, headers=headers, timeout=timeout) as response:
-                response.raise_for_status()
-
-                current_event: str | None = None
-                data_lines: list[str] = []
-
-                async for raw_line in response.aiter_lines():
-                    line = raw_line.strip("\r")
-                    if line == "":
-                        should_stop, text_chunk = self._decode_messages_sse_event(current_event, data_lines)
-                        current_event = None
-                        data_lines = []
-                        if text_chunk:
-                            yield text_chunk
-                        if should_stop:
-                            break
-                        continue
-                    if line.startswith("event:"):
-                        current_event = line[6:].strip()
-                        continue
-                    if line.startswith("data:"):
-                        data_lines.append(line[5:].strip())
-
-                if data_lines:
-                    should_stop, text_chunk = self._decode_messages_sse_event(current_event, data_lines)
-                    if text_chunk:
-                        yield text_chunk
-                    if should_stop:
-                        return
-        except httpx.HTTPStatusError as e:
-            await e.response.aread()
-            status = e.response.status_code
-            yield self._build_http_error_tag(status, e.response.text, model_name)
-        except Exception as e:
-            logging.error("Opencode streaming error: %s", e)
-            yield tag_error(ErrorCode.GENERIC, f"❌ Произошла непредвиденная ошибка API: {e}")
-
     async def _build_messages_payload(
         self,
         history: list[dict[str, Any]],
@@ -583,57 +734,6 @@ class OpencodeGoProvider(OpenRouterProvider):
             if key.endswith("_tokens") and isinstance(value, int):
                 total += value
         return total
-
-    def _decode_messages_sse_event(
-        self,
-        event_name: str | None,
-        data_lines: list[str],
-    ) -> tuple[bool, str | None]:
-        if not data_lines:
-            return False, None
-        data_str = "\n".join(data_lines).strip()
-        if not data_str or data_str == "[DONE]":
-            return data_str == "[DONE]", None
-
-        try:
-            data = json.loads(data_str)
-        except json.JSONDecodeError:
-            return False, None
-
-        event_type = event_name or data.get("type")
-        if event_type == "content_block_delta":
-            delta = data.get("delta", {})
-            if isinstance(delta, dict) and delta.get("type") == "text_delta":
-                text = str(delta.get("text", ""))
-                return False, text or None
-            return False, None
-
-        if event_type == "message_delta":
-            delta = data.get("delta", {})
-            if isinstance(delta, dict):
-                stop_reason = delta.get("stop_reason")
-                if stop_reason:
-                    from app.streaming import set_last_finish_reason
-
-                    set_last_finish_reason(str(stop_reason))
-            return False, None
-
-        if event_type == "error":
-            error = data.get("error", {})
-            if isinstance(error, dict):
-                error_type = str(error.get("type", "")).lower()
-                message = str(error.get("message", "")).strip()
-            else:
-                error_type = ""
-                message = str(error).strip()
-
-            if "overloaded" in error_type or "overloaded" in message.lower():
-                return True, tag_error(ErrorCode.OVERLOADED, "🔄 Сервер Opencode перегружен. Попробуйте позже.")
-            if "rate" in error_type or "limit" in message.lower():
-                return True, tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов. Подождите немного.")
-            return True, tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {message or error_type or 'stream error'}")
-
-        return event_type == "message_stop", None
 
     def _log_failure(
         self,

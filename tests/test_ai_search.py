@@ -6,6 +6,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.agentic import AgenticResult
+from app.errors import ErrorCode
+from app.response_delivery.outcomes import CompleteDelivery, FailedDelivery
+from app.response_delivery.renderer import (
+    DeliveryKind,
+    DeliveryReceipt,
+    TelegramMessageRef,
+)
+
+
+def _receipt() -> DeliveryReceipt:
+    return DeliveryReceipt(
+        kind=DeliveryKind.MESSAGE,
+        message_ids=(1,),
+        final_message=TelegramMessageRef(chat_id=456, message_id=1),
+    )
 
 
 def make_chat_state(
@@ -40,29 +55,30 @@ def make_placeholder(user_id=123):
 
 @pytest.mark.asyncio
 async def test_qna_search_happy_path():
-    """QnA search streams a grounded response via stream_and_display(enable_web_search=True) on the Gemini path."""
+    """QnA search uses typed delivery with provider-search grounding."""
     placeholder = make_placeholder()
     placeholder.get_bot.return_value = MagicMock()
     placeholder.chat.type = "private"
     chat_state = make_chat_state()
-    stream_message = MagicMock()
-    stream_message.edit_reply_markup = AsyncMock()
+    delivery = MagicMock()
+    delivery.stream = AsyncMock(
+        return_value=CompleteDelivery(
+            content_text="Grounded answer from Google Search",
+            displayed_text="Grounded answer from Google Search",
+            completion=None,
+            voice_requested=False,
+            receipt=_receipt(),
+        )
+    )
 
     with (
         patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
         patch("app.handlers.ai_search.update_stage", new_callable=AsyncMock),
         patch("app.handlers.ai_search.get_primary_provider", return_value="gemini"),
         patch(
-            "app.streaming.stream_and_display",
-            new_callable=AsyncMock,
-            return_value=("Grounded answer from Google Search", True, stream_message, 42, False, False),
-        ) as mock_stream,
-        patch(
-            "app.handlers.ai_search.handle_ai_response_error",
-            new_callable=AsyncMock,
-            return_value=False,
+            "app.response_delivery.delivery.get_telegram_response_delivery",
+            return_value=delivery,
         ),
-        patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock),
         patch("app.handlers.ai_search.get_registry") as mock_get_registry,
     ):
         mock_metrics.record_search_query = AsyncMock()
@@ -72,27 +88,38 @@ async def test_qna_search_happy_path():
 
         from app.handlers.ai_search import _handle_qna_search
 
-        await _handle_qna_search(placeholder, "What is Python?", chat_state)
+        result = await _handle_qna_search(placeholder, "What is Python?", chat_state)
 
-    # Verify stream_and_display was called with enable_web_search=True (Gemini path)
-    mock_stream.assert_awaited_once()
-    call_kwargs = mock_stream.call_args[1] if mock_stream.call_args[1] else {}
-    assert call_kwargs.get("enable_web_search") is True, "Gemini path must use enable_web_search=True"
-    reply_markup = call_kwargs.get("reply_markup")
-    assert reply_markup is not None
-    labels = [button.text for row in reply_markup.inline_keyboard for button in row]
+    assert result == "Grounded answer from Google Search"
+    delivery.stream.assert_awaited_once()
+    request = delivery.stream.await_args.args[1]
+    assert request.grounding.value == "provider_search_required"
+    presentation = delivery.stream.await_args.kwargs["presentation"]
+    labels = [
+        button.text
+        for row in presentation.actions.inline_keyboard
+        for button in row
+    ]
     assert labels == ["🎭 Выбрать роль ИИ", "✨ Начать новую тему"]
-    stream_message.edit_reply_markup.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_qna_search_opencode_path():
-    """QnA search uses JINA grounding (enable_web_search=False) on the Opencode path."""
+    """Opencode QnA carries JINA context through the typed request."""
     placeholder = make_placeholder()
     placeholder.get_bot.return_value = MagicMock()
     placeholder.chat.type = "private"
-    # Gemini model but PRIMARY_PROVIDER=opencode → takes Opencode path
     chat_state = make_chat_state()
+    delivery = MagicMock()
+    delivery.stream = AsyncMock(
+        return_value=CompleteDelivery(
+            content_text="Opencode JINA answer",
+            displayed_text="Opencode JINA answer",
+            completion=None,
+            voice_requested=False,
+            receipt=_receipt(),
+        )
+    )
 
     with (
         patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
@@ -104,16 +131,9 @@ async def test_qna_search_opencode_path():
             return_value="[grounding context]",
         ),
         patch(
-            "app.streaming.stream_and_display",
-            new_callable=AsyncMock,
-            return_value=("Opencode JINA answer", True, AsyncMock(), 50, False, False),
-        ) as mock_stream,
-        patch(
-            "app.handlers.ai_search.handle_ai_response_error",
-            new_callable=AsyncMock,
-            return_value=False,
+            "app.response_delivery.delivery.get_telegram_response_delivery",
+            return_value=delivery,
         ),
-        patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock),
         patch("app.handlers.ai_search.get_registry") as mock_get_registry,
     ):
         mock_metrics.record_search_query = AsyncMock()
@@ -123,44 +143,36 @@ async def test_qna_search_opencode_path():
 
         from app.handlers.ai_search import _handle_qna_search
 
-        await _handle_qna_search(placeholder, "What is Python?", chat_state)
+        result = await _handle_qna_search(placeholder, "What is Python?", chat_state)
 
-    # Opencode path: JINA grounding is injected into prompt, web search disabled
-    mock_stream.assert_awaited_once()
-    call_kwargs = mock_stream.call_args[1] if mock_stream.call_args[1] else {}
-    assert call_kwargs.get("enable_web_search") is False, (
-        "Opencode path must NOT use enable_web_search (JINA grounding used)"
-    )
-
-
-# ── QnA search — streaming failure triggers fallback ─────────────────────────
+    assert result == "Opencode JINA answer"
+    request = delivery.stream.await_args.args[1]
+    assert request.grounding.value == "provided_context"
+    assert "[grounding context]" in (request.system_instruction or "")
 
 
 @pytest.mark.asyncio
-async def test_qna_search_streaming_failure_fallback():
-    """QnA search falls back to non-streaming when all streaming attempts fail."""
+async def test_qna_search_typed_failure_does_not_duplicate_delivery():
+    """Delivery owns the rendered failure; the handler must not send it again."""
     placeholder = make_placeholder()
     placeholder.get_bot.return_value = MagicMock()
     placeholder.chat.type = "private"
     chat_state = make_chat_state()
+    delivery = MagicMock()
+    delivery.stream = AsyncMock(
+        return_value=FailedDelivery(
+            error_code=ErrorCode.KEYS_EXHAUSTED,
+            displayed_text="No keys",
+            receipt=_receipt(),
+        )
+    )
 
     with (
         patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
         patch("app.handlers.ai_search.update_stage", new_callable=AsyncMock),
         patch(
-            "app.streaming.stream_and_display",
-            new_callable=AsyncMock,
-            return_value=("", False, None, 0, False, False),
-        ),
-        patch(
-            "app.handlers.ai_search._get_ai_response_with_routing",
-            new_callable=AsyncMock,
-            return_value=("Fallback non-streaming answer", 10),
-        ) as mock_fallback,
-        patch(
-            "app.handlers.ai_search.handle_ai_response_error",
-            new_callable=AsyncMock,
-            return_value=False,
+            "app.response_delivery.delivery.get_telegram_response_delivery",
+            return_value=delivery,
         ),
         patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock) as mock_send,
         patch("app.handlers.ai_search.get_registry") as mock_get_registry,
@@ -172,12 +184,11 @@ async def test_qna_search_streaming_failure_fallback():
 
         from app.handlers.ai_search import _handle_qna_search
 
-        await _handle_qna_search(placeholder, "Query", chat_state)
+        result = await _handle_qna_search(placeholder, "Query", chat_state)
 
-    # Non-streaming fallback was invoked
-    mock_fallback.assert_awaited()
-    # Final answer was sent via send_long_message (not streamed)
-    mock_send.assert_awaited_once()
+    assert result is None
+    delivery.stream.assert_awaited_once()
+    mock_send.assert_not_awaited()
 
 
 # ── Research agent — search fails ─────────────────────────────────────────────
@@ -276,3 +287,46 @@ async def test_research_agent_tavily_error():
     placeholder.edit_text.assert_awaited()
     text = placeholder.edit_text.call_args[0][0]
     assert "Rate limit exceeded" in text
+
+
+@pytest.mark.asyncio
+async def test_research_agent_uses_unified_completed_response_delivery():
+    """AgenticSearch must not own a second Long Read implementation."""
+    from app.response_delivery.delivery import CompletedResponse
+
+    placeholder = make_placeholder()
+    placeholder.message_id = 99
+    placeholder.get_bot.return_value = None
+    chat_state = make_chat_state()
+    final_answer = "A" * 4200
+    delivery = MagicMock()
+    delivery.deliver = AsyncMock()
+
+    with (
+        patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
+        patch("app.handlers.ai_search.AgenticSearch") as agent_class,
+        patch("app.handlers.ai_search._available_models", return_value=[]),
+        patch("app.repos.keys.get_available_gemini_key", new_callable=AsyncMock) as get_key,
+        patch(
+            "app.response_delivery.delivery.get_telegram_response_delivery",
+            return_value=delivery,
+        ),
+        patch("app.cache.store_long_message", new_callable=AsyncMock) as store_long,
+        patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock) as send_long,
+        patch("app.handlers.ai_search.update_user_chat", new_callable=AsyncMock),
+    ):
+        mock_metrics.record_search_query = AsyncMock()
+        get_key.return_value = {"api_key": "fake", "key_hash": "hash123"}
+        agent = MagicMock()
+        agent.run = AsyncMock(return_value=AgenticResult(answer=final_answer))
+        agent_class.return_value = agent
+
+        from app.handlers.ai_search import _handle_research_agent
+
+        await _handle_research_agent(placeholder, 123, "Query", chat_state)
+
+    delivery.deliver.assert_awaited_once()
+    completed = delivery.deliver.await_args.args[1]
+    assert completed == CompletedResponse(final_answer)
+    store_long.assert_not_awaited()
+    send_long.assert_not_awaited()

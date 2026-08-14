@@ -12,7 +12,7 @@ import telegram
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from app.config import get_all_available_models, get_model_hash, get_openrouter_keys, settings
+from app.config import get_model_hash, get_openrouter_keys, settings
 from app.handlers import menus
 from app.handlers.callbacks import _BUSY_TOAST, _is_user_busy
 from app.repos.chats import get_user_chat, update_user_chat
@@ -41,12 +41,10 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
             model_index = int(parts[1])
             expected_hash = parts[2] if len(parts) > 2 else None
 
-            all_models: list[str] = (
-                list(settings.AVAILABLE_MODELS or [])
-                + list(settings.OPENROUTER_AVAILABLE_MODELS or [])
-                + list(getattr(settings, "OPENCODE_AVAILABLE_MODELS", None) or [])
-                + list(getattr(settings, "FREETHEAI_AVAILABLE_MODELS", None) or [])
-            )
+            current_models = menus.get_visible_model_list(settings, get_openrouter_keys())
+            user_data = getattr(context, "user_data", None)
+            stored_models = user_data.get("model_list") if user_data else None
+            all_models = stored_models if isinstance(stored_models, list) else current_models
 
             if 0 <= model_index < len(all_models):
                 model_name = all_models[model_index]
@@ -63,6 +61,14 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
                             reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель"),
                         )
                         return
+                if model_name not in current_models:
+                    from app.utils.keyboards import error_with_back_keyboard
+
+                    await query.edit_message_text(
+                        "⚠️ Эта модель больше недоступна. Пожалуйста, выберите модель заново.",
+                        reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель"),
+                    )
+                    return
             else:
                 from app.utils.keyboards import error_with_back_keyboard
 
@@ -133,12 +139,7 @@ async def switch_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     # Verify model is available
-    all_models = (
-        list(settings.AVAILABLE_MODELS or [])
-        + list(settings.OPENROUTER_AVAILABLE_MODELS or [])
-        + list(getattr(settings, "OPENCODE_AVAILABLE_MODELS", None) or [])
-        + list(getattr(settings, "FREETHEAI_AVAILABLE_MODELS", None) or [])
-    )
+    all_models = menus.get_visible_model_list(settings, get_openrouter_keys())
 
     if model_name not in all_models:
         await query.edit_message_text("⚠️ Эта модель больше недоступна.")

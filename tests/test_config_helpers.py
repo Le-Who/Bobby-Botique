@@ -1,6 +1,7 @@
 """Tests for app.config helper functions — pure parsing logic."""
 
 import logging
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -13,6 +14,7 @@ from app.config import (
     get_model_hash,
     get_settings_safe,
     load_settings,
+    normalize_gemini_chat_model,
 )
 
 # ── get_model_hash ───────────────────────────────────────────────────────────
@@ -115,9 +117,9 @@ class TestLoadDailyLimits:
 
         result = _load_daily_limits()
 
-        assert DEFAULT_GEMINI_MODELS[:2] == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+        assert DEFAULT_GEMINI_MODELS[:2] == ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
         assert "gemini-3-flash-preview" not in DEFAULT_GEMINI_MODELS[:2]
-        assert result["gemini-3.5-flash"] < result["gemini-3.1-flash-lite"]
+        assert result["gemini-3.6-flash"] < result["gemini-3.5-flash-lite"]
         assert result[GEMINI_GROUNDING_MODEL] == 500
         assert result[GEMINI_GROUNDING_FALLBACK_MODEL] == 500
 
@@ -138,7 +140,7 @@ def test_load_settings_reads_webhook_backpressure_envs(monkeypatch):
     assert settings.UPDATE_QUEUE_MAXSIZE == 2500
 
 
-def test_load_settings_defaults_to_3_5_primary_and_3_1_lite_economy(monkeypatch):
+def test_load_settings_uses_current_primary_and_economy_defaults(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
     monkeypatch.setenv("ADMIN_ID", "123")
@@ -158,20 +160,20 @@ def test_load_settings_defaults_to_3_5_primary_and_3_1_lite_economy(monkeypatch)
 
     settings = load_settings()
 
-    assert settings.AVAILABLE_MODELS[:2] == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
-    assert settings.DEFAULT_MODEL == "gemini-3.5-flash"
-    assert settings.RESEARCH_MODEL == "gemini-3.5-flash"
-    assert settings.QNA_MODEL == "gemini-3.1-flash-lite"
-    assert settings.INLINE_MODEL == "gemini-3.1-flash-lite"
-    assert settings.URL_SELECTION_MODEL == "gemini-3.1-flash-lite"
-    assert settings.TAXONOMY_MODEL == "gemini-3.1-flash-lite"
+    assert settings.AVAILABLE_MODELS == ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
+    assert settings.DEFAULT_MODEL == "gemini-3.6-flash"
+    assert settings.RESEARCH_MODEL == "gemini-3.6-flash"
+    assert settings.QNA_MODEL == "gemini-3.5-flash-lite"
+    assert settings.INLINE_MODEL == "gemini-3.5-flash-lite"
+    assert settings.URL_SELECTION_MODEL == "gemini-3.5-flash-lite"
+    assert settings.TAXONOMY_MODEL == "gemini-3.5-flash-lite"
 
 
 def test_default_gemini_models_only_include_current_flash_models():
-    assert DEFAULT_GEMINI_MODELS == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+    assert DEFAULT_GEMINI_MODELS == ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
 
 
-def test_load_settings_filters_legacy_gemini_models_from_env(monkeypatch):
+def test_load_settings_preserves_dynamic_gemini_models_from_env(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
     monkeypatch.setenv("ADMIN_ID", "123")
@@ -179,24 +181,128 @@ def test_load_settings_filters_legacy_gemini_models_from_env(monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEYS", "k2")
     monkeypatch.setenv(
         "GEMINI_AVAILABLE_MODELS",
-        "gemini-3-flash-preview,gemini-2.5-flash,gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.7-flash,"
+        "gemini-3.6-flash,gemini-3.5-flash,gemini-3.7-flash",
     )
-    monkeypatch.setenv("DEFAULT_MODEL", "gemini-3-flash-preview")
-    monkeypatch.setenv("RESEARCH_MODEL", "gemini-2.5-flash")
-    monkeypatch.setenv("QNA_MODEL", "gemini-3.1-flash-lite")
-    monkeypatch.setenv("INLINE_MODEL", "gemini-3-flash-preview")
-    monkeypatch.setenv("URL_SELECTION_MODEL", "gemini-2.5-flash-lite")
-    monkeypatch.setenv("TAXONOMY_MODEL", "gemini-3-flash-preview")
 
     settings = load_settings()
 
-    assert settings.AVAILABLE_MODELS == ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
-    assert settings.DEFAULT_MODEL == "gemini-3.5-flash"
-    assert settings.RESEARCH_MODEL == "gemini-3.5-flash"
-    assert settings.QNA_MODEL == "gemini-3.1-flash-lite"
-    assert settings.INLINE_MODEL == "gemini-3.1-flash-lite"
-    assert settings.URL_SELECTION_MODEL == "gemini-3.1-flash-lite"
-    assert settings.TAXONOMY_MODEL == "gemini-3.1-flash-lite"
+    assert settings.AVAILABLE_MODELS == [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+    ]
+
+
+def test_load_settings_none_hides_all_selectable_provider_models(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    for env_name in (
+        "GEMINI_AVAILABLE_MODELS",
+        "OPENCODE_AVAILABLE_MODELS",
+        "OPENROUTER_AVAILABLE_MODELS",
+        "FREETHEAI_AVAILABLE_MODELS",
+    ):
+        monkeypatch.setenv(env_name, " NoNe ")
+
+    settings = load_settings()
+
+    assert settings.AVAILABLE_MODELS == []
+    assert settings.OPENCODE_AVAILABLE_MODELS == []
+    assert settings.OPENROUTER_AVAILABLE_MODELS == []
+    assert settings.FREETHEAI_AVAILABLE_MODELS == []
+
+
+def test_whitespace_available_model_values_use_provider_defaults(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    for env_name in (
+        "GEMINI_AVAILABLE_MODELS",
+        "OPENCODE_AVAILABLE_MODELS",
+        "OPENROUTER_AVAILABLE_MODELS",
+        "FREETHEAI_AVAILABLE_MODELS",
+    ):
+        monkeypatch.setenv(env_name, "   ")
+
+    settings = load_settings()
+
+    assert settings.AVAILABLE_MODELS == DEFAULT_GEMINI_MODELS
+    assert settings.OPENROUTER_AVAILABLE_MODELS == [settings.OPENROUTER_DEFAULT_MODEL]
+    assert settings.OPENCODE_DEFAULT_MODEL in settings.OPENCODE_AVAILABLE_MODELS
+    assert settings.FREETHEAI_AVAILABLE_MODELS == [settings.FREETHEAI_DEFAULT_MODEL]
+
+
+def test_load_settings_does_not_expose_internal_role_models(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    monkeypatch.setenv("GEMINI_AVAILABLE_MODELS", "gemini-3.7-flash")
+    monkeypatch.setenv("DEFAULT_MODEL", "gemini-3.6-flash")
+    monkeypatch.setenv("OPENROUTER_AVAILABLE_MODELS", "vendor/selectable")
+    monkeypatch.setenv("OPENROUTER_DEFAULT_MODEL", "vendor/internal")
+    monkeypatch.setenv("OPENCODE_AVAILABLE_MODELS", "opencode-go/selectable")
+    monkeypatch.setenv("OPENCODE_DEFAULT_MODEL", "opencode-go/internal")
+    monkeypatch.setenv("FREETHEAI_AVAILABLE_MODELS", "cat/selectable")
+    monkeypatch.setenv("FREETHEAI_DEFAULT_MODEL", "cat/internal")
+
+    settings = load_settings()
+
+    assert settings.AVAILABLE_MODELS == ["gemini-3.7-flash"]
+    assert settings.OPENROUTER_AVAILABLE_MODELS == ["vendor/selectable"]
+    assert settings.OPENCODE_AVAILABLE_MODELS == ["opencode-go/selectable"]
+    assert settings.FREETHEAI_AVAILABLE_MODELS == ["cat/selectable"]
+
+
+def test_freetheai_selector_excludes_image_and_audio_models(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    monkeypatch.setenv(
+        "FREETHEAI_AVAILABLE_MODELS",
+        "vhr/gpt-image,img/gpt-image,or/google/lyria-3-pro-preview,cat/chat-model",
+    )
+
+    settings = load_settings()
+
+    assert settings.FREETHEAI_AVAILABLE_MODELS == ["cat/chat-model"]
+
+
+def test_normalize_gemini_chat_model_accepts_future_model_id():
+    assert normalize_gemini_chat_model("gemini-3.7-flash") == "gemini-3.7-flash"
+
+
+def test_actions_secret_gemini_catalog_is_visible_in_model_selector(monkeypatch):
+    from app.handlers.menus import get_visible_model_list
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    monkeypatch.setenv(
+        "GEMINI_AVAILABLE_MODELS",
+        "gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash-lite",
+    )
+
+    loaded = load_settings()
+
+    assert get_visible_model_list(loaded, openrouter_keys=[])[:3] == [
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+    ]
 
 
 def test_load_settings_reads_game_hub_envs(monkeypatch):
@@ -239,3 +345,32 @@ def test_get_settings_safe_does_not_log_expected_missing_env_errors(monkeypatch,
 
     assert settings is None
     assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+
+
+@pytest.mark.asyncio
+async def test_config_reload_preserves_shared_settings_identity_and_allows_empty_catalog(monkeypatch):
+    import app.config as config
+
+    old_settings = config.Settings.model_construct(
+        TELEGRAM_BOT_TOKEN="123:old",
+        DATABASE_URL="postgresql://old",
+        ADMIN_ID=1,
+        AVAILABLE_MODELS=["gemini-old"],
+        OPENROUTER_AVAILABLE_MODELS=[],
+    )
+    new_settings = old_settings.model_copy(deep=True)
+    new_settings.AVAILABLE_MODELS = []
+    new_settings.DEFAULT_MODEL = "gemini-internal-only"
+
+    manager = config.ConfigManager()
+    manager._settings = old_settings
+    watcher = AsyncMock()
+    manager.add_watcher(watcher)
+    monkeypatch.setattr(config, "load_settings", lambda: new_settings)
+
+    await manager.force_reload()
+
+    assert manager._settings is old_settings
+    assert old_settings.AVAILABLE_MODELS == []
+    watcher.assert_awaited_once()
+    assert watcher.await_args.args[0].AVAILABLE_MODELS == ["gemini-old"]

@@ -4,7 +4,9 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any
+from collections.abc import Callable, Iterable
+from enum import StrEnum
+from typing import Any, cast
 
 import httpx
 from cachetools import LRUCache
@@ -16,7 +18,29 @@ from PIL import Image
 from app.config import settings
 from app.errors import ErrorCode, extract_retry_after_seconds, tag_error
 from app.metrics import metrics_collector
-from app.providers.base import AIResponse, BaseAIProvider, _build_thinking_config
+from app.providers.base import (
+    AIResponse,
+    BaseAIProvider,
+    _build_thinking_config,
+)
+from app.providers.stream_types import (
+    FailurePhase,
+    FinishReason,
+    GenerationRequest,
+    GroundingMode,
+    GroundingReport,
+    GroundingSource,
+    KeyDisposition,
+    ProviderKind,
+    RetryDisposition,
+    RouteUsed,
+    StreamCompleted,
+    StreamFailed,
+    ThinkingLevel,
+    TokenUsage,
+    VisibleTextBuffer,
+)
+from app.providers.typed_payloads import gemini_contents
 from app.utils.api_logger import api_logger
 from app.utils.image_utils import TaggedImage, save_image_as_bytes
 
@@ -25,25 +49,21 @@ from app.utils.image_utils import TaggedImage, save_image_as_bytes
 _gemini_clients_cache: LRUCache = LRUCache(maxsize=50)
 
 
+class GeminiModelValidationStatus(StrEnum):
+    SUPPORTED = "supported"
+    UNSUPPORTED = "unsupported"
+    UNAVAILABLE = "unavailable"
+
+
 def _api_key_prefix(api_key: str) -> str:
     if api_key == "vertex":
         return "vertex"
     return api_key[:8]
 
 
-class _GroundingMeta:
-    """Sentinel yielded after stream_response finishes when Google Search Grounding
-    is active. Carries source citations for callers that want to surface them.
-
-    Callers that don't need grounding can simply ignore chunks where
-    isinstance(chunk, _GroundingMeta) is True.
-    """
-
-    __slots__ = ("sources",)
-
-    def __init__(self, sources: list[tuple[str, str]]) -> None:
-        # List of (url, title) pairs from grounding_metadata.grounding_chunks
-        self.sources = sources
+def _optional_int_attribute(source: Any, name: str) -> int | None:
+    value = getattr(source, name, None)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def get_cached_genai_client(api_key: str) -> genai.Client:
@@ -54,6 +74,52 @@ def get_cached_genai_client(api_key: str) -> genai.Client:
         client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]
         _gemini_clients_cache[api_key] = genai.Client(**client_kwargs)  # type: ignore[arg-type]
     return _gemini_clients_cache[api_key]
+
+
+async def validate_gemini_chat_model_capability(
+    model_name: str,
+    *,
+    api_keys: Iterable[str] | None = None,
+    client_factory: Callable[[str], Any] | None = None,
+) -> GeminiModelValidationStatus:
+    """Check that a Gemini model exists and supports ``generateContent``.
+
+    A definitive 404 or a model response without the chat capability is
+    ``UNSUPPORTED``. Transport, auth, and quota errors are retried with the
+    remaining configured keys and become ``UNAVAILABLE`` if none can answer.
+    """
+    keys = list(api_keys if api_keys is not None else settings.GEMINI_API_KEYS)
+    if not keys:
+        return GeminiModelValidationStatus.UNAVAILABLE
+
+    make_client = client_factory or get_cached_genai_client
+    saw_not_found = False
+    for api_key in keys:
+        try:
+            model = await make_client(api_key).aio.models.get(model=model_name)
+            actions = (
+                getattr(model, "supported_actions", None)
+                or getattr(model, "supported_generation_methods", None)
+                or []
+            )
+            if "generateContent" in actions:
+                return GeminiModelValidationStatus.SUPPORTED
+            return GeminiModelValidationStatus.UNSUPPORTED
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            error_text = str(exc).lower()
+            if code == 404 or ("404" in error_text and "not found" in error_text):
+                saw_not_found = True
+                continue
+            logging.getLogger(__name__).warning(
+                "Gemini model capability check failed for key %s: %s",
+                _api_key_prefix(api_key),
+                type(exc).__name__,
+            )
+
+    if saw_not_found:
+        return GeminiModelValidationStatus.UNSUPPORTED
+    return GeminiModelValidationStatus.UNAVAILABLE
 
 
 def get_live_api_client() -> "genai.Client | None":
@@ -235,15 +301,168 @@ class GeminiProvider(BaseAIProvider):
         self._client = get_cached_genai_client(api_key)
         self._client_api_key: str = api_key
 
+    async def stream(self, request: GenerationRequest, *, model_name: str):
+        """Emit typed Gemini stream events for one resolved key and model."""
+        contents = await gemini_contents(request)
+        route = RouteUsed(
+            provider=(
+                ProviderKind.VERTEX
+                if self.provider_name == "gemini-vertex"
+                else ProviderKind.GEMINI
+            ),
+            requested_model=request.models[0],
+            actual_model=model_name,
+        )
+        if not contents:
+            yield StreamFailed(
+                code=ErrorCode.INVALID_REQUEST,
+                phase=FailurePhase.BEFORE_TEXT,
+                retry=RetryDisposition.DO_NOT_RETRY,
+                key=KeyDisposition.UNCHANGED,
+                diagnostic="Gemini content conversion produced no valid contents",
+                route=route,
+            )
+            return
+
+        config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]
+        if request.grounding in {
+            GroundingMode.PROVIDER_SEARCH,
+            GroundingMode.PROVIDER_SEARCH_REQUIRED,
+        }:
+            config.tools = [types.Tool(google_search=types.GoogleSearch())]
+
+        thinking_level = None
+        if request.thinking_level is not None and request.thinking_level is not ThinkingLevel.AUTO:
+            thinking_level = request.thinking_level.value
+        thinking_config = _build_thinking_config(model_name, thinking_level)
+        if thinking_config:
+            config.thinking_config = thinking_config
+        if request.system_instruction:
+            config.system_instruction = request.system_instruction
+
+        text_emitted = False
+        finish_reason = FinishReason.from_raw(None)
+        usage = TokenUsage()
+        grounding = GroundingReport()
+        text_buffer = VisibleTextBuffer()
+
+        try:
+            response_stream = await asyncio.wait_for(
+                self._client.aio.models.generate_content_stream(
+                    model=model_name,
+                    contents=cast(Any, contents),
+                    config=config,
+                ),
+                timeout=request.provider_timeout_seconds,
+            )
+            async for chunk in response_stream:
+                candidates = getattr(chunk, "candidates", None) or []
+                if candidates:
+                    raw_finish = getattr(candidates[0], "finish_reason", None)
+                    if raw_finish and str(raw_finish) != "FINISH_REASON_UNSPECIFIED":
+                        finish_reason = FinishReason.from_raw(str(raw_finish))
+
+                    metadata = getattr(candidates[0], "grounding_metadata", None)
+                    grounding_chunks = getattr(metadata, "grounding_chunks", None) or []
+                    sources: list[GroundingSource] = []
+                    for grounding_chunk in grounding_chunks:
+                        web = getattr(grounding_chunk, "web", None)
+                        url = getattr(web, "uri", "") if web else ""
+                        title = (getattr(web, "title", "") if web else "") or url
+                        if url:
+                            sources.append(GroundingSource(url=url, title=title))
+                    if sources:
+                        grounding = GroundingReport(sources=tuple(sources))
+
+                native_usage = getattr(chunk, "usage_metadata", None)
+                if native_usage is not None:
+                    usage = TokenUsage(
+                        prompt=_optional_int_attribute(native_usage, "prompt_token_count"),
+                        completion=_optional_int_attribute(native_usage, "candidates_token_count"),
+                        total=_optional_int_attribute(native_usage, "total_token_count"),
+                        cached=_optional_int_attribute(native_usage, "cached_content_token_count"),
+                    )
+
+                text = getattr(chunk, "text", None)
+                delta = text_buffer.push(text) if isinstance(text, str) else None
+                if delta is not None:
+                    text_emitted = True
+                    yield delta
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            phase = FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT
+            message = str(exc)
+            lowered = message.lower()
+            retry = RetryDisposition.DO_NOT_RETRY if text_emitted else RetryDisposition.TRY_NEXT_KEY
+            key = KeyDisposition.UNCHANGED if text_emitted else KeyDisposition.TRANSIENT_FAILURE
+            if isinstance(exc, TimeoutError):
+                code = ErrorCode.TIMEOUT
+            elif "rate limit" in lowered or extract_retry_after_seconds(message) is not None:
+                code = ErrorCode.RATE_LIMIT
+                key = KeyDisposition.RATE_LIMITED
+            elif "quota" in lowered:
+                code = ErrorCode.QUOTA_EXCEEDED
+                key = KeyDisposition.EXHAUSTED
+            elif "api key" in lowered or "api_key_invalid" in lowered:
+                code = ErrorCode.INVALID_KEY
+                key = KeyDisposition.INVALID
+            elif (
+                getattr(exc, "code", None) in {503, 504}
+                or "unavailable" in lowered
+                or "overloaded" in lowered
+            ):
+                code = ErrorCode.OVERLOADED
+            elif "invalid" in lowered or "malformed" in lowered:
+                code = ErrorCode.INVALID_REQUEST
+                retry = RetryDisposition.DO_NOT_RETRY
+                key = KeyDisposition.UNCHANGED
+            elif isinstance(exc, httpx.HTTPError):
+                code = ErrorCode.NETWORK
+            else:
+                code = ErrorCode.GENERIC
+
+            diagnostic = f"{type(exc).__name__}: {message}"[:500]
+            if self.api_key:
+                diagnostic = diagnostic.replace(self.api_key, "[redacted]")
+            yield StreamFailed(
+                code=code,
+                phase=phase,
+                retry=retry,
+                key=key,
+                diagnostic=diagnostic,
+                route=route,
+            )
+            return
+
+        if not text_emitted:
+            yield StreamFailed(
+                code=ErrorCode.EMPTY_RESPONSE,
+                phase=FailurePhase.BEFORE_TEXT,
+                retry=RetryDisposition.TRY_NEXT_KEY,
+                key=KeyDisposition.TRANSIENT_FAILURE,
+                diagnostic="Gemini stream completed without visible text",
+                route=route,
+            )
+            return
+
+        yield StreamCompleted(
+            finish_reason=finish_reason,
+            usage=usage,
+            grounding=grounding,
+            route=route,
+        )
+
     async def _execute_request(
         self,
         history: list[dict[str, Any]],
         model_name: str,
-        system_instruction: str | None = None,
+        system_instruction: str | None,
+        user_id: int | None,
+        chat_id: int | None,
+        timeout: float,
         thinking_level: str | None = None,
-        user_id: int | None = None,
-        chat_id: int | None = None,
-        timeout: float = 90.0,
         enable_web_search: bool = False,
         force_grounding: bool = False,
     ) -> AIResponse:
@@ -386,6 +605,7 @@ class GeminiProvider(BaseAIProvider):
             self._log_failure(start_time, model_name, str(e), user_id, chat_id)
             logging.error("Gemini API Error: %s", e)
             err_lower = str(e).lower()
+            status_code = getattr(e, "code", None)
             retry_after_seconds = extract_retry_after_seconds(str(e))
 
             if retry_after_seconds is not None:
@@ -403,10 +623,9 @@ class GeminiProvider(BaseAIProvider):
                     "🚫 Достигнут лимит запросов к API (Quota Exceeded).",
                 )
             elif (
-                "503" in str(e)
+                status_code in {503, 504}
                 or "unavailable" in err_lower
                 or "overloaded" in err_lower
-                or "504" in str(e)
                 or "deadline_exceeded" in err_lower
             ):
                 await metrics_collector.record_error("gemini_overloaded", str(e))
@@ -451,171 +670,6 @@ class GeminiProvider(BaseAIProvider):
                 provider=self.provider_name,
                 model=model_name,
             )
-
-    async def stream_response(  # type: ignore[override]  # async generator: pyright can't reconcile abstract+yield
-        self,
-        history: list[dict[str, Any]],
-        model_name: str,
-        system_instruction: str | None = None,
-        thinking_level: str | None = None,
-        timeout: float = 120.0,
-        enable_web_search: bool = False,
-        force_grounding: bool = False,
-    ):
-        """
-        Stream response from Gemini API.
-        Yields text chunks.
-        """
-        if self._client is None or self._client_api_key != self.api_key:
-            client_kwargs: dict[str, Any] = {"api_key": self.api_key}
-            http_opts: dict[str, Any] = {"timeout": 90_000}
-            client_kwargs["http_options"] = types.HttpOptions(**http_opts)
-            self._client = genai.Client(**client_kwargs)
-            self._client_api_key = self.api_key
-        client = self._client
-
-        contents = await self._build_contents(history)
-        if contents is None:
-            yield tag_error(ErrorCode.GENERIC, "❌ Failed to create valid content for Gemini")
-            return
-
-        config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]
-        # Apply Google Search Grounding if requested
-        if enable_web_search:
-            config.tools = [types.Tool(google_search=types.GoogleSearch())]
-
-        tc = _build_thinking_config(model_name, thinking_level)
-        if tc:
-            config.thinking_config = tc
-        if system_instruction:
-            config.system_instruction = str(system_instruction)
-
-        _content_yielded = False
-        _last_grounding_meta = None  # populated during stream if enable_web_search=True
-        try:
-            # wait_for to prevent hanging during connect
-            coro = client.aio.models.generate_content_stream(
-                model=model_name,
-                contents=contents,
-                config=config,
-            )
-            response_stream = await asyncio.wait_for(coro, timeout=timeout)
-            async for chunk in response_stream:
-                try:
-                    candidates = getattr(chunk, "candidates", None)
-                    if candidates:
-                        fr = getattr(candidates[0], "finish_reason", None)
-                        if fr and str(fr) != "FINISH_REASON_UNSPECIFIED":
-                            from app.streaming import set_last_finish_reason
-
-                            set_last_finish_reason(str(fr))
-                    # Extract usage_metadata from the last chunk (Gemini provides it on final chunk)
-                    usage = getattr(chunk, "usage_metadata", None)
-                    if usage:
-                        total = getattr(usage, "total_token_count", 0) or 0
-                        if total > 0:
-                            from app.streaming import set_last_token_count
-
-                            set_last_token_count(total)
-                except Exception as e:
-                    logging.debug("Error extracting stream finish_reason: %s", e)
-
-                if chunk.text:
-                    _content_yielded = True
-                    yield chunk.text
-
-                # Capture grounding_metadata from any chunk that has it
-                # (Gemini typically includes it on the last chunk when Grounding is active)
-                if enable_web_search:
-                    try:
-                        cands = getattr(chunk, "candidates", None)
-                        if cands:
-                            gm = getattr(cands[0], "grounding_metadata", None)
-                            if gm:
-                                _last_grounding_meta = gm
-                    except Exception:
-                        pass
-
-            # After stream completes: emit grounding citations as a sentinel chunk.
-            # Callers that only check `chunk.text` will skip this safely.
-            if enable_web_search and _last_grounding_meta is not None:
-                try:
-                    sources: list[tuple[str, str]] = []
-                    gc = getattr(_last_grounding_meta, "grounding_chunks", None)
-                    if gc:
-                        for grounding_chunk in gc:
-                            web = getattr(grounding_chunk, "web", None)
-                            if web:
-                                url = getattr(web, "uri", "") or ""
-                                title = getattr(web, "title", "") or url
-                                if url:
-                                    sources.append((url, title))
-                    if sources:
-                        yield _GroundingMeta(sources)
-                except Exception as meta_err:
-                    logging.debug("Grounding meta extraction failed: %s", meta_err)
-        except TimeoutError:
-            logging.error("Gemini API stream timed out for model %s", model_name)
-            if not _content_yielded:
-                raise  # Let router rotate keys
-            # Mid-stream timeout: raise so streaming.py can finalize cleanly
-            # instead of dumping raw error text into the user's message.
-            raise
-        except APIError as e:
-            err_lower = str(e).lower()
-            retry_after_seconds = extract_retry_after_seconds(str(e))
-            is_retryable = (
-                "503" in str(e)
-                or "unavailable" in err_lower
-                or "overloaded" in err_lower
-                or "504" in str(e)
-                or "deadline_exceeded" in err_lower
-                or "rate limit" in err_lower
-                or retry_after_seconds is not None
-            )
-
-            if not _content_yielded:
-                if is_retryable:
-                    # Re-raise so the router can rotate to a different API key.
-                    # Google 503 "high demand" errors are often per-project or
-                    # per-key — a different key may succeed immediately.
-                    logging.warning(
-                        "Gemini API retryable stream error (503/UNAVAILABLE), re-raising for key rotation: %s", e
-                    )
-                    raise
-
-                # Pre-stream non-retryable errors: yield tagged error for the UI
-                logging.error("Gemini API stream error (pre-content): %s", e)
-                if retry_after_seconds is not None:
-                    wait_text = (
-                        f"⏱️ Временный лимит запросов модели. Подождите около {retry_after_seconds}с."
-                        if retry_after_seconds
-                        else "⏱️ Временный лимит запросов."
-                    )
-                    yield tag_error(ErrorCode.RATE_LIMIT, wait_text)
-                elif "quota" in err_lower:
-                    yield tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API.")
-                elif "api key" in err_lower or "api_key_invalid" in err_lower:
-                    yield tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ.")
-                elif "invalid" in err_lower or "malformed" in err_lower:
-                    yield tag_error(ErrorCode.INVALID_REQUEST, "❌ Некорректный запрос к API.")
-                elif "rate limit" in err_lower:
-                    yield tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов.")
-                else:
-                    yield tag_error(ErrorCode.GENERIC, f"❌ Произошла ошибка API: {e}")
-            else:
-                # Mid-stream error: raise so streaming.py can finalize the
-                # partial text cleanly instead of injecting raw JSON into chat.
-                logging.error("Gemini API mid-stream error, escalating: %s", e)
-                raise
-        except Exception as e:
-            if not _content_yielded:
-                raise  # Let router rotate keys
-            # Mid-stream error: raise for clean handling by streaming.py
-            logging.error("Gemini mid-stream error, escalating: %s", e)
-            raise
-
-    # ── Gemini helpers ───────────────────────────────────────────────────
 
     async def _build_contents(self, history: list) -> list | None:
         """Convert history dicts → list[types.Content]. Returns None on total failure."""

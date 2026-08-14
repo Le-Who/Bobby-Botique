@@ -4,7 +4,16 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.utils import vision_intent
 from app.utils.vision_intent import classify_vision_intent
+
+
+@pytest.fixture(autouse=True)
+def clear_intent_cache():
+    """Keep cached classifications from leaking between independent scenarios."""
+    vision_intent._INTENT_CACHE.clear()
+    yield
+    vision_intent._INTENT_CACHE.clear()
 
 
 @pytest.mark.asyncio

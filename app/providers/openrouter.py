@@ -13,6 +13,22 @@ from PIL import Image
 from app.errors import ErrorCode, tag_error
 from app.metrics import metrics_collector
 from app.providers.base import AIResponse, BaseAIProvider
+from app.providers.stream_types import (
+    FailurePhase,
+    FinishReason,
+    GenerationRequest,
+    GroundingReport,
+    KeyDisposition,
+    ProviderKind,
+    RetryDisposition,
+    RouteUsed,
+    StreamCompleted,
+    StreamFailed,
+    ThinkingLevel,
+    TokenUsage,
+    VisibleTextBuffer,
+)
+from app.providers.typed_payloads import openai_messages
 from app.request_context import get_request_id
 from app.utils.api_logger import api_logger
 from app.utils.image_utils import TaggedImage, save_image_as_bytes
@@ -21,6 +37,11 @@ from app.utils.network import NetworkErrorHandler
 
 # Module-level httpx client for OpenRouter
 _openrouter_http_client: httpx.AsyncClient | None = NetworkErrorHandler.create_robust_http_client()
+
+
+def _optional_int_item(source: dict[str, Any], name: str) -> int | None:
+    value = source.get(name)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 async def close_http_clients() -> None:
@@ -41,6 +62,182 @@ class OpenRouterProvider(BaseAIProvider):
     """
 
     provider_name = "openrouter"
+
+    def _provider_kind(self) -> ProviderKind:
+        if self.provider_name == "opencode":
+            return ProviderKind.OPENCODE
+        if self.provider_name == "freetheai":
+            return ProviderKind.FREETHEAI
+        return ProviderKind.OPENROUTER
+
+    async def stream(self, request: GenerationRequest, *, model_name: str):
+        """Emit typed events from an OpenAI-compatible chat-completions stream."""
+        route = RouteUsed(
+            provider=self._provider_kind(),
+            requested_model=request.models[0],
+            actual_model=model_name,
+        )
+        messages = await openai_messages(request)
+        if not messages:
+            yield StreamFailed(
+                code=ErrorCode.INVALID_REQUEST,
+                phase=FailurePhase.BEFORE_TEXT,
+                retry=RetryDisposition.DO_NOT_RETRY,
+                key=KeyDisposition.UNCHANGED,
+                diagnostic="OpenAI-compatible message conversion produced no messages",
+                route=route,
+            )
+            return
+
+        client = _openrouter_http_client
+        if client is None:
+            yield StreamFailed(
+                code=ErrorCode.NETWORK,
+                phase=FailurePhase.BEFORE_TEXT,
+                retry=RetryDisposition.RETRY_LATER,
+                key=KeyDisposition.UNCHANGED,
+                diagnostic="OpenRouter HTTP client is not initialized",
+                route=route,
+            )
+            return
+
+        thinking_level = None
+        if request.thinking_level is not None and request.thinking_level is not ThinkingLevel.AUTO:
+            thinking_level = request.thinking_level.value
+        payload: dict[str, Any] = {
+            "model": self._strip_model_prefix(model_name),
+            "messages": messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        payload.update(self._extra_payload_params(model_name, thinking_level))
+
+        text_emitted = False
+        finish_reason = FinishReason.from_raw(None)
+        usage = TokenUsage()
+        text_buffer = VisibleTextBuffer()
+
+        try:
+            async with client.stream(
+                "POST",
+                self._get_url(),
+                json=payload,
+                headers=self._get_headers(),
+                timeout=request.provider_timeout_seconds,
+            ) as response:
+                response.raise_for_status()
+                async for raw_line in response.aiter_lines():
+                    line = raw_line.strip()
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    native_usage = data.get("usage")
+                    if isinstance(native_usage, dict):
+                        usage = TokenUsage(
+                            prompt=_optional_int_item(native_usage, "prompt_tokens"),
+                            completion=_optional_int_item(native_usage, "completion_tokens"),
+                            total=_optional_int_item(native_usage, "total_tokens"),
+                            cached=_optional_int_item(native_usage, "cached_tokens"),
+                        )
+
+                    choices = data.get("choices") or []
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    raw_finish = choice.get("finish_reason")
+                    if raw_finish:
+                        finish_reason = FinishReason.from_raw(str(raw_finish))
+                    text = choice.get("delta", {}).get("content", "")
+                    delta = text_buffer.push(text) if isinstance(text, str) else None
+                    if delta is not None:
+                        text_emitted = True
+                        yield delta
+
+        except asyncio.CancelledError:
+            raise
+        except httpx.HTTPStatusError as exc:
+            await exc.response.aread()
+            status = exc.response.status_code
+            if status == 429:
+                code = ErrorCode.RATE_LIMIT
+                key = KeyDisposition.RATE_LIMITED
+                retry = RetryDisposition.TRY_NEXT_KEY
+            elif status in {401, 403}:
+                code = ErrorCode.INVALID_KEY
+                key = KeyDisposition.INVALID
+                retry = RetryDisposition.TRY_NEXT_KEY
+            elif status == 402:
+                code = ErrorCode.QUOTA_EXCEEDED
+                key = KeyDisposition.EXHAUSTED
+                retry = RetryDisposition.TRY_NEXT_KEY
+            elif status in {502, 503, 504}:
+                code = ErrorCode.OVERLOADED if status == 503 else ErrorCode.NETWORK
+                key = KeyDisposition.TRANSIENT_FAILURE
+                retry = RetryDisposition.TRY_NEXT_KEY
+            elif status == 400:
+                code = ErrorCode.INVALID_REQUEST
+                key = KeyDisposition.UNCHANGED
+                retry = RetryDisposition.DO_NOT_RETRY
+            else:
+                code = ErrorCode.GENERIC
+                key = KeyDisposition.TRANSIENT_FAILURE
+                retry = RetryDisposition.TRY_NEXT_KEY
+            if text_emitted:
+                retry = RetryDisposition.DO_NOT_RETRY
+                key = KeyDisposition.UNCHANGED
+            yield StreamFailed(
+                code=code,
+                phase=FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT,
+                retry=retry,
+                key=key,
+                diagnostic=f"HTTP {status}: {exc.response.text[:400]}",
+                route=route,
+            )
+            return
+        except Exception as exc:
+            diagnostic = f"{type(exc).__name__}: {exc}"[:500].replace(self.api_key, "[redacted]")
+            yield StreamFailed(
+                code=ErrorCode.NETWORK if isinstance(exc, httpx.HTTPError) else ErrorCode.GENERIC,
+                phase=FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT,
+                retry=(
+                    RetryDisposition.DO_NOT_RETRY
+                    if text_emitted
+                    else RetryDisposition.TRY_NEXT_KEY
+                ),
+                key=(
+                    KeyDisposition.UNCHANGED
+                    if text_emitted
+                    else KeyDisposition.TRANSIENT_FAILURE
+                ),
+                diagnostic=diagnostic,
+                route=route,
+            )
+            return
+
+        if not text_emitted:
+            yield StreamFailed(
+                code=ErrorCode.EMPTY_RESPONSE,
+                phase=FailurePhase.BEFORE_TEXT,
+                retry=RetryDisposition.TRY_NEXT_KEY,
+                key=KeyDisposition.TRANSIENT_FAILURE,
+                diagnostic="OpenAI-compatible stream completed without visible text",
+                route=route,
+            )
+            return
+
+        yield StreamCompleted(
+            finish_reason=finish_reason,
+            usage=usage,
+            grounding=GroundingReport(),
+            route=route,
+        )
 
     # ── Overridable template methods ─────────────────────────────────────────
 
@@ -268,76 +465,6 @@ class OpenRouterProvider(BaseAIProvider):
                 provider=self.provider_name,
                 model=model_name,
             )
-
-    async def stream_response(
-        self,
-        history: list[dict[str, Any]],
-        model_name: str,
-        system_instruction: str | None = None,
-        thinking_level: str | None = None,
-        timeout: float = 120.0,
-        enable_web_search: bool = False,
-        force_grounding: bool = False,  # no-op: OpenRouter has no native Search grounding
-    ):
-
-        """
-        Stream response from OpenRouter API using Server-Sent Events (SSE).
-        Yields text chunks.
-        """
-
-        messages = await self._build_messages(history, system_instruction)
-        if not messages:
-            yield tag_error(ErrorCode.GENERIC, "❌ Failed to create valid messages for OpenRouter")
-            return
-
-        url = self._get_url()
-        headers = self._get_headers()
-        api_model = self._strip_model_prefix(model_name)
-        payload: dict = {"model": api_model, "messages": messages, "stream": True}
-        payload.update(self._extra_payload_params(model_name, thinking_level))
-
-        if _openrouter_http_client is None:
-            yield tag_error(ErrorCode.GENERIC, "❌ OpenRouter HTTP client not initialized")
-            return
-
-        try:
-            async with _openrouter_http_client.stream(
-                "POST", url, json=payload, headers=headers, timeout=timeout
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    line = line.strip()
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            data = json.loads(data_str)
-                            choices = data.get("choices", [])
-                            if not choices:
-                                continue
-                            choice = choices[0]
-
-                            fr = choice.get("finish_reason")
-                            if fr:
-                                from app.streaming import set_last_finish_reason
-
-                                set_last_finish_reason(str(fr))
-
-                            chunk = choice.get("delta", {}).get("content", "")
-                            if chunk:
-                                yield chunk
-                        except json.JSONDecodeError:
-                            continue
-        except httpx.HTTPStatusError as e:
-            await e.response.aread()
-            status = e.response.status_code
-            yield self._build_http_error_tag(status, e.response.text, model_name)
-        except Exception as e:
-            logging.error("OpenRouter streaming error: %s", e)
-            yield tag_error(ErrorCode.GENERIC, f"❌ Произошла непредвиденная ошибка API: {e}")
-
-    # ── OpenRouter helpers ───────────────────────────────────────────────
 
     async def _build_messages(self, history: list, system_instruction: str | None) -> list:
         """Convert Gemini-format history → OpenAI-format messages."""

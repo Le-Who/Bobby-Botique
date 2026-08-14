@@ -536,7 +536,7 @@ class RateLimiter:
         cutoff_time = current_time - self.window_seconds
 
         async with self._lock:
-            user_requests = self._user_requests.get(user_id, [])
+            user_requests = self._user_requests.get(user_id, deque())
             recent_requests = [req_time for req_time in user_requests if req_time > cutoff_time]
 
             return {

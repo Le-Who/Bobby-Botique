@@ -219,8 +219,9 @@ async def monthly_champions_callback(update: Update, context: ContextTypes.DEFAU
 
     champions = await repo.get_monthly_champions(year, month)
     await query.answer("Загружаю лучших за месяц")
-    from telegram import Message
-    if not isinstance(query.message, Message):
+    message = query.message
+    reply_text = getattr(message, "reply_text", None)
+    if not callable(reply_text):
         return
     lines = [f"🏆 <b>Лучшие игроки {month:02d}.{year}</b>", ""]
     if not champions:
@@ -233,4 +234,4 @@ async def monthly_champions_callback(update: Update, context: ContextTypes.DEFAU
                 f"{puzzle_date.strftime('%d.%m')} — <b>{name}</b>: "
                 f"{int(item['final_score'])} очков · {int(item['moves'])} ходов"
             )
-    await query.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    await reply_text("\n".join(lines), parse_mode=ParseMode.HTML)

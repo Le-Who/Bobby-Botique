@@ -11,7 +11,6 @@ Covers:
 from __future__ import annotations
 
 import base64
-import importlib
 import json
 import urllib.parse
 from types import SimpleNamespace
@@ -648,7 +647,11 @@ class TestVertexLiveClientBootstrap:
         monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/run/secrets/vertex-live-sa.json")
         import app.providers.gemini as gemini_provider
 
-        gemini_provider = importlib.reload(gemini_provider)
+        # Reset only the singleton under test.  Reloading this shared provider module
+        # replaces its module-level caches and leaves already-imported test objects
+        # pointing at stale cache instances.
+        gemini_provider._vertex_live_client = None
+        gemini_provider._vertex_live_client_initialized = False
         monkeypatch.setattr(gemini_provider.settings, "VERTEX_AI_PROJECT", "vertex-project", raising=False)
         monkeypatch.setattr(gemini_provider.settings, "VERTEX_AI_LOCATION", "us-central1", raising=False)
         monkeypatch.setattr(gemini_provider.settings, "VERTEX_AI_KEY", "vertex-key", raising=False)

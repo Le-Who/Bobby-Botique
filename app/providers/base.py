@@ -10,12 +10,14 @@ Provides:
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
 from google.genai import types
 
 from app.errors import user_friendly_error
+from app.providers.stream_types import GenerationEvent, GenerationRequest
 from app.resilience_policy import ResiliencePolicy, run_with_resilience
 
 # ── Thinking config helpers ──────────────────────────────────────────
@@ -255,28 +257,13 @@ class BaseAIProvider(ABC):
         """
 
     @abstractmethod
-    async def stream_response(
+    def stream(
         self,
-        history: list[dict[str, Any]],
+        request: GenerationRequest,
+        *,
         model_name: str,
-        system_instruction: str | None = None,
-        thinking_level: str | None = None,
-        timeout: float = 120.0,
-        enable_web_search: bool = False,
-        force_grounding: bool = False,
-    ) -> None:  # type: ignore[override]  # subclasses yield — AsyncGenerator[Any, None]
-        """
-        Stream response from AI provider. Must be implemented by subclasses.
-        Yields chunks of text as they arrive.
-
-        Args:
-            enable_web_search: If True, enable native web search grounding
-                (Google Search for Gemini, ignored by other providers).
-            force_grounding: If True, the caller requires a grounded attempt.
-                Current Gemini models use the google_search tool for this.
-        """
-
-
+    ) -> AsyncIterator[GenerationEvent]:
+        """Emit typed generation events and exactly one terminal event."""
 
 # Known FreeTheAI routing prefixes — checked BEFORE the generic "/" detection
 # to prevent FTA models from being misrouted to OpenRouter.

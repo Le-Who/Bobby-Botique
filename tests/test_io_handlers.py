@@ -2,7 +2,7 @@
 
 import os
 import tempfile
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -18,7 +18,19 @@ async def test_process_pdf_downloads_to_drive(mock_process_path):
     mock_process_path.return_value = "Extracted PDF content"
 
     processor = DocumentProcessor()
-    result = await processor.process_document(temp_path, "test.pdf", 1, is_path=True)
+    with (
+        patch(
+            "app.document_processor.check_document_limit",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "app.document_processor.check_duplicate_file",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
+        result = await processor.process_document(temp_path, "test.pdf", 1, is_path=True)
 
     mock_process_path.assert_called_once()
     args, _ = mock_process_path.call_args
@@ -37,7 +49,19 @@ async def test_process_word_downloads_to_drive(mock_process_path):
     mock_process_path.return_value = "Extracted DOCX content"
 
     processor = DocumentProcessor()
-    result = await processor.process_document(temp_path, "test.docx", 1, is_path=True)
+    with (
+        patch(
+            "app.document_processor.check_document_limit",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "app.document_processor.check_duplicate_file",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
+        result = await processor.process_document(temp_path, "test.docx", 1, is_path=True)
 
     mock_process_path.assert_called_once()
     args, _ = mock_process_path.call_args

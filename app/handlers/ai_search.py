@@ -14,7 +14,7 @@ from app.config import DEFAULT_GEMINI_MODELS, GEMINI_ECONOMY_MODEL, GEMINI_PRIMA
 from app.core.agentic import AgenticResult, AgenticSearch
 from app.database import ChatState
 
-_bg_tasks = set()  # Store background tasks to prevent garbage collection (RUF006)
+_bg_tasks: set[asyncio.Task[Any]] = set()  # Prevent task garbage collection (RUF006)
 
 from app.config import get_primary_provider
 from app.errors import _TAG_PREFIX, is_error_message
@@ -113,7 +113,6 @@ async def _handle_qna_search(
             _setting("OPENCODE_QNA_MODEL", _DEFAULT_OPENCODE_QNA_MODEL),
             _setting("QNA_MODEL", GEMINI_ECONOMY_MODEL),
         ]
-        enable_web_search = False  # JINA grounding already in system prompt
     else:
         # ── Gemini path: native Google Search Grounding ────────────────────────
         system_instruction = (
@@ -125,121 +124,47 @@ async def _handle_qna_search(
         # QnA ALWAYS uses grounding-capable models — user's chat model preference
         # is ignored since arbitrary models may not support Google Search Grounding.
         fallback_chain = [GEMINI_ECONOMY_MODEL, GEMINI_PRIMARY_MODEL]
-        enable_web_search = True
-
     history = [{"role": "user", "parts": [actual_search_query]}]
 
-    from app.streaming import stream_and_display
+    from app.providers.request_factory import generation_request_from_history
+    from app.providers.stream_types import GroundingMode, Workload
+    from app.response_delivery.delivery import (
+        TelegramTarget,
+        get_telegram_response_delivery,
+    )
+    from app.response_delivery.outcomes import CompleteDelivery, PartialDelivery
+    from app.response_delivery.presentation import FixedPresentation
 
-    # ── Try each model in the fallback chain ─────────────────────────────────
-    final_answer: str | None = None
-    success = False
-    stream_last_msg = None
-    _tokens = 0
-    reply_markup = _qna_reply_markup()
-
-    for attempt_idx, model in enumerate(fallback_chain):
-        try:
-            logging.info("QnA search: trying model %s (attempt %d/%d)", model, attempt_idx + 1, len(fallback_chain))
-            if attempt_idx > 0:
-                try:
-                    await update_stage(placeholder_message, STAGES_SEARCH_QUICK, 0)
-                except (BadRequest, NetworkError):
-                    pass
-
-            final_answer, success, stream_last_msg, _tokens, _was_interrupted, _voice_req = await stream_and_display(
-                placeholder_message,
-                model_name=model,
-                history=history,
-                system_instruction=system_instruction,
-                thinking_level=chat_state.thinking_level,
-                user_id=user_id,
-                bot=placeholder_message.get_bot(),
-                chat_id=chat_id or 0,
-                enable_web_search=enable_web_search,
-                reply_markup=reply_markup,
-            )
-
-            # Detect error-tagged responses (e.g., 429 quota error yielded
-            # mid-stream). stream_and_display returns success=True because
-            # the generator completed, but the text contains an error tag.
-            # Check for error tag ANYWHERE in text (not just at start) since
-            # partial real content may precede the error tag.
-            if final_answer and (_TAG_PREFIX in final_answer or is_error_message(final_answer)):
-                logging.warning(
-                    "QnA search: model %s returned error-tagged response, trying next model",
-                    model,
-                )
-                # Delete the message containing the error so user doesn't
-                # see two messages (error + answer).  Then send a fresh
-                # placeholder for the next model to stream into.
-                error_msg = stream_last_msg if stream_last_msg else placeholder_message
-                try:
-                    await error_msg.delete()
-                except Exception:
-                    pass
-                try:
-                    placeholder_message = await placeholder_message.reply_text(
-                        "🔎 Ищу быстрый ответ (другая модель)..."
-                    )
-                except Exception:
-                    pass
-                continue
-
-            if success and final_answer and final_answer.strip():
-                logging.info("QnA search: model %s succeeded (%d chars)", model, len(final_answer))
-                break  # Success — exit fallback loop
-            else:
-                logging.warning("QnA search: model %s returned empty/no-success, trying next", model)
-                continue
-
-        except Exception as e:
-            logging.error("QnA search: model %s failed: %s", model, e, exc_info=True)
-            if attempt_idx < len(fallback_chain) - 1:
-                continue
-            # Last model also failed
-            final_answer = None
-            success = False
-
-    streamed = bool(success and final_answer)
-
-    # ── Fallback: non-streaming response if all streaming attempts failed ──
-    if not streamed:
-        # Try one last time via non-streaming with the last model
-        for model in reversed(fallback_chain):
-            try:
-                final_answer, _ = await _get_ai_response_with_routing(
-                    model,
-                    history,
-                    system_instruction=system_instruction,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                )
-                if final_answer and final_answer.strip():
-                    break
-            except Exception as e:
-                logging.error("QnA non-streaming fallback failed for %s: %s", model, e)
-                continue
-
-    # ── Handle response ────────────────────────────────────────────────
-    if await handle_ai_response_error(final_answer or "", placeholder_message):
-        return None
-
-    if final_answer:
-        if not streamed:
-            await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup)
-    else:
-        try:
-            from app.errors import build_retry_and_roles_keyboard
-
-            await placeholder_message.edit_text(
-                "Получен пустой ответ от API.",
-                reply_markup=build_retry_and_roles_keyboard(),
-            )
-        except (BadRequest, NetworkError) as edit_error:
-            logging.error("Could not edit placeholder message: %s", edit_error)
-
-    return final_answer or None
+    request = await generation_request_from_history(
+        models=tuple(fallback_chain),
+        history=history,
+        system_instruction=system_instruction,
+        user_id=user_id,
+        chat_id=chat_id,
+        thinking_level=chat_state.thinking_level,
+        grounding=(
+            GroundingMode.PROVIDED_CONTEXT
+            if use_opencode
+            else GroundingMode.PROVIDER_SEARCH_REQUIRED
+        ),
+        workload=Workload.QUICK_SEARCH,
+        allow_deferred=True,
+    )
+    outcome = await get_telegram_response_delivery().stream(
+        TelegramTarget(
+            placeholder_message=placeholder_message,
+            bot=placeholder_message.get_bot(),
+            chat_id=chat_id,
+        ),
+        request,
+        presentation=FixedPresentation(
+            actions=_qna_reply_markup(),
+            long_read_title=actual_search_query[:60].strip() or "Быстрый поиск",
+        ),
+    )
+    if isinstance(outcome, (CompleteDelivery, PartialDelivery)):
+        return outcome.content_text
+    return None
 
 
 @track_metrics("research_search")
@@ -434,83 +359,25 @@ async def _handle_research_agent(
             [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")],
         ]
 
-        # ── Long Read transition for large responses (>4000 chars) ────────────────────
-        reader_url: str | None = None
-        webapp_base_url = _setting("WEBAPP_BASE_URL", "")
-        if len(final_answer) > 4000 and webapp_base_url:
-            try:
-                import uuid
+        from app.response_delivery.delivery import (
+            CompletedResponse,
+            TelegramTarget,
+            get_telegram_response_delivery,
+        )
+        from app.response_delivery.presentation import FixedPresentation
 
-                from app.cache import store_long_message, store_telegraph_url
-
-                uid = str(uuid.uuid4())
-                await store_long_message(uid, final_answer)
-                reader_url = f"{webapp_base_url}/webapp/reader?id={uid}"
-                logging.info(f"AgenticSearch: Created MiniApp Reader URL for {len(final_answer)} chars: {reader_url}")
-
-                # Launch background telegraph fallback
-                from app.utils.telegraph import create_telegraph_page
-
-                page_title = actual_search_query[:60].strip() or "Исследование"
-
-                async def _bg_telegraph_fallback(u: str, t: str, a: str) -> None:
-                    try:
-                        tg_url = await create_telegraph_page(t, a)
-                        if tg_url:
-                            await store_telegraph_url(u, tg_url)
-                    except Exception as fallback_err:
-                        logging.debug("Background telegraph fallback failed: %s", fallback_err)
-
-                task = asyncio.create_task(_bg_telegraph_fallback(uid, page_title, final_answer))
-                _bg_tasks.add(task)
-                task.add_done_callback(_bg_tasks.discard)
-            except Exception as e:
-                logging.debug("Mini App Reader creation failed: %s", e)
-
-        if reader_url:
-            # Send a collapsed summary with reader link
-            summary_lines = final_answer[:800].strip()
-            if len(final_answer) > 800:
-                summary_lines += "…"
-
-            from telegram import WebAppInfo
-
-            from app.utils.ux_improvements import wrap_in_expandable_blockquote
-
-            summary_html = wrap_in_expandable_blockquote(summary_lines)
-            full_text = f'{summary_html}\n\n<i>(...текст превышает лимит. Продолжение доступно по кнопке <b>«Развернуть статью»</b> 👇)</i> <a href="{reader_url}">&#8203;</a>'
-
-            buttons.insert(
-                0, [InlineKeyboardButton("📄 Развернуть статью (Mini App)", web_app=WebAppInfo(url=reader_url))]
-            )
-            reply_markup = InlineKeyboardMarkup(buttons)
-
-            try:
-                await placeholder_message.edit_text(
-                    full_text,
-                    parse_mode="HTML",
-                    reply_markup=reply_markup,
-                    disable_web_page_preview=True,
-                )
-            except Exception as e:
-                logging.warning("Mini App Reader summary edit failed: %s, falling back", e)
-                # Fallback to standard long message
-                reply_markup = InlineKeyboardMarkup(buttons[1:])  # Remove Reader button
-                await send_long_message(
-                    placeholder_message,
-                    final_answer,
-                    reply_markup=reply_markup,
-                    is_deep_dive=True,
-                )
-        else:
-            # Standard flow: split into messages
-            reply_markup = InlineKeyboardMarkup(buttons)
-            await send_long_message(
-                placeholder_message,
-                final_answer,
-                reply_markup=reply_markup,
-                is_deep_dive=True,
-            )
+        await get_telegram_response_delivery().deliver(
+            TelegramTarget(
+                placeholder_message=placeholder_message,
+                bot=placeholder_message.get_bot(),
+                chat_id=trace_chat_id,
+            ),
+            CompletedResponse(final_answer),
+            presentation=FixedPresentation(
+                actions=InlineKeyboardMarkup(buttons),
+                long_read_title=actual_search_query[:60].strip() or "Исследование",
+            ),
+        )
 
         # ── Auto TTS for research results (fire-and-forget) ──────────
         if len(final_answer) > 200:

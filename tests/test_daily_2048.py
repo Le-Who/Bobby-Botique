@@ -605,6 +605,45 @@ async def test_daily2048_result_edits_existing_cover_prompt_instead_of_sending_n
 
 
 @pytest.mark.asyncio
+async def test_daily2048_result_without_cover_edits_prompt_as_text() -> None:
+    bot = SimpleNamespace(
+        edit_message_media=AsyncMock(),
+        edit_message_text=AsyncMock(),
+        send_photo=AsyncMock(),
+        send_message=AsyncMock(),
+    )
+
+    with (
+        patch(
+            "app.games.daily_2048_telegram.render_result_body",
+            new_callable=AsyncMock,
+            return_value=("result text", None),
+        ),
+        patch(
+            "app.games.daily_2048_telegram.repo.get_active_prompt_message",
+            new_callable=AsyncMock,
+            return_value={"id": 9, "chat_id": 77, "message_id": 501},
+        ),
+        patch(
+            "app.games.daily_2048_telegram._get_cover_photo",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
+        await daily_2048_telegram.send_daily2048_result_message(
+            bot,
+            77,
+            date(2026, 6, 2),
+        )
+
+    bot.edit_message_media.assert_not_awaited()
+    bot.edit_message_text.assert_awaited_once()
+    assert bot.edit_message_text.await_args.kwargs["text"] == "result text"
+    bot.send_photo.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_daily2048_websocket_sends_explicit_goal_and_accepts_move(monkeypatch) -> None:
     monkeypatch.setattr("app.web_miniapp.settings", SimpleNamespace(TELEGRAM_BOT_TOKEN="test-token"))
     init_data = make_valid_init_data("test-token", user_id=777)

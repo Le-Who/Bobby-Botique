@@ -1326,297 +1326,58 @@ async def _stream_inline_fast(
     max_rounds: int = 4,
     enable_web_search: bool = False,
 ) -> tuple[str | None, list[tuple[str, str]]]:
-    """2+1 Race Requests accumulator optimised for inline speed.
+    """Collect a typed inline stream; ProviderRouter owns races and key health."""
+    from app.providers.request_factory import generation_request_from_history
+    from app.providers.router import get_provider_router
+    from app.providers.stream_types import (
+        GroundingMode,
+        StreamCompleted,
+        TextDelta,
+        Workload,
+    )
 
-    Fires 2 AI Studio keys + 1 Vertex AI Express slot simultaneously per round.
-    The first to yield a real chunk wins; the other two are cancelled instantly.
-    Zero sleep between rounds.
+    thinking_level = await get_global_setting(
+        "inline_thinking_level",
+        settings.INLINE_THINKING_LEVEL,
+    )
+    request = await generation_request_from_history(
+        models=(preferred_model,),
+        history=history,
+        system_instruction=system_instruction,
+        user_id=user_id,
+        thinking_level=thinking_level,
+        grounding=(
+            GroundingMode.PROVIDER_SEARCH_REQUIRED
+            if enable_web_search
+            else GroundingMode.NONE
+        ),
+        workload=Workload.INLINE,
+        allow_deferred=False,
+    )
 
-    Returns:
-        (accumulated_text, sources) where sources is a list of (url, title)
-        tuples from Grounding metadata. Returns (None, []) when all rounds fail.
-    """
-    from app.agent_use_cases import AgentRequestUseCase
-    from app.providers.base import get_provider_for_model
-    from app.providers.gemini import _GroundingMeta
-    from app.repos.keys import get_key_status_manager
-
-    use_case = AgentRequestUseCase()
-    status_mgr = get_key_status_manager()
-    failed_keys: set[str] = set()
-    _winner_sources: list[tuple[str, str]] = []  # Grounding citations from winner
-    _VERTEX_KH = "__vertex_ai__"
-
-    async def _record_stream_error(kh: str, model: str, error_text: str) -> None:
-        """Apply router-equivalent key penalties for tagged stream error chunks."""
-        failed_keys.add(kh)
-        if kh == _VERTEX_KH:
-            return
-        if not (is_key_related_error(error_text) or is_retryable_error(error_text)):
-            return
-        try:
-            await status_mgr.suspend_key(
-                kh,
-                model,
-                classify_key_error(error_text),
-                error_text[:200],
-            )
-        except Exception as suspend_exc:
-            logging.warning("Non-critical: failed to suspend inline key after stream error: %s", suspend_exc)
-
-    class _End:
-        """Sentinel: producer puts this when its stream finishes or is cancelled."""
-
-        __slots__ = ("key_hash",)
-
-        def __init__(self, kh: str) -> None:
-            self.key_hash = kh
-
-    for _round in range(max_rounds):
-        # ── Resolve up to 2 distinct AI Studio keys for this round ─────────────
-        # (Vertex AI Express adds a 3rd parallel racer — total concurrency = 3)
-        keys: list[dict] = []
-        resolved_model: str | None = None
-        # AI Studio keys race on the model selected by the route:
-        # - gemini-3.1-flash-lite for fast ungrounded inline answers
-        # - gemini-2.5-flash for Google Search grounding on free-tier keys
-        _ai_studio_model = preferred_model
-        for _ in range(2):
-            kd, mdl, _ = await use_case.resolve_ai_request(
-                _ai_studio_model,
-                excluded_key_hashes=failed_keys | {k["key_hash"] for k in keys},
-            )
-            if kd and mdl:
-                keys.append(kd)
-                resolved_model = mdl
+    chunks: list[str] = []
+    terminal = None
+    try:
+        async for event in get_provider_router().stream(request):
+            if isinstance(event, TextDelta):
+                chunks.append(event.text)
             else:
-                break  # No more available keys
+                terminal = event
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logging.warning("Inline typed stream failed for %s: %s", preferred_model, exc)
+        return None, []
 
-        if not keys or not resolved_model:
-            return None, []  # No keys available at all
+    if not isinstance(terminal, StreamCompleted):
+        return None, []
 
-        # Read thinking level dynamically — admin can change via /set_inline_thinking
-        # without restarting the container. Falls back to env-var default.
-        thinking_level = await get_global_setting("inline_thinking_level", settings.INLINE_THINKING_LEVEL)
-
-        q: asyncio.Queue = asyncio.Queue()
-
-        async def _race(kd: dict, mod: str = resolved_model, _q: asyncio.Queue = q, _tl: str = thinking_level) -> None:  # type: ignore[assignment]
-            kh = kd["key_hash"]
-            try:
-                prov = get_provider_for_model(mod, kd["api_key"])
-                async for chunk in prov.stream_response(  # type: ignore[attr-defined]
-                    history=history,
-                    model_name=mod,
-                    system_instruction=system_instruction,
-                    thinking_level=_tl,
-                    timeout=45.0,
-                    enable_web_search=enable_web_search,
-                    force_grounding=enable_web_search,  # inline always forces Search when grounding is on
-                ):
-
-                    # Intercept _GroundingMeta sentinel — don't put in queue as text chunk
-                    if isinstance(chunk, _GroundingMeta):
-                        await _q.put((kh, chunk, None))
-                        continue
-                    await _q.put((kh, chunk, None))
-            except asyncio.CancelledError:
-                pass  # Loser cancelled normally — no sentinel needed
-            except Exception as exc:
-                await _q.put((kh, None, exc))  # noqa: B023
-                return
-            await _q.put((kh, _End(kh), None))
-
-        # ── Vertex AI Express slot ─────────────────────────────────────────────
-        # Vertex races only for the fast ungrounded flash-lite route. Grounded
-        # inline requests intentionally stay on AI Studio 2.5 Flash because
-        # free-tier Gemini 3+ grounding is not available for our key pool.
-        _INLINE_VERTEX_MODEL = "gemini-3.1-flash-lite"
-        _vertex_grounding_holder: list[list[tuple[str, str]]] = [[]]  # mutable closure slot
-
-        async def _vertex_race(_q: asyncio.Queue = q) -> None:
-            from google.genai import types as _gtypes
-
-            from app.providers.gemini import _GroundingMeta as _GMeta
-            from app.providers.gemini import get_vertex_client, report_vertex_error
-
-            vertex_client = get_vertex_client()
-            if vertex_client is None:
-                return  # Vertex not configured — skip silently (no sentinel → race ignores slot)
-            try:
-                _vcfg = _gtypes.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.7,
-                )
-                # Build Vertex-compatible contents from history
-                _vcontents = [
-                    _gtypes.Content(
-                        role=h.get("role", "user"),
-                        parts=[_gtypes.Part(text=str(p)) for p in (h.get("parts") or []) if p],
-                    )
-                    for h in history
-                ]
-                resp = await asyncio.wait_for(
-                    vertex_client.aio.models.generate_content(
-                        model=_INLINE_VERTEX_MODEL,  # noqa: B023
-                        contents=_vcontents,  # type: ignore[arg-type]
-                        config=_vcfg,
-                    ),
-                    timeout=45.0,
-                )
-                text = getattr(resp, "text", None) or ""
-                if not text:
-                    await _q.put((_VERTEX_KH, None, RuntimeError("empty vertex response")))  # noqa: B023
-                    return
-                # Extract grounding sources into holder before putting text chunk
-                sources: list[tuple[str, str]] = []
-                try:
-                    for cand in resp.candidates or []:
-                        gm = getattr(cand, "grounding_metadata", None)
-                        for gc in getattr(gm, "grounding_chunks", None) or []:
-                            web = getattr(gc, "web", None)
-                            if web:
-                                uri = getattr(web, "uri", "") or ""
-                                title = getattr(web, "title", "") or ""
-                                if uri:
-                                    sources.append((uri, title))
-                except Exception:
-                    pass
-                if sources:
-                    _vertex_grounding_holder[0] = sources  # noqa: B023
-                    await _q.put((_VERTEX_KH, _GMeta(sources=sources), None))  # noqa: B023
-                await _q.put((_VERTEX_KH, text, None))  # noqa: B023
-            except asyncio.CancelledError:
-                pass
-            except Exception as exc:
-                report_vertex_error(exc)  # noqa: B023
-                await _q.put((_VERTEX_KH, None, exc))  # noqa: B023
-                return
-            await _q.put((_VERTEX_KH, _End(_VERTEX_KH), None))  # noqa: B023
-
-        tasks: dict[str, asyncio.Task] = {kd["key_hash"]: asyncio.create_task(_race(kd)) for kd in keys}
-        # Add Vertex racer only for ungrounded flash-lite if client is available.
-        _vertex_client_available = False
-        try:
-            from app.providers.gemini import is_vertex_client_available
-
-            _vertex_client_available = (
-                not enable_web_search
-                and resolved_model == _INLINE_FALLBACK_MODEL
-                and is_vertex_client_available()
-            )
-        except Exception:
-            _vertex_client_available = False
-        if _vertex_client_available:
-            tasks[_VERTEX_KH] = asyncio.create_task(_vertex_race())
-        total_racers = len(tasks)
-
-        winner_kh: str | None = None
-        chunks: list[str] = []
-        errors: dict[str, Exception] = {}
-
-        # ── Phase 1: find the first key to yield a real chunk ────────────────
-        try:
-            while winner_kh is None and len(errors) < total_racers:
-                try:
-                    kh, chunk, exc = await asyncio.wait_for(q.get(), timeout=50.0)
-                except TimeoutError:
-                    failed_keys.update(kd["key_hash"] for kd in keys)
-                    break
-
-                if exc is not None:
-                    errors[kh] = exc
-                    failed_keys.add(kh)
-                    continue
-                if isinstance(chunk, _End):
-                    errors[kh] = RuntimeError("stream ended without chunks")
-                    failed_keys.add(kh)
-                    continue
-                # Skip _GroundingMeta sentinels — only text triggers winner
-                if isinstance(chunk, _GroundingMeta):
-                    continue
-                if chunk and is_error_message(chunk):
-                    await _record_stream_error(kh, resolved_model, str(chunk))
-                    errors[kh] = RuntimeError(str(chunk)[:200])
-                    continue
-                if chunk and not is_error_message(chunk):
-                    winner_kh = kh
-                    chunks.append(chunk)
-                    # Cancel all losers immediately
-                    for k, t in tasks.items():
-                        if k != winner_kh and not t.done():
-                            t.cancel()
-        except Exception:
-            pass  # Unexpected queue/task error — fall through to None check
-
-        if winner_kh is None:
-            for t in tasks.values():
-                if not t.done():
-                    t.cancel()
-            continue  # Next round with fresh keys
-
-        # Record winner health (non-critical) — skip for Vertex pseudo-key
-        if winner_kh != _VERTEX_KH:
-            try:
-                await status_mgr.record_success(winner_kh, resolved_model)
-                await use_case.increment_key_usage(winner_kh, resolved_model, False)
-            except Exception:
-                pass
-
-        # ── Phase 2: drain remaining chunks from winner ──────────────────────
-        try:
-            while True:
-                try:
-                    kh, chunk, exc = await asyncio.wait_for(q.get(), timeout=45.0)
-                except TimeoutError:
-                    logging.warning("Inline: winner drain timed out after 45s")
-                    break
-                if kh != winner_kh:
-                    continue  # Stale item from cancelled loser — discard
-                if exc is not None:
-                    logging.warning(
-                        "Inline: winner stream failed mid-flight: %s — discarding partial chunks, retrying next round",
-                        exc,
-                    )
-                    # Mark winner key as failed so the next round picks a fresh key.
-                    # Clear accumulated chunks so we don't return a truncated response.
-                    failed_keys.add(winner_kh)
-                    chunks = []
-                    break  # → finally cancels tasks → result="" → outer loop continues
-
-                if isinstance(chunk, _End):
-                    break  # Clean completion
-                # Capture grounding sources from winner's _GroundingMeta sentinel
-                if isinstance(chunk, _GroundingMeta):
-                    _winner_sources = chunk.sources
-                    continue
-                if chunk and is_error_message(chunk):
-                    logging.warning(
-                        "Inline: winner stream returned tagged error mid-flight: %s",
-                        str(chunk)[:120],
-                    )
-                    await _record_stream_error(kh, resolved_model, str(chunk))
-                    chunks = []
-                    break
-                if chunk:
-                    chunks.append(chunk)
-        finally:
-            for t in tasks.values():
-                if not t.done():
-                    t.cancel()
-
-        result = "".join(chunks)
-        if result.strip() and not is_error_message(result):
-            # If Vertex won, its grounding was stored in the holder (Phase 1 consumed
-            # the sentinel before text); supplement _winner_sources from holder.
-            if winner_kh == _VERTEX_KH and _vertex_grounding_holder[0] and not _winner_sources:
-                _winner_sources = _vertex_grounding_holder[0]
-            return result, _winner_sources
-
-        # Winner produced error-tagged text — mark all keys failed and retry
-        failed_keys.update(kd["key_hash"] for kd in keys)
-
-    return None, []  # All rounds exhausted
+    answer = "".join(chunks).strip()
+    sources = [
+        (source.url, source.title)
+        for source in terminal.grounding.sources
+    ]
+    return (answer, sources) if answer else (None, sources)
 
 
 def _is_usable_inline_answer(text: str | None) -> bool:
@@ -1654,40 +1415,15 @@ async def _stream_inline_primary(
     user_id: int | None,
     enable_web_search: bool,
 ) -> tuple[str | None, list[tuple[str, str]]]:
-    """Collect a ProviderRouter streaming response for a configured primary model."""
-    from app.providers.gemini import _GroundingMeta
-    from app.providers.router import get_provider_router
-
-    thinking_level = await get_global_setting("inline_thinking_level", settings.INLINE_THINKING_LEVEL)
-    router = get_provider_router()
-    chunks: list[str] = []
-    sources: list[tuple[str, str]] = []
-
-    try:
-        async for chunk in router.stream_response(
-            preferred_model=preferred_model,
-            history=history,
-            system_instruction=system_instruction,
-            user_id=user_id,
-            use_openrouter=False,
-            max_key_retries=3,
-            thinking_level=thinking_level,
-            enable_web_search=enable_web_search,
-            force_grounding=enable_web_search,
-        ):
-            if isinstance(chunk, _GroundingMeta):
-                sources = chunk.sources
-                continue
-            if chunk:
-                chunks.append(str(chunk))
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        logging.warning("Inline primary stream failed for %s: %s", preferred_model, exc)
-        return None, []
-
-    answer = "".join(chunks)
-    return (answer, sources) if answer.strip() else (None, sources)
+    """Use the same typed router path as the inline low-latency fallback."""
+    return await _stream_inline_fast(
+        preferred_model=preferred_model,
+        history=history,
+        system_instruction=system_instruction,
+        user_id=user_id,
+        max_rounds=3,
+        enable_web_search=enable_web_search,
+    )
 
 
 async def _generate_inline_grounded_answer(

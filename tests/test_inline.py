@@ -3,7 +3,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.errors import ErrorCode, tag_error
 from app.handlers.inline import parse_inline_query
 
 
@@ -39,71 +38,56 @@ def test_parse_inline_query_edit_intent():
 
 
 @pytest.mark.asyncio
-async def test_stream_inline_fast_suspends_key_related_error_chunks(monkeypatch):
+async def test_stream_inline_fast_collects_typed_text_and_grounding(monkeypatch):
     from app.handlers import inline
+    from app.providers.stream_types import (
+        FinishReason,
+        GroundingReport,
+        GroundingSource,
+        ProviderKind,
+        RouteUsed,
+        StreamCompleted,
+        TextDelta,
+        TokenUsage,
+    )
 
-    quota_text = tag_error(ErrorCode.QUOTA_EXCEEDED, "quota exhausted")
+    class FakeRouter:
+        requests = []
 
-    class FakeUseCase:
-        def __init__(self) -> None:
-            self.resolve_calls: list[dict] = []
-            self.usages_incremented: list[tuple[str, str]] = []
+        async def stream(self, request):
+            self.requests.append(request)
+            yield TextDelta("typed answer")
+            yield StreamCompleted(
+                finish_reason=FinishReason.from_raw("STOP"),
+                usage=TokenUsage(total=5),
+                grounding=GroundingReport(
+                    sources=(GroundingSource("https://example.com", "Example"),)
+                ),
+                route=RouteUsed(
+                    provider=ProviderKind.GEMINI,
+                    requested_model=request.models[0],
+                    actual_model=request.models[0],
+                ),
+            )
 
-        async def resolve_ai_request(self, preferred_model, excluded_key_hashes=None, **kwargs):
-            excluded = set(excluded_key_hashes or set())
-            self.resolve_calls.append({"preferred_model": preferred_model, "excluded": excluded})
-            if len(self.resolve_calls) == 1:
-                return {"api_key": "key-1", "key_hash": "hash1"}, preferred_model, None
-            if len(self.resolve_calls) == 2:
-                return {"api_key": "key-2", "key_hash": "hash2"}, preferred_model, None
-            return None, None, "all_exhausted"
-
-        async def increment_key_usage(self, key_hash, model_name, use_openrouter=False):
-            self.usages_incremented.append((key_hash, model_name))
-
-    class FakeStatusManager:
-        def __init__(self) -> None:
-            self.suspended: list[tuple[str, str, str]] = []
-            self.successes: list[tuple[str, str]] = []
-
-        async def suspend_key(self, key_hash, model_name, error_category, error_text=""):
-            self.suspended.append((key_hash, model_name, error_category))
-
-        async def record_success(self, key_hash, model_name):
-            self.successes.append((key_hash, model_name))
-
-    class FakeProvider:
-        def __init__(self, api_key: str) -> None:
-            self.api_key = api_key
-
-        async def stream_response(self, **kwargs):
-            if self.api_key == "key-1":
-                yield quota_text
-                return
-            await asyncio.sleep(0.01)
-            yield "fallback answer"
-
-    fake_use_case = FakeUseCase()
-    fake_status = FakeStatusManager()
-
-    monkeypatch.setattr("app.agent_use_cases.AgentRequestUseCase", lambda: fake_use_case)
-    monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: fake_status)
-    monkeypatch.setattr("app.providers.base.get_provider_for_model", lambda _model, key: FakeProvider(key))
-    monkeypatch.setattr("app.providers.gemini.get_vertex_client", lambda: None)
+    router = FakeRouter()
+    monkeypatch.setattr("app.providers.router.get_provider_router", lambda: router)
     monkeypatch.setattr(inline, "get_global_setting", _async_return("low"))
 
     text, sources = await inline._stream_inline_fast(
-        preferred_model="gemini-3.1-flash-lite",
+        preferred_model="gemini-2.5-flash",
         history=[{"role": "user", "parts": ["hi"]}],
         system_instruction=None,
         user_id=123,
         max_rounds=1,
+        enable_web_search=True,
     )
 
-    assert text == "fallback answer"
-    assert sources == []
-    assert fake_status.suspended == [("hash1", "gemini-3.1-flash-lite", "quota")]
-    assert fake_status.successes == [("hash2", "gemini-3.1-flash-lite")]
+    assert text == "typed answer"
+    assert sources == [("https://example.com", "Example")]
+    assert router.requests[0].grounding.value == "provider_search_required"
+    assert router.requests[0].workload.value == "inline"
+    assert router.requests[0].allow_deferred is False
 
 
 def _async_return(value):
@@ -362,21 +346,16 @@ def test_select_inline_generation_model_keeps_primary_for_contract_query():
 async def test_generate_inline_answer_returns_lite_when_primary_misses_deadline(monkeypatch):
     from app.handlers import inline
 
-    router_calls: list[dict] = []
-    lite_calls: list[dict] = []
-
-    class FakeRouter:
-        async def stream_response(self, **kwargs):
-            router_calls.append(kwargs)
-            await asyncio.sleep(0.2)
-            yield "primary answer"
+    calls: list[dict] = []
 
     async def fake_stream_inline_fast(**kwargs):
-        lite_calls.append(kwargs)
+        calls.append(kwargs)
+        if kwargs["preferred_model"] == "gemini-3.5-flash":
+            await asyncio.sleep(0.2)
+            return "primary answer", []
         await asyncio.sleep(0.01)
         return "lite answer", []
 
-    monkeypatch.setattr("app.providers.router.get_provider_router", lambda: FakeRouter())
     monkeypatch.setattr(inline, "_stream_inline_fast", fake_stream_inline_fast)
     monkeypatch.setattr(inline, "_INLINE_PRIMARY_GRACE_S", 0.05, raising=False)
     monkeypatch.setattr(inline, "get_global_setting", _async_return("low"))
@@ -393,8 +372,10 @@ async def test_generate_inline_answer_returns_lite_when_primary_misses_deadline(
     assert text == "lite answer"
     assert sources == []
     assert model_used == "gemini-3.1-flash-lite"
-    assert router_calls[0]["preferred_model"] == "gemini-3.5-flash"
-    assert lite_calls[0]["preferred_model"] == "gemini-3.1-flash-lite"
+    assert [call["preferred_model"] for call in calls] == [
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite",
+    ]
 
 
 @pytest.mark.asyncio
@@ -434,19 +415,12 @@ async def test_generate_inline_answer_uses_grounding_standby_when_primary_misses
 async def test_generate_inline_answer_skips_primary_for_simple_query(monkeypatch):
     from app.handlers import inline
 
-    router_calls: list[dict] = []
     lite_calls: list[dict] = []
-
-    class FakeRouter:
-        async def stream_response(self, **kwargs):
-            router_calls.append(kwargs)
-            yield "primary answer"
 
     async def fake_stream_inline_fast(**kwargs):
         lite_calls.append(kwargs)
         return "lite answer", []
 
-    monkeypatch.setattr("app.providers.router.get_provider_router", lambda: FakeRouter())
     monkeypatch.setattr(inline, "_stream_inline_fast", fake_stream_inline_fast)
 
     text, sources, model_used = await inline._generate_inline_answer(
@@ -461,6 +435,5 @@ async def test_generate_inline_answer_skips_primary_for_simple_query(monkeypatch
     assert text == "lite answer"
     assert sources == []
     assert model_used == "gemini-3.1-flash-lite"
-    assert router_calls == []
     assert lite_calls[0]["preferred_model"] == "gemini-3.1-flash-lite"
     assert lite_calls[0]["enable_web_search"] is False

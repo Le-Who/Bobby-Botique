@@ -5,7 +5,7 @@ from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
-from app.config import get_all_available_models, get_model_hash, get_openrouter_keys, settings
+from app.config import get_model_hash, get_openrouter_keys, settings
 
 # app.document_processor (pypdf, docx) is deferred to reduce startup latency
 from app.i18n import t
@@ -151,6 +151,23 @@ def _generate_model_buttons(models, current_model, start_index, provider="gemini
     return rows, current_index
 
 
+def get_visible_model_list(settings_obj=None, openrouter_keys=None) -> list[str]:
+    """Return models in the exact order used by the selector keyboard."""
+    active_settings = settings if settings_obj is None else settings_obj
+
+    def configured(name: str) -> list[str]:
+        value = getattr(active_settings, name, None)
+        return list(value) if isinstance(value, list) else []
+
+    models = configured("AVAILABLE_MODELS")
+    models.extend(configured("OPENCODE_AVAILABLE_MODELS"))
+    active_openrouter_keys = get_openrouter_keys() if openrouter_keys is None else openrouter_keys
+    if active_openrouter_keys:
+        models.extend(configured("OPENROUTER_AVAILABLE_MODELS"))
+    models.extend(configured("FREETHEAI_AVAILABLE_MODELS"))
+    return models
+
+
 def get_model_menu_content(chat_state, context):
     current_model = chat_state.model
 
@@ -158,7 +175,7 @@ def get_model_menu_content(chat_state, context):
     openrouter_available = bool(get_openrouter_keys())
 
     # Create единый list всех моделей for индексации
-    all_models = get_all_available_models()
+    all_models = get_visible_model_list()
 
     if not all_models:
         from app.utils.keyboards import error_with_back_keyboard

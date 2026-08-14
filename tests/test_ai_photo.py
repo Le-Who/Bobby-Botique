@@ -5,6 +5,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.errors import ErrorCode
+from app.response_delivery.outcomes import CompleteDelivery, FailedDelivery
+from app.response_delivery.renderer import (
+    DeliveryKind,
+    DeliveryReceipt,
+    TelegramMessageRef,
+)
+
+
+def _receipt() -> DeliveryReceipt:
+    return DeliveryReceipt(
+        kind=DeliveryKind.MESSAGE,
+        message_ids=(1,),
+        final_message=TelegramMessageRef(chat_id=456, message_id=1),
+    )
+
 
 def make_placeholder():
     msg = MagicMock()
@@ -53,54 +69,46 @@ def make_chat_state():
 
 @pytest.mark.asyncio
 async def test_handle_photo_success():
-    """Successfully processes a photo and sends AI description."""
+    """Successfully processes a photo through typed response delivery."""
     placeholder = make_placeholder()
     original = make_original_message(caption="What is this?")
     chat_state = make_chat_state()
-    stream_message = MagicMock()
-    stream_message.edit_reply_markup = AsyncMock()
+    delivery = MagicMock()
+    delivery.stream = AsyncMock(
+        return_value=CompleteDelivery(
+            content_text="This is a mountain landscape.",
+            displayed_text="This is a mountain landscape.",
+            completion=None,
+            voice_requested=False,
+            receipt=_receipt(),
+        )
+    )
 
     with (
         patch("app.handlers.ai_photo.update_stage", new_callable=AsyncMock),
         patch("app.handlers.ai_photo.get_file_bytes", new_callable=AsyncMock, return_value=b"image-bytes"),
         patch("app.handlers.ai_photo.save_image_as_bytes", new_callable=AsyncMock, return_value=b"compressed"),
         patch(
-            "app.handlers.ai_photo.stream_and_display",
-            new_callable=AsyncMock,
-            return_value=("This is a mountain landscape.", True, stream_message, 0, False, False),
-        ) as mock_stream,
-        patch(
-            "app.handlers.ai_photo._resolve_ai_request",
-            new_callable=AsyncMock,
-            return_value=({"key": "val"}, "gemini-3.1-flash-lite", None),
+            "app.response_delivery.delivery.get_telegram_response_delivery",
+            return_value=delivery,
         ),
-        patch(
-            "app.handlers.ai_photo._get_ai_response_with_routing",
-            new_callable=AsyncMock,
-            return_value=("This is a mountain landscape.", 10),
-        ),
-        patch(
-            "app.handlers.ai_photo.handle_ai_response_error",
-            new_callable=AsyncMock,
-            return_value=False,
-        ),
-        patch("app.handlers.ai_photo.send_long_message", new_callable=AsyncMock) as _mock_send,
         patch("app.handlers.ai_photo.update_user_chat", new_callable=AsyncMock),
     ):
         from app.handlers.ai_photo import _handle_photo
 
         await _handle_photo(placeholder, original, chat_state)
 
-    # send_long_message is not called when streaming is successful
-    # History should be updated
     assert len(chat_state.history) == 2
     assert chat_state.history[1]["role"] == "model"
-    reply_markup = mock_stream.await_args.kwargs.get("reply_markup")
-    assert reply_markup is not None
-    labels = [button.text for row in reply_markup.inline_keyboard for button in row]
+    request = delivery.stream.await_args.args[1]
+    assert request.turns[0].parts[1].data == b"compressed"
+    presentation = delivery.stream.await_args.kwargs["presentation"]
+    labels = [
+        button.text
+        for row in presentation.actions.inline_keyboard
+        for button in row
+    ]
     assert labels == ["🎭 Выбрать роль ИИ", "✨ Начать новую тему"]
-    stream_message.edit_reply_markup.assert_not_awaited()
-    placeholder.edit_text.assert_not_awaited()
 
 
 # ── Empty AI response ────────────────────────────────────────────────────────
@@ -108,42 +116,33 @@ async def test_handle_photo_success():
 
 @pytest.mark.asyncio
 async def test_handle_photo_empty_response():
-    """Shows error when AI returns empty response."""
+    """Typed delivery renders empty-response failure exactly once."""
     placeholder = make_placeholder()
     original = make_original_message()
     chat_state = make_chat_state()
+    delivery = MagicMock()
+    delivery.stream = AsyncMock(
+        return_value=FailedDelivery(
+            error_code=ErrorCode.EMPTY_RESPONSE,
+            displayed_text="Пустой ответ",
+            receipt=_receipt(),
+        )
+    )
 
     with (
         patch("app.handlers.ai_photo.update_stage", new_callable=AsyncMock),
+        patch("app.handlers.ai_photo.get_file_bytes", new_callable=AsyncMock, return_value=b"image"),
+        patch("app.handlers.ai_photo.save_image_as_bytes", new_callable=AsyncMock, return_value=b"compressed"),
         patch(
-            "app.handlers.ai_photo.stream_and_display",
-            new_callable=AsyncMock,
-            return_value=("", False, AsyncMock(), 0, False, False),
+            "app.response_delivery.delivery.get_telegram_response_delivery",
+            return_value=delivery,
         ),
-        patch(
-            "app.handlers.ai_photo._get_ai_response_with_routing",
-            new_callable=AsyncMock,
-            return_value=(None, 0),
-        ),
-        patch(
-            "app.handlers.ai_photo._resolve_ai_request",
-            new_callable=AsyncMock,
-            return_value=({"key": "val"}, "gemini-3.1-flash-lite", None),
-        ),
-        patch(
-            "app.handlers.ai_photo.handle_ai_response_error",
-            new_callable=AsyncMock,
-            return_value=False,
-        ),
-        patch("app.handlers.ai_photo.send_long_message", new_callable=AsyncMock) as mock_send,
     ):
         from app.handlers.ai_photo import _handle_photo
 
         await _handle_photo(placeholder, original, chat_state)
 
-    mock_send.assert_awaited_once()
-    text_arg = mock_send.call_args[0][1]
-    assert "не удалось" in text_arg.lower() or "обработать" in text_arg.lower()
+    assert chat_state.history == []
 
 
 # ── AI response is an error ──────────────────────────────────────────────────
@@ -151,40 +150,33 @@ async def test_handle_photo_empty_response():
 
 @pytest.mark.asyncio
 async def test_handle_photo_ai_error():
-    """Handles AI error response without crashing."""
+    """Typed provider failure is already displayed and does not mutate history."""
     placeholder = make_placeholder()
     original = make_original_message()
     chat_state = make_chat_state()
+    delivery = MagicMock()
+    delivery.stream = AsyncMock(
+        return_value=FailedDelivery(
+            error_code=ErrorCode.KEYS_EXHAUSTED,
+            displayed_text="API error",
+            receipt=_receipt(),
+        )
+    )
 
     with (
         patch("app.handlers.ai_photo.update_stage", new_callable=AsyncMock),
+        patch("app.handlers.ai_photo.get_file_bytes", new_callable=AsyncMock, return_value=b"image"),
+        patch("app.handlers.ai_photo.save_image_as_bytes", new_callable=AsyncMock, return_value=b"compressed"),
         patch(
-            "app.handlers.ai_photo.stream_and_display",
-            new_callable=AsyncMock,
-            return_value=("? API Error", False, AsyncMock(), 0, False, False),
+            "app.response_delivery.delivery.get_telegram_response_delivery",
+            return_value=delivery,
         ),
-        patch(
-            "app.handlers.ai_photo._get_ai_response_with_routing",
-            new_callable=AsyncMock,
-            return_value=("❌ API Error", 0),
-        ),
-        patch(
-            "app.handlers.ai_photo._resolve_ai_request",
-            new_callable=AsyncMock,
-            return_value=({"key": "val"}, "gemini-3.1-flash-lite", None),
-        ),
-        patch(
-            "app.handlers.ai_photo.handle_ai_response_error",
-            new_callable=AsyncMock,
-            return_value=True,
-        ),  # Error was handled
     ):
         from app.handlers.ai_photo import _handle_photo
 
         await _handle_photo(placeholder, original, chat_state)
 
-    # Should not crash, error handled by handle_ai_response_error
-    assert len(chat_state.history) == 0  # No history update on error
+    assert len(chat_state.history) == 0
 
 
 # ── Exception during download ────────────────────────────────────────────────

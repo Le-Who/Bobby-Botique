@@ -29,7 +29,7 @@ def _make_bot(edit_calls: list | None = None) -> MagicMock:
 @pytest.mark.parametrize("spread_type", ["tarot", "tarot_daily", "tarot_yesno"])
 async def test_generate_tarot_inline_uses_only_flash_lite_for_simple_spreads(spread_type):
     """One- and three-card inline spreads must not consume a 3.5 Flash request."""
-    from app.handlers.inline import _generate_tarot_inline
+    from app.handlers.inline import _TAROT_LITE_MODEL, _generate_tarot_inline
 
     bot = _make_bot()
     mock_router = AsyncMock()
@@ -50,7 +50,7 @@ async def test_generate_tarot_inline_uses_only_flash_lite_for_simple_spreads(spr
 
     mock_router.get_response.assert_awaited_once()
     call = mock_router.get_response.await_args.kwargs
-    assert call["preferred_model"] == "gemini-3.1-flash-lite"
+    assert call["preferred_model"] == _TAROT_LITE_MODEL
     assert call["max_key_retries"] == 3
     assert call["use_openrouter"] is False
     assert "❌" not in bot.edit_message_text.await_args.kwargs["text"]
@@ -153,13 +153,15 @@ async def test_generate_tarot_response_prefers_complex_primary_within_deadline(s
     from app.handlers import inline
     from app.tarot import SpreadType
 
+    primary_model = inline._TAROT_PRIMARY_MODEL
+    lite_model = inline._TAROT_LITE_MODEL
     calls: list[str] = []
     lite_cancelled = asyncio.Event()
 
     async def get_response(**kwargs):
         model = kwargs["preferred_model"]
         calls.append(model)
-        if model == "gemini-3.5-flash":
+        if model == primary_model:
             await asyncio.sleep(0.01)
             return "strong answer", 100
         try:
@@ -181,7 +183,7 @@ async def test_generate_tarot_response_prefers_complex_primary_within_deadline(s
     )
 
     assert result == "strong answer"
-    assert set(calls) == {"gemini-3.5-flash", "gemini-3.1-flash-lite"}
+    assert set(calls) == {primary_model, lite_model}
     assert lite_cancelled.is_set()
 
 
@@ -191,13 +193,15 @@ async def test_generate_tarot_response_uses_ready_lite_after_primary_deadline(mo
     from app.handlers import inline
     from app.tarot import SpreadType
 
+    primary_model = inline._TAROT_PRIMARY_MODEL
+    lite_model = inline._TAROT_LITE_MODEL
     calls: list[str] = []
     primary_cancelled = asyncio.Event()
 
     async def get_response(**kwargs):
         model = kwargs["preferred_model"]
         calls.append(model)
-        if model == "gemini-3.5-flash":
+        if model == primary_model:
             try:
                 await asyncio.sleep(1.0)
             except asyncio.CancelledError:
@@ -223,7 +227,7 @@ async def test_generate_tarot_response_uses_ready_lite_after_primary_deadline(mo
 
     assert result == "ready lite answer"
     assert elapsed < 0.25
-    assert set(calls) == {"gemini-3.5-flash", "gemini-3.1-flash-lite"}
+    assert set(calls) == {primary_model, lite_model}
     assert primary_cancelled.is_set()
 
 
@@ -233,7 +237,7 @@ async def test_generate_tarot_response_uses_lite_immediately_when_primary_fails(
     from app.tarot import SpreadType
 
     async def get_response(**kwargs):
-        if kwargs["preferred_model"] == "gemini-3.5-flash":
+        if kwargs["preferred_model"] == inline._TAROT_PRIMARY_MODEL:
             raise RuntimeError("primary unavailable")
         return "lite after failure", 50
 

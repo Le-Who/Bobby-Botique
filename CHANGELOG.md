@@ -3,6 +3,30 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-08-14 - Dynamic Model Catalog Correctness
+
+### 🧠 Model configuration and administration
+
+- Removed the static Gemini version allowlist from selectable-model loading and runtime eligibility. Ordered env lists now accept future syntactically valid `gemini-*` chat IDs without requiring a bot release.
+- Split the current env/Secret baseline from explicit `/models` database overrides. Legacy auto-seeded JSON arrays are removed, v2 admin overrides remain authoritative across restarts, and **Reset to .env** deletes the override instead of copying another stale snapshot.
+- Added consistent empty-list semantics for all four `*_AVAILABLE_MODELS` variables: unset or whitespace uses defaults, while the single token `none` creates an intentionally empty selector. Internal role/default models are no longer injected into `/model`.
+- Expanded `/models` to Gemini, Opencode, OpenRouter, and FreeTheAI with source labels, per-model delete buttons, collision-safe short callbacks, immediate list refresh, and typed add/remove outcomes.
+- Gemini additions now query the Models API and require `generateContent`; unsupported models and temporary validation failures produce distinct administrator messages instead of being reported as duplicates.
+- Preserved the shared settings object during hot reload, reapplied admin overrides before chat migration, included FreeTheAI in migration, and prevented migration to hidden role defaults or mass migration when every selectable list is empty.
+- Unified `/model` menu ordering with callback resolution so a configured but hidden OpenRouter list cannot shift Opencode or FreeTheAI model indices.
+
+### ✅ Verification
+
+- Added regression coverage for exact env parsing, `none`, v2 override precedence, legacy cleanup, mutation atomicity, Gemini capability validation, deletion UI, callback length/order, future model fallback, and reload migration safety.
+
+### 📨 AI response delivery
+
+- Replaced string/tuple streaming and hidden metadata `ContextVar` channels with typed generation requests and events carrying completion, failure, deferred, usage, grounding, finish reason, and actual route data.
+- Made `TelegramResponseDelivery` the sole owner of progressive edits, final text, and final action keyboard. Reader/Telegraph rows are prepended atomically and can no longer be erased by a handler after publication.
+- Unified long-response delivery behind Redis Reader → Telegraph → safe Telegram split, with immutable receipts, bounded flood retry, partial-response recovery, delayed cancel feedback, and guaranteed request cleanup.
+- Migrated chat, QnA, photo/media-group vision, document Q&A, AgenticSearch completion, deferred delivery, inline generation, and horoscope consumers; removed the legacy `StreamingWriter`, `stream_response`, `StreamingUIAdapter`, and obsolete private-state tests.
+- Fixed structured Gemini HTTP errors being misclassified by incidental `503` digits in diagnostics, and added safe text fallback when the Daily 2048 cover asset is unavailable.
+
 ## [Unreleased] - 2026-06-27 - Inline Context Continuity, Type Safety & Performance
 
 ### ⚡ Performance & Bolt Optimizations

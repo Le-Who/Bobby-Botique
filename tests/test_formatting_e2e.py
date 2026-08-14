@@ -273,48 +273,6 @@ class TestSpecialCharacters:
 # ── Test: Streaming context preservation ─────────────────────────────────────
 
 
-class TestStreamingContext:
-    """_detect_open_markdown tracks formatting state across overflow boundaries."""
-
-    def test_bold_context_detected(self):
-        from app.streaming import _detect_open_markdown
-
-        prefix, suffix = _detect_open_markdown("This is **bold text")
-        assert "**" in prefix or "<b>" in prefix or "**" in suffix
-
-    def test_italic_asterisk_context_detected(self):
-        from app.streaming import _detect_open_markdown
-
-        prefix, suffix = _detect_open_markdown("This is *italic text")
-        assert "*" in prefix or "<i>" in prefix or "*" in suffix
-
-    def test_italic_underscore_context_detected(self):
-        from app.streaming import _detect_open_markdown
-
-        prefix, suffix = _detect_open_markdown("This is _italic text")
-        assert "_" in prefix or "<i>" in prefix or "_" in suffix
-
-    def test_strikethrough_context_detected(self):
-        from app.streaming import _detect_open_markdown
-
-        prefix, suffix = _detect_open_markdown("This is ~~strike text")
-        assert "~~" in prefix or "<s>" in prefix or "~~" in suffix
-
-    def test_closed_formatting_no_context(self):
-        from app.streaming import _detect_open_markdown
-
-        prefix, suffix = _detect_open_markdown("This is **bold** and done")
-        assert prefix == ""
-        assert suffix == ""
-
-    def test_multiple_open_formats(self):
-        from app.streaming import _detect_open_markdown
-
-        prefix, suffix = _detect_open_markdown("**bold _italic")
-        # Both should be detected
-        assert prefix != "" or suffix != ""
-
-
 # ── Test: Edge cases / stress ────────────────────────────────────────────────
 
 

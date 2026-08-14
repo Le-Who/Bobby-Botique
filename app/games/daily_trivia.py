@@ -226,18 +226,20 @@ async def prepare_daily_puzzle(
     expected_revision = existing.revision if existing else 0
     regenerate_main = mode in {"all", "main"} or not existing or len(existing.questions) != 5
     regenerate_super = mode in {"all", "super"} or not existing or len(existing.super_questions) != 3
+    preserved_main = list(existing.questions) if existing else []
+    preserved_super = list(existing.super_questions) if existing else []
     last_conflict: authoring.DuplicateQuestionError | None = None
 
     for attempt in range(1, GENERATION_ATTEMPTS + 1):
         questions = (
             await generate_question_lane(puzzle_date, lane="main", model_name=model_name)
             if regenerate_main
-            else list(existing.questions)
+            else preserved_main
         )
         super_questions = (
             await generate_question_lane(puzzle_date, lane="super", model_name=model_name)
             if regenerate_super
-            else list(existing.super_questions)
+            else preserved_super
         )
         try:
             return await authoring.publish_authored_day(

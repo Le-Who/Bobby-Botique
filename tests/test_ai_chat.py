@@ -4,8 +4,53 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.errors import ErrorCode
 from app.handlers.ai_chat import _build_chat_response_markup, _handle_regular_chat
+from app.providers.stream_types import (
+    FailurePhase,
+    FinishReason,
+    GroundingReport,
+    KeyDisposition,
+    ProviderKind,
+    RetryDisposition,
+    RouteUsed,
+    StreamCompleted,
+    StreamFailed,
+    TokenUsage,
+)
+from app.response_delivery.outcomes import (
+    CompleteDelivery,
+    FailedDelivery,
+    PartialDelivery,
+)
+from app.response_delivery.presentation import PresentationFacts
+from app.response_delivery.renderer import (
+    DeliveryKind,
+    DeliveryReceipt,
+    TelegramMessageRef,
+)
 from tests.factories import make_chat_state, make_telegram_message
+
+
+def _receipt(message_id: int = 55) -> DeliveryReceipt:
+    return DeliveryReceipt(
+        kind=DeliveryKind.MESSAGE,
+        message_ids=(message_id,),
+        final_message=TelegramMessageRef(chat_id=456, message_id=message_id),
+    )
+
+
+def _completion(total_tokens: int = 42) -> StreamCompleted:
+    return StreamCompleted(
+        finish_reason=FinishReason.from_raw("STOP"),
+        usage=TokenUsage(total=total_tokens),
+        grounding=GroundingReport(),
+        route=RouteUsed(
+            provider=ProviderKind.GEMINI,
+            requested_model="gemini-3.1-flash-lite",
+            actual_model="gemini-3.1-flash-lite",
+        ),
+    )
 
 
 @pytest.fixture
@@ -14,7 +59,7 @@ def mock_boundaries():
 
     We ONLY mock the actual external dependencies:
     1. The DB persistence layer (update_user_chat)
-    2. The LLM streaming boundary (stream_and_display)
+    2. The typed Telegram response-delivery boundary
     3. The model resolution boundary (_resolve_ai_request) to simulate specific provider states
        without doing real DB lookups.
     4. Minor cosmetic indicators (update_stage, search_memories, metrics)
@@ -22,8 +67,8 @@ def mock_boundaries():
 
     with (
         patch("app.handlers.ai_chat.update_user_chat", new_callable=AsyncMock) as m_update_chat,
-        patch("app.streaming.stream_and_display", new_callable=AsyncMock) as m_stream,
         patch("app.handlers.ai_chat._resolve_ai_request", new_callable=AsyncMock) as m_resolve,
+        patch("app.response_delivery.delivery.get_telegram_response_delivery") as get_delivery,
         # Secondary dependencies that aren't the focus of this integration test
         patch("app.repos.memory.search_memories", new_callable=AsyncMock, return_value=[]),
         patch("app.handlers.ai_chat.update_stage", new_callable=AsyncMock),
@@ -36,14 +81,21 @@ def mock_boundaries():
             "direct",
         )
 
-        # We need to return the expected tuple: (response_text, success, last_message_obj, token_count)
-        placeholder_reply = make_telegram_message("Test reply", user_id=123)
-        m_stream.return_value = ("Hello world!", True, placeholder_reply, 42, False, False)
-
+        delivery = MagicMock()
+        delivery.stream = AsyncMock(
+            return_value=CompleteDelivery(
+                content_text="Hello world!",
+                displayed_text="Hello world!",
+                completion=_completion(),
+                voice_requested=False,
+                receipt=_receipt(),
+            )
+        )
+        get_delivery.return_value = delivery
         yield {
             "resolve": m_resolve,
             "update_chat": m_update_chat,
-            "stream": m_stream,
+            "delivery": delivery,
         }
 
 
@@ -81,8 +133,8 @@ async def test_successful_chat_response_appended_to_history(mock_boundaries):
 
 
 @pytest.mark.asyncio
-async def test_streamed_chat_delegates_complete_keyboard_to_stream(mock_boundaries):
-    """The stream owns the final keyboard so a long-read row cannot be overwritten."""
+async def test_streamed_chat_delegates_complete_keyboard_to_delivery(mock_boundaries):
+    """Delivery owns the final keyboard so a long-read row cannot be overwritten."""
     placeholder = make_telegram_message(user_id=123)
     placeholder.chat.type = "private"
     placeholder.get_bot = MagicMock(return_value=None)
@@ -90,20 +142,26 @@ async def test_streamed_chat_delegates_complete_keyboard_to_stream(mock_boundari
 
     await _handle_regular_chat(placeholder, 123, "Hi", chat_state)
 
-    stream = mock_boundaries["stream"]
-    post_processor = stream.await_args.kwargs["post_processor"]
-    clean_text, reply_markup = post_processor(
-        "Hello world!\n[INTENT:research]\n[SUGGESTIONS: More details]"
+    delivery = mock_boundaries["delivery"]
+    presentation = delivery.stream.await_args.kwargs["presentation"]
+    prepared = presentation.prepare(
+        PresentationFacts(
+            raw_content="Hello world!\n[INTENT:research]\n[SUGGESTIONS: More details]",
+            terminal=_completion(),
+            voice_requested=False,
+        )
     )
-    stream_message = stream.return_value[2]
 
-    assert clean_text == "Hello world!"
-    assert reply_markup is not None
-    callback_data = [button.callback_data for row in reply_markup.inline_keyboard for button in row]
+    assert prepared.content_text == "Hello world!"
+    assert prepared.actions is not None
+    callback_data = [
+        button.callback_data
+        for row in prepared.actions.inline_keyboard
+        for button in row
+    ]
     assert any(value and value.startswith("suggest:") for value in callback_data)
     assert "intent_route:research" in callback_data
     assert "retry_last" in callback_data
-    stream_message.edit_reply_markup.assert_not_awaited()
 
 
 def test_chat_response_markup_preserves_all_dynamic_actions():
@@ -140,24 +198,29 @@ async def test_interrupted_chat_delegates_recovery_keyboard_to_stream(mock_bound
     placeholder.reply_to_message = None
     placeholder.get_bot = MagicMock(return_value=None)
     chat_state = make_chat_state(history=[{"role": "user", "parts": ["Hi"]}])
-    stream_message = make_telegram_message("Partial response", user_id=123)
-    mock_boundaries["stream"].return_value = (
-        "Partial response",
-        True,
-        stream_message,
-        10,
-        True,
-        False,
+    terminal = StreamFailed(
+        code=ErrorCode.TIMEOUT,
+        phase=FailurePhase.AFTER_TEXT,
+        retry=RetryDisposition.RETRY_LATER,
+        key=KeyDisposition.TRANSIENT_FAILURE,
+        diagnostic="stream timeout",
+    )
+    mock_boundaries["delivery"].stream.return_value = PartialDelivery(
+        content_text="Partial response",
+        displayed_text="Partial response\n\n⚠️ timeout",
+        terminal=terminal,
+        voice_requested=False,
+        receipt=_receipt(),
     )
 
     with patch("app.handlers.ai_chat.set_error_reaction", new_callable=AsyncMock):
         await _handle_regular_chat(placeholder, 123, "Hi", chat_state)
 
-    interrupted_markup = mock_boundaries["stream"].await_args.kwargs.get("interrupted_reply_markup")
+    presentation = mock_boundaries["delivery"].stream.await_args.kwargs["presentation"]
+    interrupted_markup = presentation.recovery_actions
     assert interrupted_markup is not None
     callback_data = [button.callback_data for row in interrupted_markup.inline_keyboard for button in row]
     assert callback_data == ["continue_stream", "retry_last"]
-    stream_message.edit_reply_markup.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -182,7 +245,7 @@ async def test_exhausted_limits_shows_error_message(mock_boundaries):
     edited_text = placeholder.edit_text.call_args[0][0].lower()
     assert "исчерпаны" in edited_text or "лимит" in edited_text
     # Ensure stream process was definitely bypassed
-    mock_boundaries["stream"].assert_not_called()
+    mock_boundaries["delivery"].stream.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -210,7 +273,7 @@ async def test_model_exhausted_prompts_fallback_confirmation(mock_boundaries):
     assert "reply_markup" in call_kwargs, "Expected inline keyboard for fallback confirmation"
     assert "gemini-3.1-flash-lite" in call_args[0], "Expected fallback model name in prompt"
     # Ensure stream was bypassed while we wait for user confirmation
-    mock_boundaries["stream"].assert_not_called()
+    mock_boundaries["delivery"].stream.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -231,8 +294,11 @@ async def test_empty_response_rolls_back_history(mock_boundaries):
         ]
     )
 
-    # We simulate stream_and_display failing to stream anything and returning success=False
-    mock_boundaries["stream"].return_value = (None, False, None, 0, False, False)
+    mock_boundaries["delivery"].stream.return_value = FailedDelivery(
+        error_code=ErrorCode.EMPTY_RESPONSE,
+        displayed_text="Не удалось получить ответ от API.",
+        receipt=_receipt(),
+    )
 
     with patch("app.errors.build_retry_and_roles_keyboard", return_value=None):
         # ── Act ──
@@ -250,8 +316,8 @@ async def test_empty_response_rolls_back_history(mock_boundaries):
     # Since we started with user -> model, after adding a user message and failing, it should roll back to user -> model
     assert saved_state.history[-1]["role"] == "model", "Should roll back to the previous model message"
 
-    placeholder.edit_text.assert_awaited()
-    assert "ответ от api" in placeholder.edit_text.call_args_list[-1][0][0].lower()
+    # The delivery boundary already rendered the failure exactly once.
+    placeholder.edit_text.assert_not_awaited()
 
 
 @pytest.mark.asyncio

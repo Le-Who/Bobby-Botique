@@ -100,8 +100,8 @@ class TestMetricsSnapshotAtomicity:
         today = date.today().isoformat()
 
         # Set up per-user data
-        metrics_collector._user_daily[(today, 42)]["request_count"] = 8
-        metrics_collector._user_daily[(today, 42)]["model_usage"]["gemini-flash"] = 6
+        metrics_collector._user_daily[today][42]["request_count"] = 8
+        metrics_collector._user_daily[today][42]["model_usage"]["gemini-flash"] = 6
         metrics_collector.daily_metrics[today].request_count = 8
 
         with (
@@ -111,7 +111,7 @@ class TestMetricsSnapshotAtomicity:
             await metrics_collector._save_metrics_to_db()
 
         # Per-user counters must be reset after save
-        user_data = metrics_collector._user_daily[(today, 42)]
+        user_data = metrics_collector._user_daily[today][42]
         assert user_data["request_count"] == 0, f"Expected 0 (reset after save), got {user_data['request_count']}"
         assert user_data["model_usage"] == {}
 
@@ -120,8 +120,8 @@ class TestMetricsSnapshotAtomicity:
         """Per-user metrics must be restored on DB write failure."""
         today = date.today().isoformat()
 
-        metrics_collector._user_daily[(today, 99)]["request_count"] = 5
-        metrics_collector._user_daily[(today, 99)]["model_usage"]["flash"] = 3
+        metrics_collector._user_daily[today][99]["request_count"] = 5
+        metrics_collector._user_daily[today][99]["model_usage"]["flash"] = 3
         metrics_collector.daily_metrics[today].request_count = 5
 
         # First DB call (global metrics) succeeds, but db_execute_many (user metrics) fails
@@ -141,7 +141,7 @@ class TestMetricsSnapshotAtomicity:
             await metrics_collector._save_metrics_to_db()
 
         # Per-user data must be compensated
-        user_data = metrics_collector._user_daily[(today, 99)]
+        user_data = metrics_collector._user_daily[today][99]
         assert user_data["request_count"] == 5
         assert user_data["model_usage"].get("flash") == 3
 

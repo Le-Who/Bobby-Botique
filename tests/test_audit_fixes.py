@@ -421,6 +421,52 @@ class TestMigrateInvalidModels:
             # OpenRouter batch (user 2, "/" present → openrouter default)
             assert calls[2][0][1] == ("vendor/gpt-4", [2])
 
+    @pytest.mark.asyncio
+    async def test_hidden_runtime_default_is_not_written_as_selectable_model(self):
+        from app.repos.chats import migrate_invalid_models
+
+        with (
+            patch("app.repos.chats.db_manager") as mock_mgr,
+            patch("app.repos.chats.db_query", new_callable=AsyncMock) as mock_query,
+        ):
+            mock_mgr.is_connected = True
+            mock_query.return_value = [{"user_id": 7, "model": "gemini-old"}]
+
+            await migrate_invalid_models(
+                ["gemini-3.7-flash"],
+                default_gemini_model="gemini-internal-only",
+                default_openrouter_model="vendor/internal-only",
+            )
+
+            assert mock_query.call_args_list[1][0][1] == ("gemini-3.7-flash", [7])
+
+    @pytest.mark.asyncio
+    async def test_watcher_reapplies_override_and_includes_freetheai(self):
+        from types import SimpleNamespace
+
+        from app.repos.chats import model_migration_watcher
+
+        new_settings = SimpleNamespace(
+            AVAILABLE_MODELS=["gemini-3.7-flash"],
+            OPENROUTER_AVAILABLE_MODELS=[],
+            OPENCODE_AVAILABLE_MODELS=[],
+            FREETHEAI_AVAILABLE_MODELS=["cat/kat-coder-pro-v1"],
+            DEFAULT_MODEL="gemini-3.7-flash",
+            OPENROUTER_DEFAULT_MODEL="vendor/internal",
+            OPENCODE_DEFAULT_MODEL="opencode-go/internal",
+            FREETHEAI_DEFAULT_MODEL="cat/kat-coder-pro-v1",
+        )
+
+        with (
+            patch("app.repos.models_repo.sync_models_from_db", new_callable=AsyncMock) as mock_sync,
+            patch("app.repos.chats.migrate_invalid_models", new_callable=AsyncMock) as mock_migrate,
+        ):
+            await model_migration_watcher(SimpleNamespace(), new_settings)
+
+        mock_sync.assert_awaited_once_with(new_settings)
+        assert "cat/kat-coder-pro-v1" in mock_migrate.await_args.kwargs["available_models"]
+        assert mock_migrate.await_args.kwargs["default_freetheai_model"] == "cat/kat-coder-pro-v1"
+
 
 # ===========================================================================
 # M8 — database.py unused imports removed

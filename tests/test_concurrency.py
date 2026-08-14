@@ -3,7 +3,7 @@
 Tests that critical subsystems behave correctly under concurrent access:
 - Cache stampede resistance
 - Admin alert rate limiter under concurrent load
-- StreamingWriter concurrent writes
+- Telegram render-session rapid writes
 - AgentRequestUseCase concurrent key resolution
 """
 
@@ -104,33 +104,47 @@ class TestAlertRateLimiterConcurrent:
 # ============================================================================
 
 
-class TestStreamingWriterConcurrent:
-    """Verify StreamingWriter handles rapid concurrent writes without corruption."""
+class TestTelegramRenderSessionWrites:
+    """Verify rapid typed renderer appends preserve the authoritative final text."""
 
     @pytest.mark.asyncio
     async def test_concurrent_writes_produce_complete_output(self):
         """All chunks written concurrently should appear in the final output."""
-        from app.streaming import StreamingWriter
+        from app.response_delivery.renderer import TelegramMessageRef, TelegramRenderer
 
-        mock_msg = AsyncMock()
-        mock_msg.message_id = 1
-        mock_msg.chat = MagicMock()
-        mock_msg.chat.id = 123
+        class Transport:
+            current_ref = TelegramMessageRef(chat_id=123, message_id=1)
 
-        writer = StreamingWriter(mock_msg)
-        writer._debounce_s = 0.01
-        writer._min_chunk = 0
+            def __init__(self):
+                self.edits = []
+
+            async def edit(self, text, *, parse_mode, reply_markup):
+                self.edits.append(text)
+
+            async def send(self, text, *, parse_mode, reply_markup):
+                raise AssertionError("short response must not need send recovery")
+
+        transport = Transport()
+        session = TelegramRenderer(
+            transport,
+            debounce_seconds=0,
+            min_chunk_size=1,
+        ).open()
 
         # Write 20 chunks as fast as possible
         for i in range(20):
-            await writer.write(f"chunk{i} ")
+            await session.append(f"chunk{i} ")
 
-        await writer.finalize()
+        final_text = "".join(f"chunk{i} " for i in range(20))
+        await session.finalize(
+            displayed_text=final_text,
+            title="Answer",
+            actions=None,
+        )
 
         # The full text should contain all chunks
-        full_text = writer._full_text
         for i in range(20):
-            assert f"chunk{i}" in full_text
+            assert f"chunk{i}" in transport.edits[-1]
 
 
 # ============================================================================

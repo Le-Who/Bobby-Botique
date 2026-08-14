@@ -108,6 +108,17 @@ async def set_global_setting(key: str, value: str) -> None:
     logger.info("settings_repo: set '%s' = '%s'", key, value)
 
 
+async def delete_global_setting(key: str) -> None:
+    """Delete *key* and immediately invalidate its cached value."""
+    await _ensure_table()
+    await db.db_query(
+        "DELETE FROM global_settings WHERE key_name = $1",
+        (key,),
+    )
+    _cache.pop(key, None)
+    logger.info("settings_repo: deleted '%s'", key)
+
+
 def invalidate(key: str | None = None) -> None:
     """Evict *key* from the in-process cache (or clear all if None).
 

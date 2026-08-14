@@ -11,6 +11,15 @@ import pytest
 
 from app.database import db_query
 from app.handlers.messages import handle_request
+from app.providers.stream_types import (
+    FinishReason,
+    GroundingReport,
+    ProviderKind,
+    RouteUsed,
+    StreamCompleted,
+    TextDelta,
+    TokenUsage,
+)
 from tests.factories import make_telegram_context as make_context
 from tests.factories import make_telegram_update as make_update
 
@@ -35,13 +44,23 @@ async def test_e2e_happy_path_conversation(db_conn_with_key):
     update.message.reply_text.return_value = placeholder_msg
 
     # We create a fake async generator for the provider stream so the network isn't hit
-    async def fake_stream(*args, **kwargs):
-        yield "The "
-        yield "capital "
-        yield "is Paris."
+    async def fake_stream(request):
+        yield TextDelta("The ")
+        yield TextDelta("capital ")
+        yield TextDelta("is Paris.")
+        yield StreamCompleted(
+            finish_reason=FinishReason.from_raw("STOP"),
+            usage=TokenUsage(total=8),
+            grounding=GroundingReport(),
+            route=RouteUsed(
+                provider=ProviderKind.GEMINI,
+                requested_model=request.models[0],
+                actual_model=request.models[0],
+            ),
+        )
 
     fake_router = AsyncMock()
-    fake_router.stream_response = fake_stream
+    fake_router.stream = fake_stream
 
     # Use a real local semaphore to perfectly mimic the target without Redis requirements
     local_sem = asyncio.Semaphore(1)

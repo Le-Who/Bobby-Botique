@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.config import GEMINI_PRIMARY_MODEL
 from app.natal.llm import _fallback_sections, build_interpretation_prompt, generate_interpretation
 from app.natal.models import ChartData, InputQuality, PlanetPosition, TimePrecision
 
@@ -260,7 +261,7 @@ async def test_generate_interpretation_uses_current_primary_model_even_when_rese
     sections = await generate_interpretation(chart, user_id=123, chat_id=456)
 
     assert sections
-    assert router.calls[0]["preferred_model"] == "gemini-3.5-flash"
+    assert router.calls[0]["preferred_model"] == GEMINI_PRIMARY_MODEL
 
 
 def test_prompt_keeps_quality_constraints_internal_without_technical_jargon():

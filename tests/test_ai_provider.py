@@ -80,7 +80,7 @@ class TestBaseAIProvider:
             async def _execute_request(self, **kwargs):
                 pass
 
-            async def stream_response(self, **kwargs):
+            async def stream(self, **kwargs):
                 yield ""
 
             def _log_failure(self, start_time, model, msg, user_id, chat_id):
@@ -98,7 +98,7 @@ class TestBaseAIProvider:
             async def _execute_request(self, **kwargs):
                 pass
 
-            async def stream_response(self, **kwargs):
+            async def stream(self, **kwargs):
                 yield ""
 
             def _log_failure(self, start_time, model, msg, user_id, chat_id):
@@ -119,7 +119,7 @@ class TestBaseAIProvider:
             async def _execute_request(self, **kwargs):
                 pass
 
-            async def stream_response(self, **kwargs):
+            async def stream(self, **kwargs):
                 yield ""
 
             def _log_failure(self, start_time, model, msg, user_id, chat_id):
@@ -138,7 +138,7 @@ class TestBaseAIProvider:
             async def _execute_request(self, **kwargs):
                 pass
 
-            async def stream_response(self, **kwargs):
+            async def stream(self, **kwargs):
                 yield ""
 
             def _log_failure(self, start_time, model, msg, user_id, chat_id):
@@ -157,7 +157,7 @@ class TestBaseAIProvider:
             async def _execute_request(self, **kwargs):
                 pass
 
-            async def stream_response(self, **kwargs):
+            async def stream(self, **kwargs):
                 yield ""
 
             def _log_failure(self, start_time, model, msg, user_id, chat_id):
@@ -329,6 +329,54 @@ class TestProviders:
             assert response.token_count == 20
             assert response.success is True
             assert response.provider == "openrouter"
+
+    @pytest.mark.asyncio
+    async def test_openrouter_typed_stream_preserves_usage_and_finish_reason(self):
+        from app.providers.stream_types import (
+            FinishKind,
+            GenerationRequest,
+            PromptRole,
+            PromptTurn,
+            StreamCompleted,
+            TextDelta,
+            TextPart,
+            Workload,
+        )
+
+        class FakeStreamResponse:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def raise_for_status(self):
+                return None
+
+            async def aiter_lines(self):
+                yield 'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}'
+                yield 'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}'
+                yield "data: [DONE]"
+
+        request = GenerationRequest(
+            models=("openai/gpt-4o",),
+            turns=(PromptTurn(PromptRole.USER, (TextPart("hello"),)),),
+            workload=Workload.INLINE,
+        )
+        provider = OpenRouterProvider("test-key")
+        client = MagicMock()
+        client.stream.return_value = FakeStreamResponse()
+
+        with patch("app.providers.openrouter._openrouter_http_client", client):
+            events = [event async for event in provider.stream(request, model_name="openai/gpt-4o")]
+
+        assert events[0] == TextDelta("Hi")
+        assert isinstance(events[1], StreamCompleted)
+        assert events[1].finish_reason.kind is FinishKind.STOP
+        assert events[1].usage.prompt == 3
+        assert events[1].usage.completion == 2
+        assert events[1].usage.total == 5
+        assert client.stream.call_args.kwargs["timeout"] == 45.0
 
 
 class TestGetAIResponse:

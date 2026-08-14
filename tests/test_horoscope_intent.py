@@ -144,3 +144,45 @@ async def test_direct_intent_horoscope_no_sign(monkeypatch):
     assert res.handled is True
     assert "🔮 **Персональный Гороскоп**" in res.text
     assert "Пожалуйста, укажите знак зодиака" in res.text
+
+
+@pytest.mark.asyncio
+async def test_horoscope_generation_uses_typed_router_events(monkeypatch):
+    from app.intent_router import _handle_horoscope
+    from app.providers.stream_types import (
+        FinishReason,
+        GroundingReport,
+        ProviderKind,
+        RouteUsed,
+        StreamCompleted,
+        TextDelta,
+        TokenUsage,
+    )
+
+    class Router:
+        requests = []
+
+        async def stream(self, request):
+            self.requests.append(request)
+            yield TextDelta("Сегодня стоит действовать спокойно.")
+            yield StreamCompleted(
+                finish_reason=FinishReason.from_raw("STOP"),
+                usage=TokenUsage(total=8),
+                grounding=GroundingReport(),
+                route=RouteUsed(
+                    provider=ProviderKind.GEMINI,
+                    requested_model=request.models[0],
+                    actual_model=request.models[0],
+                ),
+            )
+
+    router = Router()
+    monkeypatch.setattr("app.providers.get_provider_router", lambda: router)
+    monkeypatch.setattr("app.astro.get_astro_context", lambda _date: "astro")
+
+    result = await _handle_horoscope("гороскоп овен на сегодня")
+
+    assert result is not None
+    assert "Сегодня стоит действовать спокойно" in result.text
+    assert len(router.requests) == 1
+    assert router.requests[0].allow_deferred is False

@@ -11,6 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from telegram import InlineKeyboardMarkup, Message, Update
 
+from app.response_delivery.outcomes import CompleteDelivery
+from app.response_delivery.renderer import (
+    DeliveryKind,
+    DeliveryReceipt,
+    TelegramMessageRef,
+)
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -57,7 +64,7 @@ def make_context():
 @pytest.fixture
 def run_background_sync():
     """Fixture to capture background tasks submitted by messages.py."""
-    with patch("app.utils.background_tasks.submit_task", new_callable=MagicMock) as mock_submit:
+    with patch("app.handlers.messages.submit_task", new_callable=MagicMock) as mock_submit:
         # Instead of scheduling it randomly, we just capture it in the mock
         mock_submit.side_effect = lambda coro, retry=0: None
         yield mock_submit
@@ -181,17 +188,28 @@ async def test_happy_path_text_message(run_background_sync):
             new_callable=AsyncMock,
             return_value=({"api_key": "k"}, "gemini-3.1-flash-lite", "direct"),
         ),
-        patch(
-            "app.streaming.stream_and_display",
-            new_callable=AsyncMock,
-            return_value=("Mocked joke!", True, None, 0, False, False),
-        ),
+        patch("app.response_delivery.delivery.get_telegram_response_delivery") as get_delivery,
         patch("app.repos.memory.search_memories", new_callable=AsyncMock, return_value=[]),
         patch("app.repos.memory.store_memory", new_callable=AsyncMock),
         patch("app.metrics.role_conv_metrics.record_summarization", new_callable=AsyncMock),
         patch("app.metrics.metrics_collector.record_request", new_callable=AsyncMock),
         patch("app.state.set_last_sent_message", new_callable=MagicMock),
     ):
+        delivery = MagicMock()
+        delivery.stream = AsyncMock(
+            return_value=CompleteDelivery(
+                content_text="Mocked joke!",
+                displayed_text="Mocked joke!",
+                completion=None,
+                voice_requested=False,
+                receipt=DeliveryReceipt(
+                    kind=DeliveryKind.MESSAGE,
+                    message_ids=(1002,),
+                    final_message=TelegramMessageRef(chat_id=456, message_id=1002),
+                ),
+            )
+        )
+        get_delivery.return_value = delivery
         mock_lock = MagicMock()
         mock_lock.__aenter__ = AsyncMock(return_value=None)
         mock_lock.__aexit__ = AsyncMock(return_value=None)

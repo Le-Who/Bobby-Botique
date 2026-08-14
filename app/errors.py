@@ -421,6 +421,11 @@ _ERROR_CODE_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.GENERIC: GENERIC_ERROR,
 }
 
+
+def user_message_for_error_code(code: ErrorCode) -> str:
+    """Return localized presentation text without the legacy hidden error tag."""
+    return strip_error_tag(_ERROR_CODE_MESSAGES.get(code, GENERIC_ERROR))
+
 _RETRY_AFTER_PATTERNS = (
     re.compile(r"retry[_ -]?after\s*[=:]?\s*([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
     re.compile(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE),

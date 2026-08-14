@@ -1,6 +1,6 @@
 # Architecture Overview — GemAI Bot v2
 
-> **Last updated**: 2026-06-25
+> **Last updated**: 2026-08-14
 
 ## Project Map
 
@@ -24,8 +24,17 @@ gemaibotv2/
 │   │   ├── imagen_provider.py   ←   Google Imagen 4 image generation (13KB)
 │   │   ├── pollinations.py      ←   Pollinations.ai image generation (19KB)
 │   │   ├── elevenlabs_tts.py    ←   ElevenLabs TTS (primary voice, 14KB)
-│   │   └── tts.py               ←   Gemini TTS (fallback voice, 13KB)
-│   ├── streaming.py             ← StreamingWriter — debounced multi-message Telegram updates (43KB)
+│   │   ├── tts.py               ←   Gemini TTS (fallback voice, 13KB)
+│   │   ├── stream_types.py      ←   Typed generation request/events and stream invariants
+│   │   ├── request_factory.py   ←   JSON history → typed generation boundary
+│   │   └── typed_payloads.py    ←   Provider-native payload construction
+│   ├── response_delivery/       ← Telegram response ownership boundary
+│   │   ├── delivery.py          ←   Handler-facing streamed/completed delivery façade
+│   │   ├── coordinator.py       ←   Provider lifecycle and typed outcome coordination
+│   │   ├── renderer.py          ←   Progressive edits, Reader/Telegraph/split fallback
+│   │   ├── presentation.py      ←   Canonical content and action preparation
+│   │   ├── outcomes.py          ←   Immutable delivery outcomes and receipts
+│   │   └── normalization.py     ←   Narrow output normalization
 │   │
 │   ├── ── Agentic Research ──────────────────────────────────────
 │   ├── core/
@@ -142,8 +151,7 @@ gemaibotv2/
 │   │   ├── debounce.py          ←   1.1s trailing message aggregation (23KB)
 │   │   └── dedup.py             ←   MD5 double-tap prevention (3s window, 3KB)
 │   ├── adapters/
-│   │   ├── concurrency.py       ←   Redis-backed distributed semaphores (5KB)
-│   │   └── ui_adapter.py        ←   StreamingUIAdapter for message editing (3KB)
+│   │   └── concurrency.py       ←   Redis-backed distributed semaphores (5KB)
 │   │
 │   ├── games/                    ← Crocodile (Charades) game engine — 12 modules
 │   │   ├── __init__.py
@@ -302,17 +310,28 @@ PostgreSQL (user_states table)
 
 `UserState` uses `__slots__` for memory efficiency. Active task and last-bot-message registries are in-memory only.
 
-### 5. Streaming Architecture
+### 5. Typed Response Delivery
 
-```
-ProviderRouter.stream_response()  →  async generator yielding text deltas
-    ↓
-StreamingWriter                   →  debounced Telegram editMessageText
-    ↓ (on overflow > 4000 chars)
-_overflow_to_new_message()        →  markdown-continuity-aware message chain
+```text
+Handler
+  → TelegramResponseDelivery
+      → AIStreamCoordinator
+          → ProviderRouter.stream(GenerationRequest)
+              → TextDelta* + exactly one terminal event
+      → TelegramRenderer session
+          → final message / Reader / Telegraph / Telegram split
 ```
 
-Handles: unclosed code blocks, bold, italic, strikethrough across message boundaries.
+Providers expose explicit completion, failure, deferred, grounding, usage and
+route metadata. They do not import Telegram or presentation code. The renderer
+is the sole owner of final response text and keyboard composition; handlers
+receive an immutable outcome and do not edit final response markup afterwards.
+
+The renderer performs debounced progressive edits, bounded flood-control retry,
+and applies Telegram's 4000-character limit after Markdown-to-HTML formatting.
+For long responses it uses one fallback chain: Redis Reader, then Telegraph,
+then a safe Telegram split with actions attached only to the last message.
+Publication actions are prepended without replacing the domain action rows.
 
 ### 6. Memory System (GraphRAG)
 
