@@ -19,6 +19,18 @@ from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_DOCUMENT, update_stage
 
 
+def _document_reply_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("📄 Загрузить другой документ", callback_data="doc:upload_new")],
+            [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
+            [InlineKeyboardButton("❌ Отменить работу с документами", callback_data="doc:cancel")],
+            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
+            [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
+        ]
+    )
+
+
 async def _handle_document_question(
     placeholder_message: Message,
     user_id: int,
@@ -141,8 +153,9 @@ async def _handle_document_question(
 
         parts = [document_prompt] if document_prompt else []
         history = [{"role": "user", "parts": parts}]
+        reply_markup = _document_reply_markup()
 
-        response_text, success, stream_last_msg, _tokens, _was_interrupted, _voice_req = await stream_and_display(
+        response_text, success, _stream_last_msg, _tokens, _was_interrupted, _voice_req = await stream_and_display(
             placeholder_message,
             model_name=stream_model,
             history=history,
@@ -151,6 +164,7 @@ async def _handle_document_question(
             user_id=user_id,
             bot=placeholder_message.get_bot(),
             chat_id=placeholder_message.chat_id,
+            reply_markup=reply_markup,
         )
 
         streamed = bool(success and response_text)
@@ -171,44 +185,13 @@ async def _handle_document_question(
             if await handle_ai_response_error(response_text, placeholder_message):
                 return  # Error обработана, выходим
             else:
-                # Успешный response - показываем обычные buttons for documentов
-                keyboard = [
-                    [
-                        InlineKeyboardButton(
-                            "📄 Загрузить другой документ",
-                            callback_data="doc:upload_new",
-                        )
-                    ],
-                    [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
-                    [
-                        InlineKeyboardButton(
-                            "❌ Отменить работу с документами",
-                            callback_data="doc:cancel",
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            "🎭 Выбрать роль ИИ",
-                            callback_data="open_roles:from_response",
-                        )
-                    ],
-                    [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
-                ]
-
                 # Send response с buttonми (update existing if streamed, otherwise send new)
                 if not streamed:
                     await send_long_message(
                         placeholder_message,
                         response_text,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        reply_markup=reply_markup,
                     )
-                else:
-                    button_msg = stream_last_msg if stream_last_msg else placeholder_message
-                    try:
-                        await button_msg.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-                    except Exception as e:
-                        if "not modified" not in str(e).lower():
-                            logging.warning("Final button edit failed: %s", e)
 
                 await metrics_collector.record_api_call("document_question", settings.DEFAULT_MODEL)
         else:

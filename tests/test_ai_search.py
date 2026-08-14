@@ -45,6 +45,8 @@ async def test_qna_search_happy_path():
     placeholder.get_bot.return_value = MagicMock()
     placeholder.chat.type = "private"
     chat_state = make_chat_state()
+    stream_message = MagicMock()
+    stream_message.edit_reply_markup = AsyncMock()
 
     with (
         patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
@@ -53,7 +55,7 @@ async def test_qna_search_happy_path():
         patch(
             "app.streaming.stream_and_display",
             new_callable=AsyncMock,
-            return_value=("Grounded answer from Google Search", True, AsyncMock(), 42, False, False),
+            return_value=("Grounded answer from Google Search", True, stream_message, 42, False, False),
         ) as mock_stream,
         patch(
             "app.handlers.ai_search.handle_ai_response_error",
@@ -76,6 +78,11 @@ async def test_qna_search_happy_path():
     mock_stream.assert_awaited_once()
     call_kwargs = mock_stream.call_args[1] if mock_stream.call_args[1] else {}
     assert call_kwargs.get("enable_web_search") is True, "Gemini path must use enable_web_search=True"
+    reply_markup = call_kwargs.get("reply_markup")
+    assert reply_markup is not None
+    labels = [button.text for row in reply_markup.inline_keyboard for button in row]
+    assert labels == ["🎭 Выбрать роль ИИ", "✨ Начать новую тему"]
+    stream_message.edit_reply_markup.assert_not_awaited()
 
 
 @pytest.mark.asyncio

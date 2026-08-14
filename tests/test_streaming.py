@@ -7,9 +7,11 @@ the current StreamingWriter implementation which has two paths:
   - Classic path (use_telegraph_fallback=False): creates a new reply message on overflow.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.streaming import (
     _BLOCKED_FINISH_REASONS,
@@ -19,6 +21,9 @@ from app.streaming import (
     STREAM_MSG_LIMIT,
     STREAMING_INDICATOR,
     StreamingWriter,
+    set_last_finish_reason,
+    set_last_token_count,
+    stream_and_display,
 )
 
 
@@ -50,6 +55,207 @@ class TestStreamingConstants:
     def test_blocked_and_truncated_no_overlap(self):
         overlap = _BLOCKED_FINISH_REASONS & _TRUNCATED_FINISH_REASONS
         assert len(overlap) == 0, f"Overlap: {overlap}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("finish_reason", "expected_notice"),
+    [
+        ("MAX_TOKENS", "ограничения длины"),
+        ("SAFETY", "фильтром безопасности"),
+    ],
+)
+async def test_finish_reason_footer_is_displayed(finish_reason, expected_notice):
+    """Provider stop warnings must be sent to Telegram, not only returned to the caller."""
+    placeholder = MagicMock()
+    placeholder.edit_text = AsyncMock(return_value=None)
+    placeholder.reply_text = AsyncMock(return_value=MagicMock(edit_text=AsyncMock()))
+    placeholder.get_bot = MagicMock(return_value=MagicMock())
+    placeholder.chat = MagicMock(id=456)
+    placeholder.message_id = 1
+
+    async def _stream_hits_token_limit(*args, **kwargs):
+        yield "Partial answer"
+        set_last_finish_reason(finish_reason)
+
+    fake_router = MagicMock()
+    fake_router.stream_response = _stream_hits_token_limit
+
+    try:
+        with patch("app.providers.get_provider_router", return_value=fake_router):
+            result_text, *_ = await stream_and_display(
+                placeholder_message=placeholder,
+                model_name="gemini-2.0-flash",
+                history=[],
+                chat_id=456,
+            )
+    finally:
+        set_last_finish_reason(None)
+
+    final_telegram_text = placeholder.edit_text.call_args_list[-1].args[0]
+    assert expected_notice in result_text
+    assert expected_notice in final_telegram_text
+
+
+@pytest.mark.asyncio
+async def test_new_stream_resets_finish_reason_and_token_count():
+    """Sequential streams must not inherit provider metadata from a previous request."""
+    placeholder = MagicMock()
+    placeholder.edit_text = AsyncMock(return_value=None)
+    placeholder.reply_text = AsyncMock(return_value=MagicMock(edit_text=AsyncMock()))
+    placeholder.get_bot = MagicMock(return_value=MagicMock())
+    placeholder.chat = MagicMock(id=456)
+    placeholder.message_id = 1
+
+    async def _stream_without_metadata(*args, **kwargs):
+        yield "Complete answer"
+
+    fake_router = MagicMock()
+    fake_router.stream_response = _stream_without_metadata
+    set_last_finish_reason("MAX_TOKENS")
+    set_last_token_count(777)
+
+    try:
+        with patch("app.providers.get_provider_router", return_value=fake_router):
+            result_text, _, _, token_count, *_ = await stream_and_display(
+                placeholder_message=placeholder,
+                model_name="gemini-2.0-flash",
+                history=[],
+                chat_id=456,
+            )
+    finally:
+        set_last_finish_reason(None)
+        set_last_token_count(0)
+
+    assert result_text == "Complete answer"
+    assert token_count == 0
+
+
+def _stream_placeholder() -> MagicMock:
+    placeholder = MagicMock()
+    placeholder.edit_text = AsyncMock(return_value=None)
+    placeholder.reply_text = AsyncMock(return_value=MagicMock(edit_text=AsyncMock()))
+    placeholder.get_bot = MagicMock(return_value=MagicMock())
+    placeholder.chat = MagicMock(id=456)
+    placeholder.message_id = 1
+    return placeholder
+
+
+async def _oversized_stream(*args, **kwargs):
+    yield "A" * (STREAM_MSG_LIMIT + 200)
+
+
+async def _oversized_interrupted_stream(*args, **kwargs):
+    yield "A" * (STREAM_MSG_LIMIT + 200)
+    raise TimeoutError("stream interrupted")
+
+
+@pytest.mark.asyncio
+async def test_webapp_long_read_prepends_reader_and_preserves_actions(monkeypatch):
+    placeholder = _stream_placeholder()
+    fake_router = MagicMock(stream_response=_oversized_stream)
+    actions = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Action", callback_data="action")]]
+    )
+    monkeypatch.setattr(
+        "app.config.settings",
+        SimpleNamespace(WEBAPP_BASE_URL="https://bot.example.com"),
+    )
+
+    with (
+        patch("app.providers.get_provider_router", return_value=fake_router),
+        patch("app.cache.store_long_message", new_callable=AsyncMock, return_value=True),
+        patch("app.cache.store_telegraph_url", new_callable=AsyncMock),
+        patch(
+            "app.utils.telegraph.create_telegraph_page",
+            new_callable=AsyncMock,
+            return_value="https://telegra.ph/fallback",
+        ),
+    ):
+        await stream_and_display(
+            placeholder_message=placeholder,
+            model_name="gemini-2.0-flash",
+            history=[],
+            chat_id=456,
+            reply_markup=actions,
+        )
+
+    final_markup = placeholder.edit_text.call_args_list[-1].kwargs["reply_markup"]
+    rows = final_markup.inline_keyboard
+    assert rows[0][0].text == "📄 Развернуть статью (Mini App)"
+    assert rows[0][0].web_app.url.startswith("https://bot.example.com/webapp/reader?id=")
+    assert rows[1][0].callback_data == "action"
+
+
+@pytest.mark.asyncio
+async def test_telegraph_long_read_prepends_article_and_preserves_actions(monkeypatch):
+    placeholder = _stream_placeholder()
+    fake_router = MagicMock(stream_response=_oversized_stream)
+    actions = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Action", callback_data="action")]]
+    )
+    monkeypatch.setattr("app.config.settings", SimpleNamespace(WEBAPP_BASE_URL=""))
+
+    with (
+        patch("app.providers.get_provider_router", return_value=fake_router),
+        patch(
+            "app.utils.telegraph.create_telegraph_page",
+            new_callable=AsyncMock,
+            return_value="https://telegra.ph/full-answer",
+        ),
+    ):
+        await stream_and_display(
+            placeholder_message=placeholder,
+            model_name="gemini-2.0-flash",
+            history=[],
+            chat_id=456,
+            reply_markup=actions,
+        )
+
+    final_markup = placeholder.edit_text.call_args_list[-1].kwargs["reply_markup"]
+    rows = final_markup.inline_keyboard
+    assert rows[0][0].url == "https://telegra.ph/full-answer"
+    assert rows[1][0].callback_data == "action"
+
+
+@pytest.mark.asyncio
+async def test_interrupted_long_read_preserves_reader_and_recovery_actions(monkeypatch):
+    placeholder = _stream_placeholder()
+    fake_router = MagicMock(stream_response=_oversized_interrupted_stream)
+    normal_actions = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Action", callback_data="action")]]
+    )
+    recovery_actions = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Continue", callback_data="continue_stream")]]
+    )
+    monkeypatch.setattr(
+        "app.config.settings",
+        SimpleNamespace(WEBAPP_BASE_URL="https://bot.example.com"),
+    )
+
+    with (
+        patch("app.providers.get_provider_router", return_value=fake_router),
+        patch("app.cache.store_long_message", new_callable=AsyncMock, return_value=True),
+        patch("app.cache.store_telegraph_url", new_callable=AsyncMock),
+        patch(
+            "app.utils.telegraph.create_telegraph_page",
+            new_callable=AsyncMock,
+            return_value="https://telegra.ph/fallback",
+        ),
+    ):
+        await stream_and_display(
+            placeholder_message=placeholder,
+            model_name="gemini-2.0-flash",
+            history=[],
+            chat_id=456,
+            reply_markup=normal_actions,
+            interrupted_reply_markup=recovery_actions,
+        )
+
+    rows = placeholder.edit_text.call_args_list[-1].kwargs["reply_markup"].inline_keyboard
+    assert rows[0][0].text == "📄 Развернуть статью (Mini App)"
+    assert rows[1][0].callback_data == "continue_stream"
+    assert all(button.callback_data != "action" for row in rows for button in row)
 
 
 # ── Markdown context detection tests ─────────────────────────────────────────

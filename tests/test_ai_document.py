@@ -57,6 +57,8 @@ async def test_document_question_success():
     """Successfully answers a question about an uploaded document."""
     placeholder = make_placeholder()
     chat_state = make_chat_state()
+    stream_message = MagicMock()
+    stream_message.edit_reply_markup = AsyncMock()
 
     with (
         patch(
@@ -73,8 +75,8 @@ async def test_document_question_success():
         patch(
             "app.streaming.stream_and_display",
             new_callable=AsyncMock,
-            return_value=("Python is great!", True, AsyncMock(), 0, False, False),
-        ),
+            return_value=("Python is great!", True, stream_message, 0, False, False),
+        ) as mock_stream,
         patch(
             "app.handlers.ai_core._resolve_ai_request",
             new_callable=AsyncMock,
@@ -99,8 +101,17 @@ async def test_document_question_success():
 
         await _handle_document_question(placeholder, 123, "What is Python?", chat_state)
 
-    # send_long_message is not called when streaming is successful
-    assert True
+    reply_markup = mock_stream.await_args.kwargs.get("reply_markup")
+    assert reply_markup is not None
+    labels = [button.text for row in reply_markup.inline_keyboard for button in row]
+    assert labels == [
+        "📄 Загрузить другой документ",
+        "📋 Выбрать документ",
+        "❌ Отменить работу с документами",
+        "🎭 Выбрать роль ИИ",
+        "✨ Начать новую тему",
+    ]
+    stream_message.edit_reply_markup.assert_not_awaited()
 
 
 # ── No documents uploaded ─────────────────────────────────────────────────────

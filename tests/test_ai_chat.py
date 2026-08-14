@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.handlers.ai_chat import _handle_regular_chat
+from app.handlers.ai_chat import _build_chat_response_markup, _handle_regular_chat
 from tests.factories import make_chat_state, make_telegram_message
 
 
@@ -78,6 +78,86 @@ async def test_successful_chat_response_appended_to_history(mock_boundaries):
 
     # Verify Behavior: Token limit correctly updated internally
     assert saved_state.token_count > 0, "Expected updated token count based on the assembled chunk"
+
+
+@pytest.mark.asyncio
+async def test_streamed_chat_delegates_complete_keyboard_to_stream(mock_boundaries):
+    """The stream owns the final keyboard so a long-read row cannot be overwritten."""
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
+    chat_state = make_chat_state(history=[{"role": "user", "parts": ["Hi"]}])
+
+    await _handle_regular_chat(placeholder, 123, "Hi", chat_state)
+
+    stream = mock_boundaries["stream"]
+    post_processor = stream.await_args.kwargs["post_processor"]
+    clean_text, reply_markup = post_processor(
+        "Hello world!\n[INTENT:research]\n[SUGGESTIONS: More details]"
+    )
+    stream_message = stream.return_value[2]
+
+    assert clean_text == "Hello world!"
+    assert reply_markup is not None
+    callback_data = [button.callback_data for row in reply_markup.inline_keyboard for button in row]
+    assert any(value and value.startswith("suggest:") for value in callback_data)
+    assert "intent_route:research" in callback_data
+    assert "retry_last" in callback_data
+    stream_message.edit_reply_markup.assert_not_awaited()
+
+
+def test_chat_response_markup_preserves_all_dynamic_actions():
+    markup = _build_chat_response_markup(
+        "```python\nprint('a sufficiently long code sample')\n```",
+        intent="draw",
+        suggestions=[{"id": "detail", "label": "Подробнее"}],
+        lang="ru",
+        branch_id="branch-1",
+        is_deep_dive=True,
+        is_forward_batch=True,
+        memories_injected=2,
+        graph_triples_count=3,
+    )
+
+    buttons = [button for row in markup.inline_keyboard for button in row]
+    callback_data = [button.callback_data for button in buttons]
+    assert "suggest:detail" in callback_data
+    assert "intent_route:draw" in callback_data
+    assert "branch_return" in callback_data
+    assert "deepdive:new_topic" in callback_data
+    assert "fwd_save" in callback_data
+    assert "show_facts" in callback_data
+    assert "feedback:reveal" in callback_data
+    assert any(button.copy_text is not None for button in buttons)
+    assert any(button.text == "📚 5 фактов" for button in buttons)
+
+
+@pytest.mark.asyncio
+async def test_interrupted_chat_delegates_recovery_keyboard_to_stream(mock_boundaries):
+    """Recovery actions must be merged by the stream instead of replacing Reader."""
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.chat.type = "private"
+    placeholder.reply_to_message = None
+    placeholder.get_bot = MagicMock(return_value=None)
+    chat_state = make_chat_state(history=[{"role": "user", "parts": ["Hi"]}])
+    stream_message = make_telegram_message("Partial response", user_id=123)
+    mock_boundaries["stream"].return_value = (
+        "Partial response",
+        True,
+        stream_message,
+        10,
+        True,
+        False,
+    )
+
+    with patch("app.handlers.ai_chat.set_error_reaction", new_callable=AsyncMock):
+        await _handle_regular_chat(placeholder, 123, "Hi", chat_state)
+
+    interrupted_markup = mock_boundaries["stream"].await_args.kwargs.get("interrupted_reply_markup")
+    assert interrupted_markup is not None
+    callback_data = [button.callback_data for row in interrupted_markup.inline_keyboard for button in row]
+    assert callback_data == ["continue_stream", "retry_last"]
+    stream_message.edit_reply_markup.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -44,6 +44,7 @@ def make_chat_state():
         search_enabled=False,
         thinking_level=None,
         context_summary=None,
+        ltm_enabled=False,
     )
 
 
@@ -56,14 +57,18 @@ async def test_handle_photo_success():
     placeholder = make_placeholder()
     original = make_original_message(caption="What is this?")
     chat_state = make_chat_state()
+    stream_message = MagicMock()
+    stream_message.edit_reply_markup = AsyncMock()
 
     with (
         patch("app.handlers.ai_photo.update_stage", new_callable=AsyncMock),
+        patch("app.handlers.ai_photo.get_file_bytes", new_callable=AsyncMock, return_value=b"image-bytes"),
+        patch("app.handlers.ai_photo.save_image_as_bytes", new_callable=AsyncMock, return_value=b"compressed"),
         patch(
             "app.handlers.ai_photo.stream_and_display",
             new_callable=AsyncMock,
-            return_value=("This is a mountain landscape.", True, AsyncMock(), 0, False, False),
-        ),
+            return_value=("This is a mountain landscape.", True, stream_message, 0, False, False),
+        ) as mock_stream,
         patch(
             "app.handlers.ai_photo._resolve_ai_request",
             new_callable=AsyncMock,
@@ -90,6 +95,12 @@ async def test_handle_photo_success():
     # History should be updated
     assert len(chat_state.history) == 2
     assert chat_state.history[1]["role"] == "model"
+    reply_markup = mock_stream.await_args.kwargs.get("reply_markup")
+    assert reply_markup is not None
+    labels = [button.text for row in reply_markup.inline_keyboard for button in row]
+    assert labels == ["🎭 Выбрать роль ИИ", "✨ Начать новую тему"]
+    stream_message.edit_reply_markup.assert_not_awaited()
+    placeholder.edit_text.assert_not_awaited()
 
 
 # ── Empty AI response ────────────────────────────────────────────────────────

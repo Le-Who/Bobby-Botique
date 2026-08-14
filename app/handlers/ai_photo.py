@@ -153,6 +153,15 @@ def _pick_ocr_model() -> str:
     return normalize_gemini_chat_model(_setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL))
 
 
+def _vision_reply_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
+            [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
+        ]
+    )
+
+
 async def _send_vision_response(
     placeholder_message: Message,
     response_text: str | None,
@@ -165,22 +174,11 @@ async def _send_vision_response(
     Returns:
         ``True`` if a valid response was sent, ``False`` if fallback error was used.
     """
-    buttons = [
-        [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
-        [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
-    ]
-    reply_markup = InlineKeyboardMarkup(buttons)
+    reply_markup = _vision_reply_markup()
 
     if response_text and response_text.strip():
         if not streamed:
             await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
-        else:
-            button_msg = stream_last_msg if stream_last_msg else placeholder_message
-            try:
-                await button_msg.edit_reply_markup(reply_markup=reply_markup)
-            except Exception as e:
-                if "not modified" not in str(e).lower():
-                    logging.warning("Final button edit failed: %s", e)
         return True
 
     # Empty/None response — send error fallback
@@ -244,6 +242,7 @@ async def _process_ai_vision(
         user_id=user_id,
         bot=placeholder_message.get_bot(),
         chat_id=chat_id or 0,
+        reply_markup=_vision_reply_markup(),
     )
 
     streamed = bool(success and response_text)

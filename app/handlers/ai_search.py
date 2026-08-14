@@ -48,6 +48,15 @@ def _available_models() -> list[str]:
     return value if isinstance(value, list) and value else DEFAULT_GEMINI_MODELS
 
 
+def _qna_reply_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
+            [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
+        ]
+    )
+
+
 @track_metrics("qna_search")
 async def _handle_qna_search(
     placeholder_message: Message,
@@ -127,6 +136,7 @@ async def _handle_qna_search(
     success = False
     stream_last_msg = None
     _tokens = 0
+    reply_markup = _qna_reply_markup()
 
     for attempt_idx, model in enumerate(fallback_chain):
         try:
@@ -147,6 +157,7 @@ async def _handle_qna_search(
                 bot=placeholder_message.get_bot(),
                 chat_id=chat_id or 0,
                 enable_web_search=enable_web_search,
+                reply_markup=reply_markup,
             )
 
             # Detect error-tagged responses (e.g., 429 quota error yielded
@@ -215,21 +226,8 @@ async def _handle_qna_search(
         return None
 
     if final_answer:
-        buttons = [
-            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
-            [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
-        ]
-        reply_markup = InlineKeyboardMarkup(buttons)
-
         if not streamed:
             await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup)
-        else:
-            button_msg = stream_last_msg if stream_last_msg else placeholder_message
-            try:
-                await button_msg.edit_reply_markup(reply_markup=reply_markup)
-            except Exception as e:
-                if "not modified" not in str(e).lower():
-                    logging.warning("Final button edit failed: %s", e)
     else:
         try:
             from app.errors import build_retry_and_roles_keyboard

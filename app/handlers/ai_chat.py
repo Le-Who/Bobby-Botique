@@ -45,6 +45,94 @@ def _setting(name: str, fallback: Any) -> Any:
     return fallback if value is None else value
 
 
+def _build_chat_response_markup(
+    response_text: str,
+    *,
+    intent: str | None,
+    suggestions: list[dict[str, str]],
+    lang: str,
+    branch_id: object | None,
+    is_deep_dive: bool,
+    is_forward_batch: bool,
+    memories_injected: int,
+    graph_triples_count: int,
+) -> InlineKeyboardMarkup:
+    """Build the complete action keyboard before streaming finalizes the message."""
+    from app.utils.response_tags import INTENT_BUTTONS, extract_first_code_block
+
+    branch_btn = (
+        InlineKeyboardButton(t("btn.back_to_main", lang), callback_data="branch_return")
+        if branch_id
+        else InlineKeyboardButton(t("btn.what_if", lang), callback_data="branch_create")
+    )
+    buttons: list[list[InlineKeyboardButton]] = []
+
+    if suggestions:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    f"✨ {suggestion['label']}",
+                    callback_data=f"suggest:{suggestion['id']}",
+                )
+                for suggestion in suggestions
+            ]
+        )
+
+    if intent and intent in INTENT_BUTTONS:
+        label, callback_data = INTENT_BUTTONS[intent]
+        buttons.append([InlineKeyboardButton(label, callback_data=callback_data)])
+
+    buttons.append([InlineKeyboardButton(t("btn.retry", lang), callback_data="retry_last")])
+    buttons.append(
+        [
+            InlineKeyboardButton(t("btn.roles", lang), callback_data="open_roles:from_response"),
+            branch_btn,
+        ]
+    )
+    buttons.append(
+        [
+            InlineKeyboardButton(t("btn.listen", lang), callback_data="tts_reply"),
+            InlineKeyboardButton(
+                t("btn.new_topic_short", lang),
+                callback_data=("deepdive:new_topic" if is_deep_dive else "new_topic"),
+            ),
+        ]
+    )
+
+    if is_forward_batch:
+        buttons.append([InlineKeyboardButton("💾 Сохранить тезисы в память", callback_data="fwd_save")])
+
+    code_block = extract_first_code_block(response_text)
+    if code_block:
+        from app.utils.ux_improvements import make_copy_text_button
+
+        copy_button = make_copy_text_button(code_block, "📋 Скопировать код")
+        if copy_button:
+            buttons.append([copy_button])
+
+    if graph_triples_count > 0:
+        total_sources = memories_injected + graph_triples_count
+        cite_label = f"📚 {total_sources} факт{'ов' if total_sources >= 5 else 'а' if 2 <= total_sources <= 4 else ''}"
+        buttons.append([InlineKeyboardButton(cite_label, callback_data="show_facts")])
+
+    buttons.append(make_feedback_buttons())
+    return InlineKeyboardMarkup(buttons)
+
+
+def _build_interrupted_reply_markup(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "▶️ " + t("btn.continue_stream", lang),
+                    callback_data="continue_stream",
+                ),
+                InlineKeyboardButton(t("btn.retry", lang), callback_data="retry_last"),
+            ]
+        ]
+    )
+
+
 def _store_memory_in_background(user_id: int, user_message: str) -> None:
     """Store user intent as long-term memory + extract graph (background, non-blocking).
 
@@ -343,15 +431,22 @@ async def _handle_regular_chat(
         _user_msg_id = placeholder_message.reply_to_message.message_id
         await set_thinking_reaction(_bot, _chat_id, _user_msg_id)
 
-    _extracted_tags: dict[str, Any] = {}
-
     def _stream_post_processor(full_text: str) -> tuple[str, object | None]:
         from app.utils.response_tags import parse_response_tags
 
         _clean, _intent, _sugg = parse_response_tags(full_text)
-        _extracted_tags["intent"] = _intent
-        _extracted_tags["suggestions"] = _sugg
-        return _clean, None
+        reply_markup = _build_chat_response_markup(
+            _clean,
+            intent=_intent,
+            suggestions=_sugg,
+            lang=detect_language(user_message),
+            branch_id=chat_state.branch_id,
+            is_deep_dive=chat_state.is_deep_dive,
+            is_forward_batch=is_forward_batch,
+            memories_injected=_memories_injected,
+            graph_triples_count=_graph_triples_count,
+        )
+        return _clean, reply_markup
 
     try:
         (
@@ -373,6 +468,7 @@ async def _handle_regular_chat(
             footer_text=_footer_text,
             yield_hook=_stop_placeholder_animation,
             post_processor=_stream_post_processor,
+            interrupted_reply_markup=_build_interrupted_reply_markup(detect_language(user_message)),
         )
     finally:
         # Safety net: stop heartbeat if stream failed completely before yielding
@@ -422,97 +518,22 @@ async def _handle_regular_chat(
                 # Interrupted stream: set ⚠️ reaction + show recovery keyboard
                 if _user_msg_id:
                     await set_error_reaction(_bot, _chat_id, _user_msg_id)
-                _lang = detect_language(user_message)
-                buttons = [
-                    [
-                        InlineKeyboardButton(
-                            "▶️ " + t("btn.continue_stream", _lang),
-                            callback_data="continue_stream",
-                        ),
-                        InlineKeyboardButton(t("btn.retry", _lang), callback_data="retry_last"),
-                    ],
-                ]
-
-                # Prevent replacing "Читать полностью" link generated by a frozen long-read transition
-                if stream_last_msg and stream_last_msg.reply_markup and stream_last_msg.reply_markup.inline_keyboard:
-                    existing = [list(row) for row in stream_last_msg.reply_markup.inline_keyboard]
-                    buttons = existing + buttons
-
-                reply_markup = InlineKeyboardMarkup(buttons)
             else:
-                # Normal response: parse LLM tags + show standard action buttons
-                from app.utils.response_tags import INTENT_BUTTONS, parse_response_tags
+                if not streamed:
+                    from app.utils.response_tags import parse_response_tags
 
-                if streamed and _extracted_tags:
-                    _intent: str | None = _extracted_tags.get("intent")
-                    _suggestions: list[dict[str, str]] = _extracted_tags.get("suggestions", [])
-                else:
-                    response_text, _intent, _suggestions = parse_response_tags(response_text)
-
-                _lang = detect_language(user_message)
-                branch_btn = (
-                    InlineKeyboardButton(t("btn.back_to_main", _lang), callback_data="branch_return")
-                    if chat_state.branch_id
-                    else InlineKeyboardButton(t("btn.what_if", _lang), callback_data="branch_create")
-                )
-                # ── Smart Suggestions row (LLM-generated follow-ups) ─────────
-                buttons = []
-                if _suggestions:
-                    suggestion_row = [
-                        InlineKeyboardButton(
-                            f"✨ {s['label']}",
-                            callback_data=f"suggest:{s['id']}",
-                        )
-                        for s in _suggestions
-                    ]
-                    buttons.append(suggestion_row)
-
-                # ── Proactive Intent routing button ─────────────────────────
-                if _intent and _intent in INTENT_BUTTONS:
-                    label, cb_data = INTENT_BUTTONS[_intent]
-                    buttons.append([InlineKeyboardButton(label, callback_data=cb_data)])
-
-                # Standard action rows
-                buttons.append([InlineKeyboardButton(t("btn.retry", _lang), callback_data="retry_last")])
-                buttons.append(
-                    [
-                        InlineKeyboardButton(t("btn.roles", _lang), callback_data="open_roles:from_response"),
-                        branch_btn,
-                    ]
-                )
-                buttons.append(
-                    [
-                        InlineKeyboardButton(t("btn.listen", _lang), callback_data="tts_reply"),
-                        InlineKeyboardButton(
-                            t("btn.new_topic_short", _lang),
-                            callback_data=("deepdive:new_topic" if chat_state.is_deep_dive else "new_topic"),
-                        ),
-                    ]
-                )
-                if is_forward_batch:
-                    buttons.append([InlineKeyboardButton("💾 Сохранить тезисы в память", callback_data="fwd_save")])
-
-                # ── CopyTextButton for code blocks ───────────────────────
-                from app.utils.response_tags import extract_first_code_block
-
-                _code_block = extract_first_code_block(response_text)
-                if _code_block:
-                    from app.utils.ux_improvements import make_copy_text_button
-
-                    _copy_btn = make_copy_text_button(_code_block, "📋 Скопировать код")
-                    if _copy_btn:
-                        buttons.append([_copy_btn])
-
-                # ── Citation badge when graph memory was used ────────────
-                if _graph_triples_count > 0:
-                    _total_sources = _memories_injected + _graph_triples_count
-                    _cite_label = f"📚 {_total_sources} факт{'ов' if _total_sources >= 5 else 'а' if 2 <= _total_sources <= 4 else ''}"
-                    buttons.append([InlineKeyboardButton(_cite_label, callback_data="show_facts")])
-
-                # ── RLHF: 👍/👎 inline feedback buttons (last row) ───────
-                buttons.append(make_feedback_buttons())
-
-                reply_markup = InlineKeyboardMarkup(buttons)
+                    response_text, intent, suggestions = parse_response_tags(response_text)
+                    reply_markup = _build_chat_response_markup(
+                        response_text,
+                        intent=intent,
+                        suggestions=suggestions,
+                        lang=detect_language(user_message),
+                        branch_id=chat_state.branch_id,
+                        is_deep_dive=chat_state.is_deep_dive,
+                        is_forward_batch=is_forward_batch,
+                        memories_injected=_memories_injected,
+                        graph_triples_count=_graph_triples_count,
+                    )
 
             if not streamed:
                 # Non-streaming: send_long_message as before
@@ -529,15 +550,6 @@ async def _handle_regular_chat(
                         )
                     except Exception:
                         await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
-            else:
-                # Streaming already includes footer_text — just attach buttons.
-                button_msg = stream_last_msg if stream_last_msg else placeholder_message
-                try:
-                    await button_msg.edit_reply_markup(reply_markup=reply_markup)
-                except Exception as e:
-                    if "not modified" not in str(e).lower():
-                        logging.warning("Final button edit failed: %s", e)
-
             # ── UX: set ⚡ reaction on user's message after successful response ──
             if _user_msg_id and not was_interrupted:
                 await set_done_reaction(_bot, _chat_id, _user_msg_id)

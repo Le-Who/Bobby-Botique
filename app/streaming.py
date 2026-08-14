@@ -580,6 +580,7 @@ async def stream_and_display(
     enable_web_search: bool = False,
     yield_hook: Any | None = None,
     post_processor: Callable[[str], tuple[str, object | None]] | None = None,
+    interrupted_reply_markup: Any | None = None,
 ) -> tuple[str, bool, Message, int, bool, bool]:
     """High-level: stream AI response and progressively update Telegram message.
 
@@ -601,6 +602,8 @@ async def stream_and_display(
             final message (avoids a separate edit_reply_markup call).
         yield_hook: Optional callable to invoke immediately before processing the VERY FIRST
             chunk. Used to terminate heartbeats exactly when text begins.
+        interrupted_reply_markup: Optional recovery keyboard that replaces the
+            regular final markup when the provider stream is interrupted.
 
     Returns:
         (response_text, success, last_message, token_count, was_interrupted,
@@ -625,7 +628,10 @@ async def stream_and_display(
 
     writer = StreamingWriter(adapter)
 
-    # Reset voice intent flag for this stream
+    # Provider metadata is task-local but can survive sequential calls in the
+    # same task. Reset it before every request so stale values cannot leak.
+    _last_finish_reason.set(None)
+    _last_token_count.set(0)
     _voice_requested.set(False)
     _was_interrupted = False
 
@@ -819,6 +825,42 @@ async def stream_and_display(
 
         _state_mod.clear_network_stall(user_id)
 
+    # Finish-reason notices must become part of the writer before finalization;
+    # otherwise callers receive the warning but Telegram and long-read storage do not.
+    fr = _last_finish_reason.get()
+    fr_upper = (fr or "").upper()
+    finish_notice = ""
+
+    if fr_upper in _BLOCKED_FINISH_REASONS:
+        logging.warning(
+            "Streaming response blocked by model (finish_reason=%s, %d chars generated)",
+            fr,
+            len(writer._full_text),
+        )
+        finish_notice = "\n\n⚠️ _Ответ был прерван фильтром безопасности._"
+    elif fr_upper in _TRUNCATED_FINISH_REASONS:
+        logging.warning(
+            "Streaming response truncated (finish_reason=%s, %d chars generated)",
+            fr,
+            len(writer._full_text),
+        )
+        finish_notice = "\n\n⚠️ _Ответ был обрезан из-за ограничения длины._"
+    elif len(writer._full_text) < 150 and fr_upper not in (
+        "STOP",
+        "1",
+        "FINISH_REASON_STOP",
+        "",
+    ):
+        logging.warning(
+            "Suspiciously short streaming response: %d chars, finish_reason=%s",
+            len(writer._full_text),
+            fr,
+        )
+
+    if finish_notice:
+        writer._full_text += finish_notice
+        writer._buffer += finish_notice
+
     markup = reply_markup
     if post_processor:
         # Strip tags natively before flushing final text to Telegram
@@ -831,6 +873,9 @@ async def stream_and_display(
             buf_start_in_full = len(writer._full_text) - len(writer._buffer)
             writer._buffer = clean_text[buf_start_in_full:] if buf_start_in_full < len(clean_text) else ""
             writer._full_text = clean_text
+
+    if _was_interrupted and interrupted_reply_markup is not None:
+        markup = interrupted_reply_markup
 
     final_text = await writer.finalize(reply_markup=markup)
 
@@ -967,39 +1012,6 @@ async def stream_and_display(
                 from app.utils.messaging import send_long_message
 
                 await send_long_message(writer.last_message, final_text, reply_markup=markup)  # type: ignore[arg-type]
-
-    # Check finish_reason for blocked/truncated responses
-    fr = _last_finish_reason.get()
-    fr_upper = (fr or "").upper()
-
-    if fr_upper in _BLOCKED_FINISH_REASONS:
-        logging.warning(
-            "Streaming response blocked by model (finish_reason=%s, %d chars generated)",
-            fr,
-            len(final_text),
-        )
-        # User still gets what was generated, plus a note
-        final_text += "\n\n⚠️ _Ответ был прерван фильтром безопасности._"
-
-    elif fr_upper in _TRUNCATED_FINISH_REASONS:
-        logging.warning(
-            "Streaming response truncated (finish_reason=%s, %d chars generated)",
-            fr,
-            len(final_text),
-        )
-        final_text += "\n\n⚠️ _Ответ был обрезан из-за ограничения длины._"
-
-    elif len(final_text) < 150 and fr_upper not in (
-        "STOP",
-        "1",
-        "FINISH_REASON_STOP",
-        "",
-    ):
-        logging.warning(
-            "Suspiciously short streaming response: %d chars, finish_reason=%s",
-            len(final_text),
-            fr,
-        )
 
     logging.info(
         "Streaming complete: %d chars, %d edits, %d message(s), finish_reason=%s",
