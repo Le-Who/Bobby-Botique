@@ -390,7 +390,7 @@ class TestPickTransientFallbackModel:
 
         return ProviderRouter()
 
-    def test_gemini_flash_cascades_to_lite(self):
+    def test_gemini_flash_cascades_to_next_known_lite_model(self):
         router = self._get_router()
         mock_settings = MagicMock()
         mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
@@ -398,7 +398,7 @@ class TestPickTransientFallbackModel:
         with patch("app.providers.router.settings", mock_settings):
             result = router._pick_transient_fallback_model("gemini-3.5-flash", use_openrouter=False)
 
-        assert result == "gemini-3.1-flash-lite"
+        assert result == "gemini-3.5-flash-lite"
 
     def test_opencode_model_cascades_to_gemini(self):
         router = self._get_router()

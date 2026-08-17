@@ -1016,12 +1016,13 @@ input:checked + .slider:before { transform: translateX(16px); }
       </div>
       <div class="stat-card">
         <div class="stat-card-title">Модель LLM</div>
-        <div style="margin-top:6px;">
-          <select id="trivia-model-select" style="padding:4px 8px; font-size:0.85rem; width:100%; background:var(--bg-surface); color:var(--text); border:1px solid var(--border); border-radius:6px;">
-            <option value="gemini-economy">gemini-economy</option>
-            <option value="gemini-primary">gemini-primary</option>
-            <option value="opencode">opencode</option>
-          </select>
+        <div style="margin-top:6px; display:flex; gap:6px;">
+          <input id="trivia-model-input" list="trivia-model-options" type="text" autocomplete="off" spellcheck="false" style="padding:4px 8px; font-size:0.85rem; min-width:0; flex:1; background:var(--bg-surface); color:var(--text); border:1px solid var(--border); border-radius:6px;">
+          <datalist id="trivia-model-options">
+            <option value="gemini-primary"></option>
+            <option value="gemini-economy"></option>
+          </datalist>
+          <button type="button" id="trivia-model-save" class="btn btn-secondary" style="padding:4px 8px;">Сохранить</button>
         </div>
         <div class="stat-card-sub" style="margin-top:4px;">5 обычных + 3 супер</div>
       </div>
@@ -2133,9 +2134,17 @@ const TriviaModule = (() => {
       document.getElementById('trivia-stats-bank').textContent = data.bank_fact_count ?? '0';
       document.getElementById('trivia-stats-bank-detail').textContent = `За 90 дней: ${data.recent_bank_fact_count ?? 0}`;
 
-      const modelSelect = document.getElementById('trivia-model-select');
-      if (modelSelect && data.llm_model) {
-        modelSelect.value = data.llm_model;
+      const modelInput = document.getElementById('trivia-model-input');
+      const modelOptions = document.getElementById('trivia-model-options');
+      if (modelOptions && Array.isArray(data.llm_models)) {
+        modelOptions.replaceChildren(...data.llm_models.map(model => {
+          const option = document.createElement('option');
+          option.value = model;
+          return option;
+        }));
+      }
+      if (modelInput && data.llm_model) {
+        modelInput.value = data.llm_model;
       }
     } catch (e) {
       console.error('Trivia stats error:', e);
@@ -2583,14 +2592,21 @@ const TriviaModule = (() => {
   }
 
   async function updateModel(newModel) {
+    const model = String(newModel || '').trim();
+    if (!model) {
+      showToast('Укажите модель LLM', 'error');
+      return;
+    }
     try {
       const res = await fetch('/api/admin/dailytrivia/settings', {
         method: 'POST',
         headers: apiHeaders,
-        body: JSON.stringify({ llm_model: newModel })
+        body: JSON.stringify({ llm_model: model })
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      showToast(`Модель LLM успешно изменена на ${newModel}`, 'success');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      document.getElementById('trivia-model-input').value = data.llm_model || model;
+      showToast(`Модель LLM успешно изменена на ${data.llm_model || model}`, 'success');
     } catch (e) {
       showToast(`Ошибка смены модели: ${e.message}`, 'error');
     }
@@ -2608,7 +2624,11 @@ const TriviaModule = (() => {
     document.getElementById('trivia-btn-close').addEventListener('click', closeEditor);
     document.getElementById('trivia-lb-btn-daily').addEventListener('click', () => loadLeaderboard('daily'));
     document.getElementById('trivia-lb-btn-monthly').addEventListener('click', () => loadLeaderboard('monthly'));
-    document.getElementById('trivia-model-select').addEventListener('change', (e) => updateModel(e.target.value));
+    const modelInput = document.getElementById('trivia-model-input');
+    document.getElementById('trivia-model-save').addEventListener('click', () => updateModel(modelInput.value));
+    modelInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') updateModel(modelInput.value);
+    });
 
     loadLeaderboard('daily');
   }

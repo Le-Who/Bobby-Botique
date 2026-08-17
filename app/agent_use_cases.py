@@ -53,7 +53,7 @@ def _dedupe_models(models: Iterable[str | None], *, exclude: str | None = None) 
 
 
 def _gemini_fallback_priority(preferred_model: str) -> list[str]:
-    """Return ordered configured/role fallbacks without a version allowlist."""
+    """Return known runtime fallbacks first, followed by dynamic configured models."""
     preferred_model = normalize_gemini_runtime_model(preferred_model)
     if preferred_model == GEMINI_GROUNDING_MODEL:
         return [GEMINI_GROUNDING_FALLBACK_MODEL]
@@ -76,13 +76,9 @@ def _gemini_fallback_priority(preferred_model: str) -> list[str]:
     ]
     configured = getattr(settings, "AVAILABLE_MODELS", [])
     configured_models = configured if isinstance(configured, list) else []
-    candidates = set(_dedupe_models([*configured_models, *role_models]))
     priority.extend([*role_models, *configured_models])
-    return [
-        model
-        for model in _dedupe_models(priority, exclude=preferred_model)
-        if model in candidates and is_gemini_chat_model_id(model)
-    ]
+    normalized = [normalize_gemini_runtime_model(model, fallback="") for model in priority]
+    return [model for model in _dedupe_models(normalized, exclude=preferred_model) if is_gemini_chat_model_id(model)]
 
 
 def suspend_freetheai_key(key_hash: str, cooldown: timedelta | None = None) -> None:

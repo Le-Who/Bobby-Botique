@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from app.config import GEMINI_ECONOMY_MODEL
+from app.errors import is_error_message, strip_error_tag
 from app.games.trivia_similarity import FactIdentity
 from app.providers.router import get_provider_router
 from app.repos import daily_trivia as repo
@@ -175,6 +176,8 @@ async def generate_question_lane(
                 system_instruction=system_prompt,
                 timeout=45.0,
             )
+            if is_error_message(response_text):
+                raise RuntimeError(f"LLM provider error: {strip_error_tag(response_text)}")
             start_idx = response_text.find("[")
             end_idx = response_text.rfind("]")
             clean_json = (

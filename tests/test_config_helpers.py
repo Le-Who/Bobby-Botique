@@ -7,14 +7,17 @@ import pytest
 
 from app.config import (
     DEFAULT_GEMINI_MODELS,
+    GEMINI_ECONOMY_MODEL,
     GEMINI_GROUNDING_FALLBACK_MODEL,
     GEMINI_GROUNDING_MODEL,
+    GEMINI_PRIMARY_MODEL,
     _load_and_clean_keys,
     _load_daily_limits,
     get_model_hash,
     get_settings_safe,
     load_settings,
     normalize_gemini_chat_model,
+    normalize_gemini_runtime_model,
 )
 
 # ── get_model_hash ───────────────────────────────────────────────────────────
@@ -281,6 +284,18 @@ def test_freetheai_selector_excludes_image_and_audio_models(monkeypatch):
 
 def test_normalize_gemini_chat_model_accepts_future_model_id():
     assert normalize_gemini_chat_model("gemini-3.7-flash") == "gemini-3.7-flash"
+
+
+@pytest.mark.parametrize(
+    ("alias", "expected"),
+    [
+        ("gemini-primary", GEMINI_PRIMARY_MODEL),
+        ("gemini-economy", GEMINI_ECONOMY_MODEL),
+    ],
+)
+def test_normalize_gemini_model_resolves_daily_trivia_role_aliases(alias, expected):
+    assert normalize_gemini_chat_model(alias) == expected
+    assert normalize_gemini_runtime_model(alias) == expected
 
 
 def test_actions_secret_gemini_catalog_is_visible_in_model_selector(monkeypatch):

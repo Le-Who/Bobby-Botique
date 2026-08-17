@@ -71,11 +71,11 @@ def _runtime_gemini_models() -> list[str]:
         getattr(settings, name, None)
         for name in ("RESEARCH_MODEL", "DEFAULT_MODEL", "QNA_MODEL", "INLINE_MODEL")
     ]
-    return [
-        model
+    normalized = [
+        normalize_gemini_runtime_model(model, fallback="")
         for model in _dedupe_models([*configured, *role_models])
-        if is_gemini_chat_model_id(model)
     ]
+    return [model for model in _dedupe_models(normalized) if is_gemini_chat_model_id(model)]
 
 
 # ── Opencode Go → Gemini cross-provider fallback map ──────────────────────────
@@ -135,8 +135,6 @@ def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
     if runtime_failed_model == GEMINI_GROUNDING_FALLBACK_MODEL:
         return []
 
-    available = _runtime_gemini_models()
-    available_set = set(available)
     failed_model_norm = normalize_gemini_chat_model(runtime_failed_model, fallback=failed_model)
 
     chain = list(CURRENT_GEMINI_MODELS)
@@ -156,13 +154,13 @@ def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
             _setting("INLINE_MODEL", GEMINI_ECONOMY_MODEL),
         ]
     )
-    ordered = [
+    preferred.extend(_available_models())
+    normalized = [normalize_gemini_runtime_model(model, fallback="") for model in preferred]
+    return [
         model
-        for model in _dedupe_models(preferred, exclude=failed_model_norm)
-        if model in available_set and is_gemini_chat_model_id(model)
+        for model in _dedupe_models(normalized, exclude=failed_model_norm)
+        if is_gemini_chat_model_id(model)
     ]
-    ordered.extend(model for model in available if model != failed_model_norm and model not in ordered)
-    return ordered
 
 
 def _provider_label(model_name: str | None, use_openrouter: bool | None) -> str:
@@ -1019,11 +1017,10 @@ class ProviderRouter:
         Maps heavy models to their lite counterparts. Returns None if
         the failed model is already the lightest available.
         """
-        # Gemini cascade: current primary → current economy; grounding stays
-        # on the Gemini 2.5 family because free-tier AI Studio keys do not
-        # support Gemini 3+ Google Search grounding.
+        # Grounding stays on the Gemini 2.5 family because free-tier AI Studio
+        # keys do not support Gemini 3+ Google Search grounding. Other Gemini
+        # requests use the complete ordered runtime fallback chain.
         _GEMINI_CASCADE = {
-            GEMINI_PRIMARY_MODEL: GEMINI_ECONOMY_MODEL,
             GEMINI_GROUNDING_MODEL: GEMINI_GROUNDING_FALLBACK_MODEL,
         }
 
@@ -1053,10 +1050,7 @@ class ProviderRouter:
         if fallback:
             if fallback in (GEMINI_GROUNDING_FALLBACK_MODEL,):
                 return fallback
-            # Verify the fallback model is actually in our available models list
-            available = _runtime_gemini_models()
-            if fallback in available:
-                return fallback
+            return fallback
 
         return None
 

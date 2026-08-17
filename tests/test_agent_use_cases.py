@@ -39,6 +39,24 @@ def test_dynamic_gemini_role_model_remains_eligible_for_key_fallback(mock_settin
     assert "gemini-3.7-flash" in fallbacks
 
 
+def test_custom_gemini_model_uses_full_known_fallback_chain_even_when_hidden(mock_settings):
+    mock_settings.AVAILABLE_MODELS = ["gemini-3.7-flash"]
+    mock_settings.DEFAULT_MODEL = "gemini-3.7-flash"
+    mock_settings.RESEARCH_MODEL = "gemini-3.7-flash"
+    mock_settings.QNA_MODEL = "gemini-3.7-flash"
+    mock_settings.INLINE_MODEL = "gemini-3.7-flash"
+
+    with patch("app.agent_use_cases.settings", mock_settings):
+        fallbacks = _gemini_fallback_priority("gemini-3.7-flash")
+
+    assert fallbacks[:4] == [
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+    ]
+
+
 # ── resolve_ai_request ───────────────────────────────────────────────────────
 
 
@@ -84,12 +102,12 @@ class TestResolveAiRequest:
             key, model, status = await usecase.resolve_ai_request("gemini-3.5-flash")
 
         assert key == fallback_key
-        assert model == "gemini-3.1-flash-lite"
+        assert model == "gemini-3.5-flash-lite"
         assert status == "confirm_fallback"
 
     @pytest.mark.asyncio
-    async def test_gemini_3_5_exhaustion_falls_back_to_3_1_lite_first(self, usecase, mock_settings):
-        """If primary 3.5 Flash keys are exhausted, the first Gemini fallback must be 3.1 Flash Lite."""
+    async def test_gemini_3_5_exhaustion_checks_complete_known_chain(self, usecase, mock_settings):
+        """Hidden runtime fallbacks must still be checked before reaching 3.1 Flash Lite."""
         mock_settings.DEFAULT_MODEL = "gemini-3.5-flash"
         mock_settings.RESEARCH_MODEL = "gemini-3.5-flash"
         mock_settings.QNA_MODEL = "gemini-3.1-flash-lite"
@@ -113,7 +131,11 @@ class TestResolveAiRequest:
         assert key == fallback_key
         assert model == "gemini-3.1-flash-lite"
         assert status == "confirm_fallback"
-        assert attempted_models[:2] == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+        assert attempted_models[:3] == [
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+        ]
 
     @pytest.mark.asyncio
     async def test_all_keys_exhausted(self, usecase, mock_settings):

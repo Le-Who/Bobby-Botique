@@ -34,6 +34,10 @@ CURRENT_GEMINI_MODELS: tuple[str, ...] = (
     GEMINI_ECONOMY_MODEL,
     GEMINI_ECONOMY_FALLBACK_MODEL,
 )
+GEMINI_ROLE_MODEL_ALIASES: dict[str, str] = {
+    "gemini-primary": GEMINI_PRIMARY_MODEL,
+    "gemini-economy": GEMINI_ECONOMY_MODEL,
+}
 RUNTIME_GEMINI_MODELS: tuple[str, ...] = (
     GEMINI_PRIMARY_MODEL,
     GEMINI_PRIMARY_FALLBACK_MODEL,
@@ -158,6 +162,14 @@ def is_gemini_chat_model_id(model_name: str | None) -> bool:
     return isinstance(model_name, str) and _GEMINI_CHAT_MODEL_RE.fullmatch(model_name.strip()) is not None
 
 
+def resolve_gemini_model_alias(model_name: str | None) -> str | None:
+    """Resolve stable operator-facing Gemini role names to concrete API model IDs."""
+    if not isinstance(model_name, str):
+        return model_name
+    clean = model_name.strip()
+    return GEMINI_ROLE_MODEL_ALIASES.get(clean, clean)
+
+
 def is_freetheai_chat_model_id(model_name: str | None) -> bool:
     return bool(model_name and not model_name.startswith(_FREETHEAI_NON_CHAT_PREFIXES))
 
@@ -207,22 +219,24 @@ def _filter_current_gemini_models(models: list[str], *, include_defaults: bool =
 
 
 def normalize_gemini_chat_model(model_name: str | None, fallback: str = GEMINI_PRIMARY_MODEL) -> str:
+    normalized = resolve_gemini_model_alias(model_name)
     if (
-        isinstance(model_name, str)
-        and is_gemini_chat_model_id(model_name)
-        and model_name.strip() not in _DEPRECATED_GEMINI_ROLE_MODELS
+        isinstance(normalized, str)
+        and is_gemini_chat_model_id(normalized)
+        and normalized not in _DEPRECATED_GEMINI_ROLE_MODELS
     ):
-        return model_name.strip()
+        return normalized
     return fallback
 
 
 def normalize_gemini_runtime_model(model_name: str | None, fallback: str = GEMINI_PRIMARY_MODEL) -> str:
+    normalized = resolve_gemini_model_alias(model_name)
     if (
-        isinstance(model_name, str)
-        and is_gemini_chat_model_id(model_name)
-        and model_name.strip() not in _DEPRECATED_GEMINI_ROLE_MODELS
+        isinstance(normalized, str)
+        and is_gemini_chat_model_id(normalized)
+        and normalized not in _DEPRECATED_GEMINI_ROLE_MODELS
     ):
-        return model_name.strip()
+        return normalized
     return fallback
 
 

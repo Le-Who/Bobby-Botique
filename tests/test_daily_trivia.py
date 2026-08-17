@@ -5,9 +5,14 @@ import importlib
 import importlib.util
 from datetime import date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
+from app.errors import ErrorCode, tag_error
 from app.games import daily_trivia as game
+from app.providers.gemini import GeminiModelValidationStatus
 from app.repos import daily_trivia as repo
 
 
@@ -90,6 +95,25 @@ async def test_ensure_prepared_puzzles_generates_dates_sequentially(monkeypatch)
     assert started_dates == expected_dates
     assert [puzzle.puzzle_date for puzzle in puzzles] == expected_dates
     assert max_active == 1
+
+
+async def test_generate_question_lane_preserves_tagged_provider_error(monkeypatch) -> None:
+    router = AsyncMock()
+    router.get_response.return_value = (
+        tag_error(ErrorCode.GENERIC, "Gemini API: 404 NOT_FOUND for gemini-primary"),
+        None,
+    )
+    monkeypatch.setattr(repo, "get_recent_bank_facts", AsyncMock(return_value=[]))
+
+    with pytest.raises(RuntimeError, match="404 NOT_FOUND"):
+        await game.generate_question_lane(
+            date(2026, 8, 22),
+            lane="main",
+            model_name="gemini-primary",
+            router=router,
+        )
+
+    assert router.get_response.await_count == game.GENERATION_ATTEMPTS
 
 
 def test_trivia_similarity_module_exists() -> None:
@@ -542,6 +566,142 @@ def test_admin_trivia_ui_recovers_from_revision_conflict_without_reload() -> Non
 
     assert "res.status === 409 && data.puzzle" in template
     assert "selectPuzzle(data.puzzle, true)" in template
+
+
+def test_admin_trivia_model_control_accepts_direct_model_id() -> None:
+    template = (Path(__file__).parents[1] / "app" / "templates" / "admin_daily.html").read_text(encoding="utf-8")
+
+    assert 'id="trivia-model-input"' in template
+    assert 'list="trivia-model-options"' in template
+    assert 'id="trivia-model-save"' in template
+    assert "data.llm_models" in template
+
+
+async def test_admin_trivia_settings_accepts_role_alias_without_remote_validation() -> None:
+    web_module = __import__("app.web", fromlist=["quart_app"])
+    save_setting = AsyncMock()
+    validate = AsyncMock()
+
+    with (
+        patch("app.web._is_authenticated", return_value=True),
+        patch("app.repos.settings_repo.set_global_setting", save_setting),
+        patch("app.providers.gemini.validate_gemini_chat_model_capability", validate),
+    ):
+        response = await web_module.quart_app.test_client().post(
+            "/api/admin/dailytrivia/settings",
+            json={"llm_model": "gemini-economy"},
+        )
+
+    body = await response.get_json()
+    assert response.status_code == 200
+    assert body == {"success": True, "llm_model": "gemini-economy"}
+    save_setting.assert_awaited_once_with("daily_trivia_llm_model", "gemini-economy")
+    validate.assert_not_awaited()
+
+
+async def test_admin_trivia_stats_exposes_aliases_and_configured_gemini_models() -> None:
+    web_module = __import__("app.web", fromlist=["quart_app"])
+
+    with (
+        patch("app.web._is_authenticated", return_value=True),
+        patch("app.web.settings", SimpleNamespace(AVAILABLE_MODELS=["gemini-3.7-flash", "gemini-3.6-flash"])),
+        patch("app.repos.daily_trivia.get_admin_stats", new_callable=AsyncMock, return_value={}),
+        patch("app.repos.daily_trivia.get_delivery_status", new_callable=AsyncMock, return_value={}),
+        patch(
+            "app.repos.settings_repo.get_global_setting",
+            new_callable=AsyncMock,
+            side_effect=["on", "gemini-3.7-flash"],
+        ),
+    ):
+        response = await web_module.quart_app.test_client().get("/api/admin/dailytrivia/stats")
+
+    body = await response.get_json()
+    assert response.status_code == 200
+    assert body["llm_models"] == [
+        "gemini-primary",
+        "gemini-economy",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+    ]
+
+
+async def test_admin_trivia_settings_validates_and_saves_direct_gemini_model() -> None:
+    web_module = __import__("app.web", fromlist=["quart_app"])
+    save_setting = AsyncMock()
+
+    with (
+        patch("app.web._is_authenticated", return_value=True),
+        patch("app.repos.settings_repo.set_global_setting", save_setting),
+        patch(
+            "app.providers.gemini.validate_gemini_chat_model_capability",
+            new_callable=AsyncMock,
+            return_value=GeminiModelValidationStatus.SUPPORTED,
+        ) as validate,
+    ):
+        response = await web_module.quart_app.test_client().post(
+            "/api/admin/dailytrivia/settings",
+            json={"llm_model": "gemini-3.7-flash"},
+        )
+
+    body = await response.get_json()
+    assert response.status_code == 200
+    assert body == {"success": True, "llm_model": "gemini-3.7-flash"}
+    validate.assert_awaited_once_with("gemini-3.7-flash")
+    save_setting.assert_awaited_once_with("daily_trivia_llm_model", "gemini-3.7-flash")
+
+
+async def test_admin_trivia_settings_rejects_invalid_model_id_without_remote_validation() -> None:
+    web_module = __import__("app.web", fromlist=["quart_app"])
+    save_setting = AsyncMock()
+    validate = AsyncMock()
+
+    with (
+        patch("app.web._is_authenticated", return_value=True),
+        patch("app.repos.settings_repo.set_global_setting", save_setting),
+        patch("app.providers.gemini.validate_gemini_chat_model_capability", validate),
+    ):
+        response = await web_module.quart_app.test_client().post(
+            "/api/admin/dailytrivia/settings",
+            json={"llm_model": "not-a-gemini-model"},
+        )
+
+    body = await response.get_json()
+    assert response.status_code == 400
+    assert body["success"] is False
+    save_setting.assert_not_awaited()
+    validate.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("validation", "expected_status"),
+    [
+        (GeminiModelValidationStatus.UNSUPPORTED, 400),
+        (GeminiModelValidationStatus.UNAVAILABLE, 503),
+    ],
+)
+async def test_admin_trivia_settings_does_not_save_unvalidated_model(validation, expected_status) -> None:
+    web_module = __import__("app.web", fromlist=["quart_app"])
+    save_setting = AsyncMock()
+
+    with (
+        patch("app.web._is_authenticated", return_value=True),
+        patch("app.repos.settings_repo.set_global_setting", save_setting),
+        patch(
+            "app.providers.gemini.validate_gemini_chat_model_capability",
+            new_callable=AsyncMock,
+            return_value=validation,
+        ),
+    ):
+        response = await web_module.quart_app.test_client().post(
+            "/api/admin/dailytrivia/settings",
+            json={"llm_model": "gemini-does-not-exist"},
+        )
+
+    body = await response.get_json()
+    assert response.status_code == expected_status
+    assert body["success"] is False
+    assert "error" in body
+    save_setting.assert_not_awaited()
 
 
 def test_admin_question_parser_keeps_structured_fact_identity() -> None:

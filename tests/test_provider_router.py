@@ -378,6 +378,42 @@ def test_dynamic_configured_gemini_model_remains_eligible_for_fallback():
     assert "gemini-3.7-flash" in fallbacks
 
 
+def test_custom_gemini_model_gets_full_known_router_fallback_chain():
+    mock_settings = MagicMock()
+    mock_settings.AVAILABLE_MODELS = ["gemini-3.7-flash"]
+    mock_settings.DEFAULT_MODEL = "gemini-3.7-flash"
+    mock_settings.RESEARCH_MODEL = "gemini-3.7-flash"
+    mock_settings.QNA_MODEL = "gemini-3.7-flash"
+    mock_settings.INLINE_MODEL = "gemini-3.7-flash"
+
+    with patch("app.providers.router.settings", mock_settings):
+        fallbacks = _ordered_gemini_fallback_models("gemini-3.7-flash")
+
+    assert fallbacks[:4] == [
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+    ]
+
+
+def test_transient_fallback_uses_next_known_model_even_when_hidden():
+    mock_settings = MagicMock()
+    mock_settings.AVAILABLE_MODELS = ["gemini-3.7-flash"]
+    mock_settings.DEFAULT_MODEL = "gemini-3.7-flash"
+    mock_settings.RESEARCH_MODEL = "gemini-3.7-flash"
+    mock_settings.QNA_MODEL = "gemini-3.7-flash"
+    mock_settings.INLINE_MODEL = "gemini-3.7-flash"
+    router = ProviderRouter()
+
+    with patch("app.providers.router.settings", mock_settings):
+        custom_fallback = router._pick_transient_fallback_model("gemini-3.7-flash", False)
+        primary_fallback = router._pick_transient_fallback_model("gemini-3.6-flash", False)
+
+    assert custom_fallback == "gemini-3.6-flash"
+    assert primary_fallback == "gemini-3.5-flash"
+
+
 # ── Tests for ProviderRouter.get_response ──────────────────────────────────────
 
 
@@ -535,7 +571,7 @@ class TestProviderRouter:
             resolve_sequence=[
                 ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3.5-flash", None),
                 ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3.5-flash", None),
-                ({"api_key": "k3", "key_hash": "hash3"}, "gemini-3.1-flash-lite", None),
+                ({"api_key": "k3", "key_hash": "hash3"}, "gemini-3.5-flash-lite", None),
             ],
             response_sequence=[
                 TimeoutError(),
@@ -561,7 +597,7 @@ class TestProviderRouter:
 
         assert text == "Lite fallback response"
         assert tokens == 9
-        assert fake_use_case.resolve_calls[2]["preferred_model"] == "gemini-3.1-flash-lite"
+        assert fake_use_case.resolve_calls[2]["preferred_model"] == "gemini-3.5-flash-lite"
 
     @pytest.mark.asyncio
     async def test_transient_grounding_failures_cascade_to_2_5_lite_for_non_stream_response(self):
@@ -710,8 +746,8 @@ class TestProviderRouter:
         assert "hash4" in fake_status.successful_keys
 
     @pytest.mark.asyncio
-    async def test_model_fallback_prefers_3_1_lite_after_3_5_flash_failures(self):
-        """Permanent failure of all 3.5 keys should try 3.1 Flash Lite before other Gemini models."""
+    async def test_model_fallback_uses_3_5_lite_after_3_5_flash_failures(self):
+        """Permanent failure of all 3.5 keys should follow the known chain to 3.5 Flash Lite."""
         router = ProviderRouter()
         fake_status = FakeKeyStatusManager()
         fake_use_case = FakeAgentRequestUseCase(
@@ -719,7 +755,7 @@ class TestProviderRouter:
                 ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3.5-flash", None),
                 ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3.5-flash", None),
                 ({"api_key": "k3", "key_hash": "hash3"}, "gemini-3.5-flash", None),
-                ({"api_key": "k4", "key_hash": "hash4"}, "gemini-3.1-flash-lite", None),
+                ({"api_key": "k4", "key_hash": "hash4"}, "gemini-3.5-flash-lite", None),
             ],
             response_sequence=[
                 ("🔑 Неверный API ключ.", None),
@@ -746,7 +782,7 @@ class TestProviderRouter:
 
         assert text == "Lite fallback response!"
         assert tokens == 10
-        assert fake_use_case.resolve_calls[3]["preferred_model"] == "gemini-3.1-flash-lite"
+        assert fake_use_case.resolve_calls[3]["preferred_model"] == "gemini-3.5-flash-lite"
 
     @pytest.mark.asyncio
     async def test_no_model_fallback_on_non_permanent_errors(self, monkeypatch):

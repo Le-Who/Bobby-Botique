@@ -1366,6 +1366,7 @@ def _serialize_daily_trivia_puzzle(puzzle):
 @quart_app.route("/api/admin/dailytrivia/stats", methods=["GET"])
 @require_auth
 async def api_admin_dailytrivia_stats():
+    from app.config import GEMINI_ROLE_MODEL_ALIASES
     from app.repos import daily_trivia as daily_trivia_repo
     from app.repos.crocodile_daily import today_puzzle_date
     from app.repos.settings_repo import get_global_setting
@@ -1374,6 +1375,19 @@ async def api_admin_dailytrivia_stats():
     delivery_on = await get_global_setting("daily_trivia_delivery_enabled", "on")
     stats["delivery_enabled"] = (delivery_on.strip().lower() != "off")
     stats["llm_model"] = await get_global_setting("daily_trivia_llm_model", "gemini-economy")
+    configured_models = getattr(settings, "AVAILABLE_MODELS", []) if settings is not None else []
+    stats["llm_models"] = list(
+        dict.fromkeys(
+            [
+                *GEMINI_ROLE_MODEL_ALIASES,
+                *(
+                    model
+                    for model in configured_models
+                    if isinstance(model, str) and model.strip()
+                ),
+            ]
+        )
+    )
     delivery_info = await daily_trivia_repo.get_delivery_status(today)
     stats["sent_today"] = delivery_info.get("sent_today", 0)
     stats["pending_today"] = delivery_info.get("pending_today", 0)
@@ -1383,15 +1397,31 @@ async def api_admin_dailytrivia_stats():
 @quart_app.route("/api/admin/dailytrivia/settings", methods=["POST"])
 @require_auth
 async def api_admin_dailytrivia_settings():
+    from app.config import GEMINI_ROLE_MODEL_ALIASES, is_gemini_chat_model_id
+    from app.providers.gemini import GeminiModelValidationStatus, validate_gemini_chat_model_capability
     from app.repos.settings_repo import set_global_setting
+
     data = await request.get_json() or {}
+    saved_model: str | None = None
     if "llm_model" in data:
         model = str(data["llm_model"]).strip()
+        if not model or (model not in GEMINI_ROLE_MODEL_ALIASES and not is_gemini_chat_model_id(model)):
+            return jsonify({"success": False, "error": "Некорректный Gemini model ID"}), 400
+        if model not in GEMINI_ROLE_MODEL_ALIASES:
+            validation = await validate_gemini_chat_model_capability(model)
+            if validation is GeminiModelValidationStatus.UNSUPPORTED:
+                return jsonify({"success": False, "error": "Модель не существует или не поддерживает generateContent"}), 400
+            if validation is not GeminiModelValidationStatus.SUPPORTED:
+                return jsonify({"success": False, "error": "Не удалось проверить модель Gemini. Повторите позже"}), 503
         await set_global_setting("daily_trivia_llm_model", model)
+        saved_model = model
     if "delivery_enabled" in data:
         val = "on" if bool(data["delivery_enabled"]) else "off"
         await set_global_setting("daily_trivia_delivery_enabled", val)
-    return jsonify({"success": True})
+    response = {"success": True}
+    if saved_model is not None:
+        response["llm_model"] = saved_model
+    return jsonify(response)
 
 
 @quart_app.route("/api/admin/dailytrivia/leaderboard", methods=["GET"])
