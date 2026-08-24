@@ -38,8 +38,9 @@ def _webhook_test_app():
     module-scoped context; tests reset its call history via mock.reset_mock().
     """
     from app.config import settings
+    from bot import _telegram_webhook_path
 
-    webhook_path = f"/webhook/{settings.TELEGRAM_BOT_TOKEN}"
+    webhook_path = _telegram_webhook_path(settings.TELEGRAM_BOT_TOKEN)
 
     # A real Bot is required because Update.de_json() calls bot.defaults.tzinfo
     # directly — an AsyncMock here raises "tzinfo argument must be None or of a
@@ -89,14 +90,15 @@ def webhook_client(_webhook_test_app):
 async def test_webhook_valid_payload(webhook_client):
     """
     Arrange: valid minimal Telegram Update JSON.
-    Act:     POST to /webhook/<token>.
+    Act:     POST to the derived webhook path.
     Assert:  HTTP 200 returned; Application.process_update called with
              a correctly-deserialised Update object.
     """
     client, mock_app = webhook_client
     from app.config import settings
+    from bot import _telegram_webhook_path
 
-    webhook_path = f"/webhook/{settings.TELEGRAM_BOT_TOKEN}"
+    webhook_path = _telegram_webhook_path(settings.TELEGRAM_BOT_TOKEN)
 
     payload = {
         "update_id": 987654321,
@@ -134,7 +136,7 @@ async def test_webhook_unregistered_path_returns_404(webhook_client):
              process_update is not called.
 
     Note: this tests *routing* not authentication. The bot only registers one
-    path containing its real token; any other path returns 404 by construction.
+    derived path; any other path returns 404 by construction.
     """
     client, mock_app = webhook_client
 
@@ -158,8 +160,9 @@ async def test_webhook_malformed_json_returns_400(webhook_client):
     """
     client, mock_app = webhook_client
     from app.config import settings
+    from bot import _telegram_webhook_path
 
-    webhook_path = f"/webhook/{settings.TELEGRAM_BOT_TOKEN}"
+    webhook_path = _telegram_webhook_path(settings.TELEGRAM_BOT_TOKEN)
 
     response = await client.post(
         webhook_path,

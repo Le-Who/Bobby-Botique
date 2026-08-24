@@ -15,7 +15,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pypdf
 from docx import Document as DocxDocument
 
@@ -31,7 +30,6 @@ from app.documents.repository import (
     save_document_content,
 )
 from app.metrics import metrics_collector
-from app.utils.network import NetworkErrorHandler
 
 # Verify document processing libraries are available
 try:
@@ -408,51 +406,6 @@ async def delete_user_document(document_id: int, user_id: int) -> bool:
 async def delete_all_user_documents(user_id: int) -> int:
     """Delete all user documents."""
     return await document_processor.delete_all_user_documents(user_id)
-
-
-async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> str | None:
-    """Internal function for uploading file to x0.at with retry logic."""
-    timeout_config = httpx.Timeout(
-        connect=10.0,
-        read=60.0,
-        write=60.0,
-        pool=30.0,
-    )
-
-    async with httpx.AsyncClient(timeout=timeout_config) as client:
-        files = {"file": (filename, file_data)}
-        response = await client.post("https://x0.at/", files=files)
-
-        if response.status_code == 200:
-            url = response.text.strip()
-            if url.startswith("http"):
-                logging.info("File %s uploaded to x0.at: %s", filename, url)
-                return url
-            else:
-                logging.error("Invalid response from x0.at: %s", response.text)
-                return None
-        else:
-            logging.error(
-                "Failed to upload to x0.at: %s - %s",
-                response.status_code,
-                response.text,
-            )
-            return None
-
-
-async def upload_to_x0_at(file_data: bytes, filename: str) -> str | None:
-    """Upload file to x0.at with automatic retries."""
-    try:
-        return await NetworkErrorHandler.retry_with_backoff(
-            _upload_file_to_x0_at,
-            max_retries=3,
-            base_delay=2.0,
-            file_data=file_data,
-            filename=filename,
-        )
-    except (httpx.HTTPError, OSError) as e:
-        logging.error("Error uploading to x0.at after retries: %s", e, exc_info=True)
-        return None
 
 
 async def get_document_by_id(document_id: int, user_id: int) -> dict[str, Any] | None:

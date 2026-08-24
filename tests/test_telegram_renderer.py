@@ -71,7 +71,7 @@ async def test_short_final_response_is_authoritative_and_contains_actions():
 
 
 @pytest.mark.asyncio
-async def test_reader_storage_success_prepends_publication_without_mutating_actions():
+async def test_reader_storage_success_does_not_publish_public_copy_by_default():
     transport = RecordingTransport()
     actions = _actions()
     original_rows = actions.inline_keyboard
@@ -98,6 +98,31 @@ async def test_reader_storage_success_prepends_publication_without_mutating_acti
     assert rows[0][0].web_app.url == receipt.publication_url
     assert rows[1][0].callback_data == "action"
     assert actions.inline_keyboard == original_rows
+    assert submitted == []
+
+
+@pytest.mark.asyncio
+async def test_reader_can_publish_telegraph_copy_when_explicitly_enabled():
+    transport = RecordingTransport()
+    submitted = []
+    renderer = TelegramRenderer(
+        transport,
+        message_limit=100,
+        webapp_base_url="https://bot.example.com",
+        store_long_message=AsyncMock(return_value=True),
+        create_telegraph_page=AsyncMock(return_value="https://telegra.ph/cold-copy"),
+        store_telegraph_url=AsyncMock(return_value=True),
+        submit_background=lambda coroutine: (submitted.append(coroutine), coroutine.close()),
+        telegraph_publication_enabled=True,
+    )
+
+    receipt = await renderer.open().finalize(
+        displayed_text="A" * 300,
+        title="Answer",
+        actions=_actions(),
+    )
+
+    assert receipt.kind is DeliveryKind.READER
     assert len(submitted) == 1
 
 
@@ -134,6 +159,7 @@ async def test_redis_failure_uses_synchronous_telegraph_fallback():
         transport,
         message_limit=100,
         webapp_base_url="https://bot.example.com",
+        telegraph_publication_enabled=True,
         store_long_message=AsyncMock(return_value=False),
         create_telegraph_page=create_page,
         store_telegraph_url=AsyncMock(),

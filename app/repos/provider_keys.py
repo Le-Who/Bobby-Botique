@@ -5,12 +5,14 @@ Each provider has a key stored in global_settings as 'provider_key:<name>'.
 If no DB override exists, falls back to the env-based Settings value.
 5-minute TTL cache prevents per-request DB overhead.
 
-Providers: gemini, tavily, weather, exchange, pollinations, elevenlabs, jina
+Providers: weather, exchange, pollinations, jina. Other providers use their
+own pooled key repositories and are intentionally not mirrored here.
 """
 
 import logging
 
-from app.repos.settings_repo import get_global_setting, set_global_setting
+from app.crypto import encrypt_api_key, is_encrypted, safe_decrypt
+from app.repos.settings_repo import delete_global_setting, get_global_setting, set_global_setting
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +22,7 @@ _PROVIDER_ENV_MAP: dict[str, str] = {
     "exchange": "EXCHANGE_RATE_API_KEY",
     "pollinations": "POLLINATIONS_API_KEY",
     "jina": "JINA_API_KEY",
-    "horoscope": "HOROSCOPE_API_KEY",
 }
-
-# Providers with list-based keys (multiple keys)
-_LIST_PROVIDERS: set[str] = {"gemini", "tavily", "openrouter", "elevenlabs"}
 
 
 def _db_key(provider: str) -> str:
@@ -37,9 +35,22 @@ async def get_provider_key(provider: str) -> str:
 
     Priority: DB override → env Settings fallback → empty string.
     """
+    if provider not in _PROVIDER_ENV_MAP:
+        return ""
+
     db_val = await get_global_setting(_db_key(provider), default="")
     if db_val:
-        return db_val
+        try:
+            if is_encrypted(db_val):
+                return safe_decrypt(db_val)
+
+            # Migrate values written before encrypted provider storage existed.
+            await set_global_setting(_db_key(provider), encrypt_api_key(db_val))
+            logger.info("Legacy provider key encrypted at rest: %s", provider)
+            return db_val
+        except Exception as exc:
+            logger.error("Provider key unavailable for %s (%s)", provider, type(exc).__name__)
+            return ""
 
     # Fallback to env
     env_field = _PROVIDER_ENV_MAP.get(provider)
@@ -56,13 +67,17 @@ async def get_provider_key(provider: str) -> str:
 
 async def set_provider_key(provider: str, value: str) -> None:
     """Store a runtime override for a provider key."""
-    await set_global_setting(_db_key(provider), value)
+    if provider not in _PROVIDER_ENV_MAP:
+        raise ValueError(f"Unsupported runtime key provider: {provider}")
+    await set_global_setting(_db_key(provider), encrypt_api_key(value))
     logger.info("Provider key updated: %s", provider)
 
 
 async def clear_provider_key(provider: str) -> None:
     """Remove the runtime override, falling back to env."""
-    await set_global_setting(_db_key(provider), "")
+    if provider not in _PROVIDER_ENV_MAP:
+        raise ValueError(f"Unsupported runtime key provider: {provider}")
+    await delete_global_setting(_db_key(provider))
     logger.info("Provider key cleared (fallback to env): %s", provider)
 
 
@@ -71,9 +86,15 @@ async def get_provider_status(provider: str) -> dict[str, str]:
 
     Returns dict with 'source' ('db'|'env'|'missing') and 'preview' (masked key).
     """
+    if provider not in _PROVIDER_ENV_MAP:
+        return {"source": "missing", "preview": "—"}
+
     db_val = await get_global_setting(_db_key(provider), default="")
     if db_val:
-        return {"source": "db", "preview": _mask_key(db_val)}
+        value = await get_provider_key(provider)
+        if value:
+            return {"source": "db", "preview": _mask_key(value)}
+        return {"source": "missing", "preview": "ошибка расшифровки"}
 
     env_field = _PROVIDER_ENV_MAP.get(provider)
     if env_field:
@@ -83,23 +104,6 @@ async def get_provider_status(provider: str) -> dict[str, str]:
             env_val = getattr(settings, env_field, "") or ""
             if env_val:
                 return {"source": "env", "preview": _mask_key(env_val)}
-        except Exception:
-            pass
-
-    # List-based providers (gemini, tavily, etc.)
-    if provider in _LIST_PROVIDERS:
-        try:
-            from app.config import settings
-
-            field_map = {
-                "gemini": "GEMINI_API_KEYS",
-                "tavily": "TAVILY_API_KEYS",
-                "openrouter": "OPENROUTER_API_KEYS",
-                "elevenlabs": "ELEVENLABS_API_KEYS",
-            }
-            keys = getattr(settings, field_map.get(provider, ""), []) or []
-            if keys:
-                return {"source": "env", "preview": f"{len(keys)} key(s)"}
         except Exception:
             pass
 

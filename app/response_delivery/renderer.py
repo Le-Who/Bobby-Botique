@@ -213,20 +213,25 @@ class TelegramRenderer:
         create_telegraph_page: CreateTelegraphPage = _create_telegraph_page,
         store_telegraph_url: StoreTelegraphUrl = _store_telegraph_url,
         submit_background: SubmitBackground = submit_task,
+        telegraph_publication_enabled: bool | None = None,
         debounce_seconds: float = 0.6,
         min_chunk_size: int = 24,
     ) -> None:
         self._transport = transport
         self._message_limit = message_limit
-        if webapp_base_url is None:
+        if webapp_base_url is None or telegraph_publication_enabled is None:
             from app.config import settings
 
-            webapp_base_url = getattr(settings, "WEBAPP_BASE_URL", "")
+            if webapp_base_url is None:
+                webapp_base_url = getattr(settings, "WEBAPP_BASE_URL", "")
+            if telegraph_publication_enabled is None:
+                telegraph_publication_enabled = bool(getattr(settings, "TELEGRAPH_PUBLICATION_ENABLED", False))
         self._webapp_base_url = (webapp_base_url or "").rstrip("/")
         self._store_long_message = store_long_message
         self._create_telegraph_page = create_telegraph_page
         self._store_telegraph_url = store_telegraph_url
         self._submit_background = submit_background
+        self._telegraph_publication_enabled = bool(telegraph_publication_enabled)
         self._debounce_seconds = debounce_seconds
         self._min_chunk_size = min_chunk_size
 
@@ -411,7 +416,8 @@ class TelegramRenderer:
             except Exception as exc:
                 logging.warning("Reader cold-storage task failed uid=%s: %s", uid, exc)
 
-        self._submit_background(_cold_storage())
+        if self._telegraph_publication_enabled:
+            self._submit_background(_cold_storage())
         return DeliveryReceipt(
             kind=DeliveryKind.READER,
             message_ids=(ref.message_id,),
@@ -426,6 +432,8 @@ class TelegramRenderer:
         actions: InlineKeyboardMarkup | None,
         title: str,
     ) -> DeliveryReceipt | None:
+        if not self._telegraph_publication_enabled:
+            return None
         try:
             url = await self._create_telegraph_page(title, displayed_text)
         except asyncio.CancelledError:

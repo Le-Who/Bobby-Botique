@@ -1,6 +1,8 @@
 # /tests/test_elevenlabs_tts.py
 """Unit tests for the ElevenLabs TTS provider HTTP layer, key rotation router, and voice fetcher."""
 
+import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -112,6 +114,40 @@ async def test_generate_speech_elevenlabs_500():
 
 
 @pytest.mark.asyncio
+async def test_generate_speech_error_does_not_log_upstream_body(caplog):
+    upstream_secret = "elevenlabs-upstream-secret-42c1"
+    mock_resp = MagicMock(status_code=500, text=upstream_secret, content=b"")
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    with (
+        patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client),
+        caplog.at_level(logging.INFO),
+        pytest.raises(ElevenLabsAPIError) as error,
+    ):
+        await generate_speech_elevenlabs("Hello", "key", voice_id="voice")
+
+    assert upstream_secret not in caplog.text
+    assert upstream_secret not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_fetch_voices_transport_error_is_sanitized(caplog):
+    upstream_secret = "elevenlabs-transport-secret-4f10"
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=RuntimeError(upstream_secret))
+
+    with (
+        patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client),
+        caplog.at_level(logging.INFO),
+    ):
+        result = await elevenlabs_tts.fetch_voices("key")
+
+    assert result == []
+    assert upstream_secret not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_generate_speech_elevenlabs_previous_text():
     mock_resp = MagicMock()
     mock_resp.status_code = 200
@@ -158,17 +194,23 @@ async def test_generate_speech_elevenlabs_apply_text_normalization():
 
 @pytest.mark.asyncio
 async def test_generate_speech_elevenlabs_output_format():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.content = b"a" * 150
+    captured: dict[str, object] = {}
 
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_resp)
+    async def handle_request(request: httpx.Request) -> httpx.Response:
+        captured["query"] = dict(request.url.params)
+        captured["payload"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(200, content=b"a" * 150)
 
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        await generate_speech_elevenlabs("Hello", "key", voice_id="voice")
-        payload = mock_client.post.call_args[1]["json"]
-        assert payload["output_format"] == "pcm_24000"
+    transport = httpx.MockTransport(handle_request)
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="https://api.elevenlabs.io",
+    ) as client:
+        with patch("app.providers.elevenlabs_tts._get_client", return_value=client):
+            await generate_speech_elevenlabs("Hello", "key", voice_id="voice")
+
+    assert captured["query"] == {"output_format": "pcm_24000"}
+    assert "output_format" not in captured["payload"]
 
 
 # ──────────────────────────────────────────────────────────────────────────────

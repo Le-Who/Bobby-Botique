@@ -8,8 +8,6 @@ from tenacity import (
     wait_exponential,
 )
 
-from app.config import settings
-
 MAX_PAGE_CHARS = 15_000  # ~5K tokens
 
 logger = logging.getLogger(__name__)
@@ -31,8 +29,11 @@ async def close() -> None:
 )
 async def _fetch_jina(url: str, timeout: float) -> str:
     headers = {"Accept": "text/markdown", "X-No-Cache": "true"}
-    if settings.JINA_API_KEY:
-        headers["Authorization"] = f"Bearer {settings.JINA_API_KEY}"
+    from app.repos.provider_keys import get_provider_key
+
+    api_key = await get_provider_key("jina")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
     jina_url = f"https://r.jina.ai/{url}"
 
@@ -56,11 +57,11 @@ async def read_url(url: str, timeout: float = 10.0) -> str:
         return content
 
     except httpx.TimeoutException:
-        logger.warning(f"Timeout fetching URL {url} via Jina Reader")
-        return f"[Error: Timeout reading URL {url}]"
+        logger.warning("Timeout fetching page via Jina Reader")
+        return "[Error: Timeout reading URL]"
     except httpx.HTTPStatusError as e:
-        logger.warning(f"HTTP Error {e.response.status_code} fetching URL {url} via Jina Reader")
-        return f"[Error: HTTP {e.response.status_code} reading URL {url}]"
+        logger.warning("HTTP Error %d fetching page via Jina Reader", e.response.status_code)
+        return f"[Error: HTTP {e.response.status_code} reading URL]"
     except Exception as e:
-        logger.warning(f"Error fetching URL {url} via Jina Reader: {e}")
-        return f"[Error: Failed to read URL {url} - {str(e)}]"
+        logger.warning("Error fetching page via Jina Reader (error_type=%s)", type(e).__name__)
+        return "[Error: Failed to read URL]"

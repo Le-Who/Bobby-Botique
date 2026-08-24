@@ -14,8 +14,8 @@ from app.natal.models import (
 from app.natal.service import NatalConfigurationError, create_natal_report
 
 
-def patch_report_dependencies(monkeypatch, *, telegraph_url=None, saved_reports=None):
-    captured = {"provider": None}
+def patch_report_dependencies(monkeypatch, *, telegraph_url=None, saved_reports=None, telegraph_enabled=False):
+    captured = {"provider": None, "telegraph_calls": 0}
 
     async def fake_resolve_birth_data(birth_input, geocoder_provider=None):
         captured["provider"] = geocoder_provider
@@ -56,6 +56,7 @@ def patch_report_dependencies(monkeypatch, *, telegraph_url=None, saved_reports=
             saved_reports.append(report.model_copy(deep=True))
 
     async def fake_create_telegraph_page_from_markdown(title, markdown_content):
+        captured["telegraph_calls"] += 1
         return telegraph_url
 
     monkeypatch.setattr("app.natal.service.resolve_birth_data", fake_resolve_birth_data)
@@ -66,6 +67,11 @@ def patch_report_dependencies(monkeypatch, *, telegraph_url=None, saved_reports=
     monkeypatch.setattr("app.natal.service.render_chart_svg", lambda chart: "<svg></svg>")
     monkeypatch.setattr("app.natal.service.save_report", fake_save_report)
     monkeypatch.setattr("app.natal.service.create_telegraph_page_from_markdown", fake_create_telegraph_page_from_markdown)
+    monkeypatch.setattr(
+        "app.natal.service._telegraph_publication_enabled",
+        lambda: telegraph_enabled,
+        raising=False,
+    )
     return captured
 
 
@@ -90,6 +96,7 @@ async def test_create_natal_report_returns_hosted_url(monkeypatch):
     assert report.hosted_url.startswith("https://bot.example.com/reports/natal/")
     assert report.svg.startswith("<svg")
     assert captured["provider"] == "local"
+    assert captured["telegraph_calls"] == 0
 
 
 @pytest.mark.asyncio
@@ -104,6 +111,7 @@ async def test_create_natal_report_ignores_insecure_telegraph_url(monkeypatch):
         monkeypatch,
         telegraph_url="http://telegra.ph/insecure-natal-report",
         saved_reports=saved_reports,
+        telegraph_enabled=True,
     )
 
     report = await create_natal_report(
@@ -118,6 +126,14 @@ async def test_create_natal_report_ignores_insecure_telegraph_url(monkeypatch):
     assert saved_reports[0].telegraph_url is None
 
 
+def test_telegraph_url_validator_rejects_non_telegraph_https_host():
+    from app.natal.service import _is_safe_telegraph_url
+
+    assert _is_safe_telegraph_url("https://telegra.ph/valid-page") is True
+    assert _is_safe_telegraph_url("https://evil.example/not-telegraph") is False
+    assert _is_safe_telegraph_url("https://telegra.ph.evil.example/not-telegraph") is False
+
+
 @pytest.mark.asyncio
 async def test_create_natal_report_skips_oversized_telegraph_mirror(monkeypatch):
     birth = BirthInput(
@@ -126,7 +142,7 @@ async def test_create_natal_report_skips_oversized_telegraph_mirror(monkeypatch)
         birth_place="Kyiv, Ukraine",
     )
     saved_reports = []
-    patch_report_dependencies(monkeypatch, saved_reports=saved_reports)
+    patch_report_dependencies(monkeypatch, saved_reports=saved_reports, telegraph_enabled=True)
     monkeypatch.setattr("app.natal.service.build_telegraph_markdown", lambda report: "x" * 100_000)
 
     async def fail_if_called(title, markdown_content):

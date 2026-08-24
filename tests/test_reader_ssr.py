@@ -64,6 +64,17 @@ async def test_fetch_telegraph_content_returns_none_on_network_error():
 
 
 @pytest.mark.asyncio
+async def test_fetch_telegraph_content_rejects_non_telegraph_host_before_network():
+    from app.web_miniapp import _fetch_telegraph_content
+
+    with patch("httpx.AsyncClient") as cls_mock:
+        result = await _fetch_telegraph_content("https://169.254.169.254/latest/meta-data")
+
+    assert result is None
+    cls_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_fetch_telegraph_content_returns_none_when_no_article_tag():
     """_fetch_telegraph_content() returns None if no <article> found in page HTML."""
 

@@ -75,6 +75,8 @@ import hashlib as _hashlib
 
 _KEY_DAY_BUCKET: dict[str, dict] = {}
 _KEY_BUCKET_LOCK = asyncio.Lock()
+_USER_DAY_BUCKET: dict[int, dict[str, float | int]] = {}
+_USER_BUCKET_LOCK = asyncio.Lock()
 
 
 def _day_bucket_key(api_key: str) -> str:
@@ -106,7 +108,7 @@ async def _redis_get_usage(api_key: str) -> int | None:
         val = await redis_client.get(_redis_imagen_key(api_key))
         return int(val) if val is not None else 0
     except Exception as exc:
-        logger.debug("Imagen Redis get failed (falling back to memory): %s", exc)
+        logger.debug("Imagen Redis get failed (falling back to memory): %s", type(exc).__name__)
         return None
 
 
@@ -124,7 +126,7 @@ async def _redis_increment_usage(api_key: str) -> int | None:
             await redis_client.expireat(rk, _next_midnight_ts())
         return new_val
     except Exception as exc:
-        logger.debug("Imagen Redis incr failed (falling back to memory): %s", exc)
+        logger.debug("Imagen Redis incr failed (falling back to memory): %s", type(exc).__name__)
         return None
 
 
@@ -165,6 +167,46 @@ async def _increment_key_usage(api_key: str) -> int:
             return 1
         entry["count"] += 1
         return entry["count"]
+
+
+async def _redis_consume_user_quota(user_id: int, limit: int) -> bool | None:
+    """Atomically consume one user generation slot, or return None without Redis."""
+    try:
+        from app.cache import redis_client
+
+        if redis_client is None:
+            return None
+        key = f"imagen:user_daily:{user_id}:{_datetime.datetime.now(_datetime.UTC):%Y%m%d}"
+        new_value = int(await redis_client.incr(key))
+        if new_value == 1:
+            await redis_client.expireat(key, _next_midnight_ts())
+        return new_value <= limit
+    except Exception as exc:
+        logger.debug("Imagen user quota Redis failure (falling back to memory): %s", type(exc).__name__)
+        return None
+
+
+async def _consume_user_daily_quota(user_id: int | None) -> bool:
+    """Reserve one of the configured per-user Imagen generations for today."""
+    limit = int(settings.IMAGE_GEN_DAILY_LIMIT)
+    if user_id is None or limit <= 0:
+        return True
+
+    redis_result = await _redis_consume_user_quota(user_id, limit)
+    if redis_result is not None:
+        return redis_result
+
+    async with _USER_BUCKET_LOCK:
+        now = time.time()
+        entry = _USER_DAY_BUCKET.get(user_id)
+        if entry is None or now >= float(entry["reset_ts"]):
+            _USER_DAY_BUCKET[user_id] = {"count": 1, "reset_ts": float(_next_midnight_ts())}
+            return True
+        current = int(entry["count"])
+        if current >= limit:
+            return False
+        entry["count"] = current + 1
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +251,7 @@ class ImagenProvider:
         model: str = IMAGEN_MODEL_BASE,
         aspect_ratio: str = "1:1",
         number_of_images: int = 1,
+        user_id: int | None = None,
     ) -> ImageGenResult:
         """
         Generate images from a text prompt.
@@ -229,6 +272,11 @@ class ImagenProvider:
         number_of_images = max(1, min(4, number_of_images))
 
         keys: list[str] = list(settings.GEMINI_API_KEYS)
+        if not keys:
+            return ImageGenResult(success=False, error_message="no_keys")
+        if not await _consume_user_daily_quota(user_id):
+            logger.info("Imagen user daily limit reached: user=%s", user_id)
+            return ImageGenResult(success=False, error_message="user_daily_limit")
         max_retries: int = min(settings.IMAGE_GEN_MAX_RETRIES, len(keys))
 
         last_error = ""
@@ -253,13 +301,14 @@ class ImagenProvider:
                 )
 
             key_suffix = selected_key[-4:] if len(selected_key) >= 4 else "????"
+            key_id = _day_bucket_key(selected_key)
             logger.info(
-                "Imagen: attempt=%d/%d model=%s ratio=%s key=…%s",
+                "Imagen: attempt=%d/%d model=%s ratio=%s key_id=%s",
                 attempt + 1,
                 max_retries,
                 model,
                 aspect_ratio,
-                key_suffix,
+                key_id,
             )
 
             client = get_cached_genai_client(selected_key)
@@ -291,9 +340,9 @@ class ImagenProvider:
 
                 if not images_bytes:
                     logger.warning(
-                        "Imagen: response contained no images (model=%s key=…%s)",
+                        "Imagen: response contained no images (model=%s key_id=%s)",
                         model,
-                        key_suffix,
+                        key_id,
                     )
                     # Rotate key in case this is a silent API refusal
                     keys = [k for k in keys if k != selected_key]
@@ -302,10 +351,10 @@ class ImagenProvider:
 
                 await _increment_key_usage(selected_key)
                 logger.info(
-                    "Imagen: success — %d image(s) generated (model=%s key=…%s)",
+                    "Imagen: success — %d image(s) generated (model=%s key_id=%s)",
                     len(images_bytes),
                     model,
-                    key_suffix,
+                    key_id,
                 )
                 return ImageGenResult(
                     success=True,
@@ -316,17 +365,17 @@ class ImagenProvider:
 
             except TimeoutError:
                 logger.error(
-                    "Imagen: timeout after %.0fs (model=%s key=…%s)",
+                    "Imagen: timeout after %.0fs (model=%s key_id=%s)",
                     settings.IMAGE_GEN_TIMEOUT,
                     model,
-                    key_suffix,
+                    key_id,
                 )
                 last_error = "timeout"
                 keys = [k for k in keys if k != selected_key]
 
             except APIError as exc:
                 err_lower = str(exc).lower()
-                logger.error("Imagen: APIError key=…%s: %s", key_suffix, exc)
+                logger.error("Imagen: APIError (key_id=%s)", key_id)
 
                 if "paid plan" in err_lower or "limit: 0" in err_lower:
                     # Google disabled Imagen on Free Tier or requires billing
@@ -336,13 +385,13 @@ class ImagenProvider:
                         model_used=model,
                         key_suffix=key_suffix,
                     )
-                elif "quota" in err_lower or "resource_exhausted" in err_lower or "429" in str(exc):
+                elif "quota" in err_lower or "resource_exhausted" in err_lower or "429" in err_lower:
                     # Count this key as depleted for the day
                     await _increment_key_usage(selected_key)
                     last_error = "quota"
                     keys = [k for k in keys if k != selected_key]
 
-                elif "safety" in err_lower or "block" in err_lower or "400" in str(exc):
+                elif "safety" in err_lower or "block" in err_lower or "400" in err_lower:
                     # Safety block is not a key problem — fail fast, no rotation
                     return ImageGenResult(
                         success=False,
@@ -351,17 +400,18 @@ class ImagenProvider:
                         key_suffix=key_suffix,
                     )
 
-                elif "503" in str(exc) or "unavailable" in err_lower or "overloaded" in err_lower:
+                elif "503" in err_lower or "unavailable" in err_lower or "overloaded" in err_lower:
                     last_error = "overloaded"
                     keys = [k for k in keys if k != selected_key]
 
                 else:
-                    last_error = f"api_error:{exc}"
+                    last_error = f"api_error:{type(exc).__name__}"
                     keys = [k for k in keys if k != selected_key]
 
             except Exception as exc:
-                logger.error("Imagen: unexpected error key=…%s: %s", key_suffix, exc, exc_info=True)
-                last_error = f"unexpected:{exc}"
+                error_type = type(exc).__name__
+                logger.error("Imagen: unexpected error (key_id=%s, error_type=%s)", key_id, error_type)
+                last_error = f"unexpected:{error_type}"
                 keys = [k for k in keys if k != selected_key]
 
             if not keys:

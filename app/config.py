@@ -361,8 +361,11 @@ class Settings(BaseModel):
     WEBHOOK_MAX_CONNECTIONS: int = 40
     UPDATE_QUEUE_MAXSIZE: int = 1000
     # Base URL of the web server (e.g. https://bot.example.com).
-    # Required for Mini App reader links. If empty, system falls back to Telegraph.
+    # Required for Mini App reader links; without it delivery uses an explicitly
+    # enabled Telegraph fallback or safe Telegram splitting.
     WEBAPP_BASE_URL: str = ""
+    # Telegraph pages are public and have no application-controlled retention.
+    TELEGRAPH_PUBLICATION_ENABLED: bool = False
     # Short name of the Mini App registered with @BotFather via /newapp.
     # When set, Crocodile game buttons use t.me deep links (no "Open link?" dialog).
     # Example: if short name is "game", button URL becomes https://t.me/{bot}/game?startapp={id}
@@ -560,6 +563,7 @@ def load_settings() -> Settings:
             "WEBHOOK_MAX_CONNECTIONS": int(os.getenv("WEBHOOK_MAX_CONNECTIONS", "40")),
             "UPDATE_QUEUE_MAXSIZE": int(os.getenv("UPDATE_QUEUE_MAXSIZE", "1000")),
             "WEBAPP_BASE_URL": os.getenv("WEBAPP_BASE_URL", "").rstrip("/"),
+            "TELEGRAPH_PUBLICATION_ENABLED": os.getenv("TELEGRAPH_PUBLICATION_ENABLED", "false").lower() == "true",
             "MINIAPP_SHORT_NAME": os.getenv("MINIAPP_SHORT_NAME", "").strip(),
             "GAME_HUB_URL": os.getenv("GAME_HUB_URL", "").rstrip("/"),
             "GAME_HUB_DIRECT_LINK": os.getenv("GAME_HUB_DIRECT_LINK", "").strip(),
@@ -583,6 +587,10 @@ def load_settings() -> Settings:
             or DEFAULT_POLLINATIONS_IMAGE_MODELS.copy(),
             "POLLINATIONS_DEFAULT_IMAGE_MODEL": os.getenv("DEFAULT_IMAGE_MODEL", DEFAULT_POLLINATIONS_IMAGE_MODEL),
             "POLLINATIONS_API_KEY": os.getenv("POLLINATIONS_API_KEY", ""),
+            "IMAGE_GEN_DAILY_LIMIT": int(os.getenv("IMAGE_GEN_DAILY_LIMIT", "10")),
+            "IMAGE_GEN_RPD_PER_KEY": int(os.getenv("IMAGE_GEN_RPD_PER_KEY", "25")),
+            "IMAGE_GEN_TIMEOUT": float(os.getenv("IMAGE_GEN_TIMEOUT", "60")),
+            "IMAGE_GEN_MAX_RETRIES": int(os.getenv("IMAGE_GEN_MAX_RETRIES", "3")),
             # Vertex AI Express (optional resilience for judge)
             "VERTEX_AI_KEY": os.getenv("VERTEX_AI_KEY", "").strip(),
             "VERTEX_AI_PROJECT": os.getenv("VERTEX_AI_PROJECT", "").strip(),

@@ -136,26 +136,57 @@ _COINGECKO_FIAT_MAP: dict[str, str] = {
 _CURRENCY_CODES = {
     # Russian aliases → ISO 4217
     "доллар": "USD",
+    "доллара": "USD",
+    "доллару": "USD",
+    "долларом": "USD",
+    "долларе": "USD",
+    "доллары": "USD",
     "долларов": "USD",
     "долларах": "USD",
     "баксов": "USD",
     "евро": "EUR",
     "рубль": "RUB",
+    "рубля": "RUB",
+    "рублю": "RUB",
+    "рублём": "RUB",
+    "рублем": "RUB",
+    "рубле": "RUB",
+    "рубли": "RUB",
     "рублей": "RUB",
     "рублях": "RUB",
-    "рубл": "RUB",
     "фунт": "GBP",
+    "фунта": "GBP",
+    "фунту": "GBP",
+    "фунтом": "GBP",
+    "фунте": "GBP",
+    "фунты": "GBP",
     "фунтов": "GBP",
     "юань": "CNY",
+    "юаня": "CNY",
+    "юаню": "CNY",
+    "юанем": "CNY",
+    "юани": "CNY",
     "юаней": "CNY",
     "йена": "JPY",
+    "йены": "JPY",
+    "йене": "JPY",
+    "йену": "JPY",
     "иена": "JPY",
+    "иены": "JPY",
+    "иене": "JPY",
+    "иену": "JPY",
     "йен": "JPY",
     "тенге": "KZT",
     "гривна": "UAH",
+    "гривны": "UAH",
+    "гривне": "UAH",
+    "гривну": "UAH",
+    "гривной": "UAH",
     "гривен": "UAH",
     "сом": "KGS",
+    "сомов": "KGS",
     "сум": "UZS",
+    "сумов": "UZS",
     # ISO codes (pass-through)
     "usd": "USD",
     "eur": "EUR",
@@ -177,6 +208,10 @@ _CURRENCY_CODES = {
 _SORTED_CURRENCY_ALIASES: list[tuple[str, str]] = sorted(
     _CURRENCY_CODES.items(), key=lambda kv: len(kv[0]), reverse=True
 )
+_CURRENCY_ALIAS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(rf"(?<!\w){re.escape(alias)}(?!\w)", re.IGNORECASE), code)
+    for alias, code in _SORTED_CURRENCY_ALIASES
+]
 
 # Performance: pre-compiled at module level — _handle_weather is called on every
 # weather intent match (per-message). Inline re.search() inside the function body
@@ -375,7 +410,7 @@ async def _handle_weather(text: str) -> IntentResult | None:
         result = await _fetch_weatherapi(weather_key, city_candidate)
         if result:
             return result
-        logging.info("WeatherAPI.com failed for '%s', trying Open-Meteo fallback", city_candidate)
+        logging.info("WeatherAPI.com failed; trying Open-Meteo fallback")
 
     # ── Fallback: Open-Meteo (original implementation) ───────────────────────
     return await _fetch_open_meteo(city_candidate)
@@ -391,7 +426,7 @@ async def _fetch_weatherapi(api_key: str, city: str) -> IntentResult | None:
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
-        logging.warning("WeatherAPI.com failed for '%s': %s", city, exc)
+        logging.warning("WeatherAPI.com failed (%s)", type(exc).__name__)
         return None
 
     try:
@@ -419,7 +454,7 @@ async def _fetch_weatherapi(api_key: str, city: str) -> IntentResult | None:
         )
         return IntentResult(response)
     except (KeyError, TypeError) as exc:
-        logging.warning("WeatherAPI.com: unexpected response structure: %s", exc)
+        logging.warning("WeatherAPI.com returned an unexpected response structure (%s)", type(exc).__name__)
         return None
 
 
@@ -468,7 +503,7 @@ async def _fetch_open_meteo(city_candidate: str) -> IntentResult | None:
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
-        logging.warning("Open-Meteo API failed for %s: %s", city_name, exc)
+        logging.warning("Open-Meteo API failed (%s)", type(exc).__name__)
         return None
 
     current = data.get("current", {})
@@ -504,7 +539,7 @@ async def _geocode_city_open_meteo(candidate: str) -> tuple[str, float, float] |
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
-        logging.warning("Open-Meteo Geocoding failed for '%s': %s", candidate, exc)
+        logging.warning("Open-Meteo Geocoding failed (%s)", type(exc).__name__)
         return None
 
     results = data.get("results")
@@ -581,7 +616,7 @@ async def _handle_crypto(coingecko_id: str, text: str) -> IntentResult | None:
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
-        logging.warning("CoinGecko API failed for '%s': %s", coingecko_id, exc)
+        logging.warning("CoinGecko API failed for %s (%s)", coingecko_id, type(exc).__name__)
         return None  # Fall back to LLM
 
     coin_data = data.get(coingecko_id, {})
@@ -619,13 +654,14 @@ async def _handle_fiat_currency(text: str) -> IntentResult | None:
     base, target = _extract_currency_pair(text)
     if not base or not target:
         return None
+    amount = _extract_currency_amount(text)
 
     from app.repos.provider_keys import get_provider_key
 
     # ── Primary: ExchangeRate-API ─────────────────────────────────────────────
     exchange_key = await get_provider_key("exchange")
     if exchange_key:
-        result = await _fetch_exchangerate_api(exchange_key, base, target)
+        result = await _fetch_exchangerate_api(exchange_key, base, target, amount)
         if result:
             return result
         logging.info("ExchangeRate-API failed for %s→%s, trying Frankfurter", base, target)
@@ -635,10 +671,15 @@ async def _handle_fiat_currency(text: str) -> IntentResult | None:
     if base in unsupported or target in unsupported:
         return None  # Frankfurter doesn't support these — let LLM handle via Grounding
 
-    return await _fetch_frankfurter(base, target)
+    return await _fetch_frankfurter(base, target, amount)
 
 
-async def _fetch_exchangerate_api(api_key: str, base: str, target: str) -> IntentResult | None:
+async def _fetch_exchangerate_api(
+    api_key: str,
+    base: str,
+    target: str,
+    amount: float = 1.0,
+) -> IntentResult | None:
     """Fetch rate from ExchangeRate-API v6 (free tier: 1,500 req/month)."""
     try:
         resp = await _get_http().get(
@@ -647,7 +688,7 @@ async def _fetch_exchangerate_api(api_key: str, base: str, target: str) -> Inten
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
-        logging.warning("ExchangeRate-API failed for %s→%s: %s", base, target, exc)
+        logging.warning("ExchangeRate-API failed for %s→%s (%s)", base, target, type(exc).__name__)
         return None
 
     if data.get("result") != "success":
@@ -660,15 +701,20 @@ async def _fetch_exchangerate_api(api_key: str, base: str, target: str) -> Inten
 
     update_time = data.get("time_last_update_utc", "")
     rate_fmt = f"{rate:.2f}" if rate >= 1 else f"{rate:.4f}"
+    conversion_line = ""
+    if amount != 1.0:
+        converted = amount * rate
+        conversion_line = f"{_format_currency_number(amount)} {base} = **{_format_currency_number(converted)} {target}**\n\n"
     response = (
         f"💱 **Курс {base} → {target}**\n\n"
         f"1 {base} = **{rate_fmt} {target}**\n\n"
+        f"{conversion_line}"
         f"_Данные: ExchangeRate-API ({update_time[:16] if update_time else 'сейчас'})_"
     )
     return IntentResult(response)
 
 
-async def _fetch_frankfurter(base: str, target: str) -> IntentResult | None:
+async def _fetch_frankfurter(base: str, target: str, amount: float = 1.0) -> IntentResult | None:
     """Fetch rate from Frankfurter (ECB data, fallback for EU pairs)."""
     try:
         resp = await _get_http().get(
@@ -678,7 +724,7 @@ async def _fetch_frankfurter(base: str, target: str) -> IntentResult | None:
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
-        logging.warning("Frankfurter API failed for %s→%s: %s", base, target, exc)
+        logging.warning("Frankfurter API failed for %s→%s (%s)", base, target, type(exc).__name__)
         return None
 
     rates = data.get("rates", {})
@@ -688,26 +734,49 @@ async def _fetch_frankfurter(base: str, target: str) -> IntentResult | None:
 
     date = data.get("date", "")
     rate_fmt = f"{rate:.4f}" if rate < 10 else f"{rate:.2f}"
+    conversion_line = ""
+    if amount != 1.0:
+        converted = amount * rate
+        conversion_line = f"{_format_currency_number(amount)} {base} = **{_format_currency_number(converted)} {target}**\n\n"
     response = (
-        f"💱 **Курс {base} → {target}**\n\n1 {base} = **{rate_fmt} {target}**\n\n_Данные: Европейский ЦБ ({date})_"
+        f"💱 **Курс {base} → {target}**\n\n1 {base} = **{rate_fmt} {target}**\n\n"
+        f"{conversion_line}_Данные: Европейский ЦБ ({date})_"
     )
     return IntentResult(response)
+
+
+def _extract_currency_amount(text: str) -> float:
+    """Return the first positive numeric amount, defaulting to one unit."""
+    match = re.search(r"(?<!\w)(\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?)(?!\w)", text)
+    if match is None:
+        return 1.0
+    try:
+        value = float(match.group(1).replace(" ", "").replace("\u00a0", "").replace(",", "."))
+    except ValueError:
+        return 1.0
+    return value if 0 < value <= 1_000_000_000_000 else 1.0
+
+
+def _format_currency_number(value: float) -> str:
+    rendered = f"{value:,.2f}"
+    return rendered.rstrip("0").rstrip(".")
 
 
 def _extract_currency_pair(text: str) -> tuple[str | None, str | None]:
     """Extract base and target currency codes from text."""
     lower = text.lower()
-    found: list[str] = []
+    first_position_by_code: dict[str, int] = {}
 
-    # Find all currency mentions in order.
-    # Performance: iterate pre-sorted (alias, code) pairs from module-level
-    # _SORTED_CURRENCY_ALIASES — avoids O(n log n) sorted() on every call.
-    for alias, code in _SORTED_CURRENCY_ALIASES:
-        if alias in lower:
-            if code not in found:
-                found.append(code)
-            if len(found) >= 2:
-                break
+    # Alias length prevents overlapping aliases, but conversion direction must
+    # follow the sentence rather than the alias table's iteration order.
+    for pattern, code in _CURRENCY_ALIAS_PATTERNS:
+        match = pattern.search(lower)
+        if match is not None:
+            previous = first_position_by_code.get(code)
+            if previous is None or match.start() < previous:
+                first_position_by_code[code] = match.start()
+
+    found = [code for code, _position in sorted(first_position_by_code.items(), key=lambda item: item[1])]
 
     if len(found) >= 2:
         return found[0], found[1]

@@ -1,26 +1,41 @@
 """
-Root conftest – loads .env so that ``app.config.settings`` resolves to a real
-Settings object for tests that import the production modules directly.
+Root conftest — installs deterministic non-production settings before any app
+module is imported. The production ``.env`` must never enter a unit-test process.
 """
 
 import asyncio
 import os
 import sys
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from dotenv import load_dotenv
 
-_env_path = Path(__file__).resolve().parent.parent / ".env"
-if _env_path.exists():
-    load_dotenv(_env_path, override=False)
-
-os.environ.setdefault("GEMINI_API_KEYS", "dummy_key_for_tests")
-os.environ.setdefault("TAVILY_API_KEYS", "dummy_key_for_tests")
-os.environ.setdefault("ELEVENLABS_API_KEYS", "dummy_key_for_tests")
-os.environ.setdefault("TELEGRAM_BOT_TOKEN", "1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ123456789")
-os.environ.setdefault("DATABASE_URL", "postgresql://user:pass@localhost:5432/testdb")
+_SAFE_TEST_ENV = {
+    "TESTING": "true",
+    "TELEGRAM_BOT_TOKEN": "1234567890:dummy-token-for-tests-only",
+    "ADMIN_SECRET": "dummy-admin-secret-for-tests-only",
+    "ADMIN_ID": "1",
+    "DATABASE_URL": "postgresql://user:pass@localhost:5432/testdb",
+    "REDIS_URL": "",
+    "WEBHOOK_URL": "",
+    "TELEGRAM_LOCAL_SERVER_URL": "",
+    "GEMINI_API_KEYS": "dummy-gemini-key-for-tests",
+    "TAVILY_API_KEYS": "dummy-tavily-key-for-tests",
+    "OPENROUTER_API_KEYS": "dummy-openrouter-key-for-tests",
+    "OPENCODE_API_KEYS": "dummy-opencode-key-for-tests",
+    "ELEVENLABS_API_KEYS": "",
+    "FREETHEAI_API_KEYS": "",
+    "POLLINATIONS_API_KEY": "",
+    "JINA_API_KEY": "",
+    "WEATHER_API_KEY": "",
+    "EXCHANGE_RATE_API_KEY": "",
+    "VERTEX_AI_KEY": "",
+    "NATAL_GEOCODER_PROVIDER": "local",
+}
+_original_database_url = os.environ.get("DATABASE_URL", "")
+if _original_database_url:
+    os.environ["GEMAIBOT_TEST_ORIGINAL_DATABASE_URL"] = _original_database_url
+os.environ.update(_SAFE_TEST_ENV)
 
 
 

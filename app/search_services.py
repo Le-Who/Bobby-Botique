@@ -74,7 +74,7 @@ async def tavily_search_agent(
     # Check cache before performing search
     cached_result = await get_cached_search_result(query, search_type)
     if cached_result:
-        logging.info("Cache hit for Tavily search: %s...", query[:50])
+        logging.info("Cache hit for Tavily search (type=%s)", search_type)
         return cached_result
 
     available_key = await get_available_tavily_key()
@@ -88,10 +88,9 @@ async def tavily_search_agent(
         "tavily",
         search_type=search_type,
         query_length=len(query),
-        query_preview=query[:100],
     )
 
-    logging.info("Performing Tavily API call (type: %s) for query: %.100s", search_type, query)
+    logging.info("Performing Tavily API call (type=%s, query_length=%d)", search_type, len(query))
 
     # Record search metrics
     await metrics_collector.record_search_query()
@@ -102,6 +101,7 @@ async def tavily_search_agent(
 
     if search_type == "qna":
         payload["search_depth"] = "basic"
+        payload["include_answer"] = True
         cost = settings.TAVILY_QNA_SEARCH_COST
     else:
         payload["search_depth"] = "advanced"
@@ -140,29 +140,26 @@ async def tavily_search_agent(
             search_type=search_type,
             results_count=0,
             success=False,
-            error_message=f"HTTP {e.response.status_code}: {e.response.text}",
+            error_message=f"HTTP {e.response.status_code}",
         )
 
-        logging.error(
-            "Tavily API call failed with status %d: %s",
-            e.response.status_code,
-            e.response.text,
-        )
-        await metrics_collector.record_error("tavily_http", f"Status {e.response.status_code}: {e.response.text}")
+        logging.error("Tavily API call failed with status %d", e.response.status_code)
+        await metrics_collector.record_error("tavily_http", f"Status {e.response.status_code}")
         return {"error": f"Ошибка API поиска: {e.response.status_code}. Убедитесь, что ключ API валиден."}
     except Exception as e:
+        error_type = type(e).__name__
         api_logger.log_response(
             "tavily",
             start_time,
             search_type=search_type,
             results_count=0,
             success=False,
-            error_message=str(e),
+            error_message=error_type,
         )
 
-        logging.error("Tavily API call failed: %s", e, exc_info=True)
-        await metrics_collector.record_error("tavily_api", str(e))
-        return {"error": f"Произошла непредвиденная ошибка API: {e}"}
+        logging.error("Tavily API call failed (error_type=%s)", error_type)
+        await metrics_collector.record_error("tavily_api", error_type)
+        return {"error": "Произошла непредвиденная ошибка API поиска."}
 
 
 async def parallel_search(
@@ -207,7 +204,7 @@ async def parallel_search(
 
     for result in results_list:
         if isinstance(result, Exception):
-            logging.error("Parallel search task failed: %s", result)
+            logging.error("Parallel search task failed (error_type=%s)", type(result).__name__)
             continue
 
         if isinstance(result, dict) and "error" not in result and "results" in result:

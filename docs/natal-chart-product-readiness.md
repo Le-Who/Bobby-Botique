@@ -27,9 +27,9 @@ This document tracks the changes required to move natal charts from MVP to produ
 - The city catalog is warmed during handler registration to avoid first-user lookup delay.
 - Country and city search has automated coverage for Cyrillic country prefixes, one-letter country-filtered city prefixes, and release smoke cities: Odesa/Odessa, Kyiv/Kiev, Moscow, London, New York, Ottawa, Orenburg, Berlin, Warsaw, and Istanbul.
 - The Telegram flow includes a "not in list" fallback that asks the user for the nearest large city.
-- Hosted reports and Telegraph mirrors include GeoNames / CC BY 4.0 city-data attribution.
+- Hosted reports and opt-in Telegraph mirrors include GeoNames / CC BY 4.0 city-data attribution.
 - Hosted report rendering strips `javascript:` links from interpretation body HTML, sanitizes stored SVG payloads before rendering, removes SVG event-handler attributes, and renders Telegraph mirror links only when they are HTTPS URLs.
-- Report generation stores Telegraph mirror URLs only when the publisher returns an HTTPS URL, so unsafe mirrors are filtered before persistence as well as before rendering.
+- Telegraph publication is disabled by default and requires `TELEGRAPH_PUBLICATION_ENABLED=true`. Report generation stores mirror URLs only when the publisher returns a canonical `https://telegra.ph` URL, so unsafe mirrors are filtered before persistence as well as before rendering.
 - Hosted report routes are covered for 200/404 behavior and security headers: `nosniff`, `no-referrer`, `X-Frame-Options: DENY`, and a no-script CSP.
 - Hosted report routes reject malformed report ids before storage lookup; accepted ids are bounded URL-safe tokens matching the service-generated `token_urlsafe` format.
 - Report storage serializes chart and section payloads to JSON strings before writing JSONB columns, matching the existing asyncpg/PostgreSQL repository pattern.

@@ -8,14 +8,26 @@ Each test runs inside a transaction that is ROLLED BACK — no data persists.
 
 import json
 import os
+from urllib.parse import urlsplit
 
 import asyncpg
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
-# Load .env to get TEST_DATABASE_URL from project root
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+_ENV_PATH = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+_FILE_ENV = dotenv_values(_ENV_PATH)
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL") or _FILE_ENV.get("TEST_DATABASE_URL")
+_PRODUCTION_DATABASE_URL = os.getenv("GEMAIBOT_TEST_ORIGINAL_DATABASE_URL") or _FILE_ENV.get("DATABASE_URL")
 
-TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
+
+def _database_identity(value: str | None):
+    if not value:
+        return None
+    parsed = urlsplit(value)
+    return parsed.hostname, parsed.port or 5432, parsed.path.rstrip("/")
+
+
+if TEST_DATABASE_URL and _database_identity(TEST_DATABASE_URL) == _database_identity(_PRODUCTION_DATABASE_URL):
+    raise RuntimeError("TEST_DATABASE_URL resolves to the production database target")
 
 # Shared test user ID constant for all integration tests
 TEST_USER_ID = 999999
@@ -58,17 +70,17 @@ async def db_conn(test_db_url):
     # Register JSONB codec to match production db_manager behavior
     await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
 
-    # Ensure schema is up-to-date for integration tests (idempotent).
-    # These mirror production migrations that may not yet be applied to the test DB.
-    await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS ltm_enabled BOOLEAN DEFAULT TRUE")
-    await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS branch_id INTEGER")
-    await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS temperature FLOAT")
-    await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS voice_id TEXT")
-    await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS tts_temperature FLOAT")
-    await conn.execute("ALTER TABLE long_term_memory ADD COLUMN IF NOT EXISTS rlhf_negative_count INTEGER DEFAULT 0")
     tx = conn.transaction()
     await tx.start()
     try:
+        # Keep compatibility DDL inside the rollback-owned transaction so a
+        # failed test run cannot mutate the dedicated test schema permanently.
+        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS ltm_enabled BOOLEAN DEFAULT TRUE")
+        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS branch_id INTEGER")
+        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS temperature FLOAT")
+        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS voice_id TEXT")
+        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS tts_temperature FLOAT")
+        await conn.execute("ALTER TABLE long_term_memory ADD COLUMN IF NOT EXISTS rlhf_negative_count INTEGER DEFAULT 0")
         yield conn
     finally:
         try:

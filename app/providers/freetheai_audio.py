@@ -29,14 +29,22 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from app.config import get_freetheai_keys
+from app.utils.media_download import (
+    AUDIO_MIME_TYPES,
+    MAX_AUDIO_DOWNLOAD_BYTES,
+    MediaDownloadError,
+    download_media,
+)
 
 logger = logging.getLogger(__name__)
 
 # Lyria models exposed through FreeTheAI
-LYRIA_MODELS: frozenset[str] = frozenset({
-    "or/google/lyria-3-pro-preview",
-    "or/google/lyria-3-clip-preview",
-})
+LYRIA_MODELS: frozenset[str] = frozenset(
+    {
+        "or/google/lyria-3-pro-preview",
+        "or/google/lyria-3-clip-preview",
+    }
+)
 
 LYRIA_MODEL_LABELS: dict[str, str] = {
     "or/google/lyria-3-pro-preview": "🎵 Lyria Pro",
@@ -59,7 +67,7 @@ _AUDIO_URL_RE = re.compile(
 )
 # Pattern to detect base64 audio data
 _B64_AUDIO_RE = re.compile(
-    r'data:audio/[a-z0-9]+;base64,([A-Za-z0-9+/=]+)',
+    r"data:audio/[a-z0-9]+;base64,([A-Za-z0-9+/=]+)",
     re.IGNORECASE,
 )
 
@@ -123,8 +131,13 @@ def _extract_audio_from_response(content: str) -> tuple[bytes | None, str, str]:
     # 1. Check for inline base64 audio
     b64_match = _B64_AUDIO_RE.search(content)
     if b64_match:
+        max_encoded_chars = ((MAX_AUDIO_DOWNLOAD_BYTES + 2) // 3) * 4
+        if len(b64_match.group(1)) > max_encoded_chars:
+            return None, "audio/mpeg", content.strip()
         try:
-            audio_data = base64.b64decode(b64_match.group(1))
+            audio_data = base64.b64decode(b64_match.group(1), validate=True)
+            if len(audio_data) > MAX_AUDIO_DOWNLOAD_BYTES:
+                return None, "audio/mpeg", content.strip()
             # Determine mime type from the data URI
             full_match = b64_match.group(0)
             if "audio/wav" in full_match:
@@ -133,7 +146,7 @@ def _extract_audio_from_response(content: str) -> tuple[bytes | None, str, str]:
                 mime = "audio/ogg"
             else:
                 mime = "audio/mpeg"
-            remaining = content[:b64_match.start()] + content[b64_match.end():]
+            remaining = content[: b64_match.start()] + content[b64_match.end() :]
             return audio_data, mime, remaining.strip()
         except Exception:
             pass
@@ -168,7 +181,7 @@ class FreeTheAIAudioProvider:
             return AudioGenResult(success=False, error_message="no_keys")
 
         api_key, key_hash = key_pair
-        key_suffix = api_key[-4:] if len(api_key) >= 4 else "????"
+        key_id = key_hash[:8]
 
         payload = {
             "model": model,
@@ -184,9 +197,9 @@ class FreeTheAIAudioProvider:
         }
 
         logger.info(
-            "Lyria: model=%s key=…%s prompt_len=%d",
+            "Lyria: model=%s key_id=%s prompt_len=%d",
             model,
-            key_suffix,
+            key_id,
             len(prompt),
         )
 
@@ -198,14 +211,12 @@ class FreeTheAIAudioProvider:
             elapsed = time.monotonic() - t0
 
             if response.status_code != 200:
-                body = response.text[:500]
                 logger.error(
-                    "Lyria: HTTP %d after %.1fs (model=%s key=…%s): %s",
+                    "Lyria: HTTP %d after %.1fs (model=%s key_id=%s)",
                     response.status_code,
                     elapsed,
                     model,
-                    key_suffix,
-                    body,
+                    key_id,
                 )
                 if response.status_code == 429:
                     _suspend_lyria_key(key_hash, timedelta(seconds=120))
@@ -235,11 +246,11 @@ class FreeTheAIAudioProvider:
 
             if audio_data:
                 logger.info(
-                    "Lyria: success (inline) — %.1fKB in %.1fs (model=%s key=…%s)",
+                    "Lyria: success (inline) — %.1fKB in %.1fs (model=%s key_id=%s)",
                     len(audio_data) / 1024,
                     elapsed,
                     model,
-                    key_suffix,
+                    key_id,
                 )
                 return AudioGenResult(
                     success=True,
@@ -254,12 +265,14 @@ class FreeTheAIAudioProvider:
             url_match = _AUDIO_URL_RE.search(content)
             if url_match:
                 audio_url = url_match.group(0)
-                remaining = content[:url_match.start()] + content[url_match.end():]
+                remaining = content[: url_match.start()] + content[url_match.end() :]
                 try:
-                    async with httpx.AsyncClient(timeout=120) as dl_client:
-                        dl_resp = await dl_client.get(audio_url)
-                        dl_resp.raise_for_status()
-                        audio_data = dl_resp.content
+                    audio_data = await download_media(
+                        audio_url,
+                        allowed_mime_types=AUDIO_MIME_TYPES,
+                        max_bytes=MAX_AUDIO_DOWNLOAD_BYTES,
+                        timeout=120.0,
+                    )
 
                     # Detect mime type from URL
                     url_lower = audio_url.lower()
@@ -284,22 +297,18 @@ class FreeTheAIAudioProvider:
                         model_used=model,
                         duration_s=elapsed,
                     )
-                except Exception as dl_exc:
-                    logger.error("Lyria: failed to download audio from %s: %s", audio_url[:100], dl_exc)
+                except MediaDownloadError as dl_exc:
+                    logger.error("Lyria: media download failed (%s)", dl_exc.code)
                     return AudioGenResult(
                         success=False,
                         error_message="download_failed",
-                        text_content=content,
+                        text_content=remaining.strip(),
                         model_used=model,
                     )
 
             # No audio found — return the text content as-is
             # This might happen if the model returned lyrics or a description
-            logger.warning(
-                "Lyria: response contained text but no audio data (model=%s). Content prefix: %s",
-                model,
-                content[:200],
-            )
+            logger.warning("Lyria: response contained text but no audio data (model=%s)", model)
             return AudioGenResult(
                 success=False,
                 error_message="no_audio_in_response",
@@ -311,8 +320,9 @@ class FreeTheAIAudioProvider:
             logger.error("Lyria: timeout after %.0fs (model=%s)", _AUDIO_TIMEOUT, model)
             return AudioGenResult(success=False, error_message="timeout", model_used=model)
         except Exception as exc:
-            logger.error("Lyria: unexpected error: %s", exc, exc_info=True)
-            return AudioGenResult(success=False, error_message=f"unexpected:{exc}", model_used=model)
+            error_type = type(exc).__name__
+            logger.error("Lyria: unexpected error (error_type=%s)", error_type)
+            return AudioGenResult(success=False, error_message=f"unexpected:{error_type}", model_used=model)
 
 
 # Module-level singleton

@@ -1,3 +1,6 @@
+import logging
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from app.natal.geocoding import GeocodeResult, GeocodingError, resolve_birth_data
@@ -72,6 +75,38 @@ async def test_resolve_birth_data_nominatim_fallback_resolves_timezone_from_coor
     assert geocoder.called is True
     assert resolved.timezone == "Europe/Paris"
     assert resolved.display_place == "Paris, France"
+
+
+@pytest.mark.asyncio
+async def test_resolve_birth_data_rejects_nonexistent_dst_local_time():
+    birth = BirthInput(
+        birth_date="2024-03-31",
+        birth_time="03:30",
+        time_precision=TimePrecision.EXACT,
+        birth_place="Kyiv, Ukraine",
+        birth_place_latitude=50.4501,
+        birth_place_longitude=30.5234,
+        birth_place_timezone="Europe/Kyiv",
+    )
+
+    with pytest.raises(GeocodingError, match="не существ"):
+        await resolve_birth_data(birth)
+
+
+@pytest.mark.asyncio
+async def test_resolve_birth_data_rejects_ambiguous_dst_local_time():
+    birth = BirthInput(
+        birth_date="2024-10-27",
+        birth_time="03:30",
+        time_precision=TimePrecision.EXACT,
+        birth_place="Kyiv, Ukraine",
+        birth_place_latitude=50.4501,
+        birth_place_longitude=30.5234,
+        birth_place_timezone="Europe/Kyiv",
+    )
+
+    with pytest.raises(GeocodingError, match="неоднознач"):
+        await resolve_birth_data(birth)
 
 
 @pytest.mark.asyncio
@@ -256,3 +291,47 @@ async def test_resolve_birth_data_unknown_provider_does_not_call_network_fallbac
         await resolve_birth_data(birth, geocoder=geocoder, geocoder_provider="nomninatim")
 
     assert geocoder.called is False
+
+
+@pytest.mark.asyncio
+async def test_nominatim_geocoder_caches_query_without_logging_place(monkeypatch, caplog):
+    from cachetools import TTLCache
+
+    from app.natal import geocoding
+
+    private_place = "Private Birth Place 39f2"
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = [{"display_name": "Resolved Place", "lat": "48.1", "lon": "31.2"}]
+    client = AsyncMock()
+    client.get.return_value = response
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    monkeypatch.setattr(geocoding, "_nominatim_cache", TTLCache(maxsize=8, ttl=60), raising=False)
+    monkeypatch.setattr(geocoding, "_nominatim_last_started_at", 0.0, raising=False)
+    monkeypatch.setattr(geocoding.httpx, "AsyncClient", lambda **kwargs: client)
+
+    geocoder = geocoding.NominatimGeocoder()
+    with caplog.at_level(logging.DEBUG):
+        first = await geocoder.geocode(private_place)
+        second = await geocoder.geocode(private_place)
+
+    assert first == second
+    client.get.assert_awaited_once()
+    assert private_place not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_nominatim_throttle_waits_for_global_one_second_slot(monkeypatch):
+    from app.natal import geocoding
+
+    clock = MagicMock(side_effect=[10.25, 11.0])
+    sleep = AsyncMock()
+    monkeypatch.setattr(geocoding, "_nominatim_last_started_at", 10.0, raising=False)
+    monkeypatch.setattr(geocoding, "_monotonic", clock, raising=False)
+    monkeypatch.setattr(geocoding.asyncio, "sleep", sleep, raising=False)
+
+    await geocoding._wait_for_nominatim_slot()
+
+    sleep.assert_awaited_once_with(pytest.approx(0.75))
+    assert geocoding._nominatim_last_started_at == 11.0

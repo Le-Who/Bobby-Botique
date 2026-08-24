@@ -9,10 +9,11 @@ network call via api.telegram.org.
 """
 
 import logging
-import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from telegram import Bot, File
+
+MAX_TELEGRAM_FILE_BYTES = 20 * 1024 * 1024
 
 
 def _extract_local_path(file_path: str) -> str | None:
@@ -27,35 +28,11 @@ def _extract_local_path(file_path: str) -> str | None:
     marker = "/var/lib/telegram-bot-api/"
     idx = file_path.find(marker)
     if idx != -1:
-        return file_path[idx:]
-    # Already a clean local path?
-    if file_path.startswith("/") and not file_path.startswith("http"):
-        return file_path
+        candidate = file_path[idx:]
+        if ".." in PurePosixPath(candidate).parts:
+            return None
+        return candidate
     return None
-
-
-def _diagnose_missing_file(local_path: Path) -> None:
-    """Log diagnostic info when a local file is not found — runs ONCE per miss."""
-    parts = local_path.parts  # ('/', 'var', 'lib', 'telegram-bot-api', '{token}', ...)
-    # Walk down the path tree to find exactly where it breaks
-    for i in range(1, len(parts) + 1):
-        segment = Path(*parts[:i])
-        if segment.exists():
-            if segment.is_dir():
-                try:
-                    children = os.listdir(segment)
-                    logging.warning(
-                        "  [diag] EXISTS dir %s → children: %s",
-                        segment,
-                        children[:20] if children else "(empty)",
-                    )
-                except PermissionError:
-                    logging.warning("  [diag] EXISTS dir %s → PERMISSION DENIED", segment)
-            else:
-                logging.warning("  [diag] EXISTS file %s (%d bytes)", segment, segment.stat().st_size)
-        else:
-            logging.warning("  [diag] MISSING %s ← breaks here", segment)
-            break
 
 
 async def get_file_bytes(bot: Bot, tg_file: File) -> bytes:
@@ -81,44 +58,48 @@ async def get_file_bytes(bot: Bot, tg_file: File) -> bytes:
             local_path = Path(local_path_str)
             if local_path.is_file():
                 size = local_path.stat().st_size
-                logging.debug("get_file_bytes: local read %s (%d bytes)", local_path, size)
+                if size > MAX_TELEGRAM_FILE_BYTES:
+                    raise ValueError("Telegram file is too large")
+                logging.debug("get_file_bytes: local read (%d bytes)", size)
                 return local_path.read_bytes()
 
             # Volume not mounted in this container — fetch from local Bot API server via HTTP.
             # PTB's base_file_url in local_mode = "http://tg-api:8081/file/bot{TOKEN}"
             # The local server serves: base_file_url + absolute_file_path
-            logging.warning(
-                "get_file_bytes: local path not found (%s), trying local Bot API server HTTP",
-                local_path,
-            )
-            _diagnose_missing_file(local_path)
+            logging.warning("get_file_bytes: local path unavailable; trying local Bot API server HTTP")
             try:
                 import httpx
 
                 file_url: str = bot.base_file_url + local_path_str
-                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                    resp = await client.get(file_url)
-                if resp.status_code == 200:
-                    logging.debug(
-                        "get_file_bytes: local server HTTP ok url=%s bytes=%d",
-                        file_url,
-                        len(resp.content),
-                    )
-                    return resp.content
-                logging.warning(
-                    "get_file_bytes: local server HTTP failed status=%d url=%s",
-                    resp.status_code,
-                    file_url,
-                )
+                async with (
+                    httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client,
+                    client.stream("GET", file_url) as resp,
+                ):
+                    if resp.status_code == 200:
+                        declared = int(resp.headers.get("content-length", "0") or 0)
+                        if declared > MAX_TELEGRAM_FILE_BYTES:
+                            raise ValueError("Telegram file is too large")
+                        chunks: list[bytes] = []
+                        total = 0
+                        async for chunk in resp.aiter_bytes():
+                            total += len(chunk)
+                            if total > MAX_TELEGRAM_FILE_BYTES:
+                                raise ValueError("Telegram file is too large")
+                            chunks.append(chunk)
+                        logging.debug("get_file_bytes: local server HTTP ok (%d bytes)", total)
+                        return b"".join(chunks)
+                    logging.warning("get_file_bytes: local server HTTP failed status=%d", resp.status_code)
             except Exception as exc:
-                logging.warning("get_file_bytes: local server HTTP error: %s", exc)
+                if isinstance(exc, ValueError):
+                    raise
+                logging.warning("get_file_bytes: local server HTTP error (%s)", type(exc).__name__)
         else:
-            logging.warning(
-                "get_file_bytes: could not extract local path from file_path (%s), falling back to network download",
-                tg_file.file_path,
-            )
+            logging.warning("get_file_bytes: unsafe local file path; falling back to network download")
 
     # Cloud mode OR all local fallbacks exhausted: use PTB's standard network download.
     # In cloud mode this calls api.telegram.org; in local mode this tries disk again
     # (last-resort — should only be reached if local server HTTP also failed).
-    return bytes(await tg_file.download_as_bytearray())
+    content = bytes(await tg_file.download_as_bytearray())
+    if len(content) > MAX_TELEGRAM_FILE_BYTES:
+        raise ValueError("Telegram file is too large")
+    return content

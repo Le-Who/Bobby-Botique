@@ -23,6 +23,12 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from app.config import get_freetheai_keys
+from app.utils.media_download import (
+    IMAGE_MIME_TYPES,
+    MAX_IMAGE_DOWNLOAD_BYTES,
+    MediaDownloadError,
+    download_media,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +138,7 @@ class FreeTheAIImageProvider:
 
         api_key, key_hash = key_pair
         key_suffix = api_key[-4:] if len(api_key) >= 4 else "????"
+        key_id = key_hash[:8]
 
         payload: dict = {
             "model": model,
@@ -141,7 +148,7 @@ class FreeTheAIImageProvider:
             payload["size"] = size
         if quality:
             payload["quality"] = quality
-            
+
         endpoint_url = _FTA_IMAGES_URL
         if image_base64:
             payload["image"] = image_base64
@@ -153,11 +160,12 @@ class FreeTheAIImageProvider:
         }
 
         logger.info(
-            "FTA Image: model=%s key=…%s prompt_len=%d payload=%r",
+            "FTA Image: model=%s key_id=%s prompt_len=%d has_input_image=%s input_image_chars=%d",
             model,
-            key_suffix,
+            key_id,
             len(prompt),
-            payload,
+            bool(image_base64),
+            len(image_base64 or ""),
         )
 
         t0 = time.monotonic()
@@ -168,22 +176,26 @@ class FreeTheAIImageProvider:
             elapsed = time.monotonic() - t0
 
             if response.status_code != 200:
-                body = response.text[:500]
                 logger.error(
-                    "FTA Image: HTTP %d after %.1fs (model=%s key=…%s): %s",
+                    "FTA Image: HTTP %d after %.1fs (model=%s key_id=%s)",
                     response.status_code,
                     elapsed,
                     model,
-                    key_suffix,
-                    body,
+                    key_id,
                 )
                 if response.status_code == 429:
                     _suspend_fta_img_key(key_hash, timedelta(seconds=120))
-                    return FTAImageResult(success=False, error_message="rate_limited", model_used=model, key_suffix=key_suffix)
+                    return FTAImageResult(
+                        success=False, error_message="rate_limited", model_used=model, key_suffix=key_suffix
+                    )
                 if response.status_code in (401, 403):
                     _suspend_fta_img_key(key_hash, timedelta(minutes=30))
-                    return FTAImageResult(success=False, error_message="auth_error", model_used=model, key_suffix=key_suffix)
-                return FTAImageResult(success=False, error_message=f"http_{response.status_code}", model_used=model, key_suffix=key_suffix)
+                    return FTAImageResult(
+                        success=False, error_message="auth_error", model_used=model, key_suffix=key_suffix
+                    )
+                return FTAImageResult(
+                    success=False, error_message=f"http_{response.status_code}", model_used=model, key_suffix=key_suffix
+                )
 
             data = response.json()
             images_bytes: list[bytes] = []
@@ -193,28 +205,46 @@ class FreeTheAIImageProvider:
                 # Response may have b64_json or url
                 b64 = item.get("b64_json")
                 if b64:
-                    images_bytes.append(base64.b64decode(b64))
+                    max_encoded_chars = ((MAX_IMAGE_DOWNLOAD_BYTES + 2) // 3) * 4
+                    if not isinstance(b64, str) or len(b64) > max_encoded_chars:
+                        logger.warning("FTA Image: rejected oversized b64 image")
+                        continue
+                    try:
+                        decoded = base64.b64decode(b64, validate=True)
+                    except (ValueError, TypeError):
+                        logger.warning("FTA Image: rejected invalid b64 image")
+                        continue
+                    if len(decoded) > MAX_IMAGE_DOWNLOAD_BYTES:
+                        logger.warning("FTA Image: rejected oversized decoded image")
+                        continue
+                    images_bytes.append(decoded)
                     continue
                 url = item.get("url")
                 if url:
                     try:
-                        async with httpx.AsyncClient(timeout=120) as dl_client:
-                            dl_resp = await dl_client.get(url)
-                            dl_resp.raise_for_status()
-                            images_bytes.append(dl_resp.content)
-                    except Exception as dl_exc:
-                        logger.warning("FTA Image: failed to download url %s: %s", url[:100], dl_exc)
+                        images_bytes.append(
+                            await download_media(
+                                url,
+                                allowed_mime_types=IMAGE_MIME_TYPES,
+                                max_bytes=MAX_IMAGE_DOWNLOAD_BYTES,
+                                timeout=120.0,
+                            )
+                        )
+                    except MediaDownloadError as dl_exc:
+                        logger.warning("FTA Image: media download failed (%s)", dl_exc.code)
 
             if not images_bytes:
                 logger.warning("FTA Image: response contained no images (model=%s)", model)
-                return FTAImageResult(success=False, error_message="empty_response", model_used=model, key_suffix=key_suffix)
+                return FTAImageResult(
+                    success=False, error_message="empty_response", model_used=model, key_suffix=key_suffix
+                )
 
             logger.info(
-                "FTA Image: success — %d image(s) in %.1fs (model=%s key=…%s)",
+                "FTA Image: success — %d image(s) in %.1fs (model=%s key_id=%s)",
                 len(images_bytes),
                 elapsed,
                 model,
-                key_suffix,
+                key_id,
             )
             return FTAImageResult(
                 success=True,
@@ -227,8 +257,11 @@ class FreeTheAIImageProvider:
             logger.error("FTA Image: timeout after %.0fs (model=%s)", _FTA_IMAGE_TIMEOUT, model)
             return FTAImageResult(success=False, error_message="timeout", model_used=model, key_suffix=key_suffix)
         except Exception as exc:
-            logger.error("FTA Image: unexpected error: %s", exc, exc_info=True)
-            return FTAImageResult(success=False, error_message=f"unexpected:{exc}", model_used=model, key_suffix=key_suffix)
+            error_type = type(exc).__name__
+            logger.error("FTA Image: unexpected error (error_type=%s)", error_type)
+            return FTAImageResult(
+                success=False, error_message=f"unexpected:{error_type}", model_used=model, key_suffix=key_suffix
+            )
 
 
 # Module-level singleton

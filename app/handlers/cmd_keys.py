@@ -8,12 +8,11 @@ Flow:
       → ✅ → lightweight health check against provider API
       → 🗑 → clears DB override, falls back to .env
 
-Also registers a periodic health-check job (30-min interval) that pings all providers
-and alerts the admin on first failure per provider (6h cooldown).
+Health checks run only when an administrator explicitly requests one, because
+the available provider endpoints consume the same quota as user requests.
 """
 
 import logging
-import time
 
 import httpx
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -26,7 +25,6 @@ from telegram.ext import (
     filters,
 )
 
-from app.config import get_admin_id
 from app.repos.provider_keys import (
     clear_provider_key,
     get_provider_key,
@@ -41,14 +39,10 @@ logger = logging.getLogger(__name__)
 # ── Provider Registry ────────────────────────────────────────────────────────
 
 _PROVIDERS: dict[str, str] = {
-    "gemini": "🤖 Gemini",
-    "tavily": "🔍 Tavily",
     "weather": "🌤 Weather",
     "exchange": "💱 Exchange",
     "pollinations": "🎨 Pollinations",
-    "elevenlabs": "🎙️ ElevenLabs",
     "jina": "📄 Jina",
-    "horoscope": "🔮 Horoscope",
 }
 
 # ConversationHandler states
@@ -59,12 +53,7 @@ AWAITING_KEY = 0
 _HEALTH_CHECKS: dict[str, str] = {
     "weather": "https://api.weatherapi.com/v1/current.json?key={key}&q=London&aqi=no",
     "exchange": "https://v6.exchangerate-api.com/v6/{key}/pair/USD/EUR",
-    "horoscope": "https://api.api-ninjas.com/v1/horoscope?zodiac=aries",
 }
-
-# Cooldown for alerts per provider (6 hours)
-_alert_cooldown: dict[str, float] = {}
-_ALERT_COOLDOWN_SECONDS = 6 * 3600
 
 
 # ── /keys entrypoint ─────────────────────────────────────────────────────────
@@ -93,6 +82,7 @@ def _build_provider_grid() -> InlineKeyboardMarkup:
 # ── Callback Handlers ────────────────────────────────────────────────────────
 
 
+@admin_only
 async def keys_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
     """Handle all keys:* callbacks."""
     query = update.callback_query
@@ -101,18 +91,26 @@ async def keys_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     if data.startswith("keys:show:"):
         provider = data.split(":", 2)[2]
+        if provider not in _PROVIDERS:
+            return ConversationHandler.END
         return await _show_provider_status(query, provider)
 
     if data.startswith("keys:check:"):
         provider = data.split(":", 2)[2]
+        if provider not in _PROVIDERS:
+            return ConversationHandler.END
         return await _check_provider_health_cb(query, provider)
 
     if data.startswith("keys:clear:"):
         provider = data.split(":", 2)[2]
+        if provider not in _PROVIDERS:
+            return ConversationHandler.END
         return await _clear_provider_key_cb(query, provider)
 
     if data.startswith("keys:edit:"):
         provider = data.split(":", 2)[2]
+        if provider not in _PROVIDERS:
+            return ConversationHandler.END
         if context.user_data is not None:
             context.user_data["keys_editing_provider"] = provider
         label = _PROVIDERS.get(provider, provider)
@@ -219,10 +217,11 @@ async def _show_all_statuses(query) -> int:
 # ── Key Receive Handler ──────────────────────────────────────────────────────
 
 
+@admin_only
 async def receive_key_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the user's new API key message — store + delete the message."""
     provider = context.user_data.pop("keys_editing_provider", None) if context.user_data is not None else None
-    if not provider:
+    if provider not in _PROVIDERS:
         return ConversationHandler.END
 
     new_key = (update.message.text or "").strip()
@@ -234,13 +233,20 @@ async def receive_key_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     await set_provider_key(provider, new_key)
 
     # Delete the user's message containing the key (security)
+    deleted = False
     try:
         await update.message.delete()
+        deleted = True
     except Exception as del_err:
         logger.debug("Could not delete key message: %s", del_err)
 
     label = _PROVIDERS.get(provider, provider)
-    text = f"✅ Ключ для **{label}** обновлён.\n_Сообщение с ключом удалено для безопасности._"
+    deletion_note = (
+        "_Сообщение с ключом удалено для безопасности._"
+        if deleted
+        else "⚠️ _Не удалось удалить сообщение с ключом — удалите его вручную._"
+    )
+    text = f"✅ Ключ для **{label}** обновлён.\n{deletion_note}"
     fmt, pm = TelegramFormatter.format_text(text)
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ К провайдерам", callback_data="keys:back")]])
     await update.message.chat.send_message(fmt, parse_mode=pm, reply_markup=keyboard)
@@ -256,10 +262,6 @@ async def check_single_provider_health(provider: str) -> bool | None:
     key = await get_provider_key(provider)
 
     if not template:
-        # No specific health check — just verify key is present
-        if provider in {"gemini", "tavily", "openrouter", "elevenlabs"}:
-            status = await get_provider_status(provider)
-            return status["source"] != "missing"
         return None  # No check available
 
     if not key:
@@ -267,48 +269,11 @@ async def check_single_provider_health(provider: str) -> bool | None:
 
     try:
         async with httpx.AsyncClient(timeout=6.0) as client:
-            if provider == "horoscope":
-                resp = await client.get(template, headers={"X-Api-Key": key})
-            else:
-                url = template.format(key=key)
-                resp = await client.get(url)
+            url = template.format(key=key)
+            resp = await client.get(url)
             return resp.status_code == 200
     except Exception:
         return False
-
-
-async def run_all_health_checks(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Background job: ping all providers and alert admin on failure."""
-    import asyncio
-    admin_id = get_admin_id()
-    now = time.time()
-
-    providers = list(_PROVIDERS.keys())
-    # Run all health checks in parallel
-    results_list = await asyncio.gather(*(check_single_provider_health(p) for p in providers), return_exceptions=True)
-    
-    results: dict[str, bool | None] = {}
-    for provider, res in zip(providers, results_list, strict=False):
-        if isinstance(res, Exception):  # return_exceptions=True can yield exceptions
-            results[provider] = False
-        else:
-            results[provider] = res  # type: ignore[assignment]  # bool | None from check_single_provider_health
-
-    failures = []
-    for provider, healthy in results.items():
-        if healthy is False:
-            # Check cooldown
-            last_alert = _alert_cooldown.get(provider, 0)
-            if now - last_alert > _ALERT_COOLDOWN_SECONDS:
-                _alert_cooldown[provider] = now
-                failures.append(_PROVIDERS.get(provider, provider))
-
-    if failures and context.bot:
-        text = "⚠️ **Provider Health Alert**\n\n" + "\n".join(f"❌ {name}" for name in failures)
-        try:
-            await context.bot.send_message(admin_id, text, parse_mode="Markdown")
-        except Exception as send_err:
-            logger.warning("Failed to send health alert: %s", send_err)
 
 
 def build_keys_conversation_handler() -> ConversationHandler:

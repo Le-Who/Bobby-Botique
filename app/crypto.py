@@ -96,25 +96,12 @@ def safe_decrypt(value: str) -> str:
     """
     if is_encrypted(value):
         try:
-            decrypted = decrypt_api_key(value)
-            logging.debug(
-                "Key decrypted OK: encrypted_prefix=%s... -> decrypted_prefix=%s****, len=%d",
-                value[:12],
-                decrypted[:6],
-                len(decrypted),
-            )
-            return decrypted
-        except (ValueError, Exception) as e:
+            return decrypt_api_key(value)
+        except Exception as e:
             from app.errors import DecryptionError
 
-            logging.error(
-                "CRITICAL: Failed to decrypt key (prefix=%s..., len=%d): %s",
-                value[:12],
-                len(value),
-                e,
-            )
-            raise DecryptionError(f"Cannot decrypt API key (prefix={value[:12]}...): {e}") from e
-    logging.debug("Key not encrypted (prefix=%s****, len=%d), using as-is", value[:6], len(value))
+            logging.error("CRITICAL: Failed to decrypt stored API key (%s)", type(e).__name__)
+            raise DecryptionError("Cannot decrypt stored API key") from e
     return value
 
 

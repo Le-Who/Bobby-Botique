@@ -211,11 +211,16 @@ async def _search_for_topics(topics: list[str]) -> list[dict[str, str]]:
     articles: list[dict[str, str]] = []
 
     try:
-        from app.research.search_client import search_tavily
+        from app.search_services import tavily_search_agent
 
         for topic in topics[:3]:  # Limit API calls
             try:
-                results = await search_tavily(topic, max_results=2)
+                response = await tavily_search_agent(
+                    topic,
+                    search_type="search",
+                    max_results=2,
+                )
+                results = response.get("results", [])
                 if results:
                     for r in results:
                         articles.append(

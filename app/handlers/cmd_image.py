@@ -586,6 +586,7 @@ async def _run_generation(
                 model=model,
                 aspect_ratio=aspect_ratio,
                 number_of_images=1,
+                user_id=user_id,
             )
             if result.success and result.images:
                 image_bytes = result.images[0]
@@ -706,6 +707,8 @@ def _error_text(err: str) -> str:
             "⏳ *Дневной лимит генерации изображений исчерпан.*\n\n"
             "Попробуйте завтра или переключитесь на другую модель."
         )
+    if err == "user_daily_limit":
+        return "⏳ *Ваш дневной лимит генераций Imagen исчерпан.* Попробуйте снова завтра."
     if err == "paid_tier_required":
         return (
             "💳 *Эта модель требует оплаченного аккаунта.*\n\n"

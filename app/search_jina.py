@@ -20,8 +20,6 @@ from urllib.parse import quote as url_quote
 
 import httpx
 
-from app.config import get_settings_safe
-
 _JINA_SEARCH_BASE = "https://s.jina.ai/"
 _JINA_READER_BASE = "https://r.jina.ai/"
 _DEFAULT_TIMEOUT = 15.0
@@ -65,8 +63,9 @@ async def search_jina(query: str, timeout: float = _DEFAULT_TIMEOUT) -> JinaSear
         ``JinaSearchResult`` with query, content (markdown), and source URLs.
         On any error, returns a result with empty content.
     """
-    cfg = get_settings_safe()
-    api_key = cfg.JINA_API_KEY if cfg else ""
+    from app.repos.provider_keys import get_provider_key
+
+    api_key = await get_provider_key("jina")
 
     encoded_query = _JINA_SEARCH_BASE + url_quote(query, safe="")
     url = encoded_query
@@ -79,13 +78,13 @@ async def search_jina(query: str, timeout: float = _DEFAULT_TIMEOUT) -> JinaSear
             resp.raise_for_status()
             content = resp.text[:_MAX_RESULT_CHARS]
     except httpx.TimeoutException:
-        logging.warning("JINA Search timed out for query: %s", query[:80])
+        logging.warning("JINA Search timed out (query_length=%d)", len(query))
         return JinaSearchResult(query=query, content="", source_urls=[])
     except httpx.HTTPStatusError as e:
-        logging.warning("JINA Search HTTP error %d for query '%s': %s", e.response.status_code, query[:80], e)
+        logging.warning("JINA Search HTTP error %d (query_length=%d)", e.response.status_code, len(query))
         return JinaSearchResult(query=query, content="", source_urls=[])
     except Exception as e:
-        logging.error("JINA Search unexpected error for query '%s': %s", query[:80], e)
+        logging.error("JINA Search unexpected error (error_type=%s, query_length=%d)", type(e).__name__, len(query))
         return JinaSearchResult(query=query, content="", source_urls=[])
 
     source_urls = _extract_source_urls(content)
@@ -105,8 +104,9 @@ async def read_jina_page(url: str, timeout: float = _DEFAULT_TIMEOUT) -> str:
     Returns:
         Markdown content of the page, truncated to ``_MAX_RESULT_CHARS``.
     """
-    cfg = get_settings_safe()
-    api_key = cfg.JINA_API_KEY if cfg else ""
+    from app.repos.provider_keys import get_provider_key
+
+    api_key = await get_provider_key("jina")
 
     reader_url = _JINA_READER_BASE + url
     headers = _build_jina_headers(api_key or None)
@@ -117,13 +117,13 @@ async def read_jina_page(url: str, timeout: float = _DEFAULT_TIMEOUT) -> str:
             resp.raise_for_status()
             return resp.text[:_MAX_RESULT_CHARS]
     except httpx.TimeoutException:
-        logging.warning("JINA Reader timed out for URL: %s", url[:80])
+        logging.warning("JINA Reader timed out")
         return ""
     except httpx.HTTPStatusError as e:
-        logging.warning("JINA Reader HTTP error %d for URL '%s': %s", e.response.status_code, url[:80], e)
+        logging.warning("JINA Reader HTTP error %d", e.response.status_code)
         return ""
     except Exception as e:
-        logging.error("JINA Reader unexpected error for URL '%s': %s", url[:80], e)
+        logging.error("JINA Reader unexpected error (error_type=%s)", type(e).__name__)
         return ""
 
 

@@ -154,7 +154,6 @@ async def generate_speech_elevenlabs(
         "text": text,
         "model_id": model_id,
         "voice_settings": _DEFAULT_VOICE_SETTINGS,
-        "output_format": _OUTPUT_FORMAT,
         # Text normalisation: let EL convert dates / numbers to natural speech.
         # Our _clean_text_for_speech() already strips code blocks, so the risk of
         # misreading inline code is negligible.
@@ -173,6 +172,7 @@ async def generate_speech_elevenlabs(
             client.post(
                 endpoint,
                 json=payload,
+                params={"output_format": _OUTPUT_FORMAT},
                 headers={"xi-api-key": api_key},
             ),
             timeout=timeout,
@@ -196,13 +196,8 @@ async def generate_speech_elevenlabs(
 
     if response.status_code != 200:
         # Non-recoverable server error — don't rotate key, just fail.
-        body_preview = response.text[:300] if response.text else "<no body>"
-        logging.error(
-            "ElevenLabs unexpected HTTP %d: %s",
-            response.status_code,
-            body_preview,
-        )
-        raise ElevenLabsAPIError(f"HTTP {response.status_code}: {body_preview}")
+        logging.error("ElevenLabs unexpected HTTP %d", response.status_code)
+        raise ElevenLabsAPIError(f"HTTP {response.status_code}")
 
     audio_bytes = response.content
     if not audio_bytes or len(audio_bytes) < 100:
@@ -356,8 +351,8 @@ async def fetch_voices(api_key: str, *, timeout: float = 10.0) -> list[dict]:
             ),
             timeout=timeout,
         )
-    except Exception as e:
-        logging.warning("Failed to fetch ElevenLabs voices: %s", e)
+    except Exception as exc:
+        logging.warning("Failed to fetch ElevenLabs voices (%s)", type(exc).__name__)
         return []
 
     if response.status_code != 200:
@@ -366,8 +361,8 @@ async def fetch_voices(api_key: str, *, timeout: float = 10.0) -> list[dict]:
 
     try:
         data = response.json()
-    except Exception as e:
-        logging.warning("Failed to parse ElevenLabs voices JSON: %s", e)
+    except Exception as exc:
+        logging.warning("Failed to parse ElevenLabs voices JSON (%s)", type(exc).__name__)
         return []
 
     voices_list = data.get("voices", [])

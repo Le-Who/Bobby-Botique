@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -27,6 +28,24 @@ _TELEGRAPH_API = "https://api.telegra.ph"
 
 # Cached access_token (created lazily on first use)
 _access_token: str | None = None
+
+
+def is_safe_telegraph_url(value: str | None) -> bool:
+    """Accept only canonical HTTPS pages hosted by Telegraph itself."""
+    if not value:
+        return False
+    try:
+        parsed = urlsplit(value.strip())
+        port = parsed.port
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        parsed.scheme.lower() == "https"
+        and parsed.hostname == "telegra.ph"
+        and port in (None, 443)
+        and parsed.username is None
+        and parsed.password is None
+    )
 
 
 async def _ensure_account() -> str:
@@ -50,11 +69,11 @@ async def _ensure_account() -> str:
         data = resp.json()
 
     if not data.get("ok"):
-        raise RuntimeError(f"Telegraph createAccount failed: {data}")
+        raise RuntimeError("Telegraph createAccount failed")
 
     _access_token = data["result"]["access_token"]
     assert isinstance(_access_token, str)
-    logger.info("Telegraph account created (token=%s...)", _access_token[:8])
+    logger.info("Telegraph account created")
     return _access_token
 
 
@@ -175,15 +194,18 @@ async def create_telegraph_page(title: str, markdown_content: str) -> str | None
             data = resp.json()
 
         if not data.get("ok"):
-            logger.warning("Telegraph createPage failed: %s", data)
+            logger.warning("Telegraph createPage failed")
             return None
 
         url = data["result"]["url"]
+        if not is_safe_telegraph_url(url):
+            logger.warning("Telegraph createPage returned an invalid URL")
+            return None
         logger.info("Telegraph page created: %s (%d chars)", url, len(markdown_content))
         return url
 
     except Exception as e:
-        logger.warning("Telegraph page creation failed: %s", e)
+        logger.warning("Telegraph page creation failed (error_type=%s)", type(e).__name__)
         return None
 
 

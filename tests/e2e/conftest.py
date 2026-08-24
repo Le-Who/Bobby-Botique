@@ -8,14 +8,27 @@ DB fixtures are shared from tests/integration/conftest.py via explicit import
 import contextlib
 import json
 import os
+from urllib.parse import urlsplit
 
 import asyncpg
 import pytest
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+_ENV_PATH = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+_FILE_ENV = dotenv_values(_ENV_PATH)
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL") or _FILE_ENV.get("TEST_DATABASE_URL")
+_PRODUCTION_DATABASE_URL = os.getenv("GEMAIBOT_TEST_ORIGINAL_DATABASE_URL") or _FILE_ENV.get("DATABASE_URL")
 
-TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
+
+def _database_identity(value: str | None):
+    if not value:
+        return None
+    parsed = urlsplit(value)
+    return parsed.hostname, parsed.port or 5432, parsed.path.rstrip("/")
+
+
+if TEST_DATABASE_URL and _database_identity(TEST_DATABASE_URL) == _database_identity(_PRODUCTION_DATABASE_URL):
+    raise RuntimeError("TEST_DATABASE_URL resolves to the production database target")
 
 # Shared test user ID constant
 TEST_USER_ID = 999999
@@ -50,11 +63,11 @@ async def db_conn(test_db_url):
     """Transactional DB connection that auto-rollbacks after each test."""
     conn = await asyncpg.connect(test_db_url, statement_cache_size=0)
     await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
-    await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS ltm_enabled BOOLEAN DEFAULT TRUE")
-    await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS branch_id INTEGER")
     tx = conn.transaction()
     await tx.start()
     try:
+        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS ltm_enabled BOOLEAN DEFAULT TRUE")
+        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS branch_id INTEGER")
         yield conn
     finally:
         try:

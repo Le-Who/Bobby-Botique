@@ -1,17 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, time
+from time import monotonic as _monotonic
 from typing import Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
+from cachetools import TTLCache
 
 from app.natal.city_catalog import nearest_city_timezone, search_cities
 from app.natal.models import BirthInput, ResolvedBirthData, TimePrecision
 
 logger = logging.getLogger(__name__)
+
+_NOMINATIM_MIN_INTERVAL_SECONDS = 1.0
+_nominatim_cache: TTLCache[str, GeocodeResult] = TTLCache(maxsize=512, ttl=24 * 60 * 60)
+_nominatim_lock = asyncio.Lock()
+_nominatim_last_started_at = 0.0
 
 
 @dataclass(frozen=True)
@@ -38,28 +46,47 @@ class NominatimGeocoder:
         query = place.strip()
         if not query:
             raise GeocodingError("Place query is empty.")
-        logger.debug("Geocoding place query: %s", query)
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            response = await client.get(
-                "https://nominatim.openstreetmap.org/search",
-                params={"q": query, "format": "jsonv2", "limit": 1},
-                headers={"User-Agent": self.user_agent},
+        cache_key = " ".join(query.split()).casefold()
+        cached = _nominatim_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        async with _nominatim_lock:
+            cached = _nominatim_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            await _wait_for_nominatim_slot()
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.get(
+                    "https://nominatim.openstreetmap.org/search",
+                    params={"q": query, "format": "jsonv2", "limit": 1},
+                    headers={"User-Agent": self.user_agent},
+                )
+                response.raise_for_status()
+                data = response.json()
+            if not data:
+                raise GeocodingError("Место рождения не найдено.")
+            first = data[0]
+            try:
+                latitude = float(first["lat"])
+                longitude = float(first["lon"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise GeocodingError("Геокодер вернул некорректные координаты.") from exc
+            result = GeocodeResult(
+                display_name=str(first.get("display_name") or query),
+                latitude=latitude,
+                longitude=longitude,
             )
-            response.raise_for_status()
-            data = response.json()
-        if not data:
-            raise GeocodingError("Место рождения не найдено.")
-        first = data[0]
-        try:
-            latitude = float(first["lat"])
-            longitude = float(first["lon"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise GeocodingError("Геокодер вернул некорректные координаты.") from exc
-        return GeocodeResult(
-            display_name=str(first.get("display_name") or query),
-            latitude=latitude,
-            longitude=longitude,
-        )
+            _nominatim_cache[cache_key] = result
+            return result
+
+
+async def _wait_for_nominatim_slot() -> None:
+    global _nominatim_last_started_at
+    remaining = _NOMINATIM_MIN_INTERVAL_SECONDS - (_monotonic() - _nominatim_last_started_at)
+    if remaining > 0:
+        await asyncio.sleep(remaining)
+    _nominatim_last_started_at = _monotonic()
 
 
 async def resolve_birth_data(
@@ -170,7 +197,23 @@ def _build_local_datetime(birth: BirthInput, local_zone: ZoneInfo) -> datetime:
         raise GeocodingError("Укажите примерное время рождения.")
     else:
         birth_time = time(12, 0)  # type: ignore[unreachable]
-    return datetime.combine(birth_date, birth_time, tzinfo=local_zone)
+    local_naive = datetime.combine(birth_date, birth_time)
+    valid_candidates: list[datetime] = []
+    for fold in (0, 1):
+        candidate = local_naive.replace(tzinfo=local_zone, fold=fold)
+        round_trip = candidate.astimezone(UTC).astimezone(local_zone).replace(tzinfo=None)
+        if round_trip == local_naive:
+            valid_candidates.append(candidate)
+
+    if not valid_candidates:
+        raise GeocodingError(
+            "Выбранное местное время не существовало из-за перехода на летнее время. Укажите другое время."
+        )
+    if len(valid_candidates) == 2 and valid_candidates[0].utcoffset() != valid_candidates[1].utcoffset():
+        raise GeocodingError(
+            "Выбранное местное время неоднозначно из-за перехода с летнего времени. Уточните время рождения."
+        )
+    return valid_candidates[0]
 
 
 def _parse_time(value: str) -> time:

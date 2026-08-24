@@ -207,3 +207,43 @@ class TestBriefGeneration:
             # Verify the message contains the brief
             sent_text = mock_bot.send_message.call_args[1]["text"]
             assert "бриф" in sent_text.lower() or "ML" in sent_text
+
+
+class TestTopicSearch:
+    """Test the scheduled brief adapter around Tavily search results."""
+
+    @pytest.mark.asyncio
+    async def test_search_for_topics_parses_tavily_search_envelope(self):
+        tavily_response = {
+            "type": "search",
+            "results": [
+                {
+                    "title": "Fresh result",
+                    "content": "Current information about the topic.",
+                    "url": "https://example.com/article",
+                    "score": 0.95,
+                }
+            ],
+        }
+
+        with patch(
+            "app.search_services.tavily_search_agent",
+            new_callable=AsyncMock,
+            return_value=tavily_response,
+        ) as mock_search:
+            from app.handlers.scheduled_briefs import _search_for_topics
+
+            articles = await _search_for_topics(["machine learning"])
+
+        assert articles == [
+            {
+                "title": "Fresh result",
+                "content": "Current information about the topic.",
+                "url": "https://example.com/article",
+            }
+        ]
+        mock_search.assert_awaited_once_with(
+            "machine learning",
+            search_type="search",
+            max_results=2,
+        )

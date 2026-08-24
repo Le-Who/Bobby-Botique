@@ -33,6 +33,12 @@ from typing import TYPE_CHECKING
 import httpx
 
 from app.config import POLLINATIONS_BASE_URL, settings
+from app.utils.media_download import (
+    IMAGE_MIME_TYPES,
+    MAX_IMAGE_DOWNLOAD_BYTES,
+    MediaDownloadError,
+    download_media,
+)
 
 if TYPE_CHECKING:
     pass
@@ -248,6 +254,10 @@ class PollinationsProvider:
             Transcribed text or None on failure.
         """
         url = "https://text.pollinations.ai/openai/audio/transcriptions"
+        from app.repos.provider_keys import get_provider_key
+
+        api_key = await get_provider_key("pollinations")
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
 
         # httpx expects files in format: {'file': ('filename', b'content', 'mime_type')}
         files: dict[str, tuple[str, bytes, str]] = {"file": ("audio.ogg", audio_bytes, "audio/ogg")}
@@ -255,7 +265,7 @@ class PollinationsProvider:
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(url, data=data, files=files)
+                resp = await client.post(url, data=data, files=files, headers=headers)
 
             if 200 <= resp.status_code < 300:
                 content_type = resp.headers.get("content-type", "").lower()
@@ -266,8 +276,8 @@ class PollinationsProvider:
                             logger.error("Pollinations whisper hallucinated a chat response.")
                             return None
                         return js.get("text", "").strip() or None
-                    except Exception as e:
-                        logger.warning("Pollinations whisper JSON parse error: %s", e)
+                    except Exception as exc:
+                        logger.warning("Pollinations whisper JSON parse error (%s)", type(exc).__name__)
                         return None
                 else:
                     text_res = resp.text.strip()
@@ -276,13 +286,13 @@ class PollinationsProvider:
                         return None
                     return text_res
             else:
-                logger.warning("Pollinations whisper error: %d - %s", resp.status_code, resp.text[:200])
+                logger.warning("Pollinations whisper HTTP error: %d", resp.status_code)
                 return None
         except httpx.TimeoutException:
             logger.warning("Pollinations whisper request timed out after %s s", timeout)
             return None
         except Exception as exc:
-            logger.error("Pollinations whisper request failed: %s", exc)
+            logger.error("Pollinations whisper request failed (error_type=%s)", type(exc).__name__)
             return None
 
     # ------------------------------------------------------------------
@@ -302,7 +312,9 @@ class PollinationsProvider:
     ) -> PollinationsResult:
         url = f"{POLLINATIONS_BASE_URL}/v1/images/generations"
         headers: dict[str, str] = {"Content-Type": "application/json"}
-        api_key = settings.POLLINATIONS_API_KEY
+        from app.repos.provider_keys import get_provider_key
+
+        api_key = await get_provider_key("pollinations")
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
@@ -347,7 +359,7 @@ class PollinationsProvider:
         except httpx.TimeoutException:
             return PollinationsResult(success=False, error_message="timeout", model_used=model)
         except Exception as exc:
-            logger.debug("Pollinations POST error: %s", exc)
+            logger.debug("Pollinations POST error (error_type=%s)", type(exc).__name__)
             return PollinationsResult(
                 success=False,
                 error_message=f"post_error:{type(exc).__name__}",
@@ -384,39 +396,22 @@ class PollinationsProvider:
             params["negative_prompt"] = negative_prompt
 
         if not omit_key:
-            api_key = settings.POLLINATIONS_API_KEY
+            from app.repos.provider_keys import get_provider_key
+
+            api_key = await get_provider_key("pollinations")
             if api_key:
                 params["key"] = api_key
 
         url = f"{POLLINATIONS_BASE_URL}/image/{encoded_prompt}"
 
         try:
-            async with httpx.AsyncClient(
+            request_url = str(httpx.URL(url, params=params))
+            image_bytes = await download_media(
+                request_url,
+                allowed_mime_types=IMAGE_MIME_TYPES,
+                max_bytes=MAX_IMAGE_DOWNLOAD_BYTES,
                 timeout=timeout,
-                follow_redirects=True,
-            ) as client:
-                resp = await client.get(url, params=params)
-
-            if not (200 <= resp.status_code < 300):
-                return PollinationsResult(
-                    success=False,
-                    error_message=f"get_http_{resp.status_code}",
-                    model_used=model,
-                )
-
-            # Safety: must be an image (guards against CloudFlare HTML error pages)
-            content_type = resp.headers.get("content-type", "")
-            if not content_type.startswith("image/"):
-                logger.warning("Pollinations GET: unexpected content-type %r (not image/*)", content_type)
-                return PollinationsResult(
-                    success=False,
-                    error_message="invalid_content_type",
-                    model_used=model,
-                )
-
-            image_bytes = resp.content
-            if not image_bytes:
-                return PollinationsResult(success=False, error_message="empty_response", model_used=model)
+            )
 
             logger.info(
                 "Pollinations GET fallback: success — model=%s size=%dx%d bytes=%d",
@@ -427,13 +422,11 @@ class PollinationsProvider:
             )
             return PollinationsResult(success=True, images=[image_bytes], model_used=model)
 
-        except httpx.TimeoutException:
-            return PollinationsResult(success=False, error_message="timeout", model_used=model)
-        except Exception as exc:
-            logger.error("Pollinations GET error: %s", exc, exc_info=True)
+        except MediaDownloadError as exc:
+            logger.warning("Pollinations GET download failed (%s)", exc.code)
             return PollinationsResult(
                 success=False,
-                error_message=f"get_error:{type(exc).__name__}",
+                error_message=f"get_error:{exc.code}",
                 model_used=model,
             )
 
@@ -459,22 +452,33 @@ async def _extract_b64_or_url_bytes(data: dict, timeout: float = 30.0) -> list[b
     for item in items:
         b64 = item.get("b64_json")
         if b64:
-            try:
-                result.append(base64.b64decode(b64))
+            max_encoded_chars = ((MAX_IMAGE_DOWNLOAD_BYTES + 2) // 3) * 4
+            if not isinstance(b64, str) or len(b64) > max_encoded_chars:
+                logger.warning("Pollinations: rejected oversized b64_json")
                 continue
-            except Exception as exc:
-                logger.warning("Pollinations: failed to decode b64_json: %s", exc)
+            try:
+                decoded = base64.b64decode(b64, validate=True)
+                if len(decoded) > MAX_IMAGE_DOWNLOAD_BYTES:
+                    logger.warning("Pollinations: rejected oversized decoded image")
+                    continue
+                result.append(decoded)
+                continue
+            except Exception:
+                logger.warning("Pollinations: failed to decode b64_json")
 
         url_str = item.get("url")
         if url_str:
             try:
-                async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-                    fetched = await client.get(url_str)
-                content_type = fetched.headers.get("content-type", "")
-                if fetched.status_code == 200 and content_type.startswith("image/"):
-                    result.append(fetched.content)
-            except Exception as exc:
-                logger.warning("Pollinations: failed to fetch url %s: %s", url_str, exc)
+                result.append(
+                    await download_media(
+                        url_str,
+                        allowed_mime_types=IMAGE_MIME_TYPES,
+                        max_bytes=MAX_IMAGE_DOWNLOAD_BYTES,
+                        timeout=timeout,
+                    )
+                )
+            except MediaDownloadError as exc:
+                logger.warning("Pollinations: media download failed (%s)", exc.code)
 
     return result
 

@@ -10,7 +10,7 @@ from typing import Any
 
 import asyncpg
 
-from app.config import settings
+from app.config import UTC_TZ, settings
 from app.database import (
     clear_user_context,
     db_manager,
@@ -71,7 +71,7 @@ async def get_supabase_metrics() -> dict[str, Any]:
 
 async def get_tavily_key_usage_stats() -> list[dict[str, Any]]:
     """Get monthly credit usage stats for all Tavily API keys."""
-    current_month = datetime.now(get_pacific_tz()).strftime("%Y-%m")
+    current_month = datetime.now(UTC_TZ).strftime("%Y-%m")
     query = """
         SELECT
             ak.key_hash,

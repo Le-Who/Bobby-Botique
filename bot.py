@@ -18,6 +18,7 @@ if sys.platform != "win32":
         pass
 
 import asyncio
+import hashlib
 import logging
 import signal
 import threading
@@ -74,6 +75,12 @@ from app.web import quart_app
 
 # Global shutdown event
 shutdown_event = asyncio.Event()
+
+
+def _telegram_webhook_path(bot_token: str) -> str:
+    """Return a stable webhook route without embedding the Telegram bot token."""
+    digest = hashlib.sha256(f"gemaibot-webhook-v1:{bot_token}".encode()).hexdigest()
+    return f"/webhook/{digest}"
 
 
 def signal_handler(signum, _frame):
@@ -407,7 +414,7 @@ async def run_bot_with_retry():
 
         if webhook_url:
             # ── Webhook mode ─────────────────────────────────────────────
-            webhook_path = f"/webhook/{settings.TELEGRAM_BOT_TOKEN}"
+            webhook_path = _telegram_webhook_path(settings.TELEGRAM_BOT_TOKEN)
             full_url = f"{webhook_url.rstrip('/')}{webhook_path}"
             webhook_secret = (settings.WEBHOOK_SECRET_TOKEN or "").strip()
             seen_update_ids: dict[int, float] = {}
@@ -485,7 +492,7 @@ async def run_bot_with_retry():
                 max_connections=max(1, min(100, settings.WEBHOOK_MAX_CONNECTIONS)),
                 secret_token=webhook_secret or None,
             )
-            logging.info("Bot started in WEBHOOK mode: %s", full_url)
+            logging.info("Bot started in WEBHOOK mode")
         else:
             # ── Long-polling mode ────────────────────────────────────────
             await application.updater.start_polling(
@@ -578,21 +585,6 @@ async def run_bot_with_retry():
         except Exception as e:
             logging.warning("Failed to register horoscope delivery job: %s", e)
 
-
-        # Schedule provider health check (every 30 minutes)
-        try:
-            from app.handlers.cmd_keys import run_all_health_checks
-
-            if application.job_queue:
-                application.job_queue.run_repeating(
-                    run_all_health_checks,
-                    interval=1800,  # Every 30 minutes
-                    first=120,  # First run 2min after boot
-                    name="provider_health_check",
-                )
-                logging.info("Provider health check job registered (30min interval)")
-        except Exception as e:
-            logging.warning("Failed to register provider health check job: %s", e)
 
         # Wait for shutdown event
         try:
@@ -779,12 +771,12 @@ async def startup_health_check():
                         )
                         telegram_ok = True
                     else:
-                        raise Exception(f"Telegram API error: {bot_info}")
+                        raise RuntimeError("Telegram API returned a non-ok response")
                 else:
-                    raise Exception(f"Telegram API HTTP error: {response.status_code}")
+                    raise RuntimeError(f"Telegram API HTTP status {response.status_code}")
         except Exception as e:
-            logging.error("✗ Telegram API check failed: %s", e)
-            raise Exception(f"Telegram API health check failed: {e}") from e
+            logging.error("✗ Telegram API check failed (%s)", type(e).__name__)
+            raise RuntimeError("Telegram API health check failed") from None
 
     await asyncio.gather(_check_db(), _check_telegram(), return_exceptions=False)
 

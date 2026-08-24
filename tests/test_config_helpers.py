@@ -143,6 +143,27 @@ def test_load_settings_reads_webhook_backpressure_envs(monkeypatch):
     assert settings.UPDATE_QUEUE_MAXSIZE == 2500
 
 
+def test_load_settings_reads_external_publication_and_image_quota_envs(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    monkeypatch.setenv("TELEGRAPH_PUBLICATION_ENABLED", "true")
+    monkeypatch.setenv("IMAGE_GEN_DAILY_LIMIT", "7")
+    monkeypatch.setenv("IMAGE_GEN_RPD_PER_KEY", "19")
+    monkeypatch.setenv("IMAGE_GEN_TIMEOUT", "42.5")
+    monkeypatch.setenv("IMAGE_GEN_MAX_RETRIES", "2")
+
+    settings = load_settings()
+
+    assert settings.TELEGRAPH_PUBLICATION_ENABLED is True
+    assert settings.IMAGE_GEN_DAILY_LIMIT == 7
+    assert settings.IMAGE_GEN_RPD_PER_KEY == 19
+    assert settings.IMAGE_GEN_TIMEOUT == 42.5
+    assert settings.IMAGE_GEN_MAX_RETRIES == 2
+
+
 def test_load_settings_uses_current_primary_and_economy_defaults(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")

@@ -42,10 +42,29 @@ async def _ensure_table() -> None:
             )
             """
         )
+        await db.db_query("ALTER TABLE global_settings ENABLE ROW LEVEL SECURITY")
+        await db.db_query(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_policies
+                    WHERE schemaname = current_schema()
+                      AND tablename = 'global_settings'
+                      AND policyname = 'global_settings_policy'
+                ) THEN
+                    CREATE POLICY global_settings_policy ON global_settings
+                    FOR ALL USING ((select current_setting('app.is_admin', true)) = 'true');
+                END IF;
+            END
+            $$
+            """
+        )
         _table_verified = True
         logger.info("settings_repo: global_settings table verified/created")
     except Exception as exc:
         logger.warning("settings_repo: failed to bootstrap global_settings: %s", exc)
+        raise
 
 
 async def get_global_setting(key: str, default: str = "") -> str:
@@ -75,11 +94,11 @@ async def get_global_setting(key: str, default: str = "") -> str:
             value = rows[0]["value_data"] if rows else default
         except Exception as exc:
             logger.warning(
-                "settings_repo: retry after bootstrap failed for '%s': %s — using default '%s'", key, exc, default
+                "settings_repo: retry after bootstrap failed for '%s': %s — using default", key, exc
             )
             value = default
     except Exception as exc:
-        logger.warning("settings_repo: failed to read '%s': %s — using default '%s'", key, exc, default)
+        logger.warning("settings_repo: failed to read '%s': %s — using default", key, exc)
         value = default
 
     _cache[key] = value
@@ -105,7 +124,7 @@ async def set_global_setting(key: str, value: str) -> None:
     )
     # Immediately evict so the next read fetches the fresh value.
     _cache.pop(key, None)
-    logger.info("settings_repo: set '%s' = '%s'", key, value)
+    logger.info("settings_repo: updated '%s'", key)
 
 
 async def delete_global_setting(key: str) -> None:

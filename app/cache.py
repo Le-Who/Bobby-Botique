@@ -11,6 +11,20 @@ from app.errors import RedisConnectionError
 from app.metrics import metrics_collector
 from app.utils.json_compat import json
 
+
+def _redis_tls_options(url: str) -> dict[str, str | bool]:
+    """Return secure-by-default TLS options only for ``rediss://`` URLs."""
+    if not url.lower().startswith("rediss://"):
+        return {}
+    verify = os.getenv("REDIS_TLS_VERIFY", "true").strip().lower() not in {"0", "false", "no", "off"}
+    if not verify:
+        logging.warning("Redis TLS certificate verification is explicitly disabled")
+    return {
+        "ssl_cert_reqs": "required" if verify else "none",
+        "ssl_check_hostname": verify,
+    }
+
+
 # Initialize Redis client with Upstash.com optimized configuration
 redis_url = os.getenv("REDIS_URL")
 if not redis_url:
@@ -29,11 +43,7 @@ else:
             retry_on_timeout=True,  # Only retry on timeout, not all errors
             decode_responses=False,  # Keep as bytes for manual handling
             health_check_interval=0,  # Disable built-in health-check pings
-            # TLS: disable cert verification for hosted Redis (rediss:// scheme).
-            # The provider uses a self-signed or chain cert that Python's ssl
-            # module rejects by default. ssl_cert_reqs=None skips the check.
-            ssl_cert_reqs=None,
-            ssl_check_hostname=False,
+            **_redis_tls_options(redis_url),
         )
         logging.info("Redis client initialized successfully for Upstash.com")
     except (ConnectionError, RedisError) as e:

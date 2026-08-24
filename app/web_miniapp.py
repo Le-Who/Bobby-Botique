@@ -1200,9 +1200,14 @@ async def _fetch_telegraph_content(tg_url: str) -> str | None:
     import httpx
 
     from app.utils.reader_utils import extract_text_from_telegraph_html
+    from app.utils.telegraph import is_safe_telegraph_url
+
+    if not is_safe_telegraph_url(tg_url):
+        logger.warning("Telegraph reverse-proxy rejected an invalid URL")
+        return None
 
     try:
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=False) as client:
             resp = await client.get(tg_url)
             resp.raise_for_status()
             page_html = resp.text
@@ -1212,13 +1217,13 @@ async def _fetch_telegraph_content(tg_url: str) -> str | None:
 
         article_match = _re.search(r"<article[^>]*>(.*?)</article>", page_html, _re.DOTALL)
         if not article_match:
-            logger.warning("No <article> tag found in Telegraph page: %s", tg_url)
+            logger.warning("No <article> tag found in Telegraph page")
             return None
 
         return extract_text_from_telegraph_html(article_match.group(1))
 
     except Exception as exc:
-        logger.warning("Telegraph reverse-proxy fetch failed (%s): %s", tg_url, exc)
+        logger.warning("Telegraph reverse-proxy fetch failed (error_type=%s)", type(exc).__name__)
         return None
 
 
