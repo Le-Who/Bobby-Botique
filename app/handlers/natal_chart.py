@@ -150,13 +150,17 @@ _FAST_CITIES: Final[dict[str, tuple[tuple[str, str], ...]]] = {
 
 
 async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
-    if not update.message:
+    message = getattr(update, "effective_message", None) or getattr(update, "message", None)
+    if not message:
         return ConversationHandler.END
+    query = getattr(update, "callback_query", None)
+    if query:
+        await query.answer()
     clear_natal_user_data(context.user_data)
     if not _natal_reports_enabled_for_handler():
-        await update.message.reply_text("Натальные карты временно недоступны.")
+        await message.reply_text("Натальные карты временно недоступны.")
         return ConversationHandler.END
-    flow_message = await update.message.reply_text(
+    flow_message = await message.reply_text(
         "Натальная карта и матрица судьбы — это не приговор, а бережная навигация по вашим акцентам, "
         "ритмам и повторяющимся темам.\n\n"
         "Проще всего заполнить данные в приложении: там можно выбрать натал, матрицу или объединенный разбор. "

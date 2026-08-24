@@ -10,6 +10,7 @@ Flow:
 """
 
 import contextlib
+import functools
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -47,10 +48,26 @@ _PROVIDERS = {
 }
 
 
+def _models_admin_step(func):
+    """Apply admin auth and terminate stale wizard state when access is denied."""
+    protected = admin_only(func)
+
+    @functools.wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        result = await protected(update, context, *args, **kwargs)
+        if result is None:
+            if context.user_data is not None:
+                context.user_data.pop("models_editing_provider", None)
+            return ConversationHandler.END
+        return result
+
+    return wrapper
+
+
 # ── /models entry point ───────────────────────────────────────────────────────
 
 
-@admin_only
+@_models_admin_step
 async def models_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show the provider selector for model management."""
     keyboard = _build_provider_selector()
@@ -73,6 +90,7 @@ def _build_provider_selector() -> InlineKeyboardMarkup:
 # ── Callback router ───────────────────────────────────────────────────────────
 
 
+@_models_admin_step
 async def models_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Route all models:* callback_data payloads."""
     query = update.callback_query
@@ -212,6 +230,7 @@ async def _handle_reset(query, provider: str) -> int:
 # ── Add: receive message ──────────────────────────────────────────────────────
 
 
+@_models_admin_step
 async def receive_model_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Store the new model name sent by the admin."""
     provider = context.user_data.pop("models_editing_provider", None) if context.user_data is not None else None

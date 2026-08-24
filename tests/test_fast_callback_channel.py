@@ -60,6 +60,7 @@ def test_fast_callback_helper_sets_block_false_and_priority_group():
     assert has_group_minus_one, "fast callback helper must use high-priority group=-1"
 
 
-def test_application_enables_concurrent_updates():
-    source = Path("bot.py").read_text()
-    assert ".concurrent_updates(50)" in source
+def test_application_uses_user_scoped_concurrency_in_both_builder_paths():
+    source = Path("bot.py").read_text(encoding="utf-8")
+    assert source.count(".concurrent_updates(UserScopedUpdateProcessor(50))") == 2
+    assert ".concurrent_updates(50)" not in source

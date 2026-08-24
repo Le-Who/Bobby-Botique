@@ -68,6 +68,7 @@ from app.handlers import callbacks, commands, messages
 from app.handlers.cb_navigation import new_topic_callback
 from app.metrics import metrics_collector
 from app.queue import start_task_queue, stop_task_queue
+from app.update_processor import UserScopedUpdateProcessor
 from app.utils.logging_config import setup_detailed_logging
 
 # Import extracted modules
@@ -301,7 +302,7 @@ async def run_bot_with_retry():
             .token(settings.TELEGRAM_BOT_TOKEN)
             .request(custom_request)
             .update_queue(asyncio.Queue(maxsize=max(100, settings.UPDATE_QUEUE_MAXSIZE)))
-            .concurrent_updates(50)  # Matches connection_pool_size to prevent timeouts
+            .concurrent_updates(UserScopedUpdateProcessor(50))
         )
 
         # Inject Local Bot API Server if configured
@@ -323,7 +324,7 @@ async def run_bot_with_retry():
                 .token(settings.TELEGRAM_BOT_TOKEN)
                 .request(custom_request)
                 .update_queue(asyncio.Queue(maxsize=max(100, settings.UPDATE_QUEUE_MAXSIZE)))
-                .concurrent_updates(50)
+                .concurrent_updates(UserScopedUpdateProcessor(50))
                 .base_url(local_server_url)
                 .base_file_url(file_url)
                 .local_mode(True)

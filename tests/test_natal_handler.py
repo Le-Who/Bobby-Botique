@@ -1,8 +1,12 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 from PIL import Image
+from telegram import CallbackQuery, Chat, Message, Update, User
+from telegram.ext import CallbackQueryHandler
+from telegram.warnings import PTBUserWarning
 
 from app.handlers.natal_chart import (
     _NATAL_COVER_PATH,
@@ -194,6 +198,27 @@ async def test_natal_command_sends_mode_selection(monkeypatch):
     assert "точное время рождения" in update.message.replies[0][0]
     assert "Натальная карта строится" not in update.message.replies[0][0]
     assert "natal_flow_message" in context.user_data
+
+
+@pytest.mark.asyncio
+async def test_natal_command_accepts_start_callback_and_acknowledges_it(monkeypatch):
+    monkeypatch.setattr("app.handlers.natal_chart._natal_reports_enabled_for_handler", lambda: True)
+    query = FakeCallbackQuery("start_natal")
+    update = SimpleNamespace(
+        message=None,
+        effective_message=query.message,
+        callback_query=query,
+        effective_user=SimpleNamespace(id=123),
+        effective_chat=SimpleNamespace(id=456),
+    )
+    context = make_context()
+
+    state = await natal_command(update, context)
+
+    assert state == "NATAL_MODE"
+    query.answer.assert_awaited_once()
+    assert "Натальная карта и матрица судьбы" in query.message.replies[0][0]
+    assert context.user_data["natal_flow_message"] is query.message.last_reply_message
 
 
 @pytest.mark.asyncio
@@ -713,6 +738,38 @@ def test_conversation_handler_accepts_natal_command_aliases():
 
     assert any({"natal"}.issubset(commands) for commands in command_sets)
     assert len(handler.entry_points) >= 3
+
+
+def test_conversation_handler_routes_start_natal_callback_to_natal_command():
+    user = User(id=123, first_name="User", is_bot=False)
+    chat = Chat(id=456, type="private")
+    message = Message(
+        message_id=10,
+        date=datetime.now(UTC),
+        chat=chat,
+        from_user=user,
+        text="Open natal",
+    )
+    update = Update(
+        update_id=20,
+        callback_query=CallbackQuery(
+            id="start-natal-query",
+            from_user=user,
+            chat_instance="chat-instance",
+            data="start_natal",
+            message=message,
+        ),
+    )
+
+    with pytest.warns(PTBUserWarning, match="per_message=False"):
+        handler = build_natal_chart_handler()
+    matched = handler.check_update(update)
+
+    assert matched is not None
+    _, key, entry_point, _ = matched
+    assert key == (chat.id, user.id)
+    assert isinstance(entry_point, CallbackQueryHandler)
+    assert entry_point.callback is natal_command
 
 
 @pytest.mark.asyncio
