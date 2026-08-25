@@ -118,6 +118,46 @@ class TestToggleSearchCallback:
         mock_update.assert_awaited_once()
 
 
+class TestToggleLtmCallback:
+    @pytest.mark.asyncio
+    async def test_uses_dedicated_consent_write_and_cancels_old_tasks(self):
+        from app.handlers.cb_navigation import toggle_ltm_callback
+
+        update, query = _make_update("toggle_ltm")
+        update.effective_user.language_code = "ru"
+        chat_state = MagicMock(ltm_enabled=True, memory_epoch=5)
+
+        with (
+            patch("app.handlers.cb_navigation._is_user_busy", return_value=False),
+            patch(
+                "app.handlers.cb_navigation.get_user_chat",
+                new_callable=AsyncMock,
+                return_value=chat_state,
+            ),
+            patch(
+                "app.handlers.cb_navigation.set_ltm_enabled",
+                new_callable=AsyncMock,
+                return_value=6,
+            ) as set_consent,
+            patch("app.handlers.cb_navigation.update_user_chat", new_callable=AsyncMock) as full_save,
+            patch(
+                "app.repos.memory_autosave.cancel_user_memory_tasks",
+                new_callable=AsyncMock,
+            ) as cancel_tasks,
+            patch(
+                "app.handlers.cb_navigation._build_settings_view",
+                return_value=("settings", None, MagicMock()),
+            ),
+        ):
+            await toggle_ltm_callback(update, MagicMock())
+
+        set_consent.assert_awaited_once_with(42, False)
+        cancel_tasks.assert_awaited_once_with(42)
+        full_save.assert_not_awaited()
+        assert chat_state.ltm_enabled is False
+        assert chat_state.memory_epoch == 6
+
+
 class TestDeepDiveCallback:
     @pytest.mark.asyncio
     async def test_busy_user_rejected(self):

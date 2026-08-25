@@ -149,7 +149,7 @@ async def intent_route_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif intent == "research":
         await _route_research(msg, user_id)
     elif intent == "tts":
-        await _route_tts(msg, context)
+        await _route_tts(msg, context, user_id=user_id)
     else:
         logging.warning("Unknown intent route: %s", intent)
 
@@ -223,7 +223,12 @@ async def _route_research(msg: Message, user_id: int) -> None:
         await msg.reply_text("❌ Ошибка при запуске анализа.")
 
 
-async def _route_tts(msg: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _route_tts(
+    msg: Message,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    user_id: int,
+) -> None:
     """Route to TTS — read the bot's response aloud."""
     try:
         response_text = msg.text
@@ -232,7 +237,7 @@ async def _route_tts(msg: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
         # Resolve the user's configured voice preference
-        _user_id = msg.from_user.id if msg.from_user else getattr(context, "_user_id", 0)
+        _user_id = user_id
         tts_voice = "Aoede"
         tts_temperature_val: float | None = None
         if _user_id:

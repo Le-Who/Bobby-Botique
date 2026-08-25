@@ -1,5 +1,6 @@
 """Tests for app.handlers.ai_photo — single photo processing."""
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,6 +13,27 @@ from app.response_delivery.renderer import (
     DeliveryReceipt,
     TelegramMessageRef,
 )
+
+
+@pytest.fixture(autouse=True)
+def photo_privacy_boundary_defaults():
+    """Keep unit tests isolated from the durable database boundary."""
+
+    @asynccontextmanager
+    async def allowed_lease(*_args, **_kwargs):
+        yield True
+
+    async def current_generation(_user_id, *, expected_epoch):
+        return 0 if expected_epoch is None else expected_epoch
+
+    with (
+        patch(
+            "app.handlers.ai_photo.ensure_chat_generation",
+            side_effect=current_generation,
+        ),
+        patch("app.repos.memory_consent.private_data_lease", allowed_lease),
+    ):
+        yield
 
 
 def _receipt() -> DeliveryReceipt:
@@ -61,6 +83,9 @@ def make_chat_state():
         thinking_level=None,
         context_summary=None,
         ltm_enabled=False,
+        memory_epoch=0,
+        private_data_blocked=False,
+        _has_persisted_chat=True,
     )
 
 

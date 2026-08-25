@@ -1,5 +1,6 @@
 """Tests for app.handlers.ai_search — QnA and research agent search."""
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,6 +14,23 @@ from app.response_delivery.renderer import (
     DeliveryReceipt,
     TelegramMessageRef,
 )
+
+
+@pytest.fixture(autouse=True)
+def _allow_private_data_boundaries():
+    @asynccontextmanager
+    async def allowed(*_args, **_kwargs):
+        yield True
+
+    with (
+        patch("app.repos.memory_consent.private_data_lease", allowed),
+        patch(
+            "app.handlers.ai_search.ensure_chat_generation",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
+    ):
+        yield
 
 
 def _receipt() -> DeliveryReceipt:
@@ -38,6 +56,10 @@ def make_chat_state(
         is_deep_dive=is_deep_dive,
         search_enabled=True,
         deep_dive_thread_id=None,
+        memory_epoch=0,
+        ltm_enabled=False,
+        voice_id=None,
+        tts_temperature=None,
     )
 
 
@@ -88,7 +110,12 @@ async def test_qna_search_happy_path():
 
         from app.handlers.ai_search import _handle_qna_search
 
-        result = await _handle_qna_search(placeholder, "What is Python?", chat_state)
+        result = await _handle_qna_search(
+            placeholder,
+            "What is Python?",
+            chat_state,
+            user_id=123,
+        )
 
     assert result == "Grounded answer from Google Search"
     delivery.stream.assert_awaited_once()
@@ -143,7 +170,12 @@ async def test_qna_search_opencode_path():
 
         from app.handlers.ai_search import _handle_qna_search
 
-        result = await _handle_qna_search(placeholder, "What is Python?", chat_state)
+        result = await _handle_qna_search(
+            placeholder,
+            "What is Python?",
+            chat_state,
+            user_id=123,
+        )
 
     assert result == "Opencode JINA answer"
     request = delivery.stream.await_args.args[1]
@@ -184,7 +216,12 @@ async def test_qna_search_typed_failure_does_not_duplicate_delivery():
 
         from app.handlers.ai_search import _handle_qna_search
 
-        result = await _handle_qna_search(placeholder, "Query", chat_state)
+        result = await _handle_qna_search(
+            placeholder,
+            "Query",
+            chat_state,
+            user_id=123,
+        )
 
     assert result is None
     delivery.stream.assert_awaited_once()
@@ -330,3 +367,63 @@ async def test_research_agent_uses_unified_completed_response_delivery():
     assert completed == CompletedResponse(final_answer)
     store_long.assert_not_awaited()
     send_long.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_complex_photo_search_leases_initial_vision_and_route_for_human_user():
+    """The bot-authored placeholder must not define the privacy tenant."""
+    active = False
+
+    @asynccontextmanager
+    async def tracked_lease(user_id, expected_epoch, *, purpose, require_ltm):
+        nonlocal active
+        assert user_id == 123
+        assert expected_epoch == 41
+        assert purpose == "conversation:vision-search"
+        assert require_ltm is False
+        active = True
+        try:
+            yield True
+        finally:
+            active = False
+
+    placeholder = make_placeholder(user_id=999)  # Telegram bot sender
+    placeholder.message_id = 77
+    original = MagicMock()
+    original.from_user.id = 123  # authoritative human sender
+    original.caption = "Найди это"
+    original.get_bot.return_value = MagicMock()
+    photo = MagicMock()
+    photo.get_file = AsyncMock(return_value=MagicMock())
+    original.photo = [photo]
+    chat_state = make_chat_state()
+    chat_state.memory_epoch = 41
+    chat_state._has_persisted_chat = True
+
+    async def analyze(*_args, **kwargs):
+        assert active
+        assert kwargs["user_id"] == 123
+        return "identified object", None
+
+    async def route(*_args, **kwargs):
+        assert active
+        assert kwargs["user_id"] == 123
+        assert _args[2] is chat_state
+        return "answer"
+
+    with (
+        patch("app.handlers.ai_search.get_user_chat", new_callable=AsyncMock, return_value=chat_state),
+        patch("app.handlers.ai_search.ensure_chat_generation", new_callable=AsyncMock, return_value=41),
+        patch("app.repos.memory_consent.private_data_lease", tracked_lease),
+        patch("app.handlers.ai_search.get_file_bytes", new_callable=AsyncMock, return_value=b"image"),
+        patch("PIL.Image.open", return_value=MagicMock()),
+        patch("app.handlers.ai_search._get_ai_response_with_routing", side_effect=analyze),
+        patch("app.handlers.ai_search.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
+        patch("app.handlers.ai_search._handle_qna_search", side_effect=route) as qna,
+    ):
+        from app.handlers.ai_search import _handle_complex_agent_search
+
+        await _handle_complex_agent_search(placeholder, original, "?")
+
+    qna.assert_awaited_once()
+    assert active is False

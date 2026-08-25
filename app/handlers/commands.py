@@ -220,7 +220,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "<b>📚 Память и данные:</b>\n"
         "• <code>/memory</code> — просмотр и управление памятью\n"
         "• <code>/clearmemory</code> — очистить долгосрочную память\n"
-        "• <code>/mydata</code> — экспорт всех ваших данных (GDPR)\n"
+        "• <code>/mydata</code> — экспорт диалогов и долгосрочной памяти\n"
         "• <code>/deleteme</code> — полное удаление аккаунта\n\n"
         "<i>Для получения справки по другим темам используйте кнопки ниже:</i>"
     )
@@ -611,13 +611,38 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 @authorized_only
 @safe_handler(t("error.command"))
 async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Export all user data as a JSON document (GDPR Article 20)."""
+    """Export chat settings, conversations, and long-term memory as JSON."""
     import io
+
+    if getattr(update.effective_chat, "type", None) != "private":
+        await update.message.reply_text(
+            "🔒 Экспорт личных данных доступен только в приватном чате с ботом."
+        )
+        return
 
     user_id = update.effective_user.id
     chat_state = await get_user_chat(user_id)
 
     # Gather all user data
+    chat_settings = {
+        "model": chat_state.model,
+        "thinking_level": chat_state.thinking_level,
+        "search_enabled": chat_state.search_enabled,
+        "system_prompt": chat_state.system_prompt,
+        "context_summary": getattr(chat_state, "context_summary", None),
+        "token_count": chat_state.token_count,
+        "ltm_enabled": getattr(chat_state, "ltm_enabled", False),
+        "memory_epoch": getattr(chat_state, "memory_epoch", 0),
+        "branch_id": getattr(chat_state, "branch_id", None),
+        "temperature": getattr(chat_state, "temperature", None),
+        "voice_id": getattr(chat_state, "voice_id", None),
+        "tts_temperature": getattr(chat_state, "tts_temperature", None),
+        "live_voice_name": getattr(chat_state, "live_voice_name", None),
+        "live_thinking_level": getattr(chat_state, "live_thinking_level", None),
+        "live_connection_mode": getattr(chat_state, "live_connection_mode", None),
+        "is_deep_dive": getattr(chat_state, "is_deep_dive", False),
+        "deep_dive_thread_id": getattr(chat_state, "deep_dive_thread_id", None),
+    }
     user_data = {
         "user_id": user_id,
         "username": update.effective_user.username,
@@ -627,6 +652,8 @@ async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "conversation_history_length": len(chat_state.history),
         "token_count": chat_state.token_count,
         "has_system_prompt": bool(chat_state.system_prompt),
+        "chat_settings": chat_settings,
+        "active_conversation": chat_state.history,
     }
 
     # Add conversation count
@@ -636,7 +663,19 @@ async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception:
         user_data["total_conversations"] = "unknown"
 
-    # Add memory stats
+    from app.repos.conversations import export_user_conversations
+
+    user_data["saved_conversations"] = await export_user_conversations(user_id)
+
+    # Export the actual LTM/knowledge-graph records.  This call is intentionally
+    # required: returning a successful but incomplete GDPR archive would be
+    # misleading if the memory export failed.
+    from app.repos.memory import export_user_memory
+
+    user_data["long_term_memory"] = await export_user_memory(user_id)
+
+    # Add aggregate memory stats as a convenience, without making them a
+    # prerequisite for the complete record export above.
     try:
         from app.repos.memory import get_memory_stats
 
@@ -651,7 +690,10 @@ async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     await update.message.reply_document(
         document=doc,
-        caption="📦 Ваши данные (GDPR Article 20). Файл содержит все сохранённые настройки и метаданные.",
+        caption=(
+            "📦 Экспорт данных чата: настройки, активная и сохранённая история, "
+            "долгосрочная память и граф знаний."
+        ),
     )
 
 
@@ -661,39 +703,38 @@ async def deleteme_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """Request account deletion with confirmation (GDPR Article 17)."""
     user_id = update.effective_user.id
 
+    if getattr(update.effective_chat, "type", None) != "private":
+        await update.message.reply_text(
+            "🔒 Удаление аккаунта доступно только в приватном чате с ботом."
+        )
+        return
+
+    from app.repos.users import erase_user_account, is_admin
+
+    if is_admin(user_id):
+        await update.message.reply_text(
+            "🛡️ Системный администратор не может удалить свой аккаунт этой командой."
+        )
+        return
+
     # Check if already in confirmation
     args = (update.message.text or "").split()
     if len(args) > 1 and args[1].upper() == "CONFIRM":
-        # Execute deletion
         await update.message.reply_text("🗑️ Удаление данных...")
-
-        deleted = {"conversations": 0, "memories": 0}
-
-        # Delete memories
         try:
-            from app.repos.memory import delete_user_memories
-
-            deleted["memories"] = await delete_user_memories(user_id)
-        except Exception as e:
-            logging.warning("Memory deletion failed: %s", e)
-
-        # Clear chat state
-        try:
-            chat_state = await get_user_chat(user_id)
-            chat_state.history = []
-            chat_state.token_count = 0
-            chat_state.system_prompt = None
-            chat_state.context_summary = None
-            await update_user_chat(user_id, chat_state)
-            deleted["conversations"] = 1
-        except Exception as e:
-            logging.warning("Chat state cleanup failed: %s", e)
+            await erase_user_account(user_id)
+        except Exception as exc:
+            logging.error("Account erasure failed for user %s: %s", user_id, exc, exc_info=True)
+            await update.message.reply_text(
+                "❌ Не удалось удалить аккаунт: изменения отменены. Попробуйте позже."
+            )
+            return
 
         text = (
-            "✅ **Данные удалены**\n\n"
-            f"🗂️ Бесед очищено: {deleted['conversations']}\n"
-            f"🧠 Воспоминаний удалено: {deleted['memories']}\n\n"
-            "Ваши настройки сброшены. Используйте /start для начала."
+            "✅ **Аккаунт и сохранённые данные удалены**\n\n"
+            "Удалены беседы, сообщения, документы, настройки, подписки, "
+            "игровая статистика и долгосрочная память. Идентификатор в общих "
+            "объектах обезличен, а администрирование групп передано участнику."
         )
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
@@ -722,7 +763,14 @@ async def clearmemory_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     from app.repos.memory import delete_user_memories
 
-    deleted = await delete_user_memories(user_id)
+    try:
+        deleted = await delete_user_memories(user_id)
+    except Exception as exc:
+        logging.error("Memory deletion failed for user %s: %s", user_id, exc, exc_info=True)
+        await update.message.reply_text(
+            "❌ Не удалось очистить долгосрочную память: изменения отменены. Попробуйте позже."
+        )
+        return
     formatted_text, parse_mode = TelegramFormatter.format_text(
         f"🗑️ Удалено **{deleted}** воспоминаний из долгосрочной памяти."
     )

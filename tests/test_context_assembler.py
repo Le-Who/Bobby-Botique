@@ -1,12 +1,15 @@
 """Tests for app.context_assembler — token-budget-aware context assembly."""
 
 import asyncio
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.context.summarizer import (
+    SummarizationInputTooLarge,
     _run_llm_summarization,
+    cancel_user_summarization_tasks,
     schedule_llm_summarization,
     split_into_chunks,
 )
@@ -26,6 +29,16 @@ from app.context_assembler import (
     should_summarize,
 )
 from app.prompt_registry import estimate_tokens_cyrillic
+
+
+@pytest.fixture(autouse=True)
+def allow_summary_private_data_lease():
+    @asynccontextmanager
+    async def allowed_lease(*_args, **_kwargs):
+        yield True
+
+    with patch("app.repos.memory_consent.private_data_lease", allowed_lease):
+        yield
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -264,6 +277,21 @@ class TestContextAssemblerSummary:
                 assert result.history[i + 1]["role"] == "model"
                 break
 
+    def test_retained_history_excludes_synthetic_summary_and_current_turn(self):
+        history = [make_msg("user", "Hi"), make_msg("model", "Hello")]
+
+        result = self.assembler.assemble(
+            history=history,
+            user_message="Next",
+            system_instruction="S",
+            existing_summary="Old context",
+        )
+
+        assert result.retained_history == history
+        retained_text = "\n".join(str(message.get("parts", "")) for message in result.retained_history)
+        assert "Контекст предыдущей беседы" not in retained_text
+        assert "Next" not in retained_text
+
 
 # ── ContextAssembler — role alternation ───────────────────────────────────────
 
@@ -324,17 +352,27 @@ class TestChunkSplitting:
         assert "user:" in chunks[0]
         assert "model:" in chunks[0]
 
-    def test_respects_max_chunks(self):
+    def test_rejects_input_beyond_max_chunks(self):
         # Create many large messages that would exceed MAX_CHUNKS
         msgs = make_history(100, msg_size=5000)
-        chunks = split_into_chunks(msgs)
-        assert len(chunks) <= MAX_CHUNKS
+        with pytest.raises(SummarizationInputTooLarge):
+            split_into_chunks(msgs)
 
     def test_splits_at_chunk_size(self):
         # Each message ~500 tokens, CHUNK_SIZE=10K → ~20 msgs per chunk
         msgs = make_history(60, msg_size=1500)
         chunks = split_into_chunks(msgs)
         assert len(chunks) > 1  # Should split into multiple chunks
+
+    def test_oversized_summarization_refuses_unbounded_provider_request(self, monkeypatch):
+        import app.context.summarizer as summarizer
+
+        monkeypatch.setattr(summarizer, "CHUNK_SIZE", 10)
+        monkeypatch.setattr(summarizer, "MAX_CHUNKS", 2)
+        messages = [make_msg("user", f"marker-{index}-" + "x" * 30) for index in range(4)]
+
+        with pytest.raises(summarizer.SummarizationInputTooLarge):
+            summarizer.split_into_chunks(messages)
 
 
 # ── LLM summarization scheduling ─────────────────────────────────────────────
@@ -352,9 +390,124 @@ class TestLLMSummarizationScheduling:
             "app.context.summarizer._run_llm_summarization",
             new_callable=AsyncMock,
         ):
-            schedule_llm_summarization(dropped, None, callback)
+            schedule_llm_summarization(42, dropped, None, callback, expected_epoch=7)
             # Allow the task to start
             await asyncio.sleep(0.01)
+
+    @pytest.mark.asyncio
+    async def test_cancel_user_tasks_cancels_and_awaits_shutdown(self):
+        """Account erasure must not return while a user's summary task is alive."""
+        import app.context.summarizer as summarizer
+
+        started = asyncio.Event()
+        stopped = asyncio.Event()
+
+        async def pending_summary(*_args):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
+        with patch(
+            "app.context.summarizer._run_llm_summarization",
+            side_effect=pending_summary,
+        ):
+            task = schedule_llm_summarization(9_001, [], None, AsyncMock(), expected_epoch=7)
+            await started.wait()
+
+            cancelled = await cancel_user_summarization_tasks(9_001)
+
+        assert cancelled == 1
+        assert stopped.is_set()
+        assert task.done()
+        assert task.cancelled()
+        assert 9_001 not in summarizer._summarization_tasks_by_user
+
+    @pytest.mark.asyncio
+    async def test_new_schedule_cancels_superseded_task_for_same_user(self):
+        """Only the newest summary for a user may continue using providers."""
+        import app.context.summarizer as summarizer
+
+        first_started = asyncio.Event()
+        first_stopped = asyncio.Event()
+        second_finished = asyncio.Event()
+
+        async def run_summary(_user_id, _expected_epoch, dropped_messages, _existing_summary, _callback):
+            marker = dropped_messages[0]["parts"][0]
+            if marker == "first":
+                first_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    first_stopped.set()
+            else:
+                second_finished.set()
+
+        first_messages = [make_msg("user", "first")]
+        second_messages = [make_msg("user", "second")]
+        with patch(
+            "app.context.summarizer._run_llm_summarization",
+            side_effect=run_summary,
+        ):
+            first = schedule_llm_summarization(
+                9_002,
+                first_messages,
+                None,
+                AsyncMock(),
+                expected_epoch=7,
+            )
+            await first_started.wait()
+            second = schedule_llm_summarization(
+                9_002,
+                second_messages,
+                None,
+                AsyncMock(),
+                expected_epoch=7,
+            )
+            await second
+
+        await asyncio.wait_for(first_stopped.wait(), timeout=1)
+        assert first.cancelled()
+        assert second_finished.is_set()
+        assert 9_002 not in summarizer._summarization_tasks_by_user
+
+    @pytest.mark.asyncio
+    async def test_cancel_stops_refine_chain_before_more_history_is_sent(self):
+        """Cancellation during an LLM call must prevent later chunks and callback."""
+        provider_started = asyncio.Event()
+        provider_calls: list[str] = []
+        callback = AsyncMock()
+
+        async def blocking_provider(*_args, **kwargs):
+            provider_calls.append(kwargs["history"][0]["parts"][0])
+            provider_started.set()
+            await asyncio.Event().wait()
+
+        with (
+            patch(
+                "app.context.summarizer.split_into_chunks",
+                return_value=["private chunk one", "private chunk two"],
+            ),
+            patch(
+                "app.handlers.ai_core._get_ai_response_with_routing",
+                side_effect=blocking_provider,
+            ),
+        ):
+            task = schedule_llm_summarization(
+                9_003,
+                [make_msg("user", "private history")],
+                None,
+                callback,
+                expected_epoch=7,
+            )
+            await provider_started.wait()
+            await cancel_user_summarization_tasks(9_003)
+            await asyncio.sleep(0)
+
+        assert task.cancelled()
+        assert len(provider_calls) == 1
+        callback.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_refine_chain_calls_llm(self):
@@ -377,7 +530,7 @@ class TestLLMSummarizationScheduling:
                 return_value="## Факты\n- Python — это язык программирования",
             ) as mock_llm,
         ):
-            await _run_llm_summarization(dropped, None, callback)
+            await _run_llm_summarization(42, 7, dropped, None, callback)
             mock_llm.assert_called_once()
             callback.assert_called_once()
 
@@ -409,7 +562,7 @@ class TestLLMSummarizationScheduling:
                 side_effect=mock_llm,
             ),
         ):
-            await _run_llm_summarization(dropped, None, callback)
+            await _run_llm_summarization(42, 7, dropped, None, callback)
             assert call_count == 2  # Two chunks → two LLM calls
             callback.assert_called_once()
 
@@ -431,7 +584,7 @@ class TestLLMSummarizationScheduling:
             ),
         ):
             # Should not raise
-            await _run_llm_summarization(dropped, None, callback)
+            await _run_llm_summarization(42, 7, dropped, None, callback)
             callback.assert_not_called()
 
 
@@ -504,6 +657,28 @@ class TestBudgetAccounting:
         result = self.assembler.assemble(history=[], user_message=msg, system_instruction="S")
         assert result.budget.user_message > 0
         assert result.budget.user_message == estimate_tokens_cyrillic(msg)
+
+    def test_first_local_summary_cannot_push_prompt_over_budget(self):
+        history = [
+            make_msg("user" if index % 2 == 0 else "model", "Ж" * 300)
+            for index in range(40)
+        ]
+        token_budget = 18_000
+
+        result = self.assembler.assemble(
+            history=history,
+            user_message="Продовжуй",
+            system_instruction="Допомагай",
+            token_budget=token_budget,
+        )
+
+        final_prompt_tokens = estimate_tokens_cyrillic(result.system_instruction) + sum(
+            estimate_tokens_cyrillic(self.assembler._extract_text(message))
+            for message in result.history
+        )
+        assert result.was_truncated
+        assert result.budget.used <= token_budget
+        assert final_prompt_tokens + result.budget.response_reserve <= token_budget
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────

@@ -26,7 +26,8 @@ from telegram.ext import ContextTypes
 
 from app.i18n import detect_language, t
 from app.repos.chats import get_user_chat, update_user_chat
-from app.utils.background_tasks import submit_retryable
+from app.repos.memory_autosave import submit_memory_task
+from app.repos.memory_consent import capture_epoch
 from app.utils.tg_file import get_file_bytes
 
 # Overall timeout for the entire voice processing pipeline (download + transcribe + UI).
@@ -79,6 +80,50 @@ async def handle_voice_inline(
 
 
 async def _process_voice_pipeline(
+    placeholder: Message,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    voice,
+    lang: str,
+) -> None:
+    """Lease the exact account generation before sending raw audio to ASR."""
+    chat_state = await get_user_chat(user_id)
+    known_epoch = (
+        None
+        if getattr(chat_state, "_has_persisted_chat", True) is False
+        else int(chat_state.memory_epoch)
+    )
+    from app.repos.chats import ensure_chat_generation
+    from app.repos.memory_consent import private_data_lease
+
+    expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
+    if expected_epoch is None:
+        await placeholder.edit_text("Запрос отменён: настройки приватности изменились.")
+        return
+    chat_state.memory_epoch = expected_epoch
+    chat_state._has_persisted_chat = True
+
+    async with private_data_lease(
+        user_id,
+        expected_epoch,
+        purpose="conversation:voice-ingress",
+        require_ltm=False,
+    ) as lease_current:
+        if not lease_current:
+            await placeholder.edit_text("Запрос отменён: настройки приватности изменились.")
+            return
+        await _process_voice_pipeline_leased_impl(
+            placeholder,
+            update,
+            context,
+            user_id,
+            voice,
+            lang,
+        )
+
+
+async def _process_voice_pipeline_leased_impl(
     placeholder: Message,
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -420,7 +465,8 @@ async def _auto_route_to_image(
 
     # 4. Background LTM storage (same as auto-route to chat)
     chat_state = await get_user_chat(user_id)
-    if chat_state.ltm_enabled:
+    memory_epoch = capture_epoch(chat_state)
+    if memory_epoch is not None:
         _uid = user_id
         _fid = getattr(voice, "file_unique_id", None)
         _vb = voice_bytes
@@ -429,11 +475,17 @@ async def _auto_route_to_image(
             async def _store():
                 from app.utils.multimodal_processor import process_media_for_memory
 
-                await process_media_for_memory(_vb, _uid, media_type="voice", telegram_file_id=_fid)
+                await process_media_for_memory(
+                    _vb,
+                    _uid,
+                    media_type="voice",
+                    telegram_file_id=_fid,
+                    expected_epoch=memory_epoch,
+                )
 
             return _store()
 
-        submit_retryable(_bg, retry=2)
+        submit_memory_task(user_id, _bg, retry=2)
 
 
 async def _auto_route_to_chat(
@@ -469,14 +521,6 @@ async def _auto_route_to_chat(
         detect_tts_intent(user_text=transcript)
     )
 
-    # Store in history
-    chat_state.history.append(
-        {
-            "role": "user",
-            "parts": [f"{t('voice.history_marker', lang)}\n{transcript}"],
-        }
-    )
-
     # Run the chat pipeline inline (we already hold user_lock from caller)
     await _handle_regular_chat(
         new_placeholder,
@@ -484,10 +528,15 @@ async def _auto_route_to_chat(
         transcript,
         chat_state,
         reply_with_voice=voice_decision.explicit_tts,
+        # The media pipeline below stores the enriched transcript and file
+        # provenance.  Avoid a second plain-text LTM row for the same voice.
+        capture_text_memory=False,
+        user_parts=[f"{t('voice.history_marker', lang)}\n{transcript}"],
     )
 
     # Background LTM storage
-    if chat_state.ltm_enabled:
+    memory_epoch = capture_epoch(chat_state)
+    if memory_epoch is not None:
         _uid = user_id
         _fid = getattr(voice, "file_unique_id", None)
         _vb = voice_bytes
@@ -496,11 +545,17 @@ async def _auto_route_to_chat(
             async def _store():
                 from app.utils.multimodal_processor import process_media_for_memory
 
-                await process_media_for_memory(_vb, _uid, media_type="voice", telegram_file_id=_fid)
+                await process_media_for_memory(
+                    _vb,
+                    _uid,
+                    media_type="voice",
+                    telegram_file_id=_fid,
+                    expected_epoch=memory_epoch,
+                )
 
             return _store()
 
-        submit_retryable(_bg, retry=2)
+        submit_memory_task(user_id, _bg, retry=2)
 
 
 async def _show_transcript_only(
@@ -536,7 +591,8 @@ async def _show_transcript_only(
     await update_user_chat(user_id, chat_state)
 
     # Store in long-term memory (background, non-blocking)
-    if chat_state.ltm_enabled:
+    memory_epoch = capture_epoch(chat_state)
+    if memory_epoch is not None:
         _voice_uid = user_id
         _voice_file_id = getattr(voice, "file_unique_id", None)
         _voice_bytes = voice_bytes
@@ -550,11 +606,12 @@ async def _show_transcript_only(
                     _voice_uid,
                     media_type="voice",
                     telegram_file_id=_voice_file_id,
+                    expected_epoch=memory_epoch,
                 )
 
             return _store()
 
-        submit_retryable(_bg_voice_ltm, retry=2)
+        submit_memory_task(user_id, _bg_voice_ltm, retry=2)
 
 
 async def _auto_route_to_search(
@@ -612,6 +669,7 @@ async def _auto_route_to_search(
             user_message=user_message_with_marker,
             chat_state=chat_state,
             search_query=transcript,
+            user_id=user_id,
         )
 
         # ── Persist QnA turn to chat history (Bug fix: QnA was not saved) ─

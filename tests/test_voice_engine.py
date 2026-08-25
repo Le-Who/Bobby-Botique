@@ -1,10 +1,21 @@
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.voice_engine import VoiceReplyManager
+
+
+@pytest.fixture(autouse=True)
+def _allow_private_data_lease_boundary():
+    @asynccontextmanager
+    async def allowed(*_args, **_kwargs):
+        yield True
+
+    with patch("app.repos.memory_consent.private_data_lease", allowed):
+        yield
 
 
 class FakeBot:
@@ -52,6 +63,7 @@ async def test_voice_queue_serializes_jobs_per_user():
         reply_to_message_id=101,
         response_text="first",
         source_key="one",
+        expected_epoch=1,
     )
     second = await manager.enqueue(
         bot=bot,
@@ -60,16 +72,18 @@ async def test_voice_queue_serializes_jobs_per_user():
         reply_to_message_id=102,
         response_text="second",
         source_key="two",
+        expected_epoch=1,
     )
 
     await asyncio.sleep(0.05)
     assert first.queue_position == 1
     assert second.queue_position == 2
-    # Both pregenerate tasks start immediately (Future-based pre-generation).
-    assert set(started) == {"one", "two"}
+    # Same-user synthesis remains FIFO under a lease retained through delivery.
+    assert started == ["one"]
 
     first_release.set()
     await asyncio.sleep(0.05)
+    assert started == ["one", "two"]
 
     second_release.set()
     await manager.wait_until_idle(1, timeout=1.5)
@@ -98,6 +112,7 @@ async def test_voice_queue_allows_parallel_jobs_for_different_users():
         reply_to_message_id=101,
         response_text="first",
         source_key="u1",
+        expected_epoch=1,
     )
     await manager.enqueue(
         bot=bot,
@@ -106,6 +121,7 @@ async def test_voice_queue_allows_parallel_jobs_for_different_users():
         reply_to_message_id=201,
         response_text="second",
         source_key="u2",
+        expected_epoch=1,
     )
 
     await asyncio.sleep(0.05)
@@ -136,6 +152,7 @@ async def test_voice_queue_dedupes_same_source_and_text():
         reply_to_message_id=101,
         response_text="same text",
         source_key="same-source",
+        expected_epoch=1,
     )
     second = await manager.enqueue(
         bot=bot,
@@ -144,9 +161,57 @@ async def test_voice_queue_dedupes_same_source_and_text():
         reply_to_message_id=101,
         response_text="same text",
         source_key="same-source",
+        expected_epoch=1,
     )
 
     assert first.queued is True
     assert second.deduped is True
     release.set()
+    await manager.wait_until_idle(1, timeout=1.5)
+
+
+@pytest.mark.asyncio
+async def test_ltm_purge_restarts_worker_for_retained_conversation_jobs():
+    """Cancelling active LTM TTS must not strand ordinary queued replies."""
+    manager = VoiceReplyManager()
+    bot = FakeBot()
+    ltm_started = asyncio.Event()
+    conversation_started = asyncio.Event()
+
+    async def fake_pregenerate(job):
+        if job.require_ltm:
+            ltm_started.set()
+            await asyncio.Event().wait()
+        conversation_started.set()
+        return b"fake-ogg-data"
+
+    manager._pregenerate_audio = fake_pregenerate  # type: ignore[method-assign]
+    manager._send_ogg = AsyncMock()  # type: ignore[method-assign]
+
+    await manager.enqueue(
+        bot=bot,
+        user_id=1,
+        chat_id=10,
+        reply_to_message_id=101,
+        response_text="memory-derived reply",
+        source_key="ltm",
+        expected_epoch=1,
+        require_ltm=True,
+    )
+    await ltm_started.wait()
+    await manager.enqueue(
+        bot=bot,
+        user_id=1,
+        chat_id=10,
+        reply_to_message_id=102,
+        response_text="ordinary reply",
+        source_key="conversation",
+        expected_epoch=1,
+        require_ltm=False,
+    )
+
+    removed = await manager.purge_user_jobs(1, ltm_only=True)
+
+    assert removed == 1
+    await asyncio.wait_for(conversation_started.wait(), timeout=0.5)
     await manager.wait_until_idle(1, timeout=1.5)

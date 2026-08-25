@@ -149,6 +149,7 @@ class TestGDPRCommands:
         mock_update = MagicMock()
         mock_update.effective_user.id = 12345
         mock_update.effective_user.username = "testuser"
+        mock_update.effective_chat.type = "private"
         mock_update.message = AsyncMock()
         mock_update.message.reply_document = AsyncMock()
 
@@ -158,11 +159,43 @@ class TestGDPRCommands:
         mock_chat_state.search_enabled = True
         mock_chat_state.history = [{"role": "user", "parts": ["test"]}]
         mock_chat_state.token_count = 100
-        mock_chat_state.system_prompt = None
+        mock_chat_state.system_prompt = "A private custom prompt"
+        mock_chat_state.context_summary = "Prior context summary"
+        mock_chat_state.ltm_enabled = True
+        mock_chat_state.memory_epoch = 4
+        mock_chat_state.branch_id = "branch-1"
+        mock_chat_state.temperature = 0.7
+        mock_chat_state.voice_id = "Aoede"
+        mock_chat_state.tts_temperature = 0.5
+        mock_chat_state.live_voice_name = "Puck"
+        mock_chat_state.live_thinking_level = "low"
+        mock_chat_state.live_connection_mode = "websocket"
+        mock_chat_state.is_deep_dive = False
+        mock_chat_state.deep_dive_thread_id = None
 
         with (
             patch("app.handlers.commands.get_user_chat", return_value=mock_chat_state),
             patch("app.handlers.commands.get_conversation_count", return_value=5),
+            patch(
+                "app.repos.conversations.export_user_conversations",
+                return_value=[
+                    {
+                        "id": 71,
+                        "title": "Saved chat",
+                        "created_at": "2026-08-01",
+                        "messages": [{"role": "user", "content": "saved message"}],
+                    }
+                ],
+            ),
+            patch(
+                "app.repos.memory.export_user_memory",
+                return_value={
+                    "memories": [{"id": 11, "content": "likes tea"}],
+                    "nodes": [{"id": 21, "entity_name": "tea"}],
+                    "edges": [{"id": 31, "predicate": "likes"}],
+                    "edge_sources": [{"edge_id": 31, "memory_id": 11}],
+                },
+            ) as export_memory,
         ):
             await mydata_command.__wrapped__.__wrapped__(mock_update, MagicMock())
 
@@ -174,6 +207,45 @@ class TestGDPRCommands:
         data = json.loads(content)
         assert data["user_id"] == 12345
         assert data["current_model"] == "gemini-3.5-flash"
+        assert data["chat_settings"]["system_prompt"] == "A private custom prompt"
+        assert data["chat_settings"]["ltm_enabled"] is True
+        assert data["active_conversation"] == [{"role": "user", "parts": ["test"]}]
+        assert data["saved_conversations"][0]["messages"] == [
+            {"role": "user", "content": "saved message"}
+        ]
+        assert data["long_term_memory"]["memories"][0]["content"] == "likes tea"
+        assert data["long_term_memory"]["nodes"][0]["entity_name"] == "tea"
+        assert data["long_term_memory"]["edges"][0]["predicate"] == "likes"
+        assert data["long_term_memory"]["edge_sources"] == [
+            {"edge_id": 31, "memory_id": 11}
+        ]
+        export_memory.assert_awaited_once_with(12345)
+
+    @pytest.mark.asyncio
+    async def test_mydata_refuses_to_export_private_archive_in_group(self):
+        from app.handlers.commands import mydata_command
+
+        update = MagicMock()
+        update.effective_user.id = 12345
+        update.effective_chat.type = "group"
+        update.message.reply_text = AsyncMock()
+        update.message.reply_document = AsyncMock()
+
+        with (
+            patch("app.handlers.commands.get_user_chat", new_callable=AsyncMock) as get_chat,
+            patch("app.repos.memory.export_user_memory", new_callable=AsyncMock) as export_memory,
+            patch(
+                "app.repos.conversations.export_user_conversations",
+                new_callable=AsyncMock,
+            ) as export_conversations,
+        ):
+            await mydata_command.__wrapped__.__wrapped__(update, MagicMock())
+
+        update.message.reply_text.assert_awaited_once()
+        update.message.reply_document.assert_not_awaited()
+        get_chat.assert_not_awaited()
+        export_memory.assert_not_awaited()
+        export_conversations.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_deleteme_shows_confirmation(self):
@@ -181,6 +253,7 @@ class TestGDPRCommands:
 
         mock_update = MagicMock()
         mock_update.effective_user.id = 12345
+        mock_update.effective_chat.type = "private"
         mock_update.message = AsyncMock()
         mock_update.message.text = "/deleteme"
         mock_update.message.reply_text = AsyncMock()

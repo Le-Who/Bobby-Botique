@@ -12,11 +12,14 @@ from typing import Any
 import asyncpg
 
 from app.database import (
+    clear_user_context,
     db_execute_many,
     db_manager,
     db_query,
     reconnect_database,
+    set_user_context,
 )
+from app.utils.json_compat import json
 from app.utils.logging_config import timed_operation
 
 
@@ -250,3 +253,68 @@ async def get_conversation_count(user_id: int) -> int:
         return result[0]["count"] if result else 0
     except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return 0
+
+
+async def export_user_conversations(user_id: int) -> list[dict[str, Any]]:
+    """Return every saved conversation and message for a privacy export.
+
+    Unlike the interactive list helpers, export failures intentionally
+    propagate: a successful but incomplete GDPR archive is misleading.
+    """
+    if not db_manager.is_connected:
+        await reconnect_database()
+
+    async with db_manager.pool.acquire() as conn, conn.transaction():
+        await set_user_context(user_id, False, conn=conn)
+        try:
+            rows = await db_query(
+                """
+                SELECT
+                    conversation.id,
+                    conversation.title,
+                    conversation.role_type,
+                    conversation.role_id,
+                    conversation.summary,
+                    conversation.token_budget,
+                    conversation.created_at,
+                    COALESCE(
+                        jsonb_agg(
+                            jsonb_build_object(
+                                'role', message.role,
+                                'content', message.content,
+                                'created_at', message.created_at
+                            )
+                            ORDER BY message.created_at ASC, message.id ASC
+                        ) FILTER (WHERE message.id IS NOT NULL),
+                        '[]'::jsonb
+                    ) AS messages
+                FROM public.conversations AS conversation
+                LEFT JOIN public.conversation_messages AS message
+                  ON message.conversation_id = conversation.id
+                 AND message.owner_user_id = conversation.user_id
+                WHERE conversation.user_id = $1
+                GROUP BY
+                    conversation.id,
+                    conversation.title,
+                    conversation.role_type,
+                    conversation.role_id,
+                    conversation.summary,
+                    conversation.token_budget,
+                    conversation.created_at
+                ORDER BY conversation.created_at DESC, conversation.id DESC
+                """,
+                (user_id,),
+                conn=conn,
+            )
+        finally:
+            await clear_user_context(conn=conn)
+
+    exported: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        messages = item.get("messages", [])
+        if isinstance(messages, str):
+            messages = json.loads(messages)
+        item["messages"] = messages or []
+        exported.append(item)
+    return exported

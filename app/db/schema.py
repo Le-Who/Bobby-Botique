@@ -61,6 +61,10 @@ EXPECTED_TABLES = frozenset(
         # GraphRAG memory (000/018 backfill + 025/026/026b/027)
         "memory_nodes",
         "memory_edges",
+        "memory_edge_sources",
+        "memory_node_sources",
+        "memory_derivation_sources",
+        "private_data_leases",
         # Feature tables (021, 022)
         "brief_subscriptions",
         "conversation_branches",

@@ -107,37 +107,19 @@ async def _handle_vote(query, rating: str) -> None:
     except Exception as e:
         logger.warning("Feedback save failed: %s", e)
 
-    # ── 2. RLHF actions on downvote (fire-and-forget) ─────────────────────
+    # ── 2. Response-bound RLHF action on downvote ─────────────────────────
     if rating == "down":
         from app.utils.background_tasks import submit_task
 
-        # 2a. Store negative signal in LTM
-        async def _store_negative_signal():
-            try:
-                from app.repos.keys import get_available_gemini_key
-                from app.repos.memory import EMBEDDING_MODEL, store_memory
-
-                key_data = await get_available_gemini_key(model_name=EMBEDDING_MODEL)
-                if not key_data:
-                    return
-                await store_memory(
-                    user_id,
-                    f"[FEEDBACK] Пользователю не понравился ответ (msg_id={message_id}). "
-                    "Учитывай это при формировании будущих ответов.",
-                    key_data["api_key"],
-                    source_type="negative_feedback",
-                )
-            except Exception as mem_err:
-                logger.debug("LTM negative signal failed: %s", mem_err)
-
-        submit_task(_store_negative_signal())
-
-        # 2b. Penalize graph edges used for this response
         async def _penalize_edges():
             try:
-                from app.repos.memory import penalize_graph_edges
+                from app.repos.memory import (
+                    get_response_retrieved_edge_ids,
+                    penalize_graph_edges,
+                )
 
-                count = await penalize_graph_edges(user_id, penalty=0.10)
+                edge_ids = get_response_retrieved_edge_ids(user_id, message_id)
+                count = await penalize_graph_edges(user_id, edge_ids=edge_ids, penalty=0.10)
                 if count > 0:
                     logger.info(
                         "RLHF: user %d downvote penalized %d graph edges",
@@ -185,9 +167,10 @@ async def show_facts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = query.from_user.id
 
     try:
-        from app.repos.memory import get_last_retrieved_edge_ids
+        from app.repos.memory import get_response_retrieved_edge_ids
 
-        edge_ids = get_last_retrieved_edge_ids(user_id)
+        message_id = getattr(query.message, "message_id", 0)
+        edge_ids = get_response_retrieved_edge_ids(user_id, message_id)
         if edge_ids:
             count = len(edge_ids)
             text = (

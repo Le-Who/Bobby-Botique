@@ -138,6 +138,26 @@ _ACTIVE_TASKS: dict[int, asyncio.Task] = {}
 _LAST_BOT_MESSAGE: dict[int, tuple[int, int]] = {}
 
 
+def purge_user_runtime_state(user_id: int) -> None:
+    """Remove all process-local state after durable account erasure.
+
+    This deliberately does not persist a reset state: the owning ``users``
+    row has already been deleted, so scheduling another write could recreate
+    personal data or keep retrying a now-invalid foreign key.
+    """
+    pending_persist = _pending_persists.pop(user_id, None)
+    if pending_persist is not None:
+        pending_persist.cancel()
+
+    task = _ACTIVE_TASKS.pop(user_id, None)
+    if task is not None and not task.done():
+        task.cancel()
+
+    USER_STATES._states.pop(user_id, None)
+    _NETWORK_STALL_SINCE.pop(user_id, None)
+    _LAST_BOT_MESSAGE.pop(user_id, None)
+
+
 # =============================================================================
 # DB PERSISTENCE — load/save helpers
 # =============================================================================

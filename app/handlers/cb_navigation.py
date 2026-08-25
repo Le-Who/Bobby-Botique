@@ -28,7 +28,7 @@ from telegram.ext import ContextTypes
 from app.handlers import menus
 from app.handlers.callbacks import _BUSY_TOAST, _is_user_busy
 from app.i18n import t
-from app.repos.chats import get_user_chat, update_user_chat
+from app.repos.chats import get_user_chat, set_ltm_enabled, update_user_chat
 from app.utils.formatting import TelegramFormatter
 
 
@@ -297,7 +297,11 @@ async def toggle_ltm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     chat_state = await get_user_chat(user_id)
     chat_state.ltm_enabled = not chat_state.ltm_enabled
-    await update_user_chat(user_id, chat_state)
+    chat_state.memory_epoch = await set_ltm_enabled(user_id, chat_state.ltm_enabled)
+    if not chat_state.ltm_enabled:
+        from app.repos.memory_autosave import cancel_user_memory_tasks
+
+        await cancel_user_memory_tasks(user_id)
 
     # Rebuild settings menu
     lang = _lang(update)

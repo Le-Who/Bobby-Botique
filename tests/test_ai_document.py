@@ -1,5 +1,6 @@
 """Tests for app.handlers.ai_document — document question handling."""
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -65,6 +66,28 @@ def document_test_settings(monkeypatch) -> SimpleNamespace:
     return settings
 
 
+@pytest.fixture(autouse=True)
+def document_privacy_boundary_defaults():
+    """Keep legacy behavior tests focused while the boundary is fail-closed."""
+
+    @asynccontextmanager
+    async def allowed_lease(*_args, **_kwargs):
+        yield True
+
+    async def current_generation(_user_id, *, expected_epoch):
+        return 0 if expected_epoch is None else expected_epoch
+
+    with (
+        patch(
+            "app.handlers.ai_document.ensure_chat_generation",
+            side_effect=current_generation,
+            create=True,
+        ),
+        patch("app.repos.memory_consent.private_data_lease", allowed_lease),
+    ):
+        yield
+
+
 def make_placeholder():
     msg = MagicMock()
     msg.edit_text = AsyncMock()
@@ -85,10 +108,153 @@ def make_chat_state():
         is_deep_dive=False,
         search_enabled=False,
         thinking_level=None,
+        memory_epoch=0,
+        private_data_blocked=False,
+        _has_persisted_chat=True,
     )
 
 
 # ── Happy path — AI answers question ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_document_question_holds_exact_epoch_lease_through_private_delivery():
+    """Private document text cannot outlive its exact conversation generation."""
+    placeholder = make_placeholder()
+    chat_state = make_chat_state()
+    chat_state.memory_epoch = 37
+    ensure_generation = AsyncMock(return_value=37)
+    boundary = {
+        "lease_active": False,
+        "request_inside_lease": False,
+        "delivery_inside_lease": False,
+        "private_content": False,
+        "allow_deferred": None,
+    }
+    lease_calls = []
+
+    @asynccontextmanager
+    async def tracked_lease(user_id, expected_epoch, *, purpose, require_ltm):
+        lease_calls.append((user_id, expected_epoch, purpose, require_ltm))
+        boundary["lease_active"] = True
+        try:
+            yield True
+        finally:
+            boundary["lease_active"] = False
+
+    async def build_request(**kwargs):
+        boundary["request_inside_lease"] = boundary["lease_active"]
+        boundary["allow_deferred"] = kwargs["allow_deferred"]
+        return SimpleNamespace(models=kwargs["models"])
+
+    async def stream_response(target, _request, **_kwargs):
+        boundary["delivery_inside_lease"] = boundary["lease_active"]
+        boundary["private_content"] = target.private_content
+        return CompleteDelivery(
+            content_text="Private answer",
+            displayed_text="Private answer",
+            completion=_completion(),
+            voice_requested=False,
+            receipt=_receipt(),
+        )
+
+    delivery = MagicMock()
+    delivery.stream = AsyncMock(side_effect=stream_response)
+
+    with (
+        patch(
+            "app.handlers.ai_document.ensure_chat_generation",
+            ensure_generation,
+            create=True,
+        ),
+        patch("app.repos.memory_consent.private_data_lease", tracked_lease),
+        patch(
+            "app.document_processor.get_user_documents",
+            new_callable=AsyncMock,
+            return_value=[{"id": 1, "filename": "private.txt"}],
+        ),
+        patch(
+            "app.document_processor.get_document_content",
+            new_callable=AsyncMock,
+            return_value="Private document content",
+        ),
+        patch("app.handlers.ai_document.update_stage", new_callable=AsyncMock),
+        patch(
+            "app.providers.request_factory.generation_request_from_history",
+            side_effect=build_request,
+        ),
+        patch(
+            "app.response_delivery.delivery.get_telegram_response_delivery",
+            return_value=delivery,
+        ),
+        patch("app.handlers.ai_document.metrics_collector") as mock_metrics,
+    ):
+        mock_metrics.record_api_call = AsyncMock()
+
+        from app.handlers.ai_document import _handle_document_question
+
+        await _handle_document_question(placeholder, 123, "Private question", chat_state)
+
+    ensure_generation.assert_awaited_once_with(123, expected_epoch=37)
+    assert lease_calls == [(123, 37, "conversation:document", False)]
+    assert boundary == {
+        "lease_active": False,
+        "request_inside_lease": True,
+        "delivery_inside_lease": True,
+        "private_content": True,
+        "allow_deferred": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_document_question_denied_lease_never_reaches_provider_or_delivery():
+    """An invalidated generation fails closed before private document egress."""
+    placeholder = make_placeholder()
+    chat_state = make_chat_state()
+    chat_state.memory_epoch = 11
+    provider_request = AsyncMock()
+    delivery = MagicMock()
+    delivery.stream = AsyncMock()
+
+    @asynccontextmanager
+    async def denied_lease(*_args, **_kwargs):
+        yield False
+
+    with (
+        patch(
+            "app.handlers.ai_document.ensure_chat_generation",
+            new_callable=AsyncMock,
+            return_value=11,
+            create=True,
+        ),
+        patch("app.repos.memory_consent.private_data_lease", denied_lease),
+        patch(
+            "app.document_processor.get_user_documents",
+            new_callable=AsyncMock,
+            return_value=[{"id": 1, "filename": "private.txt"}],
+        ),
+        patch(
+            "app.document_processor.get_document_content",
+            new_callable=AsyncMock,
+            return_value="Private document content",
+        ),
+        patch("app.handlers.ai_document.update_stage", new_callable=AsyncMock),
+        patch(
+            "app.providers.request_factory.generation_request_from_history",
+            provider_request,
+        ),
+        patch(
+            "app.response_delivery.delivery.get_telegram_response_delivery",
+            return_value=delivery,
+        ),
+    ):
+        from app.handlers.ai_document import _handle_document_question
+
+        await _handle_document_question(placeholder, 123, "Private question", chat_state)
+
+    provider_request.assert_not_awaited()
+    delivery.stream.assert_not_awaited()
+    placeholder.edit_text.assert_awaited_once()
 
 
 @pytest.mark.asyncio

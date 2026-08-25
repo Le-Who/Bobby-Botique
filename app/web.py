@@ -725,7 +725,7 @@ async def api_key_health():
         manager = KeyStatusManager()
 
         # key_model_status is RLS-protected — must set admin context
-        async with database.db_manager.pool.acquire() as conn:
+        async with database.db_manager.pool.acquire() as conn, conn.transaction():
             await database.set_user_context(settings.ADMIN_ID, True, conn=conn)
             try:
                 summary = await manager.get_health_summary(conn=conn)

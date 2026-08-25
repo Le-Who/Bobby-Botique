@@ -56,13 +56,12 @@ class VoiceJob:
     tts_temperature: float | None
     source_key: str
     bot: Bot
+    expected_epoch: int
+    require_ltm: bool = False
     status_message_id: int | None = None
     response_hash: str = ""
     enqueued_at: float = field(default_factory=time.monotonic)
     state: VoiceJobState = field(default_factory=VoiceJobState)
-    # Future-based pre-generation: TTS starts immediately on enqueue,
-    # worker just awaits this future and sends the result in order.
-    audio_future: asyncio.Task[bytes | None] | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -241,6 +240,46 @@ class VoiceReplyManager:
         voice: str = "Aoede",
         tts_temperature: float | None = None,
         source_key: str,
+        expected_epoch: int,
+        require_ltm: bool = False,
+    ) -> VoiceEnqueueResult:
+        """Atomically authorize queue capture of private response text."""
+        from app.repos.memory_consent import private_data_lease
+
+        async with private_data_lease(
+            user_id,
+            expected_epoch,
+            purpose="ltm:tts_enqueue" if require_ltm else "conversation:tts_enqueue",
+            require_ltm=require_ltm,
+        ) as lease_current:
+            if not lease_current:
+                return VoiceEnqueueResult(False, False, None, 0)
+            return await self._enqueue_leased(
+                bot=bot,
+                user_id=user_id,
+                chat_id=chat_id,
+                reply_to_message_id=reply_to_message_id,
+                response_text=response_text,
+                voice=voice,
+                tts_temperature=tts_temperature,
+                source_key=source_key,
+                expected_epoch=expected_epoch,
+                require_ltm=require_ltm,
+            )
+
+    async def _enqueue_leased(
+        self,
+        *,
+        bot: Bot,
+        user_id: int,
+        chat_id: int,
+        reply_to_message_id: int,
+        response_text: str,
+        voice: str = "Aoede",
+        tts_temperature: float | None = None,
+        source_key: str,
+        expected_epoch: int,
+        require_ltm: bool = False,
     ) -> VoiceEnqueueResult:
         response_hash = hashlib.sha1(response_text.strip().encode("utf-8")).hexdigest()
         queue_position = 1
@@ -271,6 +310,8 @@ class VoiceReplyManager:
                 tts_temperature=tts_temperature,
                 source_key=source_key,
                 bot=bot,
+                expected_epoch=expected_epoch,
+                require_ltm=require_ltm,
                 response_hash=response_hash,
             )
             queued_job.state.queue_position = queue_position
@@ -281,11 +322,9 @@ class VoiceReplyManager:
 
         assert queued_job is not None
 
-        # Start TTS generation immediately (Future-based pre-generation).
-        # The worker will just await the result and send in chronological order.
-        queued_job.audio_future = asyncio.create_task(
-            self._pregenerate_audio(queued_job),
-        )
+        # Generation starts in the FIFO worker under one durable lease that is
+        # retained until Telegram delivery.  A detached pre-generation task
+        # could otherwise outlive account erasure or LTM opt-out.
 
         await self._set_status(
             queued_job,
@@ -311,6 +350,57 @@ class VoiceReplyManager:
         # so sequential Telegram HTTP edits do not block the handler.
         submit_task(self._refresh_queued_statuses(user_id))
         return VoiceEnqueueResult(True, False, queued_job.job_id, queue_position)
+
+    async def purge_user_jobs(self, user_id: int, *, ltm_only: bool = False) -> int:
+        """Cancel and scrub queued private text after a durable privacy barrier."""
+
+        def selected(job: VoiceJob) -> bool:
+            return not ltm_only or job.require_ltm
+
+        removed: list[VoiceJob] = []
+        worker_to_cancel: asyncio.Task[Any] | None = None
+        async with self._lock:
+            queue = self._queues.get(user_id)
+            if queue is not None:
+                retained: deque[VoiceJob] = deque()
+                for job in queue:
+                    (removed if selected(job) else retained).append(job)
+                if retained:
+                    self._queues[user_id] = retained
+                else:
+                    self._queues.pop(user_id, None)
+
+            active = self._active_jobs.get(user_id)
+            if active is not None and selected(active):
+                removed.append(active)
+                worker_to_cancel = self._worker_tasks.get(user_id)
+
+        if worker_to_cancel is not None and not worker_to_cancel.done():
+            worker_to_cancel.cancel()
+        for job in removed:
+            job.response_text = ""
+            job.response_hash = ""
+            job.status_message_id = None
+
+        if worker_to_cancel is not None:
+            await asyncio.gather(worker_to_cancel, return_exceptions=True)
+            # A selective LTM purge may retain ordinary conversation jobs. The
+            # cancelled per-user worker cannot drain them, so replace its stale
+            # task entry atomically after cancellation has finished.
+            async with self._lock:
+                if self._worker_tasks.get(user_id) is worker_to_cancel:
+                    self._worker_tasks.pop(user_id, None)
+                queue = self._queues.get(user_id)
+                current_worker = self._worker_tasks.get(user_id)
+                if (
+                    queue
+                    and user_id not in self._active_jobs
+                    and (current_worker is None or current_worker.done())
+                ):
+                    self._worker_tasks[user_id] = submit_task(
+                        self._run_user_queue(user_id)
+                    )
+        return len(removed)
 
     async def wait_until_idle(self, user_id: int, timeout: float = 3.0) -> None:
         """Best-effort helper for tests."""
@@ -353,12 +443,7 @@ class VoiceReplyManager:
                     self._worker_tasks.pop(user_id, None)
 
     async def _pregenerate_audio(self, job: VoiceJob) -> bytes | None:
-        """Run TTS generation in the background immediately after enqueue.
-
-        The result (OGG bytes or None) is stored via the asyncio.Task so the
-        per-user worker can ``await job.audio_future`` later and just send.
-        This decouples generation latency from queue wait time.
-        """
+        """Generate one job's audio inside its FIFO worker and durable lease."""
         try:
             from app.config import settings
             from app.i18n import detect_language
@@ -433,6 +518,24 @@ class VoiceReplyManager:
             return None
 
     async def _process_job(self, job: VoiceJob) -> None:
+        from app.repos.memory_consent import private_data_lease
+
+        async with private_data_lease(
+            job.user_id,
+            job.expected_epoch,
+            purpose="ltm:tts" if job.require_ltm else "conversation:tts",
+            require_ltm=job.require_ltm,
+        ) as lease_current:
+            if not lease_current:
+                logger.info(
+                    "Discarded stale TTS job %s for user %s",
+                    job.job_id,
+                    job.user_id,
+                )
+                return
+            await self._process_job_leased(job)
+
+    async def _process_job_leased(self, job: VoiceJob) -> None:
         wait_ms = max(0.0, (time.monotonic() - job.enqueued_at) * 1000.0)
         heartbeat_stop = asyncio.Event()
         heartbeat_task = asyncio.create_task(self._heartbeat(job, heartbeat_stop))
@@ -441,35 +544,11 @@ class VoiceReplyManager:
             await role_conv_metrics.record_tts_job_started(wait_ms)
             logger.info("TTS job started: job_id=%s user_id=%s queue_wait_ms=%.1f", job.job_id, job.user_id, wait_ms)
 
-            # Try to use pre-generated audio (Future-based pipeline).
-            ogg_bytes: bytes | None = None
-            if job.audio_future is not None:
-                await self._set_status(job, status="synthesizing", detail="Генерирую аудио…")
-                try:
-                    ogg_bytes = await job.audio_future
-                except asyncio.CancelledError:
-                    # CancelledError is BaseException in Python 3.11+ — must
-                    # propagate to honor task/worker cancellation (e.g. shutdown).
-                    raise
-                except Exception as exc:
-                    logger.warning(
-                        "TTS future failed for job_id=%s: %s",
-                        job.job_id,
-                        exc,
-                    )
-                    ogg_bytes = None  # triggers synchronous retry below
-
-            if ogg_bytes is not None:
-                # Pre-generation succeeded — just send.
-                await self._send_ogg(job, ogg_bytes)
-            else:
-                # Fallback: pregenerate task returned None, retry synchronously.
-                logger.info("TTS pregenerate miss, retrying inline: job_id=%s", job.job_id)
-                await self._set_status(job, status="synthesizing", detail="Генерирую аудио (повтор)…")
-                ogg_bytes = await self._pregenerate_audio(job)
-                if ogg_bytes is None:
-                    raise RuntimeError("no_audio_generated")
-                await self._send_ogg(job, ogg_bytes)
+            await self._set_status(job, status="synthesizing", detail="Генерирую аудио…")
+            ogg_bytes = await self._pregenerate_audio(job)
+            if ogg_bytes is None:
+                raise RuntimeError("no_audio_generated")
+            await self._send_ogg(job, ogg_bytes)
 
             await role_conv_metrics.record_tts_job_completed()
         except Exception as exc:
@@ -648,8 +727,16 @@ async def fire_voice_reply(
     voice: str = "Aoede",
     tts_temperature: float | None = None,
     source_key: str,
+    expected_epoch: int | None = None,
+    require_ltm: bool = False,
 ) -> VoiceEnqueueResult:
     """Enqueue reply TTS for per-user serialized processing."""
+    if expected_epoch is None:
+        from app.repos.memory_consent import resolve_current_epoch
+
+        expected_epoch = await resolve_current_epoch(user_id, require_ltm=require_ltm)
+    if expected_epoch is None:
+        return VoiceEnqueueResult(False, False, None, 0)
     return await _voice_reply_manager.enqueue(
         bot=bot,
         user_id=user_id,
@@ -659,4 +746,6 @@ async def fire_voice_reply(
         voice=voice,
         tts_temperature=tts_temperature,
         source_key=source_key,
+        expected_epoch=expected_epoch,
+        require_ltm=require_ltm,
     )

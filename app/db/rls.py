@@ -7,8 +7,6 @@ Extracted from app/database.py to reduce monolith size.
 import logging
 import re
 
-import asyncpg
-
 # --- RLS Policy Templates ---
 
 RLS_POLICY_USER = """
@@ -94,6 +92,12 @@ RLS_CONFIG = {
     "error_logs": [{"name": "error_logs_policy", "template": RLS_POLICY_ADMIN}],
     "model_configuration": [{"name": "model_configuration_policy", "template": RLS_POLICY_ADMIN}],
     "long_term_memory": [{"name": "memory_user_isolation", "template": RLS_POLICY_USER}],
+    "memory_nodes": [{"name": "memory_nodes_user_policy", "template": RLS_POLICY_USER}],
+    "memory_edges": [{"name": "memory_edges_user_policy", "template": RLS_POLICY_USER}],
+    "memory_edge_sources": [{"name": "memory_edge_sources_user_policy", "template": RLS_POLICY_USER}],
+    "memory_node_sources": [{"name": "memory_node_sources_user_policy", "template": RLS_POLICY_USER}],
+    "memory_derivation_sources": [{"name": "memory_derivation_sources_user_policy", "template": RLS_POLICY_USER}],
+    "private_data_leases": [{"name": "private_data_leases_user_policy", "template": RLS_POLICY_USER}],
     "key_model_status": [{"name": "key_model_status_admin_policy", "template": RLS_POLICY_ADMIN}],
     "global_settings": [{"name": "global_settings_policy", "template": RLS_POLICY_ADMIN}],
     "inline_boards": [{"name": "inline_boards_policy", "template": RLS_POLICY_ADMIN}],
@@ -111,89 +115,48 @@ def quote_ident(ident: str) -> str:
 
 
 async def setup_row_level_security(db_query):
-    """Configure Row Level Security for all tables."""
-    try:
-        # Quick check if policies already exist (skip ALTER TABLE on every restart)
-        existing = await db_query("SELECT 1 FROM pg_policies WHERE tablename = 'users' AND policyname = 'users_policy'")
-        if existing:
-            logging.info("RLS already configured, skipping setup.")
-            return
+    """Configure Row Level Security for every expected table, failing closed."""
+    for table in sorted(VALID_TABLES):
+        if not _SAFE_IDENTIFIER_RE.fullmatch(table):
+            raise ValueError(f"Unsafe table name in RLS configuration: {table!r}")
 
-        alter_statements = []
-        safe_tables = []
-
-        for table in VALID_TABLES:
-            if not _SAFE_IDENTIFIER_RE.match(table):
-                logging.error("Refusing to use unsafe table name in SQL: %s", table)
-                continue
-            safe_tables.append(table)
-            quoted_table = quote_ident(table)
-            alter_statements.append(f"ALTER TABLE {quoted_table} ENABLE ROW LEVEL SECURITY;")
-
-        if alter_statements:
-            try:
-                for stmt in alter_statements:
-                    await db_query(stmt)
-            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-                logging.error("Failed to batch enable RLS: %s", e)
-                # If batch fails, we log it and continue. Policies may fail to create properly.
-
-        for table in safe_tables:
-            try:
-                await create_rls_policies(table, db_query)
-            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-                logging.warning("Failed to create RLS policies for table %s: %s", table, e)
-
-    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-        logging.error("Error setting up RLS: %s", e, exc_info=True)
+        try:
+            await db_query(f"ALTER TABLE {quote_ident(table)} ENABLE ROW LEVEL SECURITY;")
+            await create_rls_policies(table, db_query)
+        except Exception:
+            logging.exception("Failed to configure RLS for table %s", table)
+            raise
 
 
 async def create_rls_policies(table_name: str, db_query):
     """Create security policies for a table."""
     if table_name not in VALID_TABLES:
-        logging.error("Invalid table name for RLS policy: %s", table_name)
-        return
+        raise ValueError(f"Invalid table name for RLS policy: {table_name!r}")
 
-    try:
-        policies = RLS_CONFIG.get(table_name)
-        if not policies:
-            logging.warning("No RLS configuration found for table: %s", table_name)
-            return
+    policies = RLS_CONFIG[table_name]
+    if not policies:
+        raise ValueError(f"No RLS policies configured for table: {table_name!r}")
 
-        # Fetch all existing policies for the table at once to avoid N+1 queries
-        existing_policy_records = await db_query(
-            "SELECT policyname FROM pg_policies WHERE tablename = $1",
-            (table_name,),
-        )
-        existing_policies = {row["policyname"] for row in existing_policy_records}
+    # Fetch all existing policies for the table at once to avoid N+1 queries.
+    existing_policy_records = await db_query(
+        "SELECT policyname FROM pg_policies WHERE tablename = $1",
+        (table_name,),
+    )
+    existing_policies = {row["policyname"] for row in existing_policy_records}
 
-        for policy_cfg in policies:
-            policy_name = policy_cfg["name"]
+    for policy_cfg in policies:
+        policy_name = policy_cfg["name"]
+        if policy_name in existing_policies:
+            continue
 
-            try:
-                if policy_name not in existing_policies:
-                    # Construct SQL
-                    if "sql" in policy_cfg:
-                        sql = policy_cfg["sql"]
-                    elif "template" in policy_cfg:
-                        sql = policy_cfg["template"].format(
-                            policy_name=quote_ident(policy_name),
-                            table_name=quote_ident(table_name),
-                        )
-                    else:
-                        logging.error("Missing SQL or template for policy %s", policy_name)
-                        continue
+        if "sql" in policy_cfg:
+            sql = policy_cfg["sql"]
+        elif "template" in policy_cfg:
+            sql = policy_cfg["template"].format(
+                policy_name=quote_ident(policy_name),
+                table_name=quote_ident(table_name),
+            )
+        else:
+            raise ValueError(f"Missing SQL or template for RLS policy: {policy_name!r}")
 
-                    await db_query(sql)
-
-            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-                logging.error(
-                    "Failed to create policy %s for table %s: %s",
-                    policy_name,
-                    table_name,
-                    e,
-                )
-                raise e
-
-    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-        logging.error("Error creating RLS policies for %s: %s", table_name, e, exc_info=True)
+        await db_query(sql)

@@ -226,8 +226,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         # ── Store document summary in long-term memory (background) ──
         doc_content = result.get("content", "")
-        if doc_content and len(doc_content) > 100:
-            from app.utils.background_tasks import submit_retryable
+        chat_state = await get_user_chat(user_id)
+        from app.repos.memory_consent import capture_epoch
+
+        _memory_epoch = capture_epoch(chat_state)
+        if doc_content and len(doc_content) > 100 and _memory_epoch is not None:
+            from app.repos.memory_autosave import submit_memory_task
 
             _doc_bytes = doc_content.encode("utf-8", errors="replace")
             _doc_uid = user_id
@@ -240,11 +244,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                         _doc_bytes,
                         _doc_uid,
                         media_type="document_text",
+                        expected_epoch=_memory_epoch,
                     )
 
                 return _store()
 
-            submit_retryable(_bg_doc_ltm, retry=2)
+            submit_memory_task(user_id, _bg_doc_ltm, retry=2)
 
     except Exception as e:
         logging.error("Error processing document for user %s: %s", user_id, e, exc_info=True)

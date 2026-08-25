@@ -27,6 +27,9 @@ class TelegramTarget:
     placeholder_message: Any | None = None
     bot: Any | None = None
     chat_id: int | None = None
+    # Private responses must never be copied into Redis reader storage or
+    # permanently published to Telegraph.
+    private_content: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +67,10 @@ class TelegramResponseDelivery:
         )
 
     def _renderer(self, target: TelegramTarget) -> TelegramRenderer:
-        return self._renderer_factory(self._transport(target))
+        return self._renderer_factory(
+            self._transport(target),
+            private_content=target.private_content,
+        )
 
     async def stream(
         self,

@@ -1,5 +1,7 @@
 """Tests for app.handlers.ai_chat — regular conversational AI chat."""
 
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,6 +32,27 @@ from app.response_delivery.renderer import (
     TelegramMessageRef,
 )
 from tests.factories import make_chat_state, make_telegram_message
+
+
+@pytest.fixture(autouse=True)
+def _allow_durable_private_data_boundaries():
+    """Unit tests isolate DB/provider orchestration from the durable gate."""
+
+    @asynccontextmanager
+    async def allowed_lease(*_args, **_kwargs):
+        yield True
+
+    async def current_generation(_user_id, *, expected_epoch):
+        return 0 if expected_epoch is None else expected_epoch
+
+    with (
+        patch("app.repos.memory_consent.private_data_lease", allowed_lease),
+        patch(
+            "app.handlers.ai_chat.ensure_chat_generation",
+            side_effect=current_generation,
+        ),
+    ):
+        yield
 
 
 def _receipt(message_id: int = 55) -> DeliveryReceipt:
@@ -111,8 +134,13 @@ async def test_successful_chat_response_appended_to_history(mock_boundaries):
     placeholder.chat.type = "private"
     placeholder.get_bot = MagicMock(return_value=None)
 
-    # Pre-existing chat state
-    chat_state = make_chat_state(history=[{"role": "user", "parts": ["Hi"]}])
+    # Pre-existing complete turn
+    chat_state = make_chat_state(
+        history=[
+            {"role": "user", "parts": ["Earlier question"]},
+            {"role": "model", "parts": ["Earlier answer"]},
+        ]
+    )
 
     # ── Act ──
     await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
@@ -124,12 +152,221 @@ async def test_successful_chat_response_appended_to_history(mock_boundaries):
     saved_state = mock_boundaries["update_chat"].call_args_list[-1][0][1]
 
     # Verify Behavior: The generated response is appended to history
-    assert len(saved_state.history) == 2, "Expected 1 new message in history"
+    assert len(saved_state.history) == 4, "Expected one real user/model turn"
+    assert saved_state.history[-2]["role"] == "user"
     assert saved_state.history[-1]["role"] == "model"
     assert "Hello world!" in saved_state.history[-1]["parts"][0]
 
     # Verify Behavior: Token limit correctly updated internally
     assert saved_state.token_count > 0, "Expected updated token count based on the assembled chunk"
+
+
+@pytest.mark.asyncio
+async def test_chat_keeps_private_lease_through_post_stream_side_effects(mock_boundaries):
+    """Derived private output must remain leased through voice and persistence."""
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
+    chat_state = make_chat_state(ltm_enabled=False)
+    chat_state.voice_id = None
+    chat_state.tts_temperature = None
+    lease_active = False
+    observed: dict[str, bool] = {}
+
+    @asynccontextmanager
+    async def tracked_lease(*_args, **_kwargs):
+        nonlocal lease_active
+        lease_active = True
+        try:
+            yield True
+        finally:
+            lease_active = False
+
+    async def stream_response(*_args, **_kwargs):
+        observed["stream"] = lease_active
+        return CompleteDelivery(
+            content_text="Private answer",
+            displayed_text="Private answer",
+            completion=_completion(),
+            voice_requested=True,
+            receipt=_receipt(),
+        )
+
+    async def persist_chat(*_args, **_kwargs):
+        observed["persist"] = lease_active
+
+    async def enqueue_voice(**_kwargs):
+        observed["voice"] = lease_active
+
+    def bind_provenance(*_args, **_kwargs):
+        observed["provenance"] = lease_active
+
+    mock_boundaries["delivery"].stream.side_effect = stream_response
+    mock_boundaries["update_chat"].side_effect = persist_chat
+
+    with (
+        patch("app.repos.memory_consent.private_data_lease", tracked_lease),
+        patch("app.repos.memory.bind_retrieved_edges_to_response", bind_provenance),
+        patch("app.voice_engine.fire_voice_reply", new_callable=AsyncMock, side_effect=enqueue_voice),
+    ):
+        await _handle_regular_chat(placeholder, 123, "Private question", chat_state)
+
+    assert observed == {
+        "stream": True,
+        "provenance": True,
+        "voice": True,
+        "persist": True,
+    }
+    assert lease_active is False
+
+
+@pytest.mark.asyncio
+async def test_custom_current_user_parts_persist_one_text_turn_without_binary_media(mock_boundaries):
+    """Voice/image confirmation must not duplicate turns or persist raw media bytes."""
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
+    chat_state = make_chat_state(history=[])
+    media_part = b"\x89PNG\r\n\x1a\n"
+    user_parts = ["🎤 Voice transcript", media_part]
+
+    await _handle_regular_chat(
+        placeholder,
+        123,
+        "Voice transcript",
+        chat_state,
+        user_parts=user_parts,
+    )
+
+    saved_state = mock_boundaries["update_chat"].call_args_list[-1][0][1]
+    assert [message["role"] for message in saved_state.history] == ["user", "model"]
+    assert saved_state.history[0]["parts"] == ["🎤 Voice transcript"]
+    assert media_part not in saved_state.history[0]["parts"]
+
+
+@pytest.mark.asyncio
+async def test_auto_routed_voice_passes_one_marked_text_turn_to_chat_pipeline():
+    from app.handlers.msg_voice import _auto_route_to_chat
+    from app.i18n import t
+
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.edit_text = AsyncMock()
+    new_placeholder = make_telegram_message(user_id=123)
+    placeholder.reply_text = AsyncMock(return_value=new_placeholder)
+    chat_state = make_chat_state(ltm_enabled=False)
+
+    with (
+        patch("app.handlers.msg_voice.get_user_chat", new_callable=AsyncMock, return_value=chat_state),
+        patch(
+            "app.voice_intent.detect_tts_intent",
+            new_callable=AsyncMock,
+            return_value=SimpleNamespace(explicit_tts=False),
+        ),
+        patch("app.handlers.ai_chat._handle_regular_chat", new_callable=AsyncMock) as handle_chat,
+    ):
+        await _auto_route_to_chat(
+            placeholder,
+            "Voice transcript",
+            "ru",
+            123,
+            b"audio",
+            SimpleNamespace(file_unique_id="voice-file"),
+            MagicMock(),
+        )
+
+    handle_chat.assert_awaited_once()
+    assert handle_chat.await_args.kwargs["user_parts"] == [
+        f"{t('voice.history_marker', 'ru')}\nVoice transcript"
+    ]
+    assert handle_chat.await_args.kwargs["capture_text_memory"] is False
+
+
+@pytest.mark.asyncio
+async def test_synthetic_summary_is_not_persisted_as_chat_history(mock_boundaries):
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
+    chat_state = make_chat_state(
+        history=[
+            {"role": "user", "parts": ["Earlier question"]},
+            {"role": "model", "parts": ["Earlier answer"]},
+        ]
+        ,
+        ltm_enabled=False,
+    )
+    chat_state.context_summary = "A synthetic summary that belongs only in the provider prompt"
+
+    await _handle_regular_chat(placeholder, 123, "Real new question", chat_state)
+
+    saved_state = mock_boundaries["update_chat"].call_args_list[-1][0][1]
+    persisted_text = "\n".join(str(message.get("parts", "")) for message in saved_state.history)
+    assert "Контекст предыдущей беседы" not in persisted_text
+    assert "Понял, учитываю контекст" not in persisted_text
+    assert [message["role"] for message in saved_state.history[-2:]] == ["user", "model"]
+    assert "Real new question" in str(saved_state.history[-2]["parts"])
+
+
+@pytest.mark.asyncio
+async def test_ltm_disabled_does_not_submit_automatic_capture(mock_boundaries):
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
+    chat_state = make_chat_state(ltm_enabled=False)
+
+    with patch("app.handlers.ai_chat._store_memory_in_background") as capture:
+        await _handle_regular_chat(
+            placeholder,
+            123,
+            "This request is deliberately long enough for automatic memory capture",
+            chat_state,
+        )
+
+    capture.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_media_route_can_disable_duplicate_text_capture(mock_boundaries):
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
+    chat_state = make_chat_state(ltm_enabled=True)
+
+    with patch("app.handlers.ai_chat._store_memory_in_background") as capture:
+        await _handle_regular_chat(
+            placeholder,
+            123,
+            "Voice transcript stored by the media-specific pipeline",
+            chat_state,
+            capture_text_memory=False,
+        )
+
+    capture.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retrieved_edges_are_bound_explicitly_across_child_task(mock_boundaries):
+    """Retrieval runs under gather(), so task-local provenance must be returned explicitly."""
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
+    chat_state = make_chat_state(ltm_enabled=True)
+
+    with (
+        patch(
+            "app.context.compression.inject_memory_layers",
+            new_callable=AsyncMock,
+            return_value=("system with memory", {"l2_memories": 1}),
+        ),
+        patch(
+            "app.repos.memory.get_current_retrieved_edge_ids",
+            return_value=[701, 702],
+        ) as current_edges,
+        patch("app.repos.memory.bind_retrieved_edges_to_response") as bind_edges,
+    ):
+        await _handle_regular_chat(placeholder, 123, "What do you remember?", chat_state)
+
+    current_edges.assert_called_once_with(123)
+    bind_edges.assert_called_once_with(123, 55, edge_ids=[701, 702])
 
 
 @pytest.mark.asyncio
@@ -318,6 +555,92 @@ async def test_empty_response_rolls_back_history(mock_boundaries):
 
     # The delivery boundary already rendered the failure exactly once.
     placeholder.edit_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_failed_truncated_request_rolls_back_summary_and_does_not_schedule_llm(mock_boundaries):
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.get_bot = MagicMock(return_value=None)
+    original_history = [
+        {"role": "user", "parts": ["Old question"]},
+        {"role": "model", "parts": ["Old answer"]},
+    ]
+    chat_state = make_chat_state(history=list(original_history), ltm_enabled=False)
+    chat_state.context_summary = "previous durable summary"
+    assembled = SimpleNamespace(
+        history=[{"role": "user", "parts": ["New question"]}],
+        retained_history=[],
+        summary="new request-local summary",
+        was_truncated=True,
+        messages_dropped=2,
+        audit_hash="audit",
+        llm_summarization_scheduled=True,
+        dropped_messages=list(original_history),
+    )
+    assembler = MagicMock()
+    assembler.assemble.return_value = assembled
+    assembler._extract_text.side_effect = lambda message: str(message["parts"][0])
+    mock_boundaries["delivery"].stream.return_value = FailedDelivery(
+        error_code=ErrorCode.EMPTY_RESPONSE,
+        displayed_text="No response",
+        receipt=_receipt(),
+    )
+
+    with (
+        patch("app.context_assembler.get_assembler", return_value=assembler),
+        patch("app.context.summarizer.schedule_llm_summarization") as schedule_summary,
+    ):
+        await _handle_regular_chat(placeholder, 123, "New question", chat_state)
+
+    assert chat_state.history == original_history
+    assert chat_state.context_summary == "previous durable summary"
+    schedule_summary.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_successful_async_summary_uses_context_only_compare_and_swap(mock_boundaries):
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.get_bot = MagicMock(return_value=None)
+    dropped = [{"role": "user", "parts": ["Old question"]}]
+    chat_state = make_chat_state(history=list(dropped), ltm_enabled=False)
+    chat_state.context_summary = "previous summary"
+    assembled = SimpleNamespace(
+        history=[{"role": "user", "parts": ["New question"]}],
+        retained_history=[],
+        summary="local summary snapshot",
+        was_truncated=True,
+        messages_dropped=1,
+        audit_hash="audit",
+        llm_summarization_scheduled=True,
+        dropped_messages=dropped,
+    )
+    assembler = MagicMock()
+    assembler.assemble.return_value = assembled
+    assembler._extract_text.side_effect = lambda message: str(message["parts"][0])
+
+    with (
+        patch("app.context_assembler.get_assembler", return_value=assembler),
+        patch("app.context.summarizer.schedule_llm_summarization") as schedule_summary,
+        patch(
+            "app.repos.chats.replace_context_summary",
+            new_callable=AsyncMock,
+            return_value=True,
+            create=True,
+        ) as replace_summary,
+    ):
+        await _handle_regular_chat(placeholder, 123, "New question", chat_state)
+        callback = schedule_summary.call_args.kwargs["callback"]
+        update_count = mock_boundaries["update_chat"].await_count
+        await callback("refined LLM summary")
+
+    replace_summary.assert_awaited_once_with(
+        123,
+        expected_summary="local summary snapshot",
+        new_summary="refined LLM summary",
+        expected_epoch=0,
+    )
+    assert mock_boundaries["update_chat"].await_count == update_count
+    assert mock_boundaries["update_chat"].await_args.kwargs["rewrite_history"] is True
 
 
 @pytest.mark.asyncio

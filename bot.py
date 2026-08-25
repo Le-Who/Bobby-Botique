@@ -109,6 +109,13 @@ def signal_handler(signum, _frame):
         logging.info("SIGINT received - User interrupted the service")
 
 
+async def cleanup_ltm_job(_context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Physically remove expired LTM rows and their derived graph provenance."""
+    from app.repos.memory import cleanup_expired_memories
+
+    await cleanup_expired_memories()
+
+
 async def basic_monitoring():
     """Базовый мониторинг работы бота"""
     logging.info("Monitoring task started - will run continuously until shutdown")
@@ -525,6 +532,20 @@ async def run_bot_with_retry():
                 logging.info("Scheduled briefs hourly job registered")
         except Exception as e:
             logging.warning("Failed to register briefs scheduler: %s", e)
+
+        # Expired records are excluded at read time; this job also reclaims them
+        # physically and lets database cascades remove graph provenance.
+        try:
+            if application.job_queue:
+                application.job_queue.run_repeating(
+                    cleanup_ltm_job,
+                    interval=21600,  # Every six hours
+                    first=180,
+                    name="ltm_retention_cleanup",
+                )
+                logging.info("LTM retention cleanup job registered (6h interval)")
+        except Exception as e:
+            logging.warning("Failed to register LTM retention cleanup job: %s", e)
 
         # Schedule Daily Crocodile prompt/discovery delivery (hourly)
         try:

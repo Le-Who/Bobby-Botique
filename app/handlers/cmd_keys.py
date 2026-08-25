@@ -25,6 +25,7 @@ from telegram.ext import (
     filters,
 )
 
+from app.handlers.conversation import suppress_hybrid_conversation_handler_warning
 from app.repos.provider_keys import (
     clear_provider_key,
     get_provider_key,
@@ -278,22 +279,23 @@ async def check_single_provider_health(provider: str) -> bool | None:
 
 def build_keys_conversation_handler() -> ConversationHandler:
     """Build the ConversationHandler for the /keys wizard flow."""
-    return ConversationHandler(
-        entry_points=[
-            CommandHandler("keys", keys_command),
-            CallbackQueryHandler(keys_callback, pattern=r"^keys:"),
-        ],
-        states={
-            AWAITING_KEY: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_key_message),
+    with suppress_hybrid_conversation_handler_warning():
+        return ConversationHandler(
+            entry_points=[
+                CommandHandler("keys", keys_command),
+                CallbackQueryHandler(keys_callback, pattern=r"^keys:"),
             ],
-        },
-        fallbacks=[
-            CommandHandler("keys", keys_command),
-            CallbackQueryHandler(keys_callback, pattern=r"^keys:"),
-        ],
-        per_user=True,
-        per_chat=True,
-        per_message=False,
-        name="keys_wizard",
-    )
+            states={
+                AWAITING_KEY: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, receive_key_message),
+                ],
+            },
+            fallbacks=[
+                CommandHandler("keys", keys_command),
+                CallbackQueryHandler(keys_callback, pattern=r"^keys:"),
+            ],
+            per_user=True,
+            per_chat=True,
+            per_message=False,
+            name="keys_wizard",
+        )

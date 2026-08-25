@@ -106,7 +106,8 @@ class TestMetricsSnapshotAtomicity:
 
         with (
             patch("app.metrics.db.db_query", new_callable=AsyncMock),
-            patch("app.metrics.db.db_execute_many", new_callable=AsyncMock),
+            patch("app.metrics.db.db_execute_many", new_callable=AsyncMock) as execute_many,
+            patch("app.repos.analytics.record_daily_activity", new_callable=AsyncMock),
         ):
             await metrics_collector._save_metrics_to_db()
 
@@ -114,6 +115,30 @@ class TestMetricsSnapshotAtomicity:
         user_data = metrics_collector._user_daily[today][42]
         assert user_data["request_count"] == 0, f"Expected 0 (reset after save), got {user_data['request_count']}"
         assert user_data["model_usage"] == {}
+        assert execute_many.await_count == 1
+        per_user_sql = execute_many.await_args.args[0]
+        assert "INSERT INTO public.users" not in per_user_sql
+        assert "FROM public.users AS app_user" in per_user_sql
+        assert "WHERE app_user.user_id = $1" in per_user_sql
+
+    @pytest.mark.asyncio
+    async def test_queued_metrics_never_recreate_erased_user(self, metrics_collector):
+        """A pre-erasure snapshot may flush later but must not recreate users."""
+        today = date.today().isoformat()
+        metrics_collector._user_daily[today][404]["request_count"] = 1
+        metrics_collector.daily_metrics[today].request_count = 1
+
+        with (
+            patch("app.metrics.db.db_query", new_callable=AsyncMock),
+            patch("app.metrics.db.db_execute_many", new_callable=AsyncMock) as execute_many,
+            patch("app.repos.analytics.record_daily_activity", new_callable=AsyncMock),
+        ):
+            await metrics_collector._save_metrics_to_db()
+
+        all_sql = "\n".join(call.args[0] for call in execute_many.await_args_list)
+        assert "INSERT INTO public.users" not in all_sql
+        assert "INSERT INTO user_metrics" in all_sql
+        assert "FROM public.users AS app_user" in all_sql
 
     @pytest.mark.asyncio
     async def test_per_user_db_failure_compensates(self, metrics_collector):

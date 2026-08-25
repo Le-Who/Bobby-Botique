@@ -11,7 +11,9 @@ from app.context.token_budget import (
     SUMMARY_BUDGET,
     AssembledContext,
     TokenBudget,
+    truncate_to_token_budget,
 )
+from app.prompt_registry import estimate_tokens_cyrillic
 
 # ── TokenBudget dataclass ────────────────────────────────────────────────────
 
@@ -50,6 +52,26 @@ class TestTokenBudget:
     def test_custom_total(self):
         budget = TokenBudget(total=64_000)
         assert budget.available_for_history == 64_000 - RESPONSE_RESERVE
+
+    def test_used_accounts_for_every_reserved_layer(self):
+        budget = TokenBudget(
+            total=10_000,
+            system_prompt=1_000,
+            summary=500,
+            history=2_000,
+            user_message=750,
+            response_reserve=3_000,
+        )
+        assert budget.used == 7_250
+
+
+def test_utf8_truncation_respects_estimator_for_cyrillic_and_emoji():
+    text = ("Дуже довгий контекст російською та українською 🔮✨ " * 2_000).strip()
+
+    result = truncate_to_token_budget(text, 400)
+
+    assert result.endswith("...")
+    assert estimate_tokens_cyrillic(result) <= 400
 
 
 # ── AssembledContext dataclass ───────────────────────────────────────────────

@@ -51,6 +51,8 @@ async def execute_memory_tool(
     user_id: int,
     query: str,
     api_key: str,
+    *,
+    expected_epoch: int | None = None,
 ) -> dict[str, Any]:
     """Execute the `recall_memory` tool call and return results.
 
@@ -66,6 +68,7 @@ async def execute_memory_tool(
             api_key,
             limit=5,
             min_similarity=0.55,
+            expected_epoch=expected_epoch,
         )
 
         memory_texts = [

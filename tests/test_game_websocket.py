@@ -21,6 +21,19 @@ def mock_bot_token(monkeypatch):
     return "test-token"
 
 
+@pytest.fixture
+def authorized_websocket_user():
+    with patch(
+        "app.repos.users.is_authorized",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as authorized:
+        yield authorized
+
+
+pytestmark = pytest.mark.usefixtures("authorized_websocket_user")
+
+
 @pytest.mark.asyncio
 class TestWebSocketAuth:
     """WS-01: Authentication testing."""
@@ -48,7 +61,12 @@ class TestWebSocketAuth:
 class TestWebSocketEvents:
     """WS-02 through WS-05."""
 
-    async def test_history_sync_on_connect(self, test_client, mock_bot_token):
+    async def test_history_sync_on_connect(
+        self,
+        test_client,
+        mock_bot_token,
+        authorized_websocket_user,
+    ):
         """WS-02: Connect and verify history sync occurs before main loop."""
         init_data = make_valid_init_data(mock_bot_token, user_id=222)
         url = f"/webapp/game/ws?initData={urllib.parse.quote(init_data)}&game_id=game1"
@@ -78,6 +96,8 @@ class TestWebSocketEvents:
                 assert hist["items"][0]["guess"] == "кот"
                 assert "seq" in state
                 assert "seq" in hist
+
+        authorized_websocket_user.assert_awaited_once_with(222)
 
     async def test_hint_messaging(self, test_client, mock_bot_token):
         """WS-03: Hint request loop."""

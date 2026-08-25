@@ -136,33 +136,33 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
         try:
             from app.handlers.ai_chat import _handle_regular_chat
 
-            chat_state = await get_user_chat(user_id)
-
-            # Build history parts — text + optional attached image (Show & Tell)
-            from app.i18n import t as _t
-
-            parts: list = [f"{_t('voice.history_marker', lang)}\n{transcript}"]
-
-            if attached_image:
-                from app.utils.image_utils import TaggedImage
-
-                parts.append(
-                    TaggedImage(
-                        data=attached_image["bytes"],
-                        cache_key=attached_image.get("file_unique_id"),
-                        task_type="default",
-                        pre_compressed=True,
-                    )
-                )
-                logging.info(
-                    "Show & Tell: injected image %s into voice confirm for user %s",
-                    attached_image.get("file_unique_id"),
-                    user_id,
-                )
-
-            chat_state.history.append({"role": "user", "parts": parts})
-
             async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+                chat_state = await get_user_chat(user_id)
+
+                # Keep multimodal content in the current canonical user turn.
+                # Pre-appending it to history would make the chat pipeline add
+                # the same transcript a second time.
+                from app.i18n import t as _t
+
+                parts: list = [f"{_t('voice.history_marker', lang)}\n{transcript}"]
+
+                if attached_image:
+                    from app.utils.image_utils import TaggedImage
+
+                    parts.append(
+                        TaggedImage(
+                            data=attached_image["bytes"],
+                            cache_key=attached_image.get("file_unique_id"),
+                            task_type="default",
+                            pre_compressed=True,
+                        )
+                    )
+                    logging.info(
+                        "Show & Tell: injected image %s into voice confirm for user %s",
+                        attached_image.get("file_unique_id"),
+                        user_id,
+                    )
+
                 # Voice-for-Voice: source is a voice message, but we ONLY reply
                 # with voice if the user specifically asked for it (parsed intent).
                 # This flag is per-request and NOT persisted.
@@ -173,6 +173,7 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
                     transcript,
                     chat_state,
                     reply_with_voice=reply_with_voice,
+                    user_parts=parts,
                 )
         except Exception as e:
             logging.error("voice:confirm task failed: %s", e, exc_info=True)

@@ -169,26 +169,45 @@ async def mark_sent(user_id: int, sub_type: str = "morning_brief") -> None:
 # ── Brief generation pipeline ───────────────────────────────────────────
 
 
-async def _get_user_topics(user_id: int) -> list[str]:
-    """Extract recent discussion topics from user's LTM."""
+async def _query_ltm_topic_rows(
+    user_id: int,
+    source_type: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Read consent-valid LTM rows under transaction-local tenant context."""
+    async with db.db_manager.pool.acquire() as conn, conn.transaction():
+        await db.set_user_context(user_id, False, conn=conn)
+        try:
+            return await db.db_query(
+                "SELECT ltm.content, c.memory_epoch FROM long_term_memory AS ltm "
+                "JOIN chats AS c ON c.user_id = ltm.user_id "
+                "WHERE ltm.user_id = $1 AND c.ltm_enabled IS TRUE "
+                "AND (ltm.expires_at IS NULL OR ltm.expires_at > now()) "
+                "AND ltm.source_type = $2 "
+                "ORDER BY ltm.created_at DESC LIMIT $3",
+                (user_id, source_type, limit),
+                conn=conn,
+            )
+        finally:
+            await db.clear_user_context(conn=conn)
+
+
+async def _get_user_topics_snapshot(user_id: int) -> tuple[list[str], int | None]:
+    """Extract topics together with the consent epoch that authorized the read."""
     try:
         # Prefer consolidated facts (already distilled by LLM)
-        result = await db.db_query(
-            "SELECT content FROM long_term_memory "
-            "WHERE user_id = $1 AND source_type = 'consolidated' "
-            "ORDER BY created_at DESC LIMIT 5",
-            (user_id,),
-        )
+        result = await _query_ltm_topic_rows(user_id, "consolidated", 5)
         # Fallback to raw user intents
         if not result:
-            result = await db.db_query(
-                "SELECT content FROM long_term_memory "
-                "WHERE user_id = $1 AND source_type = 'user_intent' "
-                "ORDER BY created_at DESC LIMIT 10",
-                (user_id,),
-            )
+            result = await _query_ltm_topic_rows(user_id, "user_intent", 10)
         if not result:
-            return []
+            return [], None
+
+        epochs = {int(row["memory_epoch"]) for row in result if row.get("memory_epoch") is not None}
+        if len(epochs) != 1:
+            logger.warning("LTM topic snapshot for user %s has no stable consent epoch", user_id)
+            return [], None
+        expected_epoch = epochs.pop()
 
         # Extract key topics from recent memories
         topics: list[str] = []
@@ -200,13 +219,38 @@ async def _get_user_topics(user_id: int) -> list[str]:
                 if first_sentence and len(first_sentence) > 10:
                     topics.append(first_sentence[:100])
 
-        return topics[:5]  # Limit to 5 topics
+        return topics[:5], expected_epoch  # Limit to 5 topics
     except Exception as e:
         logger.error("Error getting user topics: %s", e, exc_info=True)
-        return []
+        return [], None
 
 
-async def _search_for_topics(topics: list[str]) -> list[dict[str, str]]:
+async def _get_user_topics(user_id: int) -> list[str]:
+    """Compatibility wrapper returning only consent-valid LTM topics."""
+    topics, _expected_epoch = await _get_user_topics_snapshot(user_id)
+    return topics
+
+
+async def _is_ltm_snapshot_current(user_id: int, expected_epoch: int | None) -> bool:
+    """Durably revalidate LTM consent and the epoch of a private-data snapshot."""
+    if expected_epoch is None:
+        return False
+
+    from app.repos.memory_consent import is_private_data_snapshot_current
+
+    return await is_private_data_snapshot_current(
+        user_id,
+        expected_epoch,
+        require_ltm=True,
+    )
+
+
+async def _search_for_topics(
+    topics: list[str],
+    *,
+    user_id: int | None = None,
+    expected_epoch: int | None = None,
+) -> list[dict[str, str]]:
     """Search web for fresh content on user's topics using Tavily."""
     articles: list[dict[str, str]] = []
 
@@ -214,12 +258,33 @@ async def _search_for_topics(topics: list[str]) -> list[dict[str, str]]:
         from app.search_services import tavily_search_agent
 
         for topic in topics[:3]:  # Limit API calls
+            if user_id is not None and not await _is_ltm_snapshot_current(user_id, expected_epoch):
+                logger.info("Stopped stale/revoked brief search for user %s", user_id)
+                break
             try:
-                response = await tavily_search_agent(
-                    topic,
-                    search_type="search",
-                    max_results=2,
-                )
+                if user_id is None:
+                    response = await tavily_search_agent(
+                        topic,
+                        search_type="search",
+                        max_results=2,
+                    )
+                else:
+                    from app.repos.memory_consent import private_data_lease
+
+                    async with private_data_lease(
+                        user_id,
+                        expected_epoch,
+                        purpose="ltm:brief_search",
+                        require_ltm=True,
+                    ) as lease_acquired:
+                        if not lease_acquired:
+                            logger.info("Stopped stale/revoked brief search for user %s", user_id)
+                            break
+                        response = await tavily_search_agent(
+                            topic,
+                            search_type="search",
+                            max_results=2,
+                        )
                 results = response.get("results", [])
                 if results:
                     for r in results:
@@ -240,7 +305,13 @@ async def _search_for_topics(topics: list[str]) -> list[dict[str, str]]:
     return articles[:5]  # Limit total articles
 
 
-async def _generate_brief_summary(topics: list[str], articles: list[dict[str, str]]) -> dict[str, str]:
+async def _generate_brief_summary(
+    topics: list[str],
+    articles: list[dict[str, str]],
+    *,
+    user_id: int | None = None,
+    expected_epoch: int | None = None,
+) -> dict[str, str]:
     """Use Gemini to produce per-topic summaries for digestible expandable blockquotes.
 
     Returns a dict mapping topic headline → 2-3 sentence summary string.
@@ -278,11 +349,33 @@ async def _generate_brief_summary(topics: list[str], articles: list[dict[str, st
             "Topics:\n" + "\n".join(f"- {tp}" for tp in topics) + articles_block
         )
 
-        response = await client.aio.models.generate_content(
-            model="gemini-3.1-flash-lite",
-            contents=prompt,
-            config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
-        )
+        if user_id is not None and not await _is_ltm_snapshot_current(user_id, expected_epoch):
+            logger.info("Skipped stale/revoked brief summary for user %s", user_id)
+            return {}
+
+        if user_id is None:
+            response = await client.aio.models.generate_content(
+                model="gemini-3.1-flash-lite",
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
+            )
+        else:
+            from app.repos.memory_consent import private_data_lease
+
+            async with private_data_lease(
+                user_id,
+                expected_epoch,
+                purpose="ltm:brief_summary",
+                require_ltm=True,
+            ) as lease_acquired:
+                if not lease_acquired:
+                    logger.info("Skipped stale/revoked brief summary for user %s", user_id)
+                    return {}
+                response = await client.aio.models.generate_content(
+                    model="gemini-3.1-flash-lite",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
+                )
         raw = (response.text or "").strip()
         # Strip any accidental markdown fences
         if raw.startswith("```"):
@@ -302,13 +395,18 @@ async def generate_and_send_brief(user_id: int, bot) -> bool:
     delivery time localized to the user's Telegram client timezone.
     """
     try:
-        topics = await _get_user_topics(user_id)
+        topics, expected_epoch = await _get_user_topics_snapshot(user_id)
         if not topics:
             logger.info("No LTM topics for user %s, skipping brief", user_id)
             return False
 
-        articles = await _search_for_topics(topics)
-        sections: dict[str, str] = await _generate_brief_summary(topics, articles)
+        articles = await _search_for_topics(topics, user_id=user_id, expected_epoch=expected_epoch)
+        sections: dict[str, str] = await _generate_brief_summary(
+            topics,
+            articles,
+            user_id=user_id,
+            expected_epoch=expected_epoch,
+        )
 
         if not sections:
             logger.info("Empty brief generated for user %s, skipping", user_id)
@@ -333,13 +431,30 @@ async def generate_and_send_brief(user_id: int, bot) -> bool:
 
         html_message = "\n".join(lines).strip()
 
-        await bot.send_message(
-            chat_id=user_id,
-            text=html_message,
-            parse_mode="HTML",
-        )
+        if not await _is_ltm_snapshot_current(user_id, expected_epoch):
+            logger.info("Skipped stale/revoked brief delivery for user %s", user_id)
+            return False
 
-        await mark_sent(user_id)
+        from app.repos.memory_consent import private_data_lease
+
+        async with private_data_lease(
+            user_id,
+            expected_epoch,
+            purpose="ltm:brief_delivery",
+            require_ltm=True,
+        ) as lease_acquired:
+            if not lease_acquired:
+                logger.info("Skipped stale/revoked brief delivery for user %s", user_id)
+                return False
+            await bot.send_message(
+                chat_id=user_id,
+                text=html_message,
+                parse_mode="HTML",
+            )
+            # Bind scheduler state to the same generation as the delivered
+            # private snapshot; a delete/recreate cannot be marked by stale work.
+            await mark_sent(user_id)
+
         logger.info("Brief sent to user %s (%d sections)", user_id, len(sections))
         return True
 

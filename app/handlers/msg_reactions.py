@@ -127,37 +127,18 @@ async def handle_message_reaction(update: Update, context: ContextTypes.DEFAULT_
             await set_message_reaction(context.bot, chat_id, message_id, "❤️")
 
         elif rating == "down":
-            # Store negative signal in LTM so the bot learns from dislikes.
-            # We record "user disliked response to message_id" as a memory
-            # that affects future interactions.
             from app.utils.background_tasks import submit_task
-
-            async def _store_negative_signal():
-                try:
-                    from app.repos.keys import get_available_gemini_key
-                    from app.repos.memory import EMBEDDING_MODEL, store_memory
-
-                    key_data = await get_available_gemini_key(model_name=EMBEDDING_MODEL)
-                    if not key_data:
-                        return
-                    await store_memory(
-                        user_id,
-                        f"[FEEDBACK] Пользователю не понравился ответ (msg_id={message_id}). "
-                        "Учитывай это при формировании будущих ответов.",
-                        key_data["api_key"],
-                        source_type="negative_feedback",
-                    )
-                except Exception as mem_err:
-                    logging.debug("LTM negative signal failed: %s", mem_err)
-
-            submit_task(_store_negative_signal())
 
             # ── RLHF: penalize graph edges used for this response ─────────
             async def _penalize_edges():
                 try:
-                    from app.repos.memory import penalize_graph_edges
+                    from app.repos.memory import (
+                        get_response_retrieved_edge_ids,
+                        penalize_graph_edges,
+                    )
 
-                    count = await penalize_graph_edges(user_id, penalty=0.10)
+                    edge_ids = get_response_retrieved_edge_ids(user_id, message_id)
+                    count = await penalize_graph_edges(user_id, edge_ids=edge_ids, penalty=0.10)
                     if count > 0:
                         logging.info(
                             "RLHF: user %d downvote penalized %d graph edges",

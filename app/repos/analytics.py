@@ -47,7 +47,9 @@ async def record_daily_activity(user_id: int) -> dict[str, int]:
         result = await db.db_query(
             """
             INSERT INTO user_metrics (user_id, metric_date, request_count, current_streak, longest_streak)
-            VALUES ($1, $2, 0, $3, $3)
+            SELECT app_user.user_id, $2, 0, $3, $3
+            FROM public.users AS app_user
+            WHERE app_user.user_id = $1
             ON CONFLICT (user_id, metric_date) DO UPDATE SET
                 current_streak = CASE
                     WHEN user_metrics.current_streak = 0 THEN $3

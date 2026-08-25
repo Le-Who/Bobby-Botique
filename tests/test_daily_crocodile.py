@@ -17,6 +17,16 @@ from app.repos import crocodile_daily as repo
 from app.web import quart_app
 from tests.factories import make_valid_init_data
 
+
+@pytest.fixture
+def authorized_websocket_user():
+    with patch(
+        "app.repos.users.is_authorized",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as authorized:
+        yield authorized
+
 ADMIN_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app" / "templates" / "admin_daily.html"
 
 
@@ -1029,7 +1039,10 @@ async def test_build_daily_completion_summary_uses_aggregate_daily_leaderboard()
 
 
 @pytest.mark.asyncio
-async def test_daily_websocket_uses_daily_mode_and_timezone(monkeypatch) -> None:
+async def test_daily_websocket_uses_daily_mode_and_timezone(
+    monkeypatch,
+    authorized_websocket_user,
+) -> None:
     monkeypatch.setattr("app.config.settings.TELEGRAM_BOT_TOKEN", "test-token")
     init_data = make_valid_init_data("test-token", user_id=777)
     url = f"/webapp/game/daily/ws?initData={urllib.parse.quote(init_data)}&tz=Europe%2FKyiv"
@@ -1119,5 +1132,7 @@ async def test_daily_websocket_uses_daily_mode_and_timezone(monkeypatch) -> None
             assert event["daily_completed"] is True
             assert event["pending_id"] == "p1"
             assert event["next_difficulty"] == "hard"
+
+    authorized_websocket_user.assert_awaited_once_with(777)
 
     timezone_mock.assert_awaited_once_with(777, "Europe/Kyiv")

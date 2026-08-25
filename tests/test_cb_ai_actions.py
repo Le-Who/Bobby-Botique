@@ -1,5 +1,6 @@
 """Tests for app.handlers.cb_ai_actions — heavy AI action callbacks."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -109,6 +110,47 @@ class TestRetryLastCallback:
         query.edit_message_text.assert_awaited_once()
         error_text = query.edit_message_text.call_args[0][0]
         assert "нет запроса" in error_text.lower()
+
+
+class TestContinueStreamCallback:
+    @pytest.mark.asyncio
+    async def test_does_not_duplicate_already_persisted_partial_model_turn(self):
+        from app.handlers.cb_ai_actions import continue_stream_callback
+
+        update, query = _make_update("continue_stream")
+        query.message.text = "A sufficiently long partial model response"
+        chat_state = MagicMock()
+        chat_state.history = [
+            {"role": "user", "parts": ["question"]},
+            {"role": "model", "parts": ["A sufficiently **long** partial model response"]},
+        ]
+        scheduled: list[asyncio.Task] = []
+
+        def schedule(coro):
+            task = asyncio.get_running_loop().create_task(coro)
+            scheduled.append(task)
+            return task
+
+        def discard_metric(coro):
+            coro.close()
+
+        with (
+            patch("app.handlers.cb_ai_actions.set_request_id"),
+            patch("app.handlers.cb_ai_actions.set_user_context"),
+            patch("app.handlers.cb_ai_actions.state.get_user_lock", return_value=asyncio.Lock()),
+            patch("app.handlers.cb_ai_actions.get_user_chat", new_callable=AsyncMock, return_value=chat_state),
+            patch("app.handlers.cb_ai_actions.asyncio.create_task", side_effect=schedule),
+            patch("app.handlers.agent._handle_regular_chat", new_callable=AsyncMock) as handle_chat,
+            patch("app.utils.background_tasks.submit_task", side_effect=discard_metric),
+        ):
+            await continue_stream_callback(update, MagicMock())
+            await scheduled[0]
+
+        handle_chat.assert_awaited_once()
+        assert chat_state.history == [
+            {"role": "user", "parts": ["question"]},
+            {"role": "model", "parts": ["A sufficiently **long** partial model response"]},
+        ]
 
 
 class TestBusyStateToast:

@@ -52,86 +52,24 @@ async def run_migrations(db_query, db_manager) -> MigrationResult:
     """
     result = MigrationResult()
 
-    # 1. Create version tracking table if it doesn't exist
+    # A transaction-scoped lock is safe behind PgBouncer transaction pooling and
+    # serializes table initialization, version reads, migration DDL, and version
+    # inserts across replicas. Nested transactions below are asyncpg savepoints,
+    # preserving the historical per-file rollback boundary on one connection.
     try:
-        await db_query("""
-            CREATE TABLE IF NOT EXISTS schema_migrations (
-                version TEXT PRIMARY KEY,
-                filename TEXT NOT NULL,
-                applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        async with db_manager.pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext('gemaibotv2:schema_migrations'))"
             )
-        """)
+
+            async def locked_query(query: str, params: tuple = ()):
+                return await db_query(query, params, conn=conn)
+
+            await _run_numbered_migrations_locked(locked_query, conn, result)
     except Exception as e:
-        # If we can't even create the tracking table the DB has serious issues.
-        # Surface as a failed migration so the caller can take action.
-        logging.critical("Cannot create schema_migrations table: %s", e)
-        result.failed.append(("schema_migrations", str(e)))
-        return result
-
-    # 2. Get already-applied versions
-    applied = await db_query("SELECT version FROM schema_migrations ORDER BY version")
-    applied_versions = {row["version"] for row in applied}
-
-    # 3. Find migration files
-    migrations_dir = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts" / "migrations"
-    if not migrations_dir.exists():
-        logging.info(
-            "No migrations directory found at %s — skipping file migrations",
-            migrations_dir,
-        )
-    else:
-        sql_files = sorted(migrations_dir.glob("*.sql"))
-        pending_files = [f for f in sql_files if f.stem.split("_", 1)[0] not in applied_versions]
-        result.pending_at_start = len(pending_files)
-
-        if pending_files:
-            logging.info(
-                "Schema drift: %d pending migration(s) found — applying now.",
-                len(pending_files),
-            )
-
-        for sql_file in sql_files:
-            version = sql_file.stem.split("_", 1)[0]
-
-            if version in applied_versions:
-                continue
-
-            logging.info("Applying migration %s (%s)...", version, sql_file.name)
-
-            try:
-                async with db_manager.pool.acquire() as conn, conn.transaction():
-                    sql_content = sql_file.read_text(encoding="utf-8")
-                    await conn.execute(sql_content)
-
-                    await conn.execute(
-                        "INSERT INTO schema_migrations (version, filename) VALUES ($1, $2)"
-                        " ON CONFLICT (version) DO NOTHING",
-                        version,
-                        sql_file.name,
-                    )
-
-                applied_versions.add(version)
-                result.applied.append(version)
-                logging.info("Migration %s applied successfully.", version)
-
-            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-                error_msg = str(e)
-                result.failed.append((version, error_msg))
-                logging.critical(
-                    "Migration %s (%s) FAILED: %s",
-                    version,
-                    sql_file.name,
-                    e,
-                    exc_info=True,
-                )
-                # Hard-stop: don't apply dependent migrations on a broken predecessor.
-                # This matches the behaviour of dedicated tools (Flyway, Alembic) and
-                # prevents a half-applied schema from masking the root failure.
-                logging.critical(
-                    "Aborting further migrations after %s failure. Fix the migration and redeploy.",
-                    version,
-                )
-                break
+        if not result.failed:
+            logging.critical("Cannot initialize schema migrations: %s", e, exc_info=True)
+            result.failed.append(("schema_migrations", str(e)))
 
     if result.applied:
         logging.info(
@@ -150,6 +88,86 @@ async def run_migrations(db_query, db_manager) -> MigrationResult:
     await _run_legacy_migrations(db_query)
 
     return result
+
+
+async def _run_numbered_migrations_locked(locked_query, conn, result: MigrationResult) -> None:
+    """Apply numbered migrations while the caller holds the global xact lock."""
+    try:
+        async with conn.transaction():
+            await locked_query(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version TEXT PRIMARY KEY,
+                    filename TEXT NOT NULL,
+                    applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+    except Exception as e:
+        logging.critical("Cannot create schema_migrations table: %s", e)
+        result.failed.append(("schema_migrations", str(e)))
+        return
+
+    try:
+        applied = await locked_query("SELECT version FROM schema_migrations ORDER BY version")
+    except Exception as e:
+        logging.critical("Cannot read schema_migrations table: %s", e)
+        result.failed.append(("schema_migrations", str(e)))
+        return
+    applied_versions = {row["version"] for row in applied}
+
+    migrations_dir = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts" / "migrations"
+    if not migrations_dir.exists():
+        logging.info(
+            "No migrations directory found at %s — skipping file migrations",
+            migrations_dir,
+        )
+        return
+
+    sql_files = sorted(migrations_dir.glob("*.sql"))
+    pending_files = [f for f in sql_files if f.stem.split("_", 1)[0] not in applied_versions]
+    result.pending_at_start = len(pending_files)
+
+    if pending_files:
+        logging.info(
+            "Schema drift: %d pending migration(s) found — applying now.",
+            len(pending_files),
+        )
+
+    for sql_file in sql_files:
+        version = sql_file.stem.split("_", 1)[0]
+        if version in applied_versions:
+            continue
+
+        logging.info("Applying migration %s (%s)...", version, sql_file.name)
+        try:
+            async with conn.transaction():
+                sql_content = sql_file.read_text(encoding="utf-8")
+                await conn.execute(sql_content)
+                await conn.execute(
+                    "INSERT INTO schema_migrations (version, filename) VALUES ($1, $2)"
+                    " ON CONFLICT (version) DO NOTHING",
+                    version,
+                    sql_file.name,
+                )
+
+            applied_versions.add(version)
+            result.applied.append(version)
+            logging.info("Migration %s applied successfully.", version)
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
+            result.failed.append((version, str(e)))
+            logging.critical(
+                "Migration %s (%s) FAILED: %s",
+                version,
+                sql_file.name,
+                e,
+                exc_info=True,
+            )
+            logging.critical(
+                "Aborting further migrations after %s failure. Fix the migration and redeploy.",
+                version,
+            )
+            break
 
 
 # ── Legacy inline migrations ─────────────────────────────────────────────────

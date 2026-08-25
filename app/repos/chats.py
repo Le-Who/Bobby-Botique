@@ -52,7 +52,7 @@ async def get_user_chat(user_id: int) -> ChatState | None:
     if not db_manager.is_connected:
         await reconnect_database()
 
-    async with db_manager.pool.acquire() as conn:
+    async with db_manager.pool.acquire() as conn, conn.transaction():
         await set_user_context(user_id, False, conn=conn)
         try:
             query = """
@@ -66,6 +66,8 @@ async def get_user_chat(user_id: int) -> ChatState | None:
                     c.context_summary,
                     c.thinking_level,
                     c.ltm_enabled,
+                    c.memory_epoch,
+                    c.private_data_blocked,
                     c.branch_id,
                     c.temperature,
                     c.voice_id,
@@ -117,6 +119,8 @@ async def get_user_chat(user_id: int) -> ChatState | None:
                         context_summary=validated.context_summary,
                         thinking_level=validated.thinking_level,
                         ltm_enabled=validated.ltm_enabled,
+                        memory_epoch=validated.memory_epoch,
+                        private_data_blocked=validated.private_data_blocked,
                         branch_id=validated.branch_id,
                         temperature=validated.temperature,
                         voice_id=validated.voice_id,
@@ -140,6 +144,8 @@ async def get_user_chat(user_id: int) -> ChatState | None:
                         context_summary=row_dict.get("context_summary"),
                         thinking_level=row_dict.get("thinking_level"),
                         ltm_enabled=row_dict.get("ltm_enabled", True),
+                        memory_epoch=row_dict.get("memory_epoch", 0),
+                        private_data_blocked=row_dict.get("private_data_blocked", False),
                         branch_id=row_dict.get("branch_id"),
                         temperature=row_dict.get("temperature"),
                         voice_id=row_dict.get("voice_id"),
@@ -158,6 +164,11 @@ async def get_user_chat(user_id: int) -> ChatState | None:
                 chat_state.deep_dive_thread_id = row_dict.get("deep_dive_thread_id")
 
             chat_state._original_length = len(chat_state.history)
+            # A default ChatState alone cannot distinguish a genuinely missing
+            # row from a legacy row whose valid generation is zero.  Request
+            # handlers use this marker to create a generation only for the
+            # former, while exact-matching every already persisted snapshot.
+            chat_state._has_persisted_chat = has_chat
 
             return chat_state
         finally:
@@ -178,15 +189,160 @@ def _default_chat_state() -> ChatState:
     )
 
 
-@timed_operation("update_user_chat")
-async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
-    """Save the chat state back to the database, syncing new messages."""
+@timed_operation("ensure_chat_generation")
+async def ensure_chat_generation(
+    user_id: int,
+    *,
+    expected_epoch: int | None,
+) -> int | None:
+    """Return an exact live chat generation, creating only a known-missing row.
+
+    ``expected_epoch=None`` is an explicit first-chat signal from
+    :func:`get_user_chat`; it is never inferred from the numeric value zero,
+    which remains a valid legacy generation.  The advisory lock linearizes the
+    initial INSERT with account erasure and lease acquisition.
+    """
     if not db_manager.is_connected:
         await reconnect_database()
 
-    async with db_manager.pool.acquire() as conn:
+    async with db_manager.pool.acquire() as conn, conn.transaction():
         await set_user_context(user_id, False, conn=conn)
         try:
+            await conn.execute("SELECT pg_advisory_xact_lock($1)", user_id)
+            if expected_epoch is None:
+                await db_query(
+                    """
+                    INSERT INTO public.chats (user_id)
+                    SELECT account.user_id
+                    FROM public.users AS account
+                    WHERE account.user_id = $1
+                    ON CONFLICT (user_id) DO NOTHING
+                    """,
+                    (user_id,),
+                    conn=conn,
+                )
+            rows = await db_query(
+                """
+                SELECT chat.memory_epoch
+                FROM public.chats AS chat
+                JOIN public.users AS account ON account.user_id = chat.user_id
+                WHERE chat.user_id = $1
+                  AND chat.private_data_blocked IS FALSE
+                  AND ($2::bigint IS NULL OR chat.memory_epoch = $2)
+                """,
+                (user_id, expected_epoch),
+                conn=conn,
+            )
+            return int(rows[0]["memory_epoch"]) if rows else None
+        finally:
+            await clear_user_context(conn=conn)
+
+
+@timed_operation("set_ltm_enabled")
+async def set_ltm_enabled(user_id: int, enabled: bool) -> int:
+    """Atomically update consent without a stale full-state chat overwrite.
+
+    Migration 067 owns ``memory_epoch`` changes through its trigger.  Returning
+    the trigger-managed value lets handlers keep their local ChatState coherent.
+    """
+    if not db_manager.is_connected:
+        await reconnect_database()
+
+    async with db_manager.pool.acquire() as conn, conn.transaction():
+        await set_user_context(user_id, False, conn=conn)
+        try:
+            await conn.execute("SELECT pg_advisory_xact_lock($1)", user_id)
+            rows = await db_query(
+                """
+                INSERT INTO public.chats (user_id, ltm_enabled)
+                VALUES ($1, $2)
+                ON CONFLICT (user_id)
+                DO UPDATE SET ltm_enabled = EXCLUDED.ltm_enabled
+                WHERE public.chats.private_data_blocked IS FALSE
+                RETURNING memory_epoch
+                """,
+                (user_id, enabled),
+                conn=conn,
+            )
+            if not rows:
+                raise RuntimeError("LTM consent update returned no row")
+            memory_epoch = int(rows[0]["memory_epoch"] or 0)
+        finally:
+            await clear_user_context(conn=conn)
+
+    if not enabled:
+        from app.repos.memory_consent import wait_for_private_data_leases
+
+        await wait_for_private_data_leases(
+            user_id,
+            before_epoch=memory_epoch,
+            ltm_only=True,
+        )
+        from app.voice_engine import get_voice_reply_manager
+
+        await get_voice_reply_manager().purge_user_jobs(user_id, ltm_only=True)
+    return memory_epoch
+
+
+@timed_operation("replace_context_summary")
+async def replace_context_summary(
+    user_id: int,
+    *,
+    expected_summary: str | None,
+    new_summary: str,
+    expected_epoch: int,
+) -> bool:
+    """CAS-update only the summary, rejecting a stale background result."""
+    if not db_manager.is_connected:
+        await reconnect_database()
+
+    async with db_manager.pool.acquire() as conn, conn.transaction():
+        await set_user_context(user_id, False, conn=conn)
+        try:
+            rows = await db_query(
+                """
+                UPDATE public.chats
+                SET context_summary = $3
+                WHERE user_id = $1
+                  AND context_summary IS NOT DISTINCT FROM $2
+                  AND memory_epoch = $4
+                  AND private_data_blocked IS FALSE
+                RETURNING user_id
+                """,
+                (user_id, expected_summary, new_summary, expected_epoch),
+                conn=conn,
+            )
+            return bool(rows)
+        finally:
+            await clear_user_context(conn=conn)
+
+
+@timed_operation("update_user_chat")
+async def update_user_chat(
+    user_id: int,
+    chat_state: ChatState,
+    *,
+    rewrite_history: bool = False,
+    expected_epoch: int | None = None,
+) -> bool:
+    """Save chat state, optionally replacing the canonical message sequence.
+
+    ``rewrite_history`` is required when context compaction removes a prefix.
+    Length comparison alone cannot distinguish that rewrite from ordinary
+    append-only growth when one or two new turns are added in the same request.
+    """
+    if not db_manager.is_connected:
+        await reconnect_database()
+
+    async with db_manager.pool.acquire() as conn, conn.transaction():
+        await set_user_context(user_id, False, conn=conn)
+        try:
+            effective_expected_epoch = expected_epoch
+            if (
+                effective_expected_epoch is None
+                and getattr(chat_state, "_has_persisted_chat", False) is True
+            ):
+                effective_expected_epoch = int(chat_state.memory_epoch)
             current_length = len(chat_state.history)
             original_length = getattr(chat_state, "_original_length", 0)
 
@@ -196,7 +352,12 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
             roles_to_insert = []
             contents_to_insert = []
 
-            if current_length == 0 and original_length > 0:
+            if rewrite_history:
+                should_delete = True
+                for msg in chat_state.history:
+                    roles_to_insert.append(msg.get("role", "user"))
+                    contents_to_insert.append(_extract_message_content(msg))
+            elif current_length == 0 and original_length > 0:
                 should_delete = True
             elif current_length > original_length:
                 new_msgs = chat_state.history[original_length:]
@@ -218,30 +379,50 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
                     thinking_level, ltm_enabled, branch_id, temperature, voice_id, tts_temperature,
                     live_voice_name, live_thinking_level, live_connection_mode
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $14, $15, $16, $17, $18, $19, $20)
+                SELECT $1, $2, $3, $4, $5, $6, $7, $8, $14, $15, $16, $17, $18, $19, $20
+                WHERE $21::bigint IS NULL
+                   OR EXISTS (
+                       SELECT 1 FROM public.chats AS current_chat
+                       WHERE current_chat.user_id = $1
+                         AND current_chat.memory_epoch = $21
+                         AND current_chat.private_data_blocked IS FALSE
+                   )
                 ON CONFLICT (user_id)
                 DO UPDATE SET
                     model = EXCLUDED.model, token_count = EXCLUDED.token_count,
                     search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt,
                     context_summary = EXCLUDED.context_summary, thinking_level = EXCLUDED.thinking_level,
-                    ltm_enabled = EXCLUDED.ltm_enabled, branch_id = EXCLUDED.branch_id,
+                    branch_id = EXCLUDED.branch_id,
                     temperature = EXCLUDED.temperature, voice_id = EXCLUDED.voice_id,
                     tts_temperature = EXCLUDED.tts_temperature, live_voice_name = EXCLUDED.live_voice_name,
                     live_thinking_level = EXCLUDED.live_thinking_level,
                     live_connection_mode = EXCLUDED.live_connection_mode
+                WHERE $21::bigint IS NULL
+                   OR (
+                       public.chats.memory_epoch = $21
+                       AND public.chats.private_data_blocked IS FALSE
+                   )
+                RETURNING memory_epoch
             ),
             update_users AS (
-                UPDATE public.users SET is_deep_dive = $9, deep_dive_thread_id = $10 WHERE user_id = $1
+                UPDATE public.users SET is_deep_dive = $9, deep_dive_thread_id = $10
+                WHERE user_id = $1 AND EXISTS (SELECT 1 FROM update_chats)
             ),
             delete_messages AS (
-                DELETE FROM public.active_chat_messages WHERE user_id = $1 AND $11
+                DELETE FROM public.active_chat_messages
+                WHERE user_id = $1 AND $11 AND EXISTS (SELECT 1 FROM update_chats)
+            ),
+            insert_messages AS (
+                INSERT INTO public.active_chat_messages (user_id, role, content)
+                SELECT $1, role, content FROM unnest($12::text[], $13::text[]) AS x(role, content)
+                WHERE array_length($12::text[], 1) > 0
+                  AND EXISTS (SELECT 1 FROM update_chats)
+                RETURNING user_id
             )
-            INSERT INTO public.active_chat_messages (user_id, role, content)
-            SELECT $1, role, content FROM unnest($12::text[], $13::text[]) AS x(role, content)
-            WHERE array_length($12::text[], 1) > 0;
+            SELECT memory_epoch FROM update_chats;
             """
 
-            await db_query(
+            rows = await db_query(
                 query,
                 (
                     user_id,
@@ -264,9 +445,15 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
                     chat_state.live_voice_name,
                     chat_state.live_thinking_level,
                     chat_state.live_connection_mode,
+                    effective_expected_epoch,
                 ),
                 conn=conn,
             )
+            if rows:
+                chat_state.memory_epoch = int(rows[0]["memory_epoch"])
+                chat_state._has_persisted_chat = True
+                return True
+            return False
         finally:
             await clear_user_context(conn=conn)
 

@@ -21,6 +21,8 @@ def make_chat_state(
     context_summary=None,
     thinking_level=None,
     ltm_enabled=True,
+    memory_epoch=0,
+    private_data_blocked=False,
 ):
     """Create a minimal ChatState-like object."""
     return SimpleNamespace(
@@ -33,6 +35,8 @@ def make_chat_state(
         context_summary=context_summary,
         thinking_level=thinking_level,
         ltm_enabled=ltm_enabled,
+        memory_epoch=memory_epoch,
+        private_data_blocked=private_data_blocked,
         branch_id=None,
     )
 
@@ -126,7 +130,13 @@ def make_crocodile_game(
     )
 
 
-def make_valid_init_data(bot_token: str, user_id: int = 999, username: str = "testuser") -> str:
+def make_valid_init_data(
+    bot_token: str,
+    user_id: int = 999,
+    username: str = "testuser",
+    *,
+    auth_date: int | None = None,
+) -> str:
     """Generate a valid HMAC-SHA256 signed Telegram initData string.
 
     Implements the same algorithm as _validate_init_data so tests can produce
@@ -135,10 +145,14 @@ def make_valid_init_data(bot_token: str, user_id: int = 999, username: str = "te
     import hashlib
     import hmac
     import json
+    import time
     import urllib.parse
 
     user_payload = json.dumps({"id": user_id, "username": username}, separators=(",", ":"))
-    params = {"user": user_payload, "auth_date": "9999999999"}
+    params = {
+        "user": user_payload,
+        "auth_date": str(int(time.time()) if auth_date is None else auth_date),
+    }
     data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
 
     secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()

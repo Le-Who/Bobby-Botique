@@ -129,27 +129,29 @@ async def get_document_by_id(document_id: int, user_id: int) -> dict[str, Any] |
 async def get_user_documents(user_id: int) -> list[dict[str, Any]]:
     """List all documents for a user (RLS-aware)."""
     try:
-        await database.set_user_context(user_id, is_admin(user_id))
+        async with database.db_manager.pool.acquire() as conn, conn.transaction():
+            await database.set_user_context(user_id, is_admin(user_id), conn=conn)
 
-        try:
-            result = await database.db_query(
-                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = $1 ORDER BY created_at DESC",
-                (user_id,),
-            )
+            try:
+                result = await database.db_query(
+                    "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = $1 ORDER BY created_at DESC",
+                    (user_id,),
+                    conn=conn,
+                )
 
-            return [
-                {
-                    "id": row["id"],
-                    "filename": row["filename"],
-                    "pages": row["pages"],
-                    "created_at": (row["created_at"].isoformat() if row["created_at"] else None),
-                    "file_size": row["file_size"],
-                    "file_hash": row["file_hash"],
-                }
-                for row in result
-            ]
-        finally:
-            await database.clear_user_context()
+                return [
+                    {
+                        "id": row["id"],
+                        "filename": row["filename"],
+                        "pages": row["pages"],
+                        "created_at": (row["created_at"].isoformat() if row["created_at"] else None),
+                        "file_size": row["file_size"],
+                        "file_hash": row["file_hash"],
+                    }
+                    for row in result
+                ]
+            finally:
+                await database.clear_user_context(conn=conn)
 
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logger.error("Error getting user documents: %s", e, exc_info=True)
@@ -159,19 +161,21 @@ async def get_user_documents(user_id: int) -> list[dict[str, Any]]:
 async def get_document_content(document_id: int, user_id: int) -> str | None:
     """Retrieve the text content of a document (RLS-aware)."""
     try:
-        await database.set_user_context(user_id, is_admin(user_id))
+        async with database.db_manager.pool.acquire() as conn, conn.transaction():
+            await database.set_user_context(user_id, is_admin(user_id), conn=conn)
 
-        try:
-            result = await database.db_query(
-                "SELECT content FROM user_documents WHERE id = $1 AND user_id = $2",
-                (document_id, user_id),
-            )
+            try:
+                result = await database.db_query(
+                    "SELECT content FROM user_documents WHERE id = $1 AND user_id = $2",
+                    (document_id, user_id),
+                    conn=conn,
+                )
 
-            if result:
-                return result[0]["content"]
-            return None
-        finally:
-            await database.clear_user_context()
+                if result:
+                    return result[0]["content"]
+                return None
+            finally:
+                await database.clear_user_context(conn=conn)
 
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logger.error("Error getting document content: %s", e, exc_info=True)

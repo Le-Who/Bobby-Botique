@@ -367,8 +367,13 @@ async def continue_stream_callback(update: Update, context: ContextTypes.DEFAULT
                 from app.utils.background_tasks import submit_task
 
                 _chat_state = await get_user_chat(user_id)
-                _chat_state.history.append({"role": "model", "parts": [_clean_partial]})
-                _chat_state.history.append({"role": "user", "parts": [_continuation_prompt]})
+                last_turn = _chat_state.history[-1] if _chat_state.history else None
+                if not last_turn or last_turn.get("role") != "model":
+                    # Compatibility for interrupted replies created before
+                    # partial deliveries were persisted. Current deliveries
+                    # already end in a model turn. Comparing rendered Telegram
+                    # text is unsafe because formatting entities are normalized.
+                    _chat_state.history.append({"role": "model", "parts": [_clean_partial]})
                 submit_task(role_conv_metrics.record_stream_recovery())
 
                 await _handle_regular_chat(

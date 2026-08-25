@@ -38,6 +38,8 @@ class ChatStateRow(BaseModel):
     context_summary: str | None = None
     thinking_level: str | None = None
     ltm_enabled: bool = True
+    memory_epoch: int = 0
+    private_data_blocked: bool = False
     branch_id: int | None = None
     temperature: float | None = None
     voice_id: str | None = None

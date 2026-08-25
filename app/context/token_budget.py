@@ -8,6 +8,8 @@ for LLM requests.
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.prompt_registry import estimate_tokens_cyrillic
+
 # ============================================================================
 # TOKEN BUDGET CONFIGURATION
 # ============================================================================
@@ -42,6 +44,57 @@ class TokenBudget:
         used = self.system_prompt + self.summary + self.user_message + self.response_reserve
         return max(0, self.total - used)
 
+    @property
+    def used(self) -> int:
+        """Total tokens allocated across all prompt and response layers."""
+        return (
+            self.system_prompt
+            + self.summary
+            + self.history
+            + self.user_message
+            + self.response_reserve
+        )
+
+
+def truncate_to_token_budget(text: str, token_limit: int, suffix: str = "...") -> str:
+    """Truncate UTF-8 text without exceeding the project's token estimator.
+
+    Character slicing is unsafe for Cyrillic and emoji because the estimator is
+    byte based.  Reserve room for the suffix, then back off to a valid UTF-8
+    boundary so the returned value is always within ``token_limit``.
+    """
+    if token_limit < 0:
+        raise ValueError("token_limit must be non-negative")
+    if estimate_tokens_cyrillic(text) <= token_limit:
+        return text
+    if token_limit == 0:
+        return ""
+
+    suffix_bytes = suffix.encode("utf-8")
+    byte_budget = token_limit * 3
+    if len(suffix_bytes) > byte_budget:
+        suffix = ""
+        suffix_bytes = b""
+
+    encoded = text.encode("utf-8")
+    end = min(len(encoded), byte_budget - len(suffix_bytes))
+    while end:
+        try:
+            prefix = encoded[:end].decode("utf-8")
+            break
+        except UnicodeDecodeError as exc:
+            end = exc.start
+    else:
+        prefix = ""
+
+    result = prefix + suffix
+    # The estimator uses floor division, but keep this invariant explicit in
+    # case its implementation changes independently.
+    while result and estimate_tokens_cyrillic(result) > token_limit:
+        prefix = prefix[:-1]
+        result = prefix + suffix
+    return result
+
 
 @dataclass
 class AssembledContext:
@@ -49,6 +102,9 @@ class AssembledContext:
 
     history: list[dict[str, Any]]
     system_instruction: str
+    # Canonical persisted turns after trimming.  Unlike ``history`` this never
+    # contains the synthetic summary exchange or the current request.
+    retained_history: list[dict[str, Any]] = field(default_factory=list)
     summary: str | None = None
     budget: TokenBudget = field(default_factory=TokenBudget)
     was_truncated: bool = False

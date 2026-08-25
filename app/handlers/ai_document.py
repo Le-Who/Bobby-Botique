@@ -10,6 +10,7 @@ from app.config import settings
 from app.database import ChatState
 from app.i18n import t
 from app.metrics import metrics_collector
+from app.repos.chats import ensure_chat_generation
 from app.utils.heartbeat import stop_heartbeat
 from app.utils.stage_indicators import STAGES_DOCUMENT, update_stage
 
@@ -32,8 +33,48 @@ async def _handle_document_question(
     user_message: str,
     chat_state: ChatState,
 ):
-    """Обрабатывает вопросы по загруженным документам"""
+    """Keep private document content inside one exact-generation lease."""
     stop_heartbeat(placeholder_message.message_id)
+    known_epoch = (
+        None
+        if getattr(chat_state, "_has_persisted_chat", True) is False
+        else int(getattr(chat_state, "memory_epoch", 0))
+    )
+    expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
+    if expected_epoch is None:
+        return
+    chat_state.memory_epoch = expected_epoch
+    chat_state._has_persisted_chat = True
+
+    from app.repos.memory_consent import private_data_lease
+
+    async with private_data_lease(
+        user_id,
+        expected_epoch,
+        purpose="conversation:document",
+        require_ltm=False,
+    ) as lease_current:
+        if not lease_current:
+            try:
+                await placeholder_message.edit_text(t("doc.error_question"))
+            except Exception as edit_error:
+                logging.error("Could not edit placeholder message: %s", edit_error)
+            return
+        await _handle_document_question_leased(
+            placeholder_message,
+            user_id,
+            user_message,
+            chat_state,
+        )
+
+
+async def _handle_document_question_leased(
+    placeholder_message: Message,
+    user_id: int,
+    user_message: str,
+    chat_state: ChatState,
+):
+    """Обрабатывает вопросы по загруженным документам."""
     try:
         # Get afterдний document user
         from app.document_processor import get_document_content, get_user_documents
@@ -147,13 +188,14 @@ async def _handle_document_question(
             chat_id=placeholder_message.chat_id,
             thinking_level=chat_state.thinking_level,
             workload=Workload.INTERACTIVE,
-            allow_deferred=True,
+            allow_deferred=False,
         )
         outcome = await get_telegram_response_delivery().stream(
             TelegramTarget(
                 placeholder_message=placeholder_message,
                 bot=placeholder_message.get_bot(),
                 chat_id=placeholder_message.chat_id,
+                private_content=True,
             ),
             request,
             presentation=FixedPresentation(

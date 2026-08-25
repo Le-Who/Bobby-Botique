@@ -13,6 +13,8 @@ The _local_locks dict is now unbounded (same fix as _PREP_LOCKS).
 
 from __future__ import annotations
 
+import time
+
 from app.web_miniapp import _extract_user_id, _validate_init_data
 from tests.factories import make_valid_init_data
 
@@ -63,6 +65,22 @@ class TestValidateInitData:
         """Garbage input must not raise — must return None."""
         result = _validate_init_data("not-url-encoded@#$%", _BOT_TOKEN)
         assert result is None
+
+    def test_stale_signed_init_data_returns_none(self):
+        init_data = make_valid_init_data(
+            _BOT_TOKEN,
+            user_id=42,
+            auth_date=int(time.time()) - 3601,
+        )
+        assert _validate_init_data(init_data, _BOT_TOKEN) is None
+
+    def test_implausibly_future_signed_init_data_returns_none(self):
+        init_data = make_valid_init_data(
+            _BOT_TOKEN,
+            user_id=42,
+            auth_date=int(time.time()) + 120,
+        )
+        assert _validate_init_data(init_data, _BOT_TOKEN) is None
 
 
 # ── _extract_user_id ──────────────────────────────────────────────────────────

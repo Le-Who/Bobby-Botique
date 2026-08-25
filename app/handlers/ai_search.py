@@ -25,7 +25,7 @@ from app.handlers.ai_core import (
 from app.metrics import metrics_collector, track_metrics
 from app.prompt_registry import get_registry
 from app.providers.base import is_opencode_model
-from app.repos.chats import get_user_chat, update_user_chat
+from app.repos.chats import ensure_chat_generation, get_user_chat, update_user_chat
 from app.utils.heartbeat import stop_heartbeat
 from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import (
@@ -63,6 +63,46 @@ async def _handle_qna_search(
     user_message: str,
     chat_state: ChatState,
     search_query: str | None = None,
+    *,
+    user_id: int,
+) -> str | None:
+    """Lease private query/role data through provider and Telegram delivery."""
+    from app.repos.memory_consent import private_data_lease
+
+    known_epoch = (
+        None
+        if getattr(chat_state, "_has_persisted_chat", True) is False
+        else int(chat_state.memory_epoch)
+    )
+    expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
+    if expected_epoch is None:
+        return None
+    chat_state.memory_epoch = expected_epoch
+    chat_state._has_persisted_chat = True
+    async with private_data_lease(
+        user_id,
+        expected_epoch,
+        purpose="conversation:qna-search",
+        require_ltm=False,
+    ) as lease_current:
+        if not lease_current:
+            return None
+        return await _handle_qna_search_leased_impl(
+            placeholder_message,
+            user_message,
+            chat_state,
+            search_query,
+            user_id=user_id,
+        )
+
+
+async def _handle_qna_search_leased_impl(
+    placeholder_message: Message,
+    user_message: str,
+    chat_state: ChatState,
+    search_query: str | None = None,
+    *,
+    user_id: int,
 ) -> str | None:
     """Quick search with web grounding.
 
@@ -86,7 +126,6 @@ async def _handle_qna_search(
         logging.error("Could not edit placeholder message: %s", edit_error)
         placeholder_message = await placeholder_message.reply_text("🖎 Ищу быстрый ответ...")
 
-    user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
     from datetime import UTC, datetime
@@ -148,13 +187,14 @@ async def _handle_qna_search(
             else GroundingMode.PROVIDER_SEARCH_REQUIRED
         ),
         workload=Workload.QUICK_SEARCH,
-        allow_deferred=True,
+        allow_deferred=False,
     )
     outcome = await get_telegram_response_delivery().stream(
         TelegramTarget(
             placeholder_message=placeholder_message,
             bot=placeholder_message.get_bot(),
             chat_id=chat_id,
+            private_content=True,
         ),
         request,
         presentation=FixedPresentation(
@@ -176,6 +216,74 @@ async def _handle_research_agent(
     model_override: str | None = None,
     search_query: str | None = None,
 ):
+    """Hold one exact-generation lease through research, delivery, and CAS."""
+    from app.repos.memory_consent import private_data_lease
+
+    known_epoch = (
+        None
+        if getattr(chat_state, "_has_persisted_chat", True) is False
+        else int(chat_state.memory_epoch)
+    )
+    expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
+    if expected_epoch is None:
+        await placeholder_message.edit_text("Запрос отменён: настройки приватности изменились.")
+        return
+    chat_state.memory_epoch = expected_epoch
+    chat_state._has_persisted_chat = True
+
+    wants_ltm = bool(getattr(chat_state, "ltm_enabled", False))
+    if wants_ltm:
+        async with private_data_lease(
+            user_id,
+            expected_epoch,
+            purpose="ltm:agentic-research",
+            require_ltm=True,
+        ) as lease_current:
+            if lease_current:
+                return await _handle_research_agent_leased_impl(
+                    placeholder_message,
+                    user_id,
+                    user_message,
+                    chat_state,
+                    model_override,
+                    search_query,
+                    _ltm_enabled=True,
+                    _expected_epoch=expected_epoch,
+                )
+
+    # Research always includes the active chat history, even when LTM is off.
+    async with private_data_lease(
+        user_id,
+        expected_epoch,
+        purpose="conversation:agentic-research",
+        require_ltm=False,
+    ) as lease_current:
+        if not lease_current:
+            await placeholder_message.edit_text("Запрос отменён: настройки приватности изменились.")
+            return
+        return await _handle_research_agent_leased_impl(
+            placeholder_message,
+            user_id,
+            user_message,
+            chat_state,
+            model_override,
+            search_query,
+            _ltm_enabled=False,
+            _expected_epoch=expected_epoch,
+        )
+
+
+async def _handle_research_agent_leased_impl(
+    placeholder_message: Message,
+    user_id: int,
+    user_message: str,
+    chat_state: ChatState,
+    model_override: str | None = None,
+    search_query: str | None = None,
+    *,
+    _ltm_enabled: bool,
+    _expected_epoch: int,
+):
     # If search_query is provided, use it for search, else use user_message
     actual_search_query = search_query if search_query else user_message
 
@@ -183,7 +291,7 @@ async def _handle_research_agent(
     await metrics_collector.record_search_query()
 
     # Determine trace IDs
-    trace_user_id: int | None = placeholder_message.from_user.id if placeholder_message.from_user else None
+    trace_user_id: int = user_id
     trace_chat_id: int | None = placeholder_message.chat.id if placeholder_message.chat else None
 
     # Get the key and model for AgenticSearch. Fallback to default if no OpenRouter/override
@@ -286,7 +394,6 @@ async def _handle_research_agent(
         assert key_data is not None
 
         # Agentic RAG: enable recall_memory tool when user has LTM enabled
-        _ltm_enabled = getattr(chat_state, "ltm_enabled", False)
         _ltm_key = key_data["api_key"] if _ltm_enabled else None
 
         agent = AgenticSearch(
@@ -295,6 +402,7 @@ async def _handle_research_agent(
             on_key_used=_on_key_used,
             ltm_enabled=_ltm_enabled,
             ltm_api_key=_ltm_key,
+            ltm_expected_epoch=_expected_epoch,
         )
 
         try:
@@ -371,6 +479,7 @@ async def _handle_research_agent(
                 placeholder_message=placeholder_message,
                 bot=placeholder_message.get_bot(),
                 chat_id=trace_chat_id,
+                private_content=True,
             ),
             CompletedResponse(final_answer),
             presentation=FixedPresentation(
@@ -397,6 +506,8 @@ async def _handle_research_agent(
                         voice=(chat_state.voice_id if "chat_state" in locals() and chat_state else None) or "Aoede",
                         tts_temperature=chat_state.tts_temperature if "chat_state" in locals() and chat_state else None,
                         source_key=build_voice_source_key("research_tts", _chat_id, placeholder_message.message_id),
+                        expected_epoch=_expected_epoch,
+                        require_ltm=_ltm_enabled,
                     )
             except Exception as tts_err:
                 logging.debug("Auto TTS for research skipped: %s", tts_err)
@@ -417,7 +528,7 @@ async def _handle_research_agent(
                 user_id,
             )
 
-        await update_user_chat(user_id, chat_state)
+        await update_user_chat(user_id, chat_state, expected_epoch=_expected_epoch)
     else:
         # Agent failed to get an answer or returned an explicit error
         error_msg = final_answer if final_answer else "Не удалось сформировать ответ."
@@ -434,9 +545,50 @@ async def _handle_research_agent(
 
 @track_metrics("complex_search")
 async def _handle_complex_agent_search(placeholder_message: Message, original_message: Message, search_prefix: str):
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    # Используем `from_user.id`, а не `effective_user.id`
-    user_id = original_message.from_user.id
+    """Lease the human user's generation through vision and downstream search."""
+    if original_message.from_user is None:
+        await placeholder_message.edit_text("Запрос отменён: не удалось определить пользователя.")
+        return
+    user_id = int(original_message.from_user.id)
+    chat_state = await get_user_chat(user_id)
+    known_epoch = (
+        None
+        if getattr(chat_state, "_has_persisted_chat", True) is False
+        else int(chat_state.memory_epoch)
+    )
+    expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
+    if expected_epoch is None:
+        await placeholder_message.edit_text("Запрос отменён: настройки приватности изменились.")
+        return
+    chat_state.memory_epoch = expected_epoch
+    chat_state._has_persisted_chat = True
+
+    from app.repos.memory_consent import private_data_lease
+
+    async with private_data_lease(
+        user_id,
+        expected_epoch,
+        purpose="conversation:vision-search",
+        require_ltm=False,
+    ) as lease_current:
+        if not lease_current:
+            await placeholder_message.edit_text("Запрос отменён: настройки приватности изменились.")
+            return
+        await _handle_complex_agent_search_leased_impl(
+            placeholder_message,
+            original_message,
+            search_prefix,
+            chat_state,
+        )
+
+
+async def _handle_complex_agent_search_leased_impl(
+    placeholder_message: Message,
+    original_message: Message,
+    search_prefix: str,
+    chat_state: ChatState,
+) -> None:
+    user_id = int(original_message.from_user.id)
 
     try:
         await placeholder_message.edit_text("🖼️ Анализирую изображение...")
@@ -478,12 +630,17 @@ async def _handle_complex_agent_search(placeholder_message: Message, original_me
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
-    chat_state = await get_user_chat(user_id)
     # Get оригинальное message user for локалfromации
     original_user_message = original_message.caption or "Опиши это изображение."
 
     if search_prefix == "?":
-        await _handle_qna_search(placeholder_message, original_user_message, chat_state, search_query)
+        await _handle_qna_search(
+            placeholder_message,
+            original_user_message,
+            chat_state,
+            search_query,
+            user_id=user_id,
+        )
     else:
         await _handle_research_agent(
             placeholder_message,

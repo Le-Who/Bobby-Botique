@@ -558,6 +558,7 @@ async def process_media_for_memory(
     mime_type: str | None = None,
     telegram_file_id: str | None = None,
     extra_prompt: str | None = None,
+    expected_epoch: int | None = None,
 ) -> int | None:
     """Full pipeline: process media → extract text → store as long-term memory.
 
@@ -580,18 +581,30 @@ async def process_media_for_memory(
     }
     effective_mime = mime_type or mime_defaults.get(media_type, "application/octet-stream")
 
-    # Route to appropriate processor
-    if media_type == "voice":
-        # Use enriched LTM prompt for voice memory storage (adds [VOICE, Tone, Urgency] tags)
-        extracted = await _transcribe_voice_for_ltm(content_bytes, api_key, mime_type=effective_mime)
-    elif media_type == "image":
-        extracted = await describe_image(content_bytes, api_key, mime_type=effective_mime, prompt=extra_prompt)
-    elif media_type == "document_text":
-        # For documents, content_bytes is already extracted text (UTF-8)
-        extracted = await summarize_document_text(content_bytes.decode("utf-8", errors="replace"), api_key)
-    else:
-        logging.error("Unknown media_type: %s", media_type)
-        return None
+    # The renewable lease spans the raw-media provider call. Opt-out commits a
+    # new generation immediately, then waits until this block exits; a stale
+    # retry after delete/recreate cannot acquire it at all.
+    from app.repos.memory_consent import private_data_lease
+
+    async with private_data_lease(
+        user_id,
+        expected_epoch,
+        purpose=f"ltm:media:{media_type}",
+        require_ltm=True,
+    ) as lease_acquired:
+        if not lease_acquired:
+            logging.info("Skipped stale/revoked media memory capture for user %s", user_id)
+            return None
+
+        if media_type == "voice":
+            extracted = await _transcribe_voice_for_ltm(content_bytes, api_key, mime_type=effective_mime)
+        elif media_type == "image":
+            extracted = await describe_image(content_bytes, api_key, mime_type=effective_mime, prompt=extra_prompt)
+        elif media_type == "document_text":
+            extracted = await summarize_document_text(content_bytes.decode("utf-8", errors="replace"), api_key)
+        else:
+            logging.error("Unknown media_type: %s", media_type)
+            return None
 
     if not extracted:
         logging.warning("Media processing returned no text for %s", media_type)
@@ -619,21 +632,25 @@ async def process_media_for_memory(
         res_key,
         source_type=media_type,
         metadata=metadata,
+        expected_epoch=expected_epoch,
     )
 
     # ── Real-time graph extraction from media (background, non-blocking) ──
     if memory_id and extracted and len(extracted) >= 30:
-        from app.utils.background_tasks import submit_task
+        from app.repos.memory_autosave import submit_memory_task
 
-        submit_task(
-            _extract_graph_from_media(
+        submit_memory_task(
+            user_id,
+            lambda: _extract_graph_from_media(
                 user_id=user_id,
                 text=extracted,
                 api_key=res_key,
                 source_memory_id=memory_id,
                 media_type=media_type,
                 telegram_file_id=telegram_file_id,
-            )
+                expected_epoch=expected_epoch,
+            ),
+            retry=0,
         )
 
     return memory_id
@@ -646,6 +663,7 @@ async def _extract_graph_from_media(
     source_memory_id: int | None,
     media_type: str,
     telegram_file_id: str | None,
+    expected_epoch: int | None,
 ) -> None:
     """Fire real-time graph extraction from media-derived text.
 
@@ -660,6 +678,7 @@ async def _extract_graph_from_media(
             text,
             api_key,
             source_memory_id=source_memory_id,
+            expected_epoch=expected_epoch,
         )
 
         # Attach file_id to memory_nodes created from this media
@@ -667,20 +686,70 @@ async def _extract_graph_from_media(
             from app.database import db_manager
             from app.repos.db_helpers import clear_user_context, set_user_context
 
-            async with db_manager.pool.acquire() as conn:
+            async with db_manager.pool.acquire() as conn, conn.transaction():
                 await set_user_context(user_id, False, conn=conn)
                 try:
                     await conn.execute(
                         """
-                        UPDATE memory_nodes
-                        SET file_id = $1, file_type = $2
-                        WHERE user_id = $3
-                          AND updated_at >= now() - INTERVAL '30 seconds'
-                          AND file_id IS NULL
+                        WITH authorized_source AS (
+                            SELECT memory.id
+                            FROM long_term_memory AS memory
+                            JOIN chats AS chat ON chat.user_id = memory.user_id
+                            WHERE memory.user_id = $3
+                              AND memory.id = $4
+                              AND chat.ltm_enabled IS TRUE
+                              AND ($5::bigint IS NULL OR chat.memory_epoch = $5)
+                              AND (memory.expires_at IS NULL OR memory.expires_at > now())
+                            FOR SHARE OF memory, chat
+                        ), updated_sources AS (
+                            UPDATE memory_node_sources AS source
+                            SET file_id = $1,
+                                file_type = $2
+                            FROM authorized_source AS authorized
+                            WHERE source.user_id = $3
+                              AND source.memory_id = authorized.id
+                              AND source.attributes_complete IS TRUE
+                            RETURNING source.node_id
+                        ), source_nodes AS (
+                            SELECT DISTINCT node_id FROM updated_sources
+                        ), base_attributes AS (
+                            SELECT DISTINCT ON (source.node_id)
+                                   source.node_id, source.entity_type, source.description,
+                                   source.embedding, source.wing, source.room
+                            FROM memory_node_sources AS source
+                            JOIN source_nodes AS target ON target.node_id = source.node_id
+                            WHERE source.user_id = $3
+                              AND source.attributes_complete IS TRUE
+                            ORDER BY source.node_id, source.created_at DESC, source.memory_id DESC
+                        ), media_attributes AS (
+                            SELECT DISTINCT ON (source.node_id)
+                                   source.node_id, source.file_id, source.file_type
+                            FROM memory_node_sources AS source
+                            JOIN source_nodes AS target ON target.node_id = source.node_id
+                            WHERE source.user_id = $3
+                              AND source.attributes_complete IS TRUE
+                              AND source.file_id IS NOT NULL
+                            ORDER BY source.node_id, source.created_at DESC, source.memory_id DESC
+                        )
+                        UPDATE memory_nodes AS node
+                        SET entity_type = base.entity_type,
+                            description = base.description,
+                            embedding = base.embedding,
+                            wing = base.wing,
+                            room = base.room,
+                            file_id = media.file_id,
+                            file_type = media.file_type,
+                            updated_at = now()
+                        FROM base_attributes AS base
+                        LEFT JOIN media_attributes AS media ON media.node_id = base.node_id
+                        WHERE node.user_id = $3
+                          AND node.id = base.node_id
                         """,
                         telegram_file_id,
                         media_type,
                         user_id,
+                        source_memory_id,
+                        expected_epoch,
                     )
                 finally:
                     await clear_user_context(conn=conn)

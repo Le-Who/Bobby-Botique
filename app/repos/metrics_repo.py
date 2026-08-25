@@ -171,7 +171,7 @@ async def get_active_key_info(model_name: str) -> dict[str, Any] | None:
     if not db_manager.is_connected:
         await reconnect_database()
 
-    async with db_manager.pool.acquire() as conn:
+    async with db_manager.pool.acquire() as conn, conn.transaction():
         await set_user_context(settings.ADMIN_ID, True, conn=conn)
         try:
             from app.repos.keys import _is_key_available

@@ -20,12 +20,21 @@ async def fwd_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     if query is None:
         return
+    # A Telegram callback query can only be answered once.  Acknowledge it
+    # immediately so the spinner stops, then report the eventual result as a
+    # normal message (embedding may take longer than the callback deadline).
     await query.answer("⏳ Сохраняю…")
 
     user_id = update.effective_user.id
 
     try:
         chat_state = await get_user_chat(user_id)
+        from app.repos.memory_consent import capture_epoch
+
+        memory_epoch = capture_epoch(chat_state)
+        if memory_epoch is None:
+            await _report_result(query, "❌ Долгосрочная память выключена в настройках")
+            return
 
         # Pull the last model turn from history
         ai_response: str | None = None
@@ -36,32 +45,30 @@ async def fwd_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 break
 
         if not ai_response or len(ai_response) < 30:
-            await query.answer("❌ Ответ слишком короткий для сохранения", show_alert=True)
+            await _report_result(query, "❌ Ответ слишком короткий для сохранения")
             return
 
         # Store in long-term memory (same pipeline as _store_memory_in_background)
+        from app.repos.keys import get_available_gemini_key
         from app.repos.memory import EMBEDDING_MODEL, store_memory
 
-        async def _do_save() -> None:
-            from app.repos.keys import get_available_gemini_key
+        key_data = await get_available_gemini_key(model_name=EMBEDDING_MODEL)
+        if not key_data:
+            await _report_result(query, "❌ Нет доступного ключа для сохранения")
+            return
 
-            key_data = await get_available_gemini_key(model_name=EMBEDDING_MODEL)
-            if not key_data:
-                logging.warning("fwd_save: no Gemini key available for embedding")
-                return
-
-            snippet = ai_response[:800] if ai_response else ""
-            await store_memory(
-                user_id,
-                snippet,
-                key_data["api_key"],
-                source_type="forward_analysis",
-            )
-            logging.info("fwd_save: stored %d chars for user %d", len(snippet), user_id)
-
-        from app.utils.background_tasks import submit_retryable
-
-        submit_retryable(_do_save, retry=2)
+        snippet = ai_response[:800] if ai_response else ""
+        memory_id = await store_memory(
+            user_id,
+            snippet,
+            key_data["api_key"],
+            source_type="forward_analysis",
+            expected_epoch=memory_epoch,
+        )
+        if memory_id is None:
+            await _report_result(query, "❌ Память выключена или запись устарела")
+            return
+        logging.info("fwd_save: stored %d chars for user %d", len(snippet), user_id)
 
         # Update button label immediately so the user sees confirmation
         try:
@@ -85,8 +92,16 @@ async def fwd_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except Exception as markup_err:
             logging.debug("fwd_save: could not update button label: %s", markup_err)
 
-        await query.answer("✅ Тезисы сохранены в долгосрочную память", show_alert=False)
+        await _report_result(query, "✅ Тезисы сохранены в долгосрочную память")
 
     except Exception as e:
         logging.error("fwd_save_callback error for user %d: %s", user_id, e, exc_info=True)
-        await query.answer("❌ Не удалось сохранить — попробуйте позже", show_alert=True)
+        await _report_result(query, "❌ Не удалось сохранить — попробуйте позже")
+
+
+async def _report_result(query, text: str) -> None:
+    """Report a completed save without trying to answer the callback twice."""
+    try:
+        await query.message.reply_text(text)
+    except Exception as exc:
+        logging.debug("fwd_save: could not report result: %s", exc)

@@ -24,6 +24,7 @@ from telegram.ext import (
 )
 
 from app.config import get_model_hash
+from app.handlers.conversation import suppress_hybrid_conversation_handler_warning
 from app.repos.models_repo import (
     ModelCatalogSource,
     ModelMutationCode,
@@ -281,22 +282,23 @@ async def receive_model_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def build_models_conversation_handler() -> ConversationHandler:
     """Build the ConversationHandler for the /models admin wizard."""
-    return ConversationHandler(
-        entry_points=[
-            CommandHandler("models", models_command),
-            CallbackQueryHandler(models_callback, pattern=r"^models:"),
-        ],
-        states={
-            AWAITING_MODEL_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_model_name),
+    with suppress_hybrid_conversation_handler_warning():
+        return ConversationHandler(
+            entry_points=[
+                CommandHandler("models", models_command),
+                CallbackQueryHandler(models_callback, pattern=r"^models:"),
             ],
-        },
-        fallbacks=[
-            CommandHandler("models", models_command),
-            CallbackQueryHandler(models_callback, pattern=r"^models:"),
-        ],
-        per_user=True,
-        per_chat=True,
-        per_message=False,
-        name="models_wizard",
-    )
+            states={
+                AWAITING_MODEL_NAME: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, receive_model_name),
+                ],
+            },
+            fallbacks=[
+                CommandHandler("models", models_command),
+                CallbackQueryHandler(models_callback, pattern=r"^models:"),
+            ],
+            per_user=True,
+            per_chat=True,
+            per_message=False,
+            name="models_wizard",
+        )

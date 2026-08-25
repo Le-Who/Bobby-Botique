@@ -5,6 +5,7 @@ Tests the complete path from incoming Telegram update through
 handle_request → process_long_request → AI response → database.
 """
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,6 +18,22 @@ from app.response_delivery.renderer import (
     DeliveryReceipt,
     TelegramMessageRef,
 )
+
+
+@pytest.fixture(autouse=True)
+def allow_private_data_boundaries():
+    @asynccontextmanager
+    async def allowed_lease(*_args, **_kwargs):
+        yield True
+
+    async def current_generation(_user_id, *, expected_epoch):
+        return 0 if expected_epoch is None else expected_epoch
+
+    with (
+        patch("app.handlers.ai_chat.ensure_chat_generation", side_effect=current_generation),
+        patch("app.repos.memory_consent.private_data_lease", allowed_lease),
+    ):
+        yield
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

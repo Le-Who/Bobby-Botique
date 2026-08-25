@@ -153,7 +153,12 @@ async def process_long_request(
                     chat_state,
                 )
             elif text.startswith("?"):
-                await _handle_qna_search(placeholder_message, text[1:].strip(), chat_state)
+                await _handle_qna_search(
+                    placeholder_message,
+                    text[1:].strip(),
+                    chat_state,
+                    user_id=update.effective_user.id,
+                )
             elif chat_state.search_enabled:
                 await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
             elif chat_state.is_deep_dive:

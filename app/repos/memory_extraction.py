@@ -12,10 +12,10 @@ Architecture:
        a second background task.
     3. Gemini produces JSON conforming to GraphExtractionResult schema.
     4. Entities → memory_nodes (semantic dedup, cosine < 0.12).
-    5. Relations → memory_edges (semantic predicate dedup, cosine < 0.25).
-    6. Source provenance: source_memory_ids[] links edges to originating LTM rows.
-    7. Temporal conflict: when a new edge conflicts with an existing one,
-       the old edge is closed (valid_to = now()) and the new one is inserted.
+    5. Relations → exact-predicate memory_edges; semantic similarity is advisory only.
+    6. Mutable node/edge attributes are snapshotted per exact LTM source.
+    7. Temporal conflict: an old edge closes only after an explicit resolver
+       verdict of ``update``; parallel/refinement predicates remain distinct.
 """
 
 import asyncio
@@ -208,7 +208,6 @@ async def extract_graph_structured(
                     pass
 
             if is_transient and attempt < 2:
-
                 if is_truncation:
                     # Token budget expands on next attempt logic explicitly (config max_tokens)
                     wait = 0.0
@@ -235,6 +234,54 @@ async def extract_graph_structured(
     return empty
 
 
+async def _preflight_graph_source(
+    user_id: int,
+    source_memory_id: int | None,
+    expected_epoch: int | None,
+) -> bool:
+    """Fail closed unless the graph source and durable consent are current.
+
+    This intentionally performs no row locking or mutation.  Callers use it
+    before external work, then retain their existing locked transaction check
+    at the mutation boundary.
+    """
+    if source_memory_id is None:
+        return False
+
+    from app.database import db_manager
+    from app.repos.db_helpers import set_user_context
+
+    try:
+        async with db_manager.pool.acquire() as conn, conn.transaction():
+            await set_user_context(user_id, False, conn=conn)
+            return bool(
+                await conn.fetchval(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM long_term_memory AS memory
+                        JOIN chats AS chat ON chat.user_id = memory.user_id
+                        WHERE memory.id = $2
+                          AND memory.user_id = $1
+                          AND chat.ltm_enabled IS TRUE
+                          AND ($3::bigint IS NULL OR chat.memory_epoch = $3)
+                          AND (memory.expires_at IS NULL OR memory.expires_at > now())
+                    )
+                    """,
+                    user_id,
+                    source_memory_id,
+                    expected_epoch,
+                )
+            )
+    except Exception as error:
+        logging.warning(
+            "Graph source preflight failed closed for user %d: %s",
+            user_id,
+            error,
+        )
+        return False
+
+
 async def extract_and_store_graph(
     user_id: int,
     text: str,
@@ -243,16 +290,55 @@ async def extract_and_store_graph(
     source_memory_id: int | None = None,
     chat_id: int | None = None,
     actor_user_id: int | None = None,
+    expected_epoch: int | None = None,
+) -> int:
+    """Lease the full raw-text extraction and embedding/mutation chain."""
+    from app.repos.memory_consent import private_data_lease, resolve_current_epoch
+
+    if expected_epoch is None:
+        expected_epoch = await resolve_current_epoch(user_id, require_ltm=True)
+    async with private_data_lease(
+        user_id,
+        expected_epoch,
+        purpose="ltm:graph_extraction",
+        require_ltm=True,
+    ) as lease_current:
+        if not lease_current:
+            return 0
+        return await _extract_and_store_graph_impl(
+            user_id,
+            text,
+            api_key,
+            source_memory_id=source_memory_id,
+            chat_id=chat_id,
+            actor_user_id=actor_user_id,
+            expected_epoch=expected_epoch,
+        )
+
+
+async def _extract_and_store_graph_impl(
+    user_id: int,
+    text: str,
+    api_key: str,
+    *,
+    source_memory_id: int | None = None,
+    chat_id: int | None = None,
+    actor_user_id: int | None = None,
+    expected_epoch: int | None = None,
 ) -> int:
     """Extract knowledge graph from text and upsert into DB.
 
     This is the main entry point called from ai_chat._store_memory_in_background().
-    For group chats, pass chat_id and actor_user_id for social graph attribution.
+    A durable source memory is mandatory: zero-provenance graph writes are not
+    retrievable and have no retention anchor, so they fail closed.
 
     Returns:
         Number of edges upserted.
     """
-    if len(text.strip()) < MIN_EXTRACTION_LENGTH:
+    if source_memory_id is None or len(text.strip()) < MIN_EXTRACTION_LENGTH:
+        return 0
+
+    if not await _preflight_graph_source(user_id, source_memory_id, expected_epoch):
         return 0
 
     result = await extract_graph_structured(text, api_key)
@@ -266,6 +352,7 @@ async def extract_and_store_graph(
         source_memory_id=source_memory_id,
         chat_id=chat_id,
         actor_user_id=actor_user_id,
+        expected_epoch=expected_epoch,
     )
     return edges_upserted
 
@@ -278,368 +365,508 @@ async def _upsert_graph(
     source_memory_id: int | None = None,
     chat_id: int | None = None,
     actor_user_id: int | None = None,
+    expected_epoch: int | None = None,
 ) -> int:
-    """Upsert extracted entities and relations into memory_nodes/memory_edges.
+    """Atomically persist provenance-backed relation endpoints and edges.
 
-    Implements:
-    - Semantic Entity Resolution (cosine < 0.12) to merge near-identical names.
-    - Semantic Edge Deduplication (cosine < 0.25) on predicates.
-    - Temporal Conflict Management: closes old conflicting edges (valid_to = now()).
-    - Source Provenance: appends source_memory_id to source_memory_ids[].
-    - Social Graph: stores chat_id and actor_user_id when in group context.
+    The first database phase is read-only and exists only to obtain an
+    optimistic edge snapshot for external ambiguity resolution.  The pool
+    connection is released before that external call.  A second short
+    transaction rechecks and locks consent/source state, re-resolves nodes,
+    upserts relation endpoints, re-reads current edges, and writes normalized
+    provenance.  Any failure rolls the node and edge mutations back together.
+
+    ``source_memory_id`` is required.  Derived writes without a durable source
+    fail closed because neither expiry nor deletion could clean them safely.
+    ``chat_id`` and ``actor_user_id`` remain accepted for API compatibility but
+    do not relax the private-LTM provenance boundary.
     """
+    del chat_id, actor_user_id
+
+    if source_memory_id is None:
+        logging.info("Skipping zero-provenance graph extraction for user %d", user_id)
+        return 0
+
+    if not await _preflight_graph_source(user_id, source_memory_id, expected_epoch):
+        return 0
 
     from app.database import db_manager
-    from app.repos.db_helpers import clear_user_context, set_user_context
+    from app.repos.db_helpers import set_user_context
     from app.repos.memory import _get_embedding
 
-    edges_upserted = 0
+    entities_by_name = {entity.name.strip(): entity for entity in graph.entities if entity.name.strip()}
+    relation_specs: list[dict[str, Any]] = []
+    for relation in graph.relations:
+        source_name = relation.source.strip()
+        target_name = relation.target.strip()
+        predicate = relation.predicate.strip()
+        if (
+            not source_name
+            or not target_name
+            or not predicate
+            or source_name not in entities_by_name
+            or target_name not in entities_by_name
+        ):
+            continue
+        relation_specs.append(
+            {
+                "relation": relation,
+                "source_name": source_name,
+                "target_name": target_name,
+                "predicate": predicate,
+            }
+        )
+
+    if not relation_specs:
+        return 0
+
+    endpoint_names = {
+        endpoint for relation in relation_specs for endpoint in (relation["source_name"], relation["target_name"])
+    }
+    endpoint_entities = [entity for entity in graph.entities if entity.name.strip() in endpoint_names]
 
     try:
-        # ── Pre-fetch embeddings concurrently outside of DB transaction ──
-        async def fetch_emb(text: str) -> list[float] | None:
+
+        async def fetch_embedding(text: str) -> list[float] | None:
             return await _get_embedding(text, api_key, task_type="RETRIEVAL_DOCUMENT")
 
-        ent_texts: list[str | None] = []
-        for ent in graph.entities:
-            name = ent.name.strip()
-            if not name:
-                ent_texts.append(None)
-            else:
-                ent_texts.append(f"{name}: {ent.description}" if ent.description else name)
+        entity_texts = [
+            f"{entity.name.strip()}: {entity.description}" if entity.description else entity.name.strip()
+            for entity in endpoint_entities
+        ]
+        embedding_tasks = [fetch_embedding(text) for text in entity_texts]
+        embedding_tasks.extend(fetch_embedding(relation["predicate"]) for relation in relation_specs)
+        embeddings = await asyncio.gather(*embedding_tasks)
+        entity_embeddings = embeddings[: len(endpoint_entities)]
+        relation_embeddings = embeddings[len(endpoint_entities) :]
+        entity_embedding_map = {
+            entity.name.strip(): embedding
+            for entity, embedding in zip(endpoint_entities, entity_embeddings, strict=False)
+        }
+        for relation, embedding in zip(relation_specs, relation_embeddings, strict=False):
+            relation["embedding"] = embedding
+            relation["embedding_text"] = f"[{','.join(str(value) for value in embedding)}]" if embedding else None
 
-        rel_texts = [rel.predicate for rel in graph.relations]
-
-        tasks = []
-        for t in ent_texts:
-            tasks.append(fetch_emb(t) if t else fetch_emb(""))
-        for t in rel_texts:
-            tasks.append(fetch_emb(t))
-
-        all_embeddings = await asyncio.gather(*tasks) if tasks else []
-        ent_embeddings_map = dict(
-            zip(
-                (x for x in ent_texts if x),
-                (e for i, e in enumerate(all_embeddings[: len(ent_texts)]) if ent_texts[i]),
-                strict=False,
-            )
-        )
-        rel_embeddings_map = dict(zip(rel_texts, all_embeddings[len(ent_texts) :], strict=False))
-
-        async with db_manager.pool.acquire() as conn:
-            await set_user_context(user_id, False, conn=conn)
-            try:
-                async with conn.transaction():
-                    # ── Upsert entities ────────────────────────────────────
-                    node_ids: dict[str, Any] = {}
-                    for ent in graph.entities:
-                        name = ent.name.strip()
-                        if not name:
-                            continue
-
-                        ent_text = f"{name}: {ent.description}" if ent.description else name
-                        ent_embedding = ent_embeddings_map.get(ent_text)
-                        ent_emb_str = f"[{','.join(str(v) for v in ent_embedding)}]" if ent_embedding else None
-
-                        # Semantic dedup: merge near-identical entity names
-                        if ent_emb_str:
-                            similar_node = await conn.fetchrow(
-                                """
-                                SELECT id, entity_name
-                                FROM memory_nodes
-                                WHERE user_id = $1
-                                  AND embedding <=> $2::halfvec < 0.12
-                                ORDER BY embedding <=> $2::halfvec ASC
-                                LIMIT 1
-                                """,
-                                user_id,
-                                ent_emb_str,
-                            )
-                            if similar_node:
-                                name = similar_node["entity_name"]
-
-                        # Validate wing against allowed values
-                        ent_wing = ent.wing if ent.wing in TAXONOMY_WINGS else "knowledge"
-                        ent_room = ent.room or ""
-
-                        try:
-                            row = await conn.fetchrow(
-                                """
-                                INSERT INTO memory_nodes (user_id, entity_name, entity_type, description, embedding, wing, room)
-                                VALUES ($1, $2, $3, $4, $5::halfvec, $6, $7)
-                                ON CONFLICT (user_id, entity_name)
-                                DO UPDATE SET
-                                    description = CASE
-                                        WHEN LENGTH(EXCLUDED.description) > LENGTH(memory_nodes.description)
-                                        THEN EXCLUDED.description
-                                        ELSE memory_nodes.description
-                                    END,
-                                    entity_type = EXCLUDED.entity_type,
-                                    embedding = COALESCE(EXCLUDED.embedding, memory_nodes.embedding),
-                                    wing = COALESCE(EXCLUDED.wing, memory_nodes.wing),
-                                    room = COALESCE(EXCLUDED.room, memory_nodes.room),
-                                    updated_at = now()
-                                RETURNING id
-                                """,
-                                user_id,
-                                name,
-                                ent.type,
-                                ent.description,
-                                ent_emb_str,
-                                ent_wing,
-                                ent_room,
-                            )
-                        except Exception:
-                            # Fallback: taxonomy columns not yet added (pre-migration 032)
-                            row = await conn.fetchrow(
-                                """
-                                INSERT INTO memory_nodes (user_id, entity_name, entity_type, description, embedding)
-                                VALUES ($1, $2, $3, $4, $5::halfvec)
-                                ON CONFLICT (user_id, entity_name)
-                                DO UPDATE SET
-                                    description = CASE
-                                        WHEN LENGTH(EXCLUDED.description) > LENGTH(memory_nodes.description)
-                                        THEN EXCLUDED.description
-                                        ELSE memory_nodes.description
-                                    END,
-                                    entity_type = EXCLUDED.entity_type,
-                                    embedding = COALESCE(EXCLUDED.embedding, memory_nodes.embedding),
-                                    updated_at = now()
-                                RETURNING id
-                                """,
-                                user_id,
-                                name,
-                                ent.type,
-                                ent.description,
-                                ent_emb_str,
-                            )
-                        if row:
-                            node_ids[ent.name.strip()] = row["id"]
-                            # Also map canonical name if deduped
-                            if name != ent.name.strip():
-                                node_ids[name] = row["id"]
-
-                    # ── Upsert relations ───────────────────────────────────
-                    source_ids_arr = [source_memory_id] if source_memory_id else []
-
-                    edges_to_merge = []
-                    edges_to_close = []
-                    edges_to_refine = []
-                    edges_to_insert = []
-
-                    for rel in graph.relations:
-                        src_name = rel.source.strip()
-                        tgt_name = rel.target.strip()
-                        if src_name not in node_ids or tgt_name not in node_ids:
-                            continue
-
-                        src_id = node_ids[src_name]
-                        tgt_id = node_ids[tgt_name]
-
-                        # Embed predicate for semantic dedup
-                        pred_embedding = rel_embeddings_map.get(rel.predicate)
-                        pred_emb_str = f"[{','.join(str(v) for v in pred_embedding)}]" if pred_embedding else None
-
-                        # Check for semantically similar existing edge
-                        if pred_emb_str:
-                            similar_edge = await conn.fetchrow(
-                                """
-                                SELECT id, predicate, weight
-                                FROM memory_edges
-                                WHERE user_id = $1
-                                  AND source_node = $2
-                                  AND target_node = $3
-                                  AND predicate_embedding IS NOT NULL
-                                  AND predicate_embedding <=> $4::halfvec < 0.25
-                                  AND (valid_to IS NULL)
-                                ORDER BY predicate_embedding <=> $4::halfvec ASC
-                                LIMIT 1
-                                """,
-                                user_id,
-                                src_id,
-                                tgt_id,
-                                pred_emb_str,
-                            )
-                            if similar_edge:
-                                # Merge: update weight, keep is_core sticky, append source_memory_id
-                                edges_to_merge.append((
-                                    max(rel.weight, similar_edge["weight"]),
-                                    rel.is_core,
-                                    source_ids_arr,
-                                    similar_edge["id"],
-                                ))
-                                edges_upserted += 1
-                                continue
-
-                        # Stage 1 + 2 Triage and Resolution
-                        if pred_emb_str:
-                            conflicting = await conn.fetch(
-                                """
-                                SELECT id, predicate,
-                                       predicate_embedding <=> $4::halfvec AS distance
-                                FROM memory_edges
-                                WHERE user_id = $1
-                                  AND source_node = $2
-                                  AND target_node = $3
-                                  AND valid_to IS NULL
-                                  AND predicate_embedding IS NOT NULL
-                                  AND predicate_embedding <=> $4::halfvec >= 0.15
-                                """,
-                                user_id,
-                                src_id,
-                                tgt_id,
-                                pred_emb_str,
-                            )
-
-                            # Pre-fetch all Stage 2 (ambiguous zone) verdicts concurrently
-                            # This eliminates N+1 LLM API calls and avoids holding the DB transaction open sequentially
-                            stage_2_tasks = []
-                            for old_edge in conflicting:
-                                distance = float(old_edge.get("distance", 1.0))
-                                if distance >= 0.15 and distance < 0.35:
-                                    stage_2_tasks.append(
-                                        _resolve_ambiguous_conflict(
-                                            old_edge["predicate"],
-                                            rel.predicate,
-                                            src_name,
-                                            tgt_name,
-                                            api_key,
-                                        )
-                                    )
-
-                            stage_2_verdicts = await asyncio.gather(*stage_2_tasks) if stage_2_tasks else []
-                            verdict_idx = 0
-                            skip_new_edge_insert = False
-
-                            for old_edge in conflicting:
-                                distance = float(old_edge.get("distance", 1.0))
-
-                                if distance >= 0.35:
-                                    # Stage 1: clearly different → close old
-                                    edges_to_close.append((old_edge["id"],))
-                                    logging.info(
-                                        "Temporal close: edge '%s' superseded by '%s' for user %d (dist=%.3f)",
-                                        old_edge["predicate"],
-                                        rel.predicate,
-                                        user_id,
-                                        distance,
-                                    )
-                                else:
-                                    # Stage 2: ambiguous zone (0.15-0.35) → use gathered LLM judge verdict
-                                    verdict = stage_2_verdicts[verdict_idx]
-                                    verdict_idx += 1
-
-                                    if verdict == "update":
-                                        edges_to_close.append((old_edge["id"],))
-                                        logging.info(
-                                            "LLM judge: edge '%s' → '%s' = UPDATE for user %d",
-                                            old_edge["predicate"],
-                                            rel.predicate,
-                                            user_id,
-                                        )
-                                    elif verdict == "refinement":
-                                        # Merge into existing edge (update predicate text)
-                                        edges_to_refine.append((
-                                            rel.predicate,
-                                            pred_emb_str,
-                                            rel.weight,
-                                            old_edge["id"],
-                                        ))
-                                        edges_upserted += 1
-                                        logging.info(
-                                            "LLM judge: edge '%s' → '%s' = REFINEMENT for user %d",
-                                            old_edge["predicate"],
-                                            rel.predicate,
-                                            user_id,
-                                        )
-                                        skip_new_edge_insert = True
-                                    else:
-                                        # parallel — keep both, no action on old
-                                        logging.info(
-                                            "LLM judge: edge '%s' ∥ '%s' = PARALLEL for user %d",
-                                            old_edge["predicate"],
-                                            rel.predicate,
-                                            user_id,
-                                        )
-
-                            if skip_new_edge_insert:
-                                continue  # skip inserting the new edge since it was merged
-
-                        # Insert new edge
-                        edges_to_insert.append((
-                            user_id,
-                            src_id,
-                            tgt_id,
-                            rel.predicate,
-                            pred_emb_str,
-                            rel.weight,
-                            rel.is_core,
-                            source_ids_arr,
-                        ))
-
-                    # Execute all batched edge updates
-                    if edges_to_merge:
-                        await conn.executemany(
-                            """
-                            UPDATE memory_edges
-                            SET weight = $1,
-                                is_core = is_core OR $2,
-                                updated_at = now(),
-                                source_memory_ids = source_memory_ids || $3::bigint[]
-                            WHERE id = $4
-                            """,
-                            edges_to_merge,
-                        )
-                    if edges_to_close:
-                        await conn.executemany(
-                            "UPDATE memory_edges SET valid_to = now() WHERE id = $1",
-                            edges_to_close,
-                        )
-                    if edges_to_refine:
-                        await conn.executemany(
-                            """
-                            UPDATE memory_edges
-                            SET predicate = $1,
-                                predicate_embedding = $2::halfvec,
-                                weight = GREATEST(weight, $3),
-                                updated_at = now()
-                            WHERE id = $4
-                            """,
-                            edges_to_refine,
-                        )
-                    if edges_to_insert:
-                        await conn.executemany(
-                            """
-                            INSERT INTO memory_edges
-                                (user_id, source_node, target_node, predicate,
-                                 predicate_embedding, weight, is_core,
-                                 source_memory_ids, valid_from)
-                            VALUES ($1, $2, $3, $4, $5::halfvec, $6, $7, $8::bigint[], now())
-                            ON CONFLICT (user_id, source_node, target_node, predicate)
-                            DO UPDATE SET
-                                weight = EXCLUDED.weight,
-                                is_core = memory_edges.is_core OR EXCLUDED.is_core,
-                                predicate_embedding = COALESCE(EXCLUDED.predicate_embedding,
-                                                               memory_edges.predicate_embedding),
-                                source_memory_ids = memory_edges.source_memory_ids || EXCLUDED.source_memory_ids,
-                                updated_at = now()
-                            """,
-                            edges_to_insert,
-                        )
-                        edges_upserted += len(edges_to_insert)
-
-                logging.info(
-                    "Real-time graph upsert for user %d: %d entities, %d edges",
+        async def consent_and_source_are_current(conn) -> bool:
+            return bool(
+                await conn.fetchval(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM chats c
+                        JOIN long_term_memory m
+                          ON m.id = $3
+                         AND m.user_id = c.user_id
+                         AND (m.expires_at IS NULL OR m.expires_at > now())
+                        WHERE c.user_id = $1
+                          AND c.ltm_enabled IS TRUE
+                          AND ($2::bigint IS NULL OR c.memory_epoch = $2)
+                        FOR SHARE OF c
+                        FOR KEY SHARE OF m
+                    )
+                    """,
                     user_id,
-                    len(node_ids),
-                    edges_upserted,
+                    expected_epoch,
+                    source_memory_id,
                 )
-            finally:
-                await clear_user_context(conn=conn)
-    except Exception as e:
-        logging.error("Graph upsert failed for user %d: %s", user_id, e, exc_info=True)
+            )
 
-    return edges_upserted
+        async def resolve_existing_node(conn, entity_name: str) -> Any | None:
+            embedding = entity_embedding_map.get(entity_name)
+            if embedding:
+                embedding_text = f"[{','.join(str(value) for value in embedding)}]"
+                row = await conn.fetchrow(
+                    """
+                    SELECT id, entity_name
+                    FROM memory_nodes
+                    WHERE user_id = $1
+                      AND embedding IS NOT NULL
+                      AND embedding <=> $2::halfvec < 0.12
+                    ORDER BY embedding <=> $2::halfvec ASC
+                    LIMIT 1
+                    """,
+                    user_id,
+                    embedding_text,
+                )
+                if row:
+                    return row
+            return await conn.fetchrow(
+                """
+                SELECT id, entity_name
+                FROM memory_nodes
+                WHERE user_id = $1
+                  AND entity_name = $2
+                LIMIT 1
+                """,
+                user_id,
+                entity_name,
+            )
+
+        # Phase 1: read only.  It may produce external verdict inputs, but none
+        # of its IDs are trusted for the mutation phase.
+        phase_one_conflicts: dict[int, list[Any]] = {}
+        async with db_manager.pool.acquire() as read_conn, read_conn.transaction():
+            await set_user_context(user_id, False, conn=read_conn)
+            if not await consent_and_source_are_current(read_conn):
+                return 0
+
+            existing_node_ids: dict[str, int] = {}
+            for entity in endpoint_entities:
+                original_name = entity.name.strip()
+                row = await resolve_existing_node(read_conn, original_name)
+                if row:
+                    existing_node_ids[original_name] = int(row["id"])
+
+            for relation_index, relation in enumerate(relation_specs):
+                source_id = existing_node_ids.get(relation["source_name"])
+                target_id = existing_node_ids.get(relation["target_name"])
+                embedding_text = relation["embedding_text"]
+                if source_id is None or target_id is None or embedding_text is None:
+                    continue
+
+                phase_one_conflicts[relation_index] = await read_conn.fetch(
+                    """
+                        SELECT id, predicate,
+                               predicate_embedding <=> $4::halfvec AS distance
+                        FROM memory_edges
+                        WHERE user_id = $1
+                          AND source_node = $2
+                          AND target_node = $3
+                          AND valid_to IS NULL
+                          AND predicate_embedding IS NOT NULL
+                          AND predicate <> $5
+                        """,
+                    user_id,
+                    source_id,
+                    target_id,
+                    embedding_text,
+                    relation["predicate"],
+                )
+
+        # The read snapshot is no longer authoritative once its transaction is
+        # released. Recheck durable consent immediately before constructing any
+        # resolver coroutine so revoked private predicates/entities never reach
+        # the external judge.
+        if any(phase_one_conflicts.values()) and not await _preflight_graph_source(
+            user_id,
+            source_memory_id,
+            expected_epoch,
+        ):
+            return 0
+
+        resolution_keys: list[tuple[int, int, str]] = []
+        resolution_tasks = []
+        for relation_index, conflicts in phase_one_conflicts.items():
+            relation = relation_specs[relation_index]
+            for old_edge in conflicts:
+                old_predicate = str(old_edge["predicate"])
+                resolution_keys.append((relation_index, int(old_edge["id"]), old_predicate))
+                resolution_tasks.append(
+                    _resolve_ambiguous_conflict(
+                        old_predicate,
+                        relation["predicate"],
+                        relation["source_name"],
+                        relation["target_name"],
+                        api_key,
+                    )
+                )
+        resolution_values = await asyncio.gather(*resolution_tasks) if resolution_tasks else []
+        resolutions = dict(zip(resolution_keys, resolution_values, strict=False))
+
+        source_ids = [source_memory_id]
+        affected_edge_ids: set[int] = set()
+        edges_upserted = 0
+
+        async with db_manager.pool.acquire() as write_conn, write_conn.transaction():
+            await set_user_context(user_id, False, conn=write_conn)
+            await write_conn.execute("SELECT pg_advisory_xact_lock($1)", user_id)
+            if not await consent_and_source_are_current(write_conn):
+                return 0
+
+            # Re-resolve under the mutation lock.  Concurrent semantic node
+            # inserts between phases must not leave edge IDs pointing at a
+            # stale canonical node.
+            node_ids: dict[str, int] = {}
+            node_snapshots: dict[int, tuple[Any, str | None, str, str]] = {}
+            for entity in endpoint_entities:
+                original_name = entity.name.strip()
+                existing = await resolve_existing_node(write_conn, original_name)
+                canonical_name = str(existing["entity_name"]) if existing else original_name
+                embedding = entity_embedding_map.get(original_name)
+                embedding_text = f"[{','.join(str(value) for value in embedding)}]" if embedding else None
+                wing = entity.wing if entity.wing in TAXONOMY_WINGS else "knowledge"
+                row = await write_conn.fetchrow(
+                    """
+                        INSERT INTO memory_nodes
+                            (user_id, entity_name, entity_type, description, embedding, wing, room)
+                        VALUES ($1, $2, $3, $4, $5::halfvec, $6, $7)
+                        ON CONFLICT (user_id, entity_name)
+                        DO UPDATE SET
+                            updated_at = now()
+                        RETURNING id
+                        """,
+                    user_id,
+                    canonical_name,
+                    entity.type,
+                    entity.description,
+                    embedding_text,
+                    wing,
+                    entity.room or "",
+                )
+                if not row:
+                    raise RuntimeError(f"graph node upsert returned no id for {original_name!r}")
+                node_id = int(row["id"])
+                node_ids[original_name] = node_id
+                previous = node_snapshots.get(node_id)
+                if previous is None or len(entity.description) > len(previous[0].description):
+                    node_snapshots[node_id] = (entity, embedding_text, wing, entity.room or "")
+
+            snapshot_node_ids = sorted(node_snapshots)
+            await write_conn.execute(
+                """
+                    INSERT INTO memory_node_sources
+                        (node_id, memory_id, user_id, entity_type, description,
+                         embedding, wing, room, attributes_complete)
+                    SELECT snapshot.node_id, $2, $3, snapshot.entity_type,
+                           snapshot.description, snapshot.embedding, snapshot.wing,
+                           snapshot.room, TRUE
+                    FROM unnest(
+                        $1::bigint[], $4::text[], $5::text[], $6::halfvec[],
+                        $7::text[], $8::text[]
+                    ) AS snapshot(node_id, entity_type, description, embedding, wing, room)
+                    ON CONFLICT (node_id, memory_id) DO UPDATE SET
+                        entity_type = EXCLUDED.entity_type,
+                        description = EXCLUDED.description,
+                        embedding = EXCLUDED.embedding,
+                        wing = EXCLUDED.wing,
+                        room = EXCLUDED.room,
+                        attributes_complete = TRUE,
+                        created_at = now()
+                    """,
+                snapshot_node_ids,
+                source_memory_id,
+                user_id,
+                [node_snapshots[node_id][0].type for node_id in snapshot_node_ids],
+                [node_snapshots[node_id][0].description for node_id in snapshot_node_ids],
+                [node_snapshots[node_id][1] for node_id in snapshot_node_ids],
+                [node_snapshots[node_id][2] for node_id in snapshot_node_ids],
+                [node_snapshots[node_id][3] for node_id in snapshot_node_ids],
+            )
+            await write_conn.execute(
+                """
+                    WITH target_nodes AS (
+                        SELECT unnest($1::bigint[]) AS node_id
+                    ), base_attributes AS (
+                        SELECT DISTINCT ON (source.node_id)
+                               source.node_id, source.entity_type, source.description,
+                               source.embedding, source.wing, source.room
+                        FROM memory_node_sources AS source
+                        JOIN target_nodes AS target ON target.node_id = source.node_id
+                        WHERE source.user_id = $2
+                          AND source.attributes_complete IS TRUE
+                        ORDER BY source.node_id, source.created_at DESC, source.memory_id DESC
+                    ), media_attributes AS (
+                        SELECT DISTINCT ON (source.node_id)
+                               source.node_id, source.file_id, source.file_type
+                        FROM memory_node_sources AS source
+                        JOIN target_nodes AS target ON target.node_id = source.node_id
+                        WHERE source.user_id = $2
+                          AND source.attributes_complete IS TRUE
+                          AND source.file_id IS NOT NULL
+                        ORDER BY source.node_id, source.created_at DESC, source.memory_id DESC
+                    )
+                    UPDATE memory_nodes AS node
+                    SET entity_type = base.entity_type,
+                        description = base.description,
+                        embedding = base.embedding,
+                        wing = base.wing,
+                        room = base.room,
+                        file_id = media.file_id,
+                        file_type = media.file_type,
+                        updated_at = now()
+                    FROM base_attributes AS base
+                    LEFT JOIN media_attributes AS media ON media.node_id = base.node_id
+                    WHERE node.id = base.node_id
+                      AND node.user_id = $2
+                    """,
+                snapshot_node_ids,
+                user_id,
+            )
+
+            async def upsert_current_edge(relation: dict[str, Any], source_id: int, target_id: int) -> int:
+                model_relation = relation["relation"]
+                row = await write_conn.fetchrow(
+                    """
+                        INSERT INTO memory_edges
+                            (user_id, source_node, target_node, predicate,
+                             predicate_embedding, weight, is_core,
+                             source_memory_ids, valid_from)
+                        VALUES ($1, $2, $3, $4, $5::halfvec, $6, $7, $8::bigint[], now())
+                        ON CONFLICT (user_id, source_node, target_node, predicate) WHERE valid_to IS NULL
+                        DO UPDATE SET
+                            updated_at = now()
+                        RETURNING id
+                        """,
+                    user_id,
+                    source_id,
+                    target_id,
+                    relation["predicate"],
+                    relation["embedding_text"],
+                    model_relation.weight,
+                    model_relation.is_core,
+                    source_ids,
+                )
+                if not row:
+                    raise RuntimeError("graph edge upsert returned no id")
+                return int(row["id"])
+
+            affected_edge_snapshots: dict[int, dict[str, Any]] = {}
+            for relation_index, relation in enumerate(relation_specs):
+                source_id = node_ids[relation["source_name"]]
+                target_id = node_ids[relation["target_name"]]
+                embedding_text = relation["embedding_text"]
+                model_relation = relation["relation"]
+                affected_id: int | None = None
+
+                conflicts = []
+                if embedding_text:
+                    conflicts = await write_conn.fetch(
+                        """
+                            SELECT id, predicate,
+                                   predicate_embedding <=> $4::halfvec AS distance
+                            FROM memory_edges
+                            WHERE user_id = $1
+                              AND source_node = $2
+                              AND target_node = $3
+                              AND valid_to IS NULL
+                              AND predicate_embedding IS NOT NULL
+                              AND predicate <> $5
+                            FOR UPDATE
+                            """,
+                        user_id,
+                        source_id,
+                        target_id,
+                        embedding_text,
+                        relation["predicate"],
+                    )
+
+                for old_edge in conflicts:
+                    edge_id = int(old_edge["id"])
+                    old_predicate = str(old_edge["predicate"])
+                    verdict = resolutions.get(
+                        (relation_index, edge_id, old_predicate),
+                        "parallel",
+                    )
+                    if verdict == "update":
+                        await write_conn.execute(
+                            """
+                                UPDATE memory_edges
+                                SET valid_to = now()
+                                WHERE id = $1
+                                  AND user_id = $2
+                                  AND valid_to IS NULL
+                                """,
+                            edge_id,
+                            user_id,
+                        )
+
+                if affected_id is None:
+                    affected_id = await upsert_current_edge(relation, source_id, target_id)
+
+                affected_edge_ids.add(affected_id)
+                previous = affected_edge_snapshots.get(affected_id)
+                if previous is None:
+                    affected_edge_snapshots[affected_id] = relation
+                else:
+                    previous_relation = previous["relation"]
+                    previous_relation.weight = max(previous_relation.weight, model_relation.weight)
+                    previous_relation.is_core = previous_relation.is_core or model_relation.is_core
+                edges_upserted += 1
+
+            if not affected_edge_ids:
+                raise RuntimeError("graph mutation produced no provenance-backed edges")
+            await write_conn.execute(
+                """
+                    INSERT INTO memory_edge_sources
+                        (edge_id, memory_id, user_id, predicate, predicate_embedding,
+                         weight, is_core, attributes_complete)
+                    SELECT snapshot.edge_id, $2, $3, snapshot.predicate,
+                           snapshot.predicate_embedding, snapshot.weight,
+                           snapshot.is_core, TRUE
+                    FROM unnest(
+                        $1::bigint[], $4::text[], $5::halfvec[],
+                        $6::double precision[], $7::boolean[]
+                    ) AS snapshot(edge_id, predicate, predicate_embedding, weight, is_core)
+                    ON CONFLICT (edge_id, memory_id) DO UPDATE SET
+                        predicate = EXCLUDED.predicate,
+                        predicate_embedding = EXCLUDED.predicate_embedding,
+                        weight = EXCLUDED.weight,
+                        is_core = EXCLUDED.is_core,
+                        attributes_complete = TRUE,
+                        created_at = now()
+                    """,
+                sorted(affected_edge_snapshots),
+                source_memory_id,
+                user_id,
+                [affected_edge_snapshots[edge_id]["predicate"] for edge_id in sorted(affected_edge_snapshots)],
+                [affected_edge_snapshots[edge_id]["embedding_text"] for edge_id in sorted(affected_edge_snapshots)],
+                [
+                    affected_edge_snapshots[edge_id]["relation"].weight
+                    for edge_id in sorted(affected_edge_snapshots)
+                ],
+                [
+                    affected_edge_snapshots[edge_id]["relation"].is_core
+                    for edge_id in sorted(affected_edge_snapshots)
+                ],
+            )
+            await write_conn.execute(
+                """
+                    WITH target_edges AS (
+                        SELECT unnest($1::bigint[]) AS edge_id
+                    ), aggregate_attributes AS (
+                        SELECT source.edge_id, MAX(source.weight) AS weight,
+                               BOOL_OR(source.is_core) AS is_core,
+                               ARRAY_AGG(source.memory_id ORDER BY source.memory_id) AS memory_ids
+                        FROM memory_edge_sources AS source
+                        JOIN target_edges AS target ON target.edge_id = source.edge_id
+                        WHERE source.user_id = $2
+                          AND source.attributes_complete IS TRUE
+                        GROUP BY source.edge_id
+                    ), winning_predicate AS (
+                        SELECT DISTINCT ON (source.edge_id)
+                               source.edge_id, source.predicate, source.predicate_embedding
+                        FROM memory_edge_sources AS source
+                        JOIN target_edges AS target ON target.edge_id = source.edge_id
+                        WHERE source.user_id = $2
+                          AND source.attributes_complete IS TRUE
+                        ORDER BY source.edge_id, source.created_at DESC, source.memory_id DESC
+                    )
+                    UPDATE memory_edges AS edge
+                    SET predicate = winner.predicate,
+                        predicate_embedding = winner.predicate_embedding,
+                        weight = aggregate.weight,
+                        is_core = aggregate.is_core,
+                        source_memory_ids = aggregate.memory_ids,
+                        updated_at = now()
+                    FROM aggregate_attributes AS aggregate
+                    JOIN winning_predicate AS winner ON winner.edge_id = aggregate.edge_id
+                    WHERE edge.id = aggregate.edge_id
+                      AND edge.user_id = $2
+                    """,
+                sorted(affected_edge_snapshots),
+                user_id,
+            )
+
+        logging.info(
+            "Real-time graph upsert for user %d: %d relation endpoints, %d edges",
+            user_id,
+            len(endpoint_entities),
+            edges_upserted,
+        )
+        return edges_upserted
+    except Exception as error:
+        logging.error("Graph upsert failed for user %d: %s", user_id, error, exc_info=True)
+        return 0
 
 
 async def _resolve_ambiguous_conflict(
@@ -649,11 +876,11 @@ async def _resolve_ambiguous_conflict(
     target_name: str,
     api_key: str,
 ) -> str:
-    """LLM judge for ambiguous edge conflicts (cosine distance 0.15-0.35).
+    """LLM judge for distinct exact predicates on the same entity pair.
 
-    When two predicates between the same entity pair are in the "grey zone"
-    (not similar enough to merge, not different enough to supersede), this
-    cheap Flash-Lite call determines the relationship:
+    Embedding distance never decides temporal replacement by itself. This
+    cheap Flash-Lite call is the only authority allowed to return ``update``;
+    refinement remains a separate exact edge so its provenance is not mixed.
 
     Returns one of:
         "update"     — factual change (close old, insert new)

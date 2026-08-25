@@ -7,6 +7,7 @@ They can be tested directly without mocking.
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 from typing import Any
 
@@ -105,7 +106,7 @@ def format_memories_for_system_prompt(
 
     lines: list[str] = ["<long_term_memory>"]
     for m in memories:
-        snippet = m["content"][:max_content_length].replace("&", "&amp;").replace("<", "&lt;")
+        snippet = html.escape(str(m["content"])[:max_content_length], quote=False)
         source = ""
         if "created_at" in m and m["created_at"]:
             source = f' source="{str(m["created_at"])[:10]}"'

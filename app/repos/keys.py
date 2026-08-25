@@ -274,7 +274,7 @@ async def get_available_gemini_key(
     if not db_manager.is_connected:
         await reconnect_database()
 
-    async with db_manager.pool.acquire() as conn:
+    async with db_manager.pool.acquire() as conn, conn.transaction():
         await set_user_context(settings.ADMIN_ID, True, conn=conn)
         try:
             new_key = await _get_fresh_available_key(
@@ -640,7 +640,7 @@ async def get_available_openrouter_key(
         await reconnect_database()
 
     daily_limit = await get_model_daily_limit(model_name)
-    async with db_manager.pool.acquire() as conn:
+    async with db_manager.pool.acquire() as conn, conn.transaction():
         await set_user_context(settings.ADMIN_ID, True, conn=conn)
         try:
             return await _openrouter_km.get_fresh_available_key(

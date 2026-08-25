@@ -28,6 +28,16 @@ def test_client():
     return quart_app.test_client()
 
 
+@pytest.fixture(autouse=True)
+def authorized_miniapp_user():
+    with patch(
+        "app.repos.users.is_authorized",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as authorized:
+        yield authorized
+
+
 @pytest.fixture
 def live_settings(monkeypatch) -> SimpleNamespace:
     settings = SimpleNamespace(
@@ -268,7 +278,13 @@ class TestLiveAudioSettingsApi:
 class TestLiveAudioProxy:
     """LA-02 through LA-04: WebSocket proxy lifecycle."""
 
-    async def test_connect_sends_connected_event(self, test_client, mock_bot_token, mock_api_keys):
+    async def test_connect_sends_connected_event(
+        self,
+        test_client,
+        mock_bot_token,
+        mock_api_keys,
+        authorized_miniapp_user,
+    ):
         """LA-02: After auth, server should send {"type": "connected"}."""
         init_data = make_valid_init_data(mock_bot_token, user_id=555)
         url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
@@ -324,7 +340,15 @@ class TestLiveAudioProxy:
                 assert str(config.thinking_config.thinking_level).lower().endswith("medium")
                 assert "По умолчанию отвечай по-русски" in config.system_instruction.parts[0].text
 
-    async def test_vertex_connect_sends_connected_event(self, test_client, mock_bot_token, mock_api_keys):
+        authorized_miniapp_user.assert_awaited_once_with(555)
+
+    async def test_vertex_connect_sends_connected_event(
+        self,
+        test_client,
+        mock_bot_token,
+        mock_api_keys,
+        authorized_miniapp_user,
+    ):
         init_data = make_valid_init_data(mock_bot_token, user_id=561)
         url = f"/webapp/live-vertex/ws?initData={urllib.parse.quote(init_data)}"
         chat_state = ChatState(
@@ -378,6 +402,8 @@ class TestLiveAudioProxy:
                 assert config.tools is not None
                 assert config.tools[0].google_search is not None
                 assert "доступ к Google Search" in config.system_instruction.parts[0].text
+
+        authorized_miniapp_user.assert_awaited_once_with(561)
 
     async def test_audio_forwarding(self, test_client, mock_bot_token, mock_api_keys):
         """LA-03: realtime_input message should trigger session.send_realtime_input."""

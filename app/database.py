@@ -30,6 +30,8 @@ class ChatState:
     context_summary: str | None = None  # LLM-generated conversation summary
     thinking_level: str | None = None  # User-configurable: off, low, medium, high
     ltm_enabled: bool = True  # Long-term memory recall toggle
+    memory_epoch: int = 0  # Invalidates queued LTM writes after disable/erase
+    private_data_blocked: bool = False  # Durable barrier during privacy-sensitive deletion
     branch_id: int | None = None  # Active branch snapshot ID (branching mode)
     temperature: float | None = None  # LLM creativity 0.0–1.0, None = model default
     voice_id: str | None = None  # ElevenLabs voice override, None = global default
@@ -372,19 +374,27 @@ async def init_db():
 
 
 async def _init_schema():
-    """Create tables, setup RLS, run migrations, and seed initial data."""
+    """Create tables, migrate, enforce RLS, and seed initial data."""
     from app.db.migrations import run_migrations
     from app.db.schema import create_tables
     from app.db.seed import insert_initial_data
 
     await create_tables(db_query)
-    await setup_row_level_security()  # uses the wrapper defined below
     migration_result = await run_migrations(db_query, db_manager)
+    if not migration_result.success:
+        failed_versions = ", ".join(version for version, _ in migration_result.failed)
+        raise DatabasePoolError(
+            f"Schema migration failed ({failed_versions or 'unknown'}); refusing to start with an inconsistent schema"
+        )
+
+    # Migrations may create new tenant tables, so runtime idempotent RLS setup
+    # must run afterwards rather than silently skipping tables absent at boot.
+    await setup_row_level_security()  # uses the wrapper defined below
     await insert_initial_data(db_query, db_execute_many, settings)
 
     # Emit startup telemetry for migration drift — deferred so admin bot is ready.
     # This fires in background; startup never blocks on it.
-    if migration_result.pending_at_start > 0 or not migration_result.success:
+    if migration_result.pending_at_start > 0:
 
         async def _send_migration_alert():
 
@@ -393,22 +403,12 @@ async def _init_schema():
             try:
                 from app.admin_alerts import AlertSeverity, alert_admin_raw
 
-                if not migration_result.success:
-                    failed_versions = ", ".join(v for v, _ in migration_result.failed)
-                    msg = (
-                        f"🔴 *Migration failure at startup*\n"
-                        f"Failed: `{failed_versions}`\n"
-                        f"Applied this boot: `{', '.join(migration_result.applied) or 'none'}`\n"
-                        f"Schema may be inconsistent — redeploy required."
-                    )
-                    severity = AlertSeverity.CRITICAL
-                else:
-                    msg = (
-                        f"🟡 *Schema drift auto-resolved at startup*\n"
-                        f"Pending at boot: {migration_result.pending_at_start}\n"
-                        f"Applied: `{', '.join(migration_result.applied)}`"
-                    )
-                    severity = AlertSeverity.WARNING
+                msg = (
+                    f"🟡 *Schema drift auto-resolved at startup*\n"
+                    f"Pending at boot: {migration_result.pending_at_start}\n"
+                    f"Applied: `{', '.join(migration_result.applied)}`"
+                )
+                severity = AlertSeverity.WARNING
                 await alert_admin_raw(msg, severity=severity)
             except Exception as _alert_err:
                 logging.warning("Migration alert failed (non-critical): %s", _alert_err)

@@ -43,6 +43,7 @@ from telegram.ext import (
     filters,
 )
 
+from app.handlers.conversation import suppress_hybrid_conversation_handler_warning
 from app.natal.city_catalog import nearest_city_timezone, search_cities
 from app.repos.horoscope_subscriptions import (
     delete_horoscope_subscription,
@@ -608,39 +609,42 @@ def build_horoscope_subscription_handler() -> ConversationHandler:
 
     It also registers standalone /horoscope_stop and horo_settings:* callbacks.
     """
-    return ConversationHandler(
-        entry_points=[
-            # Deep link entry — called programmatically from start_command
-            CommandHandler("horoscope_settings", horoscope_settings_command),
-            MessageHandler(filters.TEXT & filters.Regex(HOROSCOPE_INTENT_RE), start_subscribe_horoscope),
-            CallbackQueryHandler(start_subscribe_horoscope, pattern="^start_horoscope$"),
-        ],
-        states={
-            CHOOSE_SIGN: [CallbackQueryHandler(on_sign_chosen, pattern="^horo_sign:")],
-            CHOOSE_TIME_TODAY: [
-                CallbackQueryHandler(on_time_today_btn, pattern="^horo_time_today:"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_today_text),
+    with suppress_hybrid_conversation_handler_warning():
+        return ConversationHandler(
+            entry_points=[
+                # Deep link entry — called programmatically from start_command
+                CommandHandler("horoscope_settings", horoscope_settings_command),
+                MessageHandler(filters.TEXT & filters.Regex(HOROSCOPE_INTENT_RE), start_subscribe_horoscope),
+                CallbackQueryHandler(start_subscribe_horoscope, pattern="^start_horoscope$"),
             ],
-            CHOOSE_TIME_TOMORROW: [
-                CallbackQueryHandler(on_time_tomorrow_btn, pattern="^horo_time_tomorrow:"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_tomorrow_text),
+            states={
+                CHOOSE_SIGN: [CallbackQueryHandler(on_sign_chosen, pattern="^horo_sign:")],
+                CHOOSE_TIME_TODAY: [
+                    CallbackQueryHandler(on_time_today_btn, pattern="^horo_time_today:"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_today_text),
+                ],
+                CHOOSE_TIME_TOMORROW: [
+                    CallbackQueryHandler(on_time_tomorrow_btn, pattern="^horo_time_tomorrow:"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_tomorrow_text),
+                ],
+                CHOOSE_TZ: [
+                    MessageHandler(filters.LOCATION, on_tz_location),
+                    MessageHandler(filters.Regex("^⌨️ Выбрать вручную из списка$"), on_tz_manual),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, on_tz_text),
+                    CallbackQueryHandler(on_tz_chosen, pattern="^horo_tz:"),
+                ],
+                CONFIRM: [CallbackQueryHandler(on_confirm, pattern="^horo_confirm:")],
+            },
+            fallbacks=[
+                CommandHandler("horoscope_stop", horoscope_stop_command),
             ],
-            CHOOSE_TZ: [
-                MessageHandler(filters.LOCATION, on_tz_location),
-                MessageHandler(filters.Regex("^⌨️ Выбрать вручную из списка$"), on_tz_manual),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, on_tz_text),
-                CallbackQueryHandler(on_tz_chosen, pattern="^horo_tz:"),
-            ],
-            CONFIRM: [CallbackQueryHandler(on_confirm, pattern="^horo_confirm:")],
-        },
-        fallbacks=[
-            CommandHandler("horoscope_stop", horoscope_stop_command),
-        ],
-        allow_reentry=True,
-        per_message=False,
-        name="horoscope_subscription",
-        persistent=False,
-    )
+            allow_reentry=True,
+            per_user=True,
+            per_chat=True,
+            per_message=False,
+            name="horoscope_subscription",
+            persistent=False,
+        )
 
 
 async def send_horoscope_invite(bot, user_id: int) -> bool:

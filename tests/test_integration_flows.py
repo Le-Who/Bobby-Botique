@@ -346,7 +346,11 @@ class TestUserAuthChain:
             mock_mgr.is_connected = True
             mock_mgr._user_auth_cache = {}
             # Mock the pool.acquire context manager
-            mock_conn = AsyncMock()
+            mock_conn = MagicMock()
+            mock_transaction = MagicMock()
+            mock_transaction.__aenter__ = AsyncMock(return_value=None)
+            mock_transaction.__aexit__ = AsyncMock(return_value=False)
+            mock_conn.transaction.return_value = mock_transaction
             mock_mgr.pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
             mock_mgr.pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
             yield mock_query

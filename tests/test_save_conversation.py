@@ -1,4 +1,5 @@
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncpg
 import pytest
@@ -161,3 +162,43 @@ async def test_save_conversation_procedure_failure(mock_chat_state):
         # Verify error was logged
         mock_logging_error.assert_called_once()
         assert "Error saving conversation messages via Procedure" in mock_logging_error.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_export_user_conversations_is_complete_and_tenant_scoped():
+    conn = AsyncMock()
+    transaction = MagicMock()
+    transaction.__aenter__ = AsyncMock(return_value=None)
+    transaction.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction = MagicMock(return_value=transaction)
+    acquire = MagicMock()
+    acquire.__aenter__ = AsyncMock(return_value=conn)
+    acquire.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire.return_value = acquire
+
+    rows = [
+        {
+            "id": 71,
+            "title": "Saved",
+            "messages": '[{"role":"user","content":"hello"}]',
+        }
+    ]
+    with (
+        patch.object(
+            conv_repo,
+            "db_manager",
+            SimpleNamespace(pool=pool, is_connected=True),
+        ),
+        patch.object(conv_repo, "set_user_context", new_callable=AsyncMock) as set_context,
+        patch.object(conv_repo, "clear_user_context", new_callable=AsyncMock),
+        patch.object(conv_repo, "db_query", new_callable=AsyncMock, return_value=rows) as query,
+    ):
+        result = await conv_repo.export_user_conversations(42)
+
+    assert result[0]["messages"] == [{"role": "user", "content": "hello"}]
+    set_context.assert_awaited_once_with(42, False, conn=conn)
+    sql = query.await_args.args[0]
+    assert "conversation.user_id = $1" in sql
+    assert "message.owner_user_id = conversation.user_id" in sql
+    assert query.await_args.kwargs["conn"] is conn

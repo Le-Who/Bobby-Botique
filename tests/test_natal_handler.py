@@ -6,7 +6,6 @@ import pytest
 from PIL import Image
 from telegram import CallbackQuery, Chat, Message, Update, User
 from telegram.ext import CallbackQueryHandler
-from telegram.warnings import PTBUserWarning
 
 from app.handlers.natal_chart import (
     _NATAL_COVER_PATH,
@@ -761,8 +760,7 @@ def test_conversation_handler_routes_start_natal_callback_to_natal_command():
         ),
     )
 
-    with pytest.warns(PTBUserWarning, match="per_message=False"):
-        handler = build_natal_chart_handler()
+    handler = build_natal_chart_handler()
     matched = handler.check_update(update)
 
     assert matched is not None

@@ -191,3 +191,75 @@ async def test_log_group_message(group_chat_manager):
         assert mock_db_query.call_count == 2
         assert "INSERT INTO group_messages" in mock_db_query.call_args_list[0][0][0]
         assert "UPDATE group_chats" in mock_db_query.call_args_list[1][0][0]
+
+
+@pytest.mark.asyncio
+async def test_group_messages_do_not_enter_private_ltm_graph(group_chat_manager):
+    """Shared group memory is not scope-safe yet, so capture must remain off."""
+    chat_id = 100
+    group_chat_manager.active_groups[chat_id] = GroupChat(
+        chat_id=chat_id,
+        title="Test Group",
+        is_active=True,
+        created_at=None,
+        last_activity=None,
+        member_count=1,
+        admin_user_id=1,
+        settings={},
+    )
+
+    def close_unexpected(coro):
+        coro.close()
+
+    with (
+        patch("app.database.db_query", new_callable=AsyncMock),
+        patch("app.utils.background_tasks.submit_task", side_effect=close_unexpected) as submit,
+    ):
+        await group_chat_manager.log_group_message(
+            chat_id,
+            1,
+            "A long group message that must not contaminate the user's private memory graph.",
+        )
+
+    submit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_account_erasure_updates_group_cache_and_promotes_replacement(group_chat_manager):
+    group_chat_manager.active_groups[100] = GroupChat(
+        chat_id=100,
+        title="Transferred",
+        is_active=True,
+        created_at=None,
+        last_activity=None,
+        member_count=2,
+        admin_user_id=42,
+        settings={},
+    )
+    group_chat_manager.active_groups[200] = GroupChat(
+        chat_id=200,
+        title="Deleted",
+        is_active=True,
+        created_at=None,
+        last_activity=None,
+        member_count=1,
+        admin_user_id=42,
+        settings={},
+    )
+    group_chat_manager.group_settings.update({100: {}, 200: {}})
+    group_chat_manager.user_groups[42].update({100, 200})
+    group_chat_manager.user_groups[7].add(100)
+
+    await group_chat_manager.apply_account_erasure(
+        42,
+        affected_group_ids={100, 200},
+        transferred_admins={100: 7},
+        deleted_group_ids={200},
+    )
+
+    assert 42 not in group_chat_manager.user_groups
+    assert 200 not in group_chat_manager.active_groups
+    assert 200 not in group_chat_manager.group_settings
+    assert group_chat_manager.active_groups[100].admin_user_id == 7
+    assert group_chat_manager.active_groups[100].member_count == 1
+    assert 100 in group_chat_manager.user_groups[7]

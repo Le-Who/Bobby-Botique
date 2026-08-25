@@ -16,6 +16,16 @@ from app.repos import daily_2048 as repo
 from app.web import quart_app
 from tests.factories import make_valid_init_data
 
+
+@pytest.fixture
+def authorized_websocket_user():
+    with patch(
+        "app.repos.users.is_authorized",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as authorized:
+        yield authorized
+
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app" / "templates" / "daily_2048.html"
 
 
@@ -644,7 +654,10 @@ async def test_daily2048_result_without_cover_edits_prompt_as_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_daily2048_websocket_sends_explicit_goal_and_accepts_move(monkeypatch) -> None:
+async def test_daily2048_websocket_sends_explicit_goal_and_accepts_move(
+    monkeypatch,
+    authorized_websocket_user,
+) -> None:
     monkeypatch.setattr("app.web_miniapp.settings", SimpleNamespace(TELEGRAM_BOT_TOKEN="test-token"))
     init_data = make_valid_init_data("test-token", user_id=777)
     url = f"/webapp/daily2048/ws?initData={urllib.parse.quote(init_data)}&tz=Europe%2FKyiv"
@@ -724,10 +737,14 @@ async def test_daily2048_websocket_sends_explicit_goal_and_accepts_move(monkeypa
         [0, 0, 0, 0],
         [0, 0, 0, 0],
     ]
+    authorized_websocket_user.assert_awaited_once_with(777)
 
 
 @pytest.mark.asyncio
-async def test_daily2048_websocket_syncs_client_elapsed_without_move(monkeypatch) -> None:
+async def test_daily2048_websocket_syncs_client_elapsed_without_move(
+    monkeypatch,
+    authorized_websocket_user,
+) -> None:
     monkeypatch.setattr("app.web_miniapp.settings", SimpleNamespace(TELEGRAM_BOT_TOKEN="test-token"))
     init_data = make_valid_init_data("test-token", user_id=777)
     url = f"/webapp/daily2048/ws?initData={urllib.parse.quote(init_data)}&tz=Europe%2FKyiv"
@@ -777,7 +794,10 @@ async def test_daily2048_websocket_syncs_client_elapsed_without_move(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_daily2048_websocket_allows_lost_daily_to_restart_practice(monkeypatch) -> None:
+async def test_daily2048_websocket_allows_lost_daily_to_restart_practice(
+    monkeypatch,
+    authorized_websocket_user,
+) -> None:
     monkeypatch.setattr("app.web_miniapp.settings", SimpleNamespace(TELEGRAM_BOT_TOKEN="test-token"))
     init_data = make_valid_init_data("test-token", user_id=777)
     url = f"/webapp/daily2048/ws?initData={urllib.parse.quote(init_data)}&tz=Europe%2FKyiv"

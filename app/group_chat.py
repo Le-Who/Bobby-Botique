@@ -236,6 +236,35 @@ class GroupChatManager:
         group_ids = self.user_groups.get(user_id, set())
         return [self.active_groups[gid] for gid in group_ids if gid in self.active_groups]
 
+    async def apply_account_erasure(
+        self,
+        user_id: int,
+        *,
+        affected_group_ids: set[int],
+        transferred_admins: dict[int, int],
+        deleted_group_ids: set[int],
+    ) -> None:
+        """Make process-local group indexes match a committed account erasure."""
+        async with self._lock:
+            self.user_groups.pop(user_id, None)
+
+            for chat_id in deleted_group_ids:
+                self.active_groups.pop(chat_id, None)
+                self.group_settings.pop(chat_id, None)
+                for memberships in self.user_groups.values():
+                    memberships.discard(chat_id)
+
+            for chat_id in affected_group_ids - deleted_group_ids:
+                group = self.active_groups.get(chat_id)
+                if group is not None:
+                    group.member_count = max(0, group.member_count - 1)
+
+            for chat_id, replacement_user_id in transferred_admins.items():
+                group = self.active_groups.get(chat_id)
+                if group is not None:
+                    group.admin_user_id = replacement_user_id
+                self.user_groups[replacement_user_id].add(chat_id)
+
     async def update_group_activity(self, chat_id: int):
         """Обновляет время последней активности группы"""
         try:
@@ -258,7 +287,12 @@ class GroupChatManager:
         message_type: str = "text",
         is_bot_response: bool = False,
     ):
-        """Логирует сообщение в группе + запускает social graph extraction."""
+        """Log a group message without feeding the private LTM graph.
+
+        Shared group memory remains disabled until graph uniqueness, retrieval,
+        consent and deletion are all scope-aware.  Storing the group transcript
+        itself is independent from private long-term memory.
+        """
         try:
             await db.db_query(
                 "INSERT INTO group_messages (chat_id, user_id, message_text, message_type, is_bot_response) VALUES ($1, $2, $3, $4, $5)",
@@ -267,57 +301,8 @@ class GroupChatManager:
 
             await self.update_group_activity(chat_id)
 
-            # ── Social Graph Extraction (background, non-blocking) ─────
-            # Only extract from user messages (not bot responses), with enough content.
-            if not is_bot_response and message_text and len(message_text.strip()) >= 30:
-                try:
-                    from app.utils.background_tasks import submit_task
-
-                    submit_task(
-                        self._extract_social_graph(
-                            chat_id=chat_id,
-                            user_id=user_id,
-                            actor_user_id=user_id,
-                            text=message_text,
-                        )
-                    )
-                except Exception as graph_err:
-                    logging.debug("Social graph extraction task failed to submit: %s", graph_err)
-
         except Exception as e:
             logging.error("Error logging group message: %s", e, exc_info=True)
-
-    async def _extract_social_graph(
-        self,
-        chat_id: int,
-        user_id: int,
-        actor_user_id: int,
-        text: str,
-    ) -> None:
-        """Extract social graph from a group chat message (background task).
-
-        Attributes entities/edges to the specific speaker (actor_user_id)
-        and isolates them within the group context (chat_id).
-        """
-        try:
-            from app.repos.keys import get_available_gemini_key
-            from app.repos.memory import EMBEDDING_MODEL
-
-            key_data = await get_available_gemini_key(model_name=EMBEDDING_MODEL)
-            if not key_data:
-                return
-
-            from app.repos.memory_extraction import extract_and_store_graph
-
-            await extract_and_store_graph(
-                user_id,
-                text,
-                key_data["api_key"],
-                chat_id=chat_id,
-                actor_user_id=actor_user_id,
-            )
-        except Exception as e:
-            logging.debug("Social graph extraction failed for chat %d: %s", chat_id, e)
 
     async def get_group_stats(self, chat_id: int) -> dict[str, Any]:
         """Получает статистику группы"""

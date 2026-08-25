@@ -279,6 +279,7 @@ class AgenticSearch:
         *,
         ltm_enabled: bool = False,
         ltm_api_key: str | None = None,
+        ltm_expected_epoch: int | None = None,
     ):
         self.model_name = model_name
         self.api_key = api_key
@@ -294,6 +295,7 @@ class AgenticSearch:
         # Agentic RAG: when LTM is enabled, the agent can call recall_memory
         self._ltm_enabled = ltm_enabled
         self._ltm_api_key = ltm_api_key
+        self._ltm_expected_epoch = ltm_expected_epoch
 
     def _get_system_instruction(self) -> str:
         """Compose the RESEARCH_AGENT_SYSTEM prompt with configuration injected."""
@@ -461,7 +463,12 @@ class AgenticSearch:
                 logger.info("Agent requested recall_memory: %s", query[:60])
                 from app.repos.memory_tools import execute_memory_tool
 
-                return await execute_memory_tool(user_id, query, self._ltm_api_key)
+                return await execute_memory_tool(
+                    user_id,
+                    query,
+                    self._ltm_api_key,
+                    expected_epoch=self._ltm_expected_epoch,
+                )
             else:
                 return {"error": f"Unknown tool: {name}"}
 

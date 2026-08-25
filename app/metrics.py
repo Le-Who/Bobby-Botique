@@ -280,18 +280,6 @@ class MetricsCollector:
 
             # Save per-user metrics
             if user_snapshot:
-                # FIX: Ensure unregistered casual users (e.g. from inline mode) exist in public.users
-                # so the user_metrics foreign key constraint doesn't fail.
-                user_ids = [(uid,) for uid, _ in user_snapshot]
-                await db.db_execute_many(
-                    """
-                    INSERT INTO public.users (user_id, is_authorized)
-                    VALUES ($1, 0)
-                    ON CONFLICT (user_id) DO NOTHING
-                    """,
-                    user_ids,
-                )
-
                 params_list = [
                     (
                         uid,
@@ -304,7 +292,9 @@ class MetricsCollector:
                 await db.db_execute_many(
                     """
                     INSERT INTO user_metrics (user_id, metric_date, request_count, model_usage, updated_at)
-                    VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+                    SELECT app_user.user_id, $2, $3, $4, CURRENT_TIMESTAMP
+                    FROM public.users AS app_user
+                    WHERE app_user.user_id = $1
                     ON CONFLICT (user_id, metric_date) DO UPDATE SET
                         request_count = user_metrics.request_count + EXCLUDED.request_count,
                         model_usage = COALESCE(user_metrics.model_usage, '{}'::jsonb) || EXCLUDED.model_usage,
@@ -312,7 +302,7 @@ class MetricsCollector:
                     """,
                     params_list,
                 )
-                logging.debug("Per-user metrics saved for %s users", len(user_snapshot))
+                logging.debug("Per-user metrics flushed for up to %s existing users", len(user_snapshot))
 
                 # Update streaks for active users
                 try:

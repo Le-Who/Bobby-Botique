@@ -278,6 +278,19 @@ All configuration is loaded from environment variables (or a `.env` file). Varia
 | `DB_POOL_MAX_SIZE` | ⚙️ | `10`—`50` | `10` | Maximum open asyncpg connections. Keep below the PostgreSQL `max_connections` limit (default 100). For a 4-vCPU VPS, `20`—`30` is a safe value. |
 | `TEST_DATABASE_URL` | ⚙️ | Same DSN format, pointing to a test DB | — | Used **only** during integration test execution (`pytest -m integration`). Completely isolated from production data. |
 
+> **RLS deployment boundary:** the current startup path uses `DATABASE_URL` for
+> both schema migrations and runtime queries. A PostgreSQL superuser,
+> `BYPASSRLS` role, or table owner can bypass ordinary `ENABLE ROW LEVEL
+> SECURITY` policies, so the built-in RLS layer is defense-in-depth rather than
+> a hard tenant boundary when such a DSN is used. Application queries still set
+> a transaction-local tenant context and scope by `user_id`. For hard database
+> isolation, first split the current single-DSN bootstrap/runtime path: run
+> migrations and RLS provisioning through a separate owner/migrator, then run
+> the bot through a `NOSUPERUSER NOBYPASSRLS` non-owner role with only required
+> DML, sequence, and function privileges. Validate cross-tenant denial against
+> that role before enabling `FORCE ROW LEVEL SECURITY`; the current code does
+> not yet provide that two-role bootstrap automatically.
+
 > **Migrating from Supabase to a local DB:**
 > ```bash
 > # 1. Dump from Supabase

@@ -65,8 +65,15 @@ class TestImageUtils(unittest.TestCase):
         self.assertTrue(kwargs.get("exc_info"))
 
     def test_import_does_not_create_process_pool(self):
-        with patch("concurrent.futures.ProcessPoolExecutor", side_effect=AssertionError("pool should stay lazy")):
-            reload(image_utils)
+        # ``reload`` recreates dataclasses, so restore the public TaggedImage
+        # class afterwards. Otherwise other test modules collected earlier can
+        # hold the old class while provider code imports the new one.
+        tagged_image_class = image_utils.TaggedImage
+        try:
+            with patch("concurrent.futures.ProcessPoolExecutor", side_effect=AssertionError("pool should stay lazy")):
+                reload(image_utils)
+        finally:
+            image_utils.TaggedImage = tagged_image_class
 
     def test_get_image_process_pool_is_lazy_and_singleton(self):
         sentinel_pool = object()

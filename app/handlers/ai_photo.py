@@ -27,7 +27,7 @@ from app.handlers.ai_search import (
     _handle_research_agent,
 )
 from app.prompt_registry import FORMATTING_RULES_COMPACT, get_registry
-from app.repos.chats import get_user_chat, update_user_chat
+from app.repos.chats import ensure_chat_generation, get_user_chat, update_user_chat
 from app.utils.heartbeat import stop_heartbeat
 from app.utils.image_utils import TaggedImage, save_image_as_bytes
 from app.utils.stage_indicators import STAGES_PHOTO, update_stage
@@ -201,13 +201,14 @@ async def _process_ai_vision(
         chat_id=chat_id,
         thinking_level=chat_state.thinking_level,
         workload=Workload.INTERACTIVE,
-        allow_deferred=True,
+        allow_deferred=False,
     )
     outcome = await get_telegram_response_delivery().stream(
         TelegramTarget(
             placeholder_message=placeholder_message,
             bot=placeholder_message.get_bot(),
             chat_id=chat_id,
+            private_content=True,
         ),
         request,
         presentation=FixedPresentation(
@@ -240,6 +241,42 @@ async def _process_ai_vision(
 
 
 async def _handle_photo(placeholder_message: Message, original_message: Message, chat_state: ChatState):
+    user_id = int(original_message.from_user.id)
+    known_epoch = (
+        None
+        if getattr(chat_state, "_has_persisted_chat", True) is False
+        else int(chat_state.memory_epoch)
+    )
+    expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
+    if expected_epoch is None:
+        return
+    chat_state.memory_epoch = expected_epoch
+    chat_state._has_persisted_chat = True
+    from app.repos.memory_consent import private_data_lease
+
+    async with private_data_lease(
+        user_id,
+        expected_epoch,
+        purpose="conversation:vision",
+        require_ltm=False,
+    ) as lease_current:
+        if not lease_current:
+            return
+        await _handle_photo_leased_impl(
+            placeholder_message,
+            original_message,
+            chat_state,
+            _expected_epoch=expected_epoch,
+        )
+
+
+async def _handle_photo_leased_impl(
+    placeholder_message: Message,
+    original_message: Message,
+    chat_state: ChatState,
+    *,
+    _expected_epoch: int,
+):
     stop_heartbeat(placeholder_message.message_id)
     try:
         photo_file = await original_message.photo[-1].get_file()
@@ -294,12 +331,15 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
         response_text = outcome.content_text
         chat_state.history.append({"role": "user", "parts": [formatted_prompt]})
         chat_state.history.append({"role": "model", "parts": [response_text]})
-        await update_user_chat(user_id, chat_state)
+        await update_user_chat(user_id, chat_state, expected_epoch=_expected_epoch)
 
         # ── Store photo description in long-term memory (background) ──
         _photo_bytes = compressed or img_raw
-        if _photo_bytes and chat_state.ltm_enabled:
-            from app.utils.background_tasks import submit_retryable
+        from app.repos.memory_consent import capture_epoch
+
+        _memory_epoch = capture_epoch(chat_state)
+        if _photo_bytes and _memory_epoch is not None:
+            from app.repos.memory_autosave import submit_memory_task
 
             def _bg_photo_ltm():
                 async def _store():
@@ -310,11 +350,12 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
                         user_id,
                         media_type="image",
                         telegram_file_id=file_unique_id,
+                        expected_epoch=_memory_epoch,
                     )
 
                 return _store()
 
-            submit_retryable(_bg_photo_ltm, retry=2)
+            submit_memory_task(user_id, _bg_photo_ltm, retry=2)
 
     except Exception as e:
         logging.error("Error processing photo: %s", e, exc_info=True)
@@ -432,7 +473,52 @@ async def _download_images_concurrently(
 # ── Media group photo handler ───────────────────────────────────────────────
 
 
+def _media_group_user_id(messages: list[Message]) -> int:
+    """Return the human sender, rejecting mixed/bot-authored media groups."""
+    if not messages or messages[0].from_user is None:
+        raise ValueError("media group has no authoritative sender")
+    user_id = int(messages[0].from_user.id)
+    if any(message.from_user is None or int(message.from_user.id) != user_id for message in messages):
+        raise ValueError("media group contains messages from different senders")
+    return user_id
+
+
 async def _handle_media_group_photos(
+    placeholder_message: Message,
+    messages: list[Message],
+    caption: str,
+    chat_state: ChatState,
+):
+    user_id = _media_group_user_id(messages)
+    known_epoch = (
+        None
+        if getattr(chat_state, "_has_persisted_chat", True) is False
+        else int(chat_state.memory_epoch)
+    )
+    expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
+    if expected_epoch is None:
+        return
+    chat_state.memory_epoch = expected_epoch
+    chat_state._has_persisted_chat = True
+    from app.repos.memory_consent import private_data_lease
+
+    async with private_data_lease(
+        user_id,
+        expected_epoch,
+        purpose="conversation:vision-group",
+        require_ltm=False,
+    ) as lease_current:
+        if not lease_current:
+            return
+        await _handle_media_group_photos_leased_impl(
+            placeholder_message,
+            messages,
+            caption,
+            chat_state,
+        )
+
+
+async def _handle_media_group_photos_leased_impl(
     placeholder_message: Message,
     messages: list[Message],
     caption: str,
@@ -440,6 +526,7 @@ async def _handle_media_group_photos(
 ):
     """Обрабатывает группу изображений для обычного описания"""
     try:
+        user_id = _media_group_user_id(messages)
         # Load все images from groups
         images = await _download_images_concurrently(messages, placeholder=placeholder_message)
 
@@ -471,7 +558,6 @@ async def _handle_media_group_photos(
         parts = [formatted_prompt] + tagged_images
 
         # Get user_id и chat_id for логирования
-        user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
         chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
         outcome = await _process_ai_vision(
@@ -508,8 +594,45 @@ async def _handle_complex_media_group_search(
     search_prefix: str,
     chat_state: ChatState,
 ):
+    user_id = _media_group_user_id(messages)
+    known_epoch = (
+        None
+        if getattr(chat_state, "_has_persisted_chat", True) is False
+        else int(chat_state.memory_epoch)
+    )
+    expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
+    if expected_epoch is None:
+        return
+    chat_state.memory_epoch = expected_epoch
+    chat_state._has_persisted_chat = True
+    from app.repos.memory_consent import private_data_lease
+
+    async with private_data_lease(
+        user_id,
+        expected_epoch,
+        purpose="conversation:vision-research",
+        require_ltm=False,
+    ) as lease_current:
+        if not lease_current:
+            return
+        await _handle_complex_media_group_search_leased_impl(
+            placeholder_message,
+            messages,
+            caption,
+            search_prefix,
+            chat_state,
+        )
+
+
+async def _handle_complex_media_group_search_leased_impl(
+    placeholder_message: Message,
+    messages: list[Message],
+    caption: str,
+    search_prefix: str,
+    chat_state: ChatState,
+):
     """Обрабатывает группу изображений для сложного поиска"""
-    user_id = placeholder_message.from_user.id
+    user_id = _media_group_user_id(messages)
 
     try:
         await placeholder_message.edit_text("🖼️ Анализирую группу изображений...")
@@ -580,7 +703,6 @@ cooking process step by step recipe preparation
         parts = [analysis_prompt] + tagged_images
 
         # Get user_id и chat_id for логирования
-        user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
         chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
         search_query, _ = await _get_ai_response_with_routing(
@@ -606,7 +728,13 @@ cooking process step by step recipe preparation
         original_user_message = caption or f"Опиши эти {image_count} изображения."
 
         if search_prefix == "?":
-            await _handle_qna_search(placeholder_message, original_user_message, chat_state, search_query)
+            await _handle_qna_search(
+                placeholder_message,
+                original_user_message,
+                chat_state,
+                search_query,
+                user_id=user_id,
+            )
         else:
             await _handle_research_agent(
                 placeholder_message,

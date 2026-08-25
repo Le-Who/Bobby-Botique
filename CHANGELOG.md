@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-08-25 - Long-Term Memory Safety Hardening
+
+### 🧠 Consent, provenance, and retrieval
+
+- Added globally unique memory-consent epochs and renewable cross-process provider leases so queued chat, document, search, voice, media, extraction, consolidation, graph, and scheduled-brief work cannot outlive LTM disable or account erasure.
+- Disabled implicit private-memory capture from group conversations and normalized canonical chat history separately from provider-specific payloads, preventing binary/media artifacts and continuation duplicates from entering persisted history or LTM.
+- Made graph facts traceable to exact source memories, added tenant-safe composite provenance constraints and RLS policies, and made cleanup remove expired, unsupported, orphaned, or source-derived data in a deterministic order.
+- Hardened retrieval ranking, freshness/expiry checks, feedback attribution, prompt-delimited memory injection, and local/LLM summary token budgeting for Cyrillic and emoji.
+
+### 🔒 Deletion and tenant isolation
+
+- Made `/deleteme` a transactional, private-chat-only account erasure flow that removes legacy rows, transfers or removes managed groups safely, clears runtime caches, and prevents background metrics or summarization from recreating deleted users.
+- Added authenticated Mini App memory controls and export scope, and made graph visualization use one RLS-scoped database snapshot with a durable LTM-consent gate.
+- Changed RLS policy setup to fail startup when a configured table or policy cannot be protected, instead of silently continuing with partial tenant isolation.
+
+### 💬 Conversation handlers
+
+- Documented the deliberate `per_chat=True`, `per_user=True`, `per_message=False` mode for hybrid callback/command/text/location conversations and scoped suppression to the one expected `python-telegram-bot` configuration warning. Unrelated PTB warnings remain visible and test-failing.
+
+### ✅ Verification
+
+- Added regression coverage for consent races, provenance and tenant constraints, account erasure, graph authorization, canonical persistence, summary lifecycle/budgets, and all affected `ConversationHandler` builders.
+
 ## [Unreleased] - 2026-08-14 - Dynamic Model Catalog Correctness
 
 ### 🧠 Model configuration and administration

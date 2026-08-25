@@ -26,6 +26,7 @@ from .token_budget import (
     SUMMARY_BUDGET,
     AssembledContext,
     TokenBudget,
+    truncate_to_token_budget,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ class ContextAssembler:
         system_instruction: str,
         existing_summary: str | None = None,
         token_budget: int = DEFAULT_TOKEN_BUDGET,
+        user_parts: list[Any] | None = None,
     ) -> AssembledContext:
         """Assemble context within token budget.
 
@@ -74,12 +76,23 @@ class ContextAssembler:
         budget.system_prompt = estimate_tokens_cyrillic(system_instruction)
         budget.user_message = estimate_tokens_cyrillic(user_message)
 
-        # 2. Check if summary exists and account for it
+        # 2. Check if summary exists and account for it.  Persisted summaries
+        # from older versions may predate the byte-aware cap.
         if existing_summary:
+            existing_summary = truncate_to_token_budget(existing_summary, SUMMARY_BUDGET)
             budget.summary = estimate_tokens_cyrillic(existing_summary)
 
         # 3. Fit history within remaining budget
         available = budget.available_for_history
+        total_history_tokens = sum(
+            estimate_tokens_cyrillic(self._extract_text(message)) for message in history
+        )
+        if total_history_tokens > available:
+            # A first truncation creates or expands the local summary. Reserve
+            # its full allowance before selecting retained turns; otherwise
+            # the newly-created summary can push the provider prompt over the
+            # declared context budget.
+            available = max(0, available - max(0, SUMMARY_BUDGET - budget.summary))
         trimmed_history, was_truncated, dropped_count, new_summary = self._fit_history(
             history, available, existing_summary
         )
@@ -99,7 +112,12 @@ class ContextAssembler:
                 llm_scheduled = True
 
         # 5. Build final history with proper structure
-        final_history = self._build_final_history(trimmed_history, new_summary, user_message)
+        final_history = self._build_final_history(
+            trimmed_history,
+            new_summary,
+            user_message,
+            user_parts=user_parts,
+        )
 
         budget.history = sum(estimate_tokens_cyrillic(self._extract_text(msg)) for msg in trimmed_history)
 
@@ -109,6 +127,10 @@ class ContextAssembler:
         return AssembledContext(
             history=final_history,
             system_instruction=system_instruction,
+            retained_history=[
+                {**message, "parts": list(message.get("parts", []))}
+                for message in trimmed_history
+            ],
             summary=new_summary,
             budget=budget,
             was_truncated=was_truncated,
@@ -238,8 +260,7 @@ class ContextAssembler:
 
         # Cap summary length to stay within budget
         if summary and estimate_tokens_cyrillic(summary) > SUMMARY_BUDGET:
-            max_chars = SUMMARY_BUDGET * 2  # Rough chars-to-tokens for Cyrillic
-            summary = summary[:max_chars] + "..."
+            summary = truncate_to_token_budget(summary, SUMMARY_BUDGET)
 
         return summary
 
@@ -250,6 +271,8 @@ class ContextAssembler:
         trimmed_history: list[dict[str, Any]],
         summary: str | None,
         user_message: str,
+        *,
+        user_parts: list[Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Build the final message list for the LLM.
 
@@ -279,7 +302,8 @@ class ContextAssembler:
         # Add current user message — skip if None (caller already appended manually)
         if user_message is not None:
             msg_text = user_message.strip() if user_message else ""
-            context.append({"role": "user", "parts": [msg_text or "..."]})
+            parts = list(user_parts) if user_parts is not None else [msg_text or "..."]
+            context.append({"role": "user", "parts": parts})
 
         # Validate role alternation
         context = self._fix_role_alternation(context)

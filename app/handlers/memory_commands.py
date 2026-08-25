@@ -21,6 +21,9 @@ MEMORIES_PER_PAGE = 5
 @safe_handler("❌ Ошибка получения воспоминаний.")
 async def memory_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show paginated list of user's long-term memories."""
+    if getattr(update.effective_chat, "type", None) != "private":
+        await update.message.reply_text("🔒 Управление личной памятью доступно только в приватном чате с ботом.")
+        return
     user_id = update.effective_user.id
     await _send_memory_page(update.message, user_id, page=0)
 
@@ -34,6 +37,7 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
 
     from app.repos.memory import get_memory_stats, list_memories
 
+    page = max(0, page)
     offset = page * MEMORIES_PER_PAGE
     # ⚡ Bolt Optimization: Fetch memories and stats concurrently to reduce DB wait time
     memories, stats = await asyncio.gather(
@@ -41,9 +45,29 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
         get_memory_stats(user_id)
     )
     total = stats.get("total_memories", 0) if stats else 0
+    total_pages = max(1, (total + MEMORIES_PER_PAGE - 1) // MEMORIES_PER_PAGE)
+
+    # A deletion on the last page can make the callback's page stale.  Clamp
+    # and re-read instead of rendering impossible counters such as ``3/1``.
+    clamped_page = min(page, total_pages - 1)
+    if clamped_page != page:
+        page = clamped_page
+        offset = page * MEMORIES_PER_PAGE
+        memories = await list_memories(
+            user_id,
+            offset=offset,
+            limit=MEMORIES_PER_PAGE,
+        )
 
     if not memories and page == 0:
-        await target.reply_text("📭 У вас пока нет сохранённых воспоминаний.")
+        empty_text = "📭 У вас больше нет сохранённых воспоминаний."
+        if hasattr(target, "edit_text"):
+            try:
+                await target.edit_text(empty_text, reply_markup=None)
+                return
+            except Exception:
+                pass
+        await target.reply_text(empty_text)
         return
 
     # Build text
@@ -65,7 +89,7 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
         delete_row.append(
             InlineKeyboardButton(
                 f"🗑 #{memories.index(m) + offset + 1}",
-                callback_data=f"mem:del:{m['id']}:{page}",
+                callback_data=f"mem:{user_id}:del:{m['id']}:{page}",
             )
         )
     if delete_row:
@@ -74,11 +98,10 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
     # Navigation row
     nav_row = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"mem:page:{page - 1}"))
-    total_pages = max(1, (total + MEMORIES_PER_PAGE - 1) // MEMORIES_PER_PAGE)
-    nav_row.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="mem:noop"))
+        nav_row.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"mem:{user_id}:page:{page - 1}"))
+    nav_row.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data=f"mem:{user_id}:noop"))
     if offset + MEMORIES_PER_PAGE < total:
-        nav_row.append(InlineKeyboardButton("Вперёд ➡️", callback_data=f"mem:page:{page + 1}"))
+        nav_row.append(InlineKeyboardButton("Вперёд ➡️", callback_data=f"mem:{user_id}:page:{page + 1}"))
     buttons.append(nav_row)
 
     markup = InlineKeyboardMarkup(buttons)
@@ -93,25 +116,50 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
     await target.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=markup)
 
 
+@authorized_only
+@safe_handler("❌ Ошибка управления воспоминаниями.")
 async def memory_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle inline button callbacks for memory management."""
     query = update.callback_query
-    await query.answer()
-
-    data = query.data
+    if query is None:
+        return
     user_id = update.effective_user.id
-
-    if data == "mem:noop":
+    if getattr(update.effective_chat, "type", None) != "private" or query.message is None:
+        await query.answer("🔒 Личная память доступна только в приватном чате", show_alert=True)
         return
 
-    if data.startswith("mem:page:"):
-        page = int(data.split(":")[2])
+    parts = str(query.data or "").split(":")
+    try:
+        owner_id = int(parts[1])
+        action = parts[2]
+    except (IndexError, TypeError, ValueError):
+        await query.answer("Кнопка устарела. Откройте /memory заново.", show_alert=True)
+        return
+
+    if owner_id != user_id:
+        await query.answer("Эта панель памяти принадлежит другому пользователю.", show_alert=True)
+        return
+
+    if action == "noop":
+        await query.answer()
+        return
+
+    if action == "page":
+        try:
+            page = max(0, int(parts[3]))
+        except (IndexError, ValueError):
+            await query.answer("Некорректная страница", show_alert=True)
+            return
+        await query.answer()
         await _send_memory_page(query.message, user_id, page=page)
 
-    elif data.startswith("mem:del:"):
-        parts = data.split(":")
-        memory_id = int(parts[2])
-        page = int(parts[3]) if len(parts) > 3 else 0
+    elif action == "del":
+        try:
+            memory_id = int(parts[3])
+            page = max(0, int(parts[4])) if len(parts) > 4 else 0
+        except (IndexError, ValueError):
+            await query.answer("Некорректное воспоминание", show_alert=True)
+            return
 
         from app.repos.memory import delete_memory
 
@@ -125,6 +173,8 @@ async def memory_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
         # Re-render current page
         await _send_memory_page(query.message, user_id, page=page)
+    else:
+        await query.answer("Кнопка устарела. Откройте /memory заново.", show_alert=True)
 
 
 def register(application) -> None:

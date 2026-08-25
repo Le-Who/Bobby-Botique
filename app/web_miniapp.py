@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 
 miniapp_blueprint = Blueprint("miniapp", __name__, template_folder="templates")
 
+_INIT_DATA_MAX_AGE_SECONDS = 3600
+_INIT_DATA_MAX_FUTURE_SKEW_SECONDS = 30
+
 from app.security import SyncRateLimiter, rate_limit  # noqa: E402
 
 # Rate limiter for public-facing Reader pages (30 req/min)
@@ -341,6 +344,17 @@ def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any] | None
             logger.warning("initData hash mismatch")
             return None
 
+        try:
+            auth_date = int(parsed.get("auth_date", ""))
+        except (TypeError, ValueError):
+            logger.warning("initData auth_date is missing or invalid")
+            return None
+
+        age_seconds = int(time.time()) - auth_date
+        if age_seconds > _INIT_DATA_MAX_AGE_SECONDS or age_seconds < -_INIT_DATA_MAX_FUTURE_SKEW_SECONDS:
+            logger.warning("initData auth_date outside allowed window")
+            return None
+
         # Parse the user field
         if "user" in parsed:
             parsed["user"] = json.loads(parsed["user"])
@@ -388,6 +402,85 @@ def require_webapp_auth(f: typing.Callable) -> typing.Callable:
         return await f(*args, **kwargs)
 
     return decorated
+
+
+def require_authorized_webapp_user(f: typing.Callable) -> typing.Callable:
+    """Require the signed Telegram user to retain bot access.
+
+    HMAC proves who opened the Mini App; it does not prove that the account is
+    still authorized.  Private-data endpoints fail closed when authorization
+    cannot be confirmed.
+    """
+
+    @wraps(f)
+    async def decorated(*args, **kwargs):
+        user_id = kwargs.get("user_id")
+        if not isinstance(user_id, int):
+            return jsonify({"error": "No authorized user"}), 403
+        try:
+            from app.repos.users import is_authorized
+
+            if not await is_authorized(user_id):
+                return jsonify({"error": "Access revoked"}), 403
+        except Exception as exc:
+            logger.error("Mini App authorization check failed for user %s: %s", user_id, exc)
+            return jsonify({"error": "Authorization unavailable"}), 503
+        return await f(*args, **kwargs)
+
+    return decorated
+
+
+async def _require_authorized_websocket_user(user_id: int) -> bool:
+    """Fail closed unless the signed Telegram user still has bot access."""
+    from quart import websocket
+
+    try:
+        from app.repos.users import is_authorized
+
+        authorized = await is_authorized(user_id)
+    except Exception:
+        logger.error(
+            "Mini App WebSocket authorization check failed for user %s",
+            user_id,
+            exc_info=True,
+        )
+        await websocket.close(4003, "Authorization unavailable")
+        return False
+
+    if not authorized:
+        await websocket.close(4003, "Access revoked")
+        return False
+    return True
+
+
+async def _resolve_authorized_legacy_miniapp_user(
+    raw_init_data: str,
+) -> tuple[int, Any | None]:
+    """Resolve legacy-header identity and reject revoked signed users.
+
+    Daily Trivia historically allows anonymous/public reads, so an absent or
+    invalid legacy header still resolves to user ``0``.  Once a valid signed
+    identity is present, private reads and writes require current bot access.
+    """
+    if not raw_init_data:
+        return 0, None
+
+    bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+    validated = _validate_init_data(raw_init_data, bot_token) if bot_token else None
+    user_id = _extract_user_id(validated) if validated else None
+    if not isinstance(user_id, int) or user_id <= 0:
+        return 0, None
+
+    try:
+        from app.repos.users import is_authorized
+
+        if not await is_authorized(user_id):
+            return 0, (jsonify({"error": "Access revoked"}), 403)
+    except Exception as exc:
+        logger.error("Legacy Mini App authorization check failed for user %s: %s", user_id, exc)
+        return 0, (jsonify({"error": "Authorization unavailable"}), 503)
+
+    return user_id, None
 
 
 # ── Static page ──────────────────────────────────────────────────────────────
@@ -455,6 +548,7 @@ async def natal_form_page():
 
 @miniapp_blueprint.route("/api/natal/submit", methods=["POST"])
 @require_webapp_auth
+@require_authorized_webapp_user
 async def api_natal_submit(user_id: int):
     """Build a natal report from Mini App form data and deliver it to the user chat."""
     bot = get_bot()
@@ -718,6 +812,7 @@ async def _send_natal_report_to_private_chat(bot, user_id: int, report, birth_in
 
 @miniapp_blueprint.route("/api/memories")
 @require_webapp_auth
+@require_authorized_webapp_user
 async def api_list_memories(user_id: int):
     """List user memories with pagination."""
     try:
@@ -741,6 +836,7 @@ async def api_list_memories(user_id: int):
 
 @miniapp_blueprint.route("/api/memories/stats")
 @require_webapp_auth
+@require_authorized_webapp_user
 async def api_memory_stats(user_id: int):
     """Get memory usage stats for the user."""
     try:
@@ -759,6 +855,7 @@ async def api_memory_stats(user_id: int):
 
 @miniapp_blueprint.route("/api/memories/<int:memory_id>", methods=["DELETE"])
 @require_webapp_auth
+@require_authorized_webapp_user
 async def api_delete_memory(memory_id: int, user_id: int):
     """Delete a single memory (RLS-scoped to user_id)."""
     try:
@@ -778,6 +875,7 @@ async def api_delete_memory(memory_id: int, user_id: int):
 
 @miniapp_blueprint.route("/api/settings")
 @require_webapp_auth
+@require_authorized_webapp_user
 async def api_get_settings(user_id: int):
     """Get current chat settings for the user."""
     try:
@@ -833,6 +931,7 @@ async def api_get_settings(user_id: int):
 
 @miniapp_blueprint.route("/api/settings", methods=["PATCH"])
 @require_webapp_auth
+@require_authorized_webapp_user
 async def api_update_settings(user_id: int):
     """Update chat settings (partial update)."""
     try:
@@ -844,6 +943,7 @@ async def api_update_settings(user_id: int):
 
         body = await request.get_json(silent=True) or {}
         changed = False
+        requested_ltm_enabled: bool | None = None
 
         # System prompt
         if "system_prompt" in body:
@@ -871,8 +971,10 @@ async def api_update_settings(user_id: int):
 
         # LTM
         if "ltm_enabled" in body:
-            chat_state.ltm_enabled = bool(body["ltm_enabled"])
-            changed = True
+            requested_ltm_enabled = body["ltm_enabled"]
+            if not isinstance(requested_ltm_enabled, bool):
+                return jsonify({"error": "invalid_ltm_enabled"}), 400
+            chat_state.ltm_enabled = requested_ltm_enabled
 
         # Search
         if "search_enabled" in body:
@@ -910,8 +1012,24 @@ async def api_update_settings(user_id: int):
                 chat_state.voice_id = vid
                 changed = True
 
+        if requested_ltm_enabled is not None:
+            # Consent is its own atomic write.  A stale full ChatState save
+            # must never re-enable memory after an opt-out.
+            from app.repos.chats import set_ltm_enabled
+
+            chat_state.memory_epoch = await set_ltm_enabled(
+                user_id,
+                requested_ltm_enabled,
+            )
+            if not requested_ltm_enabled:
+                from app.repos.memory_autosave import cancel_user_memory_tasks
+
+                await cancel_user_memory_tasks(user_id)
+
         if changed:
             await update_user_chat(user_id, chat_state)
+
+        if changed or requested_ltm_enabled is not None:
             return jsonify({"ok": True})
 
         return jsonify({"ok": True, "note": "no_changes"})
@@ -925,6 +1043,7 @@ async def api_update_settings(user_id: int):
 
 @miniapp_blueprint.route("/api/context/reset", methods=["POST"])
 @require_webapp_auth
+@require_authorized_webapp_user
 async def api_reset_context(user_id: int):
     """Clear chat history and summary."""
     try:
@@ -944,6 +1063,7 @@ async def api_reset_context(user_id: int):
 
 @miniapp_blueprint.route("/api/roles", methods=["GET"])
 @require_webapp_auth
+@require_authorized_webapp_user
 async def api_get_roles(user_id: int):
     """Get custom roles."""
     try:
@@ -958,6 +1078,7 @@ async def api_get_roles(user_id: int):
 
 @miniapp_blueprint.route("/api/roles/<int:role_id>", methods=["DELETE"])
 @require_webapp_auth
+@require_authorized_webapp_user
 async def api_delete_role(user_id: int, role_id: int):
     """Delete a custom role."""
     try:
@@ -977,6 +1098,7 @@ _VOICES_CACHE_TTL: float = 300.0
 
 @miniapp_blueprint.route("/api/voices", methods=["GET"])
 @require_webapp_auth
+@require_authorized_webapp_user
 async def api_get_voices(user_id: int):
     """Provide a list of curated voices depending on available provider."""
     import time
@@ -1045,6 +1167,7 @@ async def api_get_voices(user_id: int):
 
 @miniapp_blueprint.route("/api/live-settings", methods=["GET"])
 @require_webapp_auth
+@require_authorized_webapp_user
 async def api_get_live_settings(user_id: int):
     """Return per-user Gemini Live Audio settings and available presets."""
     try:
@@ -1068,6 +1191,7 @@ async def api_get_live_settings(user_id: int):
 
 @miniapp_blueprint.route("/api/live-settings", methods=["PATCH"])
 @require_webapp_auth
+@require_authorized_webapp_user
 async def api_update_live_settings(user_id: int):
     """Update per-user Gemini Live Audio settings without affecting reply TTS."""
     try:
@@ -1271,6 +1395,7 @@ async def api_reader_content(uid: str):
 
 @miniapp_blueprint.route("/api/graph")
 @require_webapp_auth
+@require_authorized_webapp_user
 async def api_graph_data(user_id: int):
     """Return the user's knowledge graph nodes and edges for visualization.
 
@@ -1284,76 +1409,181 @@ async def api_graph_data(user_id: int):
             "edges": [{"source": int, "target": int, "predicate": str, "weight": float, "is_core": bool}],
         }
     """
+    from app.repos.memory_consent import private_data_lease, resolve_current_epoch
+
+    expected_epoch = await resolve_current_epoch(user_id, require_ltm=True)
+    if expected_epoch is None:
+        return jsonify({"nodes": [], "edges": []})
+
+    async with private_data_lease(
+        user_id,
+        expected_epoch,
+        purpose="ltm:miniapp-graph",
+        require_ltm=True,
+    ) as lease_current:
+        if not lease_current:
+            return jsonify({"nodes": [], "edges": []})
+        return await _api_graph_data_leased(user_id, expected_epoch)
+
+
+async def _api_graph_data_leased(user_id: int, expected_epoch: int):
+    """Build one exact-generation graph snapshot while its lease is live."""
     try:
-        from app.database import db_query
+        from app import database
 
         limit = min(request.args.get("limit", 50, type=int), 200)
         query_filter = request.args.get("query", "").strip()
 
-        # Fetch nodes
-        if query_filter:
-            nodes_rows = await db_query(
+        async with database.db_manager.pool.acquire() as conn, conn.transaction():
+            await database.set_user_context(user_id, False, conn=conn)
+            consent_rows = await database.db_query(
                 """
-                SELECT id, entity_name, entity_type, description
-                FROM memory_nodes
+                SELECT ltm_enabled
+                FROM chats
                 WHERE user_id = $1
-                  AND entity_name ILIKE $2
-                ORDER BY updated_at DESC
-                LIMIT $3
+                  AND memory_epoch = $2
+                  AND private_data_blocked IS FALSE
+                FOR SHARE
                 """,
-                (user_id, f"%{query_filter}%", limit),
+                (user_id, expected_epoch),
+                conn=conn,
             )
-        else:
-            nodes_rows = await db_query(
-                """
-                SELECT id, entity_name, entity_type, description
-                FROM memory_nodes
-                WHERE user_id = $1
-                ORDER BY updated_at DESC
-                LIMIT $2
-                """,
-                (user_id, limit),
-            )
+            if not consent_rows or consent_rows[0]["ltm_enabled"] is not True:
+                return jsonify({"nodes": [], "edges": []})
 
-        node_ids = {r["id"] for r in nodes_rows}
-        nodes = [
-            {
-                "id": r["id"],
-                "name": r["entity_name"],
-                "type": r["entity_type"],
-                "description": r.get("description", ""),
-            }
-            for r in nodes_rows
-        ]
+            # Fetch nodes and their connecting edges from one tenant-scoped snapshot.
+            if query_filter:
+                nodes_rows = await database.db_query(
+                    """
+                    WITH live_node_sources AS (
+                        SELECT source.*
+                        FROM memory_node_sources AS source
+                        JOIN long_term_memory AS memory
+                          ON memory.id = source.memory_id
+                         AND memory.user_id = source.user_id
+                        WHERE source.user_id = $1
+                          AND (memory.expires_at IS NULL OR memory.expires_at > now())
+                    ), live_attributes AS (
+                        SELECT DISTINCT ON (source.node_id)
+                               source.node_id, source.entity_type, source.description
+                        FROM live_node_sources AS source
+                        WHERE source.attributes_complete IS TRUE
+                        ORDER BY source.node_id, source.created_at DESC, source.memory_id DESC
+                    )
+                    SELECT node.id, node.entity_name,
+                           COALESCE(attributes.entity_type, 'concept') AS entity_type,
+                           COALESCE(attributes.description, '') AS description
+                    FROM memory_nodes AS node
+                    LEFT JOIN live_attributes AS attributes ON attributes.node_id = node.id
+                    WHERE node.user_id = $1
+                      AND node.entity_name ILIKE $2
+                      AND EXISTS (
+                          SELECT 1 FROM live_node_sources AS source
+                          WHERE source.node_id = node.id
+                      )
+                    ORDER BY node.updated_at DESC
+                    LIMIT $3
+                    """,
+                    (user_id, f"%{query_filter}%", limit),
+                    conn=conn,
+                )
+            else:
+                nodes_rows = await database.db_query(
+                    """
+                    WITH live_node_sources AS (
+                        SELECT source.*
+                        FROM memory_node_sources AS source
+                        JOIN long_term_memory AS memory
+                          ON memory.id = source.memory_id
+                         AND memory.user_id = source.user_id
+                        WHERE source.user_id = $1
+                          AND (memory.expires_at IS NULL OR memory.expires_at > now())
+                    ), live_attributes AS (
+                        SELECT DISTINCT ON (source.node_id)
+                               source.node_id, source.entity_type, source.description
+                        FROM live_node_sources AS source
+                        WHERE source.attributes_complete IS TRUE
+                        ORDER BY source.node_id, source.created_at DESC, source.memory_id DESC
+                    )
+                    SELECT node.id, node.entity_name,
+                           COALESCE(attributes.entity_type, 'concept') AS entity_type,
+                           COALESCE(attributes.description, '') AS description
+                    FROM memory_nodes AS node
+                    LEFT JOIN live_attributes AS attributes ON attributes.node_id = node.id
+                    WHERE node.user_id = $1
+                      AND EXISTS (
+                          SELECT 1 FROM live_node_sources AS source
+                          WHERE source.node_id = node.id
+                      )
+                    ORDER BY node.updated_at DESC
+                    LIMIT $2
+                    """,
+                    (user_id, limit),
+                    conn=conn,
+                )
 
-        # Fetch edges connecting the returned nodes
-        if node_ids:
-            id_list = list(node_ids)
-            edges_rows = await db_query(
-                """
-                SELECT source_node, target_node, predicate, weight, is_core
-                FROM memory_edges
-                WHERE user_id = $1
-                  AND source_node = ANY($2::bigint[])
-                  AND target_node = ANY($2::bigint[])
-                  AND valid_to IS NULL
-                ORDER BY weight DESC
-                LIMIT 500
-                """,
-                (user_id, id_list),
-            )
-            edges = [
+            node_ids = {r["id"] for r in nodes_rows}
+            nodes = [
                 {
-                    "source": r["source_node"],
-                    "target": r["target_node"],
-                    "predicate": r["predicate"],
-                    "weight": float(r["weight"]),
-                    "is_core": r["is_core"],
+                    "id": r["id"],
+                    "name": r["entity_name"],
+                    "type": r["entity_type"],
+                    "description": r.get("description", ""),
                 }
-                for r in edges_rows
+                for r in nodes_rows
             ]
-        else:
-            edges = []
+
+            if node_ids:
+                id_list = list(node_ids)
+                edges_rows = await database.db_query(
+                    """
+                    WITH live_edge_sources AS (
+                        SELECT source.*
+                        FROM memory_edge_sources AS source
+                        JOIN long_term_memory AS memory
+                          ON memory.id = source.memory_id
+                         AND memory.user_id = source.user_id
+                        WHERE source.user_id = $1
+                          AND source.attributes_complete IS TRUE
+                          AND (memory.expires_at IS NULL OR memory.expires_at > now())
+                    ), aggregate_attributes AS (
+                        SELECT source.edge_id, MAX(source.weight) AS weight,
+                               BOOL_OR(source.is_core) AS is_core
+                        FROM live_edge_sources AS source
+                        GROUP BY source.edge_id
+                    ), winning_predicate AS (
+                        SELECT DISTINCT ON (source.edge_id)
+                               source.edge_id, source.predicate
+                        FROM live_edge_sources AS source
+                        ORDER BY source.edge_id, source.created_at DESC, source.memory_id DESC
+                    )
+                    SELECT edge.source_node, edge.target_node, winner.predicate,
+                           aggregate.weight, aggregate.is_core
+                    FROM memory_edges AS edge
+                    JOIN aggregate_attributes AS aggregate ON aggregate.edge_id = edge.id
+                    JOIN winning_predicate AS winner ON winner.edge_id = edge.id
+                    WHERE edge.user_id = $1
+                      AND edge.source_node = ANY($2::bigint[])
+                      AND edge.target_node = ANY($2::bigint[])
+                      AND edge.valid_to IS NULL
+                    ORDER BY aggregate.weight DESC
+                    LIMIT 500
+                    """,
+                    (user_id, id_list),
+                    conn=conn,
+                )
+                edges = [
+                    {
+                        "source": r["source_node"],
+                        "target": r["target_node"],
+                        "predicate": r["predicate"],
+                        "weight": float(r["weight"]),
+                        "is_core": r["is_core"],
+                    }
+                    for r in edges_rows
+                ]
+            else:
+                edges = []
 
         return jsonify({"nodes": nodes, "edges": edges})
 
@@ -1419,33 +1649,32 @@ async def api_miniapp_trivia_today():
     user_super_result = None
     result = None
     super_res = None
-    raw_init = request.headers.get("X-TG-INIT-DATA", "")
-    if raw_init:
-        bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
-        validated = _validate_init_data(raw_init, bot_token) if bot_token else None
-        if validated:
-            uid = _extract_user_id(validated) or 0
-            if uid > 0:
-                result = await get_result_if_exists(uid, today)
-                if result is not None and result.status == "completed":
-                    user_result = {
-                        "status": "completed",
-                        "final_score": result.final_score,
-                        "correct_count": result.correct_count,
-                        "elapsed_ms": result.elapsed_ms,
-                        "answers": result.answers or [],
-                        "super_delta": result.super_delta,
-                        "super_correct": result.super_correct,
-                    }
-                super_res = await get_super_result_if_exists(uid, today)
-                if super_res is not None and super_res.status == "completed":
-                    user_super_result = {
-                        "status": "completed",
-                        "delta_score": super_res.delta_score,
-                        "correct_count": super_res.correct_count,
-                        "elapsed_ms": super_res.elapsed_ms,
-                        "answers": super_res.answers or [],
-                    }
+    uid, auth_error = await _resolve_authorized_legacy_miniapp_user(
+        request.headers.get("X-TG-INIT-DATA", "")
+    )
+    if auth_error is not None:
+        return auth_error
+    if uid > 0:
+        result = await get_result_if_exists(uid, today)
+        if result is not None and result.status == "completed":
+            user_result = {
+                "status": "completed",
+                "final_score": result.final_score,
+                "correct_count": result.correct_count,
+                "elapsed_ms": result.elapsed_ms,
+                "answers": result.answers or [],
+                "super_delta": result.super_delta,
+                "super_correct": result.super_correct,
+            }
+        super_res = await get_super_result_if_exists(uid, today)
+        if super_res is not None and super_res.status == "completed":
+            user_super_result = {
+                "status": "completed",
+                "delta_score": super_res.delta_score,
+                "correct_count": super_res.correct_count,
+                "elapsed_ms": super_res.elapsed_ms,
+                "answers": super_res.answers or [],
+            }
 
     pinned_revision_id = (
         result.puzzle_revision_id
@@ -1505,13 +1734,11 @@ async def api_miniapp_trivia_submit_answer():
     total_score = int(data.get("total_score", 0))
     puzzle_revision_id = int(data["revision_id"]) if data.get("revision_id") is not None else None
 
-    user_id = 0
-    raw_init = request.headers.get("X-TG-INIT-DATA", "")
-    if raw_init:
-        bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
-        validated = _validate_init_data(raw_init, bot_token) if bot_token else None
-        if validated:
-            user_id = _extract_user_id(validated) or 0
+    user_id, auth_error = await _resolve_authorized_legacy_miniapp_user(
+        request.headers.get("X-TG-INIT-DATA", "")
+    )
+    if auth_error is not None:
+        return auth_error
 
     if user_id > 0:
         today = today_puzzle_date()
@@ -1585,13 +1812,11 @@ async def api_miniapp_trivia_submit_super_answer():
     base_question_score = int(data.get("base_score", 0))
     puzzle_revision_id = int(data["revision_id"]) if data.get("revision_id") is not None else None
 
-    user_id = 0
-    raw_init = request.headers.get("X-TG-INIT-DATA", "")
-    if raw_init:
-        bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
-        validated = _validate_init_data(raw_init, bot_token) if bot_token else None
-        if validated:
-            user_id = _extract_user_id(validated) or 0
+    user_id, auth_error = await _resolve_authorized_legacy_miniapp_user(
+        request.headers.get("X-TG-INIT-DATA", "")
+    )
+    if auth_error is not None:
+        return auth_error
 
     if user_id > 0:
         today = today_puzzle_date()
@@ -1707,6 +1932,8 @@ async def daily2048_ws():
     user_id = _extract_user_id(validated)
     if not user_id:
         await websocket.close(4003, "No user in initData")
+        return
+    if not await _require_authorized_websocket_user(user_id):
         return
 
     timezone = websocket.args.get("tz", "")
@@ -1966,6 +2193,8 @@ async def daily_game_ws():
     if not user_id:
         await websocket.close(4003, "No user in initData")
         return
+    if not await _require_authorized_websocket_user(user_id):
+        return
 
     timezone = websocket.args.get("tz", "")
     if timezone:
@@ -2224,6 +2453,8 @@ async def game_ws():
     user_id = _extract_user_id(validated)
     if not user_id:
         await websocket.close(4003, "No user in initData")
+        return
+    if not await _require_authorized_websocket_user(user_id):
         return
 
     # ── Resolve game ───────────────────────────────────────────────────────
@@ -2582,6 +2813,8 @@ async def _open_authenticated_live_socket(route_mode: str) -> None:
     user_id = _extract_user_id(validated)
     if not user_id:
         await websocket.close(4003, "No user in initData")
+        return
+    if not await _require_authorized_websocket_user(user_id):
         return
 
     from app.cache import redis_client

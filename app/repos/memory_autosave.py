@@ -27,9 +27,10 @@ HEARTBEAT_INTERVAL = 10  # Flush chat_state every N messages
 # Set of asyncio.Tasks that are currently writing to LTM or extracting graph.
 # Populated by _store_memory_in_background via register_memory_task().
 _inflight_memory_tasks: set[asyncio.Task] = set()
+_inflight_memory_tasks_by_user: dict[int, set[asyncio.Task]] = {}
 
 
-def register_memory_task(task: asyncio.Task) -> None:
+def register_memory_task(task: asyncio.Task, user_id: int | None = None) -> None:
     """Register a background memory write task for shutdown draining.
 
     Called from ai_chat._store_memory_in_background() so that
@@ -37,6 +38,47 @@ def register_memory_task(task: asyncio.Task) -> None:
     """
     _inflight_memory_tasks.add(task)
     task.add_done_callback(_inflight_memory_tasks.discard)
+    if user_id is not None:
+        user_tasks = _inflight_memory_tasks_by_user.setdefault(user_id, set())
+        user_tasks.add(task)
+
+        def _discard_user_task(done: asyncio.Task) -> None:
+            tasks = _inflight_memory_tasks_by_user.get(user_id)
+            if tasks is None:
+                return
+            tasks.discard(done)
+            if not tasks:
+                _inflight_memory_tasks_by_user.pop(user_id, None)
+
+        task.add_done_callback(_discard_user_task)
+
+
+def submit_memory_task(user_id: int, factory, *, retry: int = 3) -> asyncio.Task:
+    """Submit and track a retryable LTM mutation for one user."""
+    from app.utils.background_tasks import submit_retryable
+
+    task = submit_retryable(factory, retry=retry)
+    register_memory_task(task, user_id)
+    return task
+
+
+async def cancel_user_memory_tasks(user_id: int) -> int:
+    """Cancel local queued/in-flight LTM tasks before a user-wide erase.
+
+    The durable epoch check remains authoritative across processes.  This local
+    cancellation only shortens the erase window and avoids wasted API work.
+    """
+    current = asyncio.current_task()
+    tasks = [
+        task
+        for task in _inflight_memory_tasks_by_user.get(user_id, set())
+        if task is not current and not task.done()
+    ]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return len(tasks)
 
 
 async def heartbeat_save(

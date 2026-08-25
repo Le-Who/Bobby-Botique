@@ -491,6 +491,7 @@ async def _execute_ai_reminder(
                             placeholder_message,
                             prompt,
                             chat_state,
+                            user_id=user_id,
                         ),
                         timeout=_AI_REMINDER_TIMEOUT,
                     )

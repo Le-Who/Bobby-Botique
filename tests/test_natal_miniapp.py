@@ -62,6 +62,7 @@ def natal_miniapp_settings(monkeypatch):
     )
     monkeypatch.setattr("app.web_miniapp.settings", settings, raising=False)
     monkeypatch.setattr("app.config.settings", settings, raising=False)
+    monkeypatch.setattr("app.repos.users.is_authorized", AsyncMock(return_value=True))
     monkeypatch.setenv("WEBHOOK_URL", "https://bot.example.com")
     quart_app.config["TESTING"] = True
     return settings

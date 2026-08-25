@@ -214,6 +214,7 @@ class TelegramRenderer:
         store_telegraph_url: StoreTelegraphUrl = _store_telegraph_url,
         submit_background: SubmitBackground = submit_task,
         telegraph_publication_enabled: bool | None = None,
+        private_content: bool = False,
         debounce_seconds: float = 0.6,
         min_chunk_size: int = 24,
     ) -> None:
@@ -232,6 +233,7 @@ class TelegramRenderer:
         self._store_telegraph_url = store_telegraph_url
         self._submit_background = submit_background
         self._telegraph_publication_enabled = bool(telegraph_publication_enabled)
+        self._private_content = private_content
         self._debounce_seconds = debounce_seconds
         self._min_chunk_size = min_chunk_size
 
@@ -485,7 +487,7 @@ class TelegramRenderer:
                 final_message=ref,
             )
 
-        if self._webapp_base_url:
+        if self._webapp_base_url and not self._private_content:
             reader = await self._reader(
                 uid=str(uuid.uuid4()),
                 displayed_text=displayed_text,
@@ -495,13 +497,14 @@ class TelegramRenderer:
             if reader is not None:
                 return reader
 
-        telegraph = await self._telegraph(
-            displayed_text=displayed_text,
-            actions=actions,
-            title=title,
-        )
-        if telegraph is not None:
-            return telegraph
+        if not self._private_content:
+            telegraph = await self._telegraph(
+                displayed_text=displayed_text,
+                actions=actions,
+                title=title,
+            )
+            if telegraph is not None:
+                return telegraph
         return await self._split(displayed_text, actions)
 
 
