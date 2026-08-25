@@ -8,6 +8,7 @@ Format is optimized for agent-parseable context.
 ### 🧠 Consent, provenance, and retrieval
 
 - Added globally unique memory-consent epochs and renewable cross-process provider leases so queued chat, document, search, voice, media, extraction, consolidation, graph, and scheduled-brief work cannot outlive LTM disable or account erasure.
+- Made migration `067` atomically upgrade legacy dashboard-created UUID graph identifiers to the canonical BIGINT schema before adding provenance foreign keys.
 - Disabled implicit private-memory capture from group conversations and normalized canonical chat history separately from provider-specific payloads, preventing binary/media artifacts and continuation duplicates from entering persisted history or LTM.
 - Made graph facts traceable to exact source memories, added tenant-safe composite provenance constraints and RLS policies, and made cleanup remove expired, unsupported, orphaned, or source-derived data in a deterministic order.
 - Hardened retrieval ranking, freshness/expiry checks, feedback attribution, prompt-delimited memory injection, and local/LLM summary token budgeting for Cyrillic and emoji.

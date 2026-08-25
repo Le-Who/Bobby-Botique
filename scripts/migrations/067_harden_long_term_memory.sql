@@ -11,6 +11,201 @@ ALTER TABLE long_term_memory
 ALTER TABLE memory_nodes
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
+-- The original graph tables were created manually in some deployments with UUID
+-- primary keys. Migration 024b later documented BIGSERIAL as the canonical schema,
+-- but CREATE TABLE IF NOT EXISTS could not change those already-existing columns.
+-- Normalize that legacy layout before creating BIGINT provenance foreign keys.
+-- The numbered migration runner wraps this whole file in one transaction, so the
+-- ID remap and every dependent schema change below commit or roll back together.
+CREATE TEMP TABLE migration_067_node_id_map (
+    old_id TEXT PRIMARY KEY,
+    new_id BIGINT NOT NULL UNIQUE
+) ON COMMIT DROP;
+
+CREATE TEMP TABLE migration_067_edge_id_map (
+    old_id TEXT PRIMARY KEY,
+    new_id BIGINT NOT NULL UNIQUE
+) ON COMMIT DROP;
+
+CREATE OR REPLACE FUNCTION pg_temp.migration_067_node_id_to_bigint(old_value TEXT)
+RETURNS BIGINT
+LANGUAGE SQL
+STABLE
+STRICT
+AS $$
+    SELECT mapping.new_id
+    FROM pg_temp.migration_067_node_id_map AS mapping
+    WHERE mapping.old_id = old_value
+$$;
+
+CREATE OR REPLACE FUNCTION pg_temp.migration_067_edge_id_to_bigint(old_value TEXT)
+RETURNS BIGINT
+LANGUAGE SQL
+STABLE
+STRICT
+AS $$
+    SELECT mapping.new_id
+    FROM pg_temp.migration_067_edge_id_map AS mapping
+    WHERE mapping.old_id = old_value
+$$;
+
+DO $$
+DECLARE
+    node_id_is_uuid BOOLEAN;
+    edge_id_is_uuid BOOLEAN;
+    dependent_fk RECORD;
+BEGIN
+    -- Keep the mapping snapshot stable if an older replica is still accepting
+    -- graph writes while this deployment starts.
+    LOCK TABLE public.memory_nodes, public.memory_edges IN ACCESS EXCLUSIVE MODE;
+
+    SELECT attribute.atttypid = 'uuid'::regtype
+    INTO node_id_is_uuid
+    FROM pg_attribute AS attribute
+    WHERE attribute.attrelid = 'public.memory_nodes'::regclass
+      AND attribute.attname = 'id'
+      AND attribute.attnum > 0
+      AND NOT attribute.attisdropped;
+
+    IF node_id_is_uuid THEN
+        -- Remove only edges whose endpoints cannot be mapped. These are already
+        -- invalid graph rows and would be removed by the tenant-FK cleanup below.
+        DELETE FROM public.memory_edges AS edge
+        WHERE NOT EXISTS (
+                SELECT 1
+                FROM public.memory_nodes AS source
+                WHERE source.id::TEXT = edge.source_node::TEXT
+            )
+           OR NOT EXISTS (
+                SELECT 1
+                FROM public.memory_nodes AS target
+                WHERE target.id::TEXT = edge.target_node::TEXT
+            );
+
+        INSERT INTO pg_temp.migration_067_node_id_map (old_id, new_id)
+        SELECT node.id::TEXT,
+               ROW_NUMBER() OVER (ORDER BY node.id)::BIGINT
+        FROM public.memory_nodes AS node;
+
+        -- The old endpoint FKs bind UUID columns to memory_nodes.id. They must be
+        -- dropped before the coordinated rewrite; tenant-aware FKs are recreated
+        -- later in this same migration.
+        FOR dependent_fk IN
+            SELECT constraint_row.conname
+            FROM pg_constraint AS constraint_row
+            WHERE constraint_row.contype = 'f'
+              AND constraint_row.conrelid = 'public.memory_edges'::regclass
+              AND constraint_row.confrelid = 'public.memory_nodes'::regclass
+        LOOP
+            EXECUTE format(
+                'ALTER TABLE public.memory_edges DROP CONSTRAINT %I',
+                dependent_fk.conname
+            );
+        END LOOP;
+
+        CREATE SEQUENCE IF NOT EXISTS public.memory_nodes_id_seq AS BIGINT;
+
+        ALTER TABLE public.memory_nodes
+            ALTER COLUMN id DROP DEFAULT;
+        ALTER TABLE public.memory_edges
+            ALTER COLUMN source_node TYPE BIGINT
+                USING pg_temp.migration_067_node_id_to_bigint(source_node::TEXT),
+            ALTER COLUMN target_node TYPE BIGINT
+                USING pg_temp.migration_067_node_id_to_bigint(target_node::TEXT);
+        ALTER TABLE public.memory_nodes
+            ALTER COLUMN id TYPE BIGINT
+                USING pg_temp.migration_067_node_id_to_bigint(id::TEXT);
+
+        ALTER SEQUENCE public.memory_nodes_id_seq
+            OWNED BY public.memory_nodes.id;
+        ALTER TABLE public.memory_nodes
+            ALTER COLUMN id SET DEFAULT nextval('public.memory_nodes_id_seq');
+        PERFORM setval(
+            'public.memory_nodes_id_seq',
+            GREATEST(
+                (SELECT COALESCE(MAX(id), 0) FROM public.memory_nodes),
+                (SELECT last_value FROM public.memory_nodes_id_seq),
+                1
+            ),
+            TRUE
+        );
+    END IF;
+
+    SELECT attribute.atttypid = 'uuid'::regtype
+    INTO edge_id_is_uuid
+    FROM pg_attribute AS attribute
+    WHERE attribute.attrelid = 'public.memory_edges'::regclass
+      AND attribute.attname = 'id'
+      AND attribute.attnum > 0
+      AND NOT attribute.attisdropped;
+
+    IF edge_id_is_uuid THEN
+        IF EXISTS (
+            SELECT 1
+            FROM pg_constraint AS constraint_row
+            WHERE constraint_row.contype = 'f'
+              AND constraint_row.confrelid = 'public.memory_edges'::regclass
+        ) THEN
+            RAISE EXCEPTION
+                'Cannot normalize memory_edges.id UUID: an unexpected table references it';
+        END IF;
+
+        INSERT INTO pg_temp.migration_067_edge_id_map (old_id, new_id)
+        SELECT edge.id::TEXT,
+               ROW_NUMBER() OVER (ORDER BY edge.id)::BIGINT
+        FROM public.memory_edges AS edge;
+
+        CREATE SEQUENCE IF NOT EXISTS public.memory_edges_id_seq AS BIGINT;
+
+        ALTER TABLE public.memory_edges
+            ALTER COLUMN id DROP DEFAULT;
+        ALTER TABLE public.memory_edges
+            ALTER COLUMN id TYPE BIGINT
+                USING pg_temp.migration_067_edge_id_to_bigint(id::TEXT);
+
+        ALTER SEQUENCE public.memory_edges_id_seq
+            OWNED BY public.memory_edges.id;
+        ALTER TABLE public.memory_edges
+            ALTER COLUMN id SET DEFAULT nextval('public.memory_edges_id_seq');
+        PERFORM setval(
+            'public.memory_edges_id_seq',
+            GREATEST(
+                (SELECT COALESCE(MAX(id), 0) FROM public.memory_edges),
+                (SELECT last_value FROM public.memory_edges_id_seq),
+                1
+            ),
+            TRUE
+        );
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_attribute AS attribute
+        WHERE (
+                (
+                    attribute.attrelid = 'public.memory_nodes'::regclass
+                    AND attribute.attname = 'id'
+                )
+                OR (
+                    attribute.attrelid = 'public.memory_edges'::regclass
+                    AND attribute.attname IN ('id', 'source_node', 'target_node')
+                )
+            )
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped
+          AND attribute.atttypid <> 'bigint'::regtype
+    ) THEN
+        RAISE EXCEPTION
+            'Graph ID normalization failed: memory node/edge identifiers must be BIGINT';
+    END IF;
+END;
+$$;
+
+DROP FUNCTION pg_temp.migration_067_node_id_to_bigint(TEXT);
+DROP FUNCTION pg_temp.migration_067_edge_id_to_bigint(TEXT);
+DROP TABLE pg_temp.migration_067_node_id_map;
+DROP TABLE pg_temp.migration_067_edge_id_map;
+
 -- A queued capture carrying the old epoch must become stale as soon as the user
 -- changes consent from enabled to disabled, regardless of which app process writes it.
 CREATE OR REPLACE FUNCTION bump_memory_epoch_on_ltm_disable()

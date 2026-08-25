@@ -96,6 +96,25 @@ def test_migration_adds_epoch_consolidation_and_node_timestamps():
     assert "add column if not exists updated_at timestamptz" in sql
 
 
+def test_migration_upgrades_legacy_uuid_graph_ids_before_bigint_provenance():
+    sql = _migration_sql()
+
+    compatibility_start = sql.index("migration_067_node_id_map")
+    provenance_start = sql.index("create table if not exists memory_edge_sources")
+    compatibility_sql = sql[compatibility_start:provenance_start]
+
+    assert "atttypid = 'uuid'::regtype" in compatibility_sql
+    assert "lock table public.memory_nodes, public.memory_edges in access exclusive mode" in compatibility_sql
+    assert "alter column source_node type bigint" in compatibility_sql
+    assert "alter column target_node type bigint" in compatibility_sql
+    assert "alter column id type bigint" in compatibility_sql
+    assert "migration_067_node_id_to_bigint" in compatibility_sql
+    assert "migration_067_edge_id_to_bigint" in compatibility_sql
+    assert "memory_nodes_id_seq" in compatibility_sql
+    assert "memory_edges_id_seq" in compatibility_sql
+    assert compatibility_start < provenance_start
+
+
 def test_migration_normalizes_provenance_with_tenant_fks_and_backfill():
     sql = _migration_sql()
 
