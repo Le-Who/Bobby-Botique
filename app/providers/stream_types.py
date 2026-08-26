@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TypeAlias
 
 from app.errors import ErrorCode
 
@@ -108,7 +107,7 @@ class ImagePart:
             raise ValueError("ImagePart.task_type cannot be blank")
 
 
-PromptPart: TypeAlias = TextPart | ImagePart
+type PromptPart = TextPart | ImagePart
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,8 +323,8 @@ class StreamDeferred:
             raise ValueError("StreamDeferred.task_id must be non-empty")
 
 
-GenerationTerminalEvent: TypeAlias = StreamCompleted | StreamFailed | StreamDeferred
-GenerationEvent: TypeAlias = TextDelta | GenerationTerminalEvent
+type GenerationTerminalEvent = StreamCompleted | StreamFailed | StreamDeferred
+type GenerationEvent = TextDelta | GenerationTerminalEvent
 
 
 def is_terminal_event(event: GenerationEvent) -> bool:

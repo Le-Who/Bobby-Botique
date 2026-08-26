@@ -84,7 +84,7 @@ async def cancel_user_memory_tasks(user_id: int) -> int:
 async def heartbeat_save(
     user_id: int,
     msg_count: int,
-    chat_state: "ChatState",
+    chat_state: ChatState,
 ) -> None:
     """Periodic chat_state flush — fire-and-forget every HEARTBEAT_INTERVAL messages.
 

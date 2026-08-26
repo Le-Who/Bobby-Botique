@@ -732,7 +732,7 @@ class APIError(GemaibotAPIError):
         super().__init__(self.user_message)
 
     @classmethod
-    def from_exception(cls, exc: Exception) -> "APIError":
+    def from_exception(cls, exc: Exception) -> APIError:
         """Create APIError from any exception, auto-detecting error type."""
         raw = str(exc)
         return cls(

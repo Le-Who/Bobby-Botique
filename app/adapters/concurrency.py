@@ -120,7 +120,7 @@ class _LazyGlobalLLMSemaphore:
             self._inner = GlobalLLMSemaphore(limit, redis_key=self._redis_key)
         return self._inner
 
-    async def __aenter__(self) -> "GlobalLLMSemaphore":
+    async def __aenter__(self) -> GlobalLLMSemaphore:
         return await self._ensure().__aenter__()
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

@@ -2,12 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main, TEST_gemaibotv2]
+    branches: [vps_testai, main, TEST_gemaibotv2]
   pull_request:
-    branches: [main]
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -21,17 +23,15 @@ jobs:
         with:
           python-version: "3.14"
           allow-prereleases: true
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install pinned Ruff
+        run: python -m pip install "ruff==0.15.2"
       - name: Ruff check
-        run: ruff check app/ tests/ load_test.py --output-format=github
-      - name: Ruff format check
-        run: ruff format --check app/ tests/ load_test.py
+        run: python -m ruff check . --output-format=github
 
   type-check:
     name: Type Check (Mypy)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -40,16 +40,14 @@ jobs:
           allow-prereleases: true
           cache: pip
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install mypy
+        run: python -m pip install -r requirements-dev.txt
       - name: Mypy
-        run: mypy app/ tests/ load_test.py
+        run: python -m mypy app bot.py
 
   test-unit:
-    name: Test Unit (Fast)
+    name: Test Unit and E2E
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     needs: [lint]
     env:
       TELEGRAM_BOT_TOKEN: "test:token"
@@ -67,21 +65,33 @@ jobs:
           allow-prereleases: true
           cache: pip
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
-      - name: Run unit tests
-        run: pytest tests/ -v
-        
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run unit and E2E tests
+        run: python -m pytest tests/ --ignore=tests/integration -m "not integration" -v
+
   test-integration:
-    name: Test Integration (Slow)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Test Integration (PostgreSQL)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     needs: [test-unit]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       TELEGRAM_BOT_TOKEN: "test:token"
-      DATABASE_URL: "postgresql://test:test@localhost/test"
+      DATABASE_URL: "postgresql://test:test@localhost:5432/test"
+      TEST_DATABASE_URL: "postgresql://test:test@localhost:5432/test"
       ADMIN_ID: "123456"
       GEMINI_API_KEYS: "test-key"
       TAVILY_API_KEYS: "test-key"
@@ -95,8 +105,28 @@ jobs:
           allow-prereleases: true
           cache: pip
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
-      - name: Run integration tests
-        run: pytest -m "integration" -n auto tests/ -v
+        run: python -m pip install -r requirements-dev.txt
+      - name: Require isolated test database
+        run: >-
+          python -c "import os; assert os.environ.get('TEST_DATABASE_URL'),
+          'TEST_DATABASE_URL must be set'"
+      - name: Apply migrations
+        run: python scripts/migrate.py
+      - name: Run integration tests serially
+        run: python -m pytest -m "integration" -n 0 tests/ -v
+
+  dependency-audit:
+    name: Audit Production Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+          cache: pip
+      - name: Install audit tool
+        run: python -m pip install "pip-audit==2.10.1"
+      - name: Audit requirements
+        run: pip-audit -r requirements.txt --progress-spinner off

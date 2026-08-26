@@ -122,7 +122,7 @@ async def validate_gemini_chat_model_capability(
     return GeminiModelValidationStatus.UNAVAILABLE
 
 
-def get_live_api_client() -> "genai.Client | None":
+def get_live_api_client() -> genai.Client | None:
     """Return a Gemini Developer API client for the Live API.
 
     gemini-3.1-flash-live-preview is a Gemini Developer API model — it is NOT
@@ -138,9 +138,9 @@ def get_live_api_client() -> "genai.Client | None":
 
 
 # Vertex AI Express singleton — None if not configured or init failed.
-_vertex_client: "genai.Client | None" = None
+_vertex_client: genai.Client | None = None
 _vertex_client_initialized: bool = False
-_vertex_live_client: "genai.Client | None" = None
+_vertex_live_client: genai.Client | None = None
 _vertex_live_client_initialized: bool = False
 _vertex_disabled_until_monotonic: float = 0.0
 _VERTEX_CONFIG_ERROR_COOLDOWN_SECONDS = 3600.0
@@ -153,7 +153,7 @@ _VERTEX_CONFIG_ERROR_PATTERNS = (
 )
 
 
-def get_vertex_client() -> "genai.Client | None":
+def get_vertex_client() -> genai.Client | None:
     """Return a cached Vertex AI client, or None if not configured.
 
     Vertex AI Express Mode uses the same google-genai SDK but routes requests
@@ -232,7 +232,7 @@ def report_vertex_error(exc: BaseException, *, cooldown_seconds: float = _VERTEX
     )
 
 
-def get_vertex_live_client() -> "genai.Client | None":
+def get_vertex_live_client() -> genai.Client | None:
     """Return a cached Vertex AI client for Live API sessions, or None if unavailable.
 
     Live API websocket sessions on Vertex are routed through the regional Vertex

@@ -1,15 +1,22 @@
 name: Deploy Telegram Bot
 
 on:
-  push:
-    branches:
-      - vps_testai
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [vps_testai]
+
+concurrency:
+  group: deploy-vps_testai
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
+  IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
 
 jobs:
   build-and-deploy:
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -18,6 +25,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set lowercase repository name
         run: echo "REPO=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
@@ -34,23 +43,29 @@ jobs:
 
       - name: Build and push Docker image
         id: build_image
+        continue-on-error: true
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.REPO }}:latest
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.REPO }}:${{ env.IMAGE_TAG }}
+            ${{ env.REGISTRY }}/${{ env.REPO }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Retry build on transient failure
-        if: failure() && steps.build_image.outcome == 'failure'
+        id: retry_build
+        if: steps.build_image.outcome == 'failure'
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.REPO }}:latest
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.REPO }}:${{ env.IMAGE_TAG }}
+            ${{ env.REGISTRY }}/${{ env.REPO }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -67,6 +82,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ env.REPO }}
           REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
           # --- CORE ---
           ADMIN_ID: ${{ secrets.ADMIN_ID }}
           ADMIN_SECRET_B64: ${{ env.ADMIN_SECRET_B64 }}
@@ -168,7 +184,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           # All env vars forwarded to SSH session
-          envs: GITHUB_TOKEN, REPO, REGISTRY, ADMIN_ID, ADMIN_SECRET_B64, TELEGRAM_BOT_TOKEN, DATABASE_URL, REDIS_URL, WEBHOOK_URL, WEBHOOK_SECRET_TOKEN, WEBAPP_BASE_URL, TELEGRAPH_PUBLICATION_ENABLED, MINIAPP_SHORT_NAME, GAME_HUB_URL, GAME_HUB_DIRECT_LINK, GAME_HUB_MINIAPP_SHORT_NAME, PORT, ENABLE_WEB_SERVER, NATAL_REPORTS_ENABLED, NATAL_REPORT_TTL_DAYS, NATAL_GEOCODER_PROVIDER, NATAL_CITY_OVERRIDES_PATH, NATAL_SEND_RAW_BIRTH_DATA_TO_LLM, TELEGRAM_API_ID, TELEGRAM_API_HASH, GEMINI_API_KEYS, GEMINI_AVAILABLE_MODELS, DEFAULT_MODEL, QNA_MODEL, RESEARCH_MODEL, URL_SELECTION_MODEL, TAXONOMY_MODEL, VERTEX_AI_KEY, VERTEX_AI_PROJECT, VERTEX_AI_LOCATION, VERTEX_LIVE_SERVICE_ACCOUNT_JSON, OPENCODE_API_KEYS, PRIMARY_PROVIDER, OPENCODE_AVAILABLE_MODELS, OPENCODE_DEFAULT_MODEL, OPENCODE_QNA_MODEL, OPENCODE_RESEARCH_MODEL, OPENCODE_VISION_MODEL, OPENCODE_INLINE_MODEL, OPENROUTER_API_KEYS, USE_OPENROUTER, OPENROUTER_AVAILABLE_MODELS, OPENROUTER_DEFAULT_MODEL, OPENROUTER_QNA_MODEL, OPENROUTER_RESEARCH_MODEL, OPENROUTER_URL_SELECTION_MODEL, FREETHEAI_API_KEYS, FREETHEAI_AVAILABLE_MODELS, FREETHEAI_DEFAULT_MODEL, TAVILY_API_KEYS, JINA_API_KEY, WEATHER_API_KEY, EXCHANGE_RATE_API_KEY, DAILY_LIMITS, MAX_CONCURRENT_HEAVY_REQUESTS, MAX_CONCURRENT_HEAVY_CALLBACKS, MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS, LRU_STATE_CACHE_SIZE, DB_POOL_MIN_SIZE, DB_POOL_MAX_SIZE, AGENTIC_MODEL, AGENTIC_MAX_TOKENS, AGENTIC_TIMEOUT_SECONDS, AGENTIC_MAX_ITERATIONS, AGENTIC_MAX_PAGES, AGENTIC_PAGE_CONTENT_LIMIT, ADAPTIVE_THINKING_ENABLED, INLINE_THINKING_LEVEL, IMAGE_MODELS, DEFAULT_IMAGE_MODEL, POLLINATIONS_API_KEY, IMAGE_GEN_DAILY_LIMIT, IMAGE_GEN_RPD_PER_KEY, IMAGE_GEN_TIMEOUT, IMAGE_GEN_MAX_RETRIES, ELEVENLABS_API_KEYS, ELEVENLABS_VOICE_ID, STRUCTURED_LOGGING, LOG_PRETTY
+          envs: GITHUB_TOKEN, REPO, REGISTRY, IMAGE_TAG, ADMIN_ID, ADMIN_SECRET_B64, TELEGRAM_BOT_TOKEN, DATABASE_URL, REDIS_URL, WEBHOOK_URL, WEBHOOK_SECRET_TOKEN, WEBAPP_BASE_URL, TELEGRAPH_PUBLICATION_ENABLED, MINIAPP_SHORT_NAME, GAME_HUB_URL, GAME_HUB_DIRECT_LINK, GAME_HUB_MINIAPP_SHORT_NAME, PORT, ENABLE_WEB_SERVER, NATAL_REPORTS_ENABLED, NATAL_REPORT_TTL_DAYS, NATAL_GEOCODER_PROVIDER, NATAL_CITY_OVERRIDES_PATH, NATAL_SEND_RAW_BIRTH_DATA_TO_LLM, TELEGRAM_API_ID, TELEGRAM_API_HASH, GEMINI_API_KEYS, GEMINI_AVAILABLE_MODELS, DEFAULT_MODEL, QNA_MODEL, RESEARCH_MODEL, URL_SELECTION_MODEL, TAXONOMY_MODEL, VERTEX_AI_KEY, VERTEX_AI_PROJECT, VERTEX_AI_LOCATION, VERTEX_LIVE_SERVICE_ACCOUNT_JSON, OPENCODE_API_KEYS, PRIMARY_PROVIDER, OPENCODE_AVAILABLE_MODELS, OPENCODE_DEFAULT_MODEL, OPENCODE_QNA_MODEL, OPENCODE_RESEARCH_MODEL, OPENCODE_VISION_MODEL, OPENCODE_INLINE_MODEL, OPENROUTER_API_KEYS, USE_OPENROUTER, OPENROUTER_AVAILABLE_MODELS, OPENROUTER_DEFAULT_MODEL, OPENROUTER_QNA_MODEL, OPENROUTER_RESEARCH_MODEL, OPENROUTER_URL_SELECTION_MODEL, FREETHEAI_API_KEYS, FREETHEAI_AVAILABLE_MODELS, FREETHEAI_DEFAULT_MODEL, TAVILY_API_KEYS, JINA_API_KEY, WEATHER_API_KEY, EXCHANGE_RATE_API_KEY, DAILY_LIMITS, MAX_CONCURRENT_HEAVY_REQUESTS, MAX_CONCURRENT_HEAVY_CALLBACKS, MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS, LRU_STATE_CACHE_SIZE, DB_POOL_MIN_SIZE, DB_POOL_MAX_SIZE, AGENTIC_MODEL, AGENTIC_MAX_TOKENS, AGENTIC_TIMEOUT_SECONDS, AGENTIC_MAX_ITERATIONS, AGENTIC_MAX_PAGES, AGENTIC_PAGE_CONTENT_LIMIT, ADAPTIVE_THINKING_ENABLED, INLINE_THINKING_LEVEL, IMAGE_MODELS, DEFAULT_IMAGE_MODEL, POLLINATIONS_API_KEY, IMAGE_GEN_DAILY_LIMIT, IMAGE_GEN_RPD_PER_KEY, IMAGE_GEN_TIMEOUT, IMAGE_GEN_MAX_RETRIES, ELEVENLABS_API_KEYS, ELEVENLABS_VOICE_ID, STRUCTURED_LOGGING, LOG_PRETTY
           script: |
             set -e
 
@@ -177,7 +193,7 @@ jobs:
 
             echo $GITHUB_TOKEN | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
 
-            docker pull $REGISTRY/$REPO:latest
+            docker pull $REGISTRY/$REPO:$IMAGE_TAG
 
             # ── Ensure shared infrastructure (idempotent) ────────────────
             docker network create tg-net 2>/dev/null || true
@@ -190,7 +206,7 @@ jobs:
             echo ">>> Releasing official Telegram cloud Bot API state..."
             docker run --rm \
               -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
-              $REGISTRY/$REPO:latest \
+              $REGISTRY/$REPO:$IMAGE_TAG \
               python /app/scripts/release_cloud_bot_api.py
 
             # ── Local Telegram Bot API Server ─────────────────────────────
@@ -212,20 +228,24 @@ jobs:
                 -v tg-api-data:/var/lib/telegram-bot-api \
                 aiogram/telegram-bot-api:latest
 
-              # Wait for local API server to be ready
-              echo ">>> Waiting for Local Bot API Server to start..."
-              for i in $(seq 1 30); do
-                if docker exec tg-api wget -qO- http://localhost:8081/ 2>/dev/null | grep -q '"ok"'; then
-                  echo ">>> Local API Server is ready."
-                  break
-                fi
-                if [ $i -eq 30 ]; then
-                  echo ">>> WARNING: Local API Server health check timed out after 60s"
-                fi
-                sleep 2
-              done
             else
               echo ">>> Local API Server already running, skipping restart."
+            fi
+
+            echo ">>> Waiting for Local Bot API Server readiness..."
+            TG_API_READY=false
+            for i in $(seq 1 30); do
+              if docker exec tg-api wget -qO- http://localhost:8081/ 2>/dev/null | grep -q '"ok"'; then
+                TG_API_READY=true
+                echo ">>> Local Bot API Server is ready."
+                break
+              fi
+              sleep 2
+            done
+            if [ "$TG_API_READY" != "true" ]; then
+              echo ">>> Telegram Bot API health check failed after 60s"
+              docker logs --tail 200 tg-api || true
+              exit 1
             fi
 
             # Fix shared volume permissions: telegram-bot-api (uid 101) creates dirs
@@ -261,7 +281,7 @@ jobs:
               --name tg-migrate \
               --network tg-net \
               -e DATABASE_URL="$DATABASE_URL" \
-              $REGISTRY/$REPO:latest \
+              $REGISTRY/$REPO:$IMAGE_TAG \
               python /app/scripts/migrate.py
             echo ">>> Migrations complete."
 
@@ -357,7 +377,23 @@ jobs:
               -e INLINE_THINKING_LEVEL="$INLINE_THINKING_LEVEL" \
               -e STRUCTURED_LOGGING="$STRUCTURED_LOGGING" \
               -e LOG_PRETTY="$LOG_PRETTY" \
-              $REGISTRY/$REPO:latest
+              $REGISTRY/$REPO:$IMAGE_TAG
+
+            echo ">>> Waiting for bot health endpoint..."
+            BOT_READY=false
+            for i in $(seq 1 30); do
+              if docker exec tg-bot sh -c 'curl -fsS "http://localhost:${PORT:-10000}/health"' >/dev/null 2>&1; then
+                BOT_READY=true
+                echo ">>> Bot health check passed."
+                break
+              fi
+              sleep 2
+            done
+            if [ "$BOT_READY" != "true" ]; then
+              echo ">>> Bot health check failed after 60s"
+              docker logs --tail 300 tg-bot || true
+              exit 1
+            fi
 
             if [ "$(printf '%s' "$NATAL_REPORTS_ENABLED" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
               echo ">>> Running natal chart report maintenance..."

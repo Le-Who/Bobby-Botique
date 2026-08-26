@@ -2526,7 +2526,7 @@ async def _generate_tarot_inline(
 
 
 def _build_tarot_system_prompt(
-    spread: "SpreadType",
+    spread: SpreadType,
     tarot_ctx: str,
     arg: str,
 ) -> str:

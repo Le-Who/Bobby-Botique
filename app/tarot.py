@@ -134,7 +134,7 @@ def iter_daily_card_variants() -> list[dict]:
     return variants
 
 def get_tarot_context(
-    spread: "SpreadType | int" = SpreadType.CLASSIC,
+    spread: SpreadType | int = SpreadType.CLASSIC,
 ) -> tuple[str, list[str]]:
     """Draw cards and return (formatted_context, card_names_list).
 

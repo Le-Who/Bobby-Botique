@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias
 
 from app.errors import ErrorCode
 from app.providers.stream_types import StreamCompleted, StreamFailed
@@ -44,9 +43,7 @@ class DeferredDelivery:
     content_text: str = ""
 
 
-TelegramResponseOutcome: TypeAlias = (
-    CompleteDelivery | PartialDelivery | FailedDelivery | DeferredDelivery
-)
+type TelegramResponseOutcome = CompleteDelivery | PartialDelivery | FailedDelivery | DeferredDelivery
 
 
 __all__ = [

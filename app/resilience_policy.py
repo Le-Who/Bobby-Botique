@@ -2,11 +2,8 @@ import asyncio
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TypeVar
 
 from app.circuit_breaker import get_circuit_breaker
-
-T = TypeVar("T")
 
 
 @dataclass
@@ -49,7 +46,7 @@ def is_retryable_exception(exc: Exception) -> bool:
     return is_transient_error(str(exc))
 
 
-async def run_with_resilience(
+async def run_with_resilience[T](
     operation: Callable[[], Awaitable[T]],
     policy: ResiliencePolicy | None = None,
     *,
