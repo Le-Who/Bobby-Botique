@@ -1,6 +1,7 @@
 """Tests for app.utils.background_tasks — shared task start/cancel utilities."""
 
 import asyncio
+import contextlib
 from unittest.mock import MagicMock
 
 import pytest
@@ -149,6 +150,40 @@ async def test_taskmanager_submit_fire_and_forget():
     await tm.drain(timeout=2.0)
 
     assert done is True
+
+
+@pytest.mark.asyncio
+async def test_taskmanager_drain_awaits_cancelled_task_cleanup():
+    tm = TaskManager()
+    running = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    async def work():
+        running.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleanup_started.set()
+            await asyncio.sleep(0.02)
+            cleanup_finished.set()
+
+    task = tm.submit(work())
+    await running.wait()
+
+    try:
+        drained = await tm.drain(timeout=0, cancel_timeout=0.2)
+
+        assert drained is True
+        assert cleanup_started.is_set()
+        assert cleanup_finished.is_set()
+        assert task.done()
+        assert not tm._tasks
+    finally:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 @pytest.mark.asyncio

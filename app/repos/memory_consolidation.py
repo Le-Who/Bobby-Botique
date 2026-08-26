@@ -726,7 +726,7 @@ async def _consolidate_memories_impl(
                 f"[{','.join(str(value) for value in embedding)}]" for embedding in fact_embeddings
             ]
             inserted_fact_ids: list[int] = []
-            for fact, embedding_text in zip(facts, fact_embedding_strings, strict=True):
+            for fact, fact_embedding_text in zip(facts, fact_embedding_strings, strict=True):
                 row = await conn.fetchrow(
                     """
                     INSERT INTO long_term_memory
@@ -736,7 +736,7 @@ async def _consolidate_memories_impl(
                     """,
                     user_id,
                     fact,
-                    embedding_text,
+                    fact_embedding_text,
                     conservative_expiry,
                 )
                 if not row:
@@ -850,25 +850,25 @@ async def _consolidate_memories_impl(
                     for entity in valid_entities
                     if entity.get("name", "").strip()
                 }
-                for original_name, support_fact_ids in entity_support_fact_ids.items():
+                for original_name, node_support_fact_ids in entity_support_fact_ids.items():
                     node_id = node_ids.get(original_name)
                     entity = entity_by_name.get(original_name)
                     if node_id is None or entity is None:
                         continue
                     embedding = ent_emb_map.get(original_name)
-                    embedding_text = (
+                    node_embedding_text = (
                         f"[{','.join(str(value) for value in embedding)}]" if embedding is not None else None
                     )
-                    for support_fact_id in support_fact_ids:
-                        key = (int(node_id), support_fact_id)
-                        candidate = (
+                    for support_fact_id in node_support_fact_ids:
+                        node_source_key = (int(node_id), support_fact_id)
+                        node_source_candidate = (
                             str(entity.get("type", "concept")),
                             "",
-                            embedding_text,
+                            node_embedding_text,
                         )
-                        previous = node_source_snapshots.get(key)
-                        if previous is None or len(candidate[1]) > len(previous[1]):
-                            node_source_snapshots[key] = candidate
+                        previous_node_source = node_source_snapshots.get(node_source_key)
+                        if previous_node_source is None or len(node_source_candidate[1]) > len(previous_node_source[1]):
+                            node_source_snapshots[node_source_key] = node_source_candidate
 
                 if node_source_snapshots:
                     ordered_node_sources = sorted(node_source_snapshots)
@@ -973,21 +973,21 @@ async def _consolidate_memories_impl(
                 # Deduplicate candidates to avoid redundant DB work
                 # (src_id, tgt_id, predicate) is the unique constraint.
                 # We merge weight (max) and is_core (OR) to avoid data loss.
-                merged_edge_cands = {}
+                merged_edge_cands: dict[tuple[int, int, str], dict[str, Any]] = {}
                 for cand in edge_candidates:
-                    key = (cand["src_id"], cand["tgt_id"], cand["predicate"])
-                    if key not in merged_edge_cands:
-                        merged_edge_cands[key] = cand
+                    edge_candidate_key = (cand["src_id"], cand["tgt_id"], cand["predicate"])
+                    if edge_candidate_key not in merged_edge_cands:
+                        merged_edge_cands[edge_candidate_key] = cand
                     else:
-                        existing = merged_edge_cands[key]
+                        existing = merged_edge_cands[edge_candidate_key]
                         existing["weight"] = max(existing["weight"], cand["weight"])
                         existing["is_core"] = existing["is_core"] or cand["is_core"]
                         existing["support_fact_ids"].update(cand["support_fact_ids"])
                 edge_candidates = list(merged_edge_cands.values())
 
-                new_inserts = []
+                new_inserts: list[tuple[dict[str, Any], tuple[Any, ...]]] = []
                 for cand in edge_candidates:
-                    support_fact_ids = sorted(cand["support_fact_ids"])
+                    sorted_support_fact_ids = sorted(cand["support_fact_ids"])
                     insert_args = (
                         user_id,
                         cand["src_id"],
@@ -996,13 +996,13 @@ async def _consolidate_memories_impl(
                         cand["emb"],
                         cand["weight"],
                         cand["is_core"],
-                        support_fact_ids,
+                        sorted_support_fact_ids,
                     )
                     new_inserts.append((cand, insert_args))
 
                 edge_attributes_by_id: dict[int, dict[str, Any]] = {}
                 if new_inserts:
-                    for candidate, edge_args in new_inserts:
+                    for edge_candidate, edge_args in new_inserts:
                         row = await conn.fetchrow(
                             """
                             INSERT INTO memory_edges
@@ -1019,13 +1019,13 @@ async def _consolidate_memories_impl(
                         if row:
                             edge_id = int(row["id"])
                             affected_edge_sources.setdefault(edge_id, set()).update(edge_args[7])
-                            edge_attributes_by_id[edge_id] = candidate
+                            edge_attributes_by_id[edge_id] = edge_candidate
 
             if affected_edge_sources:
                 provenance_edge_ids: list[int] = []
                 provenance_fact_ids: list[int] = []
-                for edge_id, support_fact_ids in sorted(affected_edge_sources.items()):
-                    for fact_id in sorted(support_fact_ids):
+                for edge_id, edge_support_fact_ids in sorted(affected_edge_sources.items()):
+                    for fact_id in sorted(edge_support_fact_ids):
                         provenance_edge_ids.append(edge_id)
                         provenance_fact_ids.append(fact_id)
                 await conn.execute(

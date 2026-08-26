@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import logging
 import os
-from typing import Any
+from typing import Any, TypedDict
 
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError, RedisError, TimeoutError
@@ -12,7 +12,12 @@ from app.metrics import metrics_collector
 from app.utils.json_compat import json
 
 
-def _redis_tls_options(url: str) -> dict[str, str | bool]:
+class _RedisTLSOptions(TypedDict, total=False):
+    ssl_cert_reqs: str
+    ssl_check_hostname: bool
+
+
+def _redis_tls_options(url: str) -> _RedisTLSOptions:
     """Return secure-by-default TLS options only for ``rediss://`` URLs."""
     if not url.lower().startswith("rediss://"):
         return {}

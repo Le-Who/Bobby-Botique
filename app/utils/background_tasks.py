@@ -148,27 +148,49 @@ class TaskManager:
                                 logging.error("TaskManager error callback failed: %s", cb_err)
 
         # Run wrapper within the captured context snapshot for trace propagation
-        task = ctx.run(asyncio.create_task, _wrapper())
+        task = ctx.run(asyncio.create_task, _wrapper(), name=f"background:{coro_name}")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return task
 
-    async def drain(self, timeout: float = 10.0) -> None:
-        """Await all running tasks with a timeout for graceful shutdown."""
-        if not self._tasks:
-            return
+    async def drain(self, timeout: float = 10.0, cancel_timeout: float = 1.0) -> bool:
+        """Drain tracked tasks and await bounded cancellation cleanup.
 
-        logging.info("Draining %d background tasks...", len(self._tasks))
-        # wait doesn't cancel, it just waits up to timeout
-        _done, pending = await asyncio.wait(self._tasks, timeout=timeout)
+        Returns ``True`` when every task finishes normally or completes its
+        cancellation cleanup.  Returns ``False`` when one or more tasks remain
+        alive after both bounded phases.
+        """
+        finished = {task for task in self._tasks if task.done()}
+        self._tasks.difference_update(finished)
+        active = set(self._tasks)
+        if not active:
+            return True
 
-        if pending:
-            logging.warning("Timeout draining background tasks. Cancelling %d tasks.", len(pending))
-            for task in pending:
-                task.cancel()
+        logging.info("Draining %d background tasks...", len(active))
+        done, pending = await asyncio.wait(active, timeout=max(0.0, timeout))
+        self._tasks.difference_update(done)
 
-            # Allow cancelled tasks a tick to clean up
-            await asyncio.sleep(0.1)
+        if not pending:
+            return True
+
+        logging.warning("Timeout draining background tasks. Cancelling %d tasks.", len(pending))
+        for task in pending:
+            task.cancel()
+
+        cancelled, stubborn = await asyncio.wait(pending, timeout=max(0.0, cancel_timeout))
+        self._tasks.difference_update(cancelled)
+
+        if stubborn:
+            names = ", ".join(sorted(task.get_name() for task in stubborn))
+            logging.error(
+                "%d background task(s) did not finish cancellation cleanup within %.2fs: %s",
+                len(stubborn),
+                max(0.0, cancel_timeout),
+                names,
+            )
+            return False
+
+        return True
 
 
 # ── Global singleton ─────────────────────────────────────────────────────────

@@ -396,10 +396,10 @@ async def _upsert_graph(
 
     entities_by_name = {entity.name.strip(): entity for entity in graph.entities if entity.name.strip()}
     relation_specs: list[dict[str, Any]] = []
-    for relation in graph.relations:
-        source_name = relation.source.strip()
-        target_name = relation.target.strip()
-        predicate = relation.predicate.strip()
+    for extracted_relation in graph.relations:
+        source_name = extracted_relation.source.strip()
+        target_name = extracted_relation.target.strip()
+        predicate = extracted_relation.predicate.strip()
         if (
             not source_name
             or not target_name
@@ -410,7 +410,7 @@ async def _upsert_graph(
             continue
         relation_specs.append(
             {
-                "relation": relation,
+                "relation": extracted_relation,
                 "source_name": source_name,
                 "target_name": target_name,
                 "predicate": predicate,
@@ -421,7 +421,9 @@ async def _upsert_graph(
         return 0
 
     endpoint_names = {
-        endpoint for relation in relation_specs for endpoint in (relation["source_name"], relation["target_name"])
+        endpoint
+        for relation_spec in relation_specs
+        for endpoint in (relation_spec["source_name"], relation_spec["target_name"])
     }
     endpoint_entities = [entity for entity in graph.entities if entity.name.strip() in endpoint_names]
 
@@ -435,7 +437,7 @@ async def _upsert_graph(
             for entity in endpoint_entities
         ]
         embedding_tasks = [fetch_embedding(text) for text in entity_texts]
-        embedding_tasks.extend(fetch_embedding(relation["predicate"]) for relation in relation_specs)
+        embedding_tasks.extend(fetch_embedding(relation_spec["predicate"]) for relation_spec in relation_specs)
         embeddings = await asyncio.gather(*embedding_tasks)
         entity_embeddings = embeddings[: len(endpoint_entities)]
         relation_embeddings = embeddings[len(endpoint_entities) :]
@@ -443,9 +445,11 @@ async def _upsert_graph(
             entity.name.strip(): embedding
             for entity, embedding in zip(endpoint_entities, entity_embeddings, strict=False)
         }
-        for relation, embedding in zip(relation_specs, relation_embeddings, strict=False):
-            relation["embedding"] = embedding
-            relation["embedding_text"] = f"[{','.join(str(value) for value in embedding)}]" if embedding else None
+        for relation_spec, embedding in zip(relation_specs, relation_embeddings, strict=False):
+            relation_spec["embedding"] = embedding
+            relation_spec["embedding_text"] = (
+                f"[{','.join(str(value) for value in embedding)}]" if embedding else None
+            )
 
         async def consent_and_source_are_current(conn) -> bool:
             return bool(
@@ -517,10 +521,10 @@ async def _upsert_graph(
                 if row:
                     existing_node_ids[original_name] = int(row["id"])
 
-            for relation_index, relation in enumerate(relation_specs):
-                source_id = existing_node_ids.get(relation["source_name"])
-                target_id = existing_node_ids.get(relation["target_name"])
-                embedding_text = relation["embedding_text"]
+            for relation_index, relation_spec in enumerate(relation_specs):
+                source_id = existing_node_ids.get(relation_spec["source_name"])
+                target_id = existing_node_ids.get(relation_spec["target_name"])
+                embedding_text = relation_spec["embedding_text"]
                 if source_id is None or target_id is None or embedding_text is None:
                     continue
 
@@ -540,7 +544,7 @@ async def _upsert_graph(
                     source_id,
                     target_id,
                     embedding_text,
-                    relation["predicate"],
+                    relation_spec["predicate"],
                 )
 
         # The read snapshot is no longer authoritative once its transaction is
@@ -557,16 +561,16 @@ async def _upsert_graph(
         resolution_keys: list[tuple[int, int, str]] = []
         resolution_tasks = []
         for relation_index, conflicts in phase_one_conflicts.items():
-            relation = relation_specs[relation_index]
+            relation_spec = relation_specs[relation_index]
             for old_edge in conflicts:
                 old_predicate = str(old_edge["predicate"])
                 resolution_keys.append((relation_index, int(old_edge["id"]), old_predicate))
                 resolution_tasks.append(
                     _resolve_ambiguous_conflict(
                         old_predicate,
-                        relation["predicate"],
-                        relation["source_name"],
-                        relation["target_name"],
+                        relation_spec["predicate"],
+                        relation_spec["source_name"],
+                        relation_spec["target_name"],
                         api_key,
                     )
                 )
@@ -617,8 +621,10 @@ async def _upsert_graph(
                     raise RuntimeError(f"graph node upsert returned no id for {original_name!r}")
                 node_id = int(row["id"])
                 node_ids[original_name] = node_id
-                previous = node_snapshots.get(node_id)
-                if previous is None or len(entity.description) > len(previous[0].description):
+                previous_node_snapshot = node_snapshots.get(node_id)
+                if previous_node_snapshot is None or len(entity.description) > len(
+                    previous_node_snapshot[0].description
+                ):
                     node_snapshots[node_id] = (entity, embedding_text, wing, entity.room or "")
 
             snapshot_node_ids = sorted(node_snapshots)
@@ -721,11 +727,11 @@ async def _upsert_graph(
                 return int(row["id"])
 
             affected_edge_snapshots: dict[int, dict[str, Any]] = {}
-            for relation_index, relation in enumerate(relation_specs):
-                source_id = node_ids[relation["source_name"]]
-                target_id = node_ids[relation["target_name"]]
-                embedding_text = relation["embedding_text"]
-                model_relation = relation["relation"]
+            for relation_index, relation_spec in enumerate(relation_specs):
+                source_id = node_ids[relation_spec["source_name"]]
+                target_id = node_ids[relation_spec["target_name"]]
+                embedding_text = relation_spec["embedding_text"]
+                model_relation = relation_spec["relation"]
                 affected_id: int | None = None
 
                 conflicts = []
@@ -747,7 +753,7 @@ async def _upsert_graph(
                         source_id,
                         target_id,
                         embedding_text,
-                        relation["predicate"],
+                        relation_spec["predicate"],
                     )
 
                 for old_edge in conflicts:
@@ -771,14 +777,14 @@ async def _upsert_graph(
                         )
 
                 if affected_id is None:
-                    affected_id = await upsert_current_edge(relation, source_id, target_id)
+                    affected_id = await upsert_current_edge(relation_spec, source_id, target_id)
 
                 affected_edge_ids.add(affected_id)
-                previous = affected_edge_snapshots.get(affected_id)
-                if previous is None:
-                    affected_edge_snapshots[affected_id] = relation
+                previous_edge_snapshot = affected_edge_snapshots.get(affected_id)
+                if previous_edge_snapshot is None:
+                    affected_edge_snapshots[affected_id] = relation_spec
                 else:
-                    previous_relation = previous["relation"]
+                    previous_relation = previous_edge_snapshot["relation"]
                     previous_relation.weight = max(previous_relation.weight, model_relation.weight)
                     previous_relation.is_core = previous_relation.is_core or model_relation.is_core
                 edges_upserted += 1

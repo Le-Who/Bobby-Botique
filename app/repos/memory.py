@@ -215,6 +215,8 @@ async def _get_embedding(
 
         return None
 
+    return None
+
 
 async def is_ltm_write_enabled(user_id: int, expected_epoch: int | None = None) -> bool:
     """Preflight durable LTM write consent before expensive external processing.

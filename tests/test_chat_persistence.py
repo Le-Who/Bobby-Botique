@@ -7,6 +7,11 @@ from app.database import ChatState
 from app.repos import chats
 
 
+def test_chat_state_declares_persisted_chat_marker() -> None:
+    field = ChatState.__dataclass_fields__["_has_persisted_chat"]
+    assert field.default is True
+
+
 def _pool_boundary():
     conn = MagicMock()
     transaction = MagicMock()

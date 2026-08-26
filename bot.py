@@ -707,7 +707,9 @@ async def run_bot_and_server():
         try:
             from app.utils.background_tasks import get_task_manager
 
-            await get_task_manager().drain(timeout=10.0)
+            drained = await get_task_manager().drain(timeout=10.0)
+            if not drained:
+                logging.error("Background task cancellation cleanup did not finish before shutdown")
         except Exception as e:
             logging.error(f"Error draining background tasks: {e}")
 

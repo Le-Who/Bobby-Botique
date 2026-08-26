@@ -40,6 +40,7 @@ class ChatState:
     live_thinking_level: str | None = None  # Live reasoning preset: off, low, medium
     live_connection_mode: str | None = None  # Live transport preset: standard, vertex_internet
     _original_length: int = 0
+    _has_persisted_chat: bool = True  # Whether the durable chats row already exists
 
 
 class DatabaseManager:

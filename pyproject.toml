@@ -36,7 +36,6 @@ ignore = [
 # They use print() by design for interactive REPL-style output.
 "test_*.py" = ["T201", "E402"]
 "scripts/**" = ["T201"]
-"clear_db.py" = ["T201"]
 # Perf benchmark scripts use print() and have loose import structure by design
 "artifacts/perf/**" = ["T201", "I001", "F841", "F821", "F541"]
 

@@ -1,5 +1,6 @@
 import hashlib
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -16,6 +17,48 @@ class MockSettings:
     TAVILY_LIMIT_THRESHOLD_PERCENT: float = 0.97
 
 
+class AsyncContext:
+    def __init__(self, value, events, label):
+        self.value = value
+        self.events = events
+        self.label = label
+
+    async def __aenter__(self):
+        self.events.append(f"{self.label}:enter")
+        return self.value
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        outcome = "rollback" if exc_type is not None else "commit"
+        self.events.append(f"{self.label}:{outcome}")
+
+
+class FakeConnection:
+    def __init__(self, events):
+        self.events = events
+
+    def transaction(self):
+        return AsyncContext(self, self.events, "transaction")
+
+
+class FakePool:
+    def __init__(self, connection, events):
+        self.connection = connection
+        self.events = events
+
+    def acquire(self):
+        return AsyncContext(self.connection, self.events, "acquire")
+
+
+class TrackingCache(dict):
+    def __init__(self, events):
+        super().__init__({"old": "cached"})
+        self.events = events
+
+    def clear(self):
+        self.events.append("cache:clear")
+        super().clear()
+
+
 @pytest.mark.asyncio
 async def test_force_update_tavily_keys():
     """Test that force_update_tavily_keys deletes old keys and inserts encrypted ones."""
@@ -25,32 +68,95 @@ async def test_force_update_tavily_keys():
 
     from app.repos import keys as keys_mod
 
+    events = []
+    connection = FakeConnection(events)
+    cache = TrackingCache(events)
+
+    async def db_query(query, params=(), retries=3, conn=None):
+        assert conn is connection
+        events.append(f"query:{query}")
+        return []
+
+    async def db_execute_many(query, data, retries=3, conn=None):
+        assert conn is connection
+        events.append("execute_many")
+        return None
+
+    manager = SimpleNamespace(pool=FakePool(connection, events), _active_keys_cache=cache)
+
     with (
         patch("app.config.get_settings", return_value=mock_settings),
         patch.object(keys_mod, "encrypt_api_key", side_effect=lambda k: f"enc_{k}"),
-        patch.object(keys_mod, "db_query", new_callable=AsyncMock) as mock_db_query,
-        patch.object(keys_mod, "db_execute_many", new_callable=AsyncMock) as mock_db_exec_many,
-        patch.object(keys_mod, "db_manager") as mock_db_manager,
+        patch.object(keys_mod, "db_query", side_effect=db_query) as mock_db_query,
+        patch.object(keys_mod, "db_execute_many", side_effect=db_execute_many) as mock_db_exec_many,
+        patch.object(keys_mod, "db_manager", manager),
     ):
-        mock_db_manager._active_keys_cache = {}
-
         result = await keys_mod.force_update_tavily_keys()
 
         assert result is True
 
         # Verify DELETE calls
-        calls = [c[0][0] for c in mock_db_query.call_args_list]
+        calls = [call.args[0] for call in mock_db_query.call_args_list]
         assert "DELETE FROM tavily_api_keys" in calls
         assert "DELETE FROM tavily_key_usage" in calls
 
         # Verify INSERT with encrypted keys
         mock_db_exec_many.assert_called_once()
-        query, data = mock_db_exec_many.call_args[0]
+        query, data = mock_db_exec_many.call_args.args[:2]
         assert "INSERT INTO tavily_api_keys" in query
         assert len(data) == 3
         for i, (key_hash, encrypted_key) in enumerate(data):
             assert key_hash == expected_hashes[i]
             assert encrypted_key == f"enc_{test_keys[i]}"
+
+        assert events == [
+            "acquire:enter",
+            "transaction:enter",
+            "query:DELETE FROM tavily_api_keys",
+            "execute_many",
+            "query:DELETE FROM tavily_key_usage",
+            "transaction:commit",
+            "acquire:commit",
+            "cache:clear",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_force_update_tavily_keys_rolls_back_and_preserves_cache_on_insert_failure():
+    mock_settings = MockSettings(TAVILY_API_KEYS=["replacement"])
+
+    from app.repos import keys as keys_mod
+
+    events = []
+    connection = FakeConnection(events)
+    cache = TrackingCache(events)
+    manager = SimpleNamespace(pool=FakePool(connection, events), _active_keys_cache=cache)
+
+    async def db_query(query, params=(), retries=3, conn=None):
+        assert conn is connection
+        events.append(f"query:{query}")
+        return []
+
+    async def fail_insert(query, data, retries=3, conn=None):
+        assert conn is connection
+        events.append("execute_many:failed")
+        from asyncpg import PostgresError
+
+        raise PostgresError("insert failed")
+
+    with (
+        patch("app.config.get_settings", return_value=mock_settings),
+        patch.object(keys_mod, "encrypt_api_key", return_value="encrypted"),
+        patch.object(keys_mod, "db_query", side_effect=db_query),
+        patch.object(keys_mod, "db_execute_many", side_effect=fail_insert),
+        patch.object(keys_mod, "db_manager", manager),
+    ):
+        result = await keys_mod.force_update_tavily_keys()
+
+    assert result is False
+    assert cache == {"old": "cached"}
+    assert "transaction:rollback" in events
+    assert "cache:clear" not in events
 
 
 @pytest.mark.asyncio
