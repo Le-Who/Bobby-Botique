@@ -70,7 +70,7 @@ The PostgreSQL behavior of the LTM changes is not considered verified until the 
 
 ### Wave 1: Truthful Verification and Dependency Security
 
-CI runs for pushes and pull requests involving the active `vps_testai` branch. Legacy branch triggers may remain only when they correspond to an intentionally supported branch.
+CI runs for pushes to `vps_testai`, `main`, and `TEST_gemaibotv2`, and for all pull requests. Deploy remains restricted to successful `vps_testai` verification.
 
 The pipeline contains explicit, non-overlapping checks:
 
@@ -185,32 +185,7 @@ Database failures from the shared module propagate to the transaction boundary. 
 
 No schema or SQL-policy change is required. Existing tenant-scoped foreign keys, RLS, provenance tables, and advisory locking remain authoritative.
 
-### Wave 5: Deterministic Repository Formatting
-
-Formatting occurs only after functional changes and their focused tests are green.
-
-1. Pin the Ruff version used by development and CI.
-2. Align the formatter target with Python 3.14.
-3. Run `ruff format .` as a standalone mechanical change with no behavioral edits mixed into it.
-4. Re-run encoding, Ruff lint, mypy, and the complete available test suite.
-5. Enable `ruff format --check .` as a required CI gate.
-
-This sequence avoids a permanently red gate and makes the one-time 233-file normalization reviewable as mechanical work. The formatting change should be isolated to reduce conflicts with concurrent branches.
-
-### Wave 6: Engineering and In-Bot Documentation
-
-#### Engineering documentation
-
-Update:
-
-- `README.md` with truthful CI behavior, test commands, counts, integration requirements, and security gates;
-- `docs/ARCHITECTURE.md` with current structure, counts, verification flow, and the LTM persistence boundary;
-- `CHANGELOG.md` with all user-visible and operational changes;
-- docstrings for the new LTM module and modified lifecycle/transaction helpers.
-
-Documentation must explicitly distinguish locally passed tests from integration tests that require an external database.
-
-#### User-facing capability documentation
+### Wave 5: User-Facing Capability Documentation
 
 Introduce one capability catalog for public bot commands and help categories. Each entry carries a stable command identity, category, localization keys, a short Telegram-safe description, and availability metadata where required.
 
@@ -248,6 +223,27 @@ Copy rules:
 - keep the main help compact and reveal details by category;
 - maintain Russian and English parity;
 - remove stale promises and verify every limit or command against code.
+
+### Wave 6: Deterministic Formatting and Engineering Documentation
+
+Formatting occurs only after all functional code and user-facing copy changes and their focused tests are green.
+
+1. Pin the Ruff version used by development and CI.
+2. Align the formatter target with Python 3.14.
+3. Run `ruff format .` as a standalone mechanical change with no behavioral edits mixed into it.
+4. Re-run encoding, Ruff lint, mypy, and the complete available test suite.
+5. Enable `ruff format --check .` as a required CI gate.
+
+This sequence avoids a permanently red gate and makes the one-time 233-file normalization reviewable as mechanical work. The formatting change should be isolated to reduce conflicts with concurrent branches.
+
+After the code and verification evidence are final, update:
+
+- `README.md` with truthful CI behavior, test commands, counts, integration requirements, and security gates;
+- `docs/ARCHITECTURE.md` with current structure, counts, verification flow, and the LTM persistence boundary;
+- `CHANGELOG.md` with all user-visible and operational changes;
+- docstrings for the new LTM module and modified lifecycle/transaction helpers.
+
+Documentation must explicitly distinguish locally passed tests from integration tests that require an external database.
 
 ## Error-Handling Invariants
 
@@ -339,4 +335,3 @@ If the integration database remains unavailable locally, completion reporting mu
 - Global Ruff format check passes and is enforced in CI.
 - Engineering documentation matches the final code and verification evidence.
 - Public bot help is centralized, bilingual, concise, kind, actionable, and consistent with registered commands.
-
