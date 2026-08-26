@@ -31,6 +31,12 @@ from app.repos.memory_config import (
     MAX_PERSONA_FACTS,
     MIN_PERSONA_FACTS,
 )
+from app.repos.memory_graph_writer import (
+    GraphEdgeCandidate,
+    GraphMutationPlan,
+    GraphNodeCandidate,
+    write_graph,
+)
 from app.utils.json_compat import json
 
 # ── Debounce gate constants ─────────────────────────────────────────────
@@ -763,338 +769,58 @@ async def _consolidate_memories_impl(
                 user_id,
             )
 
-            # ── Upsert graph entities into memory_nodes ──────────
-            # Batch semantic deduplication for nodes
-            # First, gather unique entity names to avoid redundant DB lookups
-            unique_entity_names = {ent.get("name", "").strip() for ent in valid_entities if ent.get("name", "").strip()}
-
-            entities_with_emb = [
-                (name, f"[{','.join(str(v) for v in ent_emb_map[name])}]")
-                for name in unique_entity_names
-                if ent_emb_map.get(name) is not None
-            ]
-
-            name_mapping = {name: name for name in unique_entity_names}
-            if entities_with_emb:
-                input_names = [e[0] for e in entities_with_emb]
-                input_embs = [e[1] for e in entities_with_emb]
-                similar_nodes = await conn.fetch(
-                    """
-                    SELECT t.input_name, m.entity_name
-                    FROM unnest($2::text[], $3::halfvec[]) AS t(input_name, emb)
-                    LEFT JOIN LATERAL (
-                        SELECT entity_name
-                        FROM memory_nodes
-                        WHERE user_id = $1
-                          AND embedding <=> t.emb < 0.12
-                        ORDER BY embedding <=> t.emb ASC
-                        LIMIT 1
-                    ) m ON true
-                    WHERE m.entity_name IS NOT NULL
-                    """,
-                    user_id,
-                    input_names,
-                    input_embs,
-                )
-                for row in similar_nodes:
-                    name_mapping[row["input_name"]] = row["entity_name"]
-
-            # Prepare and deduplicate node upserts
-            final_node_upserts = {}  # name -> (type, desc, emb_str)
+            # Consolidated entity descriptions do not carry entity-level
+            # support indexes, so only endpoint names and types are projected.
             entity_support_fact_ids: dict[str, set[int]] = {}
             for relation in valid_relations:
                 support_ids = {inserted_fact_ids[index] for index in relation["support_fact_indexes"]}
                 for endpoint in (relation.get("from", "").strip(), relation.get("to", "").strip()):
                     entity_support_fact_ids.setdefault(endpoint, set()).update(support_ids)
-            for ent in valid_entities:
-                orig_name = ent.get("name", "").strip()
-                canonical_name = name_mapping.get(orig_name, orig_name)
-                ent_type = ent.get("type", "concept")
-                description = ""
-                ent_embedding = ent_emb_map.get(orig_name)
-                ent_emb_str = f"[{','.join(str(v) for v in ent_embedding)}]" if ent_embedding is not None else None
-
-                # In case multiple extractions map to same canonical name, last one wins
-                final_node_upserts[canonical_name] = (ent_type, description, ent_emb_str)
-
-            node_ids = {}  # entity_name → BIGINT
-            if final_node_upserts:
-                names = list(final_node_upserts.keys())
-                types = [v[0] for v in final_node_upserts.values()]
-                descs = [v[1] for v in final_node_upserts.values()]
-                embs = [v[2] for v in final_node_upserts.values()]
-
-                node_rows = await conn.fetch(
-                    """
-                    INSERT INTO memory_nodes (user_id, entity_name, entity_type, description, embedding)
-                    SELECT $1, * FROM unnest($2::text[], $3::text[], $4::text[], $5::halfvec[])
-                    ON CONFLICT (user_id, entity_name)
-                    DO UPDATE SET
-                        updated_at = now()
-                    RETURNING id, entity_name
-                    """,
-                    user_id,
-                    names,
-                    types,
-                    descs,
-                    embs,
+            node_candidate_list: list[GraphNodeCandidate] = []
+            for entity in valid_entities:
+                entity_name = entity.get("name", "").strip()
+                entity_embedding = ent_emb_map.get(entity_name)
+                node_candidate_list.append(
+                    GraphNodeCandidate(
+                        name=entity_name,
+                        entity_type=str(entity.get("type", "concept")),
+                        description="",
+                        embedding=tuple(entity_embedding) if entity_embedding is not None else None,
+                        wing="knowledge",
+                        room="",
+                        source_memory_ids=frozenset(entity_support_fact_ids[entity_name]),
+                    )
                 )
-                temp_node_ids = {r["entity_name"]: r["id"] for r in node_rows}
-                for orig, canon in name_mapping.items():
-                    if canon in temp_node_ids:
-                        node_ids[orig] = temp_node_ids[canon]
+            node_candidates = tuple(node_candidate_list)
 
-                node_source_snapshots: dict[tuple[int, int], tuple[str, str, str | None]] = {}
-                entity_by_name = {
-                    entity.get("name", "").strip(): entity
-                    for entity in valid_entities
-                    if entity.get("name", "").strip()
-                }
-                for original_name, node_support_fact_ids in entity_support_fact_ids.items():
-                    node_id = node_ids.get(original_name)
-                    entity = entity_by_name.get(original_name)
-                    if node_id is None or entity is None:
-                        continue
-                    embedding = ent_emb_map.get(original_name)
-                    node_embedding_text = (
-                        f"[{','.join(str(value) for value in embedding)}]" if embedding is not None else None
+            edge_candidate_list: list[GraphEdgeCandidate] = []
+            for relation in valid_relations:
+                source_name = relation.get("from", "").strip()
+                target_name = relation.get("to", "").strip()
+                predicate = relation.get("predicate", "related_to").strip()
+                relation_embedding = rel_emb_map.get((source_name, target_name, predicate))
+                edge_candidate_list.append(
+                    GraphEdgeCandidate(
+                        source_name=source_name,
+                        target_name=target_name,
+                        predicate=predicate,
+                        predicate_embedding=(
+                            tuple(relation_embedding) if relation_embedding is not None else None
+                        ),
+                        weight=float(relation.get("weight", 1.0)),
+                        is_core=bool(relation.get("is_core", False)),
+                        source_memory_ids=frozenset(
+                            inserted_fact_ids[index]
+                            for index in relation["support_fact_indexes"]
+                        ),
                     )
-                    for support_fact_id in node_support_fact_ids:
-                        node_source_key = (int(node_id), support_fact_id)
-                        node_source_candidate = (
-                            str(entity.get("type", "concept")),
-                            "",
-                            node_embedding_text,
-                        )
-                        previous_node_source = node_source_snapshots.get(node_source_key)
-                        if previous_node_source is None or len(node_source_candidate[1]) > len(previous_node_source[1]):
-                            node_source_snapshots[node_source_key] = node_source_candidate
-
-                if node_source_snapshots:
-                    ordered_node_sources = sorted(node_source_snapshots)
-                    await conn.execute(
-                        """
-                        INSERT INTO memory_node_sources
-                            (node_id, memory_id, user_id, entity_type, description,
-                             embedding, attributes_complete)
-                        SELECT snapshot.node_id, snapshot.memory_id, $3,
-                               snapshot.entity_type, snapshot.description,
-                               snapshot.embedding, TRUE
-                        FROM unnest(
-                            $1::bigint[], $2::bigint[], $4::text[],
-                            $5::text[], $6::halfvec[]
-                        ) AS snapshot(node_id, memory_id, entity_type, description, embedding)
-                        ON CONFLICT (node_id, memory_id) DO UPDATE SET
-                            entity_type = EXCLUDED.entity_type,
-                            description = EXCLUDED.description,
-                            embedding = EXCLUDED.embedding,
-                            attributes_complete = TRUE,
-                            created_at = now()
-                        """,
-                        [key[0] for key in ordered_node_sources],
-                        [key[1] for key in ordered_node_sources],
-                        user_id,
-                        [node_source_snapshots[key][0] for key in ordered_node_sources],
-                        [node_source_snapshots[key][1] for key in ordered_node_sources],
-                        [node_source_snapshots[key][2] for key in ordered_node_sources],
-                    )
-                    await conn.execute(
-                        """
-                        WITH target_nodes AS (
-                            SELECT DISTINCT unnest($1::bigint[]) AS node_id
-                        ), base_attributes AS (
-                            SELECT DISTINCT ON (source.node_id)
-                                   source.node_id, source.entity_type, source.description,
-                                   source.embedding, source.wing, source.room
-                            FROM memory_node_sources AS source
-                            JOIN target_nodes AS target ON target.node_id = source.node_id
-                            WHERE source.user_id = $2
-                              AND source.attributes_complete IS TRUE
-                            ORDER BY source.node_id, source.created_at DESC, source.memory_id DESC
-                        ), media_attributes AS (
-                            SELECT DISTINCT ON (source.node_id)
-                                   source.node_id, source.file_id, source.file_type
-                            FROM memory_node_sources AS source
-                            JOIN target_nodes AS target ON target.node_id = source.node_id
-                            WHERE source.user_id = $2
-                              AND source.attributes_complete IS TRUE
-                              AND source.file_id IS NOT NULL
-                            ORDER BY source.node_id, source.created_at DESC, source.memory_id DESC
-                        )
-                        UPDATE memory_nodes AS node
-                        SET entity_type = base.entity_type,
-                            description = base.description,
-                            embedding = base.embedding,
-                            wing = base.wing,
-                            room = base.room,
-                            file_id = media.file_id,
-                            file_type = media.file_type,
-                            updated_at = now()
-                        FROM base_attributes AS base
-                        LEFT JOIN media_attributes AS media ON media.node_id = base.node_id
-                        WHERE node.id = base.node_id
-                          AND node.user_id = $2
-                        """,
-                        [key[0] for key in ordered_node_sources],
-                        user_id,
-                    )
-
-            # ── Upsert exact-predicate graph relations into memory_edges ─────
-            # Filter relations that have both nodes resolved
-            edge_candidates = []
-            for rel in valid_relations:
-                from_name = rel.get("from", "").strip()
-                to_name = rel.get("to", "").strip()
-                predicate = rel.get("predicate", "related_to").strip()
-                weight = float(rel.get("weight", 1.0))
-                is_core = bool(rel.get("is_core", False))
-
-                if from_name in node_ids and to_name in node_ids:
-                    pred_embedding = rel_emb_map.get((from_name, to_name, predicate))
-                    pred_emb_str = (
-                        f"[{','.join(str(v) for v in pred_embedding)}]" if pred_embedding is not None else None
-                    )
-                    edge_candidates.append(
-                        {
-                            "src_id": node_ids[from_name],
-                            "tgt_id": node_ids[to_name],
-                            "predicate": predicate,
-                            "weight": weight,
-                            "is_core": is_core,
-                            "emb": pred_emb_str,
-                            "support_fact_ids": {
-                                inserted_fact_ids[index] for index in rel["support_fact_indexes"]
-                            },
-                        }
-                    )
-
-            affected_edge_sources: dict[int, set[int]] = {}
-            if edge_candidates:
-                # Deduplicate candidates to avoid redundant DB work
-                # (src_id, tgt_id, predicate) is the unique constraint.
-                # We merge weight (max) and is_core (OR) to avoid data loss.
-                merged_edge_cands: dict[tuple[int, int, str], dict[str, Any]] = {}
-                for cand in edge_candidates:
-                    edge_candidate_key = (cand["src_id"], cand["tgt_id"], cand["predicate"])
-                    if edge_candidate_key not in merged_edge_cands:
-                        merged_edge_cands[edge_candidate_key] = cand
-                    else:
-                        existing = merged_edge_cands[edge_candidate_key]
-                        existing["weight"] = max(existing["weight"], cand["weight"])
-                        existing["is_core"] = existing["is_core"] or cand["is_core"]
-                        existing["support_fact_ids"].update(cand["support_fact_ids"])
-                edge_candidates = list(merged_edge_cands.values())
-
-                new_inserts: list[tuple[dict[str, Any], tuple[Any, ...]]] = []
-                for cand in edge_candidates:
-                    sorted_support_fact_ids = sorted(cand["support_fact_ids"])
-                    insert_args = (
-                        user_id,
-                        cand["src_id"],
-                        cand["tgt_id"],
-                        cand["predicate"],
-                        cand["emb"],
-                        cand["weight"],
-                        cand["is_core"],
-                        sorted_support_fact_ids,
-                    )
-                    new_inserts.append((cand, insert_args))
-
-                edge_attributes_by_id: dict[int, dict[str, Any]] = {}
-                if new_inserts:
-                    for edge_candidate, edge_args in new_inserts:
-                        row = await conn.fetchrow(
-                            """
-                            INSERT INTO memory_edges
-                                (user_id, source_node, target_node, predicate,
-                                 predicate_embedding, weight, is_core, source_memory_ids)
-                            VALUES ($1, $2, $3, $4, $5::halfvec, $6, $7, $8::bigint[])
-                            ON CONFLICT (user_id, source_node, target_node, predicate) WHERE valid_to IS NULL
-                            DO UPDATE SET
-                                updated_at = now()
-                            RETURNING id
-                            """,
-                            *edge_args,
-                        )
-                        if row:
-                            edge_id = int(row["id"])
-                            affected_edge_sources.setdefault(edge_id, set()).update(edge_args[7])
-                            edge_attributes_by_id[edge_id] = edge_candidate
-
-            if affected_edge_sources:
-                provenance_edge_ids: list[int] = []
-                provenance_fact_ids: list[int] = []
-                for edge_id, edge_support_fact_ids in sorted(affected_edge_sources.items()):
-                    for fact_id in sorted(edge_support_fact_ids):
-                        provenance_edge_ids.append(edge_id)
-                        provenance_fact_ids.append(fact_id)
-                await conn.execute(
-                    """
-                    INSERT INTO memory_edge_sources
-                        (edge_id, memory_id, user_id, predicate, predicate_embedding,
-                         weight, is_core, attributes_complete)
-                    SELECT provenance.edge_id, provenance.memory_id, $3,
-                           provenance.predicate, provenance.predicate_embedding,
-                           provenance.weight, provenance.is_core, TRUE
-                    FROM unnest(
-                        $1::bigint[], $2::bigint[], $4::text[], $5::halfvec[],
-                        $6::double precision[], $7::boolean[]
-                    ) AS provenance(
-                        edge_id, memory_id, predicate, predicate_embedding, weight, is_core
-                    )
-                    ON CONFLICT (edge_id, memory_id) DO UPDATE SET
-                        predicate = EXCLUDED.predicate,
-                        predicate_embedding = EXCLUDED.predicate_embedding,
-                        weight = EXCLUDED.weight,
-                        is_core = EXCLUDED.is_core,
-                        attributes_complete = TRUE,
-                        created_at = now()
-                    """,
-                    provenance_edge_ids,
-                    provenance_fact_ids,
-                    user_id,
-                    [edge_attributes_by_id[edge_id]["predicate"] for edge_id in provenance_edge_ids],
-                    [edge_attributes_by_id[edge_id]["emb"] for edge_id in provenance_edge_ids],
-                    [edge_attributes_by_id[edge_id]["weight"] for edge_id in provenance_edge_ids],
-                    [edge_attributes_by_id[edge_id]["is_core"] for edge_id in provenance_edge_ids],
                 )
-                await conn.execute(
-                    """
-                    WITH target_edges AS (
-                        SELECT DISTINCT unnest($1::bigint[]) AS edge_id
-                    ), aggregate_attributes AS (
-                        SELECT source.edge_id, MAX(source.weight) AS weight,
-                               BOOL_OR(source.is_core) AS is_core,
-                               ARRAY_AGG(source.memory_id ORDER BY source.memory_id) AS memory_ids
-                        FROM memory_edge_sources AS source
-                        JOIN target_edges AS target ON target.edge_id = source.edge_id
-                        WHERE source.user_id = $2
-                          AND source.attributes_complete IS TRUE
-                        GROUP BY source.edge_id
-                    ), winning_predicate AS (
-                        SELECT DISTINCT ON (source.edge_id)
-                               source.edge_id, source.predicate, source.predicate_embedding
-                        FROM memory_edge_sources AS source
-                        JOIN target_edges AS target ON target.edge_id = source.edge_id
-                        WHERE source.user_id = $2
-                          AND source.attributes_complete IS TRUE
-                        ORDER BY source.edge_id, source.created_at DESC, source.memory_id DESC
-                    )
-                    UPDATE memory_edges AS edge
-                    SET predicate = winner.predicate,
-                        predicate_embedding = winner.predicate_embedding,
-                        weight = aggregate.weight,
-                        is_core = aggregate.is_core,
-                        source_memory_ids = aggregate.memory_ids,
-                        updated_at = now()
-                    FROM aggregate_attributes AS aggregate
-                    JOIN winning_predicate AS winner ON winner.edge_id = aggregate.edge_id
-                    WHERE edge.id = aggregate.edge_id
-                      AND edge.user_id = $2
-                    """,
-                    provenance_edge_ids,
-                    user_id,
-                )
+            edge_candidates = tuple(edge_candidate_list)
+            graph_result = await write_graph(
+                conn,
+                user_id,
+                GraphMutationPlan(nodes=node_candidates, edges=edge_candidates),
+            )
 
             marked_sources = await conn.fetch(
                 """
@@ -1117,14 +843,8 @@ async def _consolidate_memories_impl(
                 user_id,
                 len(raw_ids),
                 len(inserted_fact_ids),
-                len(node_ids),
-                len(
-                    [
-                        r
-                        for r in relations
-                        if r.get("from", "").strip() in node_ids and r.get("to", "").strip() in node_ids
-                    ]
-                ),
+                len(graph_result.node_ids),
+                graph_result.edges_written,
             )
             return len(inserted_fact_ids)
     except Exception as e:

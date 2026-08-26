@@ -68,6 +68,7 @@ class _ConsolidationConnection:
         similar_edge_id: int | None = None,
         stale_merge: bool = False,
         preflight_rows=None,
+        fail_on: str | None = None,
     ):
         self.snapshot_rows = snapshot_rows
         self.preflight_rows = snapshot_rows if preflight_rows is None else preflight_rows
@@ -75,6 +76,7 @@ class _ConsolidationConnection:
         self.fact_insert_index = 0
         self.similar_edge_id = similar_edge_id
         self.stale_merge = stale_merge
+        self.fail_on = fail_on
         self.calls: list[tuple[str, str, tuple]] = []
         self.in_transaction = False
 
@@ -83,6 +85,8 @@ class _ConsolidationConnection:
 
     async def execute(self, sql, *args):
         self.calls.append(("execute", sql, args))
+        if self.fail_on and self.fail_on in sql:
+            raise RuntimeError("injected graph writer failure")
         return "OK"
 
     async def executemany(self, sql, args):
@@ -316,6 +320,46 @@ async def test_consolidation_marks_sources_after_insert_and_returns_database_cou
     _, fact_insert_sql, fact_insert_args = statements[insert_index]
     assert "expires_at" in fact_insert_sql
     assert soon in fact_insert_args
+
+
+@pytest.mark.asyncio
+async def test_graph_writer_failure_rolls_back_facts_and_preserves_raw_sources(monkeypatch):
+    raw = [_raw_memory(1)]
+    conn = _ConsolidationConnection(
+        snapshot_rows=raw,
+        inserted_fact_ids=[9001],
+        fail_on="INSERT INTO memory_edge_sources",
+    )
+    _install_db(monkeypatch, conn)
+    monkeypatch.setattr(
+        consolidation,
+        "_extract_graph",
+        AsyncMock(
+            return_value={
+                "facts": [_fact("fact one", 1)],
+                "entities": [
+                    {"name": "Alice", "type": "person", "description": "user"},
+                    {"name": "Python", "type": "skill", "description": "language"},
+                ],
+                "relations": [_relation(support_fact_indexes=[0])],
+            }
+        ),
+    )
+    monkeypatch.setattr(memory_repo, "_get_embedding", AsyncMock(return_value=[0.1, 0.2]))
+
+    result = await consolidation.consolidate_memories(
+        42,
+        "key",
+        _prefetched_memories=raw,
+        expected_epoch=7,
+    )
+
+    assert result == 0
+    transaction_outcomes = [kind for kind, _, _ in conn.calls if kind in {"commit", "rollback"}]
+    assert transaction_outcomes[-1] == "rollback"
+    statements = [" ".join(sql.split()) for _, sql, _ in conn.calls if sql]
+    assert any("INSERT INTO long_term_memory" in sql for sql in statements)
+    assert not any("SET consolidated_at = now()" in sql for sql in statements)
 
 
 @pytest.mark.asyncio

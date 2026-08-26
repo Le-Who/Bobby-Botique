@@ -71,9 +71,16 @@ class _Pool:
 
 
 class _ExtractionConnection:
-    def __init__(self, *, mode: str = "new", consent: bool | list[bool] = True):
+    def __init__(
+        self,
+        *,
+        mode: str = "new",
+        consent: bool | list[bool] = True,
+        fail_on: str | None = None,
+    ):
         self.mode = mode
         self.consent = list(consent) if isinstance(consent, list) else consent
+        self.fail_on = fail_on
         self.calls: list[tuple[str, str, tuple]] = []
         self.node_index = 0
         self.node_lookup_index = 0
@@ -119,6 +126,9 @@ class _ExtractionConnection:
     async def fetch(self, sql, *args):
         self.calls.append(("fetch", sql, args))
         normalized = " ".join(sql.split())
+        if "INSERT INTO memory_nodes" in normalized:
+            names = args[1]
+            return [{"id": index + 101, "entity_name": name} for index, name in enumerate(names)]
         if "AS distance" in normalized and self.mode == "refinement":
             return [{"id": 502, "predicate": "works with", "distance": 0.2}]
         if "AS distance" in normalized and self.mode == "far_parallel":
@@ -127,6 +137,8 @@ class _ExtractionConnection:
 
     async def execute(self, sql, *args):
         self.calls.append(("execute", sql, args))
+        if self.fail_on and self.fail_on in sql:
+            raise RuntimeError("injected graph writer failure")
         return "OK"
 
     async def executemany(self, sql, args):
@@ -487,6 +499,15 @@ async def test_edge_is_superseded_only_after_explicit_update_verdict(monkeypatch
     statements = [" ".join(sql.split()) for _, sql, _ in conn.calls if sql]
     assert sum("SET valid_to = now()" in sql for sql in statements) == 1
     assert any("INSERT INTO memory_edges" in sql for sql in statements)
+    close_sql, close_args = next(
+        (" ".join(sql.split()), args)
+        for kind, sql, args in conn.calls
+        if kind == "execute" and "SET valid_to = now()" in sql
+    )
+    assert "source_node = $3" in close_sql
+    assert "target_node = $4" in close_sql
+    assert "predicate = $5" in close_sql
+    assert close_args == (504, 42, 101, 102, "mentors")
 
 
 @pytest.mark.asyncio
@@ -540,3 +561,22 @@ async def test_graph_writes_source_level_node_and_edge_attribute_snapshots(monke
     for attribute in ("predicate", "predicate_embedding", "weight", "is_core", "attributes_complete"):
         assert attribute in edge_source_sql
     assert "77" in repr(edge_source_args)
+
+
+@pytest.mark.asyncio
+async def test_writer_failure_rolls_back_real_time_graph_and_returns_zero(monkeypatch):
+    conn = _ExtractionConnection(fail_on="INSERT INTO memory_edge_sources")
+    _install_db(monkeypatch, conn)
+    monkeypatch.setattr(memory_repo, "_get_embedding", AsyncMock(return_value=[0.1, 0.2]))
+
+    result = await extraction._upsert_graph(
+        42,
+        _graph(),
+        "key",
+        source_memory_id=77,
+        expected_epoch=9,
+    )
+
+    assert result == 0
+    transaction_outcomes = [kind for kind, _, _ in conn.calls if kind in {"commit", "rollback"}]
+    assert transaction_outcomes[-1] == "rollback"

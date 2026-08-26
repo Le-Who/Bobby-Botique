@@ -32,6 +32,13 @@ from app.repos.memory_config import (
     TAXONOMY_WINGS,
     get_taxonomy_model,
 )
+from app.repos.memory_graph_writer import (
+    GraphConflictClosure,
+    GraphEdgeCandidate,
+    GraphMutationPlan,
+    GraphNodeCandidate,
+    write_graph,
+)
 
 # ── Pydantic schemas for Structured Output ────────────────────────────────────
 
@@ -577,291 +584,70 @@ async def _upsert_graph(
         resolution_values = await asyncio.gather(*resolution_tasks) if resolution_tasks else []
         resolutions = dict(zip(resolution_keys, resolution_values, strict=False))
 
-        source_ids = [source_memory_id]
-        affected_edge_ids: set[int] = set()
-        edges_upserted = 0
+        source_memory_ids = frozenset({source_memory_id})
+        node_candidate_list: list[GraphNodeCandidate] = []
+        for entity in endpoint_entities:
+            entity_name = entity.name.strip()
+            entity_embedding = entity_embedding_map.get(entity_name)
+            node_candidate_list.append(
+                GraphNodeCandidate(
+                    name=entity_name,
+                    entity_type=entity.type,
+                    description=entity.description,
+                    embedding=tuple(entity_embedding) if entity_embedding else None,
+                    wing=entity.wing if entity.wing in TAXONOMY_WINGS else "knowledge",
+                    room=entity.room or "",
+                    source_memory_ids=source_memory_ids,
+                )
+            )
+        node_candidates = tuple(node_candidate_list)
+        edge_candidates: list[GraphEdgeCandidate] = []
+        for relation_index, relation_spec in enumerate(relation_specs):
+            conflict_closures = tuple(
+                GraphConflictClosure(
+                    edge_id=int(old_edge["id"]),
+                    predicate=str(old_edge["predicate"]),
+                )
+                for old_edge in phase_one_conflicts.get(relation_index, [])
+                if resolutions.get(
+                    (
+                        relation_index,
+                        int(old_edge["id"]),
+                        str(old_edge["predicate"]),
+                    ),
+                    "parallel",
+                )
+                == "update"
+            )
+            model_relation = relation_spec["relation"]
+            relation_embedding = relation_spec["embedding"]
+            edge_candidates.append(
+                GraphEdgeCandidate(
+                    source_name=relation_spec["source_name"],
+                    target_name=relation_spec["target_name"],
+                    predicate=relation_spec["predicate"],
+                    predicate_embedding=tuple(relation_embedding) if relation_embedding else None,
+                    weight=model_relation.weight,
+                    is_core=model_relation.is_core,
+                    source_memory_ids=source_memory_ids,
+                    close_conflicts=conflict_closures,
+                )
+            )
+        mutation_plan = GraphMutationPlan(
+            nodes=node_candidates,
+            edges=tuple(edge_candidates),
+        )
 
         async with db_manager.pool.acquire() as write_conn, write_conn.transaction():
             await set_user_context(user_id, False, conn=write_conn)
             await write_conn.execute("SELECT pg_advisory_xact_lock($1)", user_id)
             if not await consent_and_source_are_current(write_conn):
                 return 0
-
-            # Re-resolve under the mutation lock.  Concurrent semantic node
-            # inserts between phases must not leave edge IDs pointing at a
-            # stale canonical node.
-            node_ids: dict[str, int] = {}
-            node_snapshots: dict[int, tuple[Any, str | None, str, str]] = {}
-            for entity in endpoint_entities:
-                original_name = entity.name.strip()
-                existing = await resolve_existing_node(write_conn, original_name)
-                canonical_name = str(existing["entity_name"]) if existing else original_name
-                embedding = entity_embedding_map.get(original_name)
-                embedding_text = f"[{','.join(str(value) for value in embedding)}]" if embedding else None
-                wing = entity.wing if entity.wing in TAXONOMY_WINGS else "knowledge"
-                row = await write_conn.fetchrow(
-                    """
-                        INSERT INTO memory_nodes
-                            (user_id, entity_name, entity_type, description, embedding, wing, room)
-                        VALUES ($1, $2, $3, $4, $5::halfvec, $6, $7)
-                        ON CONFLICT (user_id, entity_name)
-                        DO UPDATE SET
-                            updated_at = now()
-                        RETURNING id
-                        """,
-                    user_id,
-                    canonical_name,
-                    entity.type,
-                    entity.description,
-                    embedding_text,
-                    wing,
-                    entity.room or "",
-                )
-                if not row:
-                    raise RuntimeError(f"graph node upsert returned no id for {original_name!r}")
-                node_id = int(row["id"])
-                node_ids[original_name] = node_id
-                previous_node_snapshot = node_snapshots.get(node_id)
-                if previous_node_snapshot is None or len(entity.description) > len(
-                    previous_node_snapshot[0].description
-                ):
-                    node_snapshots[node_id] = (entity, embedding_text, wing, entity.room or "")
-
-            snapshot_node_ids = sorted(node_snapshots)
-            await write_conn.execute(
-                """
-                    INSERT INTO memory_node_sources
-                        (node_id, memory_id, user_id, entity_type, description,
-                         embedding, wing, room, attributes_complete)
-                    SELECT snapshot.node_id, $2, $3, snapshot.entity_type,
-                           snapshot.description, snapshot.embedding, snapshot.wing,
-                           snapshot.room, TRUE
-                    FROM unnest(
-                        $1::bigint[], $4::text[], $5::text[], $6::halfvec[],
-                        $7::text[], $8::text[]
-                    ) AS snapshot(node_id, entity_type, description, embedding, wing, room)
-                    ON CONFLICT (node_id, memory_id) DO UPDATE SET
-                        entity_type = EXCLUDED.entity_type,
-                        description = EXCLUDED.description,
-                        embedding = EXCLUDED.embedding,
-                        wing = EXCLUDED.wing,
-                        room = EXCLUDED.room,
-                        attributes_complete = TRUE,
-                        created_at = now()
-                    """,
-                snapshot_node_ids,
-                source_memory_id,
-                user_id,
-                [node_snapshots[node_id][0].type for node_id in snapshot_node_ids],
-                [node_snapshots[node_id][0].description for node_id in snapshot_node_ids],
-                [node_snapshots[node_id][1] for node_id in snapshot_node_ids],
-                [node_snapshots[node_id][2] for node_id in snapshot_node_ids],
-                [node_snapshots[node_id][3] for node_id in snapshot_node_ids],
-            )
-            await write_conn.execute(
-                """
-                    WITH target_nodes AS (
-                        SELECT unnest($1::bigint[]) AS node_id
-                    ), base_attributes AS (
-                        SELECT DISTINCT ON (source.node_id)
-                               source.node_id, source.entity_type, source.description,
-                               source.embedding, source.wing, source.room
-                        FROM memory_node_sources AS source
-                        JOIN target_nodes AS target ON target.node_id = source.node_id
-                        WHERE source.user_id = $2
-                          AND source.attributes_complete IS TRUE
-                        ORDER BY source.node_id, source.created_at DESC, source.memory_id DESC
-                    ), media_attributes AS (
-                        SELECT DISTINCT ON (source.node_id)
-                               source.node_id, source.file_id, source.file_type
-                        FROM memory_node_sources AS source
-                        JOIN target_nodes AS target ON target.node_id = source.node_id
-                        WHERE source.user_id = $2
-                          AND source.attributes_complete IS TRUE
-                          AND source.file_id IS NOT NULL
-                        ORDER BY source.node_id, source.created_at DESC, source.memory_id DESC
-                    )
-                    UPDATE memory_nodes AS node
-                    SET entity_type = base.entity_type,
-                        description = base.description,
-                        embedding = base.embedding,
-                        wing = base.wing,
-                        room = base.room,
-                        file_id = media.file_id,
-                        file_type = media.file_type,
-                        updated_at = now()
-                    FROM base_attributes AS base
-                    LEFT JOIN media_attributes AS media ON media.node_id = base.node_id
-                    WHERE node.id = base.node_id
-                      AND node.user_id = $2
-                    """,
-                snapshot_node_ids,
-                user_id,
-            )
-
-            async def upsert_current_edge(relation: dict[str, Any], source_id: int, target_id: int) -> int:
-                model_relation = relation["relation"]
-                row = await write_conn.fetchrow(
-                    """
-                        INSERT INTO memory_edges
-                            (user_id, source_node, target_node, predicate,
-                             predicate_embedding, weight, is_core,
-                             source_memory_ids, valid_from)
-                        VALUES ($1, $2, $3, $4, $5::halfvec, $6, $7, $8::bigint[], now())
-                        ON CONFLICT (user_id, source_node, target_node, predicate) WHERE valid_to IS NULL
-                        DO UPDATE SET
-                            updated_at = now()
-                        RETURNING id
-                        """,
-                    user_id,
-                    source_id,
-                    target_id,
-                    relation["predicate"],
-                    relation["embedding_text"],
-                    model_relation.weight,
-                    model_relation.is_core,
-                    source_ids,
-                )
-                if not row:
-                    raise RuntimeError("graph edge upsert returned no id")
-                return int(row["id"])
-
-            affected_edge_snapshots: dict[int, dict[str, Any]] = {}
-            for relation_index, relation_spec in enumerate(relation_specs):
-                source_id = node_ids[relation_spec["source_name"]]
-                target_id = node_ids[relation_spec["target_name"]]
-                embedding_text = relation_spec["embedding_text"]
-                model_relation = relation_spec["relation"]
-                affected_id: int | None = None
-
-                conflicts = []
-                if embedding_text:
-                    conflicts = await write_conn.fetch(
-                        """
-                            SELECT id, predicate,
-                                   predicate_embedding <=> $4::halfvec AS distance
-                            FROM memory_edges
-                            WHERE user_id = $1
-                              AND source_node = $2
-                              AND target_node = $3
-                              AND valid_to IS NULL
-                              AND predicate_embedding IS NOT NULL
-                              AND predicate <> $5
-                            FOR UPDATE
-                            """,
-                        user_id,
-                        source_id,
-                        target_id,
-                        embedding_text,
-                        relation_spec["predicate"],
-                    )
-
-                for old_edge in conflicts:
-                    edge_id = int(old_edge["id"])
-                    old_predicate = str(old_edge["predicate"])
-                    verdict = resolutions.get(
-                        (relation_index, edge_id, old_predicate),
-                        "parallel",
-                    )
-                    if verdict == "update":
-                        await write_conn.execute(
-                            """
-                                UPDATE memory_edges
-                                SET valid_to = now()
-                                WHERE id = $1
-                                  AND user_id = $2
-                                  AND valid_to IS NULL
-                                """,
-                            edge_id,
-                            user_id,
-                        )
-
-                if affected_id is None:
-                    affected_id = await upsert_current_edge(relation_spec, source_id, target_id)
-
-                affected_edge_ids.add(affected_id)
-                previous_edge_snapshot = affected_edge_snapshots.get(affected_id)
-                if previous_edge_snapshot is None:
-                    affected_edge_snapshots[affected_id] = relation_spec
-                else:
-                    previous_relation = previous_edge_snapshot["relation"]
-                    previous_relation.weight = max(previous_relation.weight, model_relation.weight)
-                    previous_relation.is_core = previous_relation.is_core or model_relation.is_core
-                edges_upserted += 1
-
-            if not affected_edge_ids:
+            mutation_result = await write_graph(write_conn, user_id, mutation_plan)
+            if not mutation_result.affected_edge_ids:
                 raise RuntimeError("graph mutation produced no provenance-backed edges")
-            await write_conn.execute(
-                """
-                    INSERT INTO memory_edge_sources
-                        (edge_id, memory_id, user_id, predicate, predicate_embedding,
-                         weight, is_core, attributes_complete)
-                    SELECT snapshot.edge_id, $2, $3, snapshot.predicate,
-                           snapshot.predicate_embedding, snapshot.weight,
-                           snapshot.is_core, TRUE
-                    FROM unnest(
-                        $1::bigint[], $4::text[], $5::halfvec[],
-                        $6::double precision[], $7::boolean[]
-                    ) AS snapshot(edge_id, predicate, predicate_embedding, weight, is_core)
-                    ON CONFLICT (edge_id, memory_id) DO UPDATE SET
-                        predicate = EXCLUDED.predicate,
-                        predicate_embedding = EXCLUDED.predicate_embedding,
-                        weight = EXCLUDED.weight,
-                        is_core = EXCLUDED.is_core,
-                        attributes_complete = TRUE,
-                        created_at = now()
-                    """,
-                sorted(affected_edge_snapshots),
-                source_memory_id,
-                user_id,
-                [affected_edge_snapshots[edge_id]["predicate"] for edge_id in sorted(affected_edge_snapshots)],
-                [affected_edge_snapshots[edge_id]["embedding_text"] for edge_id in sorted(affected_edge_snapshots)],
-                [
-                    affected_edge_snapshots[edge_id]["relation"].weight
-                    for edge_id in sorted(affected_edge_snapshots)
-                ],
-                [
-                    affected_edge_snapshots[edge_id]["relation"].is_core
-                    for edge_id in sorted(affected_edge_snapshots)
-                ],
-            )
-            await write_conn.execute(
-                """
-                    WITH target_edges AS (
-                        SELECT unnest($1::bigint[]) AS edge_id
-                    ), aggregate_attributes AS (
-                        SELECT source.edge_id, MAX(source.weight) AS weight,
-                               BOOL_OR(source.is_core) AS is_core,
-                               ARRAY_AGG(source.memory_id ORDER BY source.memory_id) AS memory_ids
-                        FROM memory_edge_sources AS source
-                        JOIN target_edges AS target ON target.edge_id = source.edge_id
-                        WHERE source.user_id = $2
-                          AND source.attributes_complete IS TRUE
-                        GROUP BY source.edge_id
-                    ), winning_predicate AS (
-                        SELECT DISTINCT ON (source.edge_id)
-                               source.edge_id, source.predicate, source.predicate_embedding
-                        FROM memory_edge_sources AS source
-                        JOIN target_edges AS target ON target.edge_id = source.edge_id
-                        WHERE source.user_id = $2
-                          AND source.attributes_complete IS TRUE
-                        ORDER BY source.edge_id, source.created_at DESC, source.memory_id DESC
-                    )
-                    UPDATE memory_edges AS edge
-                    SET predicate = winner.predicate,
-                        predicate_embedding = winner.predicate_embedding,
-                        weight = aggregate.weight,
-                        is_core = aggregate.is_core,
-                        source_memory_ids = aggregate.memory_ids,
-                        updated_at = now()
-                    FROM aggregate_attributes AS aggregate
-                    JOIN winning_predicate AS winner ON winner.edge_id = aggregate.edge_id
-                    WHERE edge.id = aggregate.edge_id
-                      AND edge.user_id = $2
-                    """,
-                sorted(affected_edge_snapshots),
-                user_id,
-            )
+
+        edges_upserted = mutation_result.edges_written
 
         logging.info(
             "Real-time graph upsert for user %d: %d relation endpoints, %d edges",
