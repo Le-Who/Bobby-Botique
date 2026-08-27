@@ -3,6 +3,46 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-08-27 - Codebase Hardening, LTM Writer, and Public Help
+
+### 🔒 CI, deployment, and dependency safety
+
+- Made CI run for all pull requests and supported push branches, split unit/E2E from real PostgreSQL integration tests, and added an ephemeral `pgvector/pgvector:pg17` service with migrations and fail-closed `TEST_DATABASE_URL` validation.
+- Made production deployment consume only a successful completed CI run on `vps_testai`, check out and deploy the exact verified `workflow_run.head_sha`, serialize superseded deployments, retry transient image builds, and fail when container or Telegram health checks fail.
+- Upgraded the vulnerable `cryptography` dependency and verified the production requirements with `pip-audit`.
+- Normalized the complete Python tree with Ruff and added `python -m ruff format --check .` to the pinned CI lint job. A contract test prevents removal of the format gate.
+
+### 🧠 Transactional long-term memory writes
+
+- Added `app/repos/memory_graph_writer.py` as the shared, deterministic node/edge/provenance writer for both real-time extraction and batch consolidation.
+- Kept transaction, RLS context, advisory lock, and consent-epoch ownership in the caller. Embeddings and provider output are prepared before the write transaction; the writer never acquires the global pool or performs network calls.
+- Required durable source-memory IDs for every graph candidate and made node resolution, temporal conflict closure, edge merge/upsert, normalized `memory_edge_sources` writes, and compatibility snapshot refresh succeed or roll back together.
+- Added regression coverage for exact and semantic node reuse, duplicate merge semantics, monotonic core/weight updates, provenance upserts, tenant scoping, and transaction rollback.
+
+### 💬 Public commands and user-facing guidance
+
+- Added `app/bot_commands.py` as the single source of truth for the public command identities, RU/EN Telegram menu descriptions, categorized `/help` overview, and topic navigation. Administrative and developer commands remain hidden.
+- Corrected `/subscribe` to enable daily intelligence briefings; it no longer opens horoscope settings. `/unsubscribe` continues to disable the matching briefing subscription.
+- Replaced the stale `/tarot_settings` placeholder with working inline subscribe/unsubscribe callbacks for the daily Tarot card.
+- Removed server variable names, credential details, raw upstream error bodies, HTTP codes, and GraphRAG jargon from public error/data messages while preserving technical diagnostics in logs.
+- Updated README command documentation, memory transaction/provenance guidance, architecture diagrams, verification commands, and ADR 0002.
+
+### 🛡️ Runtime reliability and maintenance
+
+- Bounded shutdown cleanup for tracked background tasks and ensured cancelled tasks are awaited without allowing one stuck task to block process exit indefinitely.
+- Made Tavily force-refresh replacement atomic and removed the unsafe standalone database-clearing script.
+- Added explicit chat-state persistence markers and resolved the remaining production Mypy errors.
+
+### ✅ Verification commands
+
+- `python -m pytest tests/ --ignore=tests/integration -m "not integration" --override-ini="addopts="`
+- `python -m pytest tests/ -m "integration" -n 0 --override-ini="addopts="` with an isolated `TEST_DATABASE_URL`
+- `python -m ruff check .`
+- `python -m ruff format --check .`
+- `python -m mypy app bot.py`
+- `pip-audit -r requirements.txt --progress-spinner off`
+- `python scripts/check_encoding.py`
+
 ## [Unreleased] - 2026-08-25 - Long-Term Memory Safety Hardening
 
 ### 🧠 Consent, provenance, and retrieval

@@ -1,6 +1,7 @@
 """Contracts for the public command catalog, help, and Telegram menu."""
 
 import re
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -86,6 +87,14 @@ def test_every_public_catalog_command_is_registered() -> None:
 
     assert catalog_names <= registered.keys()
     assert catalog_names.isdisjoint(ADMIN_AND_HIDDEN_COMMANDS)
+
+
+def test_readme_documents_every_public_catalog_command() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    missing = [entry.command for entry in PUBLIC_COMMANDS if f"/{entry.command}" not in readme]
+
+    assert missing == []
 
 
 def test_brief_subscription_commands_are_registered_as_a_matching_pair() -> None:

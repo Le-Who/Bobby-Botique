@@ -1,6 +1,6 @@
 # Architecture Overview — GemAI Bot v2
 
-> **Last updated**: 2026-08-14
+> **Last updated**: 2026-08-27
 
 ## Project Map
 
@@ -9,9 +9,10 @@ gemaibotv2/
 ├── bot.py                        ← Entry point: Telegram PTB + Quart lifecycle (908 LOC)
 ├── app/
 │   ├── config.py                 ← Pydantic Settings, env loading, hot-reload (36KB)
+│   ├── bot_commands.py           ← Canonical public command/help/menu catalog
 │   │
 │   ├── ── AI Layer ──────────────────────────────────────────────
-│   ├── providers/                ← Provider abstraction — 13 modules
+│   ├── providers/                ← Provider abstraction — 15 implementation modules
 │   │   ├── __init__.py          ←   Public API re-exports
 │   │   ├── base.py              ←   BaseProvider ABC (12KB)
 │   │   ├── gemini.py            ←   Google Gemini (native genai SDK, 34KB)
@@ -59,7 +60,7 @@ gemaibotv2/
 │   │   └── parsers.py           ←   PDF/DOCX extraction (1KB)
 │   │
     ├── ── Handlers (Telegram) ───────────────────────────────────
-    ├── handlers/                 ← 48 handler modules, organized by domain:
+    ├── handlers/                 ← 49 handler modules, organized by domain:
     │   ├── __init__.py
     │   ├── messages.py          ←   Main message router + debounce integration (37KB)
     │   ├── commands.py          ←   /start, /help, /settings, /model, etc. (32KB)
@@ -117,7 +118,7 @@ gemaibotv2/
 │   │   ├── migrations.py        ←   Sequential migration runner (schema_migrations table, 9KB)
 │   │   ├── rls.py               ←   Row-Level Security policies (8KB)
 │   │   └── seed.py              ←   Seed data (admin user, API keys, indexes, 2KB)
-    ├── repos/                    ← Repository pattern — 27 modules, per-domain SQL
+    ├── repos/                    ← Repository pattern — per-domain SQL and persistence boundaries
     │   ├── __init__.py          ←   Re-exports
     │   ├── users.py             ←   User CRUD (7KB)
     │   ├── keys.py              ←   API key management, rotation, health scoring (24KB)
@@ -125,8 +126,10 @@ gemaibotv2/
     │   ├── conversations.py     ←   Named conversation storage (9KB)
     │   ├── branches.py          ←   Conversation branching (snapshot/restore, 3KB)
     │   ├── memory.py            ←   LTM: pgvector storage, RRF search, graph traversal (44KB)
+    │   ├── memory_consent.py    ←   Durable consent epochs and renewable private-data leases
     │   ├── memory_consolidation.py ← GraphRAG consolidation (entity/relation extraction, 33KB)
     │   ├── memory_extraction.py ←   Real-time streaming extraction (32KB)
+    │   ├── memory_graph_writer.py ← Shared transaction-scoped node/edge/provenance writer
     │   ├── memory_autosave.py   ←   Background memory auto-save (5KB)
     │   ├── memory_config.py     ←   Memory system configuration (4KB)
     │   ├── memory_tools.py      ←   Memory tool declarations for agentic RAG (3KB)
@@ -252,10 +255,10 @@ gemaibotv2/
 │       ├── login.html           ←   Dashboard login (5KB)
 │       └── status.html          ←   Status page (4KB)
 │
-├── scripts/migrations/           ← 57 SQL migration files (000–054)
-├── tests/                        ← 208 test files (pytest + pytest-xdist)
+├── scripts/migrations/           ← 73 numbered SQL migration files (through 069)
+├── tests/                        ← 246 pytest test files
 ├── docs/                         ← This file + extended documentation
-├── .github/workflows/ci.yml     ← CI: lint (Ruff) → type-check (Mypy) → unit → integration
+├── .github/workflows/ci.yml     ← CI: Ruff/Mypy/audit gates; unit/E2E → pgvector integration
 ├── Dockerfile                    ← Production container (Python 3.14-slim, non-root)
 ├── docker-compose.yml            ← Local compose (resource limits, health checks, legacy)
 ├── .github/workflows/deploy.yml  ← Primary Production 3-container Stack (Bot + API Server + Sidecar)
@@ -289,9 +292,15 @@ ProviderRouter → selects provider based on model name + key health scoring
 
 ### 2. Repository Pattern
 
-Database access is organized per domain in `repos/` (24 modules). Each module contains only SQL queries and data mapping — no business logic. Business logic lives in handlers and providers.
+Database access is organized per domain in `repos/`. Most modules contain SQL and data mapping; persistence workflows that must enforce cross-table invariants also live here. In particular, `memory_graph_writer.py` is a deliberate transaction-scoped persistence boundary shared by extraction and consolidation.
 
-### 3. Error Classification (O(1))
+### 3. Public Command and Help Surface
+
+`app/bot_commands.py` owns stable public command identities, categories, RU/EN description keys, Telegram menu generation, and categorized help rendering. Handler modules still own behavior and registration. Contract tests compare the catalog with registered handlers, enforce Telegram limits, and ensure administrative/developer commands do not leak into the public menu.
+
+Startup installs a Russian default command menu and an English language override. A transient Telegram failure is logged and does not abort application startup.
+
+### 4. Error Classification (O(1))
 
 ```python
 ErrorCode(Enum)         →  17 exception types + 8 HTTP status codes
@@ -300,7 +309,7 @@ classify_error(text)     →  O(1) lookup from tagged message
 handle_api_errors()      →  async context manager for unified error UI
 ```
 
-### 4. State Management (Dual-Store)
+### 5. State Management (Dual-Store)
 
 ```
 In-memory LRU Cache (configurable via LRU_STATE_CACHE_SIZE)
@@ -310,7 +319,7 @@ PostgreSQL (user_states table)
 
 `UserState` uses `__slots__` for memory efficiency. Active task and last-bot-message registries are in-memory only.
 
-### 5. Typed Response Delivery
+### 6. Typed Response Delivery
 
 ```text
 Handler
@@ -333,7 +342,7 @@ For long responses it uses one fallback chain: Redis Reader, then Telegraph,
 then a safe Telegram split with actions attached only to the last message.
 Publication actions are prepended without replacing the domain action rows.
 
-### 6. Memory System (GraphRAG)
+### 7. Memory System (GraphRAG)
 
 ```
                    Multi-Query Expansion (Flash-Lite LLM, ~200ms)
@@ -351,9 +360,27 @@ User Query  →  _get_embedding()  →  pgvector cosine + pg_trgm RRF
 
 AAAK Tiered Compression: L0 core facts (JSON shorthand) → L1 active context (consolidated + role diary) → L2 semantic recall (graph-augmented) → L3 full history.
 
-Consolidation triggers at ~8,000 tokens OR 7 days → LLM extracts persona facts + entities + relations.
+Consolidation triggers at ~8,000 tokens OR 7 days → LLM extracts persona facts + entities + relations. Original source memories are retained and marked consolidated rather than deleted.
 
-### 7. Security Layers
+```text
+provider/embedding preparation (outside DB transaction)
+  → immutable GraphMutationPlan
+  → caller opens transaction and binds RLS user context
+  → memory_graph_writer.write_graph(conn, user_id, plan)
+      → resolve/upsert nodes
+      → merge/upsert temporal edges
+      → write normalized memory_edge_sources provenance
+      → refresh compatibility source snapshots
+  → caller marks source snapshot and commits
+```
+
+Both real-time extraction and batch consolidation use this boundary. The writer never acquires a pool connection and never calls an external provider, so graph and provenance mutations cannot commit independently from their source-memory changes.
+
+Private-memory work is guarded by globally unique `memory_epoch` generations and renewable provider leases in `memory_consent.py`. LTM disable and account erasure revoke the generation and wait for older leases; stale snapshots, missing rows, and database errors fail closed. Migration `067` supplies normalized tenant-safe provenance, while migrations `068` and `069` harden erasure and durable leases.
+
+See [ADR 0002](adr/0002-provenance-safe-memory-graph-writes.md) for the writer ownership decision and rejected alternatives.
+
+### 8. Security Layers
 
 ```
 InputSanitizer → Dedup Middleware → Debounce → RateLimiter → CircuitBreaker → ProviderRouter → API
@@ -363,8 +390,9 @@ InputSanitizer → Dedup Middleware → Debounce → RateLimiter → CircuitBrea
 - CSRF-protected dashboard with brute-force protection (60 req/min/IP)
 - API key masking in all status endpoints
 - GDPR: `/mydata` export, `/deleteme` full deletion
+- Private-memory epoch/lease revocation and RLS-bound graph writes
 
-### 8. Observability Stack
+### 9. Observability Stack
 
 ```
 request_context.py  →  contextvars-based request_id propagation
@@ -379,20 +407,23 @@ logging_config.py   →  JSON/text logging (auto-detected from LOG_FORMAT env)
 
 ```mermaid
 graph TD
-    BOT[bot.py] --> HANDLERS["handlers/ — 48 modules"]
+    BOT[bot.py] --> COMMANDS["bot_commands.py — public help/menu catalog"]
+    BOT --> HANDLERS["handlers/ — Telegram behavior"]
     BOT --> WEB["web.py + web_miniapp.py — Quart"]
     BOT --> QUEUE[queue.py — background tasks]
 
-    HANDLERS --> PROVIDERS["providers/ — 13 modules"]
+    HANDLERS --> PROVIDERS["providers/ — typed provider boundary"]
     HANDLERS --> CTX["context/ — assembler, summarizer, compression"]
     HANDLERS --> DOCS[documents/ — chunking, parsers]
-    HANDLERS --> REPOS["repos/ — 26 modules"]
+    HANDLERS --> REPOS["repos/ — persistence boundaries"]
+    HANDLERS --> DELIVERY["response_delivery/ — single Telegram finalizer"]
     HANDLERS --> MIDDLEWARE["middleware/ — debounce, dedup"]
     HANDLERS --> GAMES["games/ — Crocodile engine"]
     HANDLERS --> ESOTERIC["natal/ + tarot.py + tarot_daily.py — Esoteric Suite"]
 
     PROVIDERS --> KEYS[repos/keys.py — key rotation]
     PROVIDERS --> DB[database.py — asyncpg pool]
+    DELIVERY --> PROVIDERS
 
     CTX --> PROMPTS[prompt_registry.py]
     CTX --> I18N[i18n.py]
@@ -421,26 +452,44 @@ graph TD
 
 ## CI Pipeline
 
-```
-Push to main/TEST_gemaibotv2 ─→ Lint (Ruff check + format) ─→ Type Check (Mypy)
-                                                                    ↓
-                                                            Unit Tests (fast, mocked)
-                                                                    ↓ (main only)
-                                                         Integration Tests (PostgreSQL)
+```text
+push: vps_testai | main | TEST_gemaibotv2     pull_request: all branches
+                    │                                      │
+                    └──────────────────┬───────────────────┘
+                                       ├─ Ruff lint + format gate ─→ unit/E2E ─→ PostgreSQL/pgvector integration
+                                       ├─ Mypy (app + bot.py)
+                                       └─ pip-audit (production requirements)
+
+successful complete CI run on vps_testai
+  → deploy workflow checks out workflow_run.head_sha
+  → builds/pushes that exact image tag
+  → deploys and fails closed on container or Telegram health-check failure
 ```
 
-- Python 3.14 with `allow-prereleases: true`
-- Concurrency groups cancel superseded runs
-- Unit tests run on all pushes/PRs; integration tests only on `main` push
+- Python 3.14 with `allow-prereleases: true`.
+- Concurrency groups cancel superseded CI and deployment runs.
+- The integration job runs serially against an ephemeral `pgvector/pgvector:pg17` service after migrations.
+- Deployment starts only from a successful completed CI run for `vps_testai`; it never substitutes `latest` for the verified SHA.
 
 ## Testing
 
 | Metric | Value |
 |--------|-------|
-| Test files | 208 |
-| LOC (tests/) | ~31,500 |
+| Test files | 246 |
 | Parallelism | `pytest-xdist` (`-n auto`) |
 | Timeout | 30s per test |
 | Async mode | `auto` (`pytest-asyncio`) |
 
-Tests are organized by module, with `test_*.py` naming. Integration tests are marked with `@pytest.mark.integration` and require a live PostgreSQL connection. E2E tests reside in `tests/e2e/`.
+Tests are organized by module, with `test_*.py` naming. Integration tests are marked with `@pytest.mark.integration`, require an isolated `TEST_DATABASE_URL`, and skip locally when it is absent. E2E tests reside in `tests/e2e/`.
+
+```bash
+# Unit and E2E without a live database
+python -m pytest tests/ --ignore=tests/integration -m "not integration" --override-ini="addopts="
+
+# Real database integration, serially
+python -m pytest tests/ -m "integration" -n 0 --override-ini="addopts="
+
+python -m ruff check .
+python -m ruff format --check .
+python -m mypy app bot.py
+```

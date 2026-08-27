@@ -17,16 +17,14 @@ This is a deployed, production-oriented Telegram bot codebase rather than a demo
 
 ## Public Maintenance Signals
 
-These signals are intentionally limited to data that is visible from the public repository or generated from the current checkout.
+These signals are generated from the checkout and were refreshed on 2026-08-27. Volatile hosting metrics such as open pull requests and production traffic are deliberately not hard-coded here.
 
 | Signal | Current value |
 | --- | ---: |
-| Git commits | 1,373 |
-| Open pull requests / maintenance queue items | 127 |
-| Closed pull requests | 380 |
-| Python source files | 446 |
-| Test files | 208 |
-| Docs files under `docs/` | 11 |
+| Python modules under `app/` | 235 |
+| Pytest test files | 246 |
+| Numbered SQL migration files | 73 |
+| Docs files under `docs/` | 25 |
 
 Runtime user/adoption metrics are not published in this repository yet because they can contain private Telegram deployment data. Before citing active users, chats, request volume, or retention in a public application, export anonymized aggregate counts from the deployed metrics store and document the collection window here.
 
@@ -69,7 +67,8 @@ Additional Codex and API capacity would be used for maintainer work on this publ
 - **Document Understanding**: Extracts text from PDF/DOCX files and uses it for context-aware Q&A.
 - **Multimodal Processing Pipeline**: Voice messages transcribed via `gemini-3.1-flash-lite` (high thinking budget for ASR quality) with intent-aware routing (`INTENT:CONVERSATIONAL`, `INTENT:TRANSCRIPTION`, `INTENT:SEARCH`). Features **Smart Voice Auto-Routing** (bypasses manual confirmation UI for low-complexity transcripts) with regex-based fluff tolerance, **Voice-to-Search Auto-Routing** (when `INTENT:SEARCH` is detected, directly invokes **WeatherAPI.com** for weather (1 request, localized RU conditions + "feels like"), **ExchangeRate-API** for fiat currency (RUB/KZT/UAH support), and **CoinGecko** for crypto (BTC/ETH/SOL/TON with Russian aliases) — zero LLM cost — then falls back to **QnA Grounded Search** via `gemini-2.5-flash-lite` with native Google Search Grounding for general factual queries; for users in deep-dive or search-enabled mode, routes to the full **Agentic Research Pipeline** instead), **QnA History Persistence** (QnA voice search results are saved to `chat_state.history` and persisted via `update_user_chat`, matching the deep research path — previously these turns were silently dropped), and **Show & Tell** (voice-replies to photos dynamically inject the image into the LLM context). The **Voice Engine 5.0** pipeline powers outbound voice replies using **ElevenLabs TTS** as the primary provider with atomic fallback to Gemini REST TTS (`gemini-2.5-flash-preview-tts`). Audio is transcoded into Telegram-compliant PCM→OGG Opus via `ffmpeg` at **24k bitrate** (optimized for speech). The Gemini TTS engine uses **Parallel Batch Chunking** (800 max bytes, up to 2 chunks concurrently via `asyncio.gather`) to prevent API timeouts while conserving the 15 RPD (Requests Per Day) budget per key, and features a **Future-Based Pre-Generation** architecture: TTS generation starts immediately at enqueue time across all queued messages, while per-user delivery order is preserved by a FIFO worker that simply awaits pre-computed audio futures. If the pre-generation future fails (including `asyncio.CancelledError`, which is a `BaseException` in Python 3.14), the worker gracefully falls back to synchronous retry. Combined with **Asynchronous Race Requests** (2 keys per chunk, first-to-finish wins), this eliminates serialisation bottlenecks when multiple voice replies are pending. Concurrency is capped at 3 simultaneous TTS jobs (`GEMINI_TTS_CONCURRENCY=3`) to ensure worst-case burst (3 jobs × 2 chunks × 2 key-racing = 12 RPD) consumes at most 1 key from the 10–12 key pool. A highly optimized Steerable Voice prompt enforces **Strict Verbatim Constraints** and features **Dynamic Personalities** tied directly to the MiniApp's **Independent TTS Temperature** slider (shifting between strict news-anchor, conversational, or highly engaging storytelling). Finished with a low-threshold PCM silence trimming gate (400 amplitude). Featuring **Zero-Latency Voice Intent Detection** (`[VOICE]` tag stripping). Users can hit the **Re-transcribe (Flash)** button for stubborn transcriptions. Media types stored as long-term memories via `submit_retryable()` tasks.
 - **Typed Response Delivery & Mid-Stream Recovery**: Provider streams emit typed text, completion, failure, deferred, grounding, usage, and route events. A single Telegram delivery boundary owns progressive edits and the final response keyboard, so Reader/Telegraph links cannot be erased by later handler edits. Mid-stream failures preserve partial content and show `[▶️ Продолжить]` / `[🔄 Заново]`; delayed feedback still appears after 5 seconds with `[❌ Отменить]`, and TTFB stall tracking remains active. Long responses use Redis Reader first, then an optional Telegraph mirror when `TELEGRAPH_PUBLICATION_ENABLED=true`, and finally safe Telegram splitting. The renderer strips only explicit leaked `[tool_code] ... google_search.search(...)` traces while preserving legitimate code and prose.
-- **Internationalization (i18n)**: Content-based language detection (Cyrillic density heuristic) with full bilingual UI (Russian/English). All user-facing strings externalized to `app/i18n.py` registry with `t(key, lang, **kwargs)` lookup. Language detected from message content, not Telegram settings.
+- **Internationalization (i18n)**: Shared UI and help text uses the bilingual `app/i18n.py` registry with `t(key, lang, **kwargs)` lookup. Message replies may use content-based language detection, while command help uses Telegram's interface-language hint with a Russian fallback.
+- **Single Public Command Catalog**: `app/bot_commands.py` is the source of truth for the public Telegram command menu and categorized `/help` journeys. The catalog keeps Russian and English descriptions synchronized, excludes administrative/developer commands, validates duplicate command identities at import time, and installs Telegram menu entries during startup without making a transient Bot API failure fatal.
 - **Python 3.14 Deprecation Cleanup**: Runtime callback awaitability checks now use `inspect.iscoroutinefunction()` in the remaining helper paths instead of deprecated `asyncio.iscoroutinefunction()`, reducing deprecation noise and keeping the code aligned with Python 3.14+ guidance.
 - **Persistent GraphRAG Memory**: Semantic recall via `pgvector` (`halfvec(768)`) with **Adaptive Thresholding RRF** retrieval (cosine similarity + `pg_trgm`, over-fetch ×2 then gap-filter ≤15pp from top score). **LLM-as-Judge Fallback**: when primary search (floor ~0.48) returns nothing, a second pass at floor 0.42 feeds low-confidence candidates to Flash-Lite, which judges each for genuine relevance — a "recollection path" inspired by RF-Mem (2025) dual-process memory. **2-Hop Knowledge Graph Traversal** (SQL CTE `hop1 ∪ hop2`) surfaces indirect relationships, e.g. FastAPI when asking about Python. **Multi-Query Expansion** rewrites vague queries (Flash-Lite LLM, ~200ms) into keyword-dense search phrases before embedding. **Semantic Edge Deduplication** (cosine < 0.25) merges near-identical predicates at consolidation time. **Core Persona Protection**: edges marked `is_core=TRUE` (name, profession, allergies) bypass time-decay and always rank first in graph context. Features **Semantic Entity Resolution** (`< 0.12` distance merging) to prevent graph fragmentation, and **Temporal Edge Upserts** (`ON CONFLICT` updates). Voice and media memories are **Enriched with Modality/Tone Tags** (e.g., `[VOICE, Tone: X]`) via dedicated system prompts. System clusters relational knowledge into dual tables (`memory_nodes`, `memory_edges`) for entity graphing. Memories injected into `system_instruction` as structured `<memory_palace>` XML tags (Context Engineering). Only user intent is embedded for maximum vector density (`source_type='user_intent'`). Dynamic consolidation triggers at ~8,000 tokens or 7 days, extracting atomic persona facts and relationships via LLM. User-manageable via `/memory` (paginated inline UI with per-item delete) and toggleable via `/settings`.
   - **MemPalace Wing/Room Taxonomy**: Every memory and graph entity is classified into a 5-wing hierarchy (`identity`, `projects`, `social`, `knowledge`, `temporal`) with 4—5 rooms each and 6 hall types (`fact`, `opinion`, `event`, `plan`, `preference`, `habit`). Classification via LLM (admin-configurable model via `TAXONOMY_MODEL`). Partial HNSW indexes on high-traffic wings for sub-10ms targeted retrieval.
@@ -208,6 +207,7 @@ graph TD;
 | `app/handlers/`       | Telegram command and message processors (`ai_chat`, `ai_search`, `commands`, `inline`). |
 | `app/repos/`          | Database repository pattern implementations (queries for chats, memory, keys). |
 | `app/providers/`      | AI provider abstraction layer (base, Gemini, Opencode, OpenRouter, FreeTheAI, Pollinations, Imagen, TTS, router). |
+| `app/response_delivery/` | Typed provider-event coordination and the single owner of Telegram response rendering/finalization. |
 | `app/core/`           | Agentic research engine — multi-step query decomposition and tool use.         |
 | `app/context/`        | Context assembly subsystem (assembler, summarizer, compression, token budget). |
 | `app/documents/`      | Document processing: chunking strategies, parsers, document repository.        |
@@ -217,6 +217,7 @@ graph TD;
 | `app/utils/`          | Shared utilities (formatting, keyboards, background tasks, image utils, reader SSR, etc.). |
 | `app/templates/`      | HTML Jinja2 templates for admin dashboard and Telegram Mini App.               |
 | `app/games/`          | Crocodile (Charades) game engine: state machine, semantic judge, word bank, judgement cache. |
+| `app/bot_commands.py` | Canonical public command catalog used by `/help` and Telegram's slash-command menu. |
 | `app/bot_instance.py` | PTB Bot singleton — allows non-PTB code (WebSocket handlers) to call Bot API methods. |
 | `app/web_miniapp.py`  | Quart Blueprint for Telegram Mini App (initData auth, memory/settings/game API). |
 | `app/deferred_response.py` | Redis-backed deferred AI generation worker for background retry after total outage. |
@@ -537,9 +538,9 @@ docker-compose -f docker-compose.yml up -d
 
 **Production VPS (3-container stack via GitHub Actions CI/CD):**
 
-The canonical deployment is automated by `.github/workflows/deploy.yml` (triggers on push to `vps_testai` branch). It builds and pushes a Docker image to GHCR, then SSH-deploys 3 containers:
+The canonical deployment is automated by `.github/workflows/deploy.yml`. It starts only after a successful completed `CI` run for `vps_testai`, checks out `workflow_run.head_sha`, builds that exact SHA-tagged image in GHCR, and then SSH-deploys 3 containers:
 
-1. **`tg-api`** — Local Telegram Bot API Server (`aiogram/telegram-bot-api:latest`). Requires `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from [my.telegram.org](https://my.telegram.org). On first deploy, the workflow runs `bot.log_out()` against the Telegram cloud to release the token for local API use (one-time, idempotent via `/opt/tg-local-api-migrated` flag file).
+1. **`tg-api`** — Local Telegram Bot API Server (`aiogram/telegram-bot-api:latest`). Requires `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from [my.telegram.org](https://my.telegram.org). Before starting or reusing the local API server, each deployment runs `scripts/release_cloud_bot_api.py`; the script safely releases any cloud Bot API session without relying on a stale host marker.
 2. **`tg-bot`** — The Python bot container. Connected to `tg-api` via `TELEGRAM_LOCAL_SERVER_URL=http://tg-api:8081/bot`. Mounts the shared volume `tg-api-data` at `/var/lib/telegram-bot-api` for zero-copy file access.
 3. **`tg-media-cleanup`** — Alpine cron sidecar. Runs `chmod -R g+rX` every 60s (fixes UID 101 permission conflicts) and `find -mtime +7 -delete` every 24h (prevents disk exhaustion from cached media).
 
@@ -551,7 +552,12 @@ If `VERTEX_LIVE_SERVICE_ACCOUNT_JSON` is configured in GitHub Actions secrets, t
 > ```bash
 > docker network create tg-net 2>/dev/null || true
 > docker volume create tg-api-data 2>/dev/null || true
-> 
+>
+> # 0. Release any official cloud Bot API session
+> docker run --rm -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+>   ghcr.io/<your-repo>:<verified-commit-sha> \
+>   python /app/scripts/release_cloud_bot_api.py
+>
 > # 1. Local API Server
 > docker run -d --name tg-api --network tg-net \
 >   -e TELEGRAM_API_ID="$TELEGRAM_API_ID" \
@@ -566,7 +572,7 @@ If `VERTEX_LIVE_SERVICE_ACCOUNT_JSON` is configured in GitHub Actions secrets, t
 >   -v tg-api-data:/var/lib/telegram-bot-api \
 >   -e TELEGRAM_LOCAL_SERVER_URL="http://tg-api:8081/bot" \
 >   --env-file .env \
->   ghcr.io/<your-repo>:latest
+>   ghcr.io/<your-repo>:<verified-commit-sha>
 > 
 > # 3. Media Cleanup Cron
 > docker run -d --name tg-media-cleanup --network tg-net \
@@ -636,7 +642,9 @@ Persistent semantic recall stored in the `long_term_memory` table (`pgvector` `h
 </long_term_memory>
 ```
 
-**Consolidation:** When raw memories exceed ~8,000 tokens OR 7 days since last consolidation, `gemini-3.1-flash-lite` extracts 5—8 atomic persona facts. Raw memories are deleted and replaced with consolidated facts (`source_type='consolidated'`) in a single transaction. Consolidation is gated by a debounce (`should_check_consolidation()`) — checked only every 20th message or every 15 minutes.
+**Consolidation:** When raw memories exceed ~8,000 tokens OR 7 days since last consolidation, `gemini-3.1-flash-lite` extracts atomic persona facts and graph candidates. Source memories remain durable and are marked with `consolidated_at`; new consolidated facts, graph mutations, normalized provenance, and source markers commit together. Consolidation is gated by `should_check_consolidation()` — checked only every 20th message or every 15 minutes.
+
+**Consent and revocation:** Private-memory work carries a globally unique `memory_epoch`. Slow provider calls use renewable database leases from `app/repos/memory_consent.py`; disabling LTM or erasing an account invalidates the epoch and waits for older leases. Missing state, database errors, and stale snapshots fail closed.
 
 ### Knowledge Graph Architecture
 
@@ -655,65 +663,44 @@ Relational knowledge is stored as a directed graph in dual tables:
 
 **2-Hop Graph Traversal:** After finding the top-K semantically similar entity nodes, a SQL CTE (`hop1 UNION ALL hop2`) follows outgoing edges from 1-hop neighbours to capture indirect relationships (e.g., asking about "Python" surfaces "FastAPI" via a 2-hop chain). Hop-2 results are labelled `(indirect)` in context.
 
-**Edge Provenance (HippoRAG 2 Dual-Node):** Each `memory_edge` carries a `source_memory_ids BIGINT[]` array linking it back to the original `long_term_memory` rows from which it was extracted. This enables the retriever to surface the full unstructured passage alongside a relevant graph triple, reducing LLM hallucination around short predicates. (Schema ready via migration `027`; retrieval integration is on the Phase 2 roadmap.)
+**Normalized provenance:** `memory_edge_sources` links every derived edge to durable `long_term_memory` rows with tenant-safe composite foreign keys and RLS. The legacy `source_memory_ids` array is maintained as a derived compatibility snapshot, while retrieval and cleanup use live normalized provenance.
+
+**Shared write boundary:** Real-time extraction and batch consolidation prepare embeddings and mutation plans before opening a transaction, then both call `app.repos.memory_graph_writer.write_graph()` with the caller-owned, RLS-bound connection. The writer never acquires the global pool or calls external services; node resolution, exact/semantic edge merging, conflict closure, provenance upserts, and denormalized snapshot refresh therefore succeed or roll back as one unit.
 
 **Scope:** Memory operates globally — all standard chat messages trigger store/recall when `ltm_enabled=True`. Agentic research (`??`) does not store memories but can recall from them.
 
 **User Control:** `/memory` shows paginated viewer with per-item delete. `/clearmemory` wipes all. `/settings` toggles `ltm_enabled`. `/deleteme CONFIRM` deletes all data including memories (GDPR Art. 17).
 
 **Operational Notes:**
-- To manually prune: `DELETE FROM long_term_memory WHERE created_at < now() - interval '180 days'`
-- The GIN index `idx_ltm_content_trgm` supports the `%` operator for keyword matching; rebuild with `REINDEX INDEX idx_ltm_content_trgm` if needed
-- Monitor memory count per user via `get_memory_stats(user_id)` or the admin dashboard
+- Use the scheduled retention cleanup and repository APIs instead of ad-hoc deletes so provenance, graph edges, and consent rules stay consistent.
+- The GIN index `idx_ltm_content_trgm` supports the `%` operator for keyword matching; rebuild with `REINDEX INDEX idx_ltm_content_trgm` if needed.
+- Monitor memory count per user via `get_memory_stats(user_id)` or the admin dashboard.
 
 ## Scripts
 
-| Command                    | Purpose                                  |
-| -------------------------- | ---------------------------------------- |
-| `ruff check app/`          | Runs Pyflakes / Style / Bugbear linting. |
-| `ruff format --check app/` | Verifies code formatting.                |
-| `mypy app/`                | Static type checking for Python types.   |
-
-## Testing
-
-The application features a heavily engineered test suite (**2,400+ unit and integration tests, 100% stable CI-ready**) with **parallel execution** via `pytest-xdist`.
-
-- **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections via `@pytest.mark.integration`), E2E tests.
-- **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-xdist`, `pytest-cov`.
-- **Prerequisites:** Integration tests require `TEST_DATABASE_URL` (or `DATABASE_URL` in test environments) to a clean Postgres instance.
-- **Default behavior:** Running `pytest` automatically uses parallel workers (`-n auto`) via `pytest.ini` defaults and runs **all** tests (unit + integration).
-
-| Test Type            | Command                               | Scope                                |
-| -------------------- | ------------------------------------- | ------------------------------------ |
-| Unit (default, fast) | `pytest`                              | Pure logic, LLM mock chains, prompts |
-| Integration (slow)   | `pytest -m integration`               | Raw PostgreSQL operations, DB states |
-| All tests            | `pytest -m ""`                        | Full suite (unit + integration)      |
-| Coverage             | `pytest --cov=app --cov-report=term-missing` | Application-wide execution coverage  |
+| Command | Purpose |
+| --- | --- |
+| `python -m ruff check .` | Run the repository-wide lint rules. |
+| `python -m ruff format --check .` | Enforce the same formatting gate used by CI. |
+| `python -m mypy app bot.py` | Type-check the production Python surface. |
+| `python scripts/check_encoding.py` | Detect UTF-8 corruption in protected documentation. |
+| `pip-audit -r requirements.txt --progress-spinner off` | Audit production dependencies. |
 
 ## API / Events / Contracts
 
 **Telegram Commands:**
 
-- **User Commands:**
-  - `/start`, `/help` — Initial onboarding & main menus.
-  - `/newchat` — Reset context and start a fresh conversation.
-  - `/model` — Select the active AI model.
-  - `/thinking` — Configure reasoning depth (Auto/Low/Medium/High).
-  - `/res` — Toggle Deep Research mode (Tavily-powered).
-  - `/settings` — Quick access menu for models, search, and memory toggles.
-  - `/stats` — Personal usage metrics, streaks, and API usage stats.
-  - `/documents` — Manage and query uploaded PDF/DOCX files.
-  - `/roles` — Switch between AI personas/roles. Custom roles support prompt editing (manual replacement or AI-enhanced rewrite with preview and manual tweaking).
-  - `/setprompt` — Set a custom system instruction for the current chat.
-  - `/save`, `/conversations`, `/switch`, `/rename`, `/delete` — Advanced conversation management (persistence).
-  - `/export` — Export the current chat history.
-  - `/memory` — Paginated viewer of long-term memories with per-item inline delete.
-  - `/clearmemory` — Wipe all long-term vector-indexed memories.
-  - `/remind` — Set timed reminders with bilingual time parsing (EN/RU). Supports text, QnA, and agentic AI task delivery.
-  - `/draw`, `/img`, `/image`, `/generate` — Imagen 4 text-to-image generation. Interactive Canvas with aspect ratio and model controls after each image.
-  - `/games` — Opens the external CC-GH game hub Mini App. Private chats use a native `web_app` button; groups use the direct `https://t.me/b0b_bot/games` link.
-  - `/subscribe`, `/unsubscribe` — Manage hourly intelligence brief subscriptions (LTM-topic-aware web research summaries).
-  - `/mydata`, `/deleteme` — GDPR compliant data export and account deletion.
+- **Public command catalog** (the same catalog powers Telegram's menu and `/help`):
+  - **Start and chat:** `/start`, `/help`, `/newchat`.
+  - **Personalization:** `/model`, `/roles`, `/setprompt`, `/thinking`, `/settings`.
+  - **Search and briefings:** `/res` toggles web search; `/subscribe` and `/unsubscribe` manage the daily intelligence briefing checked by the hourly scheduler.
+  - **Documents, images, and voice:** `/documents`, `/draw`, `/live`. Image-generation aliases `/img`, `/image`, and `/generate` remain accepted but are not duplicated in the public menu.
+  - **Conversation history:** `/save`, `/conversations`, `/switch`, `/rename`, `/delete`, `/export`, `/stats`.
+  - **Memory and privacy:** `/memory`, `/clearmemory`, `/mydata`, `/deleteme`. Private-data commands require a direct chat; irreversible deletion requires explicit confirmation.
+  - **Games and reminders:** `/games`, `/dailycroc`, `/daily2048`, `/trivia`, `/remind`.
+  - **Tarot and astrology:** `/tarot`, `/natal`, `/horoscope_settings`, `/horoscope_stop`.
+
+Administrative and developer commands are deliberately excluded from `app/bot_commands.py` and Telegram's public slash-command menu.
 
 - **Admin Commands (Requires `ADMIN_ID`):**
   - `/admin` — Central administration hub.
@@ -765,12 +752,10 @@ The application features a heavily engineered test suite (**2,400+ unit and inte
 - **`decryption_error` traces**: Usually caused by attempting to load the database on a new host without providing the exact prior base64 `ADMIN_SECRET`.
 - **Search features hanging**: Check `TAVILY_API_KEYS` exhaustively or verify the `circuit_breaker` state at `/api/circuit-breakers`.
 
-## Known Documentation Gaps
+## Operational Documentation Caveats
 
 - **Logging Variable Chain**: Legacy compose config sets `LOG_JSON=true`, but runtime uses `LOG_FORMAT` environment variable detected in `app/utils/logging_config.py`. The variable `STRUCTURED_LOGGING` referenced in earlier docs is not present in the `Settings` model — `LOG_FORMAT` is the actual control variable. However, `bot.py:main()` now checks `STRUCTURED_LOGGING` env var directly (alongside `LOG_FORMAT`) for backwards compatibility.
-- **OpenRouter Multimodal Capabilities**: OpenRouter is explicitly disabled for multimodal interactions (images); this architectural decision is under-documented in internal application documentation.
 - **Healthcheck Start Period**: `Dockerfile` sets `--start-period=40s` while `docker-compose.yml` overrides with `start_period: 120s`. The compose value takes precedence in production.
-- **CI pytest.ini Comment**: CI workflow (line 74) comments "runs with -m 'not integration' due to pytest.ini" but `pytest.ini` does not set `-m "not integration"` in `addopts`. All tests (unit + integration) run by default; integration tests simply pass without a database.
 - **docker-compose.yml is legacy**: The compose file describes a single-container deployment from the Northflank era. The canonical production deployment is the 3-container stack defined in `.github/workflows/deploy.yml`. The compose file is retained for backwards compatibility but does not include the Local Bot API Server or media cleanup sidecar.
 
 ## Architecture Decisions
@@ -784,10 +769,13 @@ Key implementation decisions that frequently need re-discovery:
 Telegram messages carry invisible `ErrorCode` tags via zero-width space characters (`\u200b` + enum value). This enables O(1) error classification from user-visible messages without fragile text/emoji parsing. See `tag_error()` and `classify_from_message()` in `app/errors.py`.
 
 ### Response Delivery and Long Read
-`TelegramResponseDelivery` is the only owner of final AI response text and keyboard composition. The renderer checks Telegram's ~4000-character limit after Markdown-to-HTML formatting and sanitization. Oversized responses use Redis Reader first, optional Telegraph publication second, and a safe Telegram split as the final fallback. Publication actions are prepended to the normal or recovery action rows, and split messages attach actions only to the last message.
+`TelegramResponseDelivery` is the only owner of final AI response text and keyboard composition. The renderer checks Telegram's ~4000-character limit after Markdown-to-HTML formatting and sanitization. Oversized responses use Redis Reader first, optional Telegraph publication second, and a safe Telegram split as the final fallback. Publication actions are prepended to the normal or recovery action rows, and split messages attach actions only to the last message. See [ADR 0001](docs/adr/0001-single-owner-ai-response-delivery.md).
 
 ### Memory Consolidation Triggers
 Consolidation fires when raw memories exceed ~8,000 tokens OR 7 days since last consolidation. A debounce gate (`should_check_consolidation()`) prevents DB queries on every message — it checks only every 20th message or every 15 minutes.
+
+### Shared LTM Graph Writes
+Real-time extraction and consolidation share one caller-transaction-owned writer for nodes, edges, temporal closure, and normalized provenance. See [ADR 0002](docs/adr/0002-provenance-safe-memory-graph-writes.md).
 
 ### Singleton Lifecycle
 `DatabaseManager`, `ProviderRouter`, and `PromptRegistry` use lazy-init singletons. Tests handle cleanup via `conftest.py` fixtures. Import-time side effects are avoided by deferring initialization to first access. The image-processing worker pool in `app/utils/image_utils.py` also follows this rule as of `v2.12.11`: the `ProcessPoolExecutor` is created only on first real image work, so importing Gemini / multimodal / audio compatibility modules remains safe in restricted test and CI environments.
@@ -815,7 +803,8 @@ tests/
 │   └── test_e2e_app_smoke.py    # Integration: real DB, mocked LLM network
 ├── e2e/
 │   ├── test_chat_happy_path.py  # Full pipeline: handle_request → stream → DB persist
-│   └── test_stream_recovery.py  # Mid-stream APIError / timeout recovery
+│   ├── test_opencode_cascade.py # Provider fallback behavior
+│   └── test_webhook_lifecycle.py # Webhook startup/shutdown lifecycle
 ├── test_error_codes.py          # ErrorCode tagging, typed/HTTP/string classification
 ├── test_factories.py            # Factory correctness (structure, independence)
 ├── test_formatting.py           # TelegramFormatter, escape_format_chars (AAA)
@@ -829,18 +818,18 @@ tests/
 **Running tests:**
 
 ```bash
-# Unit tests only (no DB required)
+# Unit and E2E tests (no live DB required)
 python -m pytest tests/ --ignore=tests/integration -m "not integration" --override-ini="addopts="
 
-# Full suite including integration (requires TEST_DATABASE_URL)
-python -m pytest tests/ --override-ini="addopts="
+# Real PostgreSQL integration suite (requires an isolated TEST_DATABASE_URL)
+python -m pytest tests/ -m "integration" -n 0 --override-ini="addopts="
 
 # Parallel (default from pytest.ini)
 python -m pytest tests/
 ```
 
 **Design principles:**
-- All tests follow **Arrange-Act-Assert** strictly — one behaviour per test function.
+- Prefer one observable behaviour per test and explicit regression names.
 - Integration tests use **transactional rollbacks** (`asyncpg`) for full isolation.
 - External AI/Telegram API calls are replaced by **fake adapters** and **async generator stubs**.
 - `GlobalLLMSemaphore` uses the local asyncio fallback path (Redis patched to `None`).
@@ -853,8 +842,9 @@ Minimum maintainer checks for behavior changes:
 
 1. Create a descriptive PR.
 2. Verify the relevant `pytest` checks pass.
-3. Run `python -m ruff check .`.
-4. Update user-facing docs when public behavior or deployment changes.
+3. Run `python -m ruff check .` and `python -m ruff format --check .`.
+4. Run `python -m mypy app bot.py` for production-code changes.
+5. Update user-facing docs when public behavior or deployment changes.
 
 ## License
 
