@@ -30,6 +30,14 @@ def test_ci_never_references_removed_load_test_module() -> None:
     assert "load_test.py" not in _workflow()
 
 
+def test_ci_lint_job_enforces_pinned_ruff_formatting() -> None:
+    lint_job = _job(_workflow(), "lint", "type-check")
+
+    assert "ruff==0.15.2" in lint_job
+    assert "python -m ruff check ." in lint_job
+    assert "python -m ruff format --check ." in lint_job
+
+
 def test_ci_separates_unit_and_integration_suites() -> None:
     workflow = _workflow()
     unit_job = _job(workflow, "test-unit", "test-integration")
