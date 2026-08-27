@@ -646,6 +646,9 @@ class TestLiveAudioProxy:
                 fatal_msg = json.loads(fatal_raw)
                 assert fatal_msg["type"] == "fatal"
                 assert fatal_msg["reason"] == "misconfigured"
+                assert "API" not in fatal_msg["message"]
+                assert "ключ" not in fatal_msg["message"].lower()
+                assert "попробуйте позже" in fatal_msg["message"].lower()
 
     async def test_misconfigured_vertex_route_returns_controlled_fatal(self, test_client, mock_bot_token):
         init_data = make_valid_init_data(mock_bot_token, user_id=562)
@@ -661,7 +664,9 @@ class TestLiveAudioProxy:
                 fatal_msg = json.loads(fatal_raw)
                 assert fatal_msg["type"] == "fatal"
                 assert fatal_msg["reason"] == "misconfigured"
-                assert "Express API key" in fatal_msg["message"]
+                assert "API" not in fatal_msg["message"]
+                assert "credentials" not in fatal_msg["message"].lower()
+                assert "попробуйте позже" in fatal_msg["message"].lower()
 
 
 @pytest.mark.asyncio

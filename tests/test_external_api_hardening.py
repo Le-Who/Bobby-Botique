@@ -401,7 +401,9 @@ async def test_tavily_http_error_does_not_log_upstream_body_or_query(monkeypatch
     with caplog.at_level(logging.INFO):
         result = await search_services.tavily_search_agent(private_query)
 
-    assert result["error"].startswith("Ошибка API поиска: 500")
+    assert result["error"] == "Поиск временно недоступен. Попробуйте позже."
+    assert "API" not in result["error"]
+    assert "500" not in result["error"]
     assert private_query not in caplog.text
     assert upstream_secret not in caplog.text
 

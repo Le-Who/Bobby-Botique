@@ -468,6 +468,58 @@ class TestProviderRouter:
 
         assert "🚫" in text
         assert tokens is None
+        assert "ключ" not in text.lower()
+        assert "API" not in text
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_route_hides_provider_setup(self):
+        router = ProviderRouter()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[(None, None, "no_keys")],
+            response_sequence=[],
+        )
+
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch(
+                "app.repos.keys.get_key_status_manager",
+                return_value=FakeKeyStatusManager(),
+            ),
+        ):
+            text, tokens = await router.get_response(
+                "openai/gpt-4o",
+                [{"role": "user", "parts": ["hi"]}],
+            )
+
+        assert tokens is None
+        assert "OpenRouter" not in text
+        assert "ключ" not in text.lower()
+        assert "настрой" not in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_decryption_failure_hides_server_configuration(self):
+        router = ProviderRouter()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[(None, None, "decryption_failed")],
+            response_sequence=[],
+        )
+
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch(
+                "app.repos.keys.get_key_status_manager",
+                return_value=FakeKeyStatusManager(),
+            ),
+        ):
+            text, tokens = await router.get_response(
+                "gemini-3.1",
+                [{"role": "user", "parts": ["hi"]}],
+            )
+
+        assert tokens is None
+        assert "ADMIN_SECRET" not in text
+        assert "API" not in text
+        assert "администратор" in text
 
     @pytest.mark.asyncio
     async def test_key_failure_triggers_retry_and_suspend(self):
@@ -658,7 +710,7 @@ class TestProviderRouter:
         assert fake_status.suspended_keys["hash1"]["category"] == "quota"
 
     @pytest.mark.asyncio
-    async def test_openrouter_detection(self):
+    async def test_openrouter_exhaustion_hides_routing_details(self):
         router = ProviderRouter()
         fake_status = FakeKeyStatusManager()
         fake_use_case = FakeAgentRequestUseCase(
@@ -674,7 +726,9 @@ class TestProviderRouter:
         ):
             text, _ = await router.get_response("openai/gpt-4o", [{"role": "user", "parts": ["hi"]}])
 
-        assert "OpenRouter" in text
+        assert "OpenRouter" not in text
+        assert "ключ" not in text.lower()
+        assert "другую" in text.lower()
 
     @pytest.mark.asyncio
     async def test_transient_error_is_suspended_temporarily(self):

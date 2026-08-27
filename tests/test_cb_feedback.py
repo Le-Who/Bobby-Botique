@@ -64,6 +64,7 @@ class TestFeedbackCallback:
         mock_save.assert_awaited_once_with(42, 999, "up")
         query.answer.assert_awaited_once()
 
+
     @pytest.mark.asyncio
     async def test_thumbs_down_calls_save(self, _update_with_feedback):
         from app.handlers.cb_feedback import feedback_callback
@@ -106,6 +107,28 @@ class TestFeedbackCallback:
             await feedback_callback(update, MagicMock())
 
         query.answer.assert_awaited_once()
+
+
+class TestFactDisclosure:
+    @pytest.mark.asyncio
+    async def test_fact_summary_uses_plain_user_language(self):
+        from app.handlers.cb_feedback import show_facts_callback
+
+        update = MagicMock()
+        query = update.callback_query
+        query.from_user.id = 42
+        query.message.message_id = 999
+        query.answer = AsyncMock()
+
+        with patch(
+            "app.repos.memory.get_response_retrieved_edge_ids",
+            return_value=[10, 11],
+        ):
+            await show_facts_callback(update, MagicMock())
+
+        text = query.answer.await_args.args[0]
+        assert "2" in text
+        assert "граф" not in text.lower()
 
 
 class TestExports:

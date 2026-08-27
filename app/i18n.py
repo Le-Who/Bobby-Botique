@@ -330,8 +330,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "❌ Message is too long. Maximum 4096 characters.\nShorten the text and try again.",
     },
     "error.no_api_keys": {
-        "ru": "❌ Нет доступных ключей API. Пожалуйста, попробуйте позже.",
-        "en": "❌ No API keys available. Please try later.",
+        "ru": "❌ Сервис ответов временно недоступен. Пожалуйста, попробуйте позже.",
+        "en": "❌ The response service is temporarily unavailable. Please try again later.",
     },
     "error.retry_failed": {
         "ru": "❌ Произошла ошибка при повторе запроса.",
@@ -478,41 +478,59 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "Операция отменена.",
         "en": "Operation cancelled.",
     },
-    # ── Help ─────────────────────────────────────────────────────────────
-    "help.title": {
-        "ru": (
-            "📚 **Справка**\n\n"
-            "💬 **Чат** — просто напишите сообщение\n"
-            "🌐 **Поиск** — `?` или `??` перед вопросом\n"
-            "📄 **Документы** — отправьте PDF/DOCX\n"
-            "🎭 **Роли** — специализация бота\n\n"
-            "Нажмите кнопку для подробностей:"
-        ),
-        "en": (
-            "📚 **Help**\n\n"
-            "💬 **Chat** — just type a message\n"
-            "🌐 **Search** — `?` or `??` before your question\n"
-            "📄 **Documents** — send a PDF/DOCX\n"
-            "🎭 **Roles** — bot specialization\n\n"
-            "Click a button for details:"
-        ),
+    # ── Public help and Telegram command menu ────────────────────────────
+    "help.overview.title": {
+        "ru": "📚 Чем я могу помочь",
+        "en": "📚 How I can help",
     },
-    "help.btn_chat": {
-        "ru": "💬 Чат",
-        "en": "💬 Chat",
+    "help.overview.intro": {
+        "ru": "Ниже — быстрый обзор возможностей. Выберите тему, чтобы увидеть понятные подсказки.",
+        "en": "Here is a quick overview. Choose a topic for clear, practical guidance.",
     },
-    "help.btn_search": {
-        "ru": "🌐 Поиск",
-        "en": "🌐 Search",
+    "help.overview.footer": {
+        "ru": "Не знаете, с чего начать? Просто напишите задачу обычными словами — я подскажу следующий шаг.",
+        "en": "Not sure where to begin? Describe your task in your own words and I’ll suggest the next step.",
     },
-    "help.btn_docs": {
-        "ru": "📄 Документы",
-        "en": "📄 Documents",
+    "help.category.chat.title": {
+        "ru": "💬 Разговор и начало",
+        "en": "💬 Chat and getting started",
     },
-    "help.btn_roles": {
-        "ru": "🎭 Роли",
-        "en": "🎭 Roles",
+    "help.category.chat.button": {"ru": "💬 Чат", "en": "💬 Chat"},
+    "help.category.personalize.title": {
+        "ru": "🎛 Настройка ответов",
+        "en": "🎛 Personalize responses",
     },
+    "help.category.personalize.button": {"ru": "🎛 Настроить", "en": "🎛 Personalize"},
+    "help.category.search.title": {
+        "ru": "🌐 Поиск и обзоры",
+        "en": "🌐 Search and briefings",
+    },
+    "help.category.search.button": {"ru": "🌐 Поиск", "en": "🌐 Search"},
+    "help.category.create.title": {
+        "ru": "🧰 Документы, изображения и голос",
+        "en": "🧰 Documents, images, and voice",
+    },
+    "help.category.create.button": {"ru": "🧰 Создать", "en": "🧰 Create"},
+    "help.category.history.title": {
+        "ru": "🗂 Беседы и история",
+        "en": "🗂 Conversations and history",
+    },
+    "help.category.history.button": {"ru": "🗂 Беседы", "en": "🗂 Conversations"},
+    "help.category.privacy.title": {
+        "ru": "🔐 Память и ваши данные",
+        "en": "🔐 Memory and your data",
+    },
+    "help.category.privacy.button": {"ru": "🔐 Данные", "en": "🔐 Your data"},
+    "help.category.games.title": {
+        "ru": "🎮 Игры и напоминания",
+        "en": "🎮 Games and reminders",
+    },
+    "help.category.games.button": {"ru": "🎮 Игры", "en": "🎮 Games"},
+    "help.category.insights.title": {
+        "ru": "🔮 Таро, гороскоп и натальная карта",
+        "en": "🔮 Tarot, horoscope, and natal chart",
+    },
+    "help.category.insights.button": {"ru": "🔮 Практики", "en": "🔮 Insights"},
     "help.back_to_help": {
         "ru": "⬅️ К справке",
         "en": "⬅️ Back to help",
@@ -522,81 +540,71 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "❓ Topic not found.",
     },
     "help.topic.chat": {
-        "ru": (
-            "💬 **Как общаться**\n\n"
-            "Просто напишите сообщение в чат — бот ответит "
-            "с помощью AI.\n\n"
-            "• Отправьте 🖼️ фото — бот проанализирует изображение\n"
-            "• `/newchat` — начать новый диалог\n"
-            "• `/setprompt` — задать системную инструкцию\n"
-            "• `/save` — сохранить текущую беседу"
-        ),
-        "en": (
-            "💬 **How to chat**\n\n"
-            "Just type a message — the bot will respond "
-            "using AI.\n\n"
-            "• Send a 🖼️ photo — the bot will analyze the image\n"
-            "• `/newchat` — start a new dialog\n"
-            "• `/setprompt` — set a system instruction\n"
-            "• `/save` — save the current conversation"
-        ),
+        "ru": "Напишите сообщение, отправьте фото или голосовое — я отвечу в том же диалоге. Новый чат начинает тему с чистого контекста, но не удаляет сохранённые данные.",
+        "en": "Send a message, photo, or voice note and I’ll reply in the same conversation. A new chat starts with fresh context without deleting saved data.",
+    },
+    "help.topic.personalize": {
+        "ru": "Выберите подходящую модель, роль и глубину ответа. Своя инструкция помогает заранее задать тон, формат или постоянные пожелания.",
+        "en": "Choose a model, role, and response depth that suit the task. A custom instruction can set the tone, format, or ongoing preferences.",
     },
     "help.topic.search": {
-        "ru": (
-            "🌐 **Поиск в интернете**\n\n"
-            "• `? вопрос` — быстрый фактический ответ\n"
-            "• `?? вопрос` — глубокое исследование с источниками\n"
-            "• `??` + фото — поиск по изображению\n\n"
-            "💡 `/res` — включить/выключить поиск для всех сообщений"
-        ),
-        "en": (
-            "🌐 **Web search**\n\n"
-            "• `? question` — quick factual answer\n"
-            "• `?? question` — deep research with sources\n"
-            "• `??` + photo — image search\n\n"
-            "💡 `/res` — toggle search for all messages"
-        ),
+        "ru": "Поставьте ? перед вопросом для быстрого поиска или ?? для более подробного исследования с источниками. Ежедневный обзор можно включить и отключить отдельными командами.",
+        "en": "Put ? before a question for a quick search, or ?? for more thorough research with sources. Daily briefings can be turned on or off separately.",
     },
-    "help.topic.docs": {
-        "ru": (
-            "📄 **Работа с документами**\n\n"
-            "Отправьте PDF или DOCX файл в чат — "
-            "бот извлечёт текст и будет отвечать "
-            "на основе содержимого.\n\n"
-            "• Максимум: 5 документов\n"
-            "• Хранение: 3 дня\n"
-            "• `/documents` — управление документами"
-        ),
-        "en": (
-            "📄 **Working with documents**\n\n"
-            "Send a PDF or DOCX file — "
-            "the bot will extract text and answer "
-            "based on the content.\n\n"
-            "• Maximum: 5 documents\n"
-            "• Storage: 3 days\n"
-            "• `/documents` — manage documents"
-        ),
+    "help.topic.create": {
+        "ru": "Отправьте документ, чтобы задавать вопросы по его содержимому, опишите желаемое изображение или откройте голосовой разговор. Live Audio показывается, когда он доступен в текущей установке.",
+        "en": "Send a document to ask about its contents, describe an image you want to create, or start a voice conversation. Live Audio appears when it is available in this installation.",
     },
-    "help.topic.roles": {
-        "ru": (
-            "🎭 **Роли**\n\n"
-            "Роль — это специализация бота: он будет "
-            "отвечать как эксперт в выбранной области.\n\n"
-            "• 6 готовых ролей: преподаватель, IT-инженер, доктор…\n"
-            "• ✨ Сгенерировать роль по описанию\n"
-            "• 📝 Написать свою вручную\n"
-            "• `/roles` — открыть меню ролей"
-        ),
-        "en": (
-            "🎭 **Roles**\n\n"
-            "A role specializes the bot as "
-            "an expert in a chosen field.\n\n"
-            "• 6 preset roles: teacher, IT engineer, doctor…\n"
-            "• ✨ Generate a role from a description\n"
-            "• 📝 Write your own manually\n"
-            "• `/roles` — open roles menu"
-        ),
+    "help.topic.history": {
+        "ru": "Сохраняйте важные беседы, возвращайтесь к ним позже, переименовывайте и удаляйте ненужные. Текущий чат можно скачать отдельным файлом.",
+        "en": "Save important conversations, return to them later, rename them, or remove those you no longer need. You can also download the current chat as a file.",
     },
+    "help.topic.privacy": {
+        "ru": "В приватном чате можно увидеть и удалить отдельные воспоминания, очистить всю долгосрочную память, скачать свои данные или навсегда удалить аккаунт. Перед необратимым удалением потребуется явное подтверждение.",
+        "en": "In a private chat you can review and remove individual memories, clear long-term memory, download your data, or permanently delete the account. Irreversible deletion always requires explicit confirmation.",
+    },
+    "help.topic.games": {
+        "ru": "Откройте игровой каталог или сразу запустите ежедневную игру. Напоминание поможет не забыть о задаче в нужное время.",
+        "en": "Open the game hub or launch a daily game directly. Reminders can bring a task back at the right time.",
+    },
+    "help.topic.insights": {
+        "ru": "Здесь собраны расклады Таро, натальная карта и ежедневный гороскоп. Настройки гороскопа позволяют выбрать удобное время или полностью остановить доставку.",
+        "en": "This section includes Tarot readings, a natal chart, and daily horoscopes. Horoscope settings let you choose delivery times or stop delivery completely.",
+    },
+    "help.command.start": {"ru": "Открыть главное меню", "en": "Open the main menu"},
+    "help.command.help": {"ru": "Посмотреть возможности бота", "en": "See what the bot can do"},
+    "help.command.newchat": {"ru": "Начать новый диалог", "en": "Start a new conversation"},
+    "help.command.model": {"ru": "Выбрать модель для ответов", "en": "Choose a response model"},
+    "help.command.roles": {"ru": "Выбрать стиль и специализацию", "en": "Choose a style and specialization"},
+    "help.command.setprompt": {"ru": "Задать свою инструкцию боту", "en": "Set a custom instruction"},
+    "help.command.thinking": {"ru": "Настроить глубину ответа", "en": "Adjust response depth"},
+    "help.command.settings": {"ru": "Открыть все настройки", "en": "Open all settings"},
+    "help.command.res": {"ru": "Включить или выключить веб-поиск", "en": "Turn web search on or off"},
+    "help.command.subscribe": {"ru": "Получать ежедневный обзор", "en": "Receive a daily briefing"},
+    "help.command.unsubscribe": {"ru": "Отключить ежедневный обзор", "en": "Stop the daily briefing"},
+    "help.command.documents": {"ru": "Открыть мои документы", "en": "Open my documents"},
+    "help.command.draw": {"ru": "Создать изображение по описанию", "en": "Create an image from a prompt"},
+    "help.command.live": {"ru": "Начать голосовой разговор", "en": "Start a voice conversation"},
+    "help.command.save": {"ru": "Сохранить текущую беседу", "en": "Save the current conversation"},
+    "help.command.conversations": {"ru": "Показать сохранённые беседы", "en": "Show saved conversations"},
+    "help.command.switch": {"ru": "Перейти к другой беседе", "en": "Switch to another conversation"},
+    "help.command.rename": {"ru": "Переименовать беседу", "en": "Rename a conversation"},
+    "help.command.delete": {"ru": "Удалить сохранённую беседу", "en": "Delete a saved conversation"},
+    "help.command.export": {"ru": "Скачать текущий чат", "en": "Download the current chat"},
+    "help.command.stats": {"ru": "Посмотреть статистику использования", "en": "View usage statistics"},
+    "help.command.memory": {"ru": "Посмотреть сохранённые воспоминания", "en": "Review saved memories"},
+    "help.command.clearmemory": {"ru": "Очистить долгосрочную память", "en": "Clear long-term memory"},
+    "help.command.mydata": {"ru": "Скачать свои данные", "en": "Download your personal data"},
+    "help.command.deleteme": {"ru": "Навсегда удалить аккаунт", "en": "Permanently delete the account"},
+    "help.command.games": {"ru": "Открыть каталог мини-игр", "en": "Open the mini-game hub"},
+    "help.command.dailycroc": {"ru": "Сыграть в ежедневного Крокодила", "en": "Play Daily Crocodile"},
+    "help.command.daily2048": {"ru": "Сыграть в ежедневную 2048", "en": "Play Daily 2048"},
+    "help.command.trivia": {"ru": "Ответить на вопросы дня", "en": "Answer today’s trivia"},
+    "help.command.remind": {"ru": "Создать напоминание", "en": "Create a reminder"},
+    "help.command.tarot": {"ru": "Начать расклад Таро", "en": "Start a Tarot reading"},
+    "help.command.natal": {"ru": "Составить натальную карту", "en": "Create a natal chart"},
+    "help.command.horoscope_settings": {"ru": "Настроить ежедневный гороскоп", "en": "Set up daily horoscopes"},
+    "help.command.horoscope_stop": {"ru": "Остановить доставку гороскопа", "en": "Stop horoscope delivery"},
     # ── Search Toggle ────────────────────────────────────────────────────
     "search.on": {
         "ru": "ВКЛЮЧЕН",
@@ -881,8 +889,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "📋 **New role preview**\n\n🏷 **Name:** {title}\n📝 **Prompt:**\n`{prompt}`\n\nPress button below to save:",
     },
     "role.no_api_keys": {
-        "ru": "❌ Нет доступных ключей API для генерации роли.\nПопробуйте позже или создайте роль вручную.",
-        "en": "❌ No API keys available for role generation.\nPlease try later or create manually.",
+        "ru": "❌ Сейчас не удалось создать роль автоматически.\nПопробуйте позже или создайте её вручную.",
+        "en": "❌ I couldn’t create the role automatically right now.\nTry again later or create it manually.",
     },
     "role.btn_roles_menu": {
         "ru": "🎭 Меню ролей",

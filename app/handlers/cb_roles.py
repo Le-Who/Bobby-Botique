@@ -288,7 +288,7 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
         from app.utils.keyboards import error_with_back_keyboard
 
         await query.edit_message_text(
-            "❌ Нет доступных ключей API для генерации роли.",
+            "❌ Сейчас не удалось создать роль автоматически. Попробуйте позже или создайте её вручную.",
             reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
         )
         return

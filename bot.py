@@ -381,6 +381,13 @@ async def run_bot_with_retry():
 
         await application.initialize()
 
+        # Keep Telegram's slash-command menu synchronized with the same
+        # localized catalog that powers /help. A transient Bot API failure is
+        # logged inside the installer and must not prevent the bot from starting.
+        from app.bot_commands import install_public_command_menu
+
+        await install_public_command_menu(application.bot)
+
         # Register TaskManager error callback for critical background alerts
         from app.admin_alerts import AlertSeverity, alert_admin
         from app.utils.background_tasks import get_task_manager

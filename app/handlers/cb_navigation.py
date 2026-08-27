@@ -25,6 +25,12 @@ import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from app.bot_commands import (
+    build_help_topic_rows,
+    language_from_telegram,
+    render_help_overview,
+    render_help_topic,
+)
 from app.handlers import menus
 from app.handlers.callbacks import _BUSY_TOAST, _is_user_busy
 from app.i18n import t
@@ -34,9 +40,7 @@ from app.utils.formatting import TelegramFormatter
 
 def _lang(update: Update) -> str:
     """Detect UI language from Telegram language_code with ru fallback."""
-    # For callbacks we have no user text, so use Telegram hint; most users are ru
-    code = getattr(update.effective_user, "language_code", None) or ""
-    return "en" if code.startswith("en") else "ru"
+    return language_from_telegram(getattr(update.effective_user, "language_code", None))
 
 
 async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -159,53 +163,31 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await query.answer()
 
     lang = _lang(update)
-    help_text = t("help.title", lang)
-    formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
-    keyboard = [
-        [
-            InlineKeyboardButton(t("help.btn_chat", lang), callback_data="help_topic:chat"),
-            InlineKeyboardButton(t("help.btn_search", lang), callback_data="help_topic:search"),
-        ],
-        [
-            InlineKeyboardButton(t("help.btn_docs", lang), callback_data="help_topic:docs"),
-            InlineKeyboardButton(t("help.btn_roles", lang), callback_data="help_topic:roles"),
-        ],
-        [InlineKeyboardButton(t("menu.back_to_menu", lang), callback_data="start_menu")],
-    ]
+    keyboard = build_help_topic_rows(lang)
+    keyboard.append([InlineKeyboardButton(t("menu.back_to_menu", lang), callback_data="start_menu")])
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
-            formatted_text,
-            parse_mode=parse_mode,
+            render_help_overview(lang),
+            parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
 
 # ── Help sub-topic handlers ──────────────────────────────────────────────────
 
-_HELP_TOPIC_KEYS = {
-    "chat": "help.topic.chat",
-    "search": "help.topic.search",
-    "docs": "help.topic.docs",
-    "roles": "help.topic.roles",
-}
-
-
 async def help_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Shows a specific help topic with back-to-help button."""
     query = update.callback_query
     await query.answer()
     lang = _lang(update)
-    topic = query.data.split(":", 1)[1]
-    key = _HELP_TOPIC_KEYS.get(topic)
-    text = t(key, lang) if key else t("help.topic_not_found", lang)
-    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    topic = str(query.data or "").partition(":")[2]
     keyboard = [
         [InlineKeyboardButton(t("help.back_to_help", lang), callback_data="help")],
     ]
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
-            formatted_text,
-            parse_mode=parse_mode,
+            render_help_topic(topic, lang),
+            parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 

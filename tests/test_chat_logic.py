@@ -46,6 +46,14 @@ class TestClassifyResolution:
         assert "gemini-flash" in result.user_message
         assert "Продолжить?" in result.user_message
 
+    def test_decryption_failure_hides_internal_configuration_details(self):
+        result = classify_resolution("decryption_failed", "gemini-pro")
+
+        assert result.action == "decryption_failed"
+        assert "ADMIN_SECRET" not in result.user_message
+        assert "API" not in result.user_message
+        assert "администратор" in result.user_message
+
     def test_unknown_resolution_proceeds(self):
         """Any unrecognized resolution string should proceed normally."""
         result = classify_resolution("some_new_status", "model")

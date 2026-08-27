@@ -352,7 +352,10 @@ OVERLOADED_ERROR = tag_error(
     ErrorCode.OVERLOADED,
     "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.",
 )
-QUOTA_ERROR = tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API.")
+QUOTA_ERROR = tag_error(
+    ErrorCode.QUOTA_EXCEEDED,
+    "🚫 Достигнут лимит запросов. Попробуйте позже.",
+)
 PROCESSING_ERROR = tag_error(ErrorCode.PROCESSING, "❌ Ошибка обработки запроса.")
 DOCUMENT_ERROR = tag_error(ErrorCode.DOCUMENT, "❌ Ошибка обработки содержимого документа.")
 TIMEOUT_ERROR = tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания. Попробуйте ещё раз.")
@@ -408,12 +411,27 @@ _ERROR_CODE_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.NETWORK: NETWORK_ERROR_MSG,
     ErrorCode.RATE_LIMIT: QUOTA_ERROR,
     ErrorCode.QUOTA_EXCEEDED: QUOTA_ERROR,
-    ErrorCode.INVALID_KEY: tag_error(ErrorCode.INVALID_KEY, "🔑 Ошибка API ключа. Обратитесь к администратору."),
-    ErrorCode.KEYS_EXHAUSTED: tag_error(ErrorCode.KEYS_EXHAUSTED, "🔑 Все ключи исчерпаны. Попробуйте позже."),
-    ErrorCode.DECRYPTION_FAILED: tag_error(ErrorCode.DECRYPTION_FAILED, "🔐 Ошибка дешифровки ключей."),
-    ErrorCode.NO_KEYS: tag_error(ErrorCode.NO_KEYS, "⚙️ Провайдер не настроен."),
+    ErrorCode.INVALID_KEY: tag_error(
+        ErrorCode.INVALID_KEY,
+        "⚠️ Сервис ответов временно недоступен. Обратитесь к администратору.",
+    ),
+    ErrorCode.KEYS_EXHAUSTED: tag_error(
+        ErrorCode.KEYS_EXHAUSTED,
+        "⏳ Сервис ответов временно перегружен. Попробуйте позже.",
+    ),
+    ErrorCode.DECRYPTION_FAILED: tag_error(
+        ErrorCode.DECRYPTION_FAILED,
+        "⚠️ Не удалось подготовить безопасное подключение. Обратитесь к администратору.",
+    ),
+    ErrorCode.NO_KEYS: tag_error(
+        ErrorCode.NO_KEYS,
+        "⚠️ Выбранная возможность сейчас недоступна. Попробуйте позже.",
+    ),
     ErrorCode.INVALID_REQUEST: tag_error(ErrorCode.INVALID_REQUEST, "❌ Некорректный запрос."),
-    ErrorCode.INVALID_RESPONSE: tag_error(ErrorCode.INVALID_RESPONSE, "❌ Некорректный ответ от API."),
+    ErrorCode.INVALID_RESPONSE: tag_error(
+        ErrorCode.INVALID_RESPONSE,
+        "❌ Сервис вернул некорректный ответ. Попробуйте ещё раз.",
+    ),
     ErrorCode.EMPTY_RESPONSE: tag_error(ErrorCode.EMPTY_RESPONSE, "❌ Пустой ответ от модели."),
     ErrorCode.PROCESSING: PROCESSING_ERROR,
     ErrorCode.DOCUMENT: DOCUMENT_ERROR,

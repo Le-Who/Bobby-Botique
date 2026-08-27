@@ -203,6 +203,7 @@ class TestGDPRCommands:
         call_args = mock_update.message.reply_document.call_args
         doc = call_args.kwargs.get("document") or call_args[1].get("document")
         assert doc is not None
+        assert "граф" not in call_args.kwargs["caption"].lower()
         content = doc.read().decode("utf-8")
         data = json.loads(content)
         assert data["user_id"] == 12345

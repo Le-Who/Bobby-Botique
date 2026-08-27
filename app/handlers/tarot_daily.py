@@ -75,16 +75,44 @@ async def tarot_daily_callback(update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     if action == "subscribe":
         from app.repos.tarot_daily_subscriptions import upsert_tarot_subscription
-        await upsert_tarot_subscription(user_id=user_id, is_subscribed=True)
+
+        subscribed = await upsert_tarot_subscription(user_id=user_id, is_subscribed=True)
+        if not subscribed:
+            await query.edit_message_text(
+                "Не удалось включить Карту дня. Ваши настройки не изменились — попробуйте чуть позже.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔄 Попробовать снова", callback_data="tarot_daily:subscribe")]]
+                ),
+            )
+            return
         await query.edit_message_text(
-            "🔮 Подписка на Карту дня оформлена!\n\n"
-            "Вы будете получать свежую карту каждый день в 10:00 утра.\n"
-            "Управлять подпиской можно через команду /tarot_settings (в разработке).",
-            reply_markup=InlineKeyboardMarkup([])
+            "🔮 Карта дня включена!\n\n"
+            "Свежий расклад будет приходить каждый день в 10:00 утра. "
+            "Доставку можно отключить кнопкой ниже.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔕 Отключить Карту дня", callback_data="tarot_daily:unsubscribe")]]
+            ),
+        )
+    elif action == "unsubscribe":
+        from app.repos.tarot_daily_subscriptions import unsubscribe_tarot
+
+        unsubscribed = await unsubscribe_tarot(user_id)
+        if not unsubscribed:
+            await query.edit_message_text(
+                "Карта дня уже отключена или настройка больше недоступна.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔮 Включить снова", callback_data="tarot_daily:subscribe")]]
+                ),
+            )
+            return
+        await query.edit_message_text(
+            "🔕 Карта дня отключена. Больше ничего делать не нужно.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔮 Включить снова", callback_data="tarot_daily:subscribe")]]
+            ),
         )
     elif action == "dismiss":
         await query.edit_message_text(
             "Хорошо, больше не буду предлагать 🙏",
-            reply_markup=InlineKeyboardMarkup([])
+            reply_markup=InlineKeyboardMarkup([]),
         )
-

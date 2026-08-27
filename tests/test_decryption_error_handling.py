@@ -65,18 +65,19 @@ async def test_get_ai_response_with_key_rotation_decryption_message(use_case):
         "app.providers.router.ProviderRouter.get_response",
         new_callable=AsyncMock,
         return_value=(
-            "\U0001f510 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET).",
+            "⚠️ Не удалось подготовить безопасное подключение. Попробуйте позже; если ошибка повторится, сообщите администратору.",
             None,
         ),
     ):
         text, token_count = await use_case.get_ai_response_with_key_rotation(
             preferred_model="gemini-2.5-flash",
             history=[],
-        )
+    )
 
     assert token_count is None
-    assert "\U0001f510" in text  # 🔐
-    assert "ADMIN_SECRET" in text
+    assert "администратор" in text
+    assert "ADMIN_SECRET" not in text
+    assert "API" not in text
     # Must NOT contain Python traceback indicators
     assert "Traceback" not in text
     assert "raise " not in text

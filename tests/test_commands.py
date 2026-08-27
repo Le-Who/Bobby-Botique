@@ -118,3 +118,27 @@ async def test_games_command_group_chat_uses_direct_link_button():
     button = keyboard.inline_keyboard[0][0]
     assert button.url == "https://t.me/b0b_bot/games"
     assert button.web_app is None
+
+
+@pytest.mark.asyncio
+async def test_live_unavailable_message_does_not_expose_server_configuration(monkeypatch):
+    update = MagicMock()
+    context = MagicMock()
+    update.effective_user.id = 12345
+    update.effective_chat.id = 67890
+    update.update_id = 44444
+    update.message.reply_text = AsyncMock()
+    monkeypatch.delenv("WEBHOOK_URL", raising=False)
+
+    with (
+        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch("app.utils.decorators.set_request_id"),
+    ):
+        from app.handlers.commands import live_command
+
+        await live_command(update, context)
+
+    text = update.message.reply_text.await_args.args[0]
+    assert "WEBHOOK_URL" not in text
+    assert "HTTPS" not in text
+    assert "попробуйте позже" in text.lower()

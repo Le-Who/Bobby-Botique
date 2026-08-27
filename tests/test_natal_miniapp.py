@@ -200,6 +200,25 @@ async def test_natal_submit_requires_webapp_auth():
 
 
 @pytest.mark.asyncio
+async def test_natal_submit_configuration_error_hides_environment_names(monkeypatch):
+    monkeypatch.setattr("app.web_miniapp.get_bot", lambda: SimpleNamespace())
+    monkeypatch.setattr("app.web_miniapp._public_webapp_base_url", lambda: "")
+
+    client = quart_app.test_client()
+    response = await client.post(
+        "/webapp/api/natal/submit",
+        headers=_auth_headers(user_id=777),
+        json={"birth_date": "1997-11-09", "report_type": "destiny_matrix"},
+    )
+
+    assert response.status_code == 500
+    payload = await response.get_json()
+    assert "WEBAPP_BASE_URL" not in payload.get("detail", "")
+    assert "WEBHOOK_URL" not in payload.get("detail", "")
+    assert "попробуйте позже" in payload["detail"].lower()
+
+
+@pytest.mark.asyncio
 async def test_natal_submit_accepts_form_before_report_is_ready(monkeypatch):
     sent = {}
     scheduled = {}

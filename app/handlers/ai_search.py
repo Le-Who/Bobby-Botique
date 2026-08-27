@@ -309,7 +309,7 @@ async def _handle_research_agent_leased_impl(
             from app.errors import build_retry_and_roles_keyboard
 
             await placeholder_message.edit_text(
-                "❌ Нет доступных ключей API. Пожалуйста, попробуйте позже.",
+                "❌ Сервис ответов временно недоступен. Пожалуйста, попробуйте позже.",
                 reply_markup=build_retry_and_roles_keyboard(),
             )
         except (BadRequest, NetworkError):

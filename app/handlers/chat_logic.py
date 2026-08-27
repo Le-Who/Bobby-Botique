@@ -62,7 +62,10 @@ def classify_resolution(
     if resolution == "decryption_failed":
         return ResolutionResult(
             action="decryption_failed",
-            user_message="⚠️ Системная ошибка: Не удалось расшифровать API-ключи. Пожалуйста, проверьте конфигурацию `ADMIN_SECRET`."
+            user_message=(
+                "⚠️ Не удалось подготовить безопасное подключение. Попробуйте позже; "
+                "если ошибка повторится, сообщите администратору."
+            ),
         )
 
     if resolution == "confirm_fallback":

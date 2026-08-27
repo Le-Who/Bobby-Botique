@@ -564,7 +564,10 @@ async def api_natal_submit(user_id: int):
     webhook_url = _public_webapp_base_url()
     if not webhook_url:
         return jsonify(
-            {"error": "server_misconfiguration", "detail": "WEBAPP_BASE_URL or WEBHOOK_URL is required."}
+            {
+                "error": "server_misconfiguration",
+                "detail": "Не удалось подготовить отчёт. Попробуйте позже.",
+            }
         ), 500
 
     submit_task(_build_and_send_natal_report(bot, user_id, birth_input, webhook_url))
@@ -2923,13 +2926,7 @@ async def _resolve_live_transport(
                 _VERTEX_LIVE_MODEL,
                 None,
                 "misconfigured",
-                (
-                    "Vertex internet-live сейчас требует полноценный Vertex AI regional client "
-                    "(project/location + ADC или service account, например через "
-                    "GOOGLE_APPLICATION_CREDENTIALS / secret VERTEX_LIVE_SERVICE_ACCOUNT_JSON; "
-                    "если используется файл credentials, он должен существовать и читаться из контейнера). "
-                    "Путь через Express API key для Live API websocket-сессий не поддерживается."
-                ),
+                "Голосовой режим временно недоступен. Попробуйте позже или продолжите текстом.",
             )
         return (
             client,
@@ -2950,7 +2947,7 @@ async def _resolve_live_transport(
             GEMINI_LIVE_MODEL,
             None,
             "misconfigured",
-            "Голосовой режим временно недоступен: API ключи Gemini не настроены.",
+            "Голосовой режим временно недоступен. Попробуйте позже или продолжите текстом.",
         )
 
     cooldown_seconds = await _get_live_model_cooldown_seconds()
@@ -3032,8 +3029,8 @@ async def _handle_live_session(
                 websocket,
                 reason="server_capacity",
                 message=(
-                    "Голосовой режим временно недоступен со стороны Gemini Live API. "
-                    "Попробуйте ещё раз чуть позже или продолжите текстом."
+                    "Голосовой режим временно недоступен. "
+                    "Попробуйте чуть позже или продолжите текстом."
                 ),
                 retry_after_seconds=cooldown_seconds,
             )
@@ -3267,8 +3264,8 @@ async def _handle_live_session(
                 "Экспериментальный internet-live временно недоступен. "
                 "Попробуйте ещё раз чуть позже или продолжите в стандартном режиме."
                 if transport_mode == _LIVE_VERTEX_CONNECTION_MODE
-                else "Голосовой режим временно недоступен со стороны Gemini Live API. "
-                "Попробуйте ещё раз чуть позже или продолжите текстом."
+                else "Голосовой режим временно недоступен. "
+                "Попробуйте чуть позже или продолжите текстом."
             )
             logger.warning(
                 "live_audio_ws: resource exhausted user=%d mode=%s model=%s retry_after=%ds: %s",

@@ -19,6 +19,11 @@ from telegram.ext import (
     filters,
 )
 
+from app.bot_commands import (
+    build_help_topic_rows,
+    language_from_telegram,
+    render_help_overview,
+)
 from app.handlers import menus
 from app.i18n import t
 from app.repos.chats import get_user_chat, update_user_chat
@@ -187,62 +192,20 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 @authorized_only
 @safe_handler(t("error.command"))
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показывает подробную справку по использованию бота"""
+    """Show localized public capabilities without exposing admin commands."""
     user_id = update.effective_user.id
     logging.info("Help command from user %s", user_id)
 
-    help_text = (
-        "🤖 <b>Справка и список команд</b>\n\n"
-        "<b>🔮 Развлечения и сервисы:</b>\n"
-        "• <code>/tarot</code> (или <code>таро</code>) — начать расклад Таро\n"
-        "• <code>натальная карта</code> — составить натальную карту\n"
-        "• <code>/subscribe</code> / <code>/unsubscribe</code> — гороскоп\n"
-        "• <code>/games</code> — каталог мини-игр\n"
-        "• <code>/draw</code> — сгенерировать изображение\n"
-        "• <code>/remind</code> — установить напоминание\n"
-        "• <code>/live</code> — начать Live Audio звонок\n\n"
-        "<b>🧠 Управление ботом:</b>\n"
-        "• <code>/model</code> — сменить AI-модель\n"
-        "• <code>/roles</code> — выбрать роль (личность бота)\n"
-        "• <code>/setprompt</code> — задать системную инструкцию\n"
-        "• <code>/thinking</code> — настройка уровня размышления\n"
-        "• <code>/res</code> — вкл/выкл режим веб-поиска\n"
-        "• <code>/documents</code> — управление вашими документами\n"
-        "• <code>/settings</code> — единая панель настроек\n\n"
-        "<b>💬 Общение и история:</b>\n"
-        "• <code>/newchat</code> — очистить текущий контекст\n"
-        "• <code>/save</code> — сохранить текущую беседу\n"
-        "• <code>/switch</code> — переключиться на сохранённую беседу\n"
-        "• <code>/conversations</code> — список сохранённых бесед\n"
-        "• <code>/rename</code> / <code>/delete</code> — управление беседами\n"
-        "• <code>/export</code> — экспортировать чат в документ\n"
-        "• <code>/stats</code> — ваша статистика использования\n\n"
-        "<b>📚 Память и данные:</b>\n"
-        "• <code>/memory</code> — просмотр и управление памятью\n"
-        "• <code>/clearmemory</code> — очистить долгосрочную память\n"
-        "• <code>/mydata</code> — экспорт диалогов и долгосрочной памяти\n"
-        "• <code>/deleteme</code> — полное удаление аккаунта\n\n"
-        "<i>Для получения справки по другим темам используйте кнопки ниже:</i>"
-    )
-    keyboard = [
-        [
-            InlineKeyboardButton(t("help.btn_chat"), callback_data="help_topic:chat"),
-            InlineKeyboardButton(t("help.btn_search"), callback_data="help_topic:search"),
-        ],
-        [
-            InlineKeyboardButton(t("help.btn_docs"), callback_data="help_topic:docs"),
-            InlineKeyboardButton(t("help.btn_roles"), callback_data="help_topic:roles"),
-        ],
-    ]
-    
+    lang = language_from_telegram(getattr(update.effective_user, "language_code", None))
     if update.callback_query:
         await update.callback_query.answer()
-        
+
+    chat_id = update.effective_chat.id if update.effective_chat else user_id
     await context.bot.send_message(
-        chat_id=user_id,
-        text=help_text,
+        chat_id=chat_id,
+        text=render_help_overview(lang),
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=InlineKeyboardMarkup(build_help_topic_rows(lang)),
     )
     logging.info("Help command completed successfully for user %s", user_id)
 
@@ -692,7 +655,7 @@ async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         document=doc,
         caption=(
             "📦 Экспорт данных чата: настройки, активная и сохранённая история, "
-            "долгосрочная память и граф знаний."
+            "долгосрочная память и связанные с ней факты."
         ),
     )
 
@@ -783,7 +746,9 @@ async def live_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Launch the Gemini Live Audio Mini App."""
     webapp_base = os.environ.get("WEBHOOK_URL", "").strip().rstrip("/")
     if not webapp_base or not webapp_base.startswith("https://"):
-        await update.message.reply_text("❌ Приложение Live Audio недоступно (требуется HTTPS WEBHOOK_URL).")
+        await update.message.reply_text(
+            "🎙️ Live Audio сейчас недоступно. Попробуйте позже или продолжите общение сообщениями."
+        )
         return
 
     text = "🎙️ **Gemini Live Audio**\n\nНажмите кнопку ниже, чтобы начать голосовое общение в реальном времени."
@@ -978,10 +943,9 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("delete", delete_conversation_command))
 
     # Scheduled briefs commands (from scheduled_briefs)
-    from app.handlers.horoscope_subscription import horoscope_settings_command
     from app.handlers.scheduled_briefs import subscribe_command, unsubscribe_command
 
-    application.add_handler(CommandHandler("subscribe", horoscope_settings_command))
+    application.add_handler(CommandHandler("subscribe", subscribe_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
 
     # Horoscope subscription wizard (from horoscope_subscription)

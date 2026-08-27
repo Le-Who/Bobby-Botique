@@ -325,28 +325,10 @@ class ProviderRouter:
                             timeout=timeout,
                             _is_fallback=True,
                         )
-                    is_or = (
-                        use_openrouter
-                        if use_openrouter is not None
-                        else (
-                            "/" in preferred_model
-                            and not is_opencode_model(preferred_model)
-                            and not is_freetheai_model(preferred_model)
-                        )
-                    )
-                    provider_name = (
-                        "Opencode Go"
-                        if is_opencode_model(preferred_model)
-                        else (
-                            "FreeTheAI"
-                            if is_freetheai_model(preferred_model)
-                            else ("OpenRouter" if is_or else "Gemini")
-                        )
-                    )
                     return (
                         tag_error(
                             ErrorCode.KEYS_EXHAUSTED,
-                            f"🚫 Все ключи {provider_name} недоступны или исчерпаны. Попробуйте позже.",
+                            "🚫 Выбранная модель сейчас недоступна. Попробуйте позже или выберите другую.",
                         ),
                         None,
                     )
@@ -354,7 +336,7 @@ class ProviderRouter:
                     return (
                         tag_error(
                             ErrorCode.NO_KEYS,
-                            "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки.",
+                            "❌ Выбранная модель сейчас недоступна. Попробуйте позже или выберите другую.",
                         ),
                         None,
                     )
@@ -362,14 +344,17 @@ class ProviderRouter:
                     return (
                         tag_error(
                             ErrorCode.DECRYPTION_FAILED,
-                            "🔐 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET).",
+                            (
+                                "⚠️ Не удалось подготовить безопасное подключение. Попробуйте позже; "
+                                "если ошибка повторится, сообщите администратору."
+                            ),
                         ),
                         None,
                     )
                 return (
                     tag_error(
                         ErrorCode.KEYS_EXHAUSTED,
-                        "🚫 Не удалось получить доступный ключ API. Попробуйте позже.",
+                        "🚫 Выбранная модель сейчас недоступна. Попробуйте позже или выберите другую.",
                     ),
                     None,
                 )

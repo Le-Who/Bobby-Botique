@@ -79,7 +79,7 @@ async def tavily_search_agent(
 
     available_key = await get_available_tavily_key()
     if not available_key:
-        return {"error": "Поиск недоступен: все API ключи сервиса поиска достигли месячного лимита."}
+        return {"error": "Поиск временно недоступен: исчерпан месячный лимит сервиса."}
 
     api_key = available_key["api_key"]
 
@@ -145,7 +145,7 @@ async def tavily_search_agent(
 
         logging.error("Tavily API call failed with status %d", e.response.status_code)
         await metrics_collector.record_error("tavily_http", f"Status {e.response.status_code}")
-        return {"error": f"Ошибка API поиска: {e.response.status_code}. Убедитесь, что ключ API валиден."}
+        return {"error": "Поиск временно недоступен. Попробуйте позже."}
     except Exception as e:
         error_type = type(e).__name__
         api_logger.log_response(
@@ -159,7 +159,7 @@ async def tavily_search_agent(
 
         logging.error("Tavily API call failed (error_type=%s)", error_type)
         await metrics_collector.record_error("tavily_api", error_type)
-        return {"error": "Произошла непредвиденная ошибка API поиска."}
+        return {"error": "Поиск временно недоступен. Попробуйте позже."}
 
 
 async def parallel_search(
