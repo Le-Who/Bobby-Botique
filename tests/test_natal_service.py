@@ -66,7 +66,9 @@ def patch_report_dependencies(monkeypatch, *, telegraph_url=None, saved_reports=
     monkeypatch.setattr("app.natal.service.generate_interpretation", fake_generate_interpretation)
     monkeypatch.setattr("app.natal.service.render_chart_svg", lambda chart: "<svg></svg>")
     monkeypatch.setattr("app.natal.service.save_report", fake_save_report)
-    monkeypatch.setattr("app.natal.service.create_telegraph_page_from_markdown", fake_create_telegraph_page_from_markdown)
+    monkeypatch.setattr(
+        "app.natal.service.create_telegraph_page_from_markdown", fake_create_telegraph_page_from_markdown
+    )
     monkeypatch.setattr(
         "app.natal.service._telegraph_publication_enabled",
         lambda: telegraph_enabled,

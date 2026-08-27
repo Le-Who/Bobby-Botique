@@ -46,9 +46,7 @@ async def get_tarot_subscription(user_id: int) -> dict | None:
 
 async def count_active_subscribers() -> int:
     """Return total number of active tarot daily subscribers."""
-    rows = await db_query(
-        f"SELECT COUNT(*) AS cnt FROM {TABLE} WHERE is_subscribed = TRUE"
-    )
+    rows = await db_query(f"SELECT COUNT(*) AS cnt FROM {TABLE} WHERE is_subscribed = TRUE")
     return int(rows[0]["cnt"]) if rows else 0
 
 

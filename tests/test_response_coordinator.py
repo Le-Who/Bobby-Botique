@@ -88,9 +88,7 @@ class FakeSession:
         self.status_calls.append((text, actions))
 
     async def finalize(self, *, displayed_text, title, actions):
-        self.finalize_calls.append(
-            {"displayed_text": displayed_text, "title": title, "actions": actions}
-        )
+        self.finalize_calls.append({"displayed_text": displayed_text, "title": title, "actions": actions})
         return DeliveryReceipt(
             kind=DeliveryKind.MESSAGE,
             message_ids=(1,),
@@ -110,9 +108,7 @@ def _presentation(**kwargs):
 
 @pytest.mark.asyncio
 async def test_split_voice_prefix_is_hidden_and_content_is_separate_from_footer():
-    router = FakeRouter(
-        [TextDelta("[VO"), TextDelta("ICE] Hello"), _completed()]
-    )
+    router = FakeRouter([TextDelta("[VO"), TextDelta("ICE] Hello"), _completed()])
     session = FakeSession()
     coordinator = AIStreamCoordinator(router, session, feedback_delay=60)
 
@@ -132,9 +128,7 @@ async def test_split_voice_prefix_is_hidden_and_content_is_separate_from_footer(
 
 @pytest.mark.asyncio
 async def test_model_limit_is_partial_with_notice_and_normal_actions():
-    actions = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("Action", callback_data="action")]]
-    )
+    actions = InlineKeyboardMarkup([[InlineKeyboardButton("Action", callback_data="action")]])
     session = FakeSession()
     coordinator = AIStreamCoordinator(
         FakeRouter([TextDelta("Partial"), _completed("MAX_TOKENS")]),
@@ -151,9 +145,7 @@ async def test_model_limit_is_partial_with_notice_and_normal_actions():
 
 @pytest.mark.asyncio
 async def test_transport_partial_uses_recovery_actions_and_omits_normal_footer():
-    recovery = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("Continue", callback_data="continue")]]
-    )
+    recovery = InlineKeyboardMarkup([[InlineKeyboardButton("Continue", callback_data="continue")]])
     failure = StreamFailed(
         code=ErrorCode.TIMEOUT,
         phase=FailurePhase.AFTER_TEXT,
@@ -196,7 +188,8 @@ async def test_pre_text_failure_is_rendered_without_becoming_content():
 
     assert isinstance(outcome, FailedDelivery)
     assert outcome.content_text == ""
-    assert "ключ" in outcome.displayed_text.lower()
+    assert "перегружен" in outcome.displayed_text.lower()
+    assert "ключ" not in outcome.displayed_text.lower()
     assert session.appended == []
     assert len(session.finalize_calls) == 1
 

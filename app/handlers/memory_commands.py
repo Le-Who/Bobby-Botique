@@ -41,8 +41,7 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
     offset = page * MEMORIES_PER_PAGE
     # ⚡ Bolt Optimization: Fetch memories and stats concurrently to reduce DB wait time
     memories, stats = await asyncio.gather(
-        list_memories(user_id, offset=offset, limit=MEMORIES_PER_PAGE),
-        get_memory_stats(user_id)
+        list_memories(user_id, offset=offset, limit=MEMORIES_PER_PAGE), get_memory_stats(user_id)
     )
     total = stats.get("total_memories", 0) if stats else 0
     total_pages = max(1, (total + MEMORIES_PER_PAGE - 1) // MEMORIES_PER_PAGE)
@@ -132,7 +131,7 @@ async def memory_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     try:
         owner_id = int(parts[1])
         action = parts[2]
-    except (IndexError, TypeError, ValueError):
+    except IndexError, TypeError, ValueError:
         await query.answer("Кнопка устарела. Откройте /memory заново.", show_alert=True)
         return
 
@@ -147,7 +146,7 @@ async def memory_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     if action == "page":
         try:
             page = max(0, int(parts[3]))
-        except (IndexError, ValueError):
+        except IndexError, ValueError:
             await query.answer("Некорректная страница", show_alert=True)
             return
         await query.answer()
@@ -157,7 +156,7 @@ async def memory_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         try:
             memory_id = int(parts[3])
             page = max(0, int(parts[4])) if len(parts) > 4 else 0
-        except (IndexError, ValueError):
+        except IndexError, ValueError:
             await query.answer("Некорректное воспоминание", show_alert=True)
             return
 

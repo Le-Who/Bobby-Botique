@@ -41,12 +41,11 @@ async def get_start_menu_content(chat_state, user_id=None):
     if user_id:
         try:
             from app.document_processor import get_user_documents  # deferred — avoids pypdf/docx at startup
+
             today_requests, docs, conv_count = await asyncio.gather(
-                get_user_today_request_count(user_id),
-                get_user_documents(user_id),
-                get_conversation_count(user_id)
+                get_user_today_request_count(user_id), get_user_documents(user_id), get_conversation_count(user_id)
             )
-            
+
             req_count = today_requests
             doc_count = len(docs) if docs else 0
 
@@ -225,8 +224,10 @@ def get_model_menu_content(chat_state, context):
         keyboard.extend(buttons)
     # Add FreeTheAI models, if available
     if settings.FREETHEAI_AVAILABLE_MODELS:
-        if settings.AVAILABLE_MODELS or settings.OPENCODE_AVAILABLE_MODELS or (
-            openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS
+        if (
+            settings.AVAILABLE_MODELS
+            or settings.OPENCODE_AVAILABLE_MODELS
+            or (openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS)
         ):
             keyboard.append([InlineKeyboardButton("─────────────", callback_data="model_none")])
         buttons, model_index = _generate_model_buttons(
@@ -636,6 +637,7 @@ async def get_metrics_content():
 
 async def get_documents_menu_content(user_id):
     from app.document_processor import get_user_documents  # deferred — avoids pypdf/docx at startup
+
     documents = await get_user_documents(user_id)
 
     if not documents:
@@ -676,8 +678,7 @@ async def get_conversations_menu_content(user_id, page=1):
     offset = (page - 1) * limit
 
     conversations, total_count = await asyncio.gather(
-        get_user_conversations(user_id, limit, offset),
-        get_conversation_count(user_id)
+        get_user_conversations(user_id, limit, offset), get_conversation_count(user_id)
     )
 
     if not conversations:

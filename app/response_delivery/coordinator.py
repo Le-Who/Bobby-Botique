@@ -149,9 +149,7 @@ class AIStreamCoordinator:
             else:
                 await self._session.show_status(
                     "⏳ Запрос в обработке: высокая нагрузка на сервера...",
-                    InlineKeyboardMarkup(
-                        [[InlineKeyboardButton("❌ Отменить", callback_data="cancel_generation")]]
-                    ),
+                    InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="cancel_generation")]]),
                 )
 
         if user_id is not None:
@@ -161,9 +159,7 @@ class AIStreamCoordinator:
         try:
             async for event in iterator:
                 if terminal is not None:
-                    raise ProviderStreamProtocolError(
-                        "Router emitted an event after its terminal event"
-                    )
+                    raise ProviderStreamProtocolError("Router emitted an event after its terminal event")
                 if isinstance(event, TextDelta):
                     if prefix_decided:
                         await _append_visible(event.text)
@@ -185,9 +181,7 @@ class AIStreamCoordinator:
                     continue
 
                 if not is_terminal_event(event):
-                    raise ProviderStreamProtocolError(
-                        f"Unsupported router event: {type(event).__name__}"
-                    )
+                    raise ProviderStreamProtocolError(f"Unsupported router event: {type(event).__name__}")
                 terminal = event
 
             if terminal is None:
@@ -204,10 +198,7 @@ class AIStreamCoordinator:
             prepared = presentation.prepare(facts)
 
             if isinstance(terminal, StreamDeferred):
-                displayed = (
-                    "⏳ Серверы AI временно перегружены. "
-                    "Я отправлю ответ, как только они освободятся."
-                )
+                displayed = "⏳ Серверы AI временно перегружены. Я отправлю ответ, как только они освободятся."
                 receipt = await self._session.finalize(
                     displayed_text=displayed,
                     title=prepared.long_read_title,

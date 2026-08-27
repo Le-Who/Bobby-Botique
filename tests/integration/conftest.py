@@ -80,7 +80,9 @@ async def db_conn(test_db_url):
         await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS temperature FLOAT")
         await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS voice_id TEXT")
         await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS tts_temperature FLOAT")
-        await conn.execute("ALTER TABLE long_term_memory ADD COLUMN IF NOT EXISTS rlhf_negative_count INTEGER DEFAULT 0")
+        await conn.execute(
+            "ALTER TABLE long_term_memory ADD COLUMN IF NOT EXISTS rlhf_negative_count INTEGER DEFAULT 0"
+        )
         yield conn
     finally:
         try:

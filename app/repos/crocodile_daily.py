@@ -405,7 +405,9 @@ async def create_puzzle_if_missing(puzzle_date: date, *, difficulty: str = "easy
         return await _create_puzzle_if_missing_with_conn(puzzle_date, difficulty=difficulty, conn=conn)
 
 
-async def regenerate_puzzle_word(puzzle_date: date, difficulty: str = "easy", model: str | None = None) -> DailyPuzzle | None:
+async def regenerate_puzzle_word(
+    puzzle_date: date, difficulty: str = "easy", model: str | None = None
+) -> DailyPuzzle | None:
     difficulty = normalize_daily_difficulty(difficulty)
     pool = getattr(db.db_manager, "pool", None)
     if not pool or getattr(pool, "_closed", False):
@@ -414,7 +416,7 @@ async def regenerate_puzzle_word(puzzle_date: date, difficulty: str = "easy", mo
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("LOCK TABLE public.crocodile_daily_days IN SHARE ROW EXCLUSIVE MODE")
         await conn.execute("LOCK TABLE public.crocodile_daily_puzzles IN SHARE ROW EXCLUSIVE MODE")
-        
+
         existing = await get_puzzle(puzzle_date, difficulty=difficulty, conn=conn)
         if not existing:
             return None
@@ -428,7 +430,7 @@ async def regenerate_puzzle_word(puzzle_date: date, difficulty: str = "easy", mo
 
         used_words = await get_used_daily_words(conn=conn)
         used_words.add(normalize_daily_word(existing.target_word))
-        
+
         if difficulty == "hard":
             easy_puzzle = await get_puzzle(puzzle_date, difficulty="easy", conn=conn)
             if easy_puzzle:

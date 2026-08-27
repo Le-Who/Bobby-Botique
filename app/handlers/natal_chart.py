@@ -196,7 +196,7 @@ async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | s
             "Если диапазон:\n"
             "Страна рождения:\n"
             "Место рождения:\n"
-            "Фокус разбора: общий / отношения / карьера / психология / кратко"
+            "Фокус разбора: общий / отношения / карьера / психология / кратко",
         )
         return NATAL_TABLE
     if mode == "matrix":
@@ -304,7 +304,9 @@ async def on_time_precision(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         elif raw in {"диапазон", "range"}:
             precision = TimePrecision.RANGE
         else:
-            await _show_flow_prompt(update, context, "Время рождения известно?", reply_markup=_time_precision_keyboard())
+            await _show_flow_prompt(
+                update, context, "Время рождения известно?", reply_markup=_time_precision_keyboard()
+            )
             return NATAL_TIME_PRECISION
     if precision == TimePrecision.UNKNOWN:
         context.user_data["natal_time_precision"] = TimePrecision.UNKNOWN
@@ -368,7 +370,9 @@ async def on_country(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
     await _delete_user_message(update)
     matches = search_countries(query, limit=8)
     if not matches:
-        await _show_flow_prompt(update, context, "Страна не найдена. Введите больше букв.", reply_markup=_input_keyboard("country"))
+        await _show_flow_prompt(
+            update, context, "Страна не найдена. Введите больше букв.", reply_markup=_input_keyboard("country")
+        )
         return NATAL_COUNTRY
     await _show_flow_prompt(
         update,
@@ -405,7 +409,9 @@ async def on_place(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | 
     await _delete_user_message(update)
     country_code = context.user_data.get("natal_country_code")
     if not isinstance(country_code, str) or not country_code:
-        await _show_flow_prompt(update, context, "Сначала выберите страну рождения.", reply_markup=_input_keyboard("country"))
+        await _show_flow_prompt(
+            update, context, "Сначала выберите страну рождения.", reply_markup=_input_keyboard("country")
+        )
         return NATAL_COUNTRY
     matches = search_cities(query, limit=8, country_code=country_code)
     if not matches:
@@ -433,11 +439,15 @@ async def on_place_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     geoname_id = query.data.replace("natal_place:", "")
     city = find_city_by_id(geoname_id)
     if city is None:
-        await _show_flow_prompt(update, context, "Город не найден. Введите место рождения еще раз.", reply_markup=_input_keyboard("city"))
+        await _show_flow_prompt(
+            update, context, "Город не найден. Введите место рождения еще раз.", reply_markup=_input_keyboard("city")
+        )
         return NATAL_PLACE
     country_code = context.user_data.get("natal_country_code")
     if not isinstance(country_code, str) or not country_code:
-        await _show_flow_prompt(update, context, "Сначала выберите страну рождения.", reply_markup=_input_keyboard("country"))
+        await _show_flow_prompt(
+            update, context, "Сначала выберите страну рождения.", reply_markup=_input_keyboard("country")
+        )
         return NATAL_COUNTRY
     if city.country_code != country_code:
         await _show_flow_prompt(
@@ -452,8 +462,7 @@ async def on_place_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await _show_flow_prompt(
         update,
         context,
-        f"Место рождения: {city.display_name}\n\n"
-        "Фокус разбора:",
+        f"Место рождения: {city.display_name}\n\nФокус разбора:",
         reply_markup=_focus_keyboard(),
     )
     return NATAL_FOCUS
@@ -663,7 +672,9 @@ def _result_caption(report, birth_input: BirthInput) -> str:
     del report
     ready_heading = _report_ready_heading(birth_input.report_type)
     focus = html.escape(_FOCUS_RESULT_LABELS.get(birth_input.focus, birth_input.focus or "общий разбор"))
-    precision = html.escape(_TIME_PRECISION_RESULT_LABELS.get(birth_input.time_precision, birth_input.time_precision.value))
+    precision = html.escape(
+        _TIME_PRECISION_RESULT_LABELS.get(birth_input.time_precision, birth_input.time_precision.value)
+    )
     limitation = ""
     if birth_input.report_type == ReportType.DESTINY_MATRIX:
         precision_line = "<b>Данные:</b> дата рождения; время и место не нужны для матрицы.\n\n"
@@ -712,12 +723,7 @@ def _format_flow_prompt(user_data: dict, text: str) -> str:
     if _is_terminal_flow_text(text):
         return text
     summary = "\n".join(_draft_lines(user_data))
-    return (
-        f"{text}\n\n"
-        "Черновик:\n"
-        f"{summary}\n\n"
-        "Сообщения с датой, временем и местом я удаляю из чата после обработки."
-    )
+    return f"{text}\n\nЧерновик:\n{summary}\n\nСообщения с датой, временем и местом я удаляю из чата после обработки."
 
 
 def _is_terminal_flow_text(text: str) -> bool:
@@ -895,8 +901,12 @@ def _time_picker_keyboard(user_data: dict) -> InlineKeyboardMarkup:
         target = _time_range_target(user_data)
         rows.append(
             [
-                InlineKeyboardButton(_time_target_label("start", "С", target, user_data), callback_data="natal_time:target:start"),
-                InlineKeyboardButton(_time_target_label("end", "До", target, user_data), callback_data="natal_time:target:end"),
+                InlineKeyboardButton(
+                    _time_target_label("start", "С", target, user_data), callback_data="natal_time:target:start"
+                ),
+                InlineKeyboardButton(
+                    _time_target_label("end", "До", target, user_data), callback_data="natal_time:target:end"
+                ),
             ]
         )
     rows.append(
@@ -1054,8 +1064,12 @@ def _date_picker_keyboard(user_data: dict) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(_date_part_label("day", "День", user_data, view), callback_data="natal_date:view:day"),
-            InlineKeyboardButton(_date_part_label("month", "Месяц", user_data, view), callback_data="natal_date:view:month"),
-            InlineKeyboardButton(_date_part_label("year", "Год", user_data, view), callback_data="natal_date:view:year"),
+            InlineKeyboardButton(
+                _date_part_label("month", "Месяц", user_data, view), callback_data="natal_date:view:month"
+            ),
+            InlineKeyboardButton(
+                _date_part_label("year", "Год", user_data, view), callback_data="natal_date:view:year"
+            ),
         ]
     ]
     if view == "month":
@@ -1132,10 +1146,20 @@ def _date_picker_year_rows(user_data: dict) -> list[list[InlineKeyboardButton]]:
     nav: list[InlineKeyboardButton] = []
     if start > _DATE_PICKER_YEAR_MIN:
         prev_start = max(_DATE_PICKER_YEAR_MIN, start - _DATE_PICKER_YEAR_PAGE_SIZE)
-        nav.append(InlineKeyboardButton(f"< {prev_start}-{prev_start + _DATE_PICKER_YEAR_PAGE_SIZE - 1}", callback_data=f"natal_date:year_page:{prev_start}"))
+        nav.append(
+            InlineKeyboardButton(
+                f"< {prev_start}-{prev_start + _DATE_PICKER_YEAR_PAGE_SIZE - 1}",
+                callback_data=f"natal_date:year_page:{prev_start}",
+            )
+        )
     if end < _date_picker_year_max():
         next_start = start + _DATE_PICKER_YEAR_PAGE_SIZE
-        nav.append(InlineKeyboardButton(f"{next_start}-{min(next_start + _DATE_PICKER_YEAR_PAGE_SIZE - 1, _date_picker_year_max())} >", callback_data=f"natal_date:year_page:{next_start}"))
+        nav.append(
+            InlineKeyboardButton(
+                f"{next_start}-{min(next_start + _DATE_PICKER_YEAR_PAGE_SIZE - 1, _date_picker_year_max())} >",
+                callback_data=f"natal_date:year_page:{next_start}",
+            )
+        )
     if nav:
         rows.append(nav)
     return rows
@@ -1246,7 +1270,9 @@ def _input_keyboard(target: str) -> InlineKeyboardMarkup:
         "country": "Введите страну сообщением",
         "city": "Введите город сообщением",
     }
-    return InlineKeyboardMarkup([[InlineKeyboardButton(labels.get(target, "Введите сообщением"), callback_data=f"natal_input:{target}")]])
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(labels.get(target, "Введите сообщением"), callback_data=f"natal_input:{target}")]]
+    )
 
 
 def _country_keyboard(countries: list[CountryRecord]) -> InlineKeyboardMarkup:

@@ -27,18 +27,18 @@ logger = logging.getLogger(__name__)
 
 # Human-readable sign labels (mirrors horoscope_subscription.py; kept local to avoid circular import)
 _SIGN_LABELS: dict[str, str] = {
-    "aries":       "♈ Овен",
-    "taurus":      "♉ Телец",
-    "gemini":      "♊ Близнецы",
-    "cancer":      "♋ Рак",
-    "leo":         "♌ Лев",
-    "virgo":       "♍ Дева",
-    "libra":       "♎ Весы",
-    "scorpio":     "♏ Скорпион",
+    "aries": "♈ Овен",
+    "taurus": "♉ Телец",
+    "gemini": "♊ Близнецы",
+    "cancer": "♋ Рак",
+    "leo": "♌ Лев",
+    "virgo": "♍ Дева",
+    "libra": "♎ Весы",
+    "scorpio": "♏ Скорпион",
     "sagittarius": "♐ Стрелец",
-    "capricorn":   "♑ Козерог",
-    "aquarius":    "♒ Водолей",
-    "pisces":      "♓ Рыбы",
+    "capricorn": "♑ Козерог",
+    "aquarius": "♒ Водолей",
+    "pisces": "♓ Рыбы",
 }
 
 
@@ -61,7 +61,11 @@ async def _deliver_horoscope(
     except Exception as gen_err:
         logger.error(
             "Horoscope generation error for user=%s sign=%s kind=%s: %s",
-            user_id, sign, kind, gen_err, exc_info=True,
+            user_id,
+            sign,
+            kind,
+            gen_err,
+            exc_info=True,
         )
         return False
 
@@ -75,12 +79,14 @@ async def _deliver_horoscope(
 
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-    keyboard = InlineKeyboardMarkup([
+    keyboard = InlineKeyboardMarkup(
         [
-            InlineKeyboardButton("⚙️ Настройки", callback_data="horo_settings:edit"),
-            InlineKeyboardButton("Отключить", callback_data="horo_settings:delete"),
-        ],
-    ])
+            [
+                InlineKeyboardButton("⚙️ Настройки", callback_data="horo_settings:edit"),
+                InlineKeyboardButton("Отключить", callback_data="horo_settings:delete"),
+            ],
+        ]
+    )
 
     try:
         await bot.send_message(
@@ -93,7 +99,8 @@ async def _deliver_horoscope(
     except Exception as send_err:
         logger.error(
             "Failed to send horoscope DM to user=%s: %s",
-            user_id, send_err,
+            user_id,
+            send_err,
         )
         return False
 
@@ -131,7 +138,10 @@ async def check_and_send_horoscopes(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         logger.info(
             "Horoscope scheduler: %d due '%s' deliveries at UTC %02d:%02d",
-            len(due), kind, utc_hour, utc_minute,
+            len(due),
+            kind,
+            utc_hour,
+            utc_minute,
         )
 
         for sub in due:
@@ -141,11 +151,11 @@ async def check_and_send_horoscopes(context: ContextTypes.DEFAULT_TYPE) -> None:
             success = await _deliver_horoscope(context.bot, user_id, sign, kind)
             if success:
                 await mark_horoscope_sent(user_id, kind)
-                logger.info(
-                    "Horoscope '%s' delivered to user=%s sign=%s", kind, user_id, sign
-                )
+                logger.info("Horoscope '%s' delivered to user=%s sign=%s", kind, user_id, sign)
             else:
                 logger.warning(
                     "Horoscope '%s' delivery failed for user=%s sign=%s — will retry next minute",
-                    kind, user_id, sign,
+                    kind,
+                    user_id,
+                    sign,
                 )

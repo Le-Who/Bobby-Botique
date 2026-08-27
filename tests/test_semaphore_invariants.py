@@ -72,7 +72,7 @@ async def test_semaphore_released_on_asyncio_cancelled_error():
         task.cancel()
         try:
             await task
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError, Exception:
             pass
 
     # Assert — semaphore must be released despite cancellation

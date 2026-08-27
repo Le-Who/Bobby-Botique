@@ -1587,9 +1587,7 @@ async def cleanup_expired_memories() -> int:
 
     if failures:
         failed_ids = ", ".join(str(user_id) for user_id, _error in failures)
-        raise RuntimeError(
-            f"Memory cleanup incomplete for {len(failures)} user(s): {failed_ids}"
-        ) from failures[0][1]
+        raise RuntimeError(f"Memory cleanup incomplete for {len(failures)} user(s): {failed_ids}") from failures[0][1]
 
     if count > 0:
         logging.info("Cleaned up %d expired memories", count)

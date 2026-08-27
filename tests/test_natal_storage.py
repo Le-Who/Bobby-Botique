@@ -246,8 +246,7 @@ async def test_check_storage_ready_rejects_wrong_index_definition(monkeypatch):
                 {
                     "indexname": "idx_natal_reports_user_created",
                     "indexdef": (
-                        "CREATE INDEX idx_natal_reports_user_created ON public.natal_reports "
-                        "USING btree (user_id)"
+                        "CREATE INDEX idx_natal_reports_user_created ON public.natal_reports USING btree (user_id)"
                     ),
                 }
             ]

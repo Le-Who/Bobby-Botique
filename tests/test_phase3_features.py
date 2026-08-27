@@ -211,15 +211,11 @@ class TestGDPRCommands:
         assert data["chat_settings"]["system_prompt"] == "A private custom prompt"
         assert data["chat_settings"]["ltm_enabled"] is True
         assert data["active_conversation"] == [{"role": "user", "parts": ["test"]}]
-        assert data["saved_conversations"][0]["messages"] == [
-            {"role": "user", "content": "saved message"}
-        ]
+        assert data["saved_conversations"][0]["messages"] == [{"role": "user", "content": "saved message"}]
         assert data["long_term_memory"]["memories"][0]["content"] == "likes tea"
         assert data["long_term_memory"]["nodes"][0]["entity_name"] == "tea"
         assert data["long_term_memory"]["edges"][0]["predicate"] == "likes"
-        assert data["long_term_memory"]["edge_sources"] == [
-            {"edge_id": 31, "memory_id": 11}
-        ]
+        assert data["long_term_memory"]["edge_sources"] == [{"edge_id": 31, "memory_id": 11}]
         export_memory.assert_awaited_once_with(12345)
 
     @pytest.mark.asyncio

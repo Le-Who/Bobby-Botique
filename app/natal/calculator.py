@@ -57,6 +57,7 @@ _ASPECTS = [
     ("opposition", 180.0),
 ]
 
+
 async def calculate_chart(resolved: ResolvedBirthData) -> ChartData:
     precision = resolved.birth_input.time_precision
     houses_available = precision != TimePrecision.UNKNOWN

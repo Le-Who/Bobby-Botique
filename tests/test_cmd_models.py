@@ -15,11 +15,7 @@ def test_provider_selector_includes_all_chat_providers():
     from app.handlers.cmd_models import _build_provider_selector
 
     markup = _build_provider_selector()
-    callbacks = {
-        button.callback_data
-        for row in markup.inline_keyboard
-        for button in row
-    }
+    callbacks = {button.callback_data for row in markup.inline_keyboard for button in row}
 
     assert callbacks == {
         "models:show:gemini",

@@ -102,7 +102,7 @@ def normalize_board(value: Any) -> list[list[int]]:
         for x in range(DEFAULT_BOARD_SIZE):
             try:
                 cell = int(raw_row[x]) if x < len(raw_row) else 0
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 cell = 0
             row.append(max(0, cell))
         board.append(row)
@@ -121,7 +121,7 @@ def normalize_spawn_sequence(value: Any) -> list[dict[str, int]]:
             x = int(item.get("x", 0))
             y = int(item.get("y", 0))
             tile_value = int(item.get("value", 2))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         sequence.append(
             {

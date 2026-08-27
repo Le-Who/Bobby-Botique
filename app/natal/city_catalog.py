@@ -184,10 +184,7 @@ class CityCatalog:
         self._cities = list(cities)
         self._countries = list(countries)
         self._by_id = {city.geoname_id: city for city in self._cities}
-        self._search_rows = [
-            (city, _city_search_names(city))
-            for city in self._cities
-        ]
+        self._search_rows = [(city, _city_search_names(city)) for city in self._cities]
         self._city_prefix_index = _build_prefix_index(self._search_rows)
         self._country_search_rows = [
             (
@@ -384,12 +381,7 @@ def _build_prefix_index(
 ) -> dict[str, list[tuple[CityRecord, set[str]]]]:
     indexed: dict[str, list[tuple[CityRecord, set[str]]]] = {}
     for city, names in rows:
-        keys = {
-            token[0]
-            for name in names
-            for token in (name, *name.split())
-            if token
-        }
+        keys = {token[0] for name in names for token in (name, *name.split()) if token}
         for key in keys:
             indexed.setdefault(key, []).append((city, names))
     return indexed

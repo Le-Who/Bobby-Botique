@@ -582,11 +582,11 @@ class SyncRateLimiter:
         with self._lock:
             now = time.time()
             cutoff = now - self.window_seconds
-            
+
             requests = self._requests[key]
             while requests and requests[0] <= cutoff:
                 requests.popleft()
-                
+
             self._maybe_cleanup(cutoff)
             return len(self._requests[key]) < self.max_requests
 

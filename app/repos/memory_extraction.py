@@ -454,9 +454,7 @@ async def _upsert_graph(
         }
         for relation_spec, embedding in zip(relation_specs, relation_embeddings, strict=False):
             relation_spec["embedding"] = embedding
-            relation_spec["embedding_text"] = (
-                f"[{','.join(str(value) for value in embedding)}]" if embedding else None
-            )
+            relation_spec["embedding_text"] = f"[{','.join(str(value) for value in embedding)}]" if embedding else None
 
         async def consent_and_source_are_current(conn) -> bool:
             return bool(

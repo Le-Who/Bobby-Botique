@@ -18,29 +18,15 @@ def julian_day(utc_dt: datetime) -> float:
     a = year // 100
     b = 2 - a + (a // 4)
     day_fraction = (
-        utc_dt.hour
-        + utc_dt.minute / 60.0
-        + (utc_dt.second + utc_dt.microsecond / 1_000_000.0) / 3600.0
+        utc_dt.hour + utc_dt.minute / 60.0 + (utc_dt.second + utc_dt.microsecond / 1_000_000.0) / 3600.0
     ) / 24.0
-    return (
-        math.floor(365.25 * (year + 4716))
-        + math.floor(30.6001 * (month + 1))
-        + day
-        + day_fraction
-        + b
-        - 1524.5
-    )
+    return math.floor(365.25 * (year + 4716)) + math.floor(30.6001 * (month + 1)) + day + day_fraction + b - 1524.5
 
 
 def local_sidereal_time_degrees(utc_dt: datetime, longitude: float) -> float:
     jd = julian_day(utc_dt)
     t = (jd - 2451545.0) / 36525.0
-    gmst = (
-        280.46061837
-        + 360.98564736629 * (jd - 2451545.0)
-        + 0.000387933 * t * t
-        - (t * t * t) / 38710000.0
-    )
+    gmst = 280.46061837 + 360.98564736629 * (jd - 2451545.0) + 0.000387933 * t * t - (t * t * t) / 38710000.0
     return normalize_longitude(gmst + longitude)
 
 
@@ -59,9 +45,8 @@ def calculate_ascendant(utc_dt: datetime, latitude: float, longitude: float) -> 
     def altitude_at_ecliptic_longitude(ecliptic_longitude: float) -> float:
         ra, declination = ecliptic_to_equatorial(ecliptic_longitude, obliquity)
         hour_angle = normalize_radians(lst - ra)
-        return (
-            math.sin(lat_rad) * math.sin(declination)
-            + math.cos(lat_rad) * math.cos(declination) * math.cos(hour_angle)
+        return math.sin(lat_rad) * math.sin(declination) + math.cos(lat_rad) * math.cos(declination) * math.cos(
+            hour_angle
         )
 
     roots = find_ecliptic_roots(altitude_at_ecliptic_longitude)

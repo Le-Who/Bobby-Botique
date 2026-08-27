@@ -75,7 +75,6 @@ def configure_structlog_pipeline(enable_structured: bool, enable_pretty: bool) -
     return structlog.stdlib.ProcessorFormatter(processor=structlog.dev.ConsoleRenderer(colors=enable_pretty))
 
 
-
 # =============================================================================
 # REQUEST CONTEXT FILTER
 # =============================================================================

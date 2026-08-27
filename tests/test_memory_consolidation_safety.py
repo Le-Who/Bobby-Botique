@@ -241,7 +241,9 @@ async def test_embedding_failure_aborts_before_database_mutation(monkeypatch):
     monkeypatch.setattr(
         consolidation,
         "_extract_graph",
-        AsyncMock(return_value={"facts": [_fact("fact one", 1), _fact("fact two", 2)], "entities": [], "relations": []}),
+        AsyncMock(
+            return_value={"facts": [_fact("fact one", 1), _fact("fact two", 2)], "entities": [], "relations": []}
+        ),
     )
     monkeypatch.setattr(memory_repo, "_get_embedding", AsyncMock(side_effect=[[0.1, 0.2], None]))
 

@@ -115,7 +115,7 @@ async def erase_user_account(user_id: int) -> None:
             try:
                 await conn.execute("SELECT pg_advisory_xact_lock($1)", user_id)
                 barrier_is_current = await db_query(
-                """
+                    """
                 SELECT user_id
                 FROM public.chats
                 WHERE user_id = $1
@@ -123,9 +123,9 @@ async def erase_user_account(user_id: int) -> None:
                   AND private_data_blocked IS TRUE
                 FOR UPDATE
                 """,
-                (user_id, privacy_barrier),
-                conn=conn,
-            )
+                    (user_id, privacy_barrier),
+                    conn=conn,
+                )
                 if not barrier_is_current:
                     raise RuntimeError("account erasure privacy barrier is no longer current")
 
@@ -147,7 +147,7 @@ async def erase_user_account(user_id: int) -> None:
                     await db_query(statement, (user_id,), conn=conn)
 
                 transferred_rows = await db_query(
-                """
+                    """
                 WITH replacements AS (
                     SELECT group_chat.chat_id,
                            (
@@ -180,23 +180,20 @@ async def erase_user_account(user_id: int) -> None:
                   AND member.user_id = transferred.admin_user_id
                 RETURNING transferred.chat_id, transferred.admin_user_id
                 """,
-                (user_id,),
-                conn=conn,
-            )
-                transferred_admins = {
-                    int(row["chat_id"]): int(row["admin_user_id"])
-                    for row in transferred_rows
-                }
+                    (user_id,),
+                    conn=conn,
+                )
+                transferred_admins = {int(row["chat_id"]): int(row["admin_user_id"]) for row in transferred_rows}
 
                 deleted_group_rows = await db_query(
-                "DELETE FROM public.group_chats WHERE admin_user_id = $1 RETURNING chat_id",
-                (user_id,),
-                conn=conn,
-            )
+                    "DELETE FROM public.group_chats WHERE admin_user_id = $1 RETURNING chat_id",
+                    (user_id,),
+                    conn=conn,
+                )
                 deleted_group_ids = {int(row["chat_id"]) for row in deleted_group_rows}
 
                 await db_query(
-                """
+                    """
                 UPDATE public.group_chats AS group_chat
                 SET member_count = GREATEST(group_chat.member_count - 1, 0)
                 WHERE EXISTS (
@@ -206,14 +203,14 @@ async def erase_user_account(user_id: int) -> None:
                       AND member.user_id = $1
                 )
                 """,
-                (user_id,),
-                conn=conn,
-            )
+                    (user_id,),
+                    conn=conn,
+                )
                 await db_query(
-                "DELETE FROM public.users WHERE user_id = $1",
-                (user_id,),
-                conn=conn,
-            )
+                    "DELETE FROM public.users WHERE user_id = $1",
+                    (user_id,),
+                    conn=conn,
+                )
             finally:
                 await clear_user_context(conn=conn)
 

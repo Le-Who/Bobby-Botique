@@ -20,6 +20,7 @@ from app.providers.elevenlabs_tts import (
 # Group 1: generate_speech_elevenlabs — HTTP layer
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_generate_speech_elevenlabs_empty_string():
     res = await generate_speech_elevenlabs("", "api_key", voice_id="voice")
@@ -217,6 +218,7 @@ async def test_generate_speech_elevenlabs_output_format():
 # Group 2: generate_speech_with_key_rotation — Atomic Router
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_generate_speech_with_key_rotation_empty_keys():
     res = await generate_speech_with_key_rotation(["Hello"], [], voice_id="voice")
@@ -240,6 +242,7 @@ async def test_generate_speech_with_key_rotation_three_chunks_success():
 @pytest.mark.asyncio
 async def test_generate_speech_with_key_rotation_rotates_on_quota():
     call_count = 0
+
     async def mock_gen(text, api_key, **kwargs):
         nonlocal call_count
         call_count += 1
@@ -255,7 +258,9 @@ async def test_generate_speech_with_key_rotation_rotates_on_quota():
 
 @pytest.mark.asyncio
 async def test_generate_speech_with_key_rotation_all_keys_exhausted():
-    with patch("app.providers.elevenlabs_tts.generate_speech_elevenlabs", AsyncMock(side_effect=ElevenLabsQuotaError("quota"))):
+    with patch(
+        "app.providers.elevenlabs_tts.generate_speech_elevenlabs", AsyncMock(side_effect=ElevenLabsQuotaError("quota"))
+    ):
         res = await generate_speech_with_key_rotation(["Hello"], ["key1", "key2"], voice_id="voice")
         assert res is None
 
@@ -263,15 +268,13 @@ async def test_generate_speech_with_key_rotation_all_keys_exhausted():
 @pytest.mark.asyncio
 async def test_generate_speech_with_key_rotation_on_chunk_complete_callbacks():
     completed = []
+
     async def on_complete(current, total):
         completed.append((current, total))
 
     with patch("app.providers.elevenlabs_tts.generate_speech_elevenlabs", AsyncMock(return_value=b"audio_bytes")):
         res = await generate_speech_with_key_rotation(
-            ["C1", "C2"],
-            ["key1"],
-            voice_id="voice",
-            on_chunk_complete=on_complete
+            ["C1", "C2"], ["key1"], voice_id="voice", on_chunk_complete=on_complete
         )
         assert res == [b"audio_bytes", b"audio_bytes"]
         assert completed == [(1, 2), (2, 2)]
@@ -289,6 +292,7 @@ async def test_generate_speech_with_key_rotation_skips_empty_chunks():
 # ──────────────────────────────────────────────────────────────────────────────
 # Group 3: fetch_voices — GET /v1/voices
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_fetch_voices_success():

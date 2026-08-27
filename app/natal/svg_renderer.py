@@ -85,8 +85,7 @@ def _render_zodiac_ticks(center: int, radius: int) -> list[str]:
         label_y = center + math.sin(label_angle) * (radius + 34)
         sign_name, sign_symbol = _ZODIAC_SIGNS[index]
         parts.append(
-            f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
-            'stroke="#7d68a8" stroke-width="1.4"/>'
+            f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="#7d68a8" stroke-width="1.4"/>'
         )
         parts.append(
             f'<text x="{label_x:.1f}" y="{label_y:.1f}" text-anchor="middle" dominant-baseline="middle" '
@@ -143,7 +142,7 @@ def _render_planets(chart: ChartData, center: int, radius: int) -> list[str]:
             f'<text x="{x:.1f}" y="{y + 1:.1f}" text-anchor="middle" dominant-baseline="middle" '
             f'font-family="Georgia, serif" font-size="18" fill="#3f2e5c">{symbol}</text>'
         )
-        parts.append(f'<title>{label} в знаке {html.escape(planet.sign)}</title></a>')
+        parts.append(f"<title>{label} в знаке {html.escape(planet.sign)}</title></a>")
     return parts
 
 

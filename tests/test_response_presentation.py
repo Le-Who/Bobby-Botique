@@ -4,9 +4,11 @@ from app.response_delivery.presentation import FixedPresentation, PresentationFa
 
 
 def _prepare(text: str) -> str:
-    return FixedPresentation().prepare(
-        PresentationFacts(raw_content=text, terminal=None, voice_requested=False)
-    ).content_text
+    return (
+        FixedPresentation()
+        .prepare(PresentationFacts(raw_content=text, terminal=None, voice_requested=False))
+        .content_text
+    )
 
 
 def test_internal_google_search_tool_trace_is_removed_without_losing_answer_tail():

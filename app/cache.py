@@ -417,13 +417,14 @@ async def store_inline_context(token: str, payload: dict, user_id: int | None = 
         return False
     try:
         import time
+
         now = time.time()
         key = f"{_INLINE_CTX_PREFIX}{token}"
         data = json.dumps(payload, ensure_ascii=False)
-        
+
         async with redis_client.pipeline(transaction=True) as pipe:
             pipe.setex(key, _INLINE_CTX_TTL, data.encode("utf-8"))
-            
+
             if user_id:
                 zset_key = f"{_INLINE_CTX_ZSET_PREFIX}{user_id}"
                 # Add current token to user's history zset, scored by timestamp
@@ -432,9 +433,9 @@ async def store_inline_context(token: str, payload: dict, user_id: int | None = 
                 pipe.zcard(zset_key)
                 # Keep the zset from lingering forever if the user stops using the bot
                 pipe.expire(zset_key, _INLINE_CTX_TTL)
-                
+
             results = await pipe.execute()
-            
+
             # If user_id is provided, check if we need to evict old items
             if user_id:
                 cardinality = results[2]
@@ -447,13 +448,13 @@ async def store_inline_context(token: str, payload: dict, user_id: int | None = 
                         # Decode bytes if necessary
                         tokens_str = [t.decode("utf-8") if isinstance(t, bytes) else t for t in oldest_tokens]
                         keys_to_del = [f"{_INLINE_CTX_PREFIX}{t}" for t in tokens_str]
-                        
+
                         # Pipeline deletion of old keys and removing them from the zset
                         async with redis_client.pipeline(transaction=True) as del_pipe:
                             del_pipe.delete(*keys_to_del)
                             del_pipe.zrem(zset_key, *oldest_tokens)
                             await del_pipe.execute()
-                            
+
         logging.debug("Stored inline ctx token=%s for user=%s", token, user_id)
         return True
     except Exception as e:

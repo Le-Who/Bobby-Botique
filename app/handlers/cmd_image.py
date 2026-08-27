@@ -560,15 +560,14 @@ async def _run_generation(
     )
 
     # ⚡ Bolt Optimization: Translate prompt and send placeholder concurrently.
-    
+
     async def _do_translate():
         if _needs_translation(prompt, model):
             return await _translate_to_english(prompt, user_id=user_id)
         return prompt
 
     api_prompt, placeholder = await asyncio.gather(
-        _do_translate(),
-        message.reply_text("🎨 Рисую... это займёт несколько секунд.")
+        _do_translate(), message.reply_text("🎨 Рисую... это займёт несколько секунд.")
     )
     translated = api_prompt != prompt
 
@@ -715,15 +714,9 @@ def _error_text(err: str) -> str:
             "Переключитесь на **✨ Flux** или **⚡ Z-Image** — они работают бесплатно."
         )
     if err == "no_keys":
-        return (
-            "🖼️ *Эта модель сейчас недоступна.*\n\n"
-            "Переключитесь на другую модель или попробуйте позже."
-        )
+        return "🖼️ *Эта модель сейчас недоступна.*\n\nПереключитесь на другую модель или попробуйте позже."
     if err == "rate_limited":
-        return (
-            "⏳ *У этой модели сейчас слишком много запросов.*\n\n"
-            "Подождите минуту и попробуйте снова."
-        )
+        return "⏳ *У этой модели сейчас слишком много запросов.*\n\nПодождите минуту и попробуйте снова."
     if err in ("auth_error", "unauthorized"):
         return "🖼️ *Сервис изображений сейчас недоступен.* Попробуйте позже или выберите другую модель."
     if err == "timeout":

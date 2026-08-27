@@ -139,7 +139,14 @@ _ARCANA_PERIOD_EVENTS: dict[int, str] = {
 
 _POSITION_LAYOUT: tuple[tuple[str, str, str, float, float, str], ...] = (
     ("higher_self", "Высшая суть", "вдохновение, связь с высшим, внутренний ориентир", 460, 130, "month"),
-    ("female_talent", "Таланты женского рода", "поддержка, принятие, способы создавать отношения и среду", 693, 227, "derived"),
+    (
+        "female_talent",
+        "Таланты женского рода",
+        "поддержка, принятие, способы создавать отношения и среду",
+        693,
+        227,
+        "derived",
+    ),
     ("soul_task", "Задача души", "социальная задача, зрелый выбор и направление усилий", 790, 460, "year"),
     ("money_channel", "Денежный канал", "вход в материальный результат, обмен и ценность", 693, 693, "derived"),
     ("comfort", "Характер и земная опора", "личная сила, привычный стиль восстановления и опоры", 460, 790, "derived"),
@@ -190,8 +197,7 @@ def calculate_destiny_matrix(birth_date: str) -> DestinyMatrixData:
         "karmic_tail": _reduce_arcana(portrait + comfort),
     }
     primary_positions = [
-        _build_position(key, label, theme, values[key], x, y)
-        for key, label, theme, x, y, _source in _POSITION_LAYOUT
+        _build_position(key, label, theme, values[key], x, y) for key, label, theme, x, y, _source in _POSITION_LAYOUT
     ]
     positions = [*primary_positions, *_build_intermediate_positions(values)]
     by_key = {position.key: position for position in primary_positions}
@@ -210,7 +216,7 @@ def render_destiny_matrix_svg(matrix: DestinyMatrixData) -> str:
         'aria-labelledby="matrix-title matrix-desc">',
         '<title id="matrix-title">Матрица судьбы</title>',
         '<desc id="matrix-desc">Матрица судьбы по 22 арканам: центр, родовые линии, денежный канал, '
-        'линия отношений и возрастные периоды.</desc>',
+        "линия отношений и возрастные периоды.</desc>",
         "<defs>"
         '<radialGradient id="matrix-bg" cx="50%" cy="42%" r="72%">'
         '<stop offset="0%" stop-color="#fffef7"/><stop offset="58%" stop-color="#eef7f5"/>'
@@ -555,9 +561,7 @@ def _build_life_periods(by_key: dict[str, DestinyMatrixPosition]) -> list[Destin
     return periods
 
 
-def _line_summary(
-    first_key: str, second_key: str, third_key: str, by_key: dict[str, DestinyMatrixPosition]
-) -> str:
+def _line_summary(first_key: str, second_key: str, third_key: str, by_key: dict[str, DestinyMatrixPosition]) -> str:
     first = by_key[first_key]
     second = by_key[second_key]
     third = by_key[third_key]
@@ -611,12 +615,21 @@ def _line_label(x: float, y: float, label: str, color: str) -> str:
 
 
 def _matrix_node(position: DestinyMatrixPosition) -> str:
-    radius = 24 if position.kind == "intermediate" else 55 if position.key == "center" else 45 if position.key in {
-        "higher_self",
-        "soul_task",
-        "comfort",
-        "portrait",
-    } else 33
+    radius = (
+        24
+        if position.kind == "intermediate"
+        else 55
+        if position.key == "center"
+        else 45
+        if position.key
+        in {
+            "higher_self",
+            "soul_task",
+            "comfort",
+            "portrait",
+        }
+        else 33
+    )
     fill_by_key = {
         "center": "#f8d84e",
         "higher_self": "#8d5bd6",
@@ -656,8 +669,7 @@ def _matrix_node(position: DestinyMatrixPosition) -> str:
 def _callout(x: float, y: float, lines: list[str], color: str, anchor: str) -> str:
     escaped = [html.escape(line) for line in lines]
     tspans = "".join(
-        f'<tspan x="{x:.1f}" dy="{0 if index == 0 else 18}">{line}</tspan>'
-        for index, line in enumerate(escaped)
+        f'<tspan x="{x:.1f}" dy="{0 if index == 0 else 18}">{line}</tspan>' for index, line in enumerate(escaped)
     )
     return (
         f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="{anchor}" font-family="Aptos, Segoe UI, sans-serif" '

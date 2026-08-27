@@ -35,6 +35,7 @@ def allow_private_data_boundaries():
     ):
         yield
 
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 

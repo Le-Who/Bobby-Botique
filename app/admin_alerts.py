@@ -264,15 +264,17 @@ async def alert_admin_unauthorized_user(
     )
 
     # Note: url="tg://user?id=USER_ID" opens the user's profile in Telegram clients
-    keyboard = InlineKeyboardMarkup([
+    keyboard = InlineKeyboardMarkup(
         [
-            InlineKeyboardButton("✅ Добавить в whitelist", callback_data=f"unauthorized_add:{user_id}"),
-        ],
-        [
-            InlineKeyboardButton("👤 Профиль", url=f"tg://user?id={user_id}"),
-            InlineKeyboardButton("🚫 Игнорировать", callback_data=f"unauthorized_dismiss:{user_id}"),
+            [
+                InlineKeyboardButton("✅ Добавить в whitelist", callback_data=f"unauthorized_add:{user_id}"),
+            ],
+            [
+                InlineKeyboardButton("👤 Профиль", url=f"tg://user?id={user_id}"),
+                InlineKeyboardButton("🚫 Игнорировать", callback_data=f"unauthorized_dismiss:{user_id}"),
+            ],
         ]
-    ])
+    )
 
     try:
         await app.bot.send_message(

@@ -29,24 +29,26 @@ def _load_deck() -> None:
         _TAROT_DECK = data.get("tarot_interpretations", [])
     except Exception as e:
         import logging
+
         logging.error("Failed to load tarot deck: %s", e)
 
 
 # ── Spread types ──────────────────────────────────────────────────────────────
 
+
 class SpreadType(Enum):
-    CLASSIC = "tarot"          # 3 карты: Прошлое / Настоящее / Будущее (legacy)
-    DAILY   = "tarot_daily"    # 1 карта дня
-    YES_NO  = "tarot_yesno"    # 1 карта Да / Нет
-    LOVE    = "tarot_love"     # 5 карт: расклад на отношения
-    CELTIC  = "tarot_celtic"   # 6 карт: кельтский крест (адаптированный)
+    CLASSIC = "tarot"  # 3 карты: Прошлое / Настоящее / Будущее (legacy)
+    DAILY = "tarot_daily"  # 1 карта дня
+    YES_NO = "tarot_yesno"  # 1 карта Да / Нет
+    LOVE = "tarot_love"  # 5 карт: расклад на отношения
+    CELTIC = "tarot_celtic"  # 6 карт: кельтский крест (адаптированный)
     FORTUNE = "tarot_fortune"  # мгновенное предсказание без LLM
 
 
 SPREAD_POSITIONS: dict[SpreadType, list[str]] = {
     SpreadType.CLASSIC: ["Прошлое", "Настоящее", "Будущее"],
-    SpreadType.DAILY:   ["Карта дня"],
-    SpreadType.YES_NO:  ["Ответ"],
+    SpreadType.DAILY: ["Карта дня"],
+    SpreadType.YES_NO: ["Ответ"],
     SpreadType.LOVE: [
         "Ты",
         "Партнёр",
@@ -71,6 +73,7 @@ SPREAD_BY_ID: dict[str, SpreadType] = {s.value: s for s in SpreadType}
 
 # ── Card drawing ──────────────────────────────────────────────────────────────
 
+
 def draw_cards(num_cards: int) -> list[dict]:
     """Draw random cards from the deck with orientation."""
     _load_deck()
@@ -81,20 +84,21 @@ def draw_cards(num_cards: int) -> list[dict]:
     results = []
     for card in drawn:
         is_reversed = random.choice([True, False])
-        meanings = card.get("meanings", {}).get(
-            "shadow" if is_reversed else "light", []
+        meanings = card.get("meanings", {}).get("shadow" if is_reversed else "light", [])
+        results.append(
+            {
+                "name": card.get("name", "Unknown Card"),
+                "orientation": "Перевернутая" if is_reversed else "Прямая",
+                "is_reversed": is_reversed,
+                "keywords": card.get("keywords", []),
+                "meanings": meanings,
+            }
         )
-        results.append({
-            "name": card.get("name", "Unknown Card"),
-            "orientation": "Перевернутая" if is_reversed else "Прямая",
-            "is_reversed": is_reversed,
-            "keywords": card.get("keywords", []),
-            "meanings": meanings,
-        })
     return results
 
 
 # ── Context builders ──────────────────────────────────────────────────────────
+
 
 def build_card_context(card: dict, orientation: str, position: str = "Карта дня") -> tuple[str, str]:
     """Build one-card context and display label for a fixed card/orientation."""
@@ -133,6 +137,7 @@ def iter_daily_card_variants() -> list[dict]:
             )
     return variants
 
+
 def get_tarot_context(
     spread: SpreadType | int = SpreadType.CLASSIC,
 ) -> tuple[str, list[str]]:
@@ -146,9 +151,7 @@ def get_tarot_context(
     if isinstance(spread, int):
         num_cards = spread
         positions = (
-            SPREAD_POSITIONS[SpreadType.CLASSIC]
-            if num_cards == 3
-            else [f"Карта {i + 1}" for i in range(num_cards)]
+            SPREAD_POSITIONS[SpreadType.CLASSIC] if num_cards == 3 else [f"Карта {i + 1}" for i in range(num_cards)]
         )
     else:
         positions = SPREAD_POSITIONS[spread]

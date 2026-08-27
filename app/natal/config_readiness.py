@@ -117,7 +117,4 @@ def _missing_package_message(
 ) -> str:
     if maximum is None:
         return f"{package_name} must be installed with version >={_format_version(minimum)}."
-    return (
-        f"{package_name} must be installed with version "
-        f">={_format_version(minimum)},<{_format_version(maximum)}."
-    )
+    return f"{package_name} must be installed with version >={_format_version(minimum)},<{_format_version(maximum)}."

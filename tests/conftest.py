@@ -38,7 +38,6 @@ if _original_database_url:
 os.environ.update(_SAFE_TEST_ENV)
 
 
-
 def _quiet_exception_handler(loop, context):
     """Suppress asyncpg 'connection was closed' noise during test teardown.
 

@@ -156,16 +156,13 @@ def load_golden_cases_from_json(path: str | Path) -> tuple[NatalGoldenCase, ...]
         if not isinstance(raw_case, dict):
             raise ValueError("Each natal accuracy fixture case must be an object.")
         expected_house_cusps = {
-            int(number): float(longitude)
-            for number, longitude in raw_case.get("expected_house_cusps", {}).items()
+            int(number): float(longitude) for number, longitude in raw_case.get("expected_house_cusps", {}).items()
         }
         expected_planet_longitudes = {
-            str(key): float(value)
-            for key, value in raw_case.get("expected_planet_longitudes", {}).items()
+            str(key): float(value) for key, value in raw_case.get("expected_planet_longitudes", {}).items()
         }
         expected_retrogrades = {
-            str(key): bool(value)
-            for key, value in raw_case.get("expected_retrogrades", {}).items()
+            str(key): bool(value) for key, value in raw_case.get("expected_retrogrades", {}).items()
         }
         expected_angles = {str(key): float(value) for key, value in raw_case.get("expected_angles", {}).items()}
         externally_verified = bool(raw_case.get("externally_verified", False))

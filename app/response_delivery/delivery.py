@@ -120,11 +120,7 @@ class TelegramResponseDelivery:
             content = prepared.content_text
             displayed = prepared.display_prefix + content
             if prepared.footer:
-                displayed += (
-                    prepared.footer
-                    if prepared.footer.startswith("\n")
-                    else f"\n\n{prepared.footer}"
-                )
+                displayed += prepared.footer if prepared.footer.startswith("\n") else f"\n\n{prepared.footer}"
             receipt = await session.finalize(
                 displayed_text=displayed,
                 title=prepared.long_read_title,
@@ -158,10 +154,7 @@ class TelegramResponseDelivery:
                 receipt=receipt,
             )
 
-        displayed = (
-            "⏳ Серверы AI временно перегружены. "
-            "Я отправлю ответ, как только они освободятся."
-        )
+        displayed = "⏳ Серверы AI временно перегружены. Я отправлю ответ, как только они освободятся."
         receipt = await session.finalize(
             displayed_text=displayed,
             title=prepared.long_read_title,

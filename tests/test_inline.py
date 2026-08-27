@@ -60,9 +60,7 @@ async def test_stream_inline_fast_collects_typed_text_and_grounding(monkeypatch)
             yield StreamCompleted(
                 finish_reason=FinishReason.from_raw("STOP"),
                 usage=TokenUsage(total=5),
-                grounding=GroundingReport(
-                    sources=(GroundingSource("https://example.com", "Example"),)
-                ),
+                grounding=GroundingReport(sources=(GroundingSource("https://example.com", "Example"),)),
                 route=RouteUsed(
                     provider=ProviderKind.GEMINI,
                     requested_model=request.models[0],

@@ -117,7 +117,7 @@ async def _generate_single_chunk_gemini(
         def _suppress(task: asyncio.Task[Any]) -> None:
             try:
                 task.exception()
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError, Exception:
                 pass
 
         tasks = {asyncio.create_task(_tts_race_call(key_data)): key_data for key_data in keys_to_race}
@@ -392,14 +392,8 @@ class VoiceReplyManager:
                     self._worker_tasks.pop(user_id, None)
                 queue = self._queues.get(user_id)
                 current_worker = self._worker_tasks.get(user_id)
-                if (
-                    queue
-                    and user_id not in self._active_jobs
-                    and (current_worker is None or current_worker.done())
-                ):
-                    self._worker_tasks[user_id] = submit_task(
-                        self._run_user_queue(user_id)
-                    )
+                if queue and user_id not in self._active_jobs and (current_worker is None or current_worker.done()):
+                    self._worker_tasks[user_id] = submit_task(self._run_user_queue(user_id))
         return len(removed)
 
     async def wait_until_idle(self, user_id: int, timeout: float = 3.0) -> None:
@@ -427,7 +421,7 @@ class VoiceReplyManager:
                     job = queue.popleft()
                     self._active_jobs[user_id] = job
 
-                # ⚡ Bolt Optimization: Fire and forget status updates so we don't 
+                # ⚡ Bolt Optimization: Fire and forget status updates so we don't
                 # block the next TTS job processing on Telegram API latency.
                 submit_task(self._refresh_queued_statuses(user_id))
                 try:

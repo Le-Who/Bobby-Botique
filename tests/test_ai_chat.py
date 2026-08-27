@@ -275,9 +275,7 @@ async def test_auto_routed_voice_passes_one_marked_text_turn_to_chat_pipeline():
         )
 
     handle_chat.assert_awaited_once()
-    assert handle_chat.await_args.kwargs["user_parts"] == [
-        f"{t('voice.history_marker', 'ru')}\nVoice transcript"
-    ]
+    assert handle_chat.await_args.kwargs["user_parts"] == [f"{t('voice.history_marker', 'ru')}\nVoice transcript"]
     assert handle_chat.await_args.kwargs["capture_text_memory"] is False
 
 
@@ -290,8 +288,7 @@ async def test_synthetic_summary_is_not_persisted_as_chat_history(mock_boundarie
         history=[
             {"role": "user", "parts": ["Earlier question"]},
             {"role": "model", "parts": ["Earlier answer"]},
-        ]
-        ,
+        ],
         ltm_enabled=False,
     )
     chat_state.context_summary = "A synthetic summary that belongs only in the provider prompt"
@@ -391,11 +388,7 @@ async def test_streamed_chat_delegates_complete_keyboard_to_delivery(mock_bounda
 
     assert prepared.content_text == "Hello world!"
     assert prepared.actions is not None
-    callback_data = [
-        button.callback_data
-        for row in prepared.actions.inline_keyboard
-        for button in row
-    ]
+    callback_data = [button.callback_data for row in prepared.actions.inline_keyboard for button in row]
     assert any(value and value.startswith("suggest:") for value in callback_data)
     assert "intent_route:research" in callback_data
     assert "retry_last" in callback_data

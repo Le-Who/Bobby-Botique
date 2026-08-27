@@ -34,8 +34,7 @@ class GeocodingError(RuntimeError):
 
 
 class GeocoderProtocol(Protocol):
-    async def geocode(self, place: str) -> GeocodeResult:
-        ...
+    async def geocode(self, place: str) -> GeocodeResult: ...
 
 
 class NominatimGeocoder:
@@ -104,7 +103,9 @@ async def resolve_birth_data(
             result, timezone_name = local
         else:
             if provider != "nominatim":
-                raise GeocodingError("Место рождения не найдено в локальном каталоге. Выберите страну и ближайший город.")
+                raise GeocodingError(
+                    "Место рождения не найдено в локальном каталоге. Выберите страну и ближайший город."
+                )
             geocoder = geocoder or NominatimGeocoder()
             result = await geocoder.geocode(birth.birth_place)
             _validate_coordinates(result.latitude, result.longitude)
@@ -128,11 +129,7 @@ async def resolve_birth_data(
 
 
 def _embedded_geocode_result(birth: BirthInput) -> tuple[GeocodeResult, str] | None:
-    if (
-        birth.birth_place_latitude is None
-        or birth.birth_place_longitude is None
-        or not birth.birth_place_timezone
-    ):
+    if birth.birth_place_latitude is None or birth.birth_place_longitude is None or not birth.birth_place_timezone:
         return None
     return (
         GeocodeResult(

@@ -73,12 +73,7 @@ def _damerau_levenshtein(left: str, right: str) -> int:
                 distances[row][column - 1] + 1,
                 distances[row - 1][column - 1] + cost,
             )
-            if (
-                row > 1
-                and column > 1
-                and left[row - 1] == right[column - 2]
-                and left[row - 2] == right[column - 1]
-            ):
+            if row > 1 and column > 1 and left[row - 1] == right[column - 2] and left[row - 2] == right[column - 1]:
                 distances[row][column] = min(
                     distances[row][column],
                     distances[row - 2][column - 2] + cost,
@@ -173,11 +168,7 @@ async def compare_facts(
     # semantic verdict makes numbered facts such as "объект 1" and "объект 2"
     # collide.  This intentionally follows Crocodile's judge design: local
     # metrics handle exact identity, while meaning is decided by the judge.
-    ambiguous = (
-        subject_score >= 0.60
-        or answer_score >= 0.60
-        or question_score >= 0.70
-    )
+    ambiguous = subject_score >= 0.60 or answer_score >= 0.60 or question_score >= 0.70
     if ambiguous and semantic_judge is not None:
         duplicate, semantic_score, reason = await semantic_judge(first.canonical_claim, second.canonical_claim)
         return SimilarityMatch(duplicate, semantic_score, "semantic_judge", reason)

@@ -82,10 +82,7 @@ async def test_fifty_different_users_can_run_concurrently():
             all_started.set()
         await release.wait()
 
-    tasks = [
-        asyncio.create_task(processor.process_update(_Update(user_id), handler(user_id)))
-        for user_id in range(50)
-    ]
+    tasks = [asyncio.create_task(processor.process_update(_Update(user_id), handler(user_id))) for user_id in range(50)]
 
     await asyncio.wait_for(all_started.wait(), timeout=1)
     assert processor.current_concurrent_updates == 50
@@ -116,9 +113,7 @@ async def test_same_user_backlog_does_not_block_another_user():
 
     first_task = asyncio.create_task(processor.process_update(_Update(7), first_handler()))
     await asyncio.wait_for(first_started.wait(), timeout=1)
-    backlog_tasks = [
-        asyncio.create_task(processor.process_update(_Update(7), queued_handler())) for _ in range(50)
-    ]
+    backlog_tasks = [asyncio.create_task(processor.process_update(_Update(7), queued_handler())) for _ in range(50)]
     await _wait_until(lambda: processor._user_locks[7].references >= 50)
 
     other_user_task = asyncio.create_task(processor.process_update(_Update(8), other_user_handler()))

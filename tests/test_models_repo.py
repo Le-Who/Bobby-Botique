@@ -85,9 +85,7 @@ async def test_sync_v2_admin_override_wins_even_when_list_is_empty(monkeypatch):
 async def test_sync_can_apply_admin_override_to_reloaded_settings_object(monkeypatch):
     live_settings = _settings(AVAILABLE_MODELS=["gemini-env"])
     reloaded_settings = _settings(AVAILABLE_MODELS=["gemini-new-env"])
-    override = json.dumps(
-        {"version": 2, "source": "admin", "models": ["gemini-3.7-flash"]}
-    )
+    override = json.dumps({"version": 2, "source": "admin", "models": ["gemini-3.7-flash"]})
     models_repo, _, _ = _patch_repo(
         monkeypatch,
         live_settings,
@@ -168,9 +166,7 @@ async def test_add_model_returns_added_and_persists_v2_override(monkeypatch):
         ("unavailable", "VALIDATION_UNAVAILABLE"),
     ],
 )
-async def test_add_gemini_model_reports_validation_failure_without_mutation(
-    monkeypatch, validation, expected_code
-):
+async def test_add_gemini_model_reports_validation_failure_without_mutation(monkeypatch, validation, expected_code):
     fake_settings = _settings(AVAILABLE_MODELS=["gemini-3.5-flash-lite"])
     models_repo, set_mock, _ = _patch_repo(monkeypatch, fake_settings)
     monkeypatch.setattr(models_repo, "_validate_gemini_model", AsyncMock(return_value=validation), raising=False)

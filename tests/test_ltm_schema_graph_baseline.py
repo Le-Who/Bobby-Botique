@@ -153,8 +153,9 @@ def test_migration_tracks_mutable_graph_attributes_per_exact_source():
     assert "attributes_complete is false" in sql
 
     edge_recompute = sql[
-        sql.index("create or replace function recompute_memory_edge_after_source_removal") :
-        sql.index("create or replace function delete_orphaned_memory_edge")
+        sql.index("create or replace function recompute_memory_edge_after_source_removal") : sql.index(
+            "create or replace function delete_orphaned_memory_edge"
+        )
     ]
     assert "max(weight)" in edge_recompute
     assert "bool_or(is_core)" in edge_recompute
@@ -162,8 +163,9 @@ def test_migration_tracks_mutable_graph_attributes_per_exact_source():
     assert "delete from memory_edges" in edge_recompute
 
     node_recompute = sql[
-        sql.index("create or replace function recompute_memory_node_after_source_removal") :
-        sql.index("create or replace function delete_stale_orphaned_memory_nodes")
+        sql.index("create or replace function recompute_memory_node_after_source_removal") : sql.index(
+            "create or replace function delete_stale_orphaned_memory_nodes"
+        )
     ]
     assert "description = null" in node_recompute
     assert "file_id = null" in node_recompute
@@ -409,10 +411,7 @@ async def test_store_preflight_rejects_revoked_or_stale_consent_before_embedding
 
     @asynccontextmanager
     async def consent_lease(_user_id, lease_epoch, **_kwargs):
-        yield bool(
-            chat_row["ltm_enabled"]
-            and chat_row["memory_epoch"] == lease_epoch
-        )
+        yield bool(chat_row["ltm_enabled"] and chat_row["memory_epoch"] == lease_epoch)
 
     with (
         patch("app.repos.memory_consent.private_data_lease", consent_lease),

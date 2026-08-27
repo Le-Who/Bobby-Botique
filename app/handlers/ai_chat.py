@@ -283,9 +283,7 @@ async def _handle_regular_chat(
             if not lease_current:
                 await placeholder_message.edit_text(t("error.generic", detect_language(user_message)))
                 return
-            await _handle_lyria_audio(
-                placeholder_message, user_id, user_message, model_for_this_request
-            )
+            await _handle_lyria_audio(placeholder_message, user_id, user_message, model_for_this_request)
         return
 
     key_data, model_used, resolution = await _resolve_ai_request(model_for_this_request)
@@ -380,8 +378,7 @@ async def _handle_regular_chat(
     # request-local: canonical persistence must contain only real turns.
     provider_history = assembled.history
     chat_state.history = [
-        {**message, "parts": list(message.get("parts", []))}
-        for message in assembled.retained_history
+        {**message, "parts": list(message.get("parts", []))} for message in assembled.retained_history
     ]
     chat_state.history.append(
         {
@@ -394,7 +391,7 @@ async def _handle_regular_chat(
     # ── Inject tiered memory context & Update UI Stage (Concurrent) ───────
     _memories_injected = 0
     _graph_triples_count = 0
-    
+
     async def _do_inject():
         if chat_state.ltm_enabled and key_data:
             try:
@@ -430,7 +427,7 @@ async def _handle_regular_chat(
             except Exception as mem_err:
                 logging.warning("Memory recall failed for user %s: %s", user_id, mem_err)
         return system_instruction, {}, []
-        
+
     async def _do_stage_update():
         try:
             await update_stage(placeholder_message, STAGES_CHAT, 0)
@@ -696,11 +693,7 @@ async def _complete_regular_chat_response(
         if is_openrouter_model(actual_model or "")
         else "gemini_chat"
     )
-    response_text = (
-        outcome.content_text
-        if isinstance(outcome, (CompleteDelivery, PartialDelivery))
-        else ""
-    )
+    response_text = outcome.content_text if isinstance(outcome, (CompleteDelivery, PartialDelivery)) else ""
     await _mc.record_api_call(_chat_provider, actual_model, user_id=user_id)
     await _mc.record_request(
         "chat",
@@ -750,9 +743,7 @@ async def _complete_regular_chat_response(
             response_text=response_text,
             voice=chat_state.voice_id or "Aoede",
             tts_temperature=chat_state.tts_temperature,
-            source_key=build_voice_source_key(
-                "chat_tts", chat_id, final_ref.message_id
-            ),
+            source_key=build_voice_source_key("chat_tts", chat_id, final_ref.message_id),
             expected_epoch=request_epoch,
             require_ltm=memory_context_used,
         )
@@ -931,16 +922,20 @@ async def _handle_lyria_audio(
                 performer="Lyria AI",
                 caption=caption,
                 parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 Новая генерация", callback_data="retry_last")],
-                ]),
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [InlineKeyboardButton("🔄 Новая генерация", callback_data="retry_last")],
+                    ]
+                ),
             )
             # Delete the placeholder
             try:
                 await placeholder_message.delete()
             except Exception:
                 pass
-            logging.info("Lyria audio sent: user=%s model=%s size=%.1fKB", user_id, model, len(result.audio_bytes) / 1024)
+            logging.info(
+                "Lyria audio sent: user=%s model=%s size=%.1fKB", user_id, model, len(result.audio_bytes) / 1024
+            )
         except Exception as send_err:
             logging.error("Failed to send Lyria audio: %s", send_err)
             try:
@@ -954,9 +949,11 @@ async def _handle_lyria_audio(
         try:
             await placeholder_message.edit_text(
                 f"⚠️ Модель вернула текст вместо аудио:\n\n{text}",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 Попробовать снова", callback_data="retry_last")],
-                ]),
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [InlineKeyboardButton("🔄 Попробовать снова", callback_data="retry_last")],
+                    ]
+                ),
             )
         except Exception:
             pass
@@ -974,9 +971,11 @@ async def _handle_lyria_audio(
         try:
             await placeholder_message.edit_text(
                 text,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 Попробовать снова", callback_data="retry_last")],
-                ]),
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [InlineKeyboardButton("🔄 Попробовать снова", callback_data="retry_last")],
+                    ]
+                ),
             )
         except Exception as edit_err:
             logging.error("Could not edit Lyria error message: %s", edit_err)

@@ -261,9 +261,7 @@ class OpencodeGoProvider(OpenRouterProvider):
             return
 
         total = (
-            prompt_tokens + completion_tokens
-            if prompt_tokens is not None and completion_tokens is not None
-            else None
+            prompt_tokens + completion_tokens if prompt_tokens is not None and completion_tokens is not None else None
         )
         yield StreamCompleted(
             finish_reason=finish_reason,
@@ -370,8 +368,7 @@ class OpencodeGoProvider(OpenRouterProvider):
     def _supports_tools(self, model_name: str) -> bool:
         """Return True if this model supports OpenAI-compatible function calling."""
         return (
-            not self._uses_messages_transport(model_name)
-            and self._strip_model_prefix(model_name) in self._TOOLS_MODELS
+            not self._uses_messages_transport(model_name) and self._strip_model_prefix(model_name) in self._TOOLS_MODELS
         )
 
     def _extra_payload_params(self, model_name: str, thinking_level: str | None) -> dict:

@@ -86,7 +86,7 @@ async def _validate_url(url: str, resolve_host: HostResolver) -> None:
     try:
         parsed = urlsplit(url)
         port = parsed.port or 443
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         raise MediaDownloadError("invalid_url") from None
 
     if parsed.scheme.lower() != "https":

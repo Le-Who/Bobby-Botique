@@ -211,7 +211,7 @@ class FreeTheAIImageProvider:
                         continue
                     try:
                         decoded = base64.b64decode(b64, validate=True)
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         logger.warning("FTA Image: rejected invalid b64 image")
                         continue
                     if len(decoded) > MAX_IMAGE_DOWNLOAD_BYTES:

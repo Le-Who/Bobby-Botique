@@ -122,11 +122,7 @@ async def test_qna_search_happy_path():
     request = delivery.stream.await_args.args[1]
     assert request.grounding.value == "provider_search_required"
     presentation = delivery.stream.await_args.kwargs["presentation"]
-    labels = [
-        button.text
-        for row in presentation.actions.inline_keyboard
-        for button in row
-    ]
+    labels = [button.text for row in presentation.actions.inline_keyboard for button in row]
     assert labels == ["🎭 Выбрать роль ИИ", "✨ Начать новую тему"]
 
 

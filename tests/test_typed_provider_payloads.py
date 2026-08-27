@@ -31,9 +31,7 @@ async def test_openai_payload_uses_typed_roles_and_exact_image_mime():
     assert messages[0] == {"role": "system", "content": "system"}
     assert messages[1]["role"] == "user"
     assert messages[1]["content"][0] == {"type": "text", "text": "look"}
-    assert messages[1]["content"][1]["image_url"]["url"].startswith(
-        "data:image/png;base64,"
-    )
+    assert messages[1]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
     assert messages[2] == {"role": "assistant", "content": "seen"}
 
 

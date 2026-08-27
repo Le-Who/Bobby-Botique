@@ -128,18 +128,12 @@ def test_parse_requires_birth_country():
 def test_parse_exact_time_requires_time_value():
     with pytest.raises(BirthInputParseError, match="точное время"):
         parse_birth_table(
-            "Дата рождения: 1995-02-14\n"
-            "Время рождения: точное\n"
-            "Страна рождения: Украина\n"
-            "Место рождения: Kyiv"
+            "Дата рождения: 1995-02-14\nВремя рождения: точное\nСтрана рождения: Украина\nМесто рождения: Kyiv"
         )
 
 
 def test_parse_approximate_time_requires_time_value():
     with pytest.raises(BirthInputParseError, match="примерное время"):
         parse_birth_table(
-            "Дата рождения: 1995-02-14\n"
-            "Время рождения: примерное\n"
-            "Страна рождения: Украина\n"
-            "Место рождения: Kyiv"
+            "Дата рождения: 1995-02-14\nВремя рождения: примерное\nСтрана рождения: Украина\nМесто рождения: Kyiv"
         )

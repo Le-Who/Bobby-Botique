@@ -57,6 +57,7 @@ async def restore_branch(user_id: int, branch_id: int) -> list[dict[str, Any]] |
             if isinstance(history, str):
                 # Fallback: old double-encoded row still in DB — parse it once
                 import json as _json
+
                 history = _json.loads(history)
             logger.info("Branch restored: user=%s branch_id=%d msgs=%d", user_id, branch_id, len(history))
             return history

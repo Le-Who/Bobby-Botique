@@ -128,11 +128,7 @@ async def test_handle_photo_success():
     request = delivery.stream.await_args.args[1]
     assert request.turns[0].parts[1].data == b"compressed"
     presentation = delivery.stream.await_args.kwargs["presentation"]
-    labels = [
-        button.text
-        for row in presentation.actions.inline_keyboard
-        for button in row
-    ]
+    labels = [button.text for row in presentation.actions.inline_keyboard for button in row]
     assert labels == ["🎭 Выбрать роль ИИ", "✨ Начать новую тему"]
 
 

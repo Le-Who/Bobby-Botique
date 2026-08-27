@@ -155,9 +155,9 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                     user_message = original_message.text
                     # ⚡ Bolt Optimization: Fetch chat state and detect TTS intent concurrently
                     from app.voice_intent import detect_tts_intent
+
                     chat_state, voice_decision = await asyncio.gather(
-                        get_user_chat(user_id),
-                        detect_tts_intent(user_text=user_message)
+                        get_user_chat(user_id), detect_tts_intent(user_text=user_message)
                     )
 
                     await agent._handle_regular_chat(

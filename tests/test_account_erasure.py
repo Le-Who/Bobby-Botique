@@ -216,9 +216,7 @@ async def test_erase_user_account_locks_before_any_database_read_or_write():
         await users.erase_user_account(42)
 
     lock_indices = [
-        index
-        for index, event in enumerate(events)
-        if event == ("execute", ("SELECT pg_advisory_xact_lock($1)", (42,)))
+        index for index, event in enumerate(events) if event == ("execute", ("SELECT pg_advisory_xact_lock($1)", (42,)))
     ]
     assert len(lock_indices) == 2
     assert all(events[index - 1][0] == "context" for index in lock_indices)

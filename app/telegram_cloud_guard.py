@@ -77,9 +77,7 @@ async def release_cloud_bot_api_session(
             pending_update_count = getattr(before, "pending_update_count", None)
             if webhook_was_active:
                 delete_called = True
-                log.warning(
-                    "Official Telegram cloud webhook is active while local Bot API is configured; deleting it."
-                )
+                log.warning("Official Telegram cloud webhook is active while local Bot API is configured; deleting it.")
                 await bot.delete_webhook(drop_pending_updates=drop_pending_updates)
 
             log_out_called = True

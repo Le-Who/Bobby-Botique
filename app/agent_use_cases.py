@@ -324,9 +324,7 @@ class AgentRequestUseCase:
         if use_openrouter is None:
             # FreeTheAI models contain '/' but should NOT be treated as OpenRouter
             use_openrouter = (
-                "/" in model_name
-                and not is_opencode_model(model_name)
-                and not is_freetheai_model(model_name)
+                "/" in model_name and not is_opencode_model(model_name) and not is_freetheai_model(model_name)
             ) or get_use_openrouter()
 
         if use_openrouter and not get_openrouter_keys():
@@ -364,10 +362,7 @@ class AgentRequestUseCase:
         if is_opencode_model(model_name) or is_freetheai_model(model_name):
             return
         if use_openrouter is None:
-            use_openrouter = (
-                "/" in model_name
-                and not is_freetheai_model(model_name)
-            ) or get_use_openrouter()
+            use_openrouter = ("/" in model_name and not is_freetheai_model(model_name)) or get_use_openrouter()
         if use_openrouter:
             await increment_openrouter_key_usage(key_hash, model_name)
         else:

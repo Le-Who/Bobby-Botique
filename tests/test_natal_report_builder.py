@@ -192,7 +192,9 @@ def test_hosted_report_visually_groups_natal_and_destiny_reading_blocks(sample_n
     assert 'class="reading-group reading-group-destiny"' in html
     assert "Разбор натальной карты" in html
     assert "Разбор матрицы судьбы" in html
-    assert html.index('class="reading-group reading-group-natal"') < html.index('class="reading-group reading-group-destiny"')
+    assert html.index('class="reading-group reading-group-natal"') < html.index(
+        'class="reading-group reading-group-destiny"'
+    )
     natal_group = html.split('class="reading-group reading-group-natal"', 1)[1].split("</section>", 1)[0]
     destiny_group = html.split('class="reading-group reading-group-destiny"', 1)[1].split("</section>", 1)[0]
     assert 'id="section-sun"' in natal_group

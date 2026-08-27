@@ -46,7 +46,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     # ── Deep link routing ────────────────────────────────────────────────────
     payload = (context.args[0] if context.args else "").strip()
-    
+
     if payload.startswith("ctx_"):
         import html as _html
 
@@ -57,8 +57,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         if ctx is None:
             await update.message.reply_text(
-                "⏰ <b>Ссылка устарела.</b>\n"
-                "Контекст хранится 24 часа. Задай вопрос боту напрямую.",
+                "⏰ <b>Ссылка устарела.</b>\nКонтекст хранится 24 часа. Задай вопрос боту напрямую.",
                 parse_mode="HTML",
             )
             return
@@ -71,7 +70,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         ]
         # Keep up to 20 previous messages, then append the new 2 inline messages
         chat_state.history = chat_state.history[-20:] + inline_history
-        # Force a full rewrite in the DB because we replaced the list 
+        # Force a full rewrite in the DB because we replaced the list
         # (bypasses the bolt optimization that assumes only append-only changes)
         chat_state._original_length = 0
         await update_user_chat(user_id, chat_state)
@@ -109,15 +108,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             puzzle_date = _date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
             is_super = idx_str.startswith("s")
             question_index = int(idx_str[1:] if is_super else idx_str)
-        except (ValueError, IndexError):
+        except ValueError, IndexError:
             await update.message.reply_text("❌ Некорректная ссылка.", parse_mode="HTML")
             return
 
         q = await get_question_by_date_and_index(puzzle_date, question_index, is_super=is_super)
         if q is None:
             await update.message.reply_text(
-                "❌ <b>Вопрос не найден.</b>\n"
-                "Возможно, данные обновились. Открой Викторину и попробуй снова.",
+                "❌ <b>Вопрос не найден.</b>\nВозможно, данные обновились. Открой Викторину и попробуй снова.",
                 parse_mode="HTML",
             )
             return
@@ -136,6 +134,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         try:
             from app.config import settings as _settings
             from app.providers import get_provider_router
+
             router = get_provider_router()
             ai_history = [{"role": "user", "parts": [ai_prompt]}]
             ai_response, _ = await router.get_response(
@@ -165,10 +164,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update_user_chat(user_id, chat_state)
 
         await thinking_msg.delete()
-        header = (
-            f"🧠 <b>{_html.escape(q.question)}</b>\n"
-            f"<i>Правильный ответ: {_html.escape(correct_answer)}</i>\n\n"
-        )
+        header = f"🧠 <b>{_html.escape(q.question)}</b>\n<i>Правильный ответ: {_html.escape(correct_answer)}</i>\n\n"
         full_text = header + ai_response
         if len(full_text) > 4096:
             full_text = full_text[:4090] + "…"
@@ -578,9 +574,7 @@ async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     import io
 
     if getattr(update.effective_chat, "type", None) != "private":
-        await update.message.reply_text(
-            "🔒 Экспорт личных данных доступен только в приватном чате с ботом."
-        )
+        await update.message.reply_text("🔒 Экспорт личных данных доступен только в приватном чате с ботом.")
         return
 
     user_id = update.effective_user.id
@@ -667,17 +661,13 @@ async def deleteme_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     user_id = update.effective_user.id
 
     if getattr(update.effective_chat, "type", None) != "private":
-        await update.message.reply_text(
-            "🔒 Удаление аккаунта доступно только в приватном чате с ботом."
-        )
+        await update.message.reply_text("🔒 Удаление аккаунта доступно только в приватном чате с ботом.")
         return
 
     from app.repos.users import erase_user_account, is_admin
 
     if is_admin(user_id):
-        await update.message.reply_text(
-            "🛡️ Системный администратор не может удалить свой аккаунт этой командой."
-        )
+        await update.message.reply_text("🛡️ Системный администратор не может удалить свой аккаунт этой командой.")
         return
 
     # Check if already in confirmation
@@ -688,9 +678,7 @@ async def deleteme_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await erase_user_account(user_id)
         except Exception as exc:
             logging.error("Account erasure failed for user %s: %s", user_id, exc, exc_info=True)
-            await update.message.reply_text(
-                "❌ Не удалось удалить аккаунт: изменения отменены. Попробуйте позже."
-            )
+            await update.message.reply_text("❌ Не удалось удалить аккаунт: изменения отменены. Попробуйте позже.")
             return
 
         text = (
@@ -843,10 +831,11 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("mydata", mydata_command))
     application.add_handler(CommandHandler("deleteme", deleteme_command))
     application.add_handler(CommandHandler("clearmemory", clearmemory_command))
-    
+
     from app.handlers.cmd_tarot import tarot_command
+
     application.add_handler(CommandHandler("tarot", tarot_command))
-    application.add_handler(MessageHandler(filters.Regex(r'(?i)^/(?:таро|расклад)(?:\s+|$)'), tarot_command))
+    application.add_handler(MessageHandler(filters.Regex(r"(?i)^/(?:таро|расклад)(?:\s+|$)"), tarot_command))
     application.add_handler(CallbackQueryHandler(tarot_command, pattern=r"^start_tarot$"))
 
     # Image generation commands (/draw, /img, /image, /generate)
@@ -924,7 +913,6 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("set_provider", set_provider_command))
     application.add_handler(CommandHandler("wordbank", wordbank_command))
 
-
     application.add_handler(CallbackQueryHandler(wb_callback, pattern=r"^wb:"))
 
     # Conversation commands (from cmd_conversations)
@@ -961,6 +949,7 @@ def register(application: Application) -> None:
 
     # Tarot Daily callbacks
     from app.handlers.tarot_daily import tarot_daily_callback
+
     application.add_handler(CallbackQueryHandler(tarot_daily_callback, pattern=r"^tarot_daily:"))
 
     # Reminder command (from cmd_reminders)

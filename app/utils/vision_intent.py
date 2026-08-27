@@ -39,10 +39,10 @@ async def _call_llm_for_intent(caption: str) -> Literal["ocr", "describe"]:
         "о ней, нашли что-то или проанализировали без прямого извлечения всего текста, ответь 'describe'.\n"
         "Твой ответ должен содержать ровно одно слово: либо 'ocr', либо 'describe'."
     )
-    
+
     # We use settings.INLINE_MODEL (gemini-3.1-flash-lite) for low cost and high speed.
     model = getattr(settings, "INLINE_MODEL", "gemini-3.1-flash-lite")
-    
+
     history = [{"role": "user", "parts": [caption]}]
     try:
         response_text, _ = await _get_ai_response_with_routing(
@@ -59,24 +59,24 @@ async def _call_llm_for_intent(caption: str) -> Literal["ocr", "describe"]:
                 return "describe"
     except Exception as e:
         logging.error("Failed to classify vision intent via LLM: %s", e)
-    
+
     return "describe"
 
 
 async def classify_vision_intent(caption: str | None) -> Literal["ocr", "describe"]:
     """Classify the user intent for image processing.
-    
+
     Returns:
         "ocr" if the user wants to extract/transcribe text from the image.
         "describe" if the user wants an image description or general analysis.
     """
     if not caption or not caption.strip():
         return "describe"
-        
+
     cleaned = caption.strip()
     if cleaned in _INTENT_CACHE:
         return _INTENT_CACHE[cleaned]
-        
+
     # Manage cache size
     if len(_INTENT_CACHE) >= _MAX_CACHE_SIZE:
         # Simple FIFO eviction
@@ -85,7 +85,7 @@ async def classify_vision_intent(caption: str | None) -> Literal["ocr", "describ
             _INTENT_CACHE.pop(first_key, None)
         except StopIteration:
             pass
-        
+
     # 1. Check describe fast path
     if _DESCRIBE_PATTERNS.search(cleaned):
         res: Literal["ocr", "describe"] = "describe"
@@ -99,6 +99,6 @@ async def classify_vision_intent(caption: str | None) -> Literal["ocr", "describ
         except Exception as e:
             logging.error("Error classifying vision intent: %s", e)
             res = "describe"
-            
+
     _INTENT_CACHE[cleaned] = res
     return res

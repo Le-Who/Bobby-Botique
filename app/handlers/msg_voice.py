@@ -89,11 +89,7 @@ async def _process_voice_pipeline(
 ) -> None:
     """Lease the exact account generation before sending raw audio to ASR."""
     chat_state = await get_user_chat(user_id)
-    known_epoch = (
-        None
-        if getattr(chat_state, "_has_persisted_chat", True) is False
-        else int(chat_state.memory_epoch)
-    )
+    known_epoch = None if getattr(chat_state, "_has_persisted_chat", True) is False else int(chat_state.memory_epoch)
     from app.repos.chats import ensure_chat_generation
     from app.repos.memory_consent import private_data_lease
 
@@ -509,7 +505,6 @@ async def _auto_route_to_chat(
     formatted, parse_mode = TelegramFormatter.format_text(auto_text)
     await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=None)
 
-
     from app.handlers.ai_chat import _handle_regular_chat
     from app.voice_intent import detect_tts_intent
 
@@ -518,7 +513,7 @@ async def _auto_route_to_chat(
     new_placeholder, chat_state, voice_decision = await asyncio.gather(
         placeholder.reply_text("⏳ _Анализирую текст..._", parse_mode="Markdown"),
         get_user_chat(user_id),
-        detect_tts_intent(user_text=transcript)
+        detect_tts_intent(user_text=transcript),
     )
 
     # Run the chat pipeline inline (we already hold user_lock from caller)
@@ -639,11 +634,9 @@ async def _auto_route_to_search(
     formatted, parse_mode = TelegramFormatter.format_text(auto_text)
     await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=None)
 
-
     # ⚡ Bolt Optimization: Fetch chat state and send placeholder concurrently.
     new_placeholder, chat_state = await asyncio.gather(
-        placeholder.reply_text("⏳ _Ищу информацию в сети..._", parse_mode="Markdown"),
-        get_user_chat(user_id)
+        placeholder.reply_text("⏳ _Ищу информацию в сети..._", parse_mode="Markdown"), get_user_chat(user_id)
     )
 
     user_message_with_marker = f"{t('voice.history_marker', lang)}\n{transcript}"

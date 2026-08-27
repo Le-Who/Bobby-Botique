@@ -100,7 +100,7 @@ def build_hosted_report_html(report: NatalReport) -> str:
     positions_html = _positions_reference_html(positions)
 
     return (
-        "<!doctype html><html lang=\"ru\"><head>"
+        '<!doctype html><html lang="ru"><head>'
         '<meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>{html.escape(title)}</title>"
@@ -140,7 +140,9 @@ def build_hosted_report_html(report: NatalReport) -> str:
 
 
 def _full_reading_html(full_sections: list[tuple[ReportSection, str]]) -> str:
-    natal_sections = [section_html for section, section_html in full_sections if not _is_destiny_reading_section(section)]
+    natal_sections = [
+        section_html for section, section_html in full_sections if not _is_destiny_reading_section(section)
+    ]
     destiny_sections = [section_html for section, section_html in full_sections if _is_destiny_reading_section(section)]
     groups: list[str] = []
     if natal_sections:
@@ -176,7 +178,7 @@ def _reading_group_html(kind: str, kicker: str, title: str, description: str, se
         f'<h3 id="{heading_id}">{html.escape(title)}</h3>'
         f"<p>{html.escape(description)}</p>"
         "</div>"
-        f'{"".join(sections)}</section>'
+        f"{''.join(sections)}</section>"
     )
 
 
@@ -379,7 +381,9 @@ def _merge_related_sections(sections: list[ReportSection]) -> list[ReportSection
             continue
 
         support_markdown = "".join(_support_section_markdown(support) for support in support_sections)
-        chart_refs = list(dict.fromkeys([*section.chart_refs, *(ref for support in support_sections for ref in support.chart_refs)]))
+        chart_refs = list(
+            dict.fromkeys([*section.chart_refs, *(ref for support in support_sections for ref in support.chart_refs)])
+        )
         merged.append(
             ReportSection(
                 id=section.id,
@@ -449,7 +453,12 @@ def _reading_path_html(report: NatalReport, sections: list[ReportSection]) -> st
     elif has_matrix:
         cards = [
             _path_card("1 шаг", matrix_target, "Матрица судьбы", "Перейти к началу разбора матрицы."),
-            _path_card("2 шаг", _target_section("section-destiny-money", section_ids), "Денежный канал", "Открыть практическую линию реализации."),
+            _path_card(
+                "2 шаг",
+                _target_section("section-destiny-money", section_ids),
+                "Денежный канал",
+                "Открыть практическую линию реализации.",
+            ),
             _path_card("3 шаг", periods_target, "Возрастные периоды", "Посмотреть десятилетние акценты матрицы."),
         ]
     else:
@@ -491,13 +500,19 @@ def _position_cards(report: NatalReport, sections: list[ReportSection]) -> list[
             )
         )
     if report.chart.aspects:
-        aspect_text = ", ".join(f"{aspect.point_a}-{aspect.point_b} {aspect.aspect}" for aspect in report.chart.aspects[:3])
+        aspect_text = ", ".join(
+            f"{aspect.point_a}-{aspect.point_b} {aspect.aspect}" for aspect in report.chart.aspects[:3]
+        )
         cards.append(
-            _position_card(_target_section("section-aspects", section_ids), "Внутренние связи", "Главные аспекты", aspect_text)
+            _position_card(
+                _target_section("section-aspects", section_ids), "Внутренние связи", "Главные аспекты", aspect_text
+            )
         )
     if report.chart.houses:
         house_text = ", ".join(f"{house.number}: {house.sign}" for house in report.chart.houses[:4])
-        cards.append(_position_card(_target_section("section-houses", section_ids), "Сферы жизни", "Дома карты", house_text))
+        cards.append(
+            _position_card(_target_section("section-houses", section_ids), "Сферы жизни", "Дома карты", house_text)
+        )
     if report.chart.destiny_matrix:
         for position in report.chart.destiny_matrix.positions:
             if position.kind != "primary":
@@ -512,7 +527,9 @@ def _position_cards(report: NatalReport, sections: list[ReportSection]) -> list[
             )
     if not cards:
         cards.append(
-            _position_card("section-summary", "Расчетные данные", "Карта", "Расчетные точки будут доступны в полном разборе.")
+            _position_card(
+                "section-summary", "Расчетные данные", "Карта", "Расчетные точки будут доступны в полном разборе."
+            )
         )
     return cards
 
@@ -630,7 +647,9 @@ def _sanitize_hosted_body(value: str) -> str:
 
 def _sanitize_hosted_svg(value: str) -> str:
     without_scripts = re.sub(r"<\s*script\b.*?<\s*/\s*script\s*>", "", value, flags=re.IGNORECASE | re.DOTALL)
-    without_event_handlers = re.sub(r"\s+on[a-z0-9_-]+\s*=\s*(['\"]).*?\1", "", without_scripts, flags=re.IGNORECASE | re.DOTALL)
+    without_event_handlers = re.sub(
+        r"\s+on[a-z0-9_-]+\s*=\s*(['\"]).*?\1", "", without_scripts, flags=re.IGNORECASE | re.DOTALL
+    )
     return re.sub(r"javascript\s*:", "", without_event_handlers, flags=re.IGNORECASE)
 
 
@@ -658,9 +677,7 @@ def _report_lead(report: NatalReport) -> str:
             "Дальше — разбор натальной карты, линий матрицы, денег, отношений, рода и возрастных периодов."
         )
     if has_matrix:
-        return (
-            "Архетипическая матрица по дате рождения: центр, родовые линии, денежный канал, отношения и возрастные периоды."
-        )
+        return "Архетипическая матрица по дате рождения: центр, родовые линии, денежный канал, отношения и возрастные периоды."
     return "Сначала карта как визуальный центр, затем полный разбор и справочные расчетные позиции."
 
 

@@ -1,6 +1,7 @@
 """
 Helper script to extract the NEW_BLOCK from patch_inline_tarot.py and append it to app/handlers/inline.py.
 """
+
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -28,15 +29,15 @@ if end_idx == -1:
 new_block_content = content[start_idx:end_idx]
 
 # Clean up escape sequences (e.g. \\n -> \n, \\" -> ")
-new_block_content = new_block_content.replace('\\n', '\n').replace('\\"', '"')
+new_block_content = new_block_content.replace("\\n", "\n").replace('\\"', '"')
 
 # Append to app/handlers/inline.py
 with open(INLINE_PY, encoding="utf-8") as f:
     inline_lines = f.readlines()
 
 # Verify that the last line is clean (ends with a newline)
-if inline_lines and not inline_lines[-1].endswith('\n'):
-    inline_lines[-1] += '\n'
+if inline_lines and not inline_lines[-1].endswith("\n"):
+    inline_lines[-1] += "\n"
 
 # Check if _build_fortune_cookie_html definition is already in the file (just in case)
 inline_content = "".join(inline_lines)

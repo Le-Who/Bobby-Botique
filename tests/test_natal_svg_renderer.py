@@ -25,7 +25,7 @@ def sample_chart() -> ChartData:
                 sign="Телец",
                 degree_in_sign=15.0,
                 house=6,
-            )
+            ),
         ],
         aspects=[Aspect(point_a="sun", point_b="moon", aspect="square", orb=2.4)],
         houses=[House(number=1, cusp_longitude=10.0, sign="Овен")],

@@ -61,10 +61,7 @@ async def render_result_body(user_id: int, puzzle_date: date) -> tuple[str, Inli
     if leaderboard:
         for index, row in enumerate(leaderboard, start=1):
             name = html.escape((row.get("display_name") or "").strip() or _user_label(int(row["user_id"])))
-            lines.append(
-                f"{index}. {name} — <b>{int(row['final_score'])}</b> · "
-                f"{int(row['moves'])} ходов"
-            )
+            lines.append(f"{index}. {name} — <b>{int(row['final_score'])}</b> · {int(row['moves'])} ходов")
     else:
         lines.append("Пока нет завершённых результатов.")
 
@@ -135,7 +132,7 @@ async def _edit_prompt_to_result(bot, prompt: dict[str, Any], text: str, keyboar
                 return True
             except TelegramError:
                 return False
-    except (OSError, TelegramError):
+    except OSError, TelegramError:
         return False
     return False
 
@@ -153,7 +150,7 @@ async def _send_result_photo(bot, user_id: int, text: str, keyboard: InlineKeybo
             )
             await _remember_cover_file_id(message)
             return
-        except (OSError, TelegramError):
+        except OSError, TelegramError:
             pass
 
     await bot.send_message(

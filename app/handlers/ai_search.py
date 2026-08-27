@@ -69,11 +69,7 @@ async def _handle_qna_search(
     """Lease private query/role data through provider and Telegram delivery."""
     from app.repos.memory_consent import private_data_lease
 
-    known_epoch = (
-        None
-        if getattr(chat_state, "_has_persisted_chat", True) is False
-        else int(chat_state.memory_epoch)
-    )
+    known_epoch = None if getattr(chat_state, "_has_persisted_chat", True) is False else int(chat_state.memory_epoch)
     expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
     if expected_epoch is None:
         return None
@@ -181,11 +177,7 @@ async def _handle_qna_search_leased_impl(
         user_id=user_id,
         chat_id=chat_id,
         thinking_level=chat_state.thinking_level,
-        grounding=(
-            GroundingMode.PROVIDED_CONTEXT
-            if use_opencode
-            else GroundingMode.PROVIDER_SEARCH_REQUIRED
-        ),
+        grounding=(GroundingMode.PROVIDED_CONTEXT if use_opencode else GroundingMode.PROVIDER_SEARCH_REQUIRED),
         workload=Workload.QUICK_SEARCH,
         allow_deferred=False,
     )
@@ -219,11 +211,7 @@ async def _handle_research_agent(
     """Hold one exact-generation lease through research, delivery, and CAS."""
     from app.repos.memory_consent import private_data_lease
 
-    known_epoch = (
-        None
-        if getattr(chat_state, "_has_persisted_chat", True) is False
-        else int(chat_state.memory_epoch)
-    )
+    known_epoch = None if getattr(chat_state, "_has_persisted_chat", True) is False else int(chat_state.memory_epoch)
     expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
     if expected_epoch is None:
         await placeholder_message.edit_text("Запрос отменён: настройки приватности изменились.")
@@ -312,7 +300,7 @@ async def _handle_research_agent_leased_impl(
                 "❌ Сервис ответов временно недоступен. Пожалуйста, попробуйте позже.",
                 reply_markup=build_retry_and_roles_keyboard(),
             )
-        except (BadRequest, NetworkError):
+        except BadRequest, NetworkError:
             pass
         return
 
@@ -377,7 +365,7 @@ async def _handle_research_agent_leased_impl(
                     f"⚡ Переключаюсь на модель {attempt_model}...\n\n"
                     f"_(предыдущая модель недоступна, попытка {attempt_idx + 1})_"
                 )
-            except (BadRequest, NetworkError):
+            except BadRequest, NetworkError:
                 pass
 
         # Rebuild callback for this model+key pair
@@ -455,7 +443,7 @@ async def _handle_research_agent_leased_impl(
                     "❌ Внутренняя ошибка при проведении глубокого исследования. "
                     "Все доступные модели были опробованы. Попробуйте позже."
                 )
-            except (BadRequest, NetworkError):
+            except BadRequest, NetworkError:
                 pass
             return
 
@@ -551,11 +539,7 @@ async def _handle_complex_agent_search(placeholder_message: Message, original_me
         return
     user_id = int(original_message.from_user.id)
     chat_state = await get_user_chat(user_id)
-    known_epoch = (
-        None
-        if getattr(chat_state, "_has_persisted_chat", True) is False
-        else int(chat_state.memory_epoch)
-    )
+    known_epoch = None if getattr(chat_state, "_has_persisted_chat", True) is False else int(chat_state.memory_epoch)
     expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
     if expected_epoch is None:
         await placeholder_message.edit_text("Запрос отменён: настройки приватности изменились.")

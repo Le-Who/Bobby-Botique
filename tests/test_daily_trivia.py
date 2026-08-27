@@ -262,10 +262,7 @@ def test_daily_trivia_authoring_module_exists() -> None:
 
 async def test_authoring_rejects_same_fact_between_main_and_super() -> None:
     authoring_module = importlib.import_module("app.games.daily_trivia_authoring")
-    main = [
-        _identified_question(index, f"Объект {index}", "свойство", f"Ответ {index}")
-        for index in range(1, 6)
-    ]
+    main = [_identified_question(index, f"Объект {index}", "свойство", f"Ответ {index}") for index in range(1, 6)]
     super_questions = [
         _identified_question(1, "Объект 1", "свойство", "Ответ 1"),
         _identified_question(2, "Супер объект 2", "свойство", "Супер ответ 2"),
@@ -278,10 +275,7 @@ async def test_authoring_rejects_same_fact_between_main_and_super() -> None:
 
 async def test_authoring_accepts_complete_unique_day() -> None:
     authoring_module = importlib.import_module("app.games.daily_trivia_authoring")
-    main = [
-        _identified_question(index, f"Объект {index}", "свойство", f"Ответ {index}")
-        for index in range(1, 6)
-    ]
+    main = [_identified_question(index, f"Объект {index}", "свойство", f"Ответ {index}") for index in range(1, 6)]
     super_questions = [
         _identified_question(index, f"Супер объект {index}", "свойство", f"Супер ответ {index}")
         for index in range(1, 4)
@@ -297,8 +291,7 @@ async def test_semantic_duplicate_judge_parses_strict_json() -> None:
     authoring_module = importlib.import_module("app.games.daily_trivia_authoring")
     router = AsyncMock()
     router.get_response.return_value = (
-        '{"is_duplicate": true, "confidence": 0.98, '
-        '"reason": "Один и тот же факт о происхождении названия"}',
+        '{"is_duplicate": true, "confidence": 0.98, "reason": "Один и тот же факт о происхождении названия"}',
         None,
     )
 
@@ -424,10 +417,7 @@ async def test_publish_revision_passes_python_values_to_registered_jsonb_codec()
         async def execute(self, sql: str, *args):
             assert "daily_trivia_question_occurrences" in sql
 
-    main = [
-        _identified_question(index, f"Объект {index}", "свойство", f"Ответ {index}")
-        for index in range(1, 6)
-    ]
+    main = [_identified_question(index, f"Объект {index}", "свойство", f"Ответ {index}") for index in range(1, 6)]
     super_questions = [
         _identified_question(index, f"Супер объект {index}", "свойство", f"Супер ответ {index}")
         for index in range(1, 4)
@@ -531,8 +521,7 @@ async def test_admin_regenerate_returns_latest_puzzle_on_revision_conflict() -> 
         puzzle_date=date(2026, 8, 3),
         questions=[_identified_question(i, f"Объект {i}", "свойство", f"Ответ {i}") for i in range(1, 6)],
         super_questions=[
-            _identified_question(i, f"Супер объект {i}", "свойство", f"Супер ответ {i}")
-            for i in range(1, 4)
+            _identified_question(i, f"Супер объект {i}", "свойство", f"Супер ответ {i}") for i in range(1, 4)
         ],
         status="ready",
         prepared_at=None,
@@ -839,9 +828,9 @@ def test_cutover_migration_preserves_every_result_before_today() -> None:
 
 
 def test_question_bank_migration_unwraps_and_guards_legacy_json_scalars() -> None:
-    migration = (
-        Path(__file__).parents[1] / "scripts" / "migrations" / "065_daily_trivia_question_bank.sql"
-    ).read_text(encoding="utf-8")
+    migration = (Path(__file__).parents[1] / "scripts" / "migrations" / "065_daily_trivia_question_bank.sql").read_text(
+        encoding="utf-8"
+    )
 
     first_array_expansion = migration.index("jsonb_array_elements")
     questions_repair = migration.index("SET questions = (questions #>> '{}')::jsonb")
@@ -849,9 +838,10 @@ def test_question_bank_migration_unwraps_and_guards_legacy_json_scalars() -> Non
 
     assert questions_repair < first_array_expansion
     assert super_repair < first_array_expansion
-    assert migration.count(
-        "CASE WHEN jsonb_typeof(p.questions) = 'array' THEN p.questions ELSE '[]'::jsonb END"
-    ) == 3
-    assert migration.count(
-        "CASE WHEN jsonb_typeof(p.super_questions) = 'array' THEN p.super_questions ELSE '[]'::jsonb END"
-    ) == 3
+    assert migration.count("CASE WHEN jsonb_typeof(p.questions) = 'array' THEN p.questions ELSE '[]'::jsonb END") == 3
+    assert (
+        migration.count(
+            "CASE WHEN jsonb_typeof(p.super_questions) = 'array' THEN p.super_questions ELSE '[]'::jsonb END"
+        )
+        == 3
+    )

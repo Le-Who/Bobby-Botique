@@ -36,15 +36,11 @@ async def test_insert_initial_data_prunes_stale_key_rows():
     expected_openrouter_hashes = _hashes(settings.OPENROUTER_API_KEYS)
 
     assert any(
-        "DELETE FROM key_model_status" in sql
-        and "FROM api_keys" in sql
-        and params == (expected_gemini_hashes,)
+        "DELETE FROM key_model_status" in sql and "FROM api_keys" in sql and params == (expected_gemini_hashes,)
         for sql, params in query_calls
     )
     assert any(
-        "DELETE FROM api_keys" in sql
-        and "key_hash != ALL($1::text[])" in sql
-        and params == (expected_gemini_hashes,)
+        "DELETE FROM api_keys" in sql and "key_hash != ALL($1::text[])" in sql and params == (expected_gemini_hashes,)
         for sql, params in query_calls
     )
     assert any(

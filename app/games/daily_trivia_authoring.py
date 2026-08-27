@@ -279,9 +279,7 @@ async def publish_authored_day(
             conflict = audit_conflicts[0]
             source_questions = main_tuple if conflict.candidate.lane == "main" else super_tuple
             candidate_question = source_questions[conflict.candidate.position - 1]
-            raise DuplicateQuestionError(
-                DuplicateConflict(candidate_question, conflict.existing, conflict.match)
-            )
+            raise DuplicateQuestionError(DuplicateConflict(candidate_question, conflict.existing, conflict.match))
     validated = await validate_authored_day(
         main_tuple,
         super_tuple,

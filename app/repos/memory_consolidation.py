@@ -804,14 +804,11 @@ async def _consolidate_memories_impl(
                         source_name=source_name,
                         target_name=target_name,
                         predicate=predicate,
-                        predicate_embedding=(
-                            tuple(relation_embedding) if relation_embedding is not None else None
-                        ),
+                        predicate_embedding=(tuple(relation_embedding) if relation_embedding is not None else None),
                         weight=float(relation.get("weight", 1.0)),
                         is_core=bool(relation.get("is_core", False)),
                         source_memory_ids=frozenset(
-                            inserted_fact_ids[index]
-                            for index in relation["support_fact_indexes"]
+                            inserted_fact_ids[index] for index in relation["support_fact_indexes"]
                         ),
                     )
                 )

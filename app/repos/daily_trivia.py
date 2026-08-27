@@ -91,7 +91,7 @@ def _row_get(row: Any, key: str, default: Any = None) -> Any:
         return row.get(key, default)
     try:
         return row[key]
-    except (KeyError, TypeError, IndexError):
+    except KeyError, TypeError, IndexError:
         return default
 
 
@@ -169,9 +169,7 @@ def _row_to_puzzle(row: Any) -> DailyTriviaPuzzle:
         prepared_at=_row_get(row, "prepared_at"),
         revision=int(_row_get(row, "revision", 0) or 0),
         published_revision_id=(
-            int(_row_get(row, "published_revision_id"))
-            if _row_get(row, "published_revision_id") is not None
-            else None
+            int(_row_get(row, "published_revision_id")) if _row_get(row, "published_revision_id") is not None else None
         ),
     )
 
@@ -202,9 +200,7 @@ def _row_to_result(row: Any) -> DailyTriviaResult:
         super_delta=int(super_delta_raw) if super_delta_raw is not None else None,
         super_correct=int(super_correct_raw) if super_correct_raw is not None else None,
         puzzle_revision_id=(
-            int(_row_get(row, "puzzle_revision_id"))
-            if _row_get(row, "puzzle_revision_id") is not None
-            else None
+            int(_row_get(row, "puzzle_revision_id")) if _row_get(row, "puzzle_revision_id") is not None else None
         ),
     )
 
@@ -230,9 +226,7 @@ def _row_to_super_result(row: Any) -> DailySuperResult:
         started_at=started_at,
         finished_at=_row_get(row, "finished_at"),
         puzzle_revision_id=(
-            int(_row_get(row, "puzzle_revision_id"))
-            if _row_get(row, "puzzle_revision_id") is not None
-            else None
+            int(_row_get(row, "puzzle_revision_id")) if _row_get(row, "puzzle_revision_id") is not None else None
         ),
     )
 
@@ -642,7 +636,6 @@ async def publish_revision(
         )
 
 
-
 async def get_result_if_exists(user_id: int, puzzle_date: date, *, conn=None) -> DailyTriviaResult | None:
     """Return the user's trivia result for today if it exists, else None.
 
@@ -761,9 +754,7 @@ async def update_result_answer(
     return _row_to_result(rows[0])
 
 
-async def get_super_result_if_exists(
-    user_id: int, puzzle_date: date, *, conn=None
-) -> DailySuperResult | None:
+async def get_super_result_if_exists(user_id: int, puzzle_date: date, *, conn=None) -> DailySuperResult | None:
     rows = await db.db_query(
         """
         SELECT user_id, puzzle_date, status, delta_score, correct_count,
@@ -866,8 +857,14 @@ async def update_super_result_answer(
                 RETURNING user_id, puzzle_date, status, delta_score, correct_count,
                           elapsed_ms, answers, started_at, finished_at, puzzle_revision_id
                 """,
-                user_id, puzzle_date, delta_score, correct_count, elapsed_ms,
-                answers_json, status, finished,
+                user_id,
+                puzzle_date,
+                delta_score,
+                correct_count,
+                elapsed_ms,
+                answers_json,
+                status,
+                finished,
             )
             await conn.execute(
                 """
@@ -878,7 +875,10 @@ async def update_super_result_answer(
                     updated_at = NOW()
                 WHERE user_id = $1 AND puzzle_date = $2
                 """,
-                user_id, puzzle_date, delta_score, correct_count,
+                user_id,
+                puzzle_date,
+                delta_score,
+                correct_count,
             )
         return _row_to_super_result([dict(r) for r in rows][0])
 
@@ -921,7 +921,6 @@ async def get_question_by_date_and_index(
     if question_index < 0 or question_index >= len(qs):
         return None
     return qs[question_index]
-
 
 
 async def get_puzzles_range(start_date: date, end_date: date, *, conn=None) -> list[DailyTriviaPuzzle]:
@@ -1087,9 +1086,11 @@ def _is_fuzzy_similar(str1: str, str2: str, threshold: float = 0.85) -> bool:
         return True
     try:
         from rapidfuzz import fuzz
+
         return (fuzz.token_sort_ratio(str1, str2) / 100.0) >= threshold
     except ImportError:
         import difflib
+
         return difflib.SequenceMatcher(None, str1, str2).ratio() >= threshold
 
 
@@ -1190,7 +1191,6 @@ async def delete_used_keys_for_date(p_date: date, *, conn=None) -> int:
         conn=conn,
     )
     return len(result) if result else 0
-
 
 
 # ---------------------------------------------------------------------------

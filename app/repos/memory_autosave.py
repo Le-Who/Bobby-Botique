@@ -70,9 +70,7 @@ async def cancel_user_memory_tasks(user_id: int) -> int:
     """
     current = asyncio.current_task()
     tasks = [
-        task
-        for task in _inflight_memory_tasks_by_user.get(user_id, set())
-        if task is not current and not task.done()
+        task for task in _inflight_memory_tasks_by_user.get(user_id, set()) if task is not current and not task.done()
     ]
     for task in tasks:
         task.cancel()

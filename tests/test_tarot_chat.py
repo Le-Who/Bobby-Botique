@@ -124,9 +124,7 @@ def test_tarot_idle_choice_callback_is_registered_with_tarot_messages():
     messages.register(application)
 
     callbacks = [
-        call.args[0].callback
-        for call in application.add_handler.call_args_list
-        if hasattr(call.args[0], "callback")
+        call.args[0].callback for call in application.add_handler.call_args_list if hasattr(call.args[0], "callback")
     ]
     assert tarot_chat.handle_tarot_idle_choice_callback in callbacks
 
@@ -229,7 +227,10 @@ async def test_idle_tarot_continue_choice_processes_pending_text_in_tarot_mode()
         patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
         patch("app.handlers.tarot_chat.time.time", return_value=2000.0),
         patch("app.handlers.tarot_chat.get_provider_router", return_value=router),
-        patch("app.handlers.tarot_chat.draw_cards", return_value=[{"name": "Маг", "orientation": "Прямая", "meanings": ["воля"]}] * 3),
+        patch(
+            "app.handlers.tarot_chat.draw_cards",
+            return_value=[{"name": "Маг", "orientation": "Прямая", "meanings": ["воля"]}] * 3,
+        ),
     ):
         await tarot_chat.handle_tarot_idle_choice_callback(update, context)
 

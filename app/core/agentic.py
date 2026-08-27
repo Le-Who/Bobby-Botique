@@ -193,7 +193,7 @@ def _classify_freshness(published_date: str) -> str:
             return "this_year"
         else:
             return "older"
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return "unknown"
 
 
@@ -492,7 +492,7 @@ class AgenticSearch:
             if meta is not None:
                 raw = getattr(meta, "total_token_count", 0)
                 return int(raw) if raw else 0
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             pass
         return 0
 
@@ -645,7 +645,7 @@ class AgenticSearch:
                         if hasattr(call, "args") and call.args:
                             try:
                                 call_args = dict(call.args)
-                            except (ValueError, TypeError):
+                            except ValueError, TypeError:
                                 call_args = {}
                         else:
                             call_args = {}

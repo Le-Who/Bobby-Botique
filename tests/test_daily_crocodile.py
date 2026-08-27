@@ -27,6 +27,7 @@ def authorized_websocket_user():
     ) as authorized:
         yield authorized
 
+
 ADMIN_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app" / "templates" / "admin_daily.html"
 
 

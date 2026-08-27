@@ -197,10 +197,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         logging.info("Received message from user %s: %s", user_id, message_text[:100])
 
-        is_rate_ok, is_auth_ok = await asyncio.gather(
-            check_user_rate_limit(user_id),
-            is_authorized(user_id)
-        )
+        is_rate_ok, is_auth_ok = await asyncio.gather(check_user_rate_limit(user_id), is_authorized(user_id))
 
         if not is_rate_ok:
             logging.warning("Rate limit exceeded for user %s", user_id)
@@ -466,6 +463,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 try:
                     async with state.get_user_lock(_uid):
                         from app.handlers.cmd_image import _get_draw_state, _run_generation
+
                         _ds = _get_draw_state(context)
                         # Temporarily suppress heartbeat — image pipeline sends
                         # its own typing heartbeat via ChatAction.UPLOAD_PHOTO.
@@ -687,9 +685,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
     from app.state import ensure_state_loaded
 
     is_rate_ok, is_auth_ok, _ = await asyncio.gather(
-        check_user_rate_limit(user_id),
-        is_authorized(user_id),
-        ensure_state_loaded(user_id)
+        check_user_rate_limit(user_id), is_authorized(user_id), ensure_state_loaded(user_id)
     )
 
     if not is_rate_ok:
@@ -811,17 +807,23 @@ def register(application: Application) -> None:
         is_tarot_end_session_filter,
         is_tarot_mode_filter,
     )
+
     application.add_handler(
         MessageHandler(_msg & filters.TEXT & is_tarot_end_session_filter, handle_tarot_end_session_message, block=False)
     )
-    application.add_handler(MessageHandler(_msg & filters.TEXT & is_tarot_mode_filter, handle_tarot_message, block=False))
-    application.add_handler(CallbackQueryHandler(handle_tarot_idle_choice_callback, pattern=r"^tarot_idle:", block=False))
+    application.add_handler(
+        MessageHandler(_msg & filters.TEXT & is_tarot_mode_filter, handle_tarot_message, block=False)
+    )
+    application.add_handler(
+        CallbackQueryHandler(handle_tarot_idle_choice_callback, pattern=r"^tarot_idle:", block=False)
+    )
 
     # Tarot Single-word Intent Interceptor
     import re
 
     from app.handlers.cmd_tarot import tarot_command
-    tarot_intent_filter = filters.Regex(re.compile(r'^\s*(таро|расклад)\s*[?!.]*\s*$', re.IGNORECASE))
+
+    tarot_intent_filter = filters.Regex(re.compile(r"^\s*(таро|расклад)\s*[?!.]*\s*$", re.IGNORECASE))
     application.add_handler(MessageHandler(_msg & filters.TEXT & tarot_intent_filter, tarot_command, block=False))
 
     application.add_handler(MessageHandler(_msg & filters.TEXT & ~filters.COMMAND, handle_request, block=False))

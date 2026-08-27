@@ -32,9 +32,7 @@ async def gemini_contents(request: GenerationRequest) -> list[types.Content]:
     contents: list[types.Content] = []
     for turn in request.turns:
         image_parts = [part for part in turn.parts if isinstance(part, ImagePart)]
-        materialized = await asyncio.gather(
-            *(_materialize_image(part) for part in image_parts)
-        )
+        materialized = await asyncio.gather(*(_materialize_image(part) for part in image_parts))
         image_index = 0
         native_parts: list[types.Part] = []
         for part in turn.parts:
@@ -45,11 +43,7 @@ async def gemini_contents(request: GenerationRequest) -> list[types.Content]:
             image_index += 1
             if image is not None:
                 data, mime_type = image
-                native_parts.append(
-                    types.Part(
-                        inline_data=types.Blob(mime_type=mime_type, data=data)
-                    )
-                )
+                native_parts.append(types.Part(inline_data=types.Blob(mime_type=mime_type, data=data)))
         if native_parts:
             contents.append(types.Content(role=turn.role.value, parts=native_parts))
     return contents
@@ -85,9 +79,7 @@ async def openai_messages(request: GenerationRequest) -> list[dict[str, Any]]:
                 content.append(
                     {
                         "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime_type};base64,{encoded}"
-                        },
+                        "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
                     }
                 )
         if not content:

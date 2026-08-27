@@ -64,7 +64,6 @@ class TestFeedbackCallback:
         mock_save.assert_awaited_once_with(42, 999, "up")
         query.answer.assert_awaited_once()
 
-
     @pytest.mark.asyncio
     async def test_thumbs_down_calls_save(self, _update_with_feedback):
         from app.handlers.cb_feedback import feedback_callback

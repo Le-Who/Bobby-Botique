@@ -22,6 +22,7 @@ def allow_summary_private_data_lease():
     with patch("app.repos.memory_consent.private_data_lease", allowed_lease):
         yield
 
+
 # ── _extract_text ────────────────────────────────────────────────────────────
 
 
@@ -120,9 +121,7 @@ class TestSplitIntoChunks:
         monkeypatch.setattr(summarizer, "MAX_CHUNKS", 2)
 
         with pytest.raises(SummarizationInputTooLarge):
-            summarizer.split_into_chunks(
-                [{"role": "user", "parts": ["long-message-" + "x" * 100]}]
-            )
+            summarizer.split_into_chunks([{"role": "user", "parts": ["long-message-" + "x" * 100]}])
 
 
 @pytest.mark.asyncio

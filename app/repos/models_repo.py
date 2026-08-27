@@ -111,7 +111,7 @@ def _decode_record(raw: str) -> tuple[str, list[str] | None]:
     """Return ``(kind, models)`` where kind is override, legacy, or invalid."""
     try:
         data: Any = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         return "invalid", None
 
     if isinstance(data, list):

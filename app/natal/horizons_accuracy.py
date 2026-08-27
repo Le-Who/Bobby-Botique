@@ -34,8 +34,7 @@ _HORIZONS_ROW_RE = re.compile(
 
 
 class HorizonsClient(Protocol):
-    async def get(self, url: str, *, params: dict[str, str], timeout: float) -> httpx.Response:
-        ...
+    async def get(self, url: str, *, params: dict[str, str], timeout: float) -> httpx.Response: ...
 
 
 @dataclass(frozen=True)

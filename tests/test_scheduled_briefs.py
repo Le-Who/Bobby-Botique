@@ -172,7 +172,6 @@ class TestBriefGeneration:
             new_callable=AsyncMock,
             return_value=[],
         ):
-
             from app.handlers.scheduled_briefs import generate_and_send_brief
 
             mock_bot = AsyncMock()

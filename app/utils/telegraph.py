@@ -37,7 +37,7 @@ def is_safe_telegraph_url(value: str | None) -> bool:
     try:
         parsed = urlsplit(value.strip())
         port = parsed.port
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return False
     return bool(
         parsed.scheme.lower() == "https"

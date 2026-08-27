@@ -48,10 +48,7 @@ async def check_storage_ready() -> None:
         """,
         (),
     )
-    columns = {
-        str(row["column_name"]): (str(row["data_type"]), str(row["is_nullable"]))
-        for row in column_rows
-    }
+    columns = {str(row["column_name"]): (str(row["data_type"]), str(row["is_nullable"])) for row in column_rows}
     missing_columns = sorted(set(_REQUIRED_COLUMNS) - set(columns))
     if missing_columns:
         raise NatalStorageError(

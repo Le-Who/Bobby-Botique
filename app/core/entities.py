@@ -80,4 +80,3 @@ class UserStateRow(BaseModel):
     manual_role_prompt: str = ""
     tarot_mode: bool = False
     tarot_session: dict[str, Any] | None = None
-

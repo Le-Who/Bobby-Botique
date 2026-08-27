@@ -37,4 +37,3 @@ async def test_deliver_horoscope_includes_manage_and_stop_actions(monkeypatch):
     keyboard = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
     labels = [button.text for row in keyboard for button in row]
     assert labels == ["⚙️ Настройки", "Отключить"]
-

@@ -91,9 +91,7 @@ class TestModelButtonCallback:
         selected = "cat/kat-coder-pro-v1"
         update, _ = _make_update(f"model:2:{get_model_hash(selected)}")
         context = MagicMock()
-        context.user_data = {
-            "model_list": ["gemini-3.7-flash", "opencode-go/glm-5", selected]
-        }
+        context.user_data = {"model_list": ["gemini-3.7-flash", "opencode-go/glm-5", selected]}
         chat_state = MagicMock()
 
         with (

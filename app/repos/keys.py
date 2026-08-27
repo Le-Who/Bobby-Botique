@@ -633,7 +633,7 @@ async def force_update_tavily_keys() -> bool:
 
         db_manager._active_keys_cache.clear()
         return True
-    except (asyncpg.PostgresError, asyncpg.InterfaceError):
+    except asyncpg.PostgresError, asyncpg.InterfaceError:
         return False
 
 

@@ -514,9 +514,7 @@ def load_settings() -> Settings:
         opencode_default_model = _load_single_model("OPENCODE_DEFAULT_MODEL", "opencode-go/qwen3.5-plus")
         opencode_qna_model = _load_single_model("OPENCODE_QNA_MODEL", "opencode-go/qwen3.6-plus")
         opencode_research_model = _load_single_model("OPENCODE_RESEARCH_MODEL", "opencode-go/glm-5.1")
-        opencode_url_selection_model = _load_single_model(
-            "OPENCODE_URL_SELECTION_MODEL", "opencode-go/big-pickle"
-        )
+        opencode_url_selection_model = _load_single_model("OPENCODE_URL_SELECTION_MODEL", "opencode-go/big-pickle")
         opencode_vision_model = _load_single_model("OPENCODE_VISION_MODEL", "opencode-go/mimo-v2-omni")
         opencode_inline_model = _load_single_model("OPENCODE_INLINE_MODEL", "opencode-go/minimax-m2.5")
         opencode_defaults = _dedupe_models(
@@ -534,9 +532,7 @@ def load_settings() -> Settings:
         configured_gemini_models = _load_available_models(
             "GEMINI_AVAILABLE_MODELS", DEFAULT_GEMINI_MODELS, validator=is_gemini_chat_model_id
         )
-        configured_openrouter_models = _load_available_models(
-            "OPENROUTER_AVAILABLE_MODELS", [openrouter_default_model]
-        )
+        configured_openrouter_models = _load_available_models("OPENROUTER_AVAILABLE_MODELS", [openrouter_default_model])
         configured_opencode_models = _load_available_models("OPENCODE_AVAILABLE_MODELS", opencode_defaults)
         configured_freetheai_models = [
             model

@@ -67,14 +67,18 @@ def _get_lang(obj) -> str:
     user_lang = obj.from_user.language_code if obj and obj.from_user else "en"
     return "ru" if user_lang and user_lang.startswith("ru") else "en"
 
+
 # ── Constants ────────────────────────────────────────────────────────────────
+
 
 # Primary inline model is now dynamic.
 async def get_inline_model() -> str:
     from app.config import settings
     from app.repos.settings_repo import get_global_setting
+
     default = settings.INLINE_MODEL if settings else "gemini-3.1-flash-lite"
     return await get_global_setting("inline_model", default)
+
 
 _INLINE_FALLBACK_MODEL = "gemini-3.1-flash-lite"
 _INLINE_GROUNDING_MODEL = GEMINI_GROUNDING_MODEL
@@ -180,6 +184,7 @@ _IMAGE_MODELS_IDS: list[tuple[str, str]] = [
     ("img_meme", "wan-image"),
 ]
 
+
 def _get_image_models(lang: str) -> list[tuple[str, str, str]]:
     return [
         ("img_turbo", t("inline.img_turbo", lang), "zimage"),
@@ -187,6 +192,8 @@ def _get_image_models(lang: str) -> list[tuple[str, str, str]]:
         ("img_art", t("inline.img_art", lang), "qwen-image"),
         ("img_meme", t("inline.img_meme", lang), "wan-image"),
     ]
+
+
 # Klein is NOT shown in the inline menu — it is auto-routed when user attaches
 # an image with an edit intent keyword.
 _IMG_KLEIN_ID = "img_edit"
@@ -402,6 +409,7 @@ def _progress_delayed_html(bot_name: str, lang: str) -> str:
 def _get_loading_keyboard(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton(t("inline.loading", lang), callback_data="inline_noop")]])
 
+
 # ── Retry store ──────────────────────────────────────────────────────────────
 # Keyed by short UUID, stores params needed to re-run _generate_and_edit_inline.
 # Entries auto-expire; we prune on every new insert. TTL = 5 minutes.
@@ -417,12 +425,14 @@ _INLINE_FOLLOWUP_RE = re.compile(r"^↪\ufe0f?\s*([0-9a-fA-F]{16})\s*(.*)$", re.
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+
 def _get_tones(lang: str) -> list[tuple[str, str, str]]:
     return [
         ("formal", t("inline.tone_formal", lang), t("inline.tone_hint_formal", lang)),
         ("friendly", t("inline.tone_friendly", lang), t("inline.tone_hint_friendly", lang)),
         ("sarcastic", t("inline.tone_sarcastic", lang), t("inline.tone_hint_sarcastic", lang)),
     ]
+
 
 def _tone_display(tone_id: str, lang: str) -> str:
     for tid, label, _ in _get_tones(lang):
@@ -626,7 +636,8 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
                 caption=(
                     t("inline.img_caption", lang, prompt=_html.escape(stripped_prompt[:200]))
                     + (f"\n<i>{_html.escape(auto_hint)}</i>" if auto_hint else "")
-                    + "\n" + t("inline.loading", lang)
+                    + "\n"
+                    + t("inline.loading", lang)
                 ),
                 parse_mode="HTML",
                 reply_markup=_get_loading_keyboard(lang),
@@ -776,10 +787,7 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         results_tarot.append(
             InlineQueryResultArticle(
                 id="tarot",
-                title=(
-                    f"Таро: {arg[:40]}" if has_question
-                    else t("inline.tarot_classic_title", lang)
-                ),
+                title=(f"Таро: {arg[:40]}" if has_question else t("inline.tarot_classic_title", lang)),
                 description=t("inline.tarot_desc", lang),
                 input_message_content=InputTextMessageContent(
                     message_text=t("inline.tarot_init", lang),
@@ -994,7 +1002,6 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
             )
         )
         return
-
 
     # ── Default text generation path ──────────────────────────────────────────
     get_task_manager().submit(
@@ -1346,11 +1353,7 @@ async def _stream_inline_fast(
         system_instruction=system_instruction,
         user_id=user_id,
         thinking_level=thinking_level,
-        grounding=(
-            GroundingMode.PROVIDER_SEARCH_REQUIRED
-            if enable_web_search
-            else GroundingMode.NONE
-        ),
+        grounding=(GroundingMode.PROVIDER_SEARCH_REQUIRED if enable_web_search else GroundingMode.NONE),
         workload=Workload.INLINE,
         allow_deferred=False,
     )
@@ -1373,10 +1376,7 @@ async def _stream_inline_fast(
         return None, []
 
     answer = "".join(chunks).strip()
-    sources = [
-        (source.url, source.title)
-        for source in terminal.grounding.sources
-    ]
+    sources = [(source.url, source.title) for source in terminal.grounding.sources]
     return (answer, sources) if answer else (None, sources)
 
 
@@ -1472,7 +1472,9 @@ async def _generate_inline_grounded_answer(
                 _INLINE_GROUNDING_STANDBY_MODEL,
             )
         except Exception as exc:
-            logging.warning("Inline grounded primary %s failed before standby decision: %s", _INLINE_GROUNDING_MODEL, exc)
+            logging.warning(
+                "Inline grounded primary %s failed before standby decision: %s", _INLINE_GROUNDING_MODEL, exc
+            )
 
         try:
             standby_result = await standby_task
@@ -1485,7 +1487,9 @@ async def _generate_inline_grounded_answer(
             try:
                 primary_result = await primary_task
             except Exception as exc:
-                logging.warning("Inline grounded primary %s failed after standby failure: %s", _INLINE_GROUNDING_MODEL, exc)
+                logging.warning(
+                    "Inline grounded primary %s failed after standby failure: %s", _INLINE_GROUNDING_MODEL, exc
+                )
 
         if primary_result and _is_usable_inline_answer(primary_result[0]):
             return primary_result[0], primary_result[1], _INLINE_GROUNDING_MODEL
@@ -1715,7 +1719,6 @@ async def _generate_and_edit_inline(
         web_search=_enable_web_search,
     )
 
-
     async def _delayed_progress_edit() -> None:
         """At _GEN_PROGRESS_AFTER_S seconds, edit placeholder to show delay notice."""
         nonlocal _progress_shown
@@ -1801,12 +1804,12 @@ async def _generate_and_edit_inline(
                     btn_row.append(
                         InlineKeyboardButton("🔗 Источники", callback_data=f"inl_tab:sources:{inline_message_id}")
                     )
-                
+
                 # Append continue buttons
                 continue_kb = await _build_continue_keyboard(
                     bot_username=getattr(bot, "username", "") or "",
                     user_query=user_query,
-                    final_answer=segments.get("details", final_answer), # Use parsed details instead of raw XML
+                    final_answer=segments.get("details", final_answer),  # Use parsed details instead of raw XML
                     tone_id=tone_id,
                     lang=lang,
                     user_id=user_id,
@@ -1934,7 +1937,7 @@ async def _build_continue_keyboard(
             "a": final_answer[:2000],
             "tone": tone_id,
         },
-        user_id=user_id
+        user_id=user_id,
     )
 
     if stored:
@@ -2061,6 +2064,7 @@ def _parse_xml_segments(text: str) -> dict | None:
          and Gemini's occasional markdown wrapping around the response block.
       2. Require at a minimum a non-empty <tldr> block to consider it parseable.
     """
+
     def _extract(tag: str) -> str:
         m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL | re.IGNORECASE)
         return m.group(1).strip() if m else ""
@@ -2149,11 +2153,12 @@ async def handle_inline_tab_switch(update: Update, context: ContextTypes.DEFAULT
     except Exception as err:
         logging.error("Inline tab switch: edit failed for %s: %s", inline_message_id, err)
 
+
 # -- Specialized Inline Generators (Tarot / Horoscope) --------------------------
 
 
-
 # ── Specialized Inline Generators (Tarot / Horoscope) ──────────────────────────
+
 
 async def _generate_horoscope_inline(
     bot,
@@ -2170,14 +2175,30 @@ async def _generate_horoscope_inline(
 
     # Try to extract sign from the query for the deep-link payload
     _SIGN_MAP = {
-        "овен": "aries", "телец": "taurus", "близнецы": "gemini",
-        "рак": "cancer", "лев": "leo", "дева": "virgo",
-        "весы": "libra", "скорпион": "scorpio", "стрелец": "sagittarius",
-        "козерог": "capricorn", "водолей": "aquarius", "рыбы": "pisces",
-        "aries": "aries", "taurus": "taurus", "gemini": "gemini",
-        "cancer": "cancer", "leo": "leo", "virgo": "virgo",
-        "libra": "libra", "scorpio": "scorpio", "sagittarius": "sagittarius",
-        "capricorn": "capricorn", "aquarius": "aquarius", "pisces": "pisces",
+        "овен": "aries",
+        "телец": "taurus",
+        "близнецы": "gemini",
+        "рак": "cancer",
+        "лев": "leo",
+        "дева": "virgo",
+        "весы": "libra",
+        "скорпион": "scorpio",
+        "стрелец": "sagittarius",
+        "козерог": "capricorn",
+        "водолей": "aquarius",
+        "рыбы": "pisces",
+        "aries": "aries",
+        "taurus": "taurus",
+        "gemini": "gemini",
+        "cancer": "cancer",
+        "leo": "leo",
+        "virgo": "virgo",
+        "libra": "libra",
+        "scorpio": "scorpio",
+        "sagittarius": "sagittarius",
+        "capricorn": "capricorn",
+        "aquarius": "aquarius",
+        "pisces": "pisces",
     }
     detected_sign = "aries"
     query_lower = user_query.lower()
@@ -2197,9 +2218,7 @@ async def _generate_horoscope_inline(
         subscribe_url = f"https://t.me/{bot_username}?start=subscribe_horoscope_{detected_sign}"
         subscribe_btn = InlineKeyboardButton("🔔 Подписаться на ежедневный гороскоп", url=subscribe_url)
 
-    reply_markup = (
-        InlineKeyboardMarkup([[subscribe_btn]]) if subscribe_btn else InlineKeyboardMarkup([])
-    )
+    reply_markup = InlineKeyboardMarkup([[subscribe_btn]]) if subscribe_btn else InlineKeyboardMarkup([])
 
     if res and res.text:
         html = markdown_to_html(res.text)
@@ -2216,8 +2235,6 @@ async def _generate_horoscope_inline(
                 inline_message_id=inline_message_id,
                 text="❌ Ошибка генерации гороскопа.",
             )
-
-
 
 
 def _build_fortune_cookie_html() -> str:
@@ -2424,10 +2441,10 @@ async def _generate_tarot_inline(
     # Spread-specific header for the final message
     _HEADER_MAP = {
         SpreadType.CLASSIC: "🔮 Таро",
-        SpreadType.DAILY:   "🎤 Карта дня",
-        SpreadType.YES_NO:  "🔮 Да или Нет",
-        SpreadType.LOVE:    "💞 Отношения",
-        SpreadType.CELTIC:  "🌙 Кельтский крест",
+        SpreadType.DAILY: "🎤 Карта дня",
+        SpreadType.YES_NO: "🔮 Да или Нет",
+        SpreadType.LOVE: "💞 Отношения",
+        SpreadType.CELTIC: "🌙 Кельтский крест",
     }
     header = _HEADER_MAP.get(spread, "🔮 Таро")
 
@@ -2517,12 +2534,12 @@ async def _generate_tarot_inline(
         # Last resort: strip HTML and retry as plain text
         with contextlib.suppress(Exception):
             from app.utils.text_format import strip_formatting
+
             await bot.edit_message_text(
                 inline_message_id=inline_message_id,
                 text=strip_formatting(html)[:4000] or "❌ Ошибка форматирования.",
                 reply_markup=InlineKeyboardMarkup([]),
             )
-
 
 
 def _build_tarot_system_prompt(

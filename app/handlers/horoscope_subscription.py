@@ -62,18 +62,18 @@ CONFIRM: Final = "HS_CONFIRM"
 
 # ── Zodiac signs ──────────────────────────────────────────────────────────────
 SIGNS: dict[str, str] = {
-    "aries":       "♈ Овен",
-    "taurus":      "♉ Телец",
-    "gemini":      "♊ Близнецы",
-    "cancer":      "♋ Рак",
-    "leo":         "♌ Лев",
-    "virgo":       "♍ Дева",
-    "libra":       "♎ Весы",
-    "scorpio":     "♏ Скорпион",
+    "aries": "♈ Овен",
+    "taurus": "♉ Телец",
+    "gemini": "♊ Близнецы",
+    "cancer": "♋ Рак",
+    "leo": "♌ Лев",
+    "virgo": "♍ Дева",
+    "libra": "♎ Весы",
+    "scorpio": "♏ Скорпион",
     "sagittarius": "♐ Стрелец",
-    "capricorn":   "♑ Козерог",
-    "aquarius":    "♒ Водолей",
-    "pisces":      "♓ Рыбы",
+    "capricorn": "♑ Козерог",
+    "aquarius": "♒ Водолей",
+    "pisces": "♓ Рыбы",
 }
 
 _TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
@@ -98,9 +98,17 @@ def _time_keyboard(slot: str, times: list[str]) -> InlineKeyboardMarkup:
 
 def _tz_keyboard() -> InlineKeyboardMarkup:
     offsets = [
-        ("UTC−8", -8), ("UTC−5", -5), ("UTC+0", 0), ("UTC+1", 1),
-        ("UTC+2", 2), ("UTC+3 (МСК)", 3), ("UTC+4", 4), ("UTC+5", 5),
-        ("UTC+6", 6), ("UTC+7", 7), ("UTC+8", 8),
+        ("UTC−8", -8),
+        ("UTC−5", -5),
+        ("UTC+0", 0),
+        ("UTC+1", 1),
+        ("UTC+2", 2),
+        ("UTC+3 (МСК)", 3),
+        ("UTC+4", 4),
+        ("UTC+5", 5),
+        ("UTC+6", 6),
+        ("UTC+7", 7),
+        ("UTC+8", 8),
     ]
     rows = []
     for i in range(0, len(offsets), 3):
@@ -131,9 +139,7 @@ def _get_utc_offset_from_tz(tz_name: str) -> int:
 def _summary_text(sign: str, time_today: str | None, time_tomorrow: str | None, utc_offset: int) -> str:
     sign_label = SIGNS.get(sign, sign)
     today_str = f"🌅 Утренний (сегодня): <b>{time_today}</b>" if time_today else "🌅 Утренний: <i>отключён</i>"
-    tomorrow_str = (
-        f"🌙 Вечерний (завтра): <b>{time_tomorrow}</b>" if time_tomorrow else "🌙 Вечерний: <i>отключён</i>"
-    )
+    tomorrow_str = f"🌙 Вечерний (завтра): <b>{time_tomorrow}</b>" if time_tomorrow else "🌙 Вечерний: <i>отключён</i>"
     tz_sign = "+" if utc_offset >= 0 else ""
     return (
         f"✨ <b>Гороскоп по подписке</b>\n\n"
@@ -146,12 +152,14 @@ def _summary_text(sign: str, time_today: str | None, time_tomorrow: str | None, 
 
 
 def _confirm_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
+    return InlineKeyboardMarkup(
         [
-            InlineKeyboardButton("✅ Сохранить", callback_data="horo_confirm:yes"),
-            InlineKeyboardButton("✏️ Изменить", callback_data="horo_confirm:edit"),
+            [
+                InlineKeyboardButton("✅ Сохранить", callback_data="horo_confirm:yes"),
+                InlineKeyboardButton("✏️ Изменить", callback_data="horo_confirm:edit"),
+            ]
         ]
-    ])
+    )
 
 
 def _horoscope_invite_text() -> str:
@@ -166,6 +174,7 @@ def _horoscope_invite_text() -> str:
 
 # ── Entry: deep link /start subscribe_horoscope_{sign} ───────────────────────
 
+
 async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     """Called from /start handler when payload starts with 'subscribe_horoscope_' or via callback."""
     if not update.effective_message:
@@ -173,7 +182,7 @@ async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAUL
 
     payload: str = context.user_data.get("horo_payload", "")
     sign = payload.replace("subscribe_horoscope_", "").lower().strip()
-    
+
     if update.callback_query:
         await update.callback_query.answer()
         if update.callback_query.data == "start_horoscope":
@@ -197,7 +206,7 @@ async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAUL
             "Выберите знак зодиака. После этого можно будет включить утренний прогноз на сегодня "
             "и/или вечерний прогноз на завтра."
         )
-        
+
     if update.callback_query:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -215,6 +224,7 @@ async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAUL
 
 
 # ── State: CHOOSE_SIGN ────────────────────────────────────────────────────────
+
 
 async def on_sign_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
@@ -236,6 +246,7 @@ async def on_sign_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 # ── State: CHOOSE_TIME_TODAY ──────────────────────────────────────────────────
+
 
 async def on_time_today_btn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
@@ -278,6 +289,7 @@ async def on_time_today_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 # ── State: CHOOSE_TIME_TOMORROW ───────────────────────────────────────────────
+
 
 async def on_time_tomorrow_btn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
@@ -332,6 +344,7 @@ async def on_time_tomorrow_text(update: Update, context: ContextTypes.DEFAULT_TY
 
 # ── State: CHOOSE_TZ ──────────────────────────────────────────────────────────
 
+
 async def _show_summary(message, context: ContextTypes.DEFAULT_TYPE) -> str:
     sign = context.user_data.get("horo_sign", "aries")
     time_today = context.user_data.get("horo_time_today")
@@ -356,7 +369,9 @@ async def on_tz_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     lon = update.message.location.longitude
     tz_name = nearest_city_timezone(lat, lon)
     if not tz_name:
-        await update.message.reply_text("Не удалось определить часовой пояс. Выберите из списка:", reply_markup=_tz_keyboard())
+        await update.message.reply_text(
+            "Не удалось определить часовой пояс. Выберите из списка:", reply_markup=_tz_keyboard()
+        )
         return CHOOSE_TZ
     utc_offset = _get_utc_offset_from_tz(tz_name)
     context.user_data["horo_utc_offset"] = utc_offset
@@ -369,7 +384,9 @@ async def on_tz_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
     query = update.message.text.strip()
     cities = search_cities(query)
     if not cities:
-        await update.message.reply_text("Город не найден. Попробуйте написать по-другому или выберите из списка:", reply_markup=_tz_keyboard())
+        await update.message.reply_text(
+            "Город не найден. Попробуйте написать по-другому или выберите из списка:", reply_markup=_tz_keyboard()
+        )
         return CHOOSE_TZ
     city = cities[0]
     utc_offset = _get_utc_offset_from_tz(city.timezone)
@@ -407,6 +424,7 @@ async def on_tz_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 
 # ── State: CONFIRM ────────────────────────────────────────────────────────────
+
 
 async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
@@ -473,6 +491,7 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
 
 # ── /horoscope_settings command ───────────────────────────────────────────────
 
+
 async def horoscope_settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     """Re-open the subscription wizard from any state."""
     if not update.message or not update.effective_user:
@@ -498,14 +517,18 @@ async def horoscope_settings_command(update: Update, context: ContextTypes.DEFAU
         tomorrow_str = f"🌙 Вечер: <b>{time_tomorrow}</b>" if time_tomorrow else "🌙 Вечер: <i>отключено</i>"
         tz_sign = "+" if utc_offset >= 0 else ""
 
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✏️ Изменить подписку", callback_data="horo_settings:edit")],
-            [InlineKeyboardButton(
-                "⏸ Приостановить" if is_active else "▶️ Возобновить",
-                callback_data="horo_settings:toggle",
-            )],
-            [InlineKeyboardButton("🗑 Удалить подписку", callback_data="horo_settings:delete")],
-        ])
+        keyboard = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("✏️ Изменить подписку", callback_data="horo_settings:edit")],
+                [
+                    InlineKeyboardButton(
+                        "⏸ Приостановить" if is_active else "▶️ Возобновить",
+                        callback_data="horo_settings:toggle",
+                    )
+                ],
+                [InlineKeyboardButton("🗑 Удалить подписку", callback_data="horo_settings:delete")],
+            ]
+        )
 
         await update.message.reply_text(
             f"<b>Ваша подписка на гороскоп</b>\n\n"
@@ -521,14 +544,15 @@ async def horoscope_settings_command(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text(
             "У вас нет активной подписки на гороскоп.\n\n"
             "Вы можете оформить её прямо сейчас, чтобы получать ежедневные прогнозы в удобное время.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✨ Оформить подписку", callback_data="start_horoscope")]
-            ])
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("✨ Оформить подписку", callback_data="start_horoscope")]]
+            ),
         )
     return ConversationHandler.END
 
 
 # ── /horoscope_settings callbacks ────────────────────────────────────────────
+
 
 async def horoscope_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     query = update.callback_query
@@ -584,6 +608,7 @@ async def horoscope_settings_callback(update: Update, context: ContextTypes.DEFA
 
 # ── /horoscope_stop command ───────────────────────────────────────────────────
 
+
 async def horoscope_stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
     if not update.message or not update.effective_user:
         return ConversationHandler.END
@@ -598,6 +623,7 @@ async def horoscope_stop_command(update: Update, context: ContextTypes.DEFAULT_T
 import re
 
 HOROSCOPE_INTENT_RE = re.compile(r"^\s*(?:гороскоп|настройка гороскопа|подписка на гороскоп)\s*[?!.]*$", re.IGNORECASE)
+
 
 def build_horoscope_subscription_handler() -> ConversationHandler:
     """Return a ConversationHandler for the horoscope subscription wizard.
@@ -658,13 +684,13 @@ async def send_horoscope_invite(bot, user_id: int) -> bool:
     """
     from telegram.constants import ParseMode
 
-    text = (
-        _horoscope_invite_text()
+    text = _horoscope_invite_text()
+    keyboard = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("⭐ Настроить гороскоп", callback_data="horo_settings:start")],
+            [InlineKeyboardButton("Не сейчас", callback_data="horo_settings:dismiss")],
+        ]
     )
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⭐ Настроить гороскоп", callback_data="horo_settings:start")],
-        [InlineKeyboardButton("Не сейчас", callback_data="horo_settings:dismiss")],
-    ])
     try:
         await bot.send_message(
             chat_id=user_id,
@@ -676,4 +702,3 @@ async def send_horoscope_invite(bot, user_id: int) -> bool:
     except Exception as exc:
         logger.warning("send_horoscope_invite failed for user=%s: %s", user_id, exc)
         return False
-

@@ -79,13 +79,8 @@ async def models_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 def _build_provider_selector() -> InlineKeyboardMarkup:
-    buttons = [
-        InlineKeyboardButton(label, callback_data=f"models:show:{name}")
-        for name, label in _PROVIDERS.items()
-    ]
-    return InlineKeyboardMarkup(
-        [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
-    )
+    buttons = [InlineKeyboardButton(label, callback_data=f"models:show:{name}") for name, label in _PROVIDERS.items()]
+    return InlineKeyboardMarkup([buttons[index : index + 2] for index in range(0, len(buttons), 2)])
 
 
 # ── Callback router ───────────────────────────────────────────────────────────
@@ -262,10 +257,7 @@ async def receive_model_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif added.code is ModelMutationCode.UNSUPPORTED:
         text = f"❌ Модель `{model_name}` не поддерживает generateContent в Gemini API."
     elif added.code is ModelMutationCode.VALIDATION_UNAVAILABLE:
-        text = (
-            f"⚠️ Не удалось проверить модель `{model_name}` через Gemini API. "
-            "Список не изменён; повторите позже."
-        )
+        text = f"⚠️ Не удалось проверить модель `{model_name}` через Gemini API. Список не изменён; повторите позже."
     elif added.code is ModelMutationCode.UNKNOWN_PROVIDER:
         text = "❌ Неизвестный провайдер моделей."
     else:

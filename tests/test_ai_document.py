@@ -309,9 +309,7 @@ async def test_document_question_success():
         "🎭 Выбрать роль ИИ",
         "✨ Начать новую тему",
     ]
-    mock_metrics.record_api_call.assert_awaited_once_with(
-        "document_question", "gemini-3.1-flash-lite"
-    )
+    mock_metrics.record_api_call.assert_awaited_once_with("document_question", "gemini-3.1-flash-lite")
 
 
 # ── No documents uploaded ─────────────────────────────────────────────────────
@@ -453,9 +451,7 @@ async def test_document_question_records_actual_routed_model():
 
         await _handle_document_question(placeholder, 123, "Question", chat_state)
 
-    mock_metrics.record_api_call.assert_awaited_once_with(
-        "document_question", "opencode-go/qwen3.5-plus"
-    )
+    mock_metrics.record_api_call.assert_awaited_once_with("document_question", "opencode-go/qwen3.5-plus")
 
 
 # ── Exception during processing ───────────────────────────────────────────────

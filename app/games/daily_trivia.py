@@ -142,10 +142,7 @@ def _bank_context(facts: list[repo.StoredTriviaFact]) -> str:
     if not facts:
         return ""
     claims = "\n".join(f"- {fact.identity.canonical_claim}" for fact in facts[:400])
-    return (
-        "\n\nФАКТЫ ИЗ БАНКА, КОТОРЫЕ НЕЛЬЗЯ ПОВТОРЯТЬ ИЛИ ПЕРЕФРАЗИРОВАТЬ:\n"
-        f"{claims}"
-    )
+    return f"\n\nФАКТЫ ИЗ БАНКА, КОТОРЫЕ НЕЛЬЗЯ ПОВТОРЯТЬ ИЛИ ПЕРЕФРАЗИРОВАТЬ:\n{claims}"
 
 
 async def generate_question_lane(
@@ -162,10 +159,7 @@ async def generate_question_lane(
     system_prompt = SYSTEM_PROMPT_TRIVIA if lane == "main" else SYSTEM_PROMPT_SUPER_TRIVIA
     label = "обычных вопросов" if lane == "main" else "СУПЕР-вопросов"
     bank = await repo.get_recent_bank_facts(reference_date=puzzle_date, days=90)
-    prompt = (
-        f"Сгенерируй ровно {count} {label} на дату {puzzle_date.isoformat()}."
-        f"{_bank_context(bank)}"
-    )
+    prompt = f"Сгенерируй ровно {count} {label} на дату {puzzle_date.isoformat()}.{_bank_context(bank)}"
     provider_router = router or get_provider_router()
     last_error: Exception | None = None
     for attempt in range(1, GENERATION_ATTEMPTS + 1):
@@ -206,9 +200,7 @@ async def generate_question_lane(
     raise last_error
 
 
-async def prepare_daily_puzzle(
-    puzzle_date: date, *, force: bool = False, mode: str = "all"
-) -> repo.DailyTriviaPuzzle:
+async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False, mode: str = "all") -> repo.DailyTriviaPuzzle:
     """Generate, validate against the bank, and atomically publish one day."""
     if mode not in {"all", "main", "super"}:
         raise ValueError("mode must be 'all', 'main', or 'super'")
@@ -264,7 +256,6 @@ async def prepare_daily_puzzle(
             )
     assert last_conflict is not None
     raise last_conflict
-
 
 
 def _get_fallback_questions() -> list[repo.TriviaQuestion]:

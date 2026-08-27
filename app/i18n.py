@@ -68,15 +68,33 @@ _STRINGS: dict[str, dict[str, str]] = {
     "miniapp.voice.orus": {"ru": "Более глубокий и авторитетный", "en": "Deeper and authoritative"},
     "miniapp.voice.puck": {"ru": "Бодрый", "en": "Upbeat"},
     "miniapp.preset.off_label": {"ru": "Быстрый", "en": "Fast"},
-    "miniapp.preset.off_hint": {"ru": "Минимальная задержка, короткие ответы.", "en": "Minimal latency, short answers."},
+    "miniapp.preset.off_hint": {
+        "ru": "Минимальная задержка, короткие ответы.",
+        "en": "Minimal latency, short answers.",
+    },
     "miniapp.preset.low_label": {"ru": "Сбалансированный", "en": "Balanced"},
-    "miniapp.preset.low_hint": {"ru": "Лучший режим по умолчанию для live-диалога.", "en": "Best default mode for live dialogue."},
+    "miniapp.preset.low_hint": {
+        "ru": "Лучший режим по умолчанию для live-диалога.",
+        "en": "Best default mode for live dialogue.",
+    },
     "miniapp.preset.medium_label": {"ru": "Умный", "en": "Smart"},
-    "miniapp.preset.medium_hint": {"ru": "Больше размышления, но выше задержка.", "en": "More thinking, but higher latency."},
+    "miniapp.preset.medium_hint": {
+        "ru": "Больше размышления, но выше задержка.",
+        "en": "More thinking, but higher latency.",
+    },
     "miniapp.conn.standard_label": {"ru": "Стандартный Live", "en": "Standard Live"},
-    "miniapp.conn.standard_summary": {"ru": "без проверки актуальной информации в интернете (просто поболтать)", "en": "without internet fact-checking (just for chatting)"},
-    "miniapp.conn.vertex_label": {"ru": "Vertex Live · с доступом в интернет", "en": "Vertex Live · with internet access"},
-    "miniapp.conn.vertex_summary": {"ru": "с поиском актуальной информации в интернете (проверка фактов, актуальные новости)", "en": "with live internet search (fact-checking, breaking news)"},
+    "miniapp.conn.standard_summary": {
+        "ru": "без проверки актуальной информации в интернете (просто поболтать)",
+        "en": "without internet fact-checking (just for chatting)",
+    },
+    "miniapp.conn.vertex_label": {
+        "ru": "Vertex Live · с доступом в интернет",
+        "en": "Vertex Live · with internet access",
+    },
+    "miniapp.conn.vertex_summary": {
+        "ru": "с поиском актуальной информации в интернете (проверка фактов, актуальные новости)",
+        "en": "with live internet search (fact-checking, breaking news)",
+    },
     "miniapp.voice_tag.conversational": {"ru": "Разговорный", "en": "Conversational"},
     "miniapp.voice_tag.calm": {"ru": "Спокойный", "en": "Calm"},
     "miniapp.voice_tag.deep": {"ru": "Глубокий", "en": "Deep"},
@@ -91,7 +109,6 @@ _STRINGS: dict[str, dict[str, str]] = {
     "miniapp.voice_tag.deep_authoritative": {"ru": "Глубокий/Авторитетный", "en": "Deep/Authoritative"},
     "miniapp.voice_tag.clear_cheerful": {"ru": "Чёткий/Бодрый", "en": "Clear/Cheerful"},
     "miniapp.voice_tag.informative": {"ru": "Информативный", "en": "Informative"},
-
     # ── Inline Mode ──────────────────────────────────────────────────────
     # Tones
     "inline.tone_formal": {"ru": "🧑‍💼 Формальный ответ", "en": "🧑‍💼 Formal reply"},
@@ -137,7 +154,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     "inline.img_meme": {"ru": "🅰️ Мем", "en": "🅰️ Meme"},
     "inline.img_edit": {"ru": "🪄 Изменить фото", "en": "🪄 Edit photo"},
     "inline.img_edit_hint": {"ru": "✏️ Режим редактирования (Klein)", "en": "✏️ Edit mode (Klein)"},
-    "inline.img_meme_hint": {"ru": "🅰️ Обнаружен текст → авто-выбран Мем-режим", "en": "🅰️ Text detected → Meme mode auto-selected"},
+    "inline.img_meme_hint": {
+        "ru": "🅰️ Обнаружен текст → авто-выбран Мем-режим",
+        "en": "🅰️ Text detected → Meme mode auto-selected",
+    },
     "inline.img_caption": {"ru": "🎨 <b>Запрос:</b> {prompt}", "en": "🎨 <b>Prompt:</b> {prompt}"},
     # Board
     "inline.board_init": {
@@ -146,26 +166,47 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "inline.board_activated": {"ru": "📋 Доска активирована", "en": "📋 Board activated"},
     "inline.board_topic": {"ru": "📋 Создать доску: {topic}", "en": "📋 Create board: {topic}"},
-    "inline.board_desc": {"ru": "Участники смогут добавлять идеи через reply", "en": "Participants can add ideas via reply"},
+    "inline.board_desc": {
+        "ru": "Участники смогут добавлять идеи через reply",
+        "en": "Participants can add ideas via reply",
+    },
     # Crocodile
     "inline.croc_custom": {"ru": "🐊 Крокодил: своё слово", "en": "🐊 Crocodile: custom word"},
-    "inline.croc_custom_desc": {"ru": "Задаёшь своё слово — второй игрок будет отгадывать", "en": "You set the word — another player will guess"},
+    "inline.croc_custom_desc": {
+        "ru": "Задаёшь своё слово — второй игрок будет отгадывать",
+        "en": "You set the word — another player will guess",
+    },
     "inline.croc_category": {"ru": "🐊 Крокодил: {cat}", "en": "🐊 Crocodile: {cat}"},
-    "inline.croc_cat_desc": {"ru": "Бот загадает слово из категории — второй игрок отгадывает", "en": "Bot picks a word from the category — another player guesses"},
-    "inline.croc_init": {"ru": "🐊 <b>Крокодил</b>\n<i>Игра загружается…</i>", "en": "🐊 <b>Crocodile</b>\n<i>Game loading…</i>"},
+    "inline.croc_cat_desc": {
+        "ru": "Бот загадает слово из категории — второй игрок отгадывает",
+        "en": "Bot picks a word from the category — another player guesses",
+    },
+    "inline.croc_init": {
+        "ru": "🐊 <b>Крокодил</b>\n<i>Игра загружается…</i>",
+        "en": "🐊 <b>Crocodile</b>\n<i>Game loading…</i>",
+    },
     "inline.croc_loading": {"ru": "⏳ Загрузка...", "en": "⏳ Loading..."},
     # Horoscope
-    "inline.horoscope_init": {"ru": "✨ <b>Гороскоп: {arg}</b>\n<i>Звёзды сходятся…</i>", "en": "✨ <b>Horoscope: {arg}</b>\n<i>The stars are aligning…</i>"},
+    "inline.horoscope_init": {
+        "ru": "✨ <b>Гороскоп: {arg}</b>\n<i>Звёзды сходятся…</i>",
+        "en": "✨ <b>Horoscope: {arg}</b>\n<i>The stars are aligning…</i>",
+    },
     "inline.horoscope_btn": {"ru": "⏳ Анализ...", "en": "⏳ Analyzing..."},
     "inline.horoscope_desc": {"ru": "Астрономически точный прогноз", "en": "Astronomically accurate forecast"},
     # Tarot — classic (legacy, kept for backward compat)
-    "inline.tarot_init": {"ru": "🔮 <b>Таро</b>\n<i>Тасуем колоду…</i>", "en": "🔮 <b>Tarot</b>\n<i>Shuffling the deck…</i>"},
+    "inline.tarot_init": {
+        "ru": "🔮 <b>Таро</b>\n<i>Тасуем колоду…</i>",
+        "en": "🔮 <b>Tarot</b>\n<i>Shuffling the deck…</i>",
+    },
     "inline.tarot_btn": {"ru": "⏳ Тасуем...", "en": "⏳ Shuffling..."},
     "inline.tarot_desc": {"ru": "Расклад на 3 карты", "en": "3-card spread"},
     "inline.tarot_classic_title": {"ru": "🔮 Прошлое / Настоящее / Будущее", "en": "🔮 Past / Present / Future"},
     # Tarot — card of the day
     "inline.tarot_daily_title": {"ru": "🎴 Карта дня", "en": "🎴 Card of the Day"},
-    "inline.tarot_daily_desc": {"ru": "Одна карта — совет и энергия на сегодня", "en": "One card — advice and energy for today"},
+    "inline.tarot_daily_desc": {
+        "ru": "Одна карта — совет и энергия на сегодня",
+        "en": "One card — advice and energy for today",
+    },
     "inline.tarot_daily_init": {
         "ru": "🎴 <b>Карта дня</b>\n<i>Достаём вашу карту…</i>",
         "en": "🎴 <b>Card of the Day</b>\n<i>Drawing your card…</i>",
@@ -179,7 +220,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     # Tarot — relationship
     "inline.tarot_love_title": {"ru": "💞 Отношения", "en": "💞 Relationship"},
-    "inline.tarot_love_desc": {"ru": "5 карт: ты, партнёр, связь, препятствие, итог", "en": "5 cards: you, partner, bond, obstacle, outcome"},
+    "inline.tarot_love_desc": {
+        "ru": "5 карт: ты, партнёр, связь, препятствие, итог",
+        "en": "5 cards: you, partner, bond, obstacle, outcome",
+    },
     "inline.tarot_love_init": {
         "ru": "💞 <b>Расклад на отношения</b>\n<i>Раскладываем 5 карт…</i>",
         "en": "💞 <b>Relationship Spread</b>\n<i>Laying out 5 cards…</i>",
@@ -193,8 +237,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     # Tarot — fortune cookie (instant, no LLM)
     "inline.tarot_fortune_title": {"ru": "⚡ Мгновенное предсказание", "en": "⚡ Instant Fortune"},
-    "inline.tarot_fortune_desc": {"ru": "Одна фраза от карт — без ожидания", "en": "One fortune phrase — instant, no waiting"},
-
+    "inline.tarot_fortune_desc": {
+        "ru": "Одна фраза от карт — без ожидания",
+        "en": "One fortune phrase — instant, no waiting",
+    },
     # Errors
     "inline.timeout_error": {
         "ru": "⏰ Модель не успела ответить вовремя. Нажмите «Повторить» ниже.",
@@ -226,7 +272,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "⏰ Контекст устарел. Задайте новый inline-вопрос.",
         "en": "⏰ Context expired. Start a new inline question.",
     },
-
     # ── Voice Handler ────────────────────────────────────────────────────
     "voice.processing": {
         "ru": "🎙️ Обрабатываю голосовое сообщение...",
@@ -1098,7 +1143,7 @@ def t(key: str, lang: str = DEFAULT_LANG, **kwargs: str) -> str:
     if kwargs:
         try:
             text = text.format(**kwargs)
-        except (KeyError, IndexError):
+        except KeyError, IndexError:
             pass  # Return unformatted if vars mismatch
 
     return text

@@ -109,9 +109,7 @@ def test_completed_event_carries_exact_nullable_metadata():
     event = StreamCompleted(
         finish_reason=FinishReason.from_raw("STOP"),
         usage=TokenUsage(prompt=10, completion=20, total=30, cached=None),
-        grounding=GroundingReport(
-            sources=(GroundingSource(url="https://example.com", title="Example"),)
-        ),
+        grounding=GroundingReport(sources=(GroundingSource(url="https://example.com", title="Example"),)),
         route=RouteUsed(
             provider=ProviderKind.GEMINI,
             requested_model="gemini-3.5-flash",

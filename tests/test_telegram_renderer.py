@@ -25,17 +25,13 @@ class RecordingTransport:
         self.sends: list[dict] = []
 
     async def edit(self, text, *, parse_mode, reply_markup):
-        self.edits.append(
-            {"text": text, "parse_mode": parse_mode, "reply_markup": reply_markup}
-        )
+        self.edits.append({"text": text, "parse_mode": parse_mode, "reply_markup": reply_markup})
         if self.edit_failures:
             self.edit_failures -= 1
             raise RuntimeError("edit failed")
 
     async def send(self, text, *, parse_mode, reply_markup):
-        self.sends.append(
-            {"text": text, "parse_mode": parse_mode, "reply_markup": reply_markup}
-        )
+        self.sends.append({"text": text, "parse_mode": parse_mode, "reply_markup": reply_markup})
         if self.send_fails:
             raise RuntimeError("send failed")
         self.current_ref = TelegramMessageRef(
@@ -46,9 +42,7 @@ class RecordingTransport:
 
 
 def _actions() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("Action", callback_data="action")]]
-    )
+    return InlineKeyboardMarkup([[InlineKeyboardButton("Action", callback_data="action")]])
 
 
 @pytest.mark.asyncio
@@ -250,9 +244,7 @@ async def test_send_only_transport_supports_deferred_delivery_without_placeholde
 async def test_final_edit_retries_telegram_flood_control_before_send_recovery():
     class FloodTransport(RecordingTransport):
         async def edit(self, text, *, parse_mode, reply_markup):
-            self.edits.append(
-                {"text": text, "parse_mode": parse_mode, "reply_markup": reply_markup}
-            )
+            self.edits.append({"text": text, "parse_mode": parse_mode, "reply_markup": reply_markup})
             if len(self.edits) < 3:
                 raise RuntimeError("429 Too Many Requests retry_after=1")
 
@@ -317,9 +309,7 @@ async def test_split_chain_balances_and_reopens_html_formatting():
 async def test_message_transport_sends_directly_when_reply_target_was_deleted():
     placeholder = MagicMock(chat_id=10, message_id=1, message_thread_id=77)
     placeholder.chat.id = 10
-    placeholder.reply_text = AsyncMock(
-        side_effect=RuntimeError("Message to be replied not found")
-    )
+    placeholder.reply_text = AsyncMock(side_effect=RuntimeError("Message to be replied not found"))
     sent = MagicMock(chat_id=10, message_id=2, message_thread_id=77)
     bot = MagicMock()
     bot.send_message = AsyncMock(return_value=sent)

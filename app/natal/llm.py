@@ -234,8 +234,12 @@ def _build_interpretation_repair_prompt(chart: ChartData, language: str, focus: 
 
 def _fallback_sections(chart: ChartData) -> list[ReportSection]:
     planet_lines = [f"- {planet.label}: {planet.sign} {planet.degree_in_sign:.1f}°" for planet in chart.planets]
-    aspect_lines = [f"- {aspect.point_a} {aspect.aspect} {aspect.point_b}, орб {aspect.orb:.1f}°" for aspect in chart.aspects]
-    unavailable = "Глубокая LLM-интерпретация временно недоступна, поэтому ниже приведен базовый разбор по расчетным точкам."
+    aspect_lines = [
+        f"- {aspect.point_a} {aspect.aspect} {aspect.point_b}, орб {aspect.orb:.1f}°" for aspect in chart.aspects
+    ]
+    unavailable = (
+        "Глубокая LLM-интерпретация временно недоступна, поэтому ниже приведен базовый разбор по расчетным точкам."
+    )
     sun = next((planet for planet in chart.planets if planet.key == "sun"), None)
     moon = next((planet for planet in chart.planets if planet.key == "moon"), None)
     mercury = next((planet for planet in chart.planets if planet.key == "mercury"), None)
@@ -369,7 +373,8 @@ def _fallback_sections(chart: ChartData) -> list[ReportSection]:
         ReportSection(
             id="section-aspects",
             title="Аспекты",
-            body_markdown=f"{unavailable}\n\n" + ("\n".join(aspect_lines) if aspect_lines else "Мажорные аспекты не выделены."),
+            body_markdown=f"{unavailable}\n\n"
+            + ("\n".join(aspect_lines) if aspect_lines else "Мажорные аспекты не выделены."),
         )
     )
     return sections
@@ -438,9 +443,7 @@ def _planet_mentions_any_sign_alias(
 ) -> bool:
     planet = re.escape(planet_label.lower())
     other_planets = [
-        re.escape(label.lower())
-        for label in (planet_labels or [])
-        if label and label.lower() != planet_label.lower()
+        re.escape(label.lower()) for label in (planet_labels or []) if label and label.lower() != planet_label.lower()
     ]
     for match in re.finditer(rf"\b{planet}\b", markdown):
         context = markdown[match.end() : match.end() + 180]

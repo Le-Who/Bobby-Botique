@@ -41,8 +41,7 @@ async def test_compacted_history_forces_full_rewrite_regardless_of_final_length(
 ):
     """Dropping 1/2 turns cannot be mistaken for append-only/equal length."""
     history = [
-        {"role": role, "parts": [f"content-{index}"]}
-        for index, role in enumerate([*retained_roles, "user", "model"])
+        {"role": role, "parts": [f"content-{index}"]} for index, role in enumerate([*retained_roles, "user", "model"])
     ]
     state = ChatState(
         history=history,

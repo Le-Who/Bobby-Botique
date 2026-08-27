@@ -48,7 +48,7 @@ async def get_role_data(role_key: str, user_id: int) -> dict[str, Any] | None:
                     "is_custom": True,
                     "key": role_key,
                 }
-        except (ValueError, IndexError, asyncpg.PostgresError):
+        except ValueError, IndexError, asyncpg.PostgresError:
             pass
     elif role_key in DEFAULT_ROLES:
         meta = DEFAULT_ROLES[role_key]
@@ -120,7 +120,7 @@ async def get_user_conversations(user_id: int, limit: int = 10, offset: int = 0)
             }
             for row in result
         ]
-    except (asyncpg.PostgresError, asyncpg.InterfaceError):
+    except asyncpg.PostgresError, asyncpg.InterfaceError:
         return []
 
 
@@ -149,7 +149,7 @@ async def get_conversation_messages(conversation_id: int, user_id: int, *, conn=
             }
             for row in result
         ]
-    except (asyncpg.PostgresError, asyncpg.InterfaceError):
+    except asyncpg.PostgresError, asyncpg.InterfaceError:
         return None
 
 
@@ -208,7 +208,7 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
                 )
 
         return True
-    except (asyncpg.PostgresError, asyncpg.InterfaceError):
+    except asyncpg.PostgresError, asyncpg.InterfaceError:
         return False
 
 
@@ -219,7 +219,7 @@ async def rename_conversation(user_id: int, conversation_id: int, new_title: str
             (new_title, conversation_id, user_id),
         )
         return result is not None
-    except (asyncpg.PostgresError, asyncpg.InterfaceError):
+    except asyncpg.PostgresError, asyncpg.InterfaceError:
         return False
 
 
@@ -243,7 +243,7 @@ async def delete_conversation(user_id: int, conversation_id: int) -> bool:
                 conn=conn,
             )
             return bool(result)
-    except (asyncpg.PostgresError, asyncpg.InterfaceError):
+    except asyncpg.PostgresError, asyncpg.InterfaceError:
         return False
 
 
@@ -251,7 +251,7 @@ async def get_conversation_count(user_id: int) -> int:
     try:
         result = await db_query("SELECT COUNT(*) FROM public.conversations WHERE user_id = $1", (user_id,))
         return result[0]["count"] if result else 0
-    except (asyncpg.PostgresError, asyncpg.InterfaceError):
+    except asyncpg.PostgresError, asyncpg.InterfaceError:
         return 0
 
 

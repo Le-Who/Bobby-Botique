@@ -43,7 +43,7 @@ async def build_l0_facts(user_id: int, api_key: str) -> str:
         async with db_manager.pool.acquire() as conn, conn.transaction():
             await set_user_context(user_id, False, conn=conn)
             rows = await db_query(
-                    """
+                """
                     SELECT src.entity_name AS from_name,
                            e.predicate,
                            tgt.entity_name AS to_name
@@ -68,7 +68,7 @@ async def build_l0_facts(user_id: int, api_key: str) -> str:
                     ORDER BY e.weight DESC
                     LIMIT 20
                     """,
-                    (user_id,),
+                (user_id,),
                 conn=conn,
             )
             await clear_user_context(conn=conn)
@@ -123,7 +123,7 @@ async def build_l1_context(
         async with db_manager.pool.acquire() as conn, conn.transaction():
             await set_user_context(user_id, False, conn=conn)
             consolidated = await db_query(
-                    """
+                """
                     SELECT ltm.content FROM long_term_memory AS ltm
                     JOIN chats AS c ON c.user_id = ltm.user_id
                     WHERE ltm.user_id = $1
@@ -133,7 +133,7 @@ async def build_l1_context(
                     ORDER BY ltm.created_at DESC
                     LIMIT 3
                     """,
-                    (user_id,),
+                (user_id,),
                 conn=conn,
             )
             await clear_user_context(conn=conn)

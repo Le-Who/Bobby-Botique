@@ -195,10 +195,11 @@ async def _clear_provider_key_cb(query, provider: str) -> int:
 async def _show_all_statuses(query) -> int:
     """Show a compact overview of all providers."""
     import asyncio
+
     lines = ["🔑 **Статус всех провайдеров**\n"]
     providers = list(_PROVIDERS.items())
     statuses = await asyncio.gather(*(get_provider_status(p) for p, _ in providers))
-    
+
     for (_provider, label), status in zip(providers, statuses, strict=False):
         if status["source"] == "missing":
             icon = "⚠️"

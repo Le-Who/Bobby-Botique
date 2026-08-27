@@ -21,7 +21,9 @@ import pytest
 
 def _make_bot(edit_calls: list | None = None) -> MagicMock:
     bot = MagicMock()
-    bot.edit_message_text = AsyncMock(side_effect=lambda **kw: edit_calls.append(kw) if edit_calls is not None else None)
+    bot.edit_message_text = AsyncMock(
+        side_effect=lambda **kw: edit_calls.append(kw) if edit_calls is not None else None
+    )
     return bot
 
 
@@ -103,8 +105,10 @@ async def test_generate_tarot_inline_shows_error_on_error_message():
     # is_error_message checks for certain strings, like "Внутренняя ошибка"
     mock_router.get_response.return_value = ("❌ Ошибка при обращении к API", 0)
 
-    with patch("app.providers.router.get_provider_router", return_value=mock_router), \
-         patch("app.handlers.inline.is_error_message", return_value=True):
+    with (
+        patch("app.providers.router.get_provider_router", return_value=mock_router),
+        patch("app.handlers.inline.is_error_message", return_value=True),
+    ):
         await _generate_tarot_inline(
             bot=bot,
             inline_message_id="test-msg-4",

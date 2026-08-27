@@ -177,6 +177,7 @@ async def _send_daily_entry_message(
                 **send_kwargs,
             )
             from app.games import cover_photo
+
             await cover_photo.remember_cover_file_id("dailycroc", msg)
             if track_prompt_message:
                 await repo.register_prompt_message(

@@ -527,9 +527,7 @@ def test_context_update(mock_get_keys, mock_settings_obj, mock_context):
 @pytest.mark.unit
 @patch("app.handlers.menus.settings")
 @patch("app.handlers.menus.get_openrouter_keys")
-def test_context_model_order_excludes_openrouter_without_keys(
-    mock_get_keys, mock_settings_obj, mock_context
-):
+def test_context_model_order_excludes_openrouter_without_keys(mock_get_keys, mock_settings_obj, mock_context):
     mock_settings_obj.AVAILABLE_MODELS = ["gemini-1"]
     mock_settings_obj.OPENCODE_AVAILABLE_MODELS = ["opencode-go/glm-5"]
     mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = ["vendor/hidden"]

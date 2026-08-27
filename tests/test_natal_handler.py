@@ -482,7 +482,9 @@ async def test_step_flow_exact_time_city_selection_generates_hosted_report(monke
 
     monkeypatch.setenv("WEBHOOK_URL", "https://bot.example.com")
     monkeypatch.setattr("app.handlers.natal_chart.create_natal_report", fake_create_natal_report)
-    monkeypatch.setattr("app.handlers.natal_chart._get_natal_cover_photo", AsyncMock(return_value="natal-cover-file-id"))
+    monkeypatch.setattr(
+        "app.handlers.natal_chart._get_natal_cover_photo", AsyncMock(return_value="natal-cover-file-id")
+    )
     monkeypatch.setattr("app.handlers.natal_chart._remember_natal_cover_file_id", AsyncMock())
 
     context = make_context()
@@ -546,7 +548,9 @@ async def test_step_flow_unknown_time_city_selection_generates_limited_report(mo
 
     monkeypatch.setenv("WEBHOOK_URL", "https://bot.example.com")
     monkeypatch.setattr("app.handlers.natal_chart.create_natal_report", fake_create_natal_report)
-    monkeypatch.setattr("app.handlers.natal_chart._get_natal_cover_photo", AsyncMock(return_value="natal-cover-file-id"))
+    monkeypatch.setattr(
+        "app.handlers.natal_chart._get_natal_cover_photo", AsyncMock(return_value="natal-cover-file-id")
+    )
     monkeypatch.setattr("app.handlers.natal_chart._remember_natal_cover_file_id", AsyncMock())
 
     context = make_context()

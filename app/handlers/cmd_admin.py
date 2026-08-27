@@ -263,6 +263,7 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Запрашиваю список моделей у Google API...")
     try:
         from google import genai  # deferred — avoids heavy google-genai startup cost
+
         client = genai.Client(api_key=key_data["api_key"])
 
         # google-genai SDK: Model has .name and .supported_actions (list of str)
@@ -307,6 +308,7 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def _send_welcome_to_new_user(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
     welcome_text = (
         "🎉 <b>Доступ разрешён!</b>\n"
         "Администратор одобрил вашу заявку. Теперь вы можете полноценно пользоваться ботом.\n\n"
@@ -328,14 +330,11 @@ async def _send_welcome_to_new_user(user_id: int, context: ContextTypes.DEFAULT_
         [
             InlineKeyboardButton("✨ Гороскоп", callback_data="start_horoscope"),
             InlineKeyboardButton("ℹ️ Помощь", callback_data="help_cmd"),
-        ]
+        ],
     ]
     try:
         await context.bot.send_message(
-            chat_id=user_id,
-            text=welcome_text,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            chat_id=user_id, text=welcome_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
         )
     except Exception as e:
         logging.error("Failed to send welcome message to %s: %s", user_id, e)
@@ -353,7 +352,7 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await invalidate_user_auth_cache(user_to_add)
         await update.message.reply_text(f"Пользователь {user_to_add} добавлен.")
         await _send_welcome_to_new_user(user_to_add, context)
-    except (IndexError, ValueError):
+    except IndexError, ValueError:
         await update.message.reply_text("Использование: /adduser <user_id>")
 
 
@@ -371,7 +370,7 @@ async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await revoke_user(user_to_del)
         await invalidate_user_auth_cache(user_to_del)
         await update.message.reply_text(f"Доступ для пользователя {user_to_del} отозван.")
-    except (IndexError, ValueError):
+    except IndexError, ValueError:
         await update.message.reply_text("Использование: /deluser <user_id>")
 
 
@@ -394,7 +393,7 @@ async def unauthorized_add_callback(update: Update, context: ContextTypes.DEFAUL
         await authorize_user(user_id)
         await invalidate_user_auth_cache(user_id)
         await query.answer(f"Пользователь {user_id} добавлен в белый список!")
-        
+
         # Remove buttons, append success message
         text = query.message.text_html if query.message else ""
         text += f"\n\n✅ <b>Пользователь {user_id} добавлен в whitelist!</b>"
@@ -1072,7 +1071,7 @@ async def set_provider_command(update: Update, context: ContextTypes.DEFAULT_TYP
         label = "🔮 FreeTheAI"
     else:
         label = "🔵 Gemini (классический режим)"
-        
+
     await update.message.reply_text(
         f"✅ <b>Провайдер переключён:</b> {label}\n"
         "Все новые запросы будут маршрутизироваться через выбранный провайдер.",
@@ -1174,7 +1173,7 @@ async def set_inline_model_command(update: Update, context: ContextTypes.DEFAULT
     model_name = args[0]
     await set_global_setting("inline_model", model_name)
     logging.info("Admin %s set inline_model → %s", update.effective_user.id, model_name)
-    
+
     await update.message.reply_text(
         f"✅ Модель по умолчанию для инлайна переключена на: <code>{model_name}</code>\n"
         "Смена вступит в силу для всех новых инлайн-запросов.",
@@ -1214,8 +1213,7 @@ async def set_dailycroc_model_command(update: Update, context: ContextTypes.DEFA
 
     label = _DAILY_IMAGE_MODEL_LABELS.get(value, value)
     await update.message.reply_text(
-        f"✅ Модель для daily croc артов переключена: {label}\n"
-        "Следующая генерация будет использовать новую модель.",
+        f"✅ Модель для daily croc артов переключена: {label}\nСледующая генерация будет использовать новую модель.",
         parse_mode="HTML",
     )
 
@@ -1379,7 +1377,9 @@ async def set_dailytrivia_cover_command(update: Update, context: ContextTypes.DE
 async def set_game_cover_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args or []
     if not args:
-        await update.message.reply_text("Использование: `/set_game_cover <dailycroc|daily2048|dailytrivia>` (реплай на фото)")
+        await update.message.reply_text(
+            "Использование: `/set_game_cover <dailycroc|daily2048|dailytrivia>` (реплай на фото)"
+        )
         return
     await _handle_set_game_cover(args[0], update, context)
 

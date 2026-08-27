@@ -47,13 +47,7 @@ class TokenBudget:
     @property
     def used(self) -> int:
         """Total tokens allocated across all prompt and response layers."""
-        return (
-            self.system_prompt
-            + self.summary
-            + self.history
-            + self.user_message
-            + self.response_reserve
-        )
+        return self.system_prompt + self.summary + self.history + self.user_message + self.response_reserve
 
 
 def truncate_to_token_budget(text: str, token_limit: int, suffix: str = "...") -> str:

@@ -338,10 +338,7 @@ async def update_user_chat(
         await set_user_context(user_id, False, conn=conn)
         try:
             effective_expected_epoch = expected_epoch
-            if (
-                effective_expected_epoch is None
-                and getattr(chat_state, "_has_persisted_chat", False) is True
-            ):
+            if effective_expected_epoch is None and getattr(chat_state, "_has_persisted_chat", False) is True:
                 effective_expected_epoch = int(chat_state.memory_epoch)
             current_length = len(chat_state.history)
             original_length = getattr(chat_state, "_original_length", 0)
@@ -483,9 +480,7 @@ async def migrate_invalid_models(
 
     gemini_target = migration_target(
         default_gemini_model,
-        lambda model: not is_opencode_model(model)
-        and not is_freetheai_model(model)
-        and not is_openrouter_model(model),
+        lambda model: not is_opencode_model(model) and not is_freetheai_model(model) and not is_openrouter_model(model),
     )
     openrouter_target = migration_target(default_openrouter_model, is_openrouter_model)
     opencode_target = migration_target(default_opencode_model, is_opencode_model)

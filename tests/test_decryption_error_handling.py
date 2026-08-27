@@ -72,7 +72,7 @@ async def test_get_ai_response_with_key_rotation_decryption_message(use_case):
         text, token_count = await use_case.get_ai_response_with_key_rotation(
             preferred_model="gemini-2.5-flash",
             history=[],
-    )
+        )
 
     assert token_count is None
     assert "администратор" in text

@@ -58,9 +58,7 @@ async def run_migrations(db_query, db_manager) -> MigrationResult:
     # preserving the historical per-file rollback boundary on one connection.
     try:
         async with db_manager.pool.acquire() as conn, conn.transaction():
-            await conn.execute(
-                "SELECT pg_advisory_xact_lock(hashtext('gemaibotv2:schema_migrations'))"
-            )
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext('gemaibotv2:schema_migrations'))")
 
             async def locked_query(query: str, params: tuple = ()):
                 return await db_query(query, params, conn=conn)

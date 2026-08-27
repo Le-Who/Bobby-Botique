@@ -236,16 +236,12 @@ async def test_typed_stream_emits_text_then_exact_completion_metadata():
 
     _gemini_clients_cache.clear()
     grounding = SimpleNamespace(
-        grounding_chunks=[
-            SimpleNamespace(web=SimpleNamespace(uri="https://example.com", title="Example"))
-        ]
+        grounding_chunks=[SimpleNamespace(web=SimpleNamespace(uri="https://example.com", title="Example"))]
     )
 
     class FakeChunk:
         text = "grounded answer"
-        candidates = [
-            SimpleNamespace(finish_reason="STOP", grounding_metadata=grounding)
-        ]
+        candidates = [SimpleNamespace(finish_reason="STOP", grounding_metadata=grounding)]
         usage_metadata = SimpleNamespace(
             prompt_token_count=4,
             candidates_token_count=6,
@@ -350,9 +346,7 @@ async def test_typed_stream_prefers_structured_400_over_incidental_503_text():
         turns=(PromptTurn(PromptRole.USER, (TextPart("question"),)),),
     )
     provider = GeminiProvider("key")
-    provider._client.aio.models.generate_content_stream = AsyncMock(
-        side_effect=StructuredBadRequest()
-    )
+    provider._client.aio.models.generate_content_stream = AsyncMock(side_effect=StructuredBadRequest())
 
     events = [
         event
@@ -378,10 +372,7 @@ def test_vertex_billing_disabled_error_temporarily_disables_vertex(monkeypatch):
     assert gemini.is_vertex_client_available() is True
 
     gemini.report_vertex_error(
-        RuntimeError(
-            "403 PERMISSION_DENIED. This API method requires billing to be enabled. "
-            "reason: BILLING_DISABLED"
-        ),
+        RuntimeError("403 PERMISSION_DENIED. This API method requires billing to be enabled. reason: BILLING_DISABLED"),
         cooldown_seconds=3600.0,
     )
 
@@ -398,9 +389,7 @@ async def test_model_capability_validator_accepts_generate_content_model():
     from app.providers import gemini
 
     client = MagicMock()
-    client.aio.models.get = AsyncMock(
-        return_value=SimpleNamespace(supported_actions=["generateContent"])
-    )
+    client.aio.models.get = AsyncMock(return_value=SimpleNamespace(supported_actions=["generateContent"]))
 
     result = await gemini.validate_gemini_chat_model_capability(
         "gemini-3.7-flash",

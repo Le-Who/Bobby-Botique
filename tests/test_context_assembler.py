@@ -40,6 +40,7 @@ def allow_summary_private_data_lease():
     with patch("app.repos.memory_consent.private_data_lease", allowed_lease):
         yield
 
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -659,10 +660,7 @@ class TestBudgetAccounting:
         assert result.budget.user_message == estimate_tokens_cyrillic(msg)
 
     def test_first_local_summary_cannot_push_prompt_over_budget(self):
-        history = [
-            make_msg("user" if index % 2 == 0 else "model", "Ж" * 300)
-            for index in range(40)
-        ]
+        history = [make_msg("user" if index % 2 == 0 else "model", "Ж" * 300) for index in range(40)]
         token_budget = 18_000
 
         result = self.assembler.assemble(
@@ -673,8 +671,7 @@ class TestBudgetAccounting:
         )
 
         final_prompt_tokens = estimate_tokens_cyrillic(result.system_instruction) + sum(
-            estimate_tokens_cyrillic(self.assembler._extract_text(message))
-            for message in result.history
+            estimate_tokens_cyrillic(self.assembler._extract_text(message)) for message in result.history
         )
         assert result.was_truncated
         assert result.budget.used <= token_budget

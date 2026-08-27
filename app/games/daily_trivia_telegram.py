@@ -37,6 +37,7 @@ async def _remember_cover_file_id(message: Any) -> None:
 def _play_button(label: str = "🧠 Пройти снова") -> InlineKeyboardButton:
     """Re-use the URL from the handler module to avoid circular imports."""
     from app.handlers.daily_trivia import daily_trivia_play_button
+
     return daily_trivia_play_button(label)
 
 
@@ -84,14 +85,8 @@ async def render_result_body(
     ]
     if leaderboard:
         for index, row in enumerate(leaderboard, start=1):
-            name = html.escape(
-                (row.get("name") or "").strip()
-                or _user_label(int(row["user_id"]))
-            )
-            lines.append(
-                f"{index}. {name} — <b>{int(row['score'])}</b> · "
-                f"{int(row['correct'])}/5 правильных"
-            )
+            name = html.escape((row.get("name") or "").strip() or _user_label(int(row["user_id"])))
+            lines.append(f"{index}. {name} — <b>{int(row['score'])}</b> · {int(row['correct'])}/5 правильных")
     else:
         lines.append("Пока нет завершённых результатов.")
 
@@ -102,10 +97,7 @@ async def render_result_body(
         lines.append("")
         lines.append(f"📅 <b>Топ-3 месяца</b> ({puzzle_date.strftime('%B %Y')})")
         for midx, mrow in enumerate(monthly_lb):
-            mname = html.escape(
-                (mrow.get("name") or "").strip()
-                or _user_label(int(mrow["user_id"]))
-            )
+            mname = html.escape((mrow.get("name") or "").strip() or _user_label(int(mrow["user_id"])))
             medal = month_medals[midx] if midx < len(month_medals) else f"{midx + 1}."
             lines.append(f"{medal} {mname} — <b>{int(mrow['score'])}</b> ({int(mrow['games_played'])} игр)")
 
@@ -123,7 +115,6 @@ async def render_result_body(
         ]
     )
     return "\n".join(lines), keyboard
-
 
 
 async def _edit_prompt_to_result(
@@ -174,7 +165,7 @@ async def _edit_prompt_to_result(
                 return True
             except TelegramError:
                 return False
-    except (OSError, TelegramError):
+    except OSError, TelegramError:
         return False
     return False
 
@@ -198,7 +189,7 @@ async def _send_result_photo(
             )
             await _remember_cover_file_id(message)
             return
-        except (OSError, TelegramError):
+        except OSError, TelegramError:
             pass
 
     await bot.send_message(
@@ -268,6 +259,7 @@ async def refresh_stale_result_messages(
         stale_seconds: minimum seconds since last refresh.
     """
     import logging as _logging
+
     _log = _logging.getLogger(__name__)
 
     stale_prompts = await repo.get_stale_active_prompts(puzzle_date, stale_seconds)

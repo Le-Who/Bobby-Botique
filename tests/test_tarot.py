@@ -11,6 +11,7 @@ def test_spread_types():
     assert SpreadType.CELTIC.value == "tarot_celtic"
     assert SpreadType.FORTUNE.value == "tarot_fortune"
 
+
 def test_spread_positions():
     assert len(SPREAD_POSITIONS[SpreadType.CLASSIC]) == 3
     assert len(SPREAD_POSITIONS[SpreadType.DAILY]) == 1
@@ -18,6 +19,7 @@ def test_spread_positions():
     assert len(SPREAD_POSITIONS[SpreadType.LOVE]) == 5
     assert len(SPREAD_POSITIONS[SpreadType.CELTIC]) == 6
     assert len(SPREAD_POSITIONS[SpreadType.FORTUNE]) == 0
+
 
 def test_draw_cards():
     cards = draw_cards(3)
@@ -30,6 +32,7 @@ def test_draw_cards():
         assert "meanings" in card
         assert card["orientation"] in ("Прямая", "Перевернутая")
 
+
 def test_get_tarot_context_classic():
     context, names = get_tarot_context(SpreadType.CLASSIC)
     assert len(names) == 3
@@ -37,20 +40,23 @@ def test_get_tarot_context_classic():
     assert "Позиция «Настоящее»" in context
     assert "Позиция «Будущее»" in context
 
+
 def test_get_tarot_context_legacy_int():
     # Backward compatibility with integers
     context, names = get_tarot_context(3)
     assert len(names) == 3
     assert "Позиция «Прошлое»" in context
-    
+
     context_2, names_2 = get_tarot_context(2)
     assert len(names_2) == 2
     assert "Позиция «Карта 1»" in context_2
+
 
 def test_get_tarot_context_daily():
     context, names = get_tarot_context(SpreadType.DAILY)
     assert len(names) == 1
     assert "Позиция «Карта дня»" in context
+
 
 def test_get_fortune_cookie():
     res = get_fortune_cookie()
@@ -61,22 +67,28 @@ def test_get_fortune_cookie():
     assert isinstance(name, str)
     assert len(name) > 0
 
+
 # These will test functions from app.handlers.inline which are NOT yet implemented or imported in test.
 # They should fail or raise ImportError/AttributeError until we apply the patch, verifying the RED phase.
 def test_build_fortune_cookie_html():
     from app.handlers.inline import _build_fortune_cookie_html
+
     html = _build_fortune_cookie_html()
     assert "⚡ <b>Предсказание</b>" in html
     assert "<i>«" in html
 
+
 def test_build_tarot_system_prompt_daily():
     from app.handlers.inline import _build_tarot_system_prompt
+
     prompt = _build_tarot_system_prompt(SpreadType.DAILY, "ctx data", "question")
     assert "карта дня" in prompt.lower()
     assert "совет и энергия на сегодня" in prompt.lower()
 
+
 def test_build_tarot_system_prompt_yesno():
     from app.handlers.inline import _build_tarot_system_prompt
+
     prompt_upright = _build_tarot_system_prompt(SpreadType.YES_NO, "Прямая", "question")
     assert "оракул таро" in prompt_upright.lower()
     assert "да" in prompt_upright.lower()

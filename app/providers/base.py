@@ -265,13 +265,14 @@ class BaseAIProvider(ABC):
     ) -> AsyncIterator[GenerationEvent]:
         """Emit typed generation events and exactly one terminal event."""
 
+
 # Known FreeTheAI routing prefixes — checked BEFORE the generic "/" detection
 # to prevent FTA models from being misrouted to OpenRouter.
 KNOWN_FTA_PREFIXES: tuple[str, ...] = (
     "cat/",
     "yng/",
     "vhr/",
-    "img/",          # img/gpt-image-2 — FTA image generation endpoint
+    "img/",  # img/gpt-image-2 — FTA image generation endpoint
     "or/google/lyria-",
 )
 
@@ -290,11 +291,7 @@ def is_openrouter_model(model_name: str) -> bool:
     """
     if not model_name:
         return False
-    return (
-        "/" in model_name
-        and not model_name.startswith("opencode-go/")
-        and not is_freetheai_model(model_name)
-    )
+    return "/" in model_name and not model_name.startswith("opencode-go/") and not is_freetheai_model(model_name)
 
 
 def is_opencode_model(model_name: str) -> bool:

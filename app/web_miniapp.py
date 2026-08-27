@@ -346,7 +346,7 @@ def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any] | None
 
         try:
             auth_date = int(parsed.get("auth_date", ""))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             logger.warning("initData auth_date is missing or invalid")
             return None
 
@@ -1652,9 +1652,7 @@ async def api_miniapp_trivia_today():
     user_super_result = None
     result = None
     super_res = None
-    uid, auth_error = await _resolve_authorized_legacy_miniapp_user(
-        request.headers.get("X-TG-INIT-DATA", "")
-    )
+    uid, auth_error = await _resolve_authorized_legacy_miniapp_user(request.headers.get("X-TG-INIT-DATA", ""))
     if auth_error is not None:
         return auth_error
     if uid > 0:
@@ -1737,9 +1735,7 @@ async def api_miniapp_trivia_submit_answer():
     total_score = int(data.get("total_score", 0))
     puzzle_revision_id = int(data["revision_id"]) if data.get("revision_id") is not None else None
 
-    user_id, auth_error = await _resolve_authorized_legacy_miniapp_user(
-        request.headers.get("X-TG-INIT-DATA", "")
-    )
+    user_id, auth_error = await _resolve_authorized_legacy_miniapp_user(request.headers.get("X-TG-INIT-DATA", ""))
     if auth_error is not None:
         return auth_error
 
@@ -1784,14 +1780,14 @@ async def api_miniapp_trivia_submit_answer():
             try:
                 from app.bot_instance import get_bot
                 from app.games.daily_trivia_telegram import send_trivia_result_message
+
                 bot = get_bot()
                 if bot:
                     await send_trivia_result_message(bot, user_id, today)
             except Exception as exc:
                 import logging as _logging
-                _logging.getLogger(__name__).warning(
-                    "trivia: result message failed user=%s: %s", user_id, exc
-                )
+
+                _logging.getLogger(__name__).warning("trivia: result message failed user=%s: %s", user_id, exc)
 
     return jsonify({"success": True})
 
@@ -1815,9 +1811,7 @@ async def api_miniapp_trivia_submit_super_answer():
     base_question_score = int(data.get("base_score", 0))
     puzzle_revision_id = int(data["revision_id"]) if data.get("revision_id") is not None else None
 
-    user_id, auth_error = await _resolve_authorized_legacy_miniapp_user(
-        request.headers.get("X-TG-INIT-DATA", "")
-    )
+    user_id, auth_error = await _resolve_authorized_legacy_miniapp_user(request.headers.get("X-TG-INIT-DATA", ""))
     if auth_error is not None:
         return auth_error
 
@@ -1875,9 +1869,7 @@ async def api_miniapp_trivia_submit_super_answer():
             except Exception as exc:
                 import logging as _logging
 
-                _logging.getLogger(__name__).warning(
-                    "super trivia: result message failed user=%s: %s", user_id, exc
-                )
+                _logging.getLogger(__name__).warning("super trivia: result message failed user=%s: %s", user_id, exc)
 
     return jsonify({"success": True})
 
@@ -2007,7 +1999,7 @@ async def daily2048_ws():
             if val is None:
                 return None
             value = int(val)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
         return max(0, min(value, 24 * 60 * 60 * 1000))
 
@@ -2062,7 +2054,7 @@ async def daily2048_ws():
 
             try:
                 msg = json.loads(raw)
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 await websocket.send_json({"event": "error", "message": "Invalid JSON"})
                 continue
 
@@ -2306,7 +2298,7 @@ async def daily_game_ws():
 
             try:
                 msg = json.loads(raw)
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 await websocket.send_json({"event": "error", "message": "Invalid JSON"})
                 continue
 
@@ -2594,7 +2586,7 @@ async def game_ws():
 
             try:
                 msg = json.loads(raw)
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 await websocket.send_json(
                     await stamp_runtime_payload(game_id, {"event": "error", "message": "Invalid JSON"})
                 )
@@ -3028,10 +3020,7 @@ async def _handle_live_session(
             await _send_live_fatal(
                 websocket,
                 reason="server_capacity",
-                message=(
-                    "Голосовой режим временно недоступен. "
-                    "Попробуйте чуть позже или продолжите текстом."
-                ),
+                message=("Голосовой режим временно недоступен. Попробуйте чуть позже или продолжите текстом."),
                 retry_after_seconds=cooldown_seconds,
             )
             return
@@ -3082,7 +3071,7 @@ async def _handle_live_session(
 
                         try:
                             msg = json.loads(raw)
-                        except (json.JSONDecodeError, TypeError):
+                        except json.JSONDecodeError, TypeError:
                             continue
 
                         msg_type = msg.get("type")
@@ -3243,7 +3232,7 @@ async def _handle_live_session(
                 if producer_task in done and not consumer_task.done():
                     try:
                         await asyncio.wait_for(asyncio.shield(consumer_task), timeout=5.0)
-                    except (TimeoutError, asyncio.CancelledError):
+                    except TimeoutError, asyncio.CancelledError:
                         pass
             finally:
                 for task in (producer_task, consumer_task):
@@ -3251,7 +3240,7 @@ async def _handle_live_session(
                         task.cancel()
                         try:
                             await asyncio.wait_for(task, timeout=0.25)
-                        except (asyncio.CancelledError, TimeoutError):
+                        except asyncio.CancelledError, TimeoutError:
                             pass
 
     except Exception as exc:
@@ -3264,8 +3253,7 @@ async def _handle_live_session(
                 "Экспериментальный internet-live временно недоступен. "
                 "Попробуйте ещё раз чуть позже или продолжите в стандартном режиме."
                 if transport_mode == _LIVE_VERTEX_CONNECTION_MODE
-                else "Голосовой режим временно недоступен. "
-                "Попробуйте чуть позже или продолжите текстом."
+                else "Голосовой режим временно недоступен. Попробуйте чуть позже или продолжите текстом."
             )
             logger.warning(
                 "live_audio_ws: resource exhausted user=%d mode=%s model=%s retry_after=%ds: %s",

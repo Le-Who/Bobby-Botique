@@ -12,7 +12,7 @@ def _run_test_expecting_failure(test_func, *args, **kwargs):
     try:
         test_func(*args, **kwargs)
         return False  # Test passed = mutation survived = BAD
-    except (AssertionError, Exception):
+    except AssertionError, Exception:
         return True  # Test caught the mutation = GOOD
 
 

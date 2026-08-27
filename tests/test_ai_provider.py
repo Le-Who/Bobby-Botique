@@ -1,6 +1,7 @@
 """
 Tests for the AI provider abstraction layer.
 """
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -259,6 +260,7 @@ class TestProviders:
     async def test_gemini_wrapper_deadline_exceeded(self):
         """GeminiProvider should retry on 504 DEADLINE_EXCEEDED."""
         from google.genai.errors import APIError
+
         _gemini_clients_cache.clear()
 
         # We will mock _execute_request to raise APIError for testing the raise logic,
@@ -276,6 +278,7 @@ class TestProviders:
             class FakeAPIError(APIError):
                 def __init__(self, msg):
                     self.msg = msg
+
                 def __str__(self):
                     return self.msg
 

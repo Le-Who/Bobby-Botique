@@ -468,7 +468,9 @@ async def _generate_daily_image_file_id(
             difficulty=difficulty,
         )
         if not images:
-            logger.warning("FTA image generation failed for %s/%s, falling back to Pollinations", puzzle_date, difficulty)
+            logger.warning(
+                "FTA image generation failed for %s/%s, falling back to Pollinations", puzzle_date, difficulty
+            )
             # Fallback to pollinations
             images, model_label = await _generate_via_pollinations(
                 prompt=prompt,

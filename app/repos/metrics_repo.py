@@ -32,7 +32,7 @@ async def optimize_database_connections() -> bool:
                 "SET lock_timeout = '30s';"
             )
         return True
-    except (asyncpg.PostgresError, asyncpg.InterfaceError):
+    except asyncpg.PostgresError, asyncpg.InterfaceError:
         return False
 
 

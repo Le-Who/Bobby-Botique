@@ -84,9 +84,7 @@ class ContextAssembler:
 
         # 3. Fit history within remaining budget
         available = budget.available_for_history
-        total_history_tokens = sum(
-            estimate_tokens_cyrillic(self._extract_text(message)) for message in history
-        )
+        total_history_tokens = sum(estimate_tokens_cyrillic(self._extract_text(message)) for message in history)
         if total_history_tokens > available:
             # A first truncation creates or expands the local summary. Reserve
             # its full allowance before selecting retained turns; otherwise
@@ -127,10 +125,7 @@ class ContextAssembler:
         return AssembledContext(
             history=final_history,
             system_instruction=system_instruction,
-            retained_history=[
-                {**message, "parts": list(message.get("parts", []))}
-                for message in trimmed_history
-            ],
+            retained_history=[{**message, "parts": list(message.get("parts", []))} for message in trimmed_history],
             summary=new_summary,
             budget=budget,
             was_truncated=was_truncated,

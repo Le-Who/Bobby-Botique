@@ -46,10 +46,12 @@ async def send_tarot_invite(bot, user_id: int) -> bool:
         "Включите ежедневную доставку — карта будет приходить "
         "прямо сюда в удобное для вас время."
     )
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔮 Подписаться на карту дня", callback_data="tarot_daily:subscribe")],
-        [InlineKeyboardButton("❌ Не интересует", callback_data="tarot_daily:dismiss")],
-    ])
+    keyboard = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🔮 Подписаться на карту дня", callback_data="tarot_daily:subscribe")],
+            [InlineKeyboardButton("❌ Не интересует", callback_data="tarot_daily:dismiss")],
+        ]
+    )
     try:
         await bot.send_message(
             chat_id=user_id,

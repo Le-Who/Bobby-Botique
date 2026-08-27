@@ -881,4 +881,8 @@ async def test_generate_interpretation_does_not_repair_complete_practical_struct
     sections = await generate_interpretation(chart, user_id=123, chat_id=456)
 
     assert router.calls == 1
-    assert {section.id for section in sections} >= {"section-work-money", "section-shadow-patterns", "section-relationships"}
+    assert {section.id for section in sections} >= {
+        "section-work-money",
+        "section-shadow-patterns",
+        "section-relationships",
+    }

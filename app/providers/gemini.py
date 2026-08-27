@@ -98,9 +98,7 @@ async def validate_gemini_chat_model_capability(
         try:
             model = await make_client(api_key).aio.models.get(model=model_name)
             actions = (
-                getattr(model, "supported_actions", None)
-                or getattr(model, "supported_generation_methods", None)
-                or []
+                getattr(model, "supported_actions", None) or getattr(model, "supported_generation_methods", None) or []
             )
             if "generateContent" in actions:
                 return GeminiModelValidationStatus.SUPPORTED
@@ -305,11 +303,7 @@ class GeminiProvider(BaseAIProvider):
         """Emit typed Gemini stream events for one resolved key and model."""
         contents = await gemini_contents(request)
         route = RouteUsed(
-            provider=(
-                ProviderKind.VERTEX
-                if self.provider_name == "gemini-vertex"
-                else ProviderKind.GEMINI
-            ),
+            provider=(ProviderKind.VERTEX if self.provider_name == "gemini-vertex" else ProviderKind.GEMINI),
             requested_model=request.models[0],
             actual_model=model_name,
         )
@@ -408,11 +402,7 @@ class GeminiProvider(BaseAIProvider):
             elif "api key" in lowered or "api_key_invalid" in lowered:
                 code = ErrorCode.INVALID_KEY
                 key = KeyDisposition.INVALID
-            elif (
-                getattr(exc, "code", None) in {503, 504}
-                or "unavailable" in lowered
-                or "overloaded" in lowered
-            ):
+            elif getattr(exc, "code", None) in {503, 504} or "unavailable" in lowered or "overloaded" in lowered:
                 code = ErrorCode.OVERLOADED
             elif "invalid" in lowered or "malformed" in lowered:
                 code = ErrorCode.INVALID_REQUEST

@@ -206,16 +206,8 @@ class OpenRouterProvider(BaseAIProvider):
             yield StreamFailed(
                 code=ErrorCode.NETWORK if isinstance(exc, httpx.HTTPError) else ErrorCode.GENERIC,
                 phase=FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT,
-                retry=(
-                    RetryDisposition.DO_NOT_RETRY
-                    if text_emitted
-                    else RetryDisposition.TRY_NEXT_KEY
-                ),
-                key=(
-                    KeyDisposition.UNCHANGED
-                    if text_emitted
-                    else KeyDisposition.TRANSIENT_FAILURE
-                ),
+                retry=(RetryDisposition.DO_NOT_RETRY if text_emitted else RetryDisposition.TRY_NEXT_KEY),
+                key=(KeyDisposition.UNCHANGED if text_emitted else KeyDisposition.TRANSIENT_FAILURE),
                 diagnostic=diagnostic,
                 route=route,
             )

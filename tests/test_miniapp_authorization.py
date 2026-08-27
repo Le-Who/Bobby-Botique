@@ -208,7 +208,9 @@ async def test_graph_api_uses_one_consent_locked_tenant_transaction_for_its_snap
     async with quart_app.test_request_context("/webapp/api/graph"):
         with (
             patch.object(database.db_manager, "pool", pool),
-            patch.object(database, "set_user_context", new_callable=AsyncMock, side_effect=assert_context_in_transaction) as set_context,
+            patch.object(
+                database, "set_user_context", new_callable=AsyncMock, side_effect=assert_context_in_transaction
+            ) as set_context,
             patch.object(database, "db_query", new_callable=AsyncMock, side_effect=query),
             patch(
                 "app.repos.memory_consent.resolve_current_epoch",

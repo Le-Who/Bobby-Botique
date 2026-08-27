@@ -157,9 +157,7 @@ def render_help_overview(lang: str) -> str:
         html.escape(t("help.overview.intro", lang)),
     ]
     for category in COMMAND_CATEGORIES:
-        command_links = " · ".join(
-            f"<code>/{entry.command}</code>" for entry in _commands_in_category(category.slug)
-        )
+        command_links = " · ".join(f"<code>/{entry.command}</code>" for entry in _commands_in_category(category.slug))
         parts.extend(
             [
                 f"<b>{html.escape(t(category.title_key, lang))}</b>",
@@ -194,10 +192,7 @@ def build_help_topic_rows(lang: str) -> list[list[InlineKeyboardButton]]:
 
 def build_telegram_commands(lang: str) -> list[BotCommand]:
     """Build Telegram's public command menu in stable catalog order."""
-    return [
-        BotCommand(entry.command, t(entry.description_key, lang))
-        for entry in PUBLIC_COMMANDS
-    ]
+    return [BotCommand(entry.command, t(entry.description_key, lang)) for entry in PUBLIC_COMMANDS]
 
 
 async def install_public_command_menu(bot) -> None:

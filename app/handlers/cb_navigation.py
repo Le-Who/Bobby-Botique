@@ -175,6 +175,7 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 # ── Help sub-topic handlers ──────────────────────────────────────────────────
 
+
 async def help_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Shows a specific help topic with back-to-help button."""
     query = update.callback_query

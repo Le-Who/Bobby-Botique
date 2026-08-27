@@ -142,9 +142,7 @@ async def test_writer_maps_semantically_equivalent_input_to_canonical_node() -> 
     result = await write_graph(conn, 42, _plan())
 
     assert result.node_ids == {"Alice": 101, "Python": 102}
-    node_insert_args = next(
-        args for _, sql, args in conn.calls if "INSERT INTO memory_nodes" in sql
-    )
+    node_insert_args = next(args for _, sql, args in conn.calls if "INSERT INTO memory_nodes" in sql)
     assert node_insert_args[1] == ["Алиса", "Python"]
 
 

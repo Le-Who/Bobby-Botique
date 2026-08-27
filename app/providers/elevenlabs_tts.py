@@ -375,10 +375,12 @@ async def fetch_voices(api_key: str, *, timeout: float = 10.0) -> list[dict]:
             continue
         if category not in ("premade", "cloned"):
             continue
-        result.append({
-            "id": voice_id,
-            "name": name,
-            "category": category,
-            "labels": v.get("labels", {}),
-        })
+        result.append(
+            {
+                "id": voice_id,
+                "name": name,
+                "category": category,
+                "labels": v.get("labels", {}),
+            }
+        )
     return result

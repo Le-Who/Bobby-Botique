@@ -169,9 +169,7 @@ async def prepare_daily_readings(
             # and suspend every key used by interactive inline/chat requests.
             pool_size = await count_gemini_keys()
             max_key_retries = (
-                min(pool_size, TAROT_DAILY_MAX_KEY_RETRIES)
-                if pool_size > 0
-                else TAROT_DAILY_MAX_KEY_RETRIES
+                min(pool_size, TAROT_DAILY_MAX_KEY_RETRIES) if pool_size > 0 else TAROT_DAILY_MAX_KEY_RETRIES
             )
             logger.info(
                 "Tarot prep: using max_key_retries=%d (pool_size=%d)",

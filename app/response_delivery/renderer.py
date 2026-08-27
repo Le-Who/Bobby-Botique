@@ -243,10 +243,7 @@ class TelegramRenderer:
     @staticmethod
     def _is_rate_limited(error: Exception) -> bool:
         message = str(error).lower()
-        return any(
-            marker in message
-            for marker in ("429", "flood", "too many requests", "retry_after")
-        )
+        return any(marker in message for marker in ("429", "flood", "too many requests", "retry_after"))
 
     async def _edit_with_retry(
         self,
@@ -308,9 +305,7 @@ class TelegramRenderer:
             except asyncio.CancelledError:
                 raise
             except Exception as send_error:
-                raise TelegramDeliveryError(
-                    f"Telegram edit and send recovery failed: {send_error}"
-                ) from send_error
+                raise TelegramDeliveryError(f"Telegram edit and send recovery failed: {send_error}") from send_error
 
     async def _split(
         self,
@@ -341,9 +336,7 @@ class TelegramRenderer:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                raise TelegramDeliveryError(
-                    f"Telegram split failed on part {index + 1}: {exc}"
-                ) from exc
+                raise TelegramDeliveryError(f"Telegram split failed on part {index + 1}: {exc}") from exc
             refs.append(ref)
 
         return DeliveryReceipt(
@@ -389,8 +382,8 @@ class TelegramRenderer:
         )
         summary = self._summary(displayed_text)
         body = (
-            f'{summary}\n\n<i>(...текст превышает лимит. Продолжение доступно '
-            f'по кнопке <b>«Развернуть статью»</b> 👇)</i> '
+            f"{summary}\n\n<i>(...текст превышает лимит. Продолжение доступно "
+            f"по кнопке <b>«Развернуть статью»</b> 👇)</i> "
             f'<a href="{reader_url}">&#8203;</a>'
         )
         try:

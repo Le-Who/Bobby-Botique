@@ -37,7 +37,9 @@ class MetricsCollector:
         self.api_event_log = deque(maxlen=200)  # Храним последние API события
         self.daily_metrics: dict[str, PerformanceMetrics] = defaultdict(PerformanceMetrics)
         # Per-user daily metrics: key = date_str -> uid
-        self._user_daily: dict[str, dict[int, dict[str, Any]]] = defaultdict(lambda: defaultdict(lambda: {"request_count": 0, "model_usage": {}}))
+        self._user_daily: dict[str, dict[int, dict[str, Any]]] = defaultdict(
+            lambda: defaultdict(lambda: {"request_count": 0, "model_usage": {}})
+        )
         self._events_queue = asyncio.Queue()
         self._last_save_time = time.time()
         self._save_interval = 300  # Save каждые 5 минут

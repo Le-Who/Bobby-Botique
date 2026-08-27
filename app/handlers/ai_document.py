@@ -205,11 +205,7 @@ async def _handle_document_question_leased(
         )
         if isinstance(outcome, (CompleteDelivery, PartialDelivery)):
             model_used = settings.DEFAULT_MODEL
-            metadata = (
-                outcome.completion
-                if isinstance(outcome, CompleteDelivery)
-                else outcome.terminal
-            )
+            metadata = outcome.completion if isinstance(outcome, CompleteDelivery) else outcome.terminal
             route = getattr(metadata, "route", None)
             if route is not None:
                 model_used = route.actual_model

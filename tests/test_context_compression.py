@@ -53,10 +53,7 @@ async def test_l0_is_valid_json_even_when_token_budget_is_tight(monkeypatch):
     from app.context import compression
 
     monkeypatch.setattr(compression, "L0_MAX_TOKENS", 8)
-    rows = [
-        {"from_name": "Alice", "predicate": f"predicate-{index}", "to_name": "x" * 100}
-        for index in range(5)
-    ]
+    rows = [{"from_name": "Alice", "predicate": f"predicate-{index}", "to_name": "x" * 100} for index in range(5)]
 
     class _Transaction:
         async def __aenter__(self):

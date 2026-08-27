@@ -507,8 +507,6 @@ async def _race_generate(
             _FALLBACK_MODEL,
         )
 
-
-
     # ── Fallback model race ───────────────────────────────────────────────────
     # Primary model race returned nothing (503 / 429 / all keys failed).
     # resolve_ai_request will skip keys already suspended by _one_call above.

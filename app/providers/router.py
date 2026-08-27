@@ -68,12 +68,10 @@ def _runtime_gemini_models() -> list[str]:
     """Return configured and internal Gemini runtime candidates without static eligibility checks."""
     configured = _available_models()
     role_models = [
-        getattr(settings, name, None)
-        for name in ("RESEARCH_MODEL", "DEFAULT_MODEL", "QNA_MODEL", "INLINE_MODEL")
+        getattr(settings, name, None) for name in ("RESEARCH_MODEL", "DEFAULT_MODEL", "QNA_MODEL", "INLINE_MODEL")
     ]
     normalized = [
-        normalize_gemini_runtime_model(model, fallback="")
-        for model in _dedupe_models([*configured, *role_models])
+        normalize_gemini_runtime_model(model, fallback="") for model in _dedupe_models([*configured, *role_models])
     ]
     return [model for model in _dedupe_models(normalized) if is_gemini_chat_model_id(model)]
 
@@ -156,11 +154,7 @@ def _ordered_gemini_fallback_models(failed_model: str) -> list[str]:
     )
     preferred.extend(_available_models())
     normalized = [normalize_gemini_runtime_model(model, fallback="") for model in preferred]
-    return [
-        model
-        for model in _dedupe_models(normalized, exclude=failed_model_norm)
-        if is_gemini_chat_model_id(model)
-    ]
+    return [model for model in _dedupe_models(normalized, exclude=failed_model_norm) if is_gemini_chat_model_id(model)]
 
 
 def _provider_label(model_name: str | None, use_openrouter: bool | None) -> str:
@@ -410,8 +404,10 @@ class ProviderRouter:
                 continue
 
             # Track health based on response
-            if response_text and is_error_message(response_text) and (
-                is_key_related_error(response_text) or is_retryable_error(response_text)
+            if (
+                response_text
+                and is_error_message(response_text)
+                and (is_key_related_error(response_text) or is_retryable_error(response_text))
             ):
                 failed_keys.add(key_data["key_hash"])
                 error_category = classify_key_error(response_text)
@@ -524,11 +520,7 @@ class ProviderRouter:
         provider_name = (
             "Opencode Go"
             if is_opencode_model(preferred_model)
-            else (
-                "FreeTheAI"
-                if is_freetheai_model(preferred_model)
-                else ("OpenRouter" if is_or else "Gemini")
-            )
+            else ("FreeTheAI" if is_freetheai_model(preferred_model) else ("OpenRouter" if is_or else "Gemini"))
         )
         return (
             tag_error(
@@ -576,11 +568,7 @@ class ProviderRouter:
         async def _record_success(key_data: dict, model_name: str) -> None:
             key_hash = key_data["key_hash"]
             try:
-                if (
-                    key_hash != _VERTEX_KH
-                    and not is_opencode_model(model_name)
-                    and not is_freetheai_model(model_name)
-                ):
+                if key_hash != _VERTEX_KH and not is_opencode_model(model_name) and not is_freetheai_model(model_name):
                     await status_mgr.record_success(key_hash, model_name)
                 if key_hash != _VERTEX_KH:
                     await use_case.increment_key_usage(key_hash, model_name, None)
@@ -629,25 +617,18 @@ class ProviderRouter:
                     key_data, model_used, resolution_status = await use_case.resolve_ai_request(
                         preferred_model,
                         use_openrouter=None,
-                        excluded_key_hashes=failed_keys
-                        | {key["key_hash"] for key in keys_to_race},
+                        excluded_key_hashes=failed_keys | {key["key_hash"] for key in keys_to_race},
                     )
                     if not key_data or not model_used:
                         break
                     keys_to_race.append(key_data)
                     resolved_model = model_used
 
-                if (
-                    keys_to_race
-                    and resolved_model
-                    and "gemini-3.1-flash-lite" in resolved_model
-                ):
+                if keys_to_race and resolved_model and "gemini-3.1-flash-lite" in resolved_model:
                     from app.providers.gemini import is_vertex_client_available
 
                     if is_vertex_client_available() and _VERTEX_KH not in failed_keys:
-                        keys_to_race.append(
-                            {"api_key": "vertex", "key_hash": _VERTEX_KH}
-                        )
+                        keys_to_race.append({"api_key": "vertex", "key_hash": _VERTEX_KH})
 
                 if not keys_to_race or not resolved_model:
                     if resolution_status == "decryption_failed":
@@ -697,9 +678,7 @@ class ProviderRouter:
                             yield event
                             continue
                         if not is_terminal_event(event):
-                            raise ProviderStreamProtocolError(
-                                f"Unsupported provider event: {type(event).__name__}"
-                            )
+                            raise ProviderStreamProtocolError(f"Unsupported provider event: {type(event).__name__}")
                         terminal_seen = True
                         if isinstance(event, StreamCompleted):
                             if not saw_text:
@@ -715,16 +694,12 @@ class ProviderRouter:
                                 terminal_result = event
                         elif isinstance(event, StreamDeferred):
                             if saw_text:
-                                raise ProviderStreamProtocolError(
-                                    "Provider deferred after emitting visible text"
-                                )
+                                raise ProviderStreamProtocolError("Provider deferred after emitting visible text")
                             terminal_result = event
                         elif isinstance(event, StreamFailed):
                             if saw_text:
                                 if event.phase is not FailurePhase.AFTER_TEXT:
-                                    raise ProviderStreamProtocolError(
-                                        "Provider reported BEFORE_TEXT after text"
-                                    )
+                                    raise ProviderStreamProtocolError("Provider reported BEFORE_TEXT after text")
                                 terminal_result = event
                             failure = event
 
@@ -743,18 +718,14 @@ class ProviderRouter:
                     last_failure = failure
                     continue
 
-                queue: asyncio.Queue[
-                    tuple[int, GenerationEvent | None, BaseException | None, bool]
-                ] = asyncio.Queue()
+                queue: asyncio.Queue[tuple[int, GenerationEvent | None, BaseException | None, bool]] = asyncio.Queue()
 
                 async def _race_provider(
                     idx: int,
                     key_data: dict,
                     *,
                     race_model: str,
-                    race_queue: asyncio.Queue[
-                        tuple[int, GenerationEvent | None, BaseException | None, bool]
-                    ],
+                    race_queue: asyncio.Queue[tuple[int, GenerationEvent | None, BaseException | None, bool]],
                 ) -> None:
                     terminal: GenerationEvent | None = None
                     provider = get_provider_for_model(race_model, key_data["api_key"])
@@ -769,13 +740,9 @@ class ProviderRouter:
                             elif is_terminal_event(event):
                                 terminal = event
                             else:
-                                raise ProviderStreamProtocolError(
-                                    f"Unsupported provider event: {type(event).__name__}"
-                                )
+                                raise ProviderStreamProtocolError(f"Unsupported provider event: {type(event).__name__}")
                         if terminal is None:
-                            raise ProviderStreamProtocolError(
-                                f"{provider.provider_name} ended without terminal event"
-                            )
+                            raise ProviderStreamProtocolError(f"{provider.provider_name} ended without terminal event")
                         race_queue.put_nowait((idx, terminal, None, False))
                     except asyncio.CancelledError:
                         raise
@@ -830,11 +797,7 @@ class ProviderRouter:
 
                     if winner_idx is None:
                         deferred = next(
-                            (
-                                event
-                                for event in pre_text_terminals.values()
-                                if isinstance(event, StreamDeferred)
-                            ),
+                            (event for event in pre_text_terminals.values() if isinstance(event, StreamDeferred)),
                             None,
                         )
                         if deferred is not None:
@@ -880,37 +843,27 @@ class ProviderRouter:
 
                     while True:
                         try:
-                            winner_event = await asyncio.wait_for(
-                                queue.get(), timeout=120.0
-                            )
+                            winner_event = await asyncio.wait_for(queue.get(), timeout=120.0)
                         except TimeoutError as exc:
-                            raise ProviderStreamProtocolError(
-                                "Winning provider did not emit a terminal event"
-                            ) from exc
+                            raise ProviderStreamProtocolError("Winning provider did not emit a terminal event") from exc
                         winner_event_idx, terminal_event, winner_error, is_done = winner_event
                         if winner_event_idx != winner_idx:
                             continue
                         if winner_error is not None:
                             raise winner_error
                         if is_done:
-                            raise ProviderStreamProtocolError(
-                                "Winning provider ended before terminal delivery"
-                            )
+                            raise ProviderStreamProtocolError("Winning provider ended before terminal delivery")
                         assert terminal_event is not None
                         if isinstance(terminal_event, TextDelta):
                             yield terminal_event
                             continue
                         if isinstance(terminal_event, StreamDeferred):
-                            raise ProviderStreamProtocolError(
-                                "Winning provider deferred after visible text"
-                            )
+                            raise ProviderStreamProtocolError("Winning provider deferred after visible text")
                         if (
                             isinstance(terminal_event, StreamFailed)
                             and terminal_event.phase is not FailurePhase.AFTER_TEXT
                         ):
-                            raise ProviderStreamProtocolError(
-                                "Winning provider reported BEFORE_TEXT after text"
-                            )
+                            raise ProviderStreamProtocolError("Winning provider reported BEFORE_TEXT after text")
                         yield terminal_event
                         return
                 finally:
@@ -973,11 +926,7 @@ class ProviderRouter:
             yield StreamFailed(
                 code=last_failure.code,
                 phase=FailurePhase.BEFORE_TEXT,
-                retry=(
-                    RetryDisposition.RETRY_LATER
-                    if overall_had_transient
-                    else RetryDisposition.DO_NOT_RETRY
-                ),
+                retry=(RetryDisposition.RETRY_LATER if overall_had_transient else RetryDisposition.DO_NOT_RETRY),
                 key=last_failure.key,
                 diagnostic=last_failure.diagnostic,
                 route=last_failure.route,

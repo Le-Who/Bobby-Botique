@@ -186,6 +186,7 @@ def _is_authenticated():
         bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
         if bot_token:
             from app.web_miniapp import _extract_user_id, _validate_init_data
+
             validated = _validate_init_data(init_data, bot_token)
             if validated:
                 user_id = _extract_user_id(validated)
@@ -852,7 +853,7 @@ async def api_admin_dailycroc_list():
         """,
         (limit,),
     )
-    
+
     out = []
     for r in rows:
         if r["puzzle_date"] is None:
@@ -904,12 +905,7 @@ async def api_admin_dailycroc_regen():
 
         from app.games.crocodile_daily import prepare_daily_puzzle
 
-        updated_puzzle = await prepare_daily_puzzle(
-            dt, 
-            bot=bot, 
-            difficulty=difficulty, 
-            force_image=True
-        )
+        updated_puzzle = await prepare_daily_puzzle(dt, bot=bot, difficulty=difficulty, force_image=True)
 
         if not updated_puzzle or not updated_puzzle.image_file_id:
             return jsonify({"error": "Failed to generate or upload image"}), 500
@@ -1098,6 +1094,7 @@ async def api_admin_upload_game_cover(game_id: str):
         return jsonify({"error": "empty file"}), 400
 
     from app.games import cover_photo
+
     file_path = await cover_photo.set_cover_from_upload(game_id, image_bytes)
     return jsonify({"success": True, "path": file_path.name})
 
@@ -1116,7 +1113,7 @@ async def api_admin_dailycroc_stats():
 
         # Get delivery enabled status
         delivery_on = await get_global_setting(repo.DAILY_DELIVERY_SETTING_KEY, "on")
-        stats["delivery_enabled"] = (delivery_on.strip().lower() != "off")
+        stats["delivery_enabled"] = delivery_on.strip().lower() != "off"
 
         # Get configured image model
         image_model = await get_global_setting(repo.DAILY_IMAGE_MODEL_SETTING_KEY, "pollinations")
@@ -1201,7 +1198,7 @@ async def api_admin_daily2048_save_puzzle():
         target_seconds = int(data.get("target_seconds") or daily_2048_repo.DEFAULT_TARGET_SECONDS)
         status = str(data.get("status") or "draft").strip().lower()
         solution_moves = str(data.get("solution_moves") or "")
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return jsonify({"error": "invalid puzzle payload"}), 400
 
     if status not in {"draft", "ready", "disabled"}:
@@ -1362,7 +1359,6 @@ def _serialize_daily_trivia_puzzle(puzzle):
     }
 
 
-
 @quart_app.route("/api/admin/dailytrivia/stats", methods=["GET"])
 @require_auth
 async def api_admin_dailytrivia_stats():
@@ -1370,21 +1366,18 @@ async def api_admin_dailytrivia_stats():
     from app.repos import daily_trivia as daily_trivia_repo
     from app.repos.crocodile_daily import today_puzzle_date
     from app.repos.settings_repo import get_global_setting
+
     today = today_puzzle_date()
     stats = await daily_trivia_repo.get_admin_stats(today)
     delivery_on = await get_global_setting("daily_trivia_delivery_enabled", "on")
-    stats["delivery_enabled"] = (delivery_on.strip().lower() != "off")
+    stats["delivery_enabled"] = delivery_on.strip().lower() != "off"
     stats["llm_model"] = await get_global_setting("daily_trivia_llm_model", "gemini-economy")
     configured_models = getattr(settings, "AVAILABLE_MODELS", []) if settings is not None else []
     stats["llm_models"] = list(
         dict.fromkeys(
             [
                 *GEMINI_ROLE_MODEL_ALIASES,
-                *(
-                    model
-                    for model in configured_models
-                    if isinstance(model, str) and model.strip()
-                ),
+                *(model for model in configured_models if isinstance(model, str) and model.strip()),
             ]
         )
     )
@@ -1410,7 +1403,9 @@ async def api_admin_dailytrivia_settings():
         if model not in GEMINI_ROLE_MODEL_ALIASES:
             validation = await validate_gemini_chat_model_capability(model)
             if validation is GeminiModelValidationStatus.UNSUPPORTED:
-                return jsonify({"success": False, "error": "Модель не существует или не поддерживает generateContent"}), 400
+                return jsonify(
+                    {"success": False, "error": "Модель не существует или не поддерживает generateContent"}
+                ), 400
             if validation is not GeminiModelValidationStatus.SUPPORTED:
                 return jsonify({"success": False, "error": "Не удалось проверить модель Gemini. Повторите позже"}), 503
         await set_global_setting("daily_trivia_llm_model", model)
@@ -1429,6 +1424,7 @@ async def api_admin_dailytrivia_settings():
 async def api_admin_dailytrivia_leaderboard():
     from app.repos import daily_trivia as daily_trivia_repo
     from app.repos.crocodile_daily import today_puzzle_date
+
     lb_type = request.args.get("type", "daily")
     today = today_puzzle_date()
 
@@ -1449,41 +1445,46 @@ async def api_admin_dailytrivia_leaderboard():
 async def api_admin_dailytrivia_list():
     from app.repos import daily_trivia as daily_trivia_repo
     from app.repos.crocodile_daily import today_puzzle_date
+
     today = today_puzzle_date()
     start_date = today - datetime.timedelta(days=14)
     end_date = today + datetime.timedelta(days=7)
     db_puzzles = await daily_trivia_repo.get_puzzles_range(start_date, end_date)
-    
+
     db_puzzles_by_date = {p.puzzle_date: p for p in db_puzzles}
     all_puzzles = []
-    
+
     curr = start_date
     while curr <= end_date:
         if curr in db_puzzles_by_date:
             all_puzzles.append(_serialize_daily_trivia_puzzle(db_puzzles_by_date[curr]))
         else:
-            all_puzzles.append({
-                "date": curr.isoformat(),
-                "status": "missing",
-                "prepared_at": None,
-                "revision": 0,
-                "published_revision_id": None,
-                "questions": [],
-                "super_questions": [],
-                "readiness": {
-                    "main": {"count": 0, "required": 5, "ready": False},
-                    "super": {"count": 0, "required": 3, "ready": False},
-                    "publishable": False,
-                },
-            })
+            all_puzzles.append(
+                {
+                    "date": curr.isoformat(),
+                    "status": "missing",
+                    "prepared_at": None,
+                    "revision": 0,
+                    "published_revision_id": None,
+                    "questions": [],
+                    "super_questions": [],
+                    "readiness": {
+                        "main": {"count": 0, "required": 5, "ready": False},
+                        "super": {"count": 0, "required": 3, "ready": False},
+                        "publishable": False,
+                    },
+                }
+            )
         curr += datetime.timedelta(days=1)
-        
+
     all_puzzles.sort(key=lambda x: x["date"], reverse=True)
-    
-    return jsonify({
-        "puzzles": all_puzzles,
-        "today": today.isoformat(),
-    })
+
+    return jsonify(
+        {
+            "puzzles": all_puzzles,
+            "today": today.isoformat(),
+        }
+    )
 
 
 @quart_app.route("/api/admin/dailytrivia/regenerate", methods=["POST"])
@@ -1494,6 +1495,7 @@ async def api_admin_dailytrivia_regenerate():
     from app.games import daily_trivia_authoring as authoring
     from app.repos import daily_trivia as daily_trivia_repo
     from app.repos.crocodile_daily import today_puzzle_date
+
     data = await request.get_json() or {}
     try:
         p_date = datetime.date.fromisoformat(str(data.get("date") or today_puzzle_date()))
@@ -1506,11 +1508,13 @@ async def api_admin_dailytrivia_regenerate():
         puzzle = await daily_trivia_game.prepare_daily_puzzle(p_date, force=True, mode=mode)
     except daily_trivia_repo.RevisionConflictError as exc:
         current = await daily_trivia_repo.get_puzzle(p_date)
-        return jsonify({
-            "error": "Викторина уже была обновлена другим процессом. Загружена актуальная ревизия.",
-            "current_revision": exc.actual,
-            "puzzle": _serialize_daily_trivia_puzzle(current) if current else None,
-        }), 409
+        return jsonify(
+            {
+                "error": "Викторина уже была обновлена другим процессом. Загружена актуальная ревизия.",
+                "current_revision": exc.actual,
+                "puzzle": _serialize_daily_trivia_puzzle(current) if current else None,
+            }
+        ), 409
     except authoring.DuplicateQuestionError as exc:
         return jsonify({"error": str(exc), "conflict": _serialize_trivia_conflict(exc)}), 409
     return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
@@ -1523,6 +1527,7 @@ async def api_admin_dailytrivia_save():
     from app.games import daily_trivia_authoring as authoring
     from app.repos import daily_trivia as daily_trivia_repo
     from app.repos.settings_repo import get_global_setting
+
     data = await request.get_json()
     if not data:
         return jsonify({"error": "invalid json"}), 400
@@ -1530,7 +1535,7 @@ async def api_admin_dailytrivia_save():
         p_date = datetime.date.fromisoformat(str(data.get("date") or ""))
         raw_questions = data.get("questions") or []
         expected_revision = int(data["revision"]) if data.get("revision") is not None else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return jsonify({"error": "invalid payload"}), 400
 
     existing = await daily_trivia_repo.get_puzzle(p_date)
@@ -1564,6 +1569,7 @@ async def api_admin_dailytrivia_save_super():
     from app.games import daily_trivia_authoring as authoring
     from app.repos import daily_trivia as daily_trivia_repo
     from app.repos.settings_repo import get_global_setting
+
     data = await request.get_json()
     if not data:
         return jsonify({"error": "invalid json"}), 400
@@ -1571,7 +1577,7 @@ async def api_admin_dailytrivia_save_super():
         p_date = datetime.date.fromisoformat(str(data.get("date") or ""))
         raw_questions = data.get("super_questions") or []
         expected_revision = int(data["revision"]) if data.get("revision") is not None else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return jsonify({"error": "invalid payload"}), 400
 
     existing = await daily_trivia_repo.get_puzzle(p_date)
@@ -1603,6 +1609,7 @@ async def api_admin_dailytrivia_save_super():
 async def api_admin_dailytrivia_clear_used_keys():
     from app.repos import daily_trivia as daily_trivia_repo
     from app.repos.crocodile_daily import today_puzzle_date
+
     data = await request.get_json() or {}
     try:
         p_date = datetime.date.fromisoformat(str(data.get("date") or today_puzzle_date()))
@@ -1794,9 +1801,7 @@ async def api_admin_broadcast_subscribers():
             if status_filter == "snoozed":
                 where_clauses.append("p.discovery_snoozed_until > NOW()")
             elif status_filter == "active":
-                where_clauses.append(
-                    f"(p.last_sent_puzzle_date IS NULL OR p.last_sent_puzzle_date < ${idx})"
-                )
+                where_clauses.append(f"(p.last_sent_puzzle_date IS NULL OR p.last_sent_puzzle_date < ${idx})")
                 params.append(today)
                 idx += 1
 
@@ -1820,14 +1825,16 @@ async def api_admin_broadcast_subscribers():
                 snoozed = r.get("discovery_snoozed_until")
                 status = "snoozed" if snoozed and snoozed > now else "active"
                 last_sent = r.get("last_sent")
-                rows_out.append({
-                    "user_id": r["user_id"],
-                    "channels": ["🎮 Daily Challenge"],
-                    "timezone": r.get("timezone") or "—",
-                    "preferred_hour": r.get("preferred_local_hour"),
-                    "last_sent": last_sent.isoformat() if last_sent else None,
-                    "status": status,
-                })
+                rows_out.append(
+                    {
+                        "user_id": r["user_id"],
+                        "channels": ["🎮 Daily Challenge"],
+                        "timezone": r.get("timezone") or "—",
+                        "preferred_hour": r.get("preferred_local_hour"),
+                        "last_sent": last_sent.isoformat() if last_sent else None,
+                        "status": status,
+                    }
+                )
 
         # --- Horoscope subscribers ---
         if not channel or channel in ("horoscope", "all"):
@@ -1854,14 +1861,16 @@ async def api_admin_broadcast_subscribers():
                             entry["channels"].append(badge)
                             break
                 else:
-                    rows_out.append({
-                        "user_id": uid,
-                        "channels": [badge],
-                        "timezone": f"UTC{r['utc_offset']:+d}" if r.get("utc_offset") is not None else "—",
-                        "preferred_hour": None,
-                        "last_sent": last_sent_val.isoformat() if last_sent_val else None,
-                        "status": "active",
-                    })
+                    rows_out.append(
+                        {
+                            "user_id": uid,
+                            "channels": [badge],
+                            "timezone": f"UTC{r['utc_offset']:+d}" if r.get("utc_offset") is not None else "—",
+                            "preferred_hour": None,
+                            "last_sent": last_sent_val.isoformat() if last_sent_val else None,
+                            "status": "active",
+                        }
+                    )
 
         return jsonify({"total": len(rows_out), "rows": rows_out})
     except Exception as exc:
@@ -1905,10 +1914,12 @@ async def api_admin_broadcast_errors():
     """Return users with known delivery errors (stub: uses last_sent heuristic)."""
     # Full implementation requires broadcast_events table (future migration).
     # v1: return empty list with informative message.
-    return jsonify({
-        "errors": [],
-        "note": "Detailed error log requires broadcast_events table (planned migration).",
-    })
+    return jsonify(
+        {
+            "errors": [],
+            "note": "Detailed error log requires broadcast_events table (planned migration).",
+        }
+    )
 
 
 # ── Broadcast Offer History & Manual Send ─────────────────────────────────────
@@ -1992,19 +2003,23 @@ async def api_admin_broadcast_offer_history():
             )
             for r in croc_rows:
                 snoozed = r.get("discovery_snoozed_until")
-                rows_out.append({
-                    "user_id": r["user_id"],
-                    "display_name": r.get("display_name"),
-                    "channel": "daily_challenge",
-                    "channel_emoji": "🎮",
-                    "is_subscribed": bool(r.get("is_subscribed")),
-                    "offer_sent_at": r["discovery_last_sent_at"].isoformat()
-                        if r.get("discovery_last_sent_at") else None,
-                    "snoozed_until": snoozed.isoformat() if snoozed else None,
-                    "snoozed_active": bool(snoozed and snoozed > now),
-                    "last_delivery": r["last_sent_puzzle_date"].isoformat()
-                        if r.get("last_sent_puzzle_date") else None,
-                })
+                rows_out.append(
+                    {
+                        "user_id": r["user_id"],
+                        "display_name": r.get("display_name"),
+                        "channel": "daily_challenge",
+                        "channel_emoji": "🎮",
+                        "is_subscribed": bool(r.get("is_subscribed")),
+                        "offer_sent_at": r["discovery_last_sent_at"].isoformat()
+                        if r.get("discovery_last_sent_at")
+                        else None,
+                        "snoozed_until": snoozed.isoformat() if snoozed else None,
+                        "snoozed_active": bool(snoozed and snoozed > now),
+                        "last_delivery": r["last_sent_puzzle_date"].isoformat()
+                        if r.get("last_sent_puzzle_date")
+                        else None,
+                    }
+                )
 
         # ── Horoscope ────────────────────────────────────────────────────────
         if channel in ("horoscope", "all"):
@@ -2057,11 +2072,11 @@ async def api_admin_broadcast_offer_history():
                     "channel_emoji": "⭐",
                     "is_subscribed": bool(r.get("is_subscribed")),
                     "offer_sent_at": r["discovery_last_sent_at"].isoformat()
-                        if r.get("discovery_last_sent_at") else None,
+                    if r.get("discovery_last_sent_at")
+                    else None,
                     "snoozed_until": None,
                     "snoozed_active": False,
-                    "last_delivery": r["last_today_sent"].isoformat()
-                        if r.get("last_today_sent") else None,
+                    "last_delivery": r["last_today_sent"].isoformat() if r.get("last_today_sent") else None,
                 }
                 if uid not in existing_ids:
                     rows_out.append(entry)
@@ -2116,11 +2131,11 @@ async def api_admin_broadcast_offer_history():
                     "channel_emoji": "🔮",
                     "is_subscribed": bool(r.get("is_subscribed")),
                     "offer_sent_at": r["discovery_last_sent_at"].isoformat()
-                        if r.get("discovery_last_sent_at") else None,
+                    if r.get("discovery_last_sent_at")
+                    else None,
                     "snoozed_until": None,
                     "snoozed_active": False,
-                    "last_delivery": r["last_sent_date"].isoformat()
-                        if r.get("last_sent_date") else None,
+                    "last_delivery": r["last_sent_date"].isoformat() if r.get("last_sent_date") else None,
                 }
                 if uid not in existing_ids_2:
                     rows_out.append(entry)
@@ -2147,7 +2162,7 @@ async def api_admin_broadcast_send_offer():
         data = await request.get_json() or {}
         try:
             target_user_id = int(data.get("user_id") or 0)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return jsonify({"error": "user_id must be an integer"}), 400
 
         channel = str(data.get("channel") or "").strip()
@@ -2164,12 +2179,15 @@ async def api_admin_broadcast_send_offer():
             (target_user_id,),
         )
         if not user_rows:
-            return jsonify({
-                "success": False,
-                "error": "User not found. Bot can only message users who have started a conversation.",
-            }), 404
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "User not found. Bot can only message users who have started a conversation.",
+                }
+            ), 404
 
         from app.bot_instance import get_bot
+
         bot = get_bot()
         if bot is None:
             return jsonify({"error": "Bot not available"}), 503
@@ -2182,21 +2200,26 @@ async def api_admin_broadcast_send_offer():
             pref = await croc_repo.get_preference(target_user_id)
             already_subscribed = bool(pref and pref.get("is_subscribed"))
             if already_subscribed and not force:
-                return jsonify({
-                    "success": False,
-                    "warning": "User is already subscribed. Pass force=true to send anyway.",
-                    "already_subscribed": True,
-                })
+                return jsonify(
+                    {
+                        "success": False,
+                        "warning": "User is already subscribed. Pass force=true to send anyway.",
+                        "already_subscribed": True,
+                    }
+                )
 
             game_mode = await get_active_daily_game_mode()
             if game_mode == "2048":
                 from app.handlers.daily_2048 import send_discovery_intro as send_2048_intro
+
                 await send_2048_intro(bot, target_user_id)
             elif game_mode == "trivia":
                 from app.handlers.daily_trivia import send_discovery_intro as send_trivia_intro
+
                 await send_trivia_intro(bot, target_user_id)
             else:
                 from app.handlers.daily_crocodile import send_discovery_intro as send_croc_intro
+
                 await send_croc_intro(bot, target_user_id)
 
         elif channel == "horoscope":
@@ -2208,19 +2231,24 @@ async def api_admin_broadcast_send_offer():
             sub = await get_horoscope_subscription(target_user_id)
             already_subscribed = bool(sub and sub.get("is_active"))
             if already_subscribed and not force:
-                return jsonify({
-                    "success": False,
-                    "warning": "User is already subscribed to horoscope. Pass force=true to send anyway.",
-                    "already_subscribed": True,
-                })
+                return jsonify(
+                    {
+                        "success": False,
+                        "warning": "User is already subscribed to horoscope. Pass force=true to send anyway.",
+                        "already_subscribed": True,
+                    }
+                )
 
             from app.handlers.horoscope_subscription import send_horoscope_invite
+
             delivered = await send_horoscope_invite(bot, target_user_id)
             if not delivered:
-                return jsonify({
-                    "success": False,
-                    "error": "Offer was not delivered by Telegram; discovery timestamp was not updated.",
-                }), 502
+                return jsonify(
+                    {
+                        "success": False,
+                        "error": "Offer was not delivered by Telegram; discovery timestamp was not updated.",
+                    }
+                ), 502
             await mark_horoscope_discovery_sent(target_user_id)
 
         elif channel == "tarot":
@@ -2232,22 +2260,27 @@ async def api_admin_broadcast_send_offer():
             sub = await get_tarot_subscription(target_user_id)
             already_subscribed = bool(sub and sub.get("is_subscribed"))
             if already_subscribed and not force:
-                return jsonify({
-                    "success": False,
-                    "warning": "User is already subscribed to tarot. Pass force=true to send anyway.",
-                    "already_subscribed": True,
-                })
+                return jsonify(
+                    {
+                        "success": False,
+                        "warning": "User is already subscribed to tarot. Pass force=true to send anyway.",
+                        "already_subscribed": True,
+                    }
+                )
 
             from app.handlers.tarot_daily import send_tarot_invite
+
             await send_tarot_invite(bot, target_user_id)
             await mark_tarot_discovery_sent(target_user_id)
 
-        return jsonify({
-            "success": True,
-            "user_id": target_user_id,
-            "channel": channel,
-            "message": "Offer sent successfully.",
-        })
+        return jsonify(
+            {
+                "success": True,
+                "user_id": target_user_id,
+                "channel": channel,
+                "message": "Offer sent successfully.",
+            }
+        )
     except Exception as exc:
         logging.error("Broadcast send-offer error: %s", exc, exc_info=True)
         return jsonify({"error": str(exc)}), 500
@@ -2283,10 +2316,11 @@ async def api_admin_broadcast_send_offer_batch():
 
         try:
             user_ids = [int(uid) for uid in raw_ids]
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return jsonify({"error": "All user_ids must be integers"}), 400
 
         from app.bot_instance import get_bot
+
         bot = get_bot()
         if bot is None:
             return jsonify({"error": "Bot not available"}), 503
@@ -2319,12 +2353,15 @@ async def api_admin_broadcast_send_offer_batch():
                         game_mode = await get_active_daily_game_mode()
                         if game_mode == "2048":
                             from app.handlers.daily_2048 import send_discovery_intro as send_2048_intro
+
                             await send_2048_intro(bot, uid)
                         elif game_mode == "trivia":
                             from app.handlers.daily_trivia import send_discovery_intro as send_trivia_intro
+
                             await send_trivia_intro(bot, uid)
                         else:
                             from app.handlers.daily_crocodile import send_discovery_intro as send_croc_intro
+
                             await send_croc_intro(bot, uid)
 
                     elif channel == "horoscope":
@@ -2332,10 +2369,12 @@ async def api_admin_broadcast_send_offer_batch():
                             get_horoscope_subscription,
                             mark_horoscope_discovery_sent,
                         )
+
                         sub = await get_horoscope_subscription(uid)
                         if bool(sub and sub.get("is_active")) and not force:
                             return {"user_id": uid, "status": "skipped", "message": "Already subscribed"}
                         from app.handlers.horoscope_subscription import send_horoscope_invite
+
                         delivered = await send_horoscope_invite(bot, uid)
                         if not delivered:
                             return {"user_id": uid, "status": "error", "message": "Offer was not delivered"}
@@ -2346,10 +2385,12 @@ async def api_admin_broadcast_send_offer_batch():
                             get_tarot_subscription,
                             mark_tarot_discovery_sent,
                         )
+
                         sub = await get_tarot_subscription(uid)
                         if bool(sub and sub.get("is_subscribed")) and not force:
                             return {"user_id": uid, "status": "skipped", "message": "Already subscribed"}
                         from app.handlers.tarot_daily import send_tarot_invite
+
                         await send_tarot_invite(bot, uid)
                         await mark_tarot_discovery_sent(uid)
 
@@ -2364,12 +2405,14 @@ async def api_admin_broadcast_send_offer_batch():
         skipped = sum(1 for r in results if r["status"] == "skipped")
         errors = sum(1 for r in results if r["status"] == "error")
 
-        return jsonify({
-            "success": True,
-            "channel": channel,
-            "summary": {"sent": sent, "skipped": skipped, "errors": errors},
-            "results": results,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "channel": channel,
+                "summary": {"sent": sent, "skipped": skipped, "errors": errors},
+                "results": results,
+            }
+        )
     except Exception as exc:
         logging.error("Broadcast send-offer-batch error: %s", exc, exc_info=True)
         return jsonify({"error": str(exc)}), 500
@@ -2408,16 +2451,18 @@ async def api_admin_horoscope_stats():
         )
         by_sign = {r["sign"]: int(r["cnt"]) for r in sign_rows}
 
-        return jsonify({
-            "total_active": int(stats.get("total_active", 0)),
-            "breakdown": {
-                "today_only": int(stats.get("today_only", 0)),
-                "tomorrow_only": int(stats.get("tomorrow_only", 0)),
-                "both": int(stats.get("both_slots", 0)),
-            },
-            "total_inactive": int(stats.get("total_inactive", 0)),
-            "by_sign": by_sign,
-        })
+        return jsonify(
+            {
+                "total_active": int(stats.get("total_active", 0)),
+                "breakdown": {
+                    "today_only": int(stats.get("today_only", 0)),
+                    "tomorrow_only": int(stats.get("tomorrow_only", 0)),
+                    "both": int(stats.get("both_slots", 0)),
+                },
+                "total_inactive": int(stats.get("total_inactive", 0)),
+                "by_sign": by_sign,
+            }
+        )
     except Exception as exc:
         logging.error("Horoscope stats error: %s", exc, exc_info=True)
         return jsonify({"error": str(exc)}), 500
@@ -2475,11 +2520,13 @@ async def api_admin_tarot_status():
         except Exception:
             subscriber_count = 0
 
-        return jsonify({
-            "today": today_status,
-            "tomorrow": tomorrow_status,
-            "subscribers": subscriber_count,
-        })
+        return jsonify(
+            {
+                "today": today_status,
+                "tomorrow": tomorrow_status,
+                "subscribers": subscriber_count,
+            }
+        )
     except Exception as exc:
         logging.error("Tarot status error: %s", exc, exc_info=True)
         return jsonify({"error": str(exc)}), 500
@@ -2501,14 +2548,16 @@ async def api_admin_tarot_regenerate():
             return jsonify({"error": "invalid date"}), 400
 
         result = await prepare_daily_readings(target_date=target_date)
-        return jsonify({
-            "success": True,
-            "date": target_date.isoformat(),
-            "generated": result.generated,
-            "skipped": result.skipped,
-            "failed": result.failed,
-            "locked": result.locked,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "date": target_date.isoformat(),
+                "generated": result.generated,
+                "skipped": result.skipped,
+                "failed": result.failed,
+                "locked": result.locked,
+            }
+        )
     except Exception as exc:
         logging.error("Tarot regenerate error: %s", exc, exc_info=True)
         return jsonify({"error": str(exc)}), 500

@@ -271,6 +271,7 @@ async def handle_custom_role_generation(
         chat_state = await get_user_chat(user_id)
         from app.config import settings
         from app.handlers import agent
+
         model_for_role = chat_state.model or settings.DEFAULT_MODEL
         key_data, model_used, _ = await agent._resolve_ai_request(model_for_role)
 

@@ -614,7 +614,6 @@ async def run_bot_with_retry():
         except Exception as e:
             logging.warning("Failed to register horoscope delivery job: %s", e)
 
-
         # Wait for shutdown event
         try:
             await shutdown_event.wait()
@@ -975,7 +974,7 @@ if __name__ == "__main__":
 
     try:
         asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
+    except KeyboardInterrupt, SystemExit:
         logging.info("Bot stopped by user.")
     except asyncio.CancelledError:
         logging.info("Bot was cancelled")

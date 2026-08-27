@@ -121,9 +121,7 @@ def select_model(
     from app.providers import is_freetheai_model, is_opencode_model, is_openrouter_model
 
     if current_model and (
-        is_openrouter_model(current_model)
-        or is_opencode_model(current_model)
-        or is_freetheai_model(current_model)
+        is_openrouter_model(current_model) or is_opencode_model(current_model) or is_freetheai_model(current_model)
     ):
         return None
 

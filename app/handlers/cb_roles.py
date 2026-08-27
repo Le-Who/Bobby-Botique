@@ -97,10 +97,7 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     key = query.data.split(":", 1)[1]
     role_title = ""
 
-    chat_state, role_data = await asyncio.gather(
-        get_user_chat(user_id),
-        get_role_data(key, user_id)
-    )
+    chat_state, role_data = await asyncio.gather(get_user_chat(user_id), get_role_data(key, user_id))
 
     if not role_data:
         await query.answer("❌ Роль не найдена.")
@@ -381,11 +378,8 @@ async def role_delete_confirm_callback(update: Update, context: ContextTypes.DEF
         return
     try:
         role_id = int(query.data.split(":")[1])
-        
-        chat_state, role_prompt = await asyncio.gather(
-            get_user_chat(user_id),
-            get_custom_role_prompt(role_id, user_id)
-        )
+
+        chat_state, role_prompt = await asyncio.gather(get_user_chat(user_id), get_custom_role_prompt(role_id, user_id))
 
         await delete_custom_role(role_id, user_id)
 

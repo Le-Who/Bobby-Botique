@@ -583,7 +583,7 @@ async def check_and_deliver_reminders(context: ContextTypes.DEFAULT_TYPE) -> Non
                         parsed = json.loads(ctx)
                         is_ai = parsed.get("is_ai", False)
                         ai_mode = parsed.get("mode", "qna")
-                    except (json.JSONDecodeError, TypeError):
+                    except json.JSONDecodeError, TypeError:
                         pass
 
                 if is_ai:
@@ -644,7 +644,7 @@ async def reminder_cancel_callback(update: Update, context: ContextTypes.DEFAULT
     user_id = query.from_user.id
     try:
         reminder_id = int(query.data.split(":")[1])
-    except (IndexError, ValueError):
+    except IndexError, ValueError:
         logger.warning("Invalid reminder_cancel callback data: %s", query.data)
         return
 

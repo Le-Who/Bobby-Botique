@@ -29,4 +29,3 @@ async def test_send_horoscope_invite_uses_polished_text_and_actions():
     assert calls["text"] == _horoscope_invite_text()
     labels = [button.text for row in calls["reply_markup"].inline_keyboard for button in row]
     assert labels == ["⭐ Настроить гороскоп", "Не сейчас"]
-

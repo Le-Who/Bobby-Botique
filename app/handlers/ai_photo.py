@@ -220,11 +220,7 @@ async def _process_ai_vision(
     )
     if isinstance(outcome, (CompleteDelivery, PartialDelivery)):
         model_used = raw_model
-        metadata = (
-            outcome.completion
-            if isinstance(outcome, CompleteDelivery)
-            else outcome.terminal
-        )
+        metadata = outcome.completion if isinstance(outcome, CompleteDelivery) else outcome.terminal
         route = getattr(metadata, "route", None)
         if route is not None:
             model_used = route.actual_model
@@ -242,11 +238,7 @@ async def _process_ai_vision(
 
 async def _handle_photo(placeholder_message: Message, original_message: Message, chat_state: ChatState):
     user_id = int(original_message.from_user.id)
-    known_epoch = (
-        None
-        if getattr(chat_state, "_has_persisted_chat", True) is False
-        else int(chat_state.memory_epoch)
-    )
+    known_epoch = None if getattr(chat_state, "_has_persisted_chat", True) is False else int(chat_state.memory_epoch)
     expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
     if expected_epoch is None:
         return
@@ -284,7 +276,7 @@ async def _handle_photo_leased_impl(
 
         # Determine intent (OCR vs description)
         intent = await classify_vision_intent(original_message.caption)
-        is_ocr = (intent == "ocr")
+        is_ocr = intent == "ocr"
 
         if is_ocr:
             formatted_prompt = _build_ocr_prompt(original_message.caption)
@@ -490,11 +482,7 @@ async def _handle_media_group_photos(
     chat_state: ChatState,
 ):
     user_id = _media_group_user_id(messages)
-    known_epoch = (
-        None
-        if getattr(chat_state, "_has_persisted_chat", True) is False
-        else int(chat_state.memory_epoch)
-    )
+    known_epoch = None if getattr(chat_state, "_has_persisted_chat", True) is False else int(chat_state.memory_epoch)
     expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
     if expected_epoch is None:
         return
@@ -538,7 +526,7 @@ async def _handle_media_group_photos_leased_impl(
 
         # Classify intent for group
         intent = await classify_vision_intent(caption)
-        is_ocr = (intent == "ocr")
+        is_ocr = intent == "ocr"
 
         image_count = len(images)
         if is_ocr:
@@ -595,11 +583,7 @@ async def _handle_complex_media_group_search(
     chat_state: ChatState,
 ):
     user_id = _media_group_user_id(messages)
-    known_epoch = (
-        None
-        if getattr(chat_state, "_has_persisted_chat", True) is False
-        else int(chat_state.memory_epoch)
-    )
+    known_epoch = None if getattr(chat_state, "_has_persisted_chat", True) is False else int(chat_state.memory_epoch)
     expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
     if expected_epoch is None:
         return

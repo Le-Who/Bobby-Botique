@@ -170,7 +170,9 @@ def check_city_catalog_readiness(
         matches = list(search_cities_fn(query, 5, country_code))
         search_ms = (perf_counter() - search_start) * 1000
         if max_search_ms is not None and search_ms > max_search_ms:
-            failures.append(f"{country_code} {query}: disambiguation search exceeded {max_search_ms:.1f} ms: {search_ms:.1f} ms")
+            failures.append(
+                f"{country_code} {query}: disambiguation search exceeded {max_search_ms:.1f} ms: {search_ms:.1f} ms"
+            )
         if not matches:
             failures.append(f"{country_code} {query}: no local city match")
             continue

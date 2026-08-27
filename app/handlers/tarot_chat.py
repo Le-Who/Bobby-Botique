@@ -40,7 +40,7 @@ def get_tarot_idle_confirm_after_seconds() -> int:
         value = DEFAULT_TAROT_IDLE_CONFIRM_AFTER_SECONDS
     try:
         return max(0, int(value))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return DEFAULT_TAROT_IDLE_CONFIRM_AFTER_SECONDS
 
 
@@ -70,8 +70,7 @@ is_tarot_end_session_filter = IsTarotEndSession()
 async def _finish_tarot_session(update: Update, user_id: int) -> None:
     clear_tarot_session(user_id)
     await update.message.reply_text(
-        "Сеанс Таро завершен. Возвращаюсь в обычный режим.",
-        reply_markup=ReplyKeyboardRemove()
+        "Сеанс Таро завершен. Возвращаюсь в обычный режим.", reply_markup=ReplyKeyboardRemove()
     )
 
 
@@ -86,8 +85,7 @@ async def _send_idle_route_choice(update: Update, user_id: int, session: dict, t
         ]
     )
     prompt = (
-        "Сеанс Таро всё ещё активен, но прошло много времени с последнего сообщения.\n\n"
-        "Как обработать ваш новый текст?"
+        "Сеанс Таро всё ещё активен, но прошло много времени с последнего сообщения.\n\nКак обработать ваш новый текст?"
     )
     cleanup_msg = await update.message.reply_text("⏳", reply_markup=ReplyKeyboardRemove())
     await cleanup_msg.edit_text(prompt, reply_markup=keyboard)
@@ -106,15 +104,17 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     text = update.message.text
     chat_id = update.effective_chat.id
-    
+
     if is_tarot_end_session_text(text):
         await _finish_tarot_session(update, user_id)
         return
-        
+
     session = get_tarot_session(user_id)
     if session is None:
         clear_tarot_session(user_id)
-        await update.message.reply_text("Сессия не найдена. Начните заново с /tarot", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text(
+            "Сессия не найдена. Начните заново с /tarot", reply_markup=ReplyKeyboardRemove()
+        )
         return
 
     if _is_tarot_session_idle(session):
@@ -126,13 +126,8 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
     history = session.get("history", [])
 
-    keyboard_full = [
-        ["🃏 Достать 1 карту", "🔄 Новый расклад"],
-        [TAROT_END_SESSION_TEXT]
-    ]
-    keyboard_wait = [
-        [TAROT_END_SESSION_TEXT]
-    ]
+    keyboard_full = [["🃏 Достать 1 карту", "🔄 Новый расклад"], [TAROT_END_SESSION_TEXT]]
+    keyboard_wait = [[TAROT_END_SESSION_TEXT]]
 
     if text == "🔄 Новый расклад":
         session["spread_type"] = SpreadType.CLASSIC.value
@@ -140,58 +135,63 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
         session["history"] = []
         session["waiting_for_question"] = True
         set_tarot_session(user_id, session)
-        
+
         reply_markup = ReplyKeyboardMarkup(keyboard_wait, resize_keyboard=True)
         await update.message.reply_text(
-            "🔄 Расклад сброшен. Пожалуйста, задайте ваш новый вопрос, и я вытяну карты.",
-            reply_markup=reply_markup
+            "🔄 Расклад сброшен. Пожалуйста, задайте ваш новый вопрос, и я вытяну карты.", reply_markup=reply_markup
         )
         return
-        
+
     if text == "🃏 Достать 1 карту" and not session.get("waiting_for_question"):
         cards = draw_cards(1)
         new_card = cards[0]
         session["drawn_cards"].append(new_card)
-        
+
         system_update = f"Вы вытянули дополнительную уточняющую карту: {new_card['name']} ({new_card['orientation']}). Значение: {', '.join(new_card.get('meanings', [])[:3])}"
-        history.append({"role": "user", "parts": [f"[SYSTEM: {system_update}]. Прокомментируй её появление и свяжи с предыдущими."]})
+        history.append(
+            {
+                "role": "user",
+                "parts": [f"[SYSTEM: {system_update}]. Прокомментируй её появление и свяжи с предыдущими."],
+            }
+        )
         set_tarot_session(user_id, session)
-        
+
         status_text = "⏳ **Таролог вглядывается в новую карту... Пожалуйста, подождите.**"
         f_text, p_mode = TelegramFormatter.format_text(status_text)
         status_msg = await update.message.reply_text(f_text, parse_mode=p_mode)
     else:
         is_first_question = session.get("waiting_for_question", False)
         history.append({"role": "user", "parts": [text]})
-        
+
         if is_first_question:
             cards = draw_cards(3)
             session["drawn_cards"] = cards
             session["waiting_for_question"] = False
-            
+
             card_names = ", ".join([c["name"] for c in cards])
-            status_text = f"⏳ **Таролог вглядывается в карты... Пожалуйста, подождите.**\n\n🔮 *Вытянутые карты:*\n{card_names}"
-            
-            formatted_text, parse_mode = TelegramFormatter.format_text(status_text)
-            status_msg = await update.message.reply_text(
-                formatted_text, 
-                parse_mode=parse_mode
+            status_text = (
+                f"⏳ **Таролог вглядывается в карты... Пожалуйста, подождите.**\n\n🔮 *Вытянутые карты:*\n{card_names}"
             )
+
+            formatted_text, parse_mode = TelegramFormatter.format_text(status_text)
+            status_msg = await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         else:
             status_text = "⏳ **Таролог обдумывает ваш вопрос... Пожалуйста, подождите.**"
             f_text, p_mode = TelegramFormatter.format_text(status_text)
             status_msg = await update.message.reply_text(f_text, parse_mode=p_mode)
-            
+
         set_tarot_session(user_id, session)
 
     try:
         tarot_ctx = ""
         for idx, card in enumerate(session["drawn_cards"]):
-            tarot_ctx += f"Карта {idx + 1}: {card['name']} ({card['orientation']}) - {', '.join(card.get('meanings', [])[:3])}\n"
-            
+            tarot_ctx += (
+                f"Карта {idx + 1}: {card['name']} ({card['orientation']}) - {', '.join(card.get('meanings', [])[:3])}\n"
+            )
+
         sys_prompt = _build_tarot_system_prompt(SpreadType.CLASSIC, tarot_ctx, "")
         sys_prompt += "\nВедите диалог как таролог, отвечая на вопросы пользователя по этому раскладу."
-        
+
         router = get_provider_router()
         response_text, _ = await router.get_response(
             preferred_model="gemini-3.1-flash-lite",
@@ -200,10 +200,10 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
             user_id=user_id,
             chat_id=chat_id,
         )
-        
+
         history.append({"role": "model", "parts": [response_text]})
         set_tarot_session(user_id, session)
-        
+
         formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
         try:
             await status_msg.delete()
