@@ -542,9 +542,9 @@ body {
   <div id="graph-canvas">
     <div class="graph-tooltip" id="graph-tooltip"></div>
     <div class="graph-controls">
-      <button class="graph-btn" onclick="zoomGraph(1.3)" title="Zoom In">➕</button>
-      <button class="graph-btn" onclick="zoomGraph(0.7)" title="Zoom Out">➖</button>
-      <button class="graph-btn" onclick="resetGraphZoom()" title="Reset">⟳</button>
+      <button class="graph-btn" onclick="zoomGraph(1.3)" title="Zoom In" aria-label="Увеличить масштаб">➕</button>
+      <button class="graph-btn" onclick="zoomGraph(0.7)" title="Zoom Out" aria-label="Уменьшить масштаб">➖</button>
+      <button class="graph-btn" onclick="resetGraphZoom()" title="Reset" aria-label="Сбросить масштаб">⟳</button>
     </div>
     <div class="graph-stats" id="graph-stats"></div>
     <svg id="graph-svg" width="100%" height="100%"></svg>
