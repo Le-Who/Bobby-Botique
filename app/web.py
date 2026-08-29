@@ -456,7 +456,7 @@ async def api_keys():
                 "daily_limits": getattr(settings, "DAILY_LIMITS", {}),
                 "reset_info": {
                     "gemini_resets": get_kyiv_reset_time(),
-                    "tavily_credit_limit": settings.TAVILY_MONTHLY_CREDIT_LIMIT,
+                    "tavily_credit_limit": getattr(settings, "TAVILY_MONTHLY_CREDIT_LIMIT", None),
                 },
             }
         )
@@ -479,7 +479,7 @@ async def api_errors():
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
                 "error_count": summary.get("error_count", 0),
                 "error_rate": summary.get("error_rate_percent", 0),
-                "recent_errors": list(metrics_collector.error_log)[-10:],
+                "recent_errors": summary.get("recent_errors", []),
             }
         )
     except Exception as e:
@@ -604,6 +604,188 @@ async def _safe_fetch(name: str, coro):
         return name, {"error": str(e)}
 
 
+def _dashboard_source(raw: dict, name: str, default):
+    value = raw.get(name, default)
+    if isinstance(value, dict) and value.get("error"):
+        return default, False, str(value["error"])
+    return value, True, None
+
+
+def _normalize_dashboard_metrics(raw: dict) -> dict:
+    average_ms = raw.get("average_response_time_ms")
+    if average_ms is None:
+        average_ms = float(raw.get("average_response_time", 0) or 0) * 1000
+    return {
+        "total_requests": int(raw.get("total_requests", raw.get("request_count", 0)) or 0),
+        "average_response_time_ms": round(float(average_ms or 0), 2),
+        "error_count": int(raw.get("error_count", 0) or 0),
+        "error_rate_percent": float(raw.get("error_rate_percent", raw.get("error_rate", 0)) or 0),
+        "cache_hit_rate_percent": float(raw.get("cache_hit_rate_percent", raw.get("cache_hit_rate", 0)) or 0),
+    }
+
+
+def _assemble_dashboard_snapshot(
+    raw: dict,
+    *,
+    system: dict,
+    circuit_breakers: dict,
+    generated_at: str | None = None,
+) -> dict:
+    """Normalize all observability sources into the frontend's sole contract."""
+    metrics_raw, metrics_available, metrics_error = _dashboard_source(raw, "metrics", {})
+    summarization, summarization_available, summarization_error = _dashboard_source(raw, "summarization", {})
+    db_metrics, db_available, db_error = _dashboard_source(raw, "db_metrics", {})
+    cache_raw, cache_available, cache_error = _dashboard_source(raw, "cache", {})
+    queue_raw, queue_available, queue_error = _dashboard_source(raw, "queue", {})
+    gemini_rows, gemini_available, gemini_error = _dashboard_source(raw, "keys_gemini", [])
+    tavily_rows, tavily_available, tavily_error = _dashboard_source(raw, "keys_tavily", [])
+    key_health, key_health_available, key_health_error = _dashboard_source(raw, "key_health", {})
+    redis_ping, redis_available, redis_error = _dashboard_source(raw, "redis_ping", False)
+
+    metrics = _normalize_dashboard_metrics(metrics_raw)
+    recent_errors = list(metrics_raw.get("recent_errors", [])) if isinstance(metrics_raw, dict) else []
+    recent_errors.sort(key=lambda item: str(item.get("timestamp", "")), reverse=True)
+
+    memory_cache = cache_raw.get("memory", {}) if isinstance(cache_raw, dict) else {}
+    redis_cache = cache_raw.get("redis", {}) if isinstance(cache_raw, dict) else {}
+    cache = {
+        "available": cache_available,
+        "error": cache_error,
+        "memory_items": memory_cache.get("memory_items"),
+        "memory_capacity": memory_cache.get("memory_max_size"),
+        "memory_utilization_percent": memory_cache.get("memory_utilization"),
+        "redis_keys": redis_cache.get("total_keys"),
+        "redis_used_memory": redis_cache.get("used_memory"),
+    }
+    queue = {
+        "available": queue_available,
+        "error": queue_error,
+        "pending": queue_raw.get("pending", queue_raw.get("pending_tasks")),
+        "running": queue_raw.get("running", queue_raw.get("running_tasks")),
+        "completed": queue_raw.get("completed", queue_raw.get("completed_tasks")),
+        "failed": queue_raw.get("failed", queue_raw.get("failed_tasks")),
+        "workers": queue_raw.get("workers", queue_raw.get("active_workers")),
+        "backend": queue_raw.get("backend"),
+    }
+
+    from app.utils.time import get_kyiv_reset_time
+
+    return {
+        "overview": {
+            "available": bool(system) or metrics_available,
+            "system": system,
+            "metrics": metrics,
+            "metrics_available": metrics_available,
+            "metrics_error": metrics_error,
+            "summarization": summarization,
+            "summarization_available": summarization_available,
+            "summarization_error": summarization_error,
+            "services": {
+                "database": db_metrics.get(
+                    "status", "connected" if database.is_database_connected() else "disconnected"
+                ),
+                "redis": "connected" if redis_available and redis_ping else "disconnected",
+                "bot": "running",
+            },
+        },
+        "providers": {
+            "gemini": {"available": gemini_available, "error": gemini_error, "rows": gemini_rows},
+            "tavily": {"available": tavily_available, "error": tavily_error, "rows": tavily_rows},
+            "reset_info": {
+                "gemini_resets": get_kyiv_reset_time(),
+                "tavily_credit_limit": getattr(settings, "TAVILY_MONTHLY_CREDIT_LIMIT", None),
+            },
+            "circuit_breakers": {"available": True, "items": circuit_breakers},
+            "key_health": {
+                "available": key_health_available,
+                "error": key_health_error,
+                "summary": key_health,
+                "rows": key_health.get("keys", []) if isinstance(key_health, dict) else [],
+            },
+        },
+        "infrastructure": {
+            "database": {"available": db_available, "error": db_error, **db_metrics},
+            "queue": queue,
+            "cache": cache,
+            "redis_available": redis_available,
+            "redis_error": redis_error,
+        },
+        "errors": {
+            "available": metrics_available,
+            "error": metrics_error,
+            "count": metrics["error_count"],
+            "rate_percent": metrics["error_rate_percent"],
+            "recent": recent_errors,
+        },
+        "generated_at": generated_at or datetime.datetime.now(datetime.UTC).isoformat(),
+    }
+
+
+async def _get_dashboard_key_health() -> dict:
+    from app.repos.keys import KeyStatusManager
+
+    manager = KeyStatusManager()
+    async with database.db_manager.pool.acquire() as conn, conn.transaction():
+        await database.set_user_context(settings.ADMIN_ID, True, conn=conn)
+        try:
+            return await manager.get_health_summary(conn=conn)
+        finally:
+            await database.clear_user_context(conn=conn)
+
+
+async def _build_dashboard_snapshot() -> dict:
+    import psutil
+
+    from app.cache import get_multi_layer_cache_stats, ping_safe
+    from app.metrics import metrics_collector, role_conv_metrics
+    from app.queue import task_queue
+
+    async def summarization_metrics():
+        summary = await role_conv_metrics.get_metrics_summary()
+        return summary.get("summarization", {})
+
+    results = await asyncio.gather(
+        _safe_fetch("metrics", metrics_collector.get_metrics_summary()),
+        _safe_fetch("summarization", summarization_metrics()),
+        _safe_fetch("cache", get_multi_layer_cache_stats()),
+        _safe_fetch("redis_ping", ping_safe()),
+        _safe_fetch("db_metrics", get_supabase_metrics()),
+        _safe_fetch("queue", task_queue.get_queue_stats()),
+        _safe_fetch("keys_gemini", get_gemini_key_usage_stats()),
+        _safe_fetch("keys_tavily", get_tavily_key_usage_stats()),
+        _safe_fetch("key_health", _get_dashboard_key_health()),
+        return_exceptions=True,
+    )
+    raw: dict = {}
+    for item in results:
+        if isinstance(item, BaseException):
+            continue
+        name, value = item
+        raw[name] = value
+
+    try:
+        virtual_memory = psutil.virtual_memory()
+        system = {
+            "cpu_percent": psutil.cpu_percent(interval=0.1),
+            "memory_percent": virtual_memory.percent,
+            "memory_used_mb": round(virtual_memory.used / (1024 * 1024), 1),
+            "memory_total_mb": round(virtual_memory.total / (1024 * 1024), 1),
+            "disk_percent": psutil.disk_usage("/").percent,
+        }
+    except Exception as exc:
+        logging.warning("Dashboard system metrics failed: %s", exc)
+        system = {}
+
+    try:
+        from app.circuit_breaker import _circuit_breakers
+
+        breakers = {name: breaker.get_stats() for name, breaker in _circuit_breakers.items()}
+    except Exception:
+        breakers = {}
+
+    return _assemble_dashboard_snapshot(raw, system=system, circuit_breakers=breakers)
+
+
 @quart_app.route("/api/dashboard")
 @require_auth
 @rate_limit_api
@@ -613,103 +795,7 @@ async def api_dashboard():
     Replaces 8 separate fetch() calls on the frontend with 1 HTTP round-trip.
     Each section is fetched in parallel; individual failures are isolated.
     """
-    import psutil
-
-    from app.cache import get_multi_layer_cache_stats, ping_safe
-    from app.memory_manager import get_memory_stats
-    from app.metrics import metrics_collector
-
-    # Parallel fetch of all expensive async operations
-    results = await asyncio.gather(
-        _safe_fetch("metrics", metrics_collector.get_metrics_summary()),
-        _safe_fetch("cache", get_multi_layer_cache_stats()),
-        _safe_fetch("redis_ping", ping_safe()),
-        _safe_fetch("db_metrics", get_supabase_metrics()),
-        _safe_fetch("keys_gemini", get_gemini_key_usage_stats()),
-        _safe_fetch("keys_tavily", get_tavily_key_usage_stats()),
-        _safe_fetch("keys_active", get_active_key_info()),
-        return_exceptions=True,
-    )
-
-    # Collect results into a dict
-    data: dict = {}
-    for item in results:
-        if isinstance(item, Exception):
-            continue
-        name, value = item
-        data[name] = value
-
-    # Sync calls (cheap, no I/O)
-    try:
-        system = {
-            "cpu_percent": psutil.cpu_percent(interval=0.1),
-            "memory_percent": psutil.virtual_memory().percent,
-            "memory_used_mb": round(psutil.virtual_memory().used / (1024 * 1024), 1),
-            "memory_total_mb": round(psutil.virtual_memory().total / (1024 * 1024), 1),
-            "disk_percent": psutil.disk_usage("/").percent,
-        }
-    except Exception:
-        system = {}
-
-    memory_stats = get_memory_stats()
-
-    # Queue stats
-    queue_stats = {}
-    try:
-        from app.queue import task_queue
-
-        queue_stats = await task_queue.get_queue_stats()
-    except Exception as e:
-        logging.warning("Dashboard batch: queue failed: %s", e)
-
-    # Circuit breakers
-    breakers = {}
-    try:
-        from app.circuit_breaker import _circuit_breakers
-
-        breakers = {name: cb.get_stats() for name, cb in _circuit_breakers.items()}
-    except Exception:
-        pass
-
-    # Errors
-    errors_data = {}
-    try:
-        from app.metrics import metrics_collector as mc
-
-        summary = data.get("metrics", {})
-        errors_data = {
-            "error_count": summary.get("error_count", 0),
-            "error_rate": summary.get("error_rate_percent", 0),
-            "recent_errors": list(mc.error_log)[-10:],
-        }
-    except Exception:
-        pass
-
-    return jsonify(
-        {
-            "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
-            "overview": {
-                "system": system,
-                "metrics": data.get("metrics", {}),
-                "services": {
-                    "database": "connected" if database.is_database_connected() else "disconnected",
-                    "redis": "connected" if data.get("redis_ping") else "disconnected",
-                    "bot": "running",
-                },
-            },
-            "keys": {
-                "gemini": data.get("keys_gemini", {}),
-                "tavily": data.get("keys_tavily", {}),
-                "active": data.get("keys_active", {}),
-            },
-            "errors": errors_data,
-            "cache": data.get("cache", {}),
-            "queue": queue_stats,
-            "database": data.get("db_metrics", {}),
-            "circuit_breakers": breakers,
-            "memory": memory_stats,
-        }
-    )
+    return jsonify(await _build_dashboard_snapshot())
 
 
 # ── Key health endpoint ──────────────────────────────────────────────────────
@@ -724,8 +810,6 @@ async def api_key_health():
         from app.repos.keys import KeyStatusManager
 
         manager = KeyStatusManager()
-
-        # key_model_status is RLS-protected — must set admin context
         async with database.db_manager.pool.acquire() as conn, conn.transaction():
             await database.set_user_context(settings.ADMIN_ID, True, conn=conn)
             try:

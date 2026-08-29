@@ -73,6 +73,7 @@ class FakeAgentRequestUseCase:
         self.resolve_calls: list[dict] = []
         self.response_calls: list[dict] = []
         self.usages_incremented: list[str] = []
+        self.usages_reserved: list[tuple[str, str]] = []
 
     async def resolve_ai_request(
         self, model_name: str, use_openrouter: bool = False, excluded_key_hashes: set[str] | None = None, **kwargs
@@ -100,6 +101,10 @@ class FakeAgentRequestUseCase:
 
     async def increment_key_usage(self, key_hash: str, model_name: str, use_openrouter: bool = False) -> None:
         self.usages_incremented.append(key_hash)
+
+    async def reserve_key_usage(self, key_hash: str, model_name: str, use_openrouter: bool = False) -> bool:
+        self.usages_reserved.append((key_hash, model_name))
+        return True
 
 
 def _typed_request(model: str = "gemini-3.5-flash") -> GenerationRequest:
@@ -148,7 +153,8 @@ async def test_typed_router_single_key_forwards_terminal_metadata():
 
     assert events == [TextDelta("Hello"), _completion("gemini-3.5-flash", 17)]
     assert status.successful_keys == ["hash1"]
-    assert use_case.usages_incremented == ["hash1"]
+    assert use_case.usages_reserved == [("hash1", "gemini-3.5-flash")]
+    assert use_case.usages_incremented == []
 
 
 @pytest.mark.asyncio
@@ -221,6 +227,10 @@ async def test_typed_router_race_keeps_winner_metadata_and_awaits_loser():
     assert events == [TextDelta("Winner"), _completion("gemini-3.5-flash", 23)]
     assert loser_closed is True
     assert status.successful_keys == ["hash1"]
+    assert use_case.usages_reserved == [
+        ("hash1", "gemini-3.5-flash"),
+        ("hash2", "gemini-3.5-flash"),
+    ]
 
 
 @pytest.mark.asyncio
@@ -441,7 +451,8 @@ class TestProviderRouter:
         assert text == "Hello!"
         assert tokens == 10
         assert "hash1" in fake_status.successful_keys
-        assert fake_use_case.usages_incremented == ["hash1"]
+        assert fake_use_case.usages_reserved == [("hash1", "gemini-3.1")]
+        assert fake_use_case.usages_incremented == []
         assert "KEY_EVENT key_request key=AIzaTEST" in caplog.text
         assert "KEY_EVENT key_answered key=AIzaTEST" in caplog.text
         assert "model=gemini-3.1" in caplog.text
@@ -583,6 +594,71 @@ class TestProviderRouter:
         assert fake_use_case.resolve_calls[1]["excluded_key_hashes"] == {"hash1"}
         assert fake_status.suspended_keys["hash1"]["category"] == "transient"
         assert "hash2" in fake_status.successful_keys
+
+    @pytest.mark.asyncio
+    async def test_failed_requests_reserve_rpd_before_key_rotation(self):
+        router = ProviderRouter()
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[
+                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3.7-flash", None),
+                ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3.7-flash", None),
+            ],
+            response_sequence=[TimeoutError(), ("Recovered", 5)],
+        )
+
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
+        ):
+            text, _ = await router.get_response(
+                "gemini-3.7-flash",
+                [{"role": "user", "parts": ["hi"]}],
+                max_key_retries=2,
+            )
+
+        assert text == "Recovered"
+        assert fake_use_case.usages_reserved == [
+            ("hash1", "gemini-3.7-flash"),
+            ("hash2", "gemini-3.7-flash"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_explicit_model_plan_keeps_key_until_full_cycle(self):
+        router = ProviderRouter()
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[],
+            response_sequence=[TimeoutError(), TimeoutError(), TimeoutError(), TimeoutError(), ("Recovered", 7)],
+        )
+        first_key = {"api_key": "k1", "key_hash": "hash1"}
+        second_key = {"api_key": "k2", "key_hash": "hash2"}
+
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
+            patch(
+                "app.repos.keys.get_available_gemini_key",
+                new_callable=AsyncMock,
+                side_effect=[first_key, second_key],
+            ),
+        ):
+            result = await router.execute_gemini_model_plan(
+                ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.6-flash"],
+                [{"role": "user", "parts": ["hi"]}],
+                parse_response=lambda text: text,
+                max_keys=2,
+            )
+
+        assert result == "Recovered"
+        assert [call["args"][0] for call in fake_use_case.response_calls] == ["k1", "k1", "k1", "k1", "k2"]
+        assert [call["args"][2] for call in fake_use_case.response_calls] == [
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash",
+        ]
 
     @pytest.mark.asyncio
     async def test_router_disables_provider_retries_so_same_model_rotates_keys(self):
@@ -798,6 +874,13 @@ class TestProviderRouter:
         assert "hash3" in fake_status.suspended_keys
 
         assert "hash4" in fake_status.successful_keys
+        assert fake_use_case.usages_reserved == [
+            ("hash1", "gemini-3.5-flash"),
+            ("hash2", "gemini-3.5-flash"),
+            ("hash3", "gemini-3.5-flash"),
+            ("hash4", "gemini-3.1-flash-lite"),
+        ]
+        assert fake_use_case.usages_incremented == []
 
     @pytest.mark.asyncio
     async def test_model_fallback_uses_3_5_lite_after_3_5_flash_failures(self):

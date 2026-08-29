@@ -58,6 +58,40 @@ class TestDailyKeyManager:
         assert "ON CONFLICT" in sql
 
     @pytest.mark.asyncio
+    async def test_reserve_usage_enforces_threshold_atomically(self):
+        """A request slot must be reserved atomically before the provider call."""
+        mgr = self._make_manager()
+
+        with (
+            patch("app.repos.keys.db_query", new_callable=AsyncMock) as mock_db,
+            patch("app.repos.keys.settings") as mock_settings,
+        ):
+            mock_settings.LIMIT_THRESHOLD_PERCENT = 0.9
+            mock_db.return_value = [{"request_count": 90}]
+
+            reservation = await mgr.reserve_usage("hash1", "gemini-3.7-flash", 100)
+
+        assert reservation == 90
+        sql, params = mock_db.call_args.args[:2]
+        assert "WHERE test_usage.request_count < $4" in sql
+        assert params == ("hash1", "gemini-3.7-flash", mgr._today(), 90)
+
+    @pytest.mark.asyncio
+    async def test_reserve_usage_returns_none_when_threshold_is_reached(self):
+        mgr = self._make_manager()
+
+        with (
+            patch("app.repos.keys.db_query", new_callable=AsyncMock) as mock_db,
+            patch("app.repos.keys.settings") as mock_settings,
+        ):
+            mock_settings.LIMIT_THRESHOLD_PERCENT = 0.9
+            mock_db.return_value = []
+
+            reservation = await mgr.reserve_usage("hash1", "gemini-3.7-flash", 100)
+
+        assert reservation is None
+
+    @pytest.mark.asyncio
     async def test_is_key_available_under_limit(self):
         """Should return True when usage is under threshold."""
         mgr = self._make_manager()

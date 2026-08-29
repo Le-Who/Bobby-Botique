@@ -3,6 +3,26 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-08-29 - Trivia Resilience and Admin Observability
+
+### 🧩 Daily Trivia generation
+
+- Added a key-local retry plan for each Trivia lane: the configured Gemini model, `gemini-3.6-flash`, the configured model again, then `gemini-3.6-flash` again. Authentication and quota failures rotate the key immediately; transient, content, and response-validation failures advance through the model plan first.
+- Made every attempted Gemini/OpenRouter request reserve its daily request allowance atomically before the provider call, including failed requests, fallbacks, and stream races, so RPD accounting reflects actual provider traffic and concurrent workers cannot oversubscribe a key.
+- Added a distributed three-hour cooldown for failed future-puzzle preparation with an in-process fallback when Redis is unavailable. Today's puzzle remains immediately retryable, one failed future date no longer aborts the rest of the preparation window, and successful preparation clears the cooldown.
+
+### 💬 Telegram menus and subscriptions
+
+- Fixed first-time horoscope subscriptions so supplied morning/evening delivery times are persisted by the initial insert instead of appearing as disabled in `/horoscope_settings`.
+- Made `/help` topic and back callbacks carry the selected language explicitly, preserving the complete RU/EN catalog across nested menus independently of Telegram interface-language drift while keeping legacy callback data compatible.
+- Rebuilt `/admin` from a tested command catalog that covers the current operator surface and adds validated HTTPS links to the main and Daily web dashboards.
+
+### 📊 Admin Dashboard
+
+- Replaced fragmented frontend polling with one canonical `/api/dashboard` snapshot containing `overview`, `providers`, `infrastructure`, and newest-first `errors`. Independent data-source failures now produce visible unavailable states instead of breaking the whole page.
+- Normalized response-time, error-rate, cache-rate, queue, database, provider, and key-health fields; fixed chronological metric hydration; and made configured Gemini model/key combinations visible even before they record usage.
+- Added regression coverage for the snapshot contract, escaped error rendering, partial initialization, RLS-scoped key health, zero-usage models, menu navigation, subscriptions, provider retries, RPD reservation, and preparation cooldowns.
+
 ## [Unreleased] - 2026-08-27 - Codebase Hardening, LTM Writer, and Public Help
 
 ### 🔒 CI, deployment, and dependency safety

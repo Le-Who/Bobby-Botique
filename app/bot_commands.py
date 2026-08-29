@@ -184,10 +184,17 @@ def render_help_topic(slug: str, lang: str) -> str:
 def build_help_topic_rows(lang: str) -> list[list[InlineKeyboardButton]]:
     """Build the shared two-column category keyboard."""
     buttons = [
-        InlineKeyboardButton(t(category.button_key, lang), callback_data=f"help_topic:{category.slug}")
+        InlineKeyboardButton(t(category.button_key, lang), callback_data=f"help_topic:{lang}:{category.slug}")
         for category in COMMAND_CATEGORIES
     ]
     return [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
+
+
+def build_help_overview_rows(lang: str) -> list[list[InlineKeyboardButton]]:
+    """Build the identical language-stable overview keyboard for commands and callbacks."""
+    rows = build_help_topic_rows(lang)
+    rows.append([InlineKeyboardButton(t("menu.back_to_menu", lang), callback_data="start_menu")])
+    return rows
 
 
 def build_telegram_commands(lang: str) -> list[BotCommand]:
@@ -209,6 +216,7 @@ __all__ = [
     "PUBLIC_COMMANDS",
     "CommandCategory",
     "PublicCommand",
+    "build_help_overview_rows",
     "build_help_topic_rows",
     "build_telegram_commands",
     "install_public_command_menu",

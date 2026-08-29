@@ -11,6 +11,7 @@ from telegram.ext import CommandHandler, ConversationHandler
 from app.bot_commands import (
     COMMAND_CATEGORIES,
     PUBLIC_COMMANDS,
+    build_help_overview_rows,
     build_telegram_commands,
     install_public_command_menu,
     render_help_overview,
@@ -144,6 +145,15 @@ def test_generated_help_is_categorized_html_safe_and_mentions_only_public_comman
     assert combined.count("<code>") == combined.count("</code>")
     assert not re.search(r"\b(?:RLS|provenance|epoch|provider|graph)\b", combined, re.IGNORECASE)
     assert "/tarot_settings" not in combined
+
+
+@pytest.mark.parametrize("lang", ["ru", "en"])
+def test_help_overview_keyboard_preserves_language_and_has_main_menu(lang: str) -> None:
+    rows = build_help_overview_rows(lang)
+    callback_data = [button.callback_data for row in rows for button in row]
+
+    assert f"help_topic:{lang}:chat" in callback_data
+    assert callback_data[-1] == "start_menu"
 
 
 @pytest.mark.asyncio

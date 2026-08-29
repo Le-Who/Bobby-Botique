@@ -4,12 +4,14 @@
 import asyncio
 import html
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 import httpx
 
 # google.genai is deferred to reduce startup latency (used only in list_models_command)
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
 from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
@@ -48,6 +50,110 @@ _DAILYCROC_STATUS_SEND_TEST = "dailycroc_status:send_test"
 _DAILYCROC_REGEN_IMAGE = "dailycroc_status:regen:"
 _EXPECTED_DAILY_HINTS = 3
 _DAILYCROC_PLACEHOLDER_TEST_KEY = "daily_croc_placeholder_test_status"
+
+
+@dataclass(frozen=True, slots=True)
+class AdminHelpCommand:
+    command: str
+    description: str
+    usage: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AdminHelpGroup:
+    title: str
+    commands: tuple[AdminHelpCommand, ...]
+
+
+ADMIN_COMMAND_GROUPS = (
+    AdminHelpGroup(
+        "👥 Пользователи",
+        (
+            AdminHelpCommand("admin", "открыть эту справку"),
+            AdminHelpCommand("adduser", "добавить пользователя", " user_id"),
+            AdminHelpCommand("deluser", "удалить пользователя", " user_id"),
+            AdminHelpCommand("listusers", "список авторизованных пользователей"),
+        ),
+    ),
+    AdminHelpGroup(
+        "🔑 Ключи и модели",
+        (
+            AdminHelpCommand("keys", "мастер управления ключами провайдеров"),
+            AdminHelpCommand("models", "мастер управления моделями"),
+            AdminHelpCommand("listmodels", "список доступных моделей"),
+            AdminHelpCommand("checkgeminikeys", "проверить ключи Gemini"),
+            AdminHelpCommand("updatetavilykeys", "обновить ключи Tavily"),
+            AdminHelpCommand("checktavilykeys", "проверить ключи Tavily"),
+        ),
+    ),
+    AdminHelpGroup(
+        "📊 Мониторинг",
+        (
+            AdminHelpCommand("metrics", "сводка метрик и лимитов"),
+            AdminHelpCommand("cachestats", "состояние кэша"),
+            AdminHelpCommand("queuestats", "состояние очереди"),
+            AdminHelpCommand("docstats", "статистика документов"),
+            AdminHelpCommand("rolemetrics", "метрики ролей и диалогов"),
+            AdminHelpCommand("dailycroc_status", "статус подготовки и рассылки Daily"),
+            AdminHelpCommand("groupstats", "статистика групп"),
+        ),
+    ),
+    AdminHelpGroup(
+        "🛠 Система",
+        (
+            AdminHelpCommand("reloadconfig", "перезагрузить конфигурацию"),
+            AdminHelpCommand("clearcache", "очистить кэш"),
+            AdminHelpCommand("clearoldmetrics", "удалить метрики старше 30 дней"),
+            AdminHelpCommand("clearolddocs", "удалить документы старше 3 дней"),
+            AdminHelpCommand("wordbank", "управление банком слов"),
+            AdminHelpCommand("registergroup", "зарегистрировать текущую группу"),
+        ),
+    ),
+    AdminHelpGroup(
+        "🎮 Daily-игры",
+        (
+            AdminHelpCommand("set_daily_game", "выбрать активную Daily-игру", " crocodile|2048|trivia"),
+            AdminHelpCommand("set_dailycroc_delivery", "включить или выключить рассылку", " on|off"),
+            AdminHelpCommand("set_dailycroc_model", "сменить модель генерации"),
+            AdminHelpCommand("set_dailycroc_placeholder", "назначить баннер Daily Crocodile ответом на фото"),
+            AdminHelpCommand("set_daily2048_cover", "назначить обложку Daily 2048 ответом на фото"),
+            AdminHelpCommand("set_dailytrivia_cover", "назначить обложку Daily Trivia ответом на фото"),
+            AdminHelpCommand("set_game_cover", "назначить обложку выбранной игры", " <game>"),
+        ),
+    ),
+    AdminHelpGroup(
+        "📡 Inline",
+        (
+            AdminHelpCommand("set_inline_model", "сменить inline-модель"),
+            AdminHelpCommand("set_inline_thinking", "задать уровень рассуждения"),
+            AdminHelpCommand("set_inline_tabs", "настроить вкладки"),
+            AdminHelpCommand("set_provider", "выбрать провайдера по умолчанию"),
+        ),
+    ),
+)
+
+ADMIN_HELP_HIDDEN_COMMANDS = {"asr"}
+
+
+def _render_admin_help() -> str:
+    parts = ["🔧 *Админские команды Gemini Bot*"]
+    for group in ADMIN_COMMAND_GROUPS:
+        parts.append(f"\n*{group.title}:*")
+        parts.extend(f"• `/{entry.command}{entry.usage}` — {entry.description}" for entry in group.commands)
+    return "\n".join(parts)
+
+
+def _admin_dashboard_keyboard() -> InlineKeyboardMarkup | None:
+    base_url = str(getattr(settings, "WEBAPP_BASE_URL", "") or "").strip().rstrip("/")
+    parsed = urlparse(base_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return None
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("📊 Dashboard", web_app=WebAppInfo(url=f"{base_url}/"))],
+            [InlineKeyboardButton("🎮 Daily Admin", web_app=WebAppInfo(url=f"{base_url}/admin_daily"))],
+        ]
+    )
 
 
 def _is_message_not_modified_error(exc: Exception) -> bool:
@@ -833,55 +939,12 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         logging.info("Admin command")
 
-        help_text = (
-            "🔧 *Админские команды Gemini Bot*\n\n"
-            "*👥 Управление пользователями:*\n"
-            "• `/adduser user_id` — добавить пользователя\n"
-            "• `/deluser user_id` — удалить пользователя\n"
-            "• `/listusers` — список авторизованных пользователей\n\n"
-            "*🔑 Ключи и модели (wizards):*\n"
-            "• `/keys` — управление ключами провайдеров\n"
-            "• `/models` — управление доступными моделями\n\n"
-            "*📊 Мониторинг и статистика:*\n"
-            "• `/metrics` — полная сводка метрик, ключей, кредитов\n"
-            "• `/cachestats` — статистика кэша\n"
-            "• `/queuestats` — статистика очереди задач\n"
-            "• `/docstats` — статистика документов\n"
-            "• `/rolemetrics` — метрики ролей и бесед\n\n"
-            "*🔧 Управление системой:*\n"
-            "• `/reloadconfig` — перезагрузить конфигурацию из env\n"
-            "• `/clearcache` — очистить кэш\n"
-            "• `/clearoldmetrics` — очистить старые метрики 30\\+ дней\n"
-            "• `/clearolddocs` — очистить старые документы 3\\+ дня\n"
-            "• `/listmodels` — список доступных моделей\n\n"
-            "*🗂 Word Bank:*\n"
-            "• `/wordbank` — управление банком слов\n\n"
-            "*🐊 Daily Crocodile:*\n"
-            "• `/set_daily_game crocodile|2048` — выбрать активную игру\n"
-            "• `/set_dailycroc_delivery on|off` — рассылка вкл/выкл\n"
-            "• `/set_dailycroc_model` — сменить модель генерации\n"
-            "• `/dailycroc_status` — статус подписок и генерации\n"
-            "• `/set_dailycroc_placeholder` — реплай на фото для баннера\n\n"
-            "*📡 Инлайн-режим:*\n"
-            "• `/set_inline_model` — модель для инлайн-режима\n"
-            "• `/set_inline_thinking` — уровень мышления инлайна\n"
-            "• `/set_inline_tabs` — отображение вкладок\n"
-            "• `/set_provider` — провайдер по умолчанию\n\n"
-            "*🌐 Управление API ключами (legacy):*\n"
-            "• `/checkgeminikeys` — проверить статус ключей Gemini\n"
-            "• `/updatetavilykeys` — обновить ключи Tavily API\n"
-            "• `/checktavilykeys` — проверить статус ключей Tavily\n\n"
-            "*👥 Групповые чаты:*\n"
-            "• `/registergroup` — зарегистрировать групповой чат\n"
-            "• `/groupstats` — статистика групповых чатов\n\n"
-            "*💬 Данные пользователей:*\n"
-            "• `/save`, `/conversations`, `/switch`, `/rename`, `/delete`\n"
-            "• `/documents` — управление документами\n"
-            "• `/memory` — просмотр памяти пользователей\n"
+        formatted_text, parse_mode = TelegramFormatter.format_text(_render_admin_help())
+        await update.message.reply_text(
+            formatted_text,
+            parse_mode=parse_mode,
+            reply_markup=_admin_dashboard_keyboard(),
         )
-
-        formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
-        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         logging.info("Admin command completed successfully")
 
     except Exception as e:

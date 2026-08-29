@@ -26,7 +26,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from app.bot_commands import (
-    build_help_topic_rows,
+    build_help_overview_rows,
     language_from_telegram,
     render_help_overview,
     render_help_topic,
@@ -41,6 +41,18 @@ from app.utils.formatting import TelegramFormatter
 def _lang(update: Update) -> str:
     """Detect UI language from Telegram language_code with ru fallback."""
     return language_from_telegram(getattr(update.effective_user, "language_code", None))
+
+
+def _help_lang(update: Update, context: ContextTypes.DEFAULT_TYPE, explicit: str | None = None) -> str:
+    """Resolve help language once and retain it throughout callback navigation."""
+    user_data = context.user_data
+    if explicit in {"ru", "en"}:
+        lang = explicit
+    else:
+        saved = user_data.get("help_lang")
+        lang = saved if saved in {"ru", "en"} else _lang(update)
+    user_data["help_lang"] = lang
+    return lang
 
 
 async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -162,9 +174,10 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     query = update.callback_query
     await query.answer()
 
-    lang = _lang(update)
-    keyboard = build_help_topic_rows(lang)
-    keyboard.append([InlineKeyboardButton(t("menu.back_to_menu", lang), callback_data="start_menu")])
+    data = str(query.data or "")
+    explicit_lang = data.partition(":")[2] or None
+    lang = _help_lang(update, context, explicit_lang)
+    keyboard = build_help_overview_rows(lang)
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
             render_help_overview(lang),
@@ -180,10 +193,15 @@ async def help_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Shows a specific help topic with back-to-help button."""
     query = update.callback_query
     await query.answer()
-    lang = _lang(update)
-    topic = str(query.data or "").partition(":")[2]
+    parts = str(query.data or "").split(":")
+    if len(parts) >= 3 and parts[1] in {"ru", "en"}:
+        lang = _help_lang(update, context, parts[1])
+        topic = parts[2]
+    else:
+        lang = _help_lang(update, context)
+        topic = parts[1] if len(parts) >= 2 else ""
     keyboard = [
-        [InlineKeyboardButton(t("help.back_to_help", lang), callback_data="help")],
+        [InlineKeyboardButton(t("help.back_to_help", lang), callback_data=f"help:{lang}")],
     ]
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(

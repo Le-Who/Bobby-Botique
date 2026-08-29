@@ -171,6 +171,57 @@ class TestDeepDiveCallback:
         query.answer.assert_awaited()
 
 
+class TestHelpNavigation:
+    @pytest.mark.asyncio
+    async def test_explicit_help_language_survives_telegram_locale(self):
+        from app.bot_commands import render_help_overview
+        from app.handlers.cb_navigation import help_callback
+
+        update, query = _make_update("help:en")
+        update.effective_user.language_code = "ru"
+        context = MagicMock()
+        context.user_data = {}
+
+        await help_callback(update, context)
+
+        assert context.user_data["help_lang"] == "en"
+        assert query.edit_message_text.await_args.args[0] == render_help_overview("en")
+        markup = query.edit_message_text.await_args.kwargs["reply_markup"]
+        callback_data = [button.callback_data for row in markup.inline_keyboard for button in row]
+        assert "help_topic:en:chat" in callback_data
+        assert "start_menu" in callback_data
+
+    @pytest.mark.asyncio
+    async def test_help_topic_back_button_keeps_explicit_language(self):
+        from app.bot_commands import render_help_topic
+        from app.handlers.cb_navigation import help_topic_callback
+
+        update, query = _make_update("help_topic:en:games")
+        update.effective_user.language_code = "ru"
+        context = MagicMock()
+        context.user_data = {}
+
+        await help_topic_callback(update, context)
+
+        assert query.edit_message_text.await_args.args[0] == render_help_topic("games", "en")
+        markup = query.edit_message_text.await_args.kwargs["reply_markup"]
+        assert markup.inline_keyboard[0][0].callback_data == "help:en"
+
+    @pytest.mark.asyncio
+    async def test_legacy_help_topic_uses_saved_language(self):
+        from app.bot_commands import render_help_topic
+        from app.handlers.cb_navigation import help_topic_callback
+
+        update, query = _make_update("help_topic:games")
+        update.effective_user.language_code = "ru"
+        context = MagicMock()
+        context.user_data = {"help_lang": "en"}
+
+        await help_topic_callback(update, context)
+
+        assert query.edit_message_text.await_args.args[0] == render_help_topic("games", "en")
+
+
 class TestExports:
     def test_all_exports_present(self):
         from app.handlers.cb_navigation import __all__

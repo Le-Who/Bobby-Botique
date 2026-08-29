@@ -7,9 +7,10 @@ Also provides the module-level convenience functions:
 """
 
 import asyncio
+import inspect
 import logging
-from collections.abc import Iterable
-from typing import Any
+from collections.abc import Callable, Iterable
+from typing import Any, TypeVar
 
 from app.config import (
     CURRENT_GEMINI_MODELS,
@@ -48,6 +49,8 @@ from app.providers.stream_types import (
     Workload,
     is_terminal_event,
 )
+
+_ParsedResponse = TypeVar("_ParsedResponse")
 
 
 def _setting(name: str, fallback: str) -> str:
@@ -355,6 +358,23 @@ class ProviderRouter:
 
             # Execute the request
             assert model_used is not None  # guaranteed by _resolve_ai_request
+            try:
+                reserved = await use_case.reserve_key_usage(
+                    key_data["key_hash"],
+                    model_used,
+                    use_openrouter,
+                )
+            except Exception as exc:
+                logging.warning("Failed to reserve provider usage before request: %s", exc)
+                reserved = False
+            if not reserved:
+                failed_keys.add(key_data["key_hash"])
+                logging.info(
+                    "KEY_EVENT key_reservation_rejected key=%s… model=%s",
+                    key_data["key_hash"][:8],
+                    model_used,
+                )
+                continue
             _log_key_request(
                 key_data["api_key"],
                 model_used,
@@ -447,7 +467,7 @@ class ProviderRouter:
                 )
                 continue
 
-            # Success — update health and increment usage
+            # Success — update health. Usage was reserved before the request.
             if response_text and not is_error_message(response_text):
                 try:
                     # Opencode/FTA keys are in-memory only — skip DB key_model_status writes
@@ -459,11 +479,6 @@ class ProviderRouter:
                         )
                 except Exception as e:
                     logging.debug("Non-critical: record_success failed: %s", e)
-
-                try:
-                    await use_case.increment_key_usage(key_data["key_hash"], model_used, use_openrouter)  # type: ignore[arg-type]  # asserted above
-                except Exception as e:
-                    logging.warning("Non-critical: failed to increment key usage: %s", e)
 
                 _log_key_answered(key_data["api_key"], model_used, use_openrouter, token_count)
 
@@ -530,6 +545,140 @@ class ProviderRouter:
             None,
         )
 
+    async def execute_gemini_model_plan(
+        self,
+        model_plan: list[str] | tuple[str, ...],
+        history: list,
+        *,
+        parse_response: Callable[[str], _ParsedResponse],
+        system_instruction: str | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
+        thinking_level: str | None = None,
+        timeout: float | None = None,
+        max_keys: int | None = None,
+    ) -> _ParsedResponse:
+        """Execute an explicit Gemini model sequence on each key before rotation.
+
+        This is intended for background jobs whose latency budget allows model
+        alternation. It deliberately bypasses the interactive router fallback
+        order while retaining health tracking and atomic RPD accounting.
+        """
+        from app.agent_use_cases import AgentRequestUseCase
+        from app.repos.keys import get_available_gemini_key, get_key_status_manager
+
+        normalized_plan = [normalize_gemini_runtime_model(model, fallback="") for model in model_plan]
+        if not normalized_plan or any(not is_gemini_chat_model_id(model) for model in normalized_plan):
+            raise ValueError("model_plan must contain Gemini chat model IDs")
+
+        use_case = AgentRequestUseCase()
+        status_mgr = get_key_status_manager()
+        excluded_keys: set[str] = set()
+        attempted_keys = 0
+        last_error: Exception | None = None
+
+        while max_keys is None or attempted_keys < max_keys:
+            key_data = None
+            for selection_model in _dedupe_models(normalized_plan):
+                key_data = await get_available_gemini_key(selection_model, excluded_hashes=excluded_keys)
+                if key_data:
+                    break
+            if not key_data:
+                break
+
+            attempted_keys += 1
+            key_hash = key_data["key_hash"]
+            api_key = key_data["api_key"]
+            switch_key = False
+
+            for attempt, model_name in enumerate(normalized_plan, start=1):
+                try:
+                    reserved = await use_case.reserve_key_usage(key_hash, model_name, False)
+                except Exception as exc:
+                    last_error = exc
+                    logging.warning(
+                        "Trivia model plan could not reserve RPD key=%s… model=%s: %s",
+                        key_hash[:8],
+                        model_name,
+                        exc,
+                    )
+                    continue
+                if not reserved:
+                    last_error = RuntimeError(f"RPD limit reached for {model_name}")
+                    continue
+
+                _log_key_request(
+                    api_key,
+                    model_name,
+                    False,
+                    attempt=attempt,
+                    max_attempts=len(normalized_plan),
+                )
+                try:
+                    response_text, token_count = await use_case.get_ai_response(
+                        api_key,
+                        history,
+                        model_name,
+                        system_instruction,
+                        user_id,
+                        chat_id,
+                        False,
+                        thinking_level=thinking_level,
+                        timeout=timeout,
+                        provider_max_retries=1,
+                    )
+                except Exception as exc:
+                    last_error = exc
+                    response_text = user_friendly_error(exc)
+
+                if is_error_message(response_text):
+                    error_category = classify_key_error(response_text)
+                    last_error = RuntimeError(response_text)
+                    if error_category in {"permanent", "quota"}:
+                        try:
+                            await status_mgr.suspend_key(
+                                key_hash,
+                                model_name,
+                                error_category,
+                                response_text[:200],
+                            )
+                        except Exception as exc:
+                            logging.warning("Non-critical: failed to suspend planned key: %s", exc)
+                        switch_key = True
+                        break
+                    continue
+
+                try:
+                    parsed = parse_response(response_text)
+                    if inspect.isawaitable(parsed):
+                        parsed = await parsed
+                except Exception as exc:
+                    last_error = exc
+                    logging.warning(
+                        "Gemini model plan response rejected key=%s… model=%s attempt=%d/%d: %s",
+                        key_hash[:8],
+                        model_name,
+                        attempt,
+                        len(normalized_plan),
+                        exc,
+                    )
+                    continue
+
+                try:
+                    await status_mgr.record_success(key_hash, model_name)
+                except Exception as exc:
+                    logging.debug("Non-critical: planned request record_success failed: %s", exc)
+                _log_key_answered(api_key, model_name, False, token_count)
+                return parsed
+
+            excluded_keys.add(key_hash)
+            if switch_key:
+                logging.info("Trivia model plan rotating invalid/exhausted key=%s…", key_hash[:8])
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("No Gemini keys available for the requested model plan")
+
     async def stream(self, request: GenerationRequest):
         """Route a typed generation stream and emit exactly one terminal event."""
         from app.agent_use_cases import AgentRequestUseCase
@@ -570,8 +719,6 @@ class ProviderRouter:
             try:
                 if key_hash != _VERTEX_KH and not is_opencode_model(model_name) and not is_freetheai_model(model_name):
                     await status_mgr.record_success(key_hash, model_name)
-                if key_hash != _VERTEX_KH:
-                    await use_case.increment_key_usage(key_hash, model_name, None)
             except Exception as exc:
                 logging.debug("Non-critical typed-stream stats update failed: %s", exc)
 
@@ -629,6 +776,29 @@ class ProviderRouter:
 
                     if is_vertex_client_available() and _VERTEX_KH not in failed_keys:
                         keys_to_race.append({"api_key": "vertex", "key_hash": _VERTEX_KH})
+
+                if keys_to_race and resolved_model:
+                    reserved_keys: list[dict] = []
+                    for key_data in keys_to_race:
+                        key_hash = key_data["key_hash"]
+                        if key_hash == _VERTEX_KH:
+                            reserved_keys.append(key_data)
+                            continue
+                        try:
+                            reserved = await use_case.reserve_key_usage(key_hash, resolved_model, None)
+                        except Exception as exc:
+                            logging.warning(
+                                "Typed stream RPD reservation failed key=%s… model=%s: %s",
+                                key_hash[:8],
+                                resolved_model,
+                                exc,
+                            )
+                            reserved = False
+                        if reserved:
+                            reserved_keys.append(key_data)
+                        else:
+                            failed_keys.add(key_hash)
+                    keys_to_race = reserved_keys
 
                 if not keys_to_race or not resolved_model:
                     if resolution_status == "decryption_failed":
@@ -1032,6 +1202,18 @@ class ProviderRouter:
                 failed_model,
             )
 
+            try:
+                reserved = await use_case.reserve_key_usage(
+                    key_data["key_hash"],
+                    model_used,
+                    use_openrouter,
+                )
+            except Exception as exc:
+                logging.warning("Model fallback RPD reservation failed: %s", exc)
+                reserved = False
+            if not reserved:
+                continue
+
             _log_key_request(key_data["api_key"], model_used, use_openrouter)
             response_text, token_count = await use_case.get_ai_response(
                 key_data["api_key"],
@@ -1054,14 +1236,6 @@ class ProviderRouter:
                     await status_mgr.record_success(key_data["key_hash"], model_used)
                 except Exception as e:
                     logging.debug("Non-critical: record_success failed: %s", e)
-                try:
-                    await use_case.increment_key_usage(
-                        key_data["key_hash"],
-                        model_used,
-                        use_openrouter,
-                    )
-                except Exception as e:
-                    logging.warning("Non-critical: failed to increment key usage: %s", e)
                 _log_key_answered(key_data["api_key"], model_used, use_openrouter, token_count)
                 return response_text, token_count
 

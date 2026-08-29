@@ -106,6 +106,32 @@ class DailyKeyManager:
                 )
         return result
 
+    async def reserve_usage(self, key_hash: str, model_name: str, daily_limit: int | None) -> int | None:
+        """Atomically reserve one provider request without crossing the RPD threshold.
+
+        The reservation happens immediately before a network call, so failed
+        provider requests consume RPD just like successful ones. ``None`` means
+        another worker reached the threshold first and the request must not be
+        sent.
+        """
+        if not daily_limit:
+            result = await self.increment_usage(key_hash, model_name)
+            return int(result[0]["request_count"]) if result else None
+
+        today = self._today()
+        threshold = max(1, int(daily_limit * settings.LIMIT_THRESHOLD_PERCENT))
+        query = f"""
+            INSERT INTO {self.usage_table}
+                (key_hash, model_name, usage_date, request_count)
+            VALUES ($1, $2, $3, 1)
+            ON CONFLICT (key_hash, model_name, usage_date)
+            DO UPDATE SET request_count = {self.usage_table}.request_count + 1
+            WHERE {self.usage_table}.request_count < $4
+            RETURNING request_count;
+        """
+        result = await db_query(query, (key_hash, model_name, today, threshold))
+        return int(result[0]["request_count"]) if result else None
+
     async def is_key_available(self, key_hash: str, model_name: str, daily_limit: int | None, conn=None) -> bool:
         """Check if a key is under its daily threshold."""
         if not daily_limit:
@@ -339,6 +365,39 @@ async def increment_gemini_key_usage(key_hash: str, model_name: str) -> None:
                 daily_limit,
                 usage_pct,
             )
+
+
+async def reserve_gemini_key_usage(key_hash: str, model_name: str) -> bool:
+    """Reserve one Gemini RPD slot atomically before sending a request."""
+    daily_limit = await get_model_daily_limit(model_name)
+    current_usage = await _gemini_km.reserve_usage(key_hash, model_name, daily_limit)
+    if current_usage is None:
+        await invalidate_key_cache(model_name)
+        return False
+
+    if daily_limit:
+        threshold = max(1, int(daily_limit * settings.LIMIT_THRESHOLD_PERCENT))
+        usage_pct = (current_usage / daily_limit) * 100
+        if current_usage >= threshold:
+            logging.warning(
+                "KEY_EVENT key_threshold_reached key=%s… model=%s usage=%d/%d (%.0f%%) — rotating",
+                key_hash[:8],
+                model_name,
+                current_usage,
+                daily_limit,
+                usage_pct,
+            )
+            await invalidate_key_cache(model_name)
+        elif usage_pct >= 70:
+            logging.info(
+                "KEY_EVENT key_nearing_limit key=%s… model=%s usage=%d/%d (%.0f%%)",
+                key_hash[:8],
+                model_name,
+                current_usage,
+                daily_limit,
+                usage_pct,
+            )
+    return True
 
 
 # ─── KeyStatusManager (per-model key health, DB-backed) ─────────────────────
@@ -663,3 +722,9 @@ async def get_available_openrouter_key(
 
 async def increment_openrouter_key_usage(key_hash: str, model_name: str) -> None:
     await _openrouter_km.increment_usage(key_hash, model_name)
+
+
+async def reserve_openrouter_key_usage(key_hash: str, model_name: str) -> bool:
+    """Reserve one OpenRouter daily request slot before sending a request."""
+    daily_limit = await get_model_daily_limit(model_name)
+    return await _openrouter_km.reserve_usage(key_hash, model_name, daily_limit) is not None

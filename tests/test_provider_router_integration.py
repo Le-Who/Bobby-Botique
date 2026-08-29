@@ -27,6 +27,7 @@ class TestProviderRouterIntegration:
         )
         mock_use_case.get_ai_response = AsyncMock(return_value=("Hello!", 42))
         mock_use_case.increment_key_usage = AsyncMock()
+        mock_use_case.reserve_key_usage = AsyncMock(return_value=True)
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
@@ -45,7 +46,8 @@ class TestProviderRouterIntegration:
 
         assert text == "Hello!"
         assert tokens == 42
-        mock_use_case.increment_key_usage.assert_awaited_once()
+        mock_use_case.reserve_key_usage.assert_awaited_once_with("abc", "gemini-3.1-flash-lite", None)
+        mock_use_case.increment_key_usage.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_openrouter_full_chain_success(self):
@@ -64,6 +66,7 @@ class TestProviderRouterIntegration:
         )
         mock_use_case.get_ai_response = AsyncMock(return_value=("GPT says hi", 37))
         mock_use_case.increment_key_usage = AsyncMock()
+        mock_use_case.reserve_key_usage = AsyncMock(return_value=True)
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
@@ -163,6 +166,7 @@ class TestProviderRouterIntegration:
         )
         mock_use_case.get_ai_response = AsyncMock(return_value=("Image desc", 50))
         mock_use_case.increment_key_usage = AsyncMock()
+        mock_use_case.reserve_key_usage = AsyncMock(return_value=True)
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
@@ -214,6 +218,7 @@ class TestProviderRouterIntegration:
             ]
         )
         mock_use_case.increment_key_usage = AsyncMock()
+        mock_use_case.reserve_key_usage = AsyncMock(return_value=True)
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),

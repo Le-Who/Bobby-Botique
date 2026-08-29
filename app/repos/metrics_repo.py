@@ -135,28 +135,56 @@ async def get_gemini_key_usage_stats(
             ),
         )
     else:
+        configured_models = list(
+            dict.fromkeys(
+                [
+                    *getattr(settings, "AVAILABLE_MODELS", []),
+                    *getattr(settings, "DAILY_LIMITS", {}).keys(),
+                ]
+            )
+        )
+        configured_limits = [getattr(settings, "DAILY_LIMITS", {}).get(model) for model in configured_models]
         query = """
+            WITH configured_models AS (
+                SELECT model_name, configured_limit
+                FROM UNNEST($3::text[], $4::integer[])
+                    AS configured(model_name, configured_limit)
+            )
             SELECT
                 ak.key_hash,
                 LEFT(ak.key_hash, 8) || '***' as api_key_preview,
-                ku.model_name,
+                cm.model_name,
                 COALESCE(ku.request_count, 0) as request_count,
-                mc.daily_limit,
+                COALESCE(mc.daily_limit, cm.configured_limit) AS daily_limit,
                 CASE
-                    WHEN mc.daily_limit IS NULL THEN 0
-                    ELSE (COALESCE(ku.request_count, 0)::float / mc.daily_limit * 100)
+                    WHEN COALESCE(mc.daily_limit, cm.configured_limit) IS NULL THEN 0
+                    ELSE (
+                        COALESCE(ku.request_count, 0)::float
+                        / COALESCE(mc.daily_limit, cm.configured_limit) * 100
+                    )
                 END as usage_percent,
                 CASE
-                    WHEN mc.daily_limit IS NULL THEN true
-                    ELSE COALESCE(ku.request_count, 0) < (mc.daily_limit * $1)
+                    WHEN COALESCE(mc.daily_limit, cm.configured_limit) IS NULL THEN true
+                    ELSE COALESCE(ku.request_count, 0) < (
+                        COALESCE(mc.daily_limit, cm.configured_limit) * $1
+                    )
                 END as is_available
             FROM public.api_keys ak
-            LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash AND ku.usage_date = $2
-            LEFT JOIN public.model_configuration mc ON mc.model_name = ku.model_name
-            WHERE ku.model_name IS NOT NULL
-            ORDER BY ku.model_name, COALESCE(ku.request_count, 0) ASC
+            CROSS JOIN configured_models cm
+            LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash
+                AND ku.model_name = cm.model_name AND ku.usage_date = $2
+            LEFT JOIN public.model_configuration mc ON mc.model_name = cm.model_name
+            ORDER BY cm.model_name, COALESCE(ku.request_count, 0) ASC
         """
-        results = await db_query(query, (settings.LIMIT_THRESHOLD_PERCENT, today_pacific))
+        results = await db_query(
+            query,
+            (
+                settings.LIMIT_THRESHOLD_PERCENT,
+                today_pacific,
+                configured_models,
+                configured_limits,
+            ),
+        )
     return results
 
 

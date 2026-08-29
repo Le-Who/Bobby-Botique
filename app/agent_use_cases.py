@@ -25,6 +25,8 @@ from app.repos.keys import (
     increment_gemini_key_usage,
     increment_openrouter_key_usage,
     invalidate_key_cache,
+    reserve_gemini_key_usage,
+    reserve_openrouter_key_usage,
 )
 
 # In-memory health state for Opencode keys (dict: key_hash → suspended_until UTC).
@@ -367,6 +369,21 @@ class AgentRequestUseCase:
             await increment_openrouter_key_usage(key_hash, model_name)
         else:
             await increment_gemini_key_usage(key_hash, model_name)
+
+    async def reserve_key_usage(
+        self,
+        key_hash: str,
+        model_name: str,
+        use_openrouter: bool | None = None,
+    ) -> bool:
+        """Atomically account for a request before it reaches the provider."""
+        if is_opencode_model(model_name) or is_freetheai_model(model_name):
+            return True
+        if use_openrouter is None:
+            use_openrouter = ("/" in model_name and not is_freetheai_model(model_name)) or get_use_openrouter()
+        if use_openrouter:
+            return await reserve_openrouter_key_usage(key_hash, model_name)
+        return await reserve_gemini_key_usage(key_hash, model_name)
 
     async def get_ai_response_with_key_rotation(
         self,

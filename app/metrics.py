@@ -433,7 +433,9 @@ class MetricsCollector:
             """)
 
             self.error_log.clear()  # Clear existing before loading
-            for row in error_result:
+            # Query returns newest-first; store chronologically so append() keeps
+            # the deque invariant of oldest -> newest for live events as well.
+            for row in reversed(error_result):
                 self.error_log.append(
                     {
                         "timestamp": row["created_at"].isoformat(),
@@ -531,13 +533,20 @@ class MetricsCollector:
 
     async def get_metrics_summary(self) -> dict[str, Any]:
         """Возвращает сводку метрик"""
-        recent_errors = list(self.error_log)[-10:]
+        recent_errors = list(reversed(self.error_log))[:10]
+        average_response_time = self.get_average_response_time()
+        error_rate = self.get_error_rate()
+        cache_hit_rate = self.get_cache_hit_rate()
 
         summary = {
             "total_requests": self.metrics.request_count,
-            "average_response_time": self.get_average_response_time(),
-            "error_rate": self.get_error_rate(),
-            "cache_hit_rate": self.get_cache_hit_rate(),
+            "average_response_time": average_response_time,
+            "average_response_time_ms": round(average_response_time * 1000, 2),
+            "error_count": self.metrics.error_count,
+            "error_rate": error_rate,
+            "error_rate_percent": error_rate,
+            "cache_hit_rate": cache_hit_rate,
+            "cache_hit_rate_percent": cache_hit_rate,
             "api_calls": dict(self.metrics.api_calls),
             "model_usage": dict(self.metrics.model_usage),
             "search_queries": self.metrics.search_queries,

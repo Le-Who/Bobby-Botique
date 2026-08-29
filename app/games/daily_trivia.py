@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 import random
+import time
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from app.config import GEMINI_ECONOMY_MODEL
+from app.config import GEMINI_ECONOMY_MODEL, normalize_gemini_runtime_model
 from app.errors import is_error_message, strip_error_tag
 from app.games.trivia_similarity import FactIdentity
 from app.providers.router import get_provider_router
@@ -19,6 +20,9 @@ MAX_TIME_PER_QUESTION_MS = 15000
 BASE_CORRECT_POINTS = 200
 MAX_SPEED_BONUS = 100
 GENERATION_ATTEMPTS = 3
+TRIVIA_RETRY_MODEL = "gemini-3.6-flash"
+PREPARATION_RETRY_COOLDOWN_SECONDS = 3 * 60 * 60
+_preparation_cooldowns: dict[date, float] = {}
 
 
 def calculate_question_score(is_correct: bool, elapsed_ms: int) -> int:
@@ -161,43 +165,32 @@ async def generate_question_lane(
     bank = await repo.get_recent_bank_facts(reference_date=puzzle_date, days=90)
     prompt = f"Сгенерируй ровно {count} {label} на дату {puzzle_date.isoformat()}.{_bank_context(bank)}"
     provider_router = router or get_provider_router()
-    last_error: Exception | None = None
-    for attempt in range(1, GENERATION_ATTEMPTS + 1):
-        try:
-            response_text, _ = await provider_router.get_response(
-                preferred_model=model_name,
-                history=[{"role": "user", "parts": [{"text": prompt}]}],
-                system_instruction=system_prompt,
-                timeout=45.0,
-            )
-            if is_error_message(response_text):
-                raise RuntimeError(f"LLM provider error: {strip_error_tag(response_text)}")
-            start_idx = response_text.find("[")
-            end_idx = response_text.rfind("]")
-            clean_json = (
-                response_text[start_idx : end_idx + 1]
-                if start_idx >= 0 and end_idx > start_idx
-                else response_text.strip()
-            )
-            parsed = json.loads(clean_json)
-            if not isinstance(parsed, list):
-                raise ValueError("LLM output is not a JSON list")
-            questions = shuffle_options_and_update_correct_index(parsed)
-            if len(questions) != count or any(question.identity is None for question in questions):
-                raise ValueError(f"LLM returned {len(questions)}/{count} valid identified questions")
-            return questions
-        except Exception as exc:
-            last_error = exc
-            logger.warning(
-                "trivia: %s generation attempt %d/%d failed for %s: %s",
-                lane,
-                attempt,
-                GENERATION_ATTEMPTS,
-                puzzle_date,
-                exc,
-            )
-    assert last_error is not None
-    raise last_error
+    primary_model = normalize_gemini_runtime_model(model_name)
+    model_plan = [primary_model, TRIVIA_RETRY_MODEL, primary_model, TRIVIA_RETRY_MODEL]
+
+    def parse_response(response_text: str) -> list[repo.TriviaQuestion]:
+        if is_error_message(response_text):
+            raise RuntimeError(f"LLM provider error: {strip_error_tag(response_text)}")
+        start_idx = response_text.find("[")
+        end_idx = response_text.rfind("]")
+        clean_json = (
+            response_text[start_idx : end_idx + 1] if start_idx >= 0 and end_idx > start_idx else response_text.strip()
+        )
+        parsed = json.loads(clean_json)
+        if not isinstance(parsed, list):
+            raise ValueError("LLM output is not a JSON list")
+        questions = shuffle_options_and_update_correct_index(parsed)
+        if len(questions) != count or any(question.identity is None for question in questions):
+            raise ValueError(f"LLM returned {len(questions)}/{count} valid identified questions")
+        return questions
+
+    return await provider_router.execute_gemini_model_plan(
+        model_plan,
+        [{"role": "user", "parts": [{"text": prompt}]}],
+        parse_response=parse_response,
+        system_instruction=system_prompt,
+        timeout=45.0,
+    )
 
 
 async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False, mode: str = "all") -> repo.DailyTriviaPuzzle:
@@ -343,5 +336,64 @@ async def ensure_prepared_puzzles(*, now: datetime | None = None) -> list[repo.D
     dates = [start_date + timedelta(days=offset) for offset in range(repo.DAILY_TRIVIA_PREP_DAYS_AHEAD + 1)]
     puzzles: list[repo.DailyTriviaPuzzle] = []
     for puzzle_date in dates:
-        puzzles.append(await prepare_daily_puzzle(puzzle_date))
+        if puzzle_date != start_date and await _is_preparation_cooling_down(puzzle_date):
+            logger.info("trivia: skipping future preparation in cooldown for %s", puzzle_date)
+            continue
+        try:
+            puzzles.append(await prepare_daily_puzzle(puzzle_date))
+        except Exception as exc:
+            logger.exception("trivia: preparation failed for %s", puzzle_date)
+            if puzzle_date != start_date:
+                await _mark_preparation_cooldown(puzzle_date, str(exc))
+            continue
+        if puzzle_date != start_date:
+            await _clear_preparation_cooldown(puzzle_date)
     return puzzles
+
+
+def _preparation_cooldown_key(puzzle_date: date) -> str:
+    return f"daily_trivia:prepare_cooldown:{puzzle_date.isoformat()}"
+
+
+async def _is_preparation_cooling_down(puzzle_date: date) -> bool:
+    from app.cache import redis_client
+
+    if redis_client:
+        try:
+            if await redis_client.exists(_preparation_cooldown_key(puzzle_date)):
+                return True
+        except Exception as exc:
+            logger.warning("trivia: Redis cooldown read failed for %s: %s", puzzle_date, exc)
+    expires_at = _preparation_cooldowns.get(puzzle_date)
+    if expires_at is None:
+        return False
+    if expires_at <= time.monotonic():
+        _preparation_cooldowns.pop(puzzle_date, None)
+        return False
+    return True
+
+
+async def _mark_preparation_cooldown(puzzle_date: date, reason: str) -> None:
+    from app.cache import redis_client
+
+    _preparation_cooldowns[puzzle_date] = time.monotonic() + PREPARATION_RETRY_COOLDOWN_SECONDS
+    if redis_client:
+        try:
+            await redis_client.setex(
+                _preparation_cooldown_key(puzzle_date),
+                PREPARATION_RETRY_COOLDOWN_SECONDS,
+                reason[:500],
+            )
+        except Exception as exc:
+            logger.warning("trivia: Redis cooldown write failed for %s: %s", puzzle_date, exc)
+
+
+async def _clear_preparation_cooldown(puzzle_date: date) -> None:
+    from app.cache import redis_client
+
+    _preparation_cooldowns.pop(puzzle_date, None)
+    if redis_client:
+        try:
+            await redis_client.delete(_preparation_cooldown_key(puzzle_date))
+        except Exception as exc:
+            logger.warning("trivia: Redis cooldown clear failed for %s: %s", puzzle_date, exc)

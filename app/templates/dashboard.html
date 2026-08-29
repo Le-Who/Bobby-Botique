@@ -265,19 +265,19 @@
             <div class="card-label">Cache Details</div>
             <div class="db-stats" id="cache-stats">
               <div class="stat-line">
-                <span class="sl-label">Memory Hits</span>
+                <span class="sl-label">Memory Items</span>
                 <span class="sl-val mono" id="c-mem-hits">—</span>
               </div>
               <div class="stat-line">
-                <span class="sl-label">Redis Hits</span>
+                <span class="sl-label">Memory Capacity</span>
                 <span class="sl-val mono" id="c-redis-hits">—</span>
               </div>
               <div class="stat-line">
-                <span class="sl-label">Misses</span>
+                <span class="sl-label">Memory Utilization</span>
                 <span class="sl-val mono" id="c-misses">—</span>
               </div>
               <div class="stat-line">
-                <span class="sl-label">Memory Items</span>
+                <span class="sl-label">Redis Keys</span>
                 <span class="sl-val mono" id="c-mem-items">—</span>
               </div>
             </div>
@@ -294,10 +294,11 @@
               <thead>
                 <tr>
                   <th>Key</th>
+                  <th>Model</th>
                   <th>Status</th>
-                  <th>Usage</th>
-                  <th>Last Rotated</th>
-                  <th>Events</th>
+                  <th>Failures</th>
+                  <th>Suspended Until</th>
+                  <th>Last Error</th>
                 </tr>
               </thead>
               <tbody id="kh-tbody"></tbody>
@@ -328,20 +329,23 @@
 
     <script nonce="{{ g.csp_nonce }}">
       // =====================================================================
-      // Dashboard data fetcher — polls all API endpoints every 15 seconds
+      // Dashboard data fetcher — one canonical snapshot every 15 seconds
       // =====================================================================
 
       const API = {
-        overview: "/api/overview",
-        keys: "/api/keys",
-        errors: "/api/errors",
-        cache: "/api/cache",
-        queue: "/api/queue",
-        database: "/api/database",
-        circuitBreakers: "/api/circuit-breakers",
+        dashboard: "/api/dashboard",
       };
 
       const $ = (id) => document.getElementById(id);
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
 
       // Clock
       function updateClock() {
@@ -443,21 +447,22 @@
       // Data loaders
       // =====================================================================
 
-      async function loadOverview() {
-        const d = await apiFetch(API.overview);
+      function renderOverview(d) {
         if (!d) return;
-
         const s = d.system;
-        $("cpu-val").textContent = s.cpu_percent + "%";
-        setBarLevel($("cpu-bar"), $("card-cpu"), s.cpu_percent);
+        const cpu = s.cpu_percent ?? 0;
+        const memory = s.memory_percent ?? 0;
+        const disk = s.disk_percent ?? 0;
+        $("cpu-val").textContent = s.cpu_percent != null ? cpu + "%" : "Unavailable";
+        setBarLevel($("cpu-bar"), $("card-cpu"), cpu);
 
-        $("mem-val").textContent = s.memory_percent + "%";
+        $("mem-val").textContent = s.memory_percent != null ? memory + "%" : "Unavailable";
         $("mem-detail").textContent =
-          s.memory_used_mb + " / " + s.memory_total_mb + " MB";
-        setBarLevel($("mem-bar"), $("card-mem"), s.memory_percent);
+          s.memory_used_mb != null ? s.memory_used_mb + " / " + s.memory_total_mb + " MB" : "";
+        setBarLevel($("mem-bar"), $("card-mem"), memory);
 
-        $("disk-val").textContent = s.disk_percent + "%";
-        setBarLevel($("disk-bar"), $("card-disk"), s.disk_percent);
+        $("disk-val").textContent = s.disk_percent != null ? disk + "%" : "Unavailable";
+        setBarLevel($("disk-bar"), $("card-disk"), disk);
 
         // Services
         const svc = d.services;
@@ -467,26 +472,30 @@
 
         // Metrics
         const m = d.metrics;
-        if (m) {
-          $("req-count").textContent = (m.request_count || 0).toLocaleString();
-          const avgMs =
-            m.average_response_time_ms ||
-            (m.average_response_time ? m.average_response_time * 1000 : 0);
+        if (m && d.metrics_available !== false) {
+          $("req-count").textContent = (m.total_requests || 0).toLocaleString();
+          const avgMs = m.average_response_time_ms || 0;
           $("avg-resp").textContent = avgMs ? avgMs.toFixed(0) + "ms" : "—";
-          const errRate = m.error_rate_percent || m.error_rate || 0;
+          const errRate = m.error_rate_percent || 0;
           $("error-rate").textContent =
             (typeof errRate === "number" ? errRate.toFixed(1) : errRate) + "%";
           $("error-count-sub").textContent =
             (m.error_count || 0) + " errors total";
-          const cacheRate = m.cache_hit_rate_percent || m.cache_hit_rate || 0;
+          const cacheRate = m.cache_hit_rate_percent || 0;
           $("cache-hit").textContent =
             (typeof cacheRate === "number" ? cacheRate.toFixed(1) : cacheRate) +
             "%";
+        } else {
+          $("req-count").textContent = "Unavailable";
+          $("avg-resp").textContent = "—";
+          $("error-rate").textContent = "—";
+          $("error-count-sub").textContent = "Metrics unavailable";
+          $("cache-hit").textContent = "—";
         }
 
         // Summarization
         const sm = d.summarization;
-        if (sm) {
+        if (sm && d.summarization_available !== false) {
           $("sum-triggered").textContent = (sm.triggered || 0).toLocaleString();
           $("sum-llm").textContent = (sm.llm_tier || 0).toLocaleString();
           const llmFail = sm.llm_failures || 0;
@@ -495,31 +504,37 @@
           $("sum-tokens").textContent = (sm.tokens_saved || 0).toLocaleString();
           const avg = sm.avg_summary_length || 0;
           $("sum-avg").textContent = avg > 0 ? "avg " + Math.round(avg) + " tok" : "";
+        } else {
+          $("sum-triggered").textContent = "Unavailable";
+          $("sum-llm").textContent = "—";
+          $("sum-local").textContent = "—";
+          $("sum-tokens").textContent = "—";
+          $("sum-llm-fail").textContent = "Metrics unavailable";
+          $("sum-avg").textContent = "";
         }
 
         $("last-update").textContent =
           "Updated: " + new Date().toLocaleTimeString();
 
         // Sparklines
-        cpuHistory.push(s.cpu_percent);
-        memHistory.push(s.memory_percent);
+        cpuHistory.push(cpu);
+        memHistory.push(memory);
         if (cpuHistory.length > MAX_SPARK) cpuHistory.shift();
         if (memHistory.length > MAX_SPARK) memHistory.shift();
         renderSparkline($("spark-cpu"), cpuHistory, "#4ade80");
         renderSparkline($("spark-mem"), memHistory, "#60a5fa");
       }
 
-      async function loadKeys() {
-        const d = await apiFetch(API.keys);
+      function renderProviders(d) {
         if (!d) return;
-
         // --- Gemini keys ---
         const tbody = $("key-tbody");
         const empty = $("keys-empty");
-        const rows = d.key_usage || [];
+        const rows = d.gemini?.rows || [];
 
         if (rows.length === 0) {
           tbody.innerHTML = "";
+          empty.textContent = d.gemini?.available === false ? "Gemini metrics unavailable" : "No Gemini keys configured";
           empty.style.display = "block";
         } else {
           empty.style.display = "none";
@@ -547,8 +562,8 @@
                 statusTxt = "✓ Available";
               }
               return `<tr>
-                  <td class="mono">${r.model_name || "—"}</td>
-                  <td class="mono dim">${r.api_key_preview || r.key_hash?.substring(0, 10) || "—"}</td>
+                  <td class="mono">${escapeHtml(r.model_name || "—")}</td>
+                  <td class="mono dim">${escapeHtml(r.api_key_preview || r.key_hash?.substring(0, 10) || "—")}</td>
                   <td class="mono">${used}</td>
                   <td class="mono">${limit ?? "∞"}</td>
                   <td class="mono">${limit != null ? pct + "%" : "—"}</td>
@@ -561,10 +576,11 @@
         // --- Tavily keys ---
         const tBody = $("tavily-tbody");
         const tEmpty = $("tavily-empty");
-        const tRows = d.tavily_usage || [];
+        const tRows = d.tavily?.rows || [];
 
         if (tRows.length === 0) {
           tBody.innerHTML = "";
+          tEmpty.textContent = d.tavily?.available === false ? "Tavily metrics unavailable" : "No Tavily keys configured";
           tEmpty.style.display = "block";
         } else {
           tEmpty.style.display = "none";
@@ -586,7 +602,7 @@
                 statusTxt = "✓ Available";
               }
               return `<tr>
-                  <td class="mono dim">${r.api_key_preview || "—"}</td>
+                  <td class="mono dim">${escapeHtml(r.api_key_preview || "—")}</td>
                   <td class="mono">${used}</td>
                   <td class="mono">${limit}</td>
                   <td class="mono">${pct}%</td>
@@ -605,12 +621,10 @@
         }
       }
 
-      async function loadCircuitBreakers() {
-        const d = await apiFetch(API.circuitBreakers);
+      function renderCircuitBreakers(d) {
         if (!d) return;
-
         const list = $("cb-list");
-        const cbs = d.circuit_breakers || {};
+        const cbs = d.circuit_breakers?.items || {};
         const names = Object.keys(cbs);
 
         if (names.length === 0) {
@@ -631,19 +645,22 @@
                   : "dot-warn";
             return `<div class="cb-item">
                 <span class="dot ${dotCls}"></span>
-                <span class="cb-name">${name}</span>
-                <span class="cb-state mono">${state.toUpperCase()}</span>
+                <span class="cb-name">${escapeHtml(name)}</span>
+                <span class="cb-state mono">${escapeHtml(state.toUpperCase())}</span>
                 <span class="cb-detail mono dim">${cb.failure_count || 0} fails</span>
             </div>`;
           })
           .join("");
       }
 
-      async function loadDatabase() {
-        const d = await apiFetch(API.database);
-        if (!d || !d.database) return;
-
-        const db = d.database;
+      function renderDatabase(d) {
+        if (!d) return;
+        const db = d;
+        if (db.available === false) {
+          $("db-status").textContent = "Unavailable";
+          $("db-status").className = "sl-val val-err";
+          return;
+        }
         $("db-status").textContent = db.status || "—";
         $("db-status").className =
           "sl-val " + (db.status === "connected" ? "val-ok" : "val-err");
@@ -654,29 +671,22 @@
           db.response_time_ms != null ? db.response_time_ms + "ms" : "—";
       }
 
-      async function loadQueue() {
-        const d = await apiFetch(API.queue);
-        if (!d || !d.queue) return;
-
-        const q = d.queue;
-        $("q-pending").textContent = q.pending ?? q.pending_tasks ?? "—";
-        $("q-running").textContent = q.running ?? q.running_tasks ?? "—";
-        $("q-completed").textContent = q.completed ?? q.completed_tasks ?? "—";
-        $("q-failed").textContent = q.failed ?? q.failed_tasks ?? "—";
-        $("q-workers").textContent = q.workers ?? q.active_workers ?? "—";
+      function renderQueue(q) {
+        if (!q) return;
+        $("q-pending").textContent = q.available === false ? "Unavailable" : q.pending ?? "—";
+        $("q-running").textContent = q.running ?? "—";
+        $("q-completed").textContent = q.completed ?? "—";
+        $("q-failed").textContent = q.failed ?? "—";
+        $("q-workers").textContent = q.workers ?? "—";
       }
 
-      async function loadCache() {
-        const d = await apiFetch(API.cache);
-        if (!d) return;
-
-        const ml = d.multi_layer || {};
-        const mem = ml.memory || {};
-        $("c-mem-hits").textContent = mem.hits ?? ml.memory_hits ?? "—";
-        $("c-redis-hits").textContent = ml.redis_hits ?? "—";
-        $("c-misses").textContent = mem.misses ?? ml.misses ?? "—";
-        $("c-mem-items").textContent =
-          mem.total_items ?? ml.memory_items ?? "—";
+      function renderCache(cache) {
+        if (!cache) return;
+        $("c-mem-hits").textContent = cache.available === false ? "Unavailable" : cache.memory_items ?? "—";
+        $("c-redis-hits").textContent = cache.memory_capacity ?? "—";
+        $("c-misses").textContent = cache.memory_utilization_percent != null
+          ? Number(cache.memory_utilization_percent).toFixed(1) + "%" : "—";
+        $("c-mem-items").textContent = cache.redis_keys ?? "—";
       }
 
       // =====================================================================
@@ -685,25 +695,31 @@
 
       async function refreshAll() {
         try {
-          await Promise.all([
-            loadOverview(),
-            loadKeys(),
-            loadCircuitBreakers(),
-            loadDatabase(),
-            loadQueue(),
-            loadCache(),
-          ]);
+          const d = await apiFetch(API.dashboard);
+          if (!d) return;
+          renderOverview(d.overview);
+          renderProviders(d.providers);
+          renderCircuitBreakers(d.providers);
+          renderDatabase(d.infrastructure?.database);
+          renderQueue(d.infrastructure?.queue);
+          renderCache(d.infrastructure?.cache);
+          renderErrors(d.errors);
+          renderKeyHealth(d.providers?.key_health);
         } catch (e) {
           console.error("Dashboard refresh error:", e);
         }
       }
 
-      async function loadErrors() {
-        const d = await apiFetch(API.errors);
+      function renderErrors(d) {
         if (!d) return;
-
         const badge = $("error-badge");
-        const count = d.error_count || 0;
+        const logEl = $("error-log");
+        if (d.available === false) {
+          badge.style.display = "none";
+          logEl.innerHTML = '<div class="empty-state">Error metrics unavailable</div>';
+          return;
+        }
+        const count = d.count || 0;
         if (count > 0) {
           badge.textContent = count;
           badge.style.display = "inline-block";
@@ -711,8 +727,7 @@
           badge.style.display = "none";
         }
 
-        const logEl = $("error-log");
-        const recent = d.recent_errors || [];
+        const recent = d.recent || [];
         if (recent.length === 0) {
           logEl.innerHTML = '<div class="empty-state">No recent errors \u2014 all systems normal</div>';
           return;
@@ -723,52 +738,46 @@
           const msg = err.message || err.error || String(err);
           return `<div class="error-row">
             <span class="error-ts mono dim">${ts}</span>
-            <span class="error-type mono tag tag-err">${errType}</span>
-            <span class="error-msg">${msg}</span>
+            <span class="error-type mono tag tag-err">${escapeHtml(errType)}</span>
+            <span class="error-msg">${escapeHtml(msg)}</span>
           </div>`;
         }).join('');
       }
 
       // Initial load
       refreshAll();
-      loadErrors();
       setInterval(refreshAll, 15000);
-      setInterval(loadErrors, 30000);
 
       // =====================================================================
       // Key Health loader
       // =====================================================================
-      async function loadKeyHealth() {
-        const d = await apiFetch('/api/key-health');
-        if (!d || !d.keys) return;
-
+      function renderKeyHealth(d) {
+        if (!d) return;
         const tbody = $('kh-tbody');
         const empty = $('kh-empty');
-        const keys = Array.isArray(d.keys) ? d.keys : Object.values(d.keys);
+        const keys = d.rows || [];
 
         if (keys.length === 0) {
           tbody.innerHTML = '';
+          empty.textContent = d.available === false ? 'Key health unavailable' : 'No key health events';
           empty.style.display = 'block';
           return;
         }
         empty.style.display = 'none';
         tbody.innerHTML = keys.map(k => {
-          const statusCls = k.status === 'healthy' ? 'tag-ok' : k.status === 'degraded' ? 'tag-warn' : 'tag-err';
+          const statusCls = ['healthy', 'active'].includes(k.status) ? 'tag-ok' : k.status === 'suspended' ? 'tag-warn' : 'tag-err';
           const statusTxt = (k.status || 'unknown').toUpperCase();
-          const usage = k.usage_percent != null ? Number(k.usage_percent).toFixed(1) + '%' : '—';
-          const rotated = k.last_rotated ? new Date(k.last_rotated).toLocaleTimeString() : '—';
-          const events = k.event_count ?? k.events ?? 0;
+          const suspendedUntil = k.suspended_until ? new Date(k.suspended_until).toLocaleString() : '—';
           return `<tr>
-            <td class="mono dim">${k.key_preview || k.key_hash?.substring(0, 10) || '—'}</td>
-            <td><span class="tag ${statusCls}">${statusTxt}</span></td>
-            <td class="mono">${usage}</td>
-            <td class="mono dim">${rotated}</td>
-            <td class="mono">${events}</td>
+            <td class="mono dim">${escapeHtml(k.key || k.key_preview || k.key_hash?.substring(0, 10) || '—')}</td>
+            <td class="mono">${escapeHtml(k.model || k.model_name || '—')}</td>
+            <td><span class="tag ${statusCls}">${escapeHtml(statusTxt)}</span></td>
+            <td class="mono">${k.failures ?? k.failure_count ?? 0}</td>
+            <td class="mono dim">${escapeHtml(suspendedUntil)}</td>
+            <td>${escapeHtml(k.last_error || '—')}</td>
           </tr>`;
         }).join('');
       }
-      loadKeyHealth();
-      setInterval(loadKeyHealth, 30000);
 
       // =====================================================================
       // SSE Live Updates (real-time between polls)

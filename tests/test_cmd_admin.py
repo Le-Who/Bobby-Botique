@@ -42,6 +42,74 @@ async def test_admin_command_shows_help():
     assert "Админ" in reply_text or "admin" in reply_text.lower()
 
 
+def test_admin_help_catalog_covers_registered_admin_surface():
+    from app.handlers.cmd_admin import ADMIN_COMMAND_GROUPS, ADMIN_HELP_HIDDEN_COMMANDS
+
+    catalog = {entry.command for group in ADMIN_COMMAND_GROUPS for entry in group.commands}
+    expected = {
+        "admin",
+        "adduser",
+        "deluser",
+        "listusers",
+        "keys",
+        "models",
+        "listmodels",
+        "metrics",
+        "cachestats",
+        "queuestats",
+        "docstats",
+        "rolemetrics",
+        "reloadconfig",
+        "clearcache",
+        "clearoldmetrics",
+        "clearolddocs",
+        "checkgeminikeys",
+        "updatetavilykeys",
+        "checktavilykeys",
+        "registergroup",
+        "groupstats",
+        "set_dailycroc_delivery",
+        "set_daily_game",
+        "set_dailycroc_model",
+        "dailycroc_status",
+        "set_dailycroc_placeholder",
+        "set_daily2048_cover",
+        "set_dailytrivia_cover",
+        "set_game_cover",
+        "set_inline_model",
+        "set_inline_thinking",
+        "set_inline_tabs",
+        "set_provider",
+        "wordbank",
+    }
+
+    assert catalog == expected
+    assert ADMIN_HELP_HIDDEN_COMMANDS == {"asr"}
+
+
+@pytest.mark.asyncio
+async def test_admin_command_includes_cover_commands_and_dashboard_buttons():
+    update, context = make_admin_update()
+
+    with (
+        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch("app.utils.decorators.is_admin", return_value=True),
+        patch("app.handlers.cmd_admin.settings") as mock_settings,
+    ):
+        mock_settings.WEBAPP_BASE_URL = "https://bot.example.test"
+        from app.handlers.cmd_admin import admin_command
+
+        await admin_command(update, context)
+
+    text = update.message.reply_text.await_args.args[0]
+    assert "/set_daily2048_cover" in text
+    assert "/set_dailytrivia_cover" in text
+    assert "/set_game_cover" in text
+    markup = update.message.reply_text.await_args.kwargs["reply_markup"]
+    urls = [button.web_app.url for row in markup.inline_keyboard for button in row]
+    assert urls == ["https://bot.example.test/", "https://bot.example.test/admin_daily"]
+
+
 # ── /adduser ──────────────────────────────────────────────────────────────────
 
 

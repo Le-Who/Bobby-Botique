@@ -20,7 +20,7 @@ from telegram.ext import (
 )
 
 from app.bot_commands import (
-    build_help_topic_rows,
+    build_help_overview_rows,
     language_from_telegram,
     render_help_overview,
 )
@@ -193,6 +193,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     logging.info("Help command from user %s", user_id)
 
     lang = language_from_telegram(getattr(update.effective_user, "language_code", None))
+    context.user_data["help_lang"] = lang
     if update.callback_query:
         await update.callback_query.answer()
 
@@ -201,7 +202,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         chat_id=chat_id,
         text=render_help_overview(lang),
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(build_help_topic_rows(lang)),
+        reply_markup=InlineKeyboardMarkup(build_help_overview_rows(lang)),
     )
     logging.info("Help command completed successfully for user %s", user_id)
 

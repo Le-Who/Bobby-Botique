@@ -97,12 +97,113 @@ async def test_ensure_prepared_puzzles_generates_dates_sequentially(monkeypatch)
     assert max_active == 1
 
 
+async def test_ensure_prepared_puzzles_continues_after_future_failure(monkeypatch) -> None:
+    start = date(2026, 8, 3)
+    failed_date = start + __import__("datetime").timedelta(days=1)
+    attempted: list[date] = []
+
+    async def fake_prepare(puzzle_date: date):
+        attempted.append(puzzle_date)
+        if puzzle_date == failed_date:
+            raise RuntimeError("provider unavailable")
+        return repo.DailyTriviaPuzzle(
+            puzzle_date=puzzle_date,
+            questions=[],
+            super_questions=[],
+            status="ready",
+            prepared_at=None,
+        )
+
+    mark_cooldown = AsyncMock()
+    monkeypatch.setattr(game, "prepare_daily_puzzle", fake_prepare)
+    monkeypatch.setattr(game, "_is_preparation_cooling_down", AsyncMock(return_value=False), raising=False)
+    monkeypatch.setattr(game, "_mark_preparation_cooldown", mark_cooldown, raising=False)
+
+    puzzles = await game.ensure_prepared_puzzles(now=datetime(2026, 8, 3))
+
+    expected_dates = [
+        start + __import__("datetime").timedelta(days=offset) for offset in range(repo.DAILY_TRIVIA_PREP_DAYS_AHEAD + 1)
+    ]
+    assert attempted == expected_dates
+    assert [puzzle.puzzle_date for puzzle in puzzles] == [day for day in expected_dates if day != failed_date]
+    mark_cooldown.assert_awaited_once_with(failed_date, "provider unavailable")
+
+
+async def test_ensure_prepared_puzzles_skips_future_date_in_cooldown(monkeypatch) -> None:
+    start = date(2026, 8, 3)
+    cooling_date = start + __import__("datetime").timedelta(days=2)
+    attempted: list[date] = []
+
+    async def fake_prepare(puzzle_date: date):
+        attempted.append(puzzle_date)
+        return repo.DailyTriviaPuzzle(
+            puzzle_date=puzzle_date,
+            questions=[],
+            super_questions=[],
+            status="ready",
+            prepared_at=None,
+        )
+
+    async def is_cooling(puzzle_date: date) -> bool:
+        return puzzle_date == cooling_date
+
+    monkeypatch.setattr(game, "prepare_daily_puzzle", fake_prepare)
+    monkeypatch.setattr(game, "_is_preparation_cooling_down", is_cooling, raising=False)
+
+    await game.ensure_prepared_puzzles(now=datetime(2026, 8, 3))
+
+    assert start in attempted
+    assert cooling_date not in attempted
+
+
+async def test_generate_question_lane_uses_approved_model_plan(monkeypatch) -> None:
+    valid_questions = [
+        {
+            "id": index,
+            "topic": "Наука",
+            "question": f"Вопрос {index}?",
+            "options": ["Верный", "A", "B", "C"],
+            "correct_index": 0,
+            "explanation": "Объяснение",
+            "key": {"subject": f"Объект {index}", "relation": "свойство", "answer": "Верный"},
+        }
+        for index in range(1, 6)
+    ]
+
+    class PlanRouter:
+        def __init__(self) -> None:
+            self.model_plan: list[str] = []
+
+        async def execute_gemini_model_plan(self, model_plan, history, *, parse_response, **kwargs):
+            self.model_plan = list(model_plan)
+            return parse_response(__import__("json").dumps(valid_questions, ensure_ascii=False))
+
+    router = PlanRouter()
+    monkeypatch.setattr(repo, "get_recent_bank_facts", AsyncMock(return_value=[]))
+
+    questions = await game.generate_question_lane(
+        date(2026, 8, 22),
+        lane="main",
+        model_name="gemini-3.7-flash",
+        router=router,
+    )
+
+    assert len(questions) == 5
+    assert router.model_plan == [
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+    ]
+
+
 async def test_generate_question_lane_preserves_tagged_provider_error(monkeypatch) -> None:
     router = AsyncMock()
-    router.get_response.return_value = (
-        tag_error(ErrorCode.GENERIC, "Gemini API: 404 NOT_FOUND for gemini-primary"),
-        None,
-    )
+
+    async def execute_plan(model_plan, history, *, parse_response, **kwargs):
+        return parse_response(tag_error(ErrorCode.GENERIC, "Gemini API: 404 NOT_FOUND for gemini-primary"))
+
+    router.execute_gemini_model_plan.side_effect = execute_plan
     monkeypatch.setattr(repo, "get_recent_bank_facts", AsyncMock(return_value=[]))
 
     with pytest.raises(RuntimeError, match="404 NOT_FOUND"):
@@ -113,7 +214,7 @@ async def test_generate_question_lane_preserves_tagged_provider_error(monkeypatc
             router=router,
         )
 
-    assert router.get_response.await_count == game.GENERATION_ATTEMPTS
+    router.execute_gemini_model_plan.assert_awaited_once()
 
 
 def test_trivia_similarity_module_exists() -> None:

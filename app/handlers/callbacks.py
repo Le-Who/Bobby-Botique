@@ -138,7 +138,7 @@ def register(application: Application) -> None:
     _add_fast_callback(application, toggle_ltm_callback, "^toggle_ltm$")
     _add_fast_callback(application, new_chat_callback, "^new_chat$")
     _add_fast_callback(application, model_menu_callback, "^model_menu$")
-    _add_fast_callback(application, help_callback, "^help$")
+    _add_fast_callback(application, help_callback, r"^help(?::(?:ru|en))?$")
     _add_fast_callback(application, start_menu_callback, "^start_menu$")
     _add_fast_callback(application, model_button_callback, "^model[_:]")
     _add_fast_callback(application, switch_model_callback, "^switch_model:")

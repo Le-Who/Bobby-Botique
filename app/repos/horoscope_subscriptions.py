@@ -52,54 +52,52 @@ async def upsert_horoscope_subscription(
     that delivery slot while preserving the other.
     """
     insert_sign = sign or "aries"
-    sets: list[str] = []
+    insert_columns = ["user_id", "sign"]
     params: list[Any] = [user_id, insert_sign]
-    idx = 3
+    update_sets: list[str] = []
 
     if sign is not None:
-        sets.append(f"sign = ${idx}")
-        params.append(sign)
-        idx += 1
+        update_sets.append("sign = EXCLUDED.sign")
 
     if time_today is not _MISSING:
-        sets.append(f"time_today = ${idx}")
+        insert_columns.append("time_today")
         params.append(_normalize_delivery_time(time_today))
-        idx += 1
+        update_sets.append("time_today = EXCLUDED.time_today")
 
     if time_tomorrow is not _MISSING:
-        sets.append(f"time_tomorrow = ${idx}")
+        insert_columns.append("time_tomorrow")
         params.append(_normalize_delivery_time(time_tomorrow))
-        idx += 1
+        update_sets.append("time_tomorrow = EXCLUDED.time_tomorrow")
 
     if utc_offset is not None:
-        sets.append(f"utc_offset = ${idx}")
+        insert_columns.append("utc_offset")
         params.append(utc_offset)
-        idx += 1
+        update_sets.append("utc_offset = EXCLUDED.utc_offset")
 
     if is_active is not None:
-        sets.append(f"is_active = ${idx}")
+        insert_columns.append("is_active")
         params.append(is_active)
-        idx += 1
-
-    sets.append("updated_at = CURRENT_TIMESTAMP")
+        update_sets.append("is_active = EXCLUDED.is_active")
 
     try:
-        if len(sets) == 1:
+        columns_sql = ", ".join(insert_columns)
+        values_sql = ", ".join(f"${index}" for index in range(1, len(params) + 1))
+        if not update_sets:
             # Only updated_at — just ensure row exists
             await db_query(
-                """
-                INSERT INTO horoscope_subscriptions (user_id, sign)
-                VALUES ($1, $2)
+                f"""
+                INSERT INTO horoscope_subscriptions ({columns_sql})
+                VALUES ({values_sql})
                 ON CONFLICT (user_id) DO NOTHING
                 """,
-                (user_id, insert_sign),
+                tuple(params),
             )
         else:
-            set_clause = ", ".join(sets)
+            set_clause = ", ".join([*update_sets, "updated_at = CURRENT_TIMESTAMP"])
             await db_query(
                 f"""
-                INSERT INTO horoscope_subscriptions (user_id, sign)
-                VALUES ($1, $2)
+                INSERT INTO horoscope_subscriptions ({columns_sql})
+                VALUES ({values_sql})
                 ON CONFLICT (user_id) DO UPDATE SET {set_clause}
                 """,
                 tuple(params),
