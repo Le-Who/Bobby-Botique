@@ -1,0 +1,179 @@
+name: Dependency Live Canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Same-repository dependency pull request number
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-live-canary-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Validate trusted dependency PR scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      base_sha: ${{ steps.pr.outputs.base_sha }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+    steps:
+      - name: Reject forks and non-dependency changes
+        id: pr
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PR_NUMBER);
+            if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
+              throw new Error("pr_number must be a positive integer");
+            }
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            if (pr.state !== "open") {
+              throw new Error("dependency canary requires an open pull request");
+            }
+            if (pr.head.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+              throw new Error("fork pull requests cannot receive dependency canary credentials");
+            }
+            if (pr.base.ref !== context.payload.repository.default_branch) {
+              throw new Error("dependency canary pull request must target the repository default branch");
+            }
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              ...context.repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+            const allowed = new Set(["pyproject.toml", "uv.lock"]);
+            const unexpected = files.map((file) => file.filename).filter((name) => !allowed.has(name));
+            if (unexpected.length > 0 || files.length === 0) {
+              throw new Error(`unexpected dependency PR files: ${unexpected.join(", ") || "none"}`);
+            }
+            core.setOutput("base_sha", pr.base.sha);
+            core.setOutput("head_sha", pr.head.sha);
+
+  canary:
+    name: Compare baseline and candidate live contracts
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: dependency-canary
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Check out trusted baseline
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.base_sha }}
+          path: baseline
+      - name: Check out validated candidate commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.head_sha }}
+          path: candidate
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install pinned uv
+        run: python -m pip install "uv==0.12.6"
+      - name: Mark candidate status pending
+        uses: actions/github-script@v7
+        env:
+          HEAD_SHA: ${{ needs.preflight.outputs.head_sha }}
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: process.env.HEAD_SHA,
+              state: "pending",
+              context: "dependency-live-canary",
+              description: "Protected baseline/candidate canary is running",
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+      - name: Sync baseline and candidate locks
+        run: |
+          (cd baseline && uv sync --locked --link-mode copy)
+          (cd candidate && uv sync --locked --link-mode copy)
+          baseline/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock baseline/uv.lock
+          candidate/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock candidate/uv.lock
+      - name: Run controlled baseline and candidate probes
+        id: canary
+        env:
+          CANARY_TELEGRAM_BOT_TOKEN: ${{ secrets.CANARY_TELEGRAM_BOT_TOKEN }}
+          CANARY_TELEGRAM_CHAT_ID: ${{ secrets.CANARY_TELEGRAM_CHAT_ID }}
+          CANARY_GEMINI_API_KEY: ${{ secrets.CANARY_GEMINI_API_KEY }}
+          CANARY_GEMINI_MODEL: ${{ vars.CANARY_GEMINI_MODEL || 'gemini-2.5-flash' }}
+          CANARY_TAVILY_API_KEY: ${{ secrets.CANARY_TAVILY_API_KEY }}
+          CANARY_TIMEOUT_SECONDS: "15"
+        run: |
+          set +e
+          mkdir -p canary-artifacts
+          baseline/.venv/bin/python baseline/scripts/dependency_live_canary.py run \
+            --label baseline --output canary-artifacts/baseline.json
+          baseline_exit=$?
+          candidate/.venv/bin/python baseline/scripts/dependency_live_canary.py run \
+            --label candidate --output canary-artifacts/candidate.json
+          candidate_exit=$?
+          if [ "$baseline_exit" -ne 0 ] || [ "$candidate_exit" -ne 0 ]; then
+            exit_code=70
+          else
+            baseline/.venv/bin/python baseline/scripts/dependency_live_canary.py compare \
+              --baseline canary-artifacts/baseline.json \
+              --candidate canary-artifacts/candidate.json \
+              --output canary-artifacts/comparison.json
+            exit_code=$?
+          fi
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload redacted canary evidence
+        id: evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-live-canary-${{ needs.preflight.outputs.head_sha }}
+          path: canary-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish final candidate status
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          HEAD_SHA: ${{ needs.preflight.outputs.head_sha }}
+          CANARY_EXIT: ${{ steps.canary.outputs.exit_code || '99' }}
+          EVIDENCE_OUTCOME: ${{ steps.evidence.outcome }}
+        with:
+          script: |
+            const fs = require("fs");
+            const exitCode = Number(process.env.CANARY_EXIT);
+            const passed = exitCode === 0 && process.env.EVIDENCE_OUTCOME === "success";
+            let readyForReview = false;
+            if (fs.existsSync("canary-artifacts/comparison.json")) {
+              const comparison = JSON.parse(fs.readFileSync("canary-artifacts/comparison.json", "utf8"));
+              readyForReview = comparison.ready_for_review === true;
+            }
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: process.env.HEAD_SHA,
+              state: passed ? "success" : "failure",
+              context: "dependency-live-canary",
+              description: passed && readyForReview
+                ? "Baseline and candidate live contracts passed"
+                : "Dependency live canary did not validate the candidate",
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+      - name: Fail closed on any non-passing comparison
+        if: always() && steps.canary.outputs.exit_code != '0'
+        run: exit "${{ steps.canary.outputs.exit_code }}"

@@ -71,6 +71,8 @@ artifacts/perf/*.log
 artifacts/perf/*.json
 artifacts/perf/parse_*.py
 artifacts/perf/out*.log
+artifacts/dependency-frontier/
+production-requirements.txt
 
 # ── OS Files ──────────────────────────────────────────────────
 Thumbs.db

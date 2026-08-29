@@ -67,6 +67,7 @@ data/
 output/
 verification/
 artifacts/perf/
+artifacts/dependency-frontier/
 northflank.yaml
 docker-compose*.yml
 

@@ -689,6 +689,31 @@ Relational knowledge is stored as a directed graph in dual tables:
 | `uv run --locked python scripts/check_encoding.py` | Detect UTF-8 corruption in protected documentation. |
 | `uv export --locked --no-dev --output-file production-requirements.txt` | Export the exact production graph for external audit tools. |
 
+## Dependency maintenance
+
+`pyproject.toml` is the only manually edited dependency manifest and `uv.lock` is the committed exact graph. Use the pinned tool version for every lock operation:
+
+```bash
+python -m pip install "uv==0.12.6"
+uv lock --check
+uv sync --locked
+uv run --locked python scripts/dependency_frontier.py audit
+```
+
+The `Dependency Frontier Audit` workflow wakes weekly but a fixed UTC epoch gate permits scheduled resolution only every 14 days; a manual dispatch runs immediately. It resolves the policy-constrained and unconstrained stable frontiers twice for Linux production and Windows development with a seven-day release cooldown. Its report is discovery evidence, not proof of compatibility. Dependabot groups post-1.0 patch/minor updates, while major and current `0.x` updates remain separate and are never auto-merged.
+
+The manual `Dependency Live Canary` workflow accepts a same-repository dependency PR that changes only `pyproject.toml` and `uv.lock`. The protected `dependency-canary` GitHub Environment must require a reviewer and provide dedicated, low-quota credentials:
+
+| Environment entry | Purpose |
+| --- | --- |
+| `CANARY_TELEGRAM_BOT_TOKEN` | Dedicated bot that can access only the canary chat. |
+| `CANARY_TELEGRAM_CHAT_ID` | Dedicated chat where one silent tagged message is sent and deleted. |
+| `CANARY_GEMINI_API_KEY` | Revocable, low-quota Gemini canary key. |
+| `CANARY_TAVILY_API_KEY` | Revocable, low-quota Tavily canary key. |
+| `CANARY_GEMINI_MODEL` | Optional environment variable; defaults to `gemini-2.5-flash`. |
+
+Baseline and candidate probes run in one approved window. Missing credentials, cleanup failure, baseline failure, transient provider ambiguity, cancellation, or any skipped comparison cannot publish a passing candidate status.
+
 ## API / Events / Contracts
 
 **Telegram Commands:**

@@ -108,7 +108,7 @@ Stable, non-yanked releases newer than the cutoff are deliberately excluded. Thi
 4. Export and inspect the baseline graph.
 5. Generate a policy input retaining all direct constraints.
 6. Generate a frontier input removing only registry version specifiers. Preserve extras and markers exactly.
-7. Compile both inputs with a fresh resolver cache view, the same absolute cutoff, Python 3.14, universal markers, and `resolution=highest`.
+7. Compile both inputs separately for the declared Linux production and Windows development targets with the same absolute cutoff, Python 3.14, and `resolution=highest`; repeat every platform resolution and compare normalized results.
 8. Parse exact direct and transitive versions from the generated requirements-format locks.
 9. Classify each direct dependency as unchanged, update-within-policy, blocked-by-policy, major frontier update, or unresolved.
 10. Preserve the complete candidate locks as workflow artifacts so validation jobs install the exact graphs that were reported.
@@ -199,7 +199,7 @@ The live sequence uses the same minimal fixtures for baseline and candidate:
 
 1. Telegram `getMe`, send one uniquely tagged message to a dedicated canary chat, then delete it.
 2. Gemini sends one small deterministic prompt and validates a minimal response contract.
-3. Tavily sends one low-cost query and validates the normalized response contract.
+3. Tavily sends one low-cost query through the same `httpx` request contract used by the application and validates the normalized response contract.
 
 Every call has a short timeout, request identifier, and at most one retry for errors already classified as transient. Cleanup runs in `finally` blocks. Failure to clean up is a failure.
 

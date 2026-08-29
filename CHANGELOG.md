@@ -13,6 +13,7 @@ Format is optimized for agent-parseable context.
 - Removed the unused `tavily-python` SDK; production Tavily traffic already uses the repository's tested `httpx` adapter, so retaining the SDK added supply-chain surface without exercising application behavior.
 - Added focused offline boundary tests for the third-party APIs used by Telegram, Gemini, Quart/Hypercorn, Pydantic, cryptography, document/image processing, serialization, astrology, Redis, and asyncpg.
 - Added a digest-pinned production base image, exact installed-versus-lock verification, an offline real `/health` container smoke, CycloneDX SBOM artifacts, and a license inventory that reports unknowns and fails only against an explicit repository denylist.
+- Added a protected, manual baseline-versus-candidate live canary for same-repository dependency PRs. It uses dedicated Telegram/Gemini/Tavily credentials only in the probe step, deletes the Telegram message in cleanup, records redacted evidence, distinguishes configuration/contract/transient failures, and publishes success only after a fully passing comparison.
 
 ## [Unreleased] - 2026-08-29 - Trivia Resilience and Admin Observability
 
