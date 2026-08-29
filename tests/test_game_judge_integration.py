@@ -15,6 +15,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import app.games.judge as judge_module
+from app.games.ai_budget import reset_budget_state_for_tests
 from app.games.judge import GuessJudgement, _race_generate, judge_guess
 
 # ── Shared stubs ──────────────────────────────────────────────────────────────
@@ -29,6 +31,15 @@ _HOT = GuessJudgement(status="hot", score=0.85, hint="Горячо 🔥")
 
 @pytest.mark.asyncio
 class TestJudgeGuessPipeline:
+    @pytest.fixture(autouse=True)
+    def _reset_judge_runtime_state(self):
+        """Keep process-global RPM and circuit state out of test ordering."""
+        reset_budget_state_for_tests()
+        judge_module._primary_circuit_open_until = 0.0
+        yield
+        reset_budget_state_for_tests()
+        judge_module._primary_circuit_open_until = 0.0
+
     @pytest.fixture(autouse=True)
     def _patch_cache(self):
         """Default: cache always misses; cache_judgement is a no-op.
