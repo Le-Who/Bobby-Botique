@@ -1,5 +1,5 @@
 # Production Dockerfile
-FROM python:3.14-slim
+FROM python:3.14-slim@sha256:cae66f2ef0ec51a9891263eeee7f987dacf0a9879e8aa9353d5606e0530619a5
 
 # Install minimal system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -10,10 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies first (layer caching)
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+# Install the exact production graph from the committed lockfile.
+RUN python -m pip install --no-cache-dir "uv==0.12.6"
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project --link-mode copy
 
 # Copy application code
 COPY . .
@@ -31,6 +31,7 @@ RUN chmod +x /app/start.sh \
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
+ENV PATH="/app/.venv/bin:$PATH"
 
 USER app
 

@@ -258,13 +258,12 @@ gemaibotv2/
 ├── scripts/migrations/           ← 73 numbered SQL migration files (through 069)
 ├── tests/                        ← 246 pytest test files
 ├── docs/                         ← This file + extended documentation
-├── .github/workflows/ci.yml     ← CI: Ruff/Mypy/audit gates; unit/E2E → pgvector integration
+├── .github/workflows/ci.yml     ← CI: locked Ruff/Mypy/audit gates; unit/E2E → pgvector + Redis integration
 ├── Dockerfile                    ← Production container (Python 3.14-slim, non-root)
 ├── docker-compose.yml            ← Local compose (resource limits, health checks, legacy)
 ├── .github/workflows/deploy.yml  ← Primary Production 3-container Stack (Bot + API Server + Sidecar)
-├── requirements.txt              ← Production Python dependencies
-├── requirements-dev.txt          ← Development/test dependencies
-├── pyproject.toml                ← Ruff + Mypy configuration
+├── pyproject.toml                ← Direct production/dev dependencies and tool policy
+├── uv.lock                       ← Exact reproducible production/dev dependency graph
 └── start.sh                      ← Startup script with env validation
 ```
 
@@ -484,12 +483,12 @@ Tests are organized by module, with `test_*.py` naming. Integration tests are ma
 
 ```bash
 # Unit and E2E without a live database
-python -m pytest tests/ --ignore=tests/integration -m "not integration" --override-ini="addopts="
+uv run --locked pytest tests/ --ignore=tests/integration -m "not integration" --override-ini="addopts="
 
 # Real database integration, serially
-python -m pytest tests/ -m "integration" -n 0 --override-ini="addopts="
+uv run --locked pytest tests/ -m "integration" -n 0 --override-ini="addopts="
 
-python -m ruff check .
-python -m ruff format --check .
-python -m mypy app bot.py
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked mypy app bot.py
 ```

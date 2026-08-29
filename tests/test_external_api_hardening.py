@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
@@ -478,12 +479,134 @@ async def test_pollinations_transcription_error_log_does_not_include_upstream_bo
 
 
 @pytest.mark.asyncio
+async def test_imagen_uses_current_gemini_image_generation_contract(monkeypatch):
+    import base64
+
+    from google import genai
+    from google.genai import types
+
+    from app.handlers.cmd_image import _is_imagen_model
+    from app.providers import imagen_provider
+
+    requests: list[dict[str, object]] = []
+
+    async def handle_request(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "interaction-test",
+                "status": "completed",
+                "model": "gemini-3.1-flash-image",
+                "steps": [
+                    {
+                        "type": "model_output",
+                        "content": [
+                            {
+                                "type": "image",
+                                "data": base64.b64encode(b"current-image-bytes").decode("ascii"),
+                                "mime_type": "image/png",
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+    client = genai.Client(
+        api_key="test-key",
+        http_options=types.HttpOptions(async_client_args={"transport": httpx.MockTransport(handle_request)}),
+    )
+    monkeypatch.setattr(imagen_provider.settings, "GEMINI_API_KEYS", ["image-api-key"])
+    monkeypatch.setattr(imagen_provider.settings, "IMAGE_GEN_MAX_RETRIES", 1)
+    monkeypatch.setattr(imagen_provider, "_consume_user_daily_quota", AsyncMock(return_value=True))
+    monkeypatch.setattr(imagen_provider, "_get_key_usage", AsyncMock(return_value=0))
+    increment = AsyncMock()
+    monkeypatch.setattr(imagen_provider, "_increment_key_usage", increment)
+    monkeypatch.setattr(imagen_provider, "get_cached_genai_client", lambda _key: client)
+
+    try:
+        result = await imagen_provider.ImagenProvider().generate(
+            "cat",
+            model="imagen-4.0-generate-001",
+            aspect_ratio="16:9",
+            user_id=42,
+        )
+    finally:
+        await client.aio.aclose()
+
+    assert result.success is True
+    assert result.images == [b"current-image-bytes"]
+    assert result.model_used == "gemini-3.1-flash-image"
+    assert _is_imagen_model("gemini-3.1-flash-image") is True
+    assert _is_imagen_model("imagen-4.0-generate-001") is True
+    assert _is_imagen_model("imagen-4.0-generate-preview-06-06") is True
+    assert requests == [
+        {
+            "model": "gemini-3.1-flash-image",
+            "input": "cat",
+            "store": False,
+            "response_format": {
+                "aspect_ratio": "16:9",
+                "type": "image",
+            },
+        }
+    ]
+    assert requests[0]["response_format"] == {
+        "type": "image",
+        "aspect_ratio": "16:9",
+    }
+    increment.assert_awaited_once_with("image-api-key")
+
+
+@pytest.mark.asyncio
+async def test_imagen_classifies_interactions_rate_limit(monkeypatch):
+    from google import genai
+    from google.genai import types
+
+    from app.providers import imagen_provider
+
+    async def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={
+                "error": {
+                    "code": 429,
+                    "message": "quota exhausted",
+                    "status": "RESOURCE_EXHAUSTED",
+                }
+            },
+        )
+
+    client = genai.Client(
+        api_key="test-key",
+        http_options=types.HttpOptions(async_client_args={"transport": httpx.MockTransport(handle_request)}),
+    )
+    monkeypatch.setattr(imagen_provider.settings, "GEMINI_API_KEYS", ["image-api-key"])
+    monkeypatch.setattr(imagen_provider.settings, "IMAGE_GEN_MAX_RETRIES", 1)
+    monkeypatch.setattr(imagen_provider, "_consume_user_daily_quota", AsyncMock(return_value=True))
+    monkeypatch.setattr(imagen_provider, "_get_key_usage", AsyncMock(return_value=0))
+    increment = AsyncMock()
+    monkeypatch.setattr(imagen_provider, "_increment_key_usage", increment)
+    monkeypatch.setattr(imagen_provider, "get_cached_genai_client", lambda _key: client)
+
+    try:
+        result = await imagen_provider.ImagenProvider().generate("cat", user_id=42)
+    finally:
+        await client.aio.aclose()
+
+    assert result.success is False
+    assert result.error_message == "quota"
+    increment.assert_awaited_once_with("image-api-key")
+
+
+@pytest.mark.asyncio
 async def test_imagen_error_is_sanitized_in_logs_and_user_result(monkeypatch, caplog):
     from app.providers import imagen_provider
 
     upstream_secret = "imagen-upstream-secret-357c"
     client = MagicMock()
-    client.aio.models.generate_images = AsyncMock(side_effect=RuntimeError(upstream_secret))
+    client.aio.interactions.create = AsyncMock(side_effect=RuntimeError(upstream_secret))
     monkeypatch.setattr(imagen_provider.settings, "GEMINI_API_KEYS", ["imagen-api-key-raw"])
     monkeypatch.setattr(imagen_provider.settings, "IMAGE_GEN_MAX_RETRIES", 1)
     monkeypatch.setattr(imagen_provider, "_consume_user_daily_quota", AsyncMock(return_value=True))

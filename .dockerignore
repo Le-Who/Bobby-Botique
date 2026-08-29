@@ -28,7 +28,6 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-uv.lock
 
 # ── Test & Coverage (not needed in prod) ──────────────────────
 tests/
@@ -68,6 +67,7 @@ data/
 output/
 verification/
 artifacts/perf/
+artifacts/dependency-frontier/
 northflank.yaml
 docker-compose*.yml
 

@@ -60,7 +60,7 @@ Additional Codex and API capacity would be used for maintainer work on this publ
 - **Agentic Web Browsing (`??` prefix)**: Deep research mode utilizing Tavily API and Jina Reader API for multi-step query decomposition, autonomous site triage, content extraction, and dynamic self-correction loops. Hardened against memory leaks caused by gRPC protobuf cyclic references during long-running iterations (including threaded, non-blocking asynchronous Garbage Collection). Per-call API key usage tracking ensures accurate quota accounting across all LLM invocations within the agentic loop. Features an intelligent **Model Fallback Cascade** (automatically retries failed LLM requests or 503 errors using the next most capable model according to the capability tier rankings), parallel tool execution (`asyncio.gather` with semaphore), two-layer page content caching (session + global, 30-min TTL), source quality scoring (domain classification, freshness labels, citation validation), adaptive iteration budget (query deduplication, configurable token cap and wall-clock timeout), and rich streaming progress with search queries and iteration counters.
 - **Image Processing Pipeline**: Context-aware adaptive resize (`TASK_DIMS`: describe 1280px, search 768px, OCR 2048px) governed by **Shannon Entropy Analysis** (dynamically boosts +50% dimension for text-dense screenshots while reducing -25% for simple photos, optimizing token usage). Uses a 3-stage compression pipeline (thumbnail → JPEG q85 → fallback q75/65), TTL-cached results (`cache_key` by `file_unique_id`), and `TaggedImage` metadata carrier across handler→provider boundary to eliminate redundant recompression. Media group downloads use `Semaphore(5)` with debounced progress indicator.
 - **Image Generation (Multi-Provider)**: Text-to-image generation via `/draw <prompt>` or via **implicit natural language triggers** (e.g., *"Бот, нарисуй кота"* / *"сгенерируй картинку леса"*). Uses a multi-layered Regex heuristics engine to isolate the artistic prompt without leaking pronouns or conversational fillers (e.g. extracts "леса" from "сгенерируй мне пожалуйста картинку леса"). Implicit triggers are natively intercepted in both text and voice channels. Voice requests trigger an **Interactive Pre-Canvas Confirmation** where the parsed text and generation keyboard are rendered interactively before consuming API resources. Uses a Factory Pattern for provider routing:
-  - **Google Imagen 4** (`imagen-4.0-fast-generate-001`, etc.): Triggered when the user requests an `imagen-*` model and `GEMINI_API_KEYS` are available. Features an **isolated per-key RPD budget** to protect chat quota.
+  - **Google Gemini native image generation** (`gemini-3.1-flash-image`): Uses the current Interactions API image contract when `GEMINI_API_KEYS` are available. Persisted selections containing a retired `imagen-4.0-*-generate-001` ID are normalized to the current model. The provider keeps an **isolated per-key RPD budget** to protect chat quota.
   - **Pollinations.ai** (Models: `✨ Flux`, `⚡ Z-Image`, etc.): The primary provider for free-tier keys, capable of operating completely without an API key. Uses robust transport layer fallback: attempts OpenAI-compatible `POST` for structured errors, failing over to a direct keyless `GET` stream with `Content-Type: image/*` validation if the primary endpoint throws budget exhaustion (402/401) or 5xx timeouts. Includes user-friendly messaging for 429 rate limits.
   - **FreeTheAI Router** (Models: hr/gpt_image_2, hr/nano_banana_2, etc.): Triggered for hr/* prefix models, acting as a gateway to advanced external image models.
   - **Interactive Canvas UX**: Features full, unrestricted prompt display (up to 800 characters) across the entire UI. Heartbeat animation (`ChatAction.UPLOAD_PHOTO` refreshed every 4.5 s) during generation, followed by an inline keyboard for one-tap regeneration, aspect ratio switching (1:1, 3:4, 4:3, 9:16, 16:9), and dynamic model switching. Includes a native "✏️  Изменить промпт" pasteboard workflow for frictionless prompt editing. The model selection buttons are auto-generated from environment variables (`IMAGE_MODELS`) with smart column-balancing.
@@ -245,9 +245,10 @@ graph TD;
 
 1. Clone the repository.
 2. Ensure Python 3.14-slim and PostgreSQL (with `pgvector` extension) are installed.
-3. Install dependencies:
+3. Install the pinned package manager and synchronize the committed dependency graph:
    ```bash
-   pip install -r requirements.txt
+   python -m pip install "uv==0.12.6"
+   uv sync --locked
    ```
 4. Copy `.env.example` to `.env` (if applicable) and fill in necessary configuration.
 5. Create PostgreSQL database with `pgvector` extension. Pending numbered SQL migrations from `scripts/migrations/` are applied automatically on startup; migration files are kept idempotent so fresh deploys and repeated bootstrap runs remain safe.
@@ -682,11 +683,57 @@ Relational knowledge is stored as a directed graph in dual tables:
 
 | Command | Purpose |
 | --- | --- |
-| `python -m ruff check .` | Run the repository-wide lint rules. |
-| `python -m ruff format --check .` | Enforce the same formatting gate used by CI. |
-| `python -m mypy app bot.py` | Type-check the production Python surface. |
-| `python scripts/check_encoding.py` | Detect UTF-8 corruption in protected documentation. |
-| `pip-audit -r requirements.txt --progress-spinner off` | Audit production dependencies. |
+| `uv run --locked ruff check .` | Run the repository-wide lint rules. |
+| `uv run --locked ruff format --check .` | Enforce the same formatting gate used by CI. |
+| `uv run --locked mypy app bot.py` | Type-check the production Python surface. |
+| `uv run --locked python scripts/check_encoding.py` | Detect UTF-8 corruption in protected documentation. |
+| `uv export --locked --no-dev --output-file production-requirements.txt` | Export the exact production graph for external audit tools. |
+
+## Dependency maintenance
+
+`pyproject.toml` is the only manually edited dependency manifest and `uv.lock` is the committed exact graph. Use the pinned tool version for every lock operation:
+
+```bash
+python -m pip install "uv==0.12.6"
+uv lock --check
+uv sync --locked
+uv run --locked python scripts/dependency_frontier.py audit
+```
+
+The `Dependency Frontier Audit` workflow wakes weekly but a fixed UTC epoch gate permits scheduled resolution only every 14 days; a manual dispatch runs immediately. It resolves the policy-constrained and unconstrained stable frontiers twice for Linux production and Windows development with a seven-day release cooldown. Its report is discovery evidence, not proof of compatibility. Dependabot groups post-1.0 patch/minor updates, while major and current `0.x` updates remain separate and are never auto-merged.
+
+The manual `Dependency Live Canary` workflow accepts a same-repository dependency PR that changes only `pyproject.toml` and `uv.lock`. Before the protected job is entered, an unprivileged job rejects non-PyPI/direct sources, disables source builds, installs both locked graphs, and verifies exact environment parity. Both checkouts discard persisted Git credentials. The protected job repeats the wheel-only locked installation without secrets; dedicated credentials exist only in the probe step. The `dependency-canary` GitHub Environment must require a reviewer and provide dedicated, low-quota credentials:
+
+| Environment entry | Purpose |
+| --- | --- |
+| `CANARY_TELEGRAM_BOT_TOKEN` | Dedicated bot that can access only the canary chat. |
+| `CANARY_TELEGRAM_CHAT_ID` | Dedicated chat where one silent tagged message is sent and deleted. |
+| `CANARY_GEMINI_API_KEY` | Revocable, low-quota Gemini canary key. |
+| `CANARY_TAVILY_API_KEY` | Revocable, low-quota Tavily canary key. |
+| `CANARY_GEMINI_MODEL` | Optional environment variable; defaults to `gemini-2.5-flash`. |
+
+Baseline and candidate probes run in one approved window. Missing credentials, cleanup failure, baseline failure, transient provider ambiguity, cancellation, or any skipped comparison cannot publish a passing candidate status.
+
+The dedicated canary is optional infrastructure, not a substitute for production verification. If no separate canary bot exists, do not treat that gate as passed or reuse the production bot token in it. For a deliberate production dependency trial, keep the dependency changes in one reviewed PR so CI and the running bot exercise the exact combined graph. The deploy workflow then:
+
+1. serializes production transitions without cancelling an in-flight deploy;
+2. proves that the successful CI commit belongs to exactly one merged same-repository PR;
+3. allows automatic rollback only when both dependency manifests and an explicit set of non-runtime review files changed;
+4. preserves the current `tg-bot` container and independently verifies that its image SHA equals the PR base SHA;
+5. starts the candidate, checks `/health`, runs enabled natal maintenance, and only then deletes the preserved container;
+6. restores and health-checks the previous container after an eligible candidate failure while leaving the deployment failed for investigation.
+
+This rollback protects startup and health-gated failures. It cannot detect a semantically wrong provider response after `/health` succeeds, and it deliberately refuses automatic rollback when code or migrations changed. After deploying a frontier trial, exercise the real bot during a controlled low-traffic window:
+
+- ordinary text in both streaming and non-streaming paths;
+- provider fallback plus agentic/web search;
+- photo and document understanding;
+- voice transcription and TTS;
+- `/draw` image generation and `/live` audio when enabled;
+- memory write/read, a Redis-backed callback or game action, and an admin/background test send;
+- structured logs, provider error rates, duplicate replies, stuck streams, and dropped updates.
+
+Any functional regression, schema/type error from a provider, unexplained error-rate increase, duplicate delivery, or stalled response rejects the candidate even when all automated checks passed. Keep the PR under observation for 24–48 hours; a post-health functional failure requires an explicit redeploy of the recorded base SHA because the workflow has no reliable signal for automatic application-level rollback.
 
 ## API / Events / Contracts
 

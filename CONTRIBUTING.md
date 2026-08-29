@@ -12,9 +12,8 @@ Thanks for considering a contribution to GemAI Bot v2. This repository is mainta
 ## Local Setup
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
-python -m pip install -r requirements.txt -r requirements-dev.txt
+python -m pip install "uv==0.12.6"
+uv sync --locked
 ```
 
 For full integration coverage, configure a test PostgreSQL database through `TEST_DATABASE_URL`. Unit tests should not require live Telegram, Gemini, OpenAI, Pollinations, Tavily, Jina, WeatherAPI, or other external provider calls.
@@ -24,14 +23,14 @@ For full integration coverage, configure a test PostgreSQL database through `TES
 Run the narrowest test that proves your change first, then run broader checks before requesting review:
 
 ```bash
-python -m ruff check .
-python -m pytest tests/ --ignore=tests/integration -m "not integration" --override-ini="addopts="
+uv run --locked ruff check .
+uv run --locked pytest tests/ --ignore=tests/integration -m "not integration" --override-ini="addopts="
 ```
 
 For database, WebSocket, provider-routing, or migration changes, also run the relevant integration tests with `TEST_DATABASE_URL` configured:
 
 ```bash
-python -m pytest tests/ --override-ini="addopts="
+uv run --locked pytest tests/ --override-ini="addopts="
 ```
 
 ## Pull Request Checklist

@@ -3,6 +3,25 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-08-29 - Reproducible Dependency Frontier
+
+### 📦 Dependency resolution and verification
+
+- Replaced independent requirements manifests with PEP 621 dependencies in `pyproject.toml` and a committed `uv.lock`; local, CI, audit, and production-container installs now use the same exact graph through uv 0.12.6.
+- Added a read-only dependency-frontier audit that resolves both policy-constrained and unconstrained stable versions twice for Linux production and Windows development, applies a seven-day release cooldown, rejects source-only candidates, and reports policy-blocked major upgrades without presenting cooldown downgrades as updates.
+- Added contract coverage for dependency metadata, deterministic resolution, conservative pre-1.0 classification, platform enforcement, truthful terminal states, locked CI installation, and locked production-image construction.
+- Confined pytest discovery to the repository `tests/` tree. This prevents unpacked SDK audit artifacts from injecting their upstream test suites into project results and producing misleading pass/fail counts.
+- Removed the unused `tavily-python` SDK; production Tavily traffic already uses the repository's tested `httpx` adapter, so retaining the SDK added supply-chain surface without exercising application behavior.
+- Added focused offline boundary tests for the third-party APIs used by Telegram, Gemini, Quart/Hypercorn, Pydantic, cryptography, document/image processing, serialization, astrology, Redis, and asyncpg.
+- Added a digest-pinned production base image, exact installed-versus-lock verification, an offline real `/health` container smoke, CycloneDX SBOM artifacts, and a license inventory that reports unknowns and fails only against an explicit repository denylist.
+- Added a protected, manual baseline-versus-candidate live canary for same-repository dependency PRs. An unprivileged pre-canary job now rejects non-PyPI/direct lock sources, source builds, environment drift, and persisted checkout credentials before protected execution. The canary uses dedicated Telegram/Gemini/Tavily credentials only in the probe step, deletes the Telegram message in cleanup, records redacted evidence, distinguishes configuration/contract/transient failures, and publishes success only after a fully passing comparison.
+- Updated the first production frontier trial as one attributable dependency PR: `google-genai` 2.19, `structlog` 26.1, and the removal of unused `rich` from the production graph. `rich` 15 remains lockable only through development tooling and is not installed by the production image.
+- Audited the `google-genai` 1.75→2.19 delta against Google's official changelog, migration/reference documentation, and both exact wheel APIs. The breaking v2 Interactions API changes do not touch the project's `generate_content`, streaming, embedding, Live, TTS, or manual function-call paths; focused contract tests exercise those boundaries on 2.19.
+- Replaced the retired Imagen 4 model IDs and deprecated `generate_images()` path with `gemini-3.1-flash-image` through the current Interactions API. Legacy persisted `imagen-*` selections remain accepted as aliases, requests opt out of server-side storage, and real SDK transport tests verify the HTTP payload, base64 `output_image` extraction, manual function-call passthrough, and the separate Interactions error hierarchy used for rate limits.
+- Hardened deployment trials so production transitions cannot cancel one another. The deploy classifier fails closed unless one same-repository merged PR changes both dependency manifests and only explicitly non-runtime review files; the VPS independently requires the running image SHA to equal the PR base SHA before automatic rollback is armed.
+- Preserved the previous bot container until the candidate passes health and optional natal maintenance. A failed eligible dependency candidate restores and health-checks the previous container while still failing the deployment visibly; an ineligible change keeps the stopped container for manual recovery without claiming that rollback across possible migrations is safe.
+- Because this first trial also contains the runtime Imagen compatibility correction, its deployment is intentionally ineligible for automatic rollback under the fail-closed classifier. The previous container is still preserved for explicit recovery; subsequent manifest-only frontier trials can use the automatic path.
+
 ## [Unreleased] - 2026-08-29 - Trivia Resilience and Admin Observability
 
 ### 🗄️ Migration portability and schema safety
@@ -67,7 +86,7 @@ Format is optimized for agent-parseable context.
 - `python -m ruff check .`
 - `python -m ruff format --check .`
 - `python -m mypy app bot.py`
-- `pip-audit -r requirements.txt --progress-spinner off`
+- `uv export --locked --no-dev --output-file production-requirements.txt` followed by `uv run --locked pip-audit -r production-requirements.txt --progress-spinner off`
 - `python scripts/check_encoding.py`
 
 ## [Unreleased] - 2026-08-25 - Long-Term Memory Safety Hardening

@@ -56,11 +56,16 @@ DEFAULT_DAILY_LIMITS_BY_MODEL: dict[str, int] = {
     GEMINI_GROUNDING_FALLBACK_MODEL: 500,
 }
 
-# --- Imagen 4 model identifiers (AI Studio / Gemini API) ---
-IMAGEN_MODEL_FAST: str = "imagen-4.0-fast-generate-001"
-IMAGEN_MODEL_BASE: str = "imagen-4.0-generate-001"
-IMAGEN_MODEL_ULTRA: str = "imagen-4.0-ultra-generate-001"
-IMAGEN_MODELS_ORDERED: list[str] = [IMAGEN_MODEL_FAST, IMAGEN_MODEL_BASE, IMAGEN_MODEL_ULTRA]
+# --- Gemini native image generation (AI Studio / Gemini API) ---
+# Imagen 4 model IDs were retired on 2026-08-17.  Keep their identifiers only
+# as input aliases so persisted draw-state and old callback payloads continue to
+# work after the provider moved to the current Interactions image contract.
+GEMINI_IMAGE_MODEL: str = "gemini-3.1-flash-image"
+LEGACY_IMAGEN_MODELS: tuple[str, ...] = (
+    "imagen-4.0-fast-generate-001",
+    "imagen-4.0-generate-001",
+    "imagen-4.0-ultra-generate-001",
+)
 
 # --- Gemini Live API (real-time bidirectional audio) ---
 # The current deployed live path in this repo uses the Gemini GenAI Live API.
