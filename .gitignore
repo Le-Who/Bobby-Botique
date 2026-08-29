@@ -9,7 +9,6 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-uv.lock
 
 # ── Test & Coverage Artifacts ─────────────────────────────────
 .coverage
