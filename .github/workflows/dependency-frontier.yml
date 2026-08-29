@@ -1,0 +1,146 @@
+name: Dependency Frontier Audit
+
+on:
+  schedule:
+    # GitHub cron has no exact biweekly primitive; the fixed epoch gate below does.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-frontier-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Resolve dependency frontier
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      executed: ${{ steps.cadence.outputs.due }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install pinned uv
+        run: python -m pip install "uv==0.12.6"
+      - name: Sync locked audit environment
+        run: uv sync --locked --link-mode copy
+      - name: Enforce exact fourteen-day cadence
+        id: cadence
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "due=true" >> "$GITHUB_OUTPUT"
+          elif uv run --locked python scripts/dependency_frontier.py schedule-due \
+            --date "$(date -u +%F)" --epoch 2026-09-07; then
+            echo "due=true" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            if [ "$status" -eq 3 ]; then
+              echo "due=false" >> "$GITHUB_OUTPUT"
+              echo "Weekly wakeup is outside the fixed fourteen-day window." >> "$GITHUB_STEP_SUMMARY"
+            else
+              exit "$status"
+            fi
+          fi
+      - name: Verify baseline lock
+        if: steps.cadence.outputs.due == 'true'
+        run: |
+          uv lock --check
+          uv pip check
+      - name: Resolve policy and unconstrained frontiers
+        if: steps.cadence.outputs.due == 'true'
+        run: >-
+          uv run --locked python scripts/dependency_frontier.py audit
+          --output-dir artifacts/dependency-frontier
+          --base-sha "${{ github.sha }}"
+      - name: Publish report summary
+        if: steps.cadence.outputs.due == 'true' && always()
+        run: |
+          if [ -f artifacts/dependency-frontier/dependency-frontier.md ]; then
+            cat artifacts/dependency-frontier/dependency-frontier.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload reproducibility artifacts
+        if: steps.cadence.outputs.due == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-frontier-${{ github.run_id }}
+          path: artifacts/dependency-frontier/
+          if-no-files-found: warn
+          retention-days: 30
+
+  track-frontier:
+    name: Track actionable frontier
+    needs: audit
+    if: needs.audit.result == 'success' && needs.audit.outputs.executed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dependency-frontier-${{ github.run_id }}
+          path: artifacts/dependency-frontier
+      - name: Create, update, or close the single frontier issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const report = JSON.parse(
+              fs.readFileSync("artifacts/dependency-frontier/dependency-frontier.json", "utf8"),
+            );
+            const title = "[dependency-frontier] Actionable dependency frontier";
+            const actionable = report.dependencies.filter((row) => row.actionable);
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+            const tracked = issues.filter((issue) => !issue.pull_request && issue.title === title);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            if (actionable.length > 0) {
+              const rows = actionable.map(
+                (row) => `- \`${row.name}\`: ${row.locked.join(", ") || "—"} → ${row.frontier.join(", ") || "—"} (${row.classification})`,
+              );
+              const body = [
+                "The read-only frontier audit found dependency versions that require maintainer review.",
+                "",
+                ...rows,
+                "",
+                `Audit run: ${runUrl}`,
+                `Base SHA: \`${report.base_sha}\``,
+                `Cutoff: \`${report.cutoff}\``,
+                "",
+                "This issue is discovery evidence, not a compatibility claim. Dependency PRs must pass every required gate and are never merged automatically.",
+              ].join("\n");
+              if (tracked.length === 0) {
+                await github.rest.issues.create({ ...context.repo, title, body });
+              } else {
+                await github.rest.issues.update({ ...context.repo, issue_number: tracked[0].number, body });
+                for (const duplicate of tracked.slice(1)) {
+                  await github.rest.issues.update({
+                    ...context.repo,
+                    issue_number: duplicate.number,
+                    state: "closed",
+                    state_reason: "not_planned",
+                  });
+                }
+              }
+            } else {
+              for (const issue of tracked) {
+                await github.rest.issues.update({
+                  ...context.repo,
+                  issue_number: issue.number,
+                  state: "closed",
+                  state_reason: "completed",
+                });
+              }
+            }
