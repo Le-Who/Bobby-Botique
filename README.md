@@ -245,9 +245,10 @@ graph TD;
 
 1. Clone the repository.
 2. Ensure Python 3.14-slim and PostgreSQL (with `pgvector` extension) are installed.
-3. Install dependencies:
+3. Install the pinned package manager and synchronize the committed dependency graph:
    ```bash
-   pip install -r requirements.txt
+   python -m pip install "uv==0.12.6"
+   uv sync --locked
    ```
 4. Copy `.env.example` to `.env` (if applicable) and fill in necessary configuration.
 5. Create PostgreSQL database with `pgvector` extension. Pending numbered SQL migrations from `scripts/migrations/` are applied automatically on startup; migration files are kept idempotent so fresh deploys and repeated bootstrap runs remain safe.
@@ -682,11 +683,11 @@ Relational knowledge is stored as a directed graph in dual tables:
 
 | Command | Purpose |
 | --- | --- |
-| `python -m ruff check .` | Run the repository-wide lint rules. |
-| `python -m ruff format --check .` | Enforce the same formatting gate used by CI. |
-| `python -m mypy app bot.py` | Type-check the production Python surface. |
-| `python scripts/check_encoding.py` | Detect UTF-8 corruption in protected documentation. |
-| `pip-audit -r requirements.txt --progress-spinner off` | Audit production dependencies. |
+| `uv run --locked ruff check .` | Run the repository-wide lint rules. |
+| `uv run --locked ruff format --check .` | Enforce the same formatting gate used by CI. |
+| `uv run --locked mypy app bot.py` | Type-check the production Python surface. |
+| `uv run --locked python scripts/check_encoding.py` | Detect UTF-8 corruption in protected documentation. |
+| `uv export --locked --no-dev --output-file production-requirements.txt` | Export the exact production graph for external audit tools. |
 
 ## API / Events / Contracts
 

@@ -1,6 +1,8 @@
 from pathlib import Path
 
 WORKFLOW_PATH = Path(".github/workflows/deploy.yml")
+DOCKERFILE_PATH = Path("Dockerfile")
+DOCKERIGNORE_PATH = Path(".dockerignore")
 
 
 def _workflow() -> str:
@@ -62,3 +64,15 @@ def test_deploy_fails_closed_when_runtime_health_checks_expire() -> None:
     assert 'curl -fsS "http://localhost:${PORT:-10000}/health"' in workflow
     assert "docker logs --tail 300 tg-bot" in workflow
     assert "Bot health check failed" in workflow
+
+
+def test_production_image_installs_only_the_committed_uv_lock() -> None:
+    dockerfile = DOCKERFILE_PATH.read_text(encoding="utf-8")
+    dockerignore = DOCKERIGNORE_PATH.read_text(encoding="utf-8")
+
+    assert 'python -m pip install --no-cache-dir "uv==0.12.6"' in dockerfile
+    assert "COPY pyproject.toml uv.lock ./" in dockerfile
+    assert "uv sync --locked --no-dev --no-install-project" in dockerfile
+    assert 'ENV PATH="/app/.venv/bin:$PATH"' in dockerfile
+    assert "requirements.txt" not in dockerfile
+    assert "uv.lock" not in dockerignore

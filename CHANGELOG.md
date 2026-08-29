@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-08-29 - Reproducible Dependency Frontier
+
+### 📦 Dependency resolution and verification
+
+- Replaced independent requirements manifests with PEP 621 dependencies in `pyproject.toml` and a committed `uv.lock`; local, CI, audit, and production-container installs now use the same exact graph through uv 0.12.6.
+- Added a read-only dependency-frontier audit that resolves both policy-constrained and unconstrained stable versions twice for Linux production and Windows development, applies a seven-day release cooldown, rejects source-only candidates, and reports policy-blocked major upgrades without presenting cooldown downgrades as updates.
+- Added contract coverage for dependency metadata, deterministic resolution, conservative pre-1.0 classification, platform enforcement, truthful terminal states, locked CI installation, and locked production-image construction.
+
 ## [Unreleased] - 2026-08-29 - Trivia Resilience and Admin Observability
 
 ### 🗄️ Migration portability and schema safety
@@ -67,7 +75,7 @@ Format is optimized for agent-parseable context.
 - `python -m ruff check .`
 - `python -m ruff format --check .`
 - `python -m mypy app bot.py`
-- `pip-audit -r requirements.txt --progress-spinner off`
+- `uv export --locked --no-dev --output-file production-requirements.txt` followed by `uv run --locked pip-audit -r production-requirements.txt --progress-spinner off`
 - `python scripts/check_encoding.py`
 
 ## [Unreleased] - 2026-08-25 - Long-Term Memory Safety Hardening
