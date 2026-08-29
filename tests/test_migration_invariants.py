@@ -129,6 +129,17 @@ def test_user_rls_template_explicitly_checks_inserted_and_updated_rows() -> None
     assert "WITH CHECK" in RLS_POLICY_USER
 
 
+def test_migrations_define_every_chat_column_used_by_the_runtime_repository() -> None:
+    sql = _without_line_comments(_migration_sql())
+
+    for column in ("thinking_level", "temperature", "voice_id"):
+        assert re.search(
+            rf"ALTER\s+TABLE\s+(?:public\.)?chats\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+{column}\b",
+            sql,
+            flags=re.IGNORECASE,
+        ), column
+
+
 @pytest.mark.asyncio
 async def test_schema_validation_fails_closed_when_a_table_is_missing() -> None:
     from app.db.schema import SchemaValidationError, validate_schema
@@ -138,3 +149,16 @@ async def test_schema_validation_fails_closed_when_a_table_is_missing() -> None:
 
     with pytest.raises(SchemaValidationError, match="missing"):
         await validate_schema(no_tables)
+
+
+@pytest.mark.asyncio
+async def test_schema_validation_fails_closed_when_a_required_column_is_missing() -> None:
+    from app.db.schema import EXPECTED_TABLES, SchemaValidationError, validate_schema
+
+    async def tables_without_columns(query: str, _params=()):
+        if "pg_tables" in query:
+            return [{"tablename": table} for table in EXPECTED_TABLES]
+        return []
+
+    with pytest.raises(SchemaValidationError, match="column"):
+        await validate_schema(tables_without_columns)

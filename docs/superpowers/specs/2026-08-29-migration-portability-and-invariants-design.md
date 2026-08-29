@@ -20,7 +20,7 @@ The defect remained latent because the PostgreSQL integration job previously ran
 
 ## Audit findings
 
-The pre-implementation audit covered all 73 SQL migration files; implementation adds migration `070` as the 74th file.
+The pre-implementation audit covered all 73 SQL migration files; implementation adds policy migration `070` and chat-schema migration `071`.
 
 - All 73 files parse successfully as PostgreSQL SQL.
 - There are no empty migration files, duplicate version prefixes, or forward table-dependency violations in the current manifest.
@@ -32,6 +32,7 @@ The pre-implementation audit covered all 73 SQL migration files; implementation 
 - Schema validation currently runs before numbered migrations and only warns, so it cannot prove that the final schema is complete.
 - The application startup runner still invokes legacy DDL after a numbered migration fails.
 - Both migration runners rely on version tracking but do not reject duplicate version prefixes before execution.
+- The first clean-database CI run exposed three chat preference columns (`thinking_level`, `temperature`, and `voice_id`) that runtime code uses but that had previously existed only in live databases; migration `071` now backfills them and strict validation covers the critical `chats` column contract.
 
 ## Goals
 
@@ -68,7 +69,7 @@ Changing these historical files is intentional: clean databases must receive the
 
 ### 2. Forward repair migration `070`
 
-`070_normalize_tenant_rls_policies.sql` will repair already-migrated databases inside one transaction managed by the runner.
+`070_normalize_tenant_rls_policies.sql` repairs already-migrated databases inside one transaction managed by the runner.
 
 For each affected table it will:
 
@@ -88,6 +89,8 @@ Affected tables:
 - `user_achievements`
 
 The migration changes policy definitions only. It does not delete or rewrite application rows.
+
+Migration `071_add_missing_chat_runtime_columns.sql` idempotently adds the three runtime chat preference columns that were missing from clean databases.
 
 ### 3. Runtime RLS verification
 

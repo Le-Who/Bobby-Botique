@@ -8,7 +8,7 @@ Format is optimized for agent-parseable context.
 ### 🗄️ Migration portability and schema safety
 
 - Made the complete migration chain portable to standard pgvector PostgreSQL by guarding the Supabase-only `service_role`, correcting stale RLS context names, and replacing open Horoscope/Tarot subscription policies with tenant/admin isolation.
-- Added forward migration `070` to normalize affected policies on already-migrated databases, synchronized runtime RLS and expected-table catalogs, and made post-migration schema validation fail closed.
+- Added forward migration `070` to normalize affected policies and migration `071` to backfill chat preference columns that previously existed only in live databases; synchronized runtime RLS/schema catalogs and made post-migration table/critical-column validation fail closed.
 - Added a shared migration-manifest validator for deterministic names, unique versions, UTF-8, and non-empty SQL; numbered failures now stop before legacy DDL.
 - Made CI apply migrations twice and then require zero drift before integration tests and deployment.
 

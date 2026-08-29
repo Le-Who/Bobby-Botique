@@ -6,8 +6,6 @@ pytestmark = pytest.mark.integration
 Tests get_user_chat / update_user_chat / update_thinking_level logic.
 """
 
-import json
-
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -24,8 +22,8 @@ class TestChatStateLifecycle:
 
         # Ensure user in users table but no chat yet
         await conn.execute(
-            """INSERT INTO chats (user_id, model, history, token_count, search_enabled)
-               VALUES ($1, $2, '[]'::jsonb, 0, false)
+            """INSERT INTO chats (user_id, model, token_count, search_enabled)
+               VALUES ($1, $2, 0, false)
                ON CONFLICT (user_id) DO NOTHING""",
             user_id,
             "gemini-2.5-flash",
@@ -35,7 +33,7 @@ class TestChatStateLifecycle:
         assert row["model"] == "gemini-2.5-flash"
         assert row["token_count"] == 0
         assert row["search_enabled"] is False
-        assert row["history"] == []
+        assert await conn.fetchval("SELECT COUNT(*) FROM active_chat_messages WHERE user_id = $1", user_id) == 0
 
     @pytest.mark.asyncio
     async def test_update_chat_model_and_history(self, db_conn_with_user):
@@ -54,17 +52,23 @@ class TestChatStateLifecycle:
             {"role": "model", "content": "Hi!"},
         ]
         await conn.execute(
-            "UPDATE chats SET model = $1, history = $2::jsonb, token_count = $3 WHERE user_id = $4",
+            "UPDATE chats SET model = $1, token_count = $2 WHERE user_id = $3",
             "gemini-2.5-flash-lite",
-            json.dumps(history),
             150,
             user_id,
         )
+        await conn.executemany(
+            "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
+            [(user_id, message["role"], message["content"]) for message in history],
+        )
 
-        row = await conn.fetchrow("SELECT model, history, token_count FROM chats WHERE user_id = $1", user_id)
+        row = await conn.fetchrow("SELECT model, token_count FROM chats WHERE user_id = $1", user_id)
         assert row["model"] == "gemini-2.5-flash-lite"
         assert row["token_count"] == 150
-        loaded_history = json.loads(row["history"]) if isinstance(row["history"], str) else row["history"]
+        loaded_history = await conn.fetch(
+            "SELECT role, content FROM active_chat_messages WHERE user_id = $1 ORDER BY id ASC",
+            user_id,
+        )
         assert len(loaded_history) == 2
         assert loaded_history[0]["role"] == "user"
 
@@ -83,13 +87,16 @@ class TestChatStateLifecycle:
         )
 
         await conn.execute(
-            "UPDATE chats SET history = '[]'::jsonb, token_count = 0, context_summary = NULL WHERE user_id = $1",
+            "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, 'user', 'old')",
             user_id,
         )
+        await conn.execute("UPDATE chats SET token_count = 0, context_summary = NULL WHERE user_id = $1", user_id)
+        await conn.execute("DELETE FROM active_chat_messages WHERE user_id = $1", user_id)
 
         row = await conn.fetchrow("SELECT token_count, context_summary FROM chats WHERE user_id = $1", user_id)
         assert row["token_count"] == 0
         assert row["context_summary"] is None
+        assert await conn.fetchval("SELECT COUNT(*) FROM active_chat_messages WHERE user_id = $1", user_id) == 0
 
     @pytest.mark.asyncio
     async def test_update_thinking_level(self, db_conn_with_user):

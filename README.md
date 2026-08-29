@@ -601,7 +601,7 @@ All database DDL is managed via **numbered SQL migration files** in `scripts/mig
 | `scripts/migrations/018_add_missing_table_definitions.sql` | Backfill migration for databases that applied `000` without all tables |
 | `scripts/migrate.py` | Standalone CLI runner with strict manifest validation. Runs explicitly during deployment to guarantee schema safety. |
 | `app/db/migrations.py` | Internal migration framework. Stops before legacy DDL when any numbered migration fails. |
-| `app/db/schema.py` | Fail-closed startup validation — verifies all expected tables exist after migrations |
+| `app/db/schema.py` | Fail-closed startup validation — verifies all expected tables and critical runtime columns after migrations |
 | `app/db/rls.py` | Row Level Security policy management |
 | `app/db/seed.py` | Initial data seeding (admin user, API keys, indexes) |
 

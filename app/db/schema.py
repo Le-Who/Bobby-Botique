@@ -83,6 +83,32 @@ EXPECTED_TABLES = frozenset(
     }
 )
 
+# Critical column-level contract for tables whose runtime shape cannot be
+# inferred safely from table existence alone.
+EXPECTED_COLUMNS = {
+    "chats": frozenset(
+        {
+            "user_id",
+            "model",
+            "token_count",
+            "search_enabled",
+            "system_prompt",
+            "context_summary",
+            "thinking_level",
+            "ltm_enabled",
+            "memory_epoch",
+            "private_data_blocked",
+            "branch_id",
+            "temperature",
+            "voice_id",
+            "tts_temperature",
+            "live_voice_name",
+            "live_thinking_level",
+            "live_connection_mode",
+        }
+    )
+}
+
 
 class SchemaValidationError(RuntimeError):
     """Raised when the migrated public schema is incomplete or unreadable."""
@@ -106,11 +132,35 @@ async def validate_schema(db_query):
                 f"Schema validation failed: {len(missing)} expected table(s) missing "
                 f"from public schema: {missing_tables}"
             )
-        else:
-            logging.info(
-                "Schema validation passed: all %d expected tables present.",
-                len(EXPECTED_TABLES),
+
+        column_rows = await db_query(
+            """
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = ANY($1::text[])
+            """,
+            (list(EXPECTED_COLUMNS),),
+        )
+        existing_columns: dict[str, set[str]] = {table: set() for table in EXPECTED_COLUMNS}
+        for row in column_rows:
+            existing_columns[row["table_name"]].add(row["column_name"])
+
+        missing_columns = {
+            table: expected - existing_columns[table]
+            for table, expected in EXPECTED_COLUMNS.items()
+            if expected - existing_columns[table]
+        }
+        if missing_columns:
+            details = "; ".join(
+                f"{table}: {', '.join(sorted(columns))}" for table, columns in sorted(missing_columns.items())
             )
+            raise SchemaValidationError(f"Schema validation failed: required column(s) missing: {details}")
+
+        logging.info(
+            "Schema validation passed: all %d expected tables and critical columns present.",
+            len(EXPECTED_TABLES),
+        )
     except SchemaValidationError:
         raise
     except Exception as e:

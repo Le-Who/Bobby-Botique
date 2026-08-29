@@ -26,7 +26,7 @@ from tests.factories import make_telegram_update as make_update
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_e2e_happy_path_conversation(db_conn_with_key):
+async def test_e2e_happy_path_conversation(db_conn_with_key, force_test_db_conn):
     """
     Risk Covered: Complete failure of the bot's core pipeline.
     Level: E2E (With only external AI network mocked out via a stub stream)

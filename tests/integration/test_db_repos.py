@@ -57,8 +57,9 @@ class TestChatsTable:
         assert row["model"] == "gemini-2.5-flash"
         assert row["token_count"] == 0
         assert row["search_enabled"] is False
-        assert row["history"] == []
+        assert row["ltm_enabled"] is True
         assert row["context_summary"] is None
+        assert await conn.fetchval("SELECT COUNT(*) FROM active_chat_messages WHERE user_id = $1", user_id) == 0
 
     @pytest.mark.asyncio
     async def test_update_chat_model(self, db_conn_with_user):

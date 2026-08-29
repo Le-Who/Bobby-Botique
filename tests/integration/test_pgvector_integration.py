@@ -7,25 +7,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.database import db_manager
+from app.repos.memory import EMBEDDING_DIMENSION
 
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture
-def mock_db_manager(db_conn):
-    """Patches db_manager to yield the test transactional connection"""
-
-    @asynccontextmanager
-    async def mock_acquire():
-        yield db_conn
-
-    with patch.object(db_manager, "pool", create=True) as mock_pool:
-        mock_pool.acquire = mock_acquire
-        yield mock_pool
-
-
 @pytest.mark.asyncio
-async def test_pgvector_chunking_and_fallback(db_conn, mock_db_manager):
+async def test_pgvector_chunking_and_fallback(db_conn):
     """
     TC-002: Ensure large text insertion into pgvector gets properly chunked
     and handles potential database connection/dimension errors gracefully.
@@ -35,14 +23,14 @@ async def test_pgvector_chunking_and_fallback(db_conn, mock_db_manager):
     # 1. Arrange: Create a user and a very large memory text
     user_id = 9000001
     await db_conn.execute("INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING", user_id)
+    await db_conn.execute("INSERT INTO chats (user_id, ltm_enabled) VALUES ($1, TRUE)", user_id)
 
     # A single string with over 20,000 characters
     large_text = "Big long memory chunk. " * 1000
 
     # 2. Act: Store memory. we need to mock the embeddings API to just return a dummy vector
     with patch("app.repos.memory._get_embedding", new_callable=AsyncMock) as mock_embed:
-        # Mocking an embedding array of size 3072 since the schema requires halfvec(3072)
-        mock_embed.return_value = [0.1] * 3072
+        mock_embed.return_value = [0.1] * EMBEDDING_DIMENSION
 
         # We store it
         success_id = await store_memory(
@@ -65,10 +53,11 @@ async def test_pgvector_chunking_and_fallback(db_conn, mock_db_manager):
         raise Exception("DB Con Error")
         yield None
 
-    mock_db_manager.acquire = fail_acquire
-
-    with patch("app.repos.memory._get_embedding", new_callable=AsyncMock) as mock_embed2:
-        mock_embed2.return_value = [0.1] * 3072
+    with (
+        patch.object(db_manager.pool, "acquire", fail_acquire),
+        patch("app.repos.memory._get_embedding", new_callable=AsyncMock) as mock_embed2,
+    ):
+        mock_embed2.return_value = [0.1] * EMBEDDING_DIMENSION
         success_fail_id = await store_memory(
             user_id=user_id,
             content="Small text",
