@@ -588,12 +588,14 @@ async def _search_memories_impl(
                         ),
                         keyword AS (
                             SELECT id,
-                                   ROW_NUMBER() OVER (ORDER BY similarity(content, $5) DESC) AS rank_k
+                                   ROW_NUMBER() OVER (
+                                       ORDER BY extensions.similarity(content, $5::text) DESC
+                                   ) AS rank_k
                             FROM long_term_memory
                             WHERE user_id = $1
                               AND (expires_at IS NULL OR expires_at > now())
-                              AND content % $5
-                            ORDER BY similarity(content, $5) DESC
+                              AND content OPERATOR(extensions.%) $5::text
+                            ORDER BY extensions.similarity(content, $5::text) DESC
                             LIMIT 20
                         ),
                         candidates AS (

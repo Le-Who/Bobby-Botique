@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app import state
 from app.database import db_query
 from app.handlers.messages import handle_request
 from app.providers.stream_types import (
@@ -69,7 +70,6 @@ async def test_e2e_happy_path_conversation(db_conn_with_key, force_test_db_conn)
     with (
         patch("app.providers.get_provider_router", return_value=fake_router),
         patch("app.utils.background_tasks._task_manager._tasks", set()),
-        patch("app.utils.background_tasks.submit_task") as mock_submit,
         patch("app.utils.background_tasks.submit_retryable"),
         patch("app.state.set_last_sent_message", new_callable=MagicMock),
         patch("app.adapters.concurrency.heavy_request_semaphore", local_sem),
@@ -78,17 +78,12 @@ async def test_e2e_happy_path_conversation(db_conn_with_key, force_test_db_conn)
         # Execute the incoming update as the bot would
         await handle_request(update, context)
 
-        # CRITICAL FIX: handle_request launches fire-and-forget background tasks
-        # (like _schedule_persist for last_sent_message). We MUST allow the event loop
-        # a tiny slice of time to finish those DB inserts before we manually trigger
-        # the next stage, otherwise both coroutines fight for the single test DB connection.
-        await asyncio.sleep(0.1)
-
-        assert mock_submit.call_count >= 1
-        long_request_coro = mock_submit.call_args_list[0][0][0]
-
-        # Execute the background task synchronously to complete the test
-        await long_request_coro
+        # The handler owns and registers the actual AI task. Await that task rather
+        # than patching the source helper after messages.py imported its local alias;
+        # otherwise the real task leaks past the transactional fixture rollback.
+        ai_task = state._ACTIVE_TASKS.get(user_id)
+        assert ai_task is not None
+        await ai_task
 
     # If the process_long_request loop crashed internally, it will swallow the exception
     # and call edit_text to tell the user an error occurred. Let's catch that explicitly.

@@ -584,6 +584,8 @@ async def test_hybrid_search_includes_keyword_only_candidates_and_orders_by_pena
     assert "full outer join keyword" in sql
     assert "coalesce(s.id, k.id)" in sql
     assert "or rank_k is not null" in sql
+    assert "extensions.similarity(content, $5::text)" in sql
+    assert "content operator(extensions.%) $5::text" in sql
     assert "final_score" in sql
     assert "order by final_score desc" in sql
     assert results == [
