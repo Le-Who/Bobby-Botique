@@ -22,6 +22,8 @@ from cachetools import LRUCache
 # Survives until process restart. If restarted, old suggestion buttons fail gracefully.
 SUGGESTION_CACHE: LRUCache[str, str] = LRUCache(maxsize=10000)
 
+_EXCESSIVE_NEWLINES_RE = re.compile(r"\n{3,}")
+
 # ── Intent Tag ────────────────────────────────────────────────────────────────
 # Matches [INTENT:draw], [INTENT:research], [INTENT:tts] anywhere in the text.
 _INTENT_RE = re.compile(r"\[INTENT:(draw|research|tts)\]", re.IGNORECASE)
@@ -108,7 +110,7 @@ def parse_response_tags(text: str) -> tuple[str, str | None, list[dict[str, str]
     text, intent = extract_intent(text)
 
     # Cleanup any excessive blank lines left behind by tag extraction
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    text = _EXCESSIVE_NEWLINES_RE.sub("\n\n", text).strip()
     return text, intent, suggestions
 
 

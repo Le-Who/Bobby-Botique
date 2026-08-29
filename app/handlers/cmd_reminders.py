@@ -242,6 +242,8 @@ _RESEARCH_SIGNALS = {
     "compare",
 }
 
+_WORD_RE = re.compile(r"[\w]+")
+
 
 def _classify_reminder_intent(prompt: str) -> dict:
     """Classify the user's reminder prompt into an action type.
@@ -257,7 +259,7 @@ def _classify_reminder_intent(prompt: str) -> dict:
     4. Defaults to "notify" (plain text) when uncertain — safe fallback.
     """
     lower = prompt.lower().strip()
-    words = set(re.findall(r"[\w]+", lower))
+    words = set(_WORD_RE.findall(lower))
 
     # ── Step 1: Explicit notification patterns (high confidence) ────────
     # RU patterns use substring matching (handles morphological suffixes)

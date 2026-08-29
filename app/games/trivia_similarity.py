@@ -93,6 +93,8 @@ def _allowed_edits(length: int) -> int:
         return 1
     return 2
 
+_DIGIT_RE = re.compile(r"\d+")
+
 
 def _is_typo_equivalent(left: str, right: str) -> bool:
     left_norm = normalize_fact_text(left)
@@ -101,7 +103,7 @@ def _is_typo_equivalent(left: str, right: str) -> bool:
         return False
     # A changed year, quantity, ordinal or version is usually a different fact,
     # never a harmless typo.
-    if re.findall(r"\d+", left_norm) != re.findall(r"\d+", right_norm):
+    if _DIGIT_RE.findall(left_norm) != _DIGIT_RE.findall(right_norm):
         return False
     return _damerau_levenshtein(left_norm, right_norm) <= _allowed_edits(max(len(left_norm), len(right_norm)))
 

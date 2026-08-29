@@ -13,6 +13,23 @@ _GEONAMES_ATTRIBUTION_HTML = (
 )
 _GEONAMES_ATTRIBUTION_MARKDOWN = "City data: GeoNames (https://www.geonames.org/), CC BY 4.0."
 
+_PARENS_RE = re.compile(r"\s*\([^)]*\)\s*$")
+_SPACES_RE = re.compile(r"\s+")
+_MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_MD_CODE_RE = re.compile(r"`([^`]*)`")
+_MD_BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
+_MD_BOLD_UNDERSCORE_RE = re.compile(r"__([^_]+)__")
+_MD_ITALIC_RE = re.compile(r"\*([^*]+)\*")
+_MD_ITALIC_UNDERSCORE_RE = re.compile(r"_([^_]+)_")
+_MD_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s*", flags=re.MULTILINE)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_SVG_TAG_RE = re.compile(r"<\s*/?\s*svg\b.*?>", flags=re.IGNORECASE | re.DOTALL)
+_SCRIPT_TAG_RE = re.compile(r"<\s*/?\s*script\b.*?>", flags=re.IGNORECASE | re.DOTALL)
+_JS_PROTOCOL_RE = re.compile(r"javascript\s*:", flags=re.IGNORECASE)
+_SCRIPT_BLOCK_RE = re.compile(r"<\s*script\b.*?<\s*/\s*script\s*>", flags=re.IGNORECASE | re.DOTALL)
+_EVENT_HANDLER_RE = re.compile(r"\s+on[a-z0-9_-]+\s*=\s*(['\"]).*?\1", flags=re.IGNORECASE | re.DOTALL)
+
 _POINT_MEANINGS = {
     "sun": "Ядро личности",
     "moon": "Эмоции и потребности",
@@ -397,7 +414,7 @@ def _support_section_markdown(section: ReportSection) -> str:
 
 
 def _compact_support_title(title: str) -> str:
-    return re.sub(r"\s*\([^)]*\)\s*$", "", title).strip()
+    return _PARENS_RE.sub("", title).strip()
 
 
 def _section_aliases(section_id: str, display_section_ids: set[str]) -> list[str]:
@@ -576,22 +593,22 @@ def _point_meaning(point_key: str) -> str:
 
 
 def _excerpt(markdown: str, limit: int = 220) -> str:
-    compact = re.sub(r"\s+", " ", markdown).strip()
+    compact = _SPACES_RE.sub(" ", markdown).strip()
     if len(compact) <= limit:
         return compact
     return compact[: limit - 1].rstrip() + "…"
 
 
 def _plain_text_excerpt(markdown: str, limit: int = 220) -> str:
-    text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", markdown)
-    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-    text = re.sub(r"`([^`]*)`", r"\1", text)
-    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
-    text = re.sub(r"__([^_]+)__", r"\1", text)
-    text = re.sub(r"\*([^*]+)\*", r"\1", text)
-    text = re.sub(r"_([^_]+)_", r"\1", text)
-    text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.MULTILINE)
-    text = re.sub(r"<[^>]+>", "", text)
+    text = _MD_IMAGE_RE.sub(r"\1", markdown)
+    text = _MD_LINK_RE.sub(r"\1", text)
+    text = _MD_CODE_RE.sub(r"\1", text)
+    text = _MD_BOLD_RE.sub(r"\1", text)
+    text = _MD_BOLD_UNDERSCORE_RE.sub(r"\1", text)
+    text = _MD_ITALIC_RE.sub(r"\1", text)
+    text = _MD_ITALIC_UNDERSCORE_RE.sub(r"\1", text)
+    text = _MD_HEADING_RE.sub("", text)
+    text = _HTML_TAG_RE.sub("", text)
     return _excerpt(html.unescape(text), limit)
 
 
@@ -618,20 +635,20 @@ def build_telegraph_markdown(report: NatalReport) -> str:
         lines.extend(["", f"## {section.title}", "", strip_user_facing_blocked_notes(section.body_markdown)])
     lines.extend(["", _GEONAMES_ATTRIBUTION_MARKDOWN])
     markdown = "\n".join(lines)
-    markdown = re.sub(r"<\s*/?\s*svg\b.*?>", "", markdown, flags=re.IGNORECASE | re.DOTALL)
-    markdown = re.sub(r"<\s*/?\s*script\b.*?>", "", markdown, flags=re.IGNORECASE | re.DOTALL)
-    markdown = re.sub(r"javascript:", "", markdown, flags=re.IGNORECASE)
+    markdown = _SVG_TAG_RE.sub("", markdown)
+    markdown = _SCRIPT_TAG_RE.sub("", markdown)
+    markdown = _JS_PROTOCOL_RE.sub("", markdown)
     return markdown
 
 
 def _sanitize_hosted_body(value: str) -> str:
-    return re.sub(r"javascript\s*:", "", value, flags=re.IGNORECASE)
+    return _JS_PROTOCOL_RE.sub("", value)
 
 
 def _sanitize_hosted_svg(value: str) -> str:
-    without_scripts = re.sub(r"<\s*script\b.*?<\s*/\s*script\s*>", "", value, flags=re.IGNORECASE | re.DOTALL)
-    without_event_handlers = re.sub(r"\s+on[a-z0-9_-]+\s*=\s*(['\"]).*?\1", "", without_scripts, flags=re.IGNORECASE | re.DOTALL)
-    return re.sub(r"javascript\s*:", "", without_event_handlers, flags=re.IGNORECASE)
+    without_scripts = _SCRIPT_BLOCK_RE.sub("", value)
+    without_event_handlers = _EVENT_HANDLER_RE.sub("", without_scripts)
+    return _JS_PROTOCOL_RE.sub("", without_event_handlers)
 
 
 def _is_safe_external_url(value: str) -> bool:

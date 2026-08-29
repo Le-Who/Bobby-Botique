@@ -223,6 +223,8 @@ _WEATHER_FUTURE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_CURRENCY_AMOUNT_RE = re.compile(r"(?<!\w)(\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?)(?!\w)")
+
 # Pattern to extract a city candidate from weather queries.
 _CITY_EXTRACT_PATTERN = re.compile(
     # Branch A: "погода [сегодня|завтра|сейчас] [в] <город>" — preposition is optional here
@@ -747,7 +749,7 @@ async def _fetch_frankfurter(base: str, target: str, amount: float = 1.0) -> Int
 
 def _extract_currency_amount(text: str) -> float:
     """Return the first positive numeric amount, defaulting to one unit."""
-    match = re.search(r"(?<!\w)(\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?)(?!\w)", text)
+    match = _CURRENCY_AMOUNT_RE.search(text)
     if match is None:
         return 1.0
     try:

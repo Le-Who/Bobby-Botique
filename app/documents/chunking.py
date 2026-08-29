@@ -146,6 +146,8 @@ def hierarchical_chunk(
 
 # ── Relevance scoring ────────────────────────────────────────────────────
 
+_WORD_LEN3_RE = re.compile(r"\w{3,}")
+
 
 def _score_chunk(chunk: str, query: str) -> float:
     """Simple keyword overlap score. Returns 0.0 to 1.0."""
@@ -154,7 +156,7 @@ def _score_chunk(chunk: str, query: str) -> float:
 
     # Normalize
     chunk_lower = chunk.lower()
-    query_words = set(re.findall(r"\w{3,}", query.lower()))  # 3+ char words
+    query_words = set(_WORD_LEN3_RE.findall(query.lower()))  # 3+ char words
 
     if not query_words:
         return 0.5

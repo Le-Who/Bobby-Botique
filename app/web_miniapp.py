@@ -37,6 +37,9 @@ from app.natal.service import create_natal_report
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
 
+_UUID_RE = re.compile(r"^[0-9a-f-]{36}$", re.IGNORECASE)
+_ARTICLE_RE = re.compile(r"<article[^>]*>(.*?)</article>", re.DOTALL)
+
 logger = logging.getLogger(__name__)
 
 miniapp_blueprint = Blueprint("miniapp", __name__, template_folder="templates")
@@ -1252,15 +1255,13 @@ async def reader_page():
         4. Inject pre-rendered HTML + TOC JSON into the Jinja2 template so the
            client renders instantly without a second fetch round-trip.
     """
-    import re as _re
-
     from quart import render_template
     from quart import request as _req
 
     uid = _req.args.get("id", "")
 
     # ── 1. Validate UID
-    if uid and not _re.match(r"^[0-9a-f-]{36}$", uid, _re.IGNORECASE):
+    if uid and not _UUID_RE.match(uid):
         uid = ""  # treat as missing rather than raising
 
     body_html = ""
@@ -1337,9 +1338,7 @@ async def _fetch_telegraph_content(tg_url: str) -> str | None:
             page_html = resp.text
 
         # Extract the <article> body from the Telegraph page HTML
-        import re as _re
-
-        article_match = _re.search(r"<article[^>]*>(.*?)</article>", page_html, _re.DOTALL)
+        article_match = _ARTICLE_RE.search(page_html)
         if not article_match:
             logger.warning("No <article> tag found in Telegraph page")
             return None
@@ -1365,10 +1364,8 @@ async def api_reader_content(uid: str):
       {"telegraph_url": "https://telegra.ph/..."}         — Redis miss, cold fallback URL
       {"error": "not_found"}  HTTP 404                    — nothing available
     """
-    import re
-
     # Basic UUID validation to prevent Redis key injection
-    if not re.match(r"^[0-9a-f-]{36}$", uid, re.IGNORECASE):
+    if not _UUID_RE.match(uid):
         return jsonify({"error": "invalid_id"}), 400
 
     try:
