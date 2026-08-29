@@ -38,10 +38,18 @@ _ZODIAC_MAPPING = {
     "leo": re.compile(r"\b(?:лев|льва|льву|львом|льве|львы|львов|leo)\b", re.IGNORECASE),
     "virgo": re.compile(r"\b(?:дева|девы|деве|деву|девой|дев|virgo)\b", re.IGNORECASE),
     "libra": re.compile(r"\b(?:весы|весов|весам|весами|весах|libra)\b", re.IGNORECASE),
-    "scorpio": re.compile(r"\b(?:скорпион|скорпиона|скорпиону|скорпионом|скорпионе|скорпионы|скорпионов|scorpio)\b", re.IGNORECASE),
-    "sagittarius": re.compile(r"\b(?:стрелец|стрельца|стрельцу|стрельцом|стрельце|стрельцы|стрельцов|sagittarius)\b", re.IGNORECASE),
-    "capricorn": re.compile(r"\b(?:козерог|козерога|козерогу|козерогом|козероге|козероги|козерогов|capricorn)\b", re.IGNORECASE),
-    "aquarius": re.compile(r"\b(?:водолей|водолея|водолею|водолеем|водолее|водолеи|водолеев|aquarius)\b", re.IGNORECASE),
+    "scorpio": re.compile(
+        r"\b(?:скорпион|скорпиона|скорпиону|скорпионом|скорпионе|скорпионы|скорпионов|scorpio)\b", re.IGNORECASE
+    ),
+    "sagittarius": re.compile(
+        r"\b(?:стрелец|стрельца|стрельцу|стрельцом|стрельце|стрельцы|стрельцов|sagittarius)\b", re.IGNORECASE
+    ),
+    "capricorn": re.compile(
+        r"\b(?:козерог|козерога|козерогу|козерогом|козероге|козероги|козерогов|capricorn)\b", re.IGNORECASE
+    ),
+    "aquarius": re.compile(
+        r"\b(?:водолей|водолея|водолею|водолеем|водолее|водолеи|водолеев|aquarius)\b", re.IGNORECASE
+    ),
     "pisces": re.compile(r"\b(?:рыбы|рыбы|рыбе|рыбу|рыбой|рыб|рыбам|рыбами|рыбах|pisces)\b", re.IGNORECASE),
 }
 
@@ -209,8 +217,7 @@ _SORTED_CURRENCY_ALIASES: list[tuple[str, str]] = sorted(
     _CURRENCY_CODES.items(), key=lambda kv: len(kv[0]), reverse=True
 )
 _CURRENCY_ALIAS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(rf"(?<!\w){re.escape(alias)}(?!\w)", re.IGNORECASE), code)
-    for alias, code in _SORTED_CURRENCY_ALIASES
+    (re.compile(rf"(?<!\w){re.escape(alias)}(?!\w)", re.IGNORECASE), code) for alias, code in _SORTED_CURRENCY_ALIASES
 ]
 
 # Performance: pre-compiled at module level — _handle_weather is called on every
@@ -312,14 +319,16 @@ class IntentResult:
         self.context_data = context_data
 
 
-def _is_complex_query(text: str) -> bool:
+def _is_complex_query(text: str, word_count: int) -> bool:
     """Determine if a query is complex and should NOT short-circuit to API cards."""
     # 1. Length heuristic (long text or article)
-    if len(text.split()) > 20:
+    # Optimized: Use pre-computed word_count instead of allocating a new list with len(text.split())
+    if word_count > 20:
         return True
 
     # 2. Multiple sentences/questions
-    sentence_enders = sum(text.count(c) for c in "?!.")
+    # Optimized: Direct addition of .count() is ~2x faster than a generator expression
+    sentence_enders = text.count("?") + text.count("!") + text.count(".")
     if sentence_enders > 1:
         return True
 
@@ -338,7 +347,7 @@ async def try_direct_intent(message_text: str) -> IntentResult | None:
     """
     text = message_text.strip()
     word_count = len(text.split())
-    is_complex = _is_complex_query(text)
+    is_complex = _is_complex_query(text, word_count)
 
     def _prepare_result(res: IntentResult | None) -> IntentResult | None:
         if res and is_complex:
@@ -704,7 +713,9 @@ async def _fetch_exchangerate_api(
     conversion_line = ""
     if amount != 1.0:
         converted = amount * rate
-        conversion_line = f"{_format_currency_number(amount)} {base} = **{_format_currency_number(converted)} {target}**\n\n"
+        conversion_line = (
+            f"{_format_currency_number(amount)} {base} = **{_format_currency_number(converted)} {target}**\n\n"
+        )
     response = (
         f"💱 **Курс {base} → {target}**\n\n"
         f"1 {base} = **{rate_fmt} {target}**\n\n"
@@ -737,7 +748,9 @@ async def _fetch_frankfurter(base: str, target: str, amount: float = 1.0) -> Int
     conversion_line = ""
     if amount != 1.0:
         converted = amount * rate
-        conversion_line = f"{_format_currency_number(amount)} {base} = **{_format_currency_number(converted)} {target}**\n\n"
+        conversion_line = (
+            f"{_format_currency_number(amount)} {base} = **{_format_currency_number(converted)} {target}**\n\n"
+        )
     response = (
         f"💱 **Курс {base} → {target}**\n\n1 {base} = **{rate_fmt} {target}**\n\n"
         f"{conversion_line}_Данные: Европейский ЦБ ({date})_"
@@ -891,7 +904,7 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
     from datetime import UTC, datetime, timedelta
 
     from app.astro import get_astro_context
-    
+
     # Calculate target date for ephemeris based on day_ru
     dt = datetime.now(UTC)
     if day_ru == "завтра":
@@ -903,7 +916,7 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
     elif day_ru == "на следующие три дня":
         # Let's base the transit context on tomorrow as the midpoint
         dt += timedelta(days=1)
-        
+
     astro_context = get_astro_context(dt)
 
     logging.info("Generating horoscope using local astrological data")
@@ -937,11 +950,13 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
         result_text = "".join(chunks).strip()
         if result_text and isinstance(terminal, StreamCompleted):
             logging.info("Gemini direct generation completed successfully")
-            return IntentResult(_format_horoscope_response(
-                sign_displays=sign_displays,
-                day_ru=day_ru,
-                body_text=result_text,
-            ))
+            return IntentResult(
+                _format_horoscope_response(
+                    sign_displays=sign_displays,
+                    day_ru=day_ru,
+                    body_text=result_text,
+                )
+            )
     except Exception as exc:
         logging.error("Failed to generate fallback horoscope: %s", exc)
         return None
