@@ -23,6 +23,8 @@ _REQUIRED_PACKAGES = {
     "tzdata": ((2024, 1), None),
 }
 
+_VERSION_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)")
+
 
 def check_natal_config_readiness(
     settings: Any,
@@ -100,7 +102,7 @@ def _installed_package_versions() -> dict[str, str | None]:
 
 
 def _parse_version(value: str) -> tuple[int, ...] | None:
-    match = re.match(r"^\s*(\d+(?:\.\d+)*)", value)
+    match = _VERSION_RE.match(value)
     if not match:
         return None
     return tuple(int(part) for part in match.group(1).split("."))

@@ -1386,6 +1386,8 @@ def _birth_input_from_steps(user_data: dict) -> BirthInput:
 def _is_matrix_only_flow(user_data: dict) -> bool:
     return user_data.get("natal_report_type") == ReportType.DESTINY_MATRIX
 
+_RU_DATE_VALIDATION_RE = re.compile(r"^\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s*$")
+
 
 def _normalize_step_birth_date(value: str) -> str:
     stripped = value.strip()
@@ -1393,7 +1395,7 @@ def _normalize_step_birth_date(value: str) -> str:
         return date.fromisoformat(stripped).isoformat()
     except ValueError:
         pass
-    match = re.match(r"^\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s*$", stripped)
+    match = _RU_DATE_VALIDATION_RE.match(stripped)
     if not match:
         raise BirthInputParseError("Дата рождения должна быть в формате ДД.ММ.ГГГГ или YYYY-MM-DD.")
     day, month, year = (int(part) for part in match.groups())

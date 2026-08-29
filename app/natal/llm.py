@@ -498,6 +498,11 @@ def _prompt_quality_constraints(chart: ChartData) -> str:
     return "\n".join(lines)
 
 
+_BIRTH_DATA_RE = re.compile(r"\b(?:birth_date|birth_place)\b|дата рождения|место рождения", flags=re.IGNORECASE)
+_ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_RU_DATE_RE = re.compile(r"\b\d{1,2}\.\d{1,2}\.\d{4}\b")
+
+
 def _safe_prompt_quality_notes(chart: ChartData) -> list[str]:
     notes: list[str] = []
     for warning in chart.input_quality.warnings:
@@ -508,7 +513,7 @@ def _safe_prompt_quality_notes(chart: ChartData) -> list[str]:
 
 
 def _redact_raw_birth_data(value: str) -> str:
-    if re.search(r"\b(?:birth_date|birth_place)\b|дата рождения|место рождения", value, flags=re.IGNORECASE):
+    if _BIRTH_DATA_RE.search(value):
         return "[redacted birth data]"
-    redacted = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", "[redacted date]", value)
-    return re.sub(r"\b\d{1,2}\.\d{1,2}\.\d{4}\b", "[redacted date]", redacted)
+    redacted = _ISO_DATE_RE.sub("[redacted date]", value)
+    return _RU_DATE_RE.sub("[redacted date]", redacted)

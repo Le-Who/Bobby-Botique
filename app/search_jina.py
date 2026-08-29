@@ -43,10 +43,12 @@ def _build_jina_headers(api_key: str | None = None) -> dict[str, str]:
         headers["Authorization"] = f"Bearer {api_key}"
     return headers
 
+_URL_RE = re.compile(r"https?://[^\s\)\]\"']+")
+
 
 def _extract_source_urls(content: str) -> list[str]:
     """Extract URLs from JINA markdown output."""
-    return re.findall(r"https?://[^\s\)\]\"']+", content)
+    return _URL_RE.findall(content)
 
 
 async def search_jina(query: str, timeout: float = _DEFAULT_TIMEOUT) -> JinaSearchResult:

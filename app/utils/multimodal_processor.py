@@ -27,10 +27,14 @@ from app.resilience_policy import ResiliencePolicy, run_with_resilience
 TRANSCRIPTION_MODEL = "gemini-3.1-flash-lite"
 IMAGE_DESCRIPTION_MODEL = "gemini-3.1-flash-lite"
 
+import re
+
 # High thinking level for accurate ASR on noisy/accented audio.
 THINKING_CONFIG_HIGH = types.ThinkingConfig(thinking_level="high")  # type: ignore[arg-type]
 # Medium thinking for faster image descriptions.
 THINKING_CONFIG_MEDIUM = types.ThinkingConfig(thinking_level="medium")  # type: ignore[arg-type]
+
+_TAG_METADATA_RE = re.compile(r"^\[([^\]]+)\]")
 
 # Resilience policy for media processing (tuned for API quota/network hiccups)
 _MEDIA_RESILIENCE = ResiliencePolicy(
@@ -803,9 +807,7 @@ def _extract_ltm_tags(text: str) -> dict[str, str]:
     Returns a dict like {"tone": "Curious", "urgency": "High"} for storage
     in the metadata JSONB column. Returns empty dict if no tags found.
     """
-    import re
-
-    match = re.match(r"^\[([^\]]+)\]", text.strip())
+    match = _TAG_METADATA_RE.match(text.strip())
     if not match:
         return {}
 

@@ -107,3 +107,7 @@
 ## 2026-06-27 - Pillow imports were inside the for-loop, causing repeated attr lookups
 **Learning:** `from PIL import ImageFont` was inside the per-image loop in `_ensure_placeholders`. Moving it to the top of the enclosing block (alongside `Image, ImageDraw`) avoids repeated module attribute resolution and makes the two-phase refactor (build-then-gather) cleaner.
 **Action:** Always hoist repeated `from X import Y` statements out of loops.
+
+## 2026-10-24 - Widespread Inline Regex Compilations Discovered Across Hot Paths
+**Learning:** Found multiple instances where regular expressions were compiled inline using `re.sub()`, `re.match()`, `re.findall()`, and `re.search()` inside high-frequency event loop handlers and utility functions (e.g., `cb_ai_actions.py`, `report_builder.py`, `chunking.py`, `web_miniapp.py`). Even methods like `re.findall` or `re.sub` trigger cache lookup overhead and sometimes re-compilation on every call if the cache is thrashing.
+**Action:** Always pre-compile regular expressions at the module level using `re.compile()` and use the method on the compiled pattern (e.g., `_PATTERN.sub()`) in functions. This completely bypasses the `re._cache` lookup overhead and prevents unexpected blocking in the event loop.
