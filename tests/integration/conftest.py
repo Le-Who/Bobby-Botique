@@ -8,10 +8,12 @@ Each test runs inside a transaction that is ROLLED BACK — no data persists.
 
 import json
 import os
-from urllib.parse import urlsplit
 
 import asyncpg
 from dotenv import dotenv_values
+
+from tests.database_safety import database_identity as _database_identity
+from tests.database_safety import database_target_is_forbidden as _database_target_is_forbidden
 
 _ENV_PATH = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
 _FILE_ENV = dotenv_values(_ENV_PATH)
@@ -19,14 +21,7 @@ TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL") or _FILE_ENV.get("TEST_DATABA
 _PRODUCTION_DATABASE_URL = os.getenv("GEMAIBOT_TEST_ORIGINAL_DATABASE_URL") or _FILE_ENV.get("DATABASE_URL")
 
 
-def _database_identity(value: str | None):
-    if not value:
-        return None
-    parsed = urlsplit(value)
-    return parsed.hostname, parsed.port or 5432, parsed.path.rstrip("/")
-
-
-if TEST_DATABASE_URL and _database_identity(TEST_DATABASE_URL) == _database_identity(_PRODUCTION_DATABASE_URL):
+if _database_target_is_forbidden(TEST_DATABASE_URL, _PRODUCTION_DATABASE_URL):
     raise RuntimeError("TEST_DATABASE_URL resolves to the production database target")
 
 # Shared test user ID constant for all integration tests

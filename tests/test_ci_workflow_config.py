@@ -56,6 +56,7 @@ def test_ci_integration_job_uses_ephemeral_pgvector_database() -> None:
     assert "pgvector/pgvector:" in integration_job
     assert "TEST_DATABASE_URL:" in integration_job
     assert "DATABASE_URL:" in integration_job
+    assert 'GEMAIBOT_TEST_DATABASE_IS_EPHEMERAL: "true"' in integration_job
     assert integration_job.count("python scripts/migrate.py") == 3
     assert "python scripts/migrate.py --check" in integration_job
     assert "TEST_DATABASE_URL must be set" in integration_job

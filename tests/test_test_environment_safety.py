@@ -42,3 +42,20 @@ def test_database_identity_normalizes_default_postgres_port(db_conftest):
     explicit_port = "postgresql://user:secret@db.example.com:5432/app"
 
     assert db_conftest._database_identity(implicit_port) == db_conftest._database_identity(explicit_port)
+
+
+@pytest.mark.parametrize("db_conftest", [integration_conftest, e2e_conftest])
+def test_matching_database_is_allowed_only_for_explicit_local_github_service(monkeypatch, db_conftest):
+    local_service = "postgresql://test:test@localhost:5432/test"
+    remote_database = "postgresql://test:test@db.example.com:5432/test"
+
+    monkeypatch.delenv("GEMAIBOT_TEST_DATABASE_IS_EPHEMERAL", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    assert db_conftest._database_target_is_forbidden(local_service, local_service) is True
+
+    monkeypatch.setenv("GEMAIBOT_TEST_DATABASE_IS_EPHEMERAL", "true")
+    assert db_conftest._database_target_is_forbidden(local_service, local_service) is True
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert db_conftest._database_target_is_forbidden(local_service, local_service) is False
+    assert db_conftest._database_target_is_forbidden(remote_database, remote_database) is True

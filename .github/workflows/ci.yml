@@ -94,6 +94,7 @@ jobs:
       TELEGRAM_BOT_TOKEN: "test:token"
       DATABASE_URL: "postgresql://test:test@localhost:5432/test"
       TEST_DATABASE_URL: "postgresql://test:test@localhost:5432/test"
+      GEMAIBOT_TEST_DATABASE_IS_EPHEMERAL: "true"
       ADMIN_ID: "123456"
       GEMINI_API_KEYS: "test-key"
       TAVILY_API_KEYS: "test-key"
