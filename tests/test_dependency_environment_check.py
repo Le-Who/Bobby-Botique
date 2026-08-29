@@ -1,6 +1,6 @@
 """Tests for exact installed-versus-lock verification used by container CI."""
 
-from scripts.dependency_environment_check import verify_environment
+from scripts.dependency_environment_check import verify_environment, verify_lock_sources
 
 
 def _lock() -> dict[str, object]:
@@ -48,3 +48,30 @@ def test_environment_check_fails_closed_for_unknown_markers() -> None:
     assert verify_environment(lock, {"demo": "1.2.3", "helper": "4.5.6"}, "win32") == [
         "conditional: unsupported lock marker for container verification: python_version >= '3.14'"
     ]
+
+
+def test_lock_source_check_allows_only_pypi_registry_and_virtual_root() -> None:
+    assert verify_lock_sources(_lock()) == []
+
+
+def test_lock_source_check_rejects_direct_git_url_path_and_unapproved_registry() -> None:
+    lock = _lock()
+    lock["package"].extend(
+        [
+            {"name": "direct-url", "version": "1", "source": {"url": "https://example.test/pkg.whl"}},
+            {"name": "git-package", "version": "1", "source": {"git": "https://example.test/repo"}},
+            {"name": "local-path", "version": "1", "source": {"editable": "../outside"}},
+            {
+                "name": "alternate-index",
+                "version": "1",
+                "source": {"registry": "https://packages.example.test/simple"},
+            },
+        ]
+    )
+
+    errors = verify_lock_sources(lock)
+
+    assert "alternate-index: unapproved registry https://packages.example.test/simple" in errors
+    assert "direct-url: lock source must be the approved registry, found url" in errors
+    assert "git-package: lock source must be the approved registry, found git" in errors
+    assert "local-path: lock source must be the approved registry, found editable" in errors

@@ -278,7 +278,7 @@ Tests must use local fixtures and mocked subprocess/provider boundaries. Real li
 - Resolution and deterministic testing jobs have read-only repository permissions and no service secrets.
 - PRs from forks never receive canary secrets.
 - The canary environment requires maintainer approval and exposes only dedicated canary credentials.
-- Candidate package installation occurs before any protected environment is entered.
+- Candidate lock sources and a first wheel-only installation are validated in an unprivileged job before any protected environment is entered. The protected job reproduces the same locked, no-source-build installation with checkout credentials disabled and injects dedicated service credentials only into the probe step.
 - Logs redact tokens, URLs containing credentials, provider payload secrets, and database DSNs.
 - Actions and the `uv` tool are version-pinned; dependency updates for CI tooling are reviewed separately.
 - The seven-day cooldown is bypassed only for explicitly reviewed security fixes.

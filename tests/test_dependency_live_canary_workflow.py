@@ -21,7 +21,7 @@ def test_live_canary_is_manual_protected_and_never_runs_on_pull_request_code_imp
 
 def test_preflight_rejects_forks_wrong_base_and_non_dependency_files() -> None:
     workflow = _workflow()
-    preflight = workflow.split("  preflight:", 1)[1].split("  canary:", 1)[0]
+    preflight = workflow.split("  preflight:", 1)[1].split("  validate-lock:", 1)[0]
 
     assert "pull-requests: read" in preflight
     assert "pr.head.repo.full_name" in preflight
@@ -31,7 +31,20 @@ def test_preflight_rejects_forks_wrong_base_and_non_dependency_files() -> None:
     assert "unexpected" in preflight
 
 
-def test_candidate_install_has_no_secrets_and_uses_only_the_trusted_canary_script() -> None:
+def test_candidate_lock_is_validated_without_credentials_before_protected_job() -> None:
+    workflow = _workflow()
+    validation_job = workflow.split("  validate-lock:", 1)[1].split("  canary:", 1)[0]
+
+    assert "environment:" not in validation_job
+    assert "secrets." not in validation_job
+    assert validation_job.count("persist-credentials: false") == 2
+    assert "--lock-only" in validation_job
+    assert validation_job.count("uv sync --locked --no-build --link-mode copy") == 2
+    assert "baseline/.venv/bin/python baseline/scripts/dependency_environment_check.py" in validation_job
+    assert "candidate/.venv/bin/python baseline/scripts/dependency_environment_check.py" in validation_job
+
+
+def test_protected_candidate_install_has_no_credentials_or_secrets_and_uses_trusted_script() -> None:
     workflow = _workflow()
     canary_job = workflow.split("  canary:", 1)[1]
     install_block = canary_job.split("- name: Sync baseline and candidate locks", 1)[1].split(
@@ -39,6 +52,9 @@ def test_candidate_install_has_no_secrets_and_uses_only_the_trusted_canary_scrip
     )[0]
 
     assert 'python -m pip install "uv==0.12.6"' in canary_job
+    assert canary_job.count("persist-credentials: false") == 2
+    assert install_block.count("uv sync --locked --no-build --link-mode copy") == 2
+    assert "--lock-only" in install_block
     assert "baseline/.venv/bin/python baseline/scripts/dependency_environment_check.py" in install_block
     assert "candidate/.venv/bin/python baseline/scripts/dependency_environment_check.py" in install_block
     assert "secrets." not in install_block

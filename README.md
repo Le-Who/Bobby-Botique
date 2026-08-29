@@ -702,7 +702,7 @@ uv run --locked python scripts/dependency_frontier.py audit
 
 The `Dependency Frontier Audit` workflow wakes weekly but a fixed UTC epoch gate permits scheduled resolution only every 14 days; a manual dispatch runs immediately. It resolves the policy-constrained and unconstrained stable frontiers twice for Linux production and Windows development with a seven-day release cooldown. Its report is discovery evidence, not proof of compatibility. Dependabot groups post-1.0 patch/minor updates, while major and current `0.x` updates remain separate and are never auto-merged.
 
-The manual `Dependency Live Canary` workflow accepts a same-repository dependency PR that changes only `pyproject.toml` and `uv.lock`. The protected `dependency-canary` GitHub Environment must require a reviewer and provide dedicated, low-quota credentials:
+The manual `Dependency Live Canary` workflow accepts a same-repository dependency PR that changes only `pyproject.toml` and `uv.lock`. Before the protected job is entered, an unprivileged job rejects non-PyPI/direct sources, disables source builds, installs both locked graphs, and verifies exact environment parity. Both checkouts discard persisted Git credentials. The protected job repeats the wheel-only locked installation without secrets; dedicated credentials exist only in the probe step. The `dependency-canary` GitHub Environment must require a reviewer and provide dedicated, low-quota credentials:
 
 | Environment entry | Purpose |
 | --- | --- |

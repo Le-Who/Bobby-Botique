@@ -64,9 +64,43 @@ jobs:
             core.setOutput("base_sha", pr.base.sha);
             core.setOutput("head_sha", pr.head.sha);
 
+  validate-lock:
+    name: Validate candidate lock before protected execution
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out trusted baseline without credentials
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.base_sha }}
+          path: baseline
+          persist-credentials: false
+      - name: Check out validated candidate without credentials
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.head_sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install pinned uv
+        run: python -m pip install "uv==0.12.6"
+      - name: Reject untrusted sources, builds, and environment drift
+        run: |
+          python baseline/scripts/dependency_environment_check.py --lock baseline/uv.lock --lock-only
+          python baseline/scripts/dependency_environment_check.py --lock candidate/uv.lock --lock-only
+          (cd baseline && uv sync --locked --no-build --link-mode copy)
+          (cd candidate && uv sync --locked --no-build --link-mode copy)
+          baseline/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock baseline/uv.lock
+          candidate/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock candidate/uv.lock
+
   canary:
     name: Compare baseline and candidate live contracts
-    needs: preflight
+    needs: [preflight, validate-lock]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: dependency-canary
@@ -79,11 +113,13 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.base_sha }}
           path: baseline
+          persist-credentials: false
       - name: Check out validated candidate commit
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.preflight.outputs.head_sha }}
           path: candidate
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
@@ -105,8 +141,10 @@ jobs:
             });
       - name: Sync baseline and candidate locks
         run: |
-          (cd baseline && uv sync --locked --link-mode copy)
-          (cd candidate && uv sync --locked --link-mode copy)
+          python baseline/scripts/dependency_environment_check.py --lock baseline/uv.lock --lock-only
+          python baseline/scripts/dependency_environment_check.py --lock candidate/uv.lock --lock-only
+          (cd baseline && uv sync --locked --no-build --link-mode copy)
+          (cd candidate && uv sync --locked --no-build --link-mode copy)
           baseline/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock baseline/uv.lock
           candidate/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock candidate/uv.lock
       - name: Run controlled baseline and candidate probes
