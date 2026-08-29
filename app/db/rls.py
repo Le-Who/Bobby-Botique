@@ -14,17 +14,30 @@ CREATE POLICY {policy_name} ON {table_name}
 FOR ALL USING (
     user_id = (select NULLIF(current_setting('app.user_id', true), '')::bigint) OR
     (select current_setting('app.is_admin', true)) = 'true'
+)
+WITH CHECK (
+    user_id = (select NULLIF(current_setting('app.user_id', true), '')::bigint) OR
+    (select current_setting('app.is_admin', true)) = 'true'
 );
 """
 
 RLS_POLICY_ADMIN = """
 CREATE POLICY {policy_name} ON {table_name}
-FOR ALL USING ((select current_setting('app.is_admin', true)) = 'true');
+FOR ALL USING ((select current_setting('app.is_admin', true)) = 'true')
+WITH CHECK ((select current_setting('app.is_admin', true)) = 'true');
 """
 
 RLS_POLICY_GROUP = """
 CREATE POLICY {policy_name} ON {table_name}
 FOR ALL USING (
+    (select current_setting('app.is_admin', true)) = 'true' OR
+    EXISTS (
+        SELECT 1 FROM group_members gm
+        WHERE gm.chat_id = {table_name}.chat_id
+        AND gm.user_id = (select NULLIF(current_setting('app.user_id', true), '')::bigint)
+    )
+)
+WITH CHECK (
     (select current_setting('app.is_admin', true)) = 'true' OR
     EXISTS (
         SELECT 1 FROM group_members gm
@@ -37,6 +50,10 @@ FOR ALL USING (
 RLS_POLICY_CONVERSATION_MESSAGES = """
 CREATE POLICY {policy_name} ON {table_name}
 FOR ALL USING (
+    (select current_setting('app.is_admin', true)) = 'true'
+    OR owner_user_id = (select NULLIF(current_setting('app.user_id', true), '')::bigint)
+)
+WITH CHECK (
     (select current_setting('app.is_admin', true)) = 'true'
     OR owner_user_id = (select NULLIF(current_setting('app.user_id', true), '')::bigint)
 );
@@ -99,6 +116,12 @@ RLS_CONFIG = {
     "memory_derivation_sources": [{"name": "memory_derivation_sources_user_policy", "template": RLS_POLICY_USER}],
     "private_data_leases": [{"name": "private_data_leases_user_policy", "template": RLS_POLICY_USER}],
     "key_model_status": [{"name": "key_model_status_admin_policy", "template": RLS_POLICY_ADMIN}],
+    "brief_subscriptions": [{"name": "brief_subscriptions_policy", "template": RLS_POLICY_USER}],
+    "conversation_branches": [{"name": "conversation_branches_policy", "template": RLS_POLICY_USER}],
+    "user_reminders": [{"name": "user_reminders_policy", "template": RLS_POLICY_USER}],
+    "horoscope_subscriptions": [{"name": "horoscope_subscriptions_policy", "template": RLS_POLICY_USER}],
+    "tarot_daily_subscriptions": [{"name": "tarot_daily_subscriptions_policy", "template": RLS_POLICY_USER}],
+    "user_achievements": [{"name": "user_achievements_policy", "template": RLS_POLICY_USER}],
     "global_settings": [{"name": "global_settings_policy", "template": RLS_POLICY_ADMIN}],
     "inline_boards": [{"name": "inline_boards_policy", "template": RLS_POLICY_ADMIN}],
 }
@@ -139,7 +162,7 @@ async def create_rls_policies(table_name: str, db_query):
 
     # Fetch all existing policies for the table at once to avoid N+1 queries.
     existing_policy_records = await db_query(
-        "SELECT policyname FROM pg_policies WHERE tablename = $1",
+        "SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = $1",
         (table_name,),
     )
     existing_policies = {row["policyname"] for row in existing_policy_records}

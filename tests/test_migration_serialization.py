@@ -108,3 +108,25 @@ async def test_concurrent_runners_apply_each_numbered_migration_once(monkeypatch
     assert second_result.success is True
     assert pool.migration_executions == 1
     assert pool.applied_versions == {"001"}
+
+
+@pytest.mark.asyncio
+async def test_numbered_migration_failure_skips_legacy_ddl(monkeypatch):
+    """A broken numbered schema must not be mutated further by legacy DDL."""
+    from app.db import migrations
+
+    pool = _MigrationPool()
+    pool.allow_first_migration_to_finish.set()
+    manager = SimpleNamespace(pool=pool)
+
+    async def fail_numbered(_locked_query, _conn, result):
+        result.failed.append(("014", "missing role"))
+
+    legacy = AsyncMock()
+    monkeypatch.setattr(migrations, "_run_numbered_migrations_locked", fail_numbered)
+    monkeypatch.setattr(migrations, "_run_legacy_migrations", legacy)
+
+    result = await migrations.run_migrations(AsyncMock(), manager)
+
+    assert result.success is False
+    legacy.assert_not_awaited()

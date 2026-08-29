@@ -375,18 +375,19 @@ async def init_db():
 
 
 async def _init_schema():
-    """Create tables, migrate, enforce RLS, and seed initial data."""
+    """Migrate, validate the final schema, enforce RLS, and seed data."""
     from app.db.migrations import run_migrations
-    from app.db.schema import create_tables
+    from app.db.schema import validate_schema
     from app.db.seed import insert_initial_data
 
-    await create_tables(db_query)
     migration_result = await run_migrations(db_query, db_manager)
     if not migration_result.success:
         failed_versions = ", ".join(version for version, _ in migration_result.failed)
         raise DatabasePoolError(
             f"Schema migration failed ({failed_versions or 'unknown'}); refusing to start with an inconsistent schema"
         )
+
+    await validate_schema(db_query)
 
     # Migrations may create new tenant tables, so runtime idempotent RLS setup
     # must run afterwards rather than silently skipping tables absent at boot.

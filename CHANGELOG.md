@@ -5,6 +5,13 @@ Format is optimized for agent-parseable context.
 
 ## [Unreleased] - 2026-08-29 - Trivia Resilience and Admin Observability
 
+### 🗄️ Migration portability and schema safety
+
+- Made the complete migration chain portable to standard pgvector PostgreSQL by guarding the Supabase-only `service_role`, correcting stale RLS context names, and replacing open Horoscope/Tarot subscription policies with tenant/admin isolation.
+- Added forward migration `070` to normalize affected policies on already-migrated databases, synchronized runtime RLS and expected-table catalogs, and made post-migration schema validation fail closed.
+- Added a shared migration-manifest validator for deterministic names, unique versions, UTF-8, and non-empty SQL; numbered failures now stop before legacy DDL.
+- Made CI apply migrations twice and then require zero drift before integration tests and deployment.
+
 ### 🧩 Daily Trivia generation
 
 - Added a key-local retry plan for each Trivia lane: the configured Gemini model, `gemini-3.6-flash`, the configured model again, then `gemini-3.6-flash` again. Authentication and quota failures rotate the key immediately; transient, content, and response-validation failures advance through the model plan first.

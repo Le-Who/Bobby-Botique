@@ -26,6 +26,7 @@ EXPECTED_TABLES = frozenset(
         "crocodile_daily_puzzles",
         "crocodile_daily_preferences",
         "crocodile_daily_results",
+        "crocodile_daily_result_messages",
         "crocodile_daily_prompt_messages",
         "crocodile_player_activity",
         "daily_2048_puzzles",
@@ -40,6 +41,7 @@ EXPECTED_TABLES = frozenset(
         "daily_trivia_super_results",
         "daily_trivia_prompt_messages",
         "daily_trivia_preferences",
+        "daily_trivia_used_keys",
         "error_logs",
         "tarot_daily_readings",
         "tavily_api_keys",
@@ -50,6 +52,11 @@ EXPECTED_TABLES = frozenset(
         "user_documents",
         "user_state",
         "feedback",
+        "horoscope_subscriptions",
+        "inline_boards",
+        "natal_reports",
+        "tarot_daily_subscriptions",
+        "user_achievements",
         # Added by later migrations / 018 backfill
         "user_metrics",
         "model_configuration",
@@ -77,12 +84,16 @@ EXPECTED_TABLES = frozenset(
 )
 
 
-async def create_tables(db_query):
+class SchemaValidationError(RuntimeError):
+    """Raised when the migrated public schema is incomplete or unreadable."""
+
+
+async def validate_schema(db_query):
     """Validate that all expected application tables exist.
 
     Table creation is handled by SQL migration files.  This function only
     checks that every table the code depends on is present, and logs
-    warnings for any that are missing so operators can investigate.
+    raises if any are missing so the process cannot start on partial DDL.
     """
     try:
         rows = await db_query("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
@@ -90,17 +101,21 @@ async def create_tables(db_query):
         missing = EXPECTED_TABLES - existing
 
         if missing:
-            logging.warning(
-                "Schema validation: %d expected table(s) missing from public schema: %s. "
-                "Migrations may not have run yet — they will execute next.",
-                len(missing),
-                ", ".join(sorted(missing)),
+            missing_tables = ", ".join(sorted(missing))
+            raise SchemaValidationError(
+                f"Schema validation failed: {len(missing)} expected table(s) missing "
+                f"from public schema: {missing_tables}"
             )
         else:
             logging.info(
                 "Schema validation passed: all %d expected tables present.",
                 len(EXPECTED_TABLES),
             )
+    except SchemaValidationError:
+        raise
     except Exception as e:
-        # Non-fatal — migrations will create missing tables momentarily.
-        logging.warning("Schema validation skipped due to error: %s", e)
+        raise SchemaValidationError(f"Schema validation query failed: {e}") from e
+
+
+# Backward-compatible alias for integrations that imported the old name.
+create_tables = validate_schema

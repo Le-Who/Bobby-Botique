@@ -18,8 +18,8 @@ async def test_schema_migrations_run_before_runtime_rls_setup():
         order.append(name)
         return result
 
-    async def mark_tables(*_):
-        return await mark("tables")
+    async def mark_schema(*_):
+        return await mark("schema")
 
     async def mark_migrations(*_):
         return await mark("migrations", migration_result)
@@ -32,14 +32,14 @@ async def test_schema_migrations_run_before_runtime_rls_setup():
 
     migration_result = SimpleNamespace(success=True, applied=[], failed=[], pending_at_start=0)
     with (
-        patch("app.db.schema.create_tables", new=AsyncMock(side_effect=mark_tables)),
+        patch("app.db.schema.validate_schema", new=AsyncMock(side_effect=mark_schema)),
         patch("app.db.migrations.run_migrations", new=AsyncMock(side_effect=mark_migrations)),
         patch("app.database.setup_row_level_security", new=AsyncMock(side_effect=mark_rls)),
         patch("app.db.seed.insert_initial_data", new=AsyncMock(side_effect=mark_seed)),
     ):
         await _init_schema()
 
-    assert order == ["tables", "migrations", "rls", "seed"]
+    assert order == ["migrations", "schema", "rls", "seed"]
 
 
 @pytest.mark.asyncio
@@ -53,7 +53,7 @@ async def test_failed_migration_stops_startup_before_rls_and_seed():
         pending_at_start=1,
     )
     with (
-        patch("app.db.schema.create_tables", new_callable=AsyncMock),
+        patch("app.db.schema.validate_schema", new_callable=AsyncMock) as schema,
         patch("app.db.migrations.run_migrations", new_callable=AsyncMock, return_value=migration_result),
         patch("app.database.setup_row_level_security", new_callable=AsyncMock) as rls,
         patch("app.db.seed.insert_initial_data", new_callable=AsyncMock) as seed,
@@ -61,6 +61,7 @@ async def test_failed_migration_stops_startup_before_rls_and_seed():
         with pytest.raises(DatabasePoolError, match="067"):
             await _init_schema()
 
+    schema.assert_not_awaited()
     rls.assert_not_awaited()
     seed.assert_not_awaited()
 
@@ -77,7 +78,7 @@ async def test_failed_rls_setup_stops_startup_before_seed():
         pending_at_start=1,
     )
     with (
-        patch("app.db.schema.create_tables", new_callable=AsyncMock),
+        patch("app.db.schema.validate_schema", new_callable=AsyncMock),
         patch("app.db.migrations.run_migrations", new_callable=AsyncMock, return_value=migration_result),
         patch(
             "app.database.setup_row_level_security",

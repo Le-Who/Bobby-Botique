@@ -17,12 +17,17 @@ CREATE TABLE IF NOT EXISTS key_model_status (
 -- Enable RLS (consistent with other tables)
 ALTER TABLE key_model_status ENABLE ROW LEVEL SECURITY;
 
--- Service-role full access policy
+-- Supabase defines service_role; plain PostgreSQL does not.  Only create the
+-- role-targeted policy when the role is present so fresh CI databases remain portable.
 DO $$
 BEGIN
-    IF NOT EXISTS (
+    IF EXISTS (
+        SELECT 1 FROM pg_roles WHERE rolname = 'service_role'
+    ) AND NOT EXISTS (
         SELECT 1 FROM pg_policies
-        WHERE tablename = 'key_model_status' AND policyname = 'key_model_status_service_role'
+        WHERE schemaname = 'public'
+          AND tablename = 'key_model_status'
+          AND policyname = 'key_model_status_service_role'
     ) THEN
         EXECUTE 'CREATE POLICY key_model_status_service_role ON key_model_status FOR ALL TO service_role USING (true) WITH CHECK (true)';
     END IF;
@@ -34,13 +39,15 @@ DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_policies
-        WHERE tablename = 'key_model_status' AND policyname = 'key_model_status_admin'
+        WHERE schemaname = 'public'
+          AND tablename = 'key_model_status'
+          AND policyname = 'key_model_status_admin_policy'
     ) THEN
         EXECUTE format(
-            'CREATE POLICY key_model_status_admin ON key_model_status FOR ALL USING (
-                current_setting(''app.user_is_admin'', true)::boolean = true
+            'CREATE POLICY key_model_status_admin_policy ON key_model_status FOR ALL USING (
+                current_setting(''app.is_admin'', true) = ''true''
             ) WITH CHECK (
-                current_setting(''app.user_is_admin'', true)::boolean = true
+                current_setting(''app.is_admin'', true) = ''true''
             )'
         );
     END IF;

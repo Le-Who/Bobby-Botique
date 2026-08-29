@@ -599,15 +599,16 @@ All database DDL is managed via **numbered SQL migration files** in `scripts/mig
 | `scripts/migrations/033_add_role_diaries.sql` | Adds `role_diaries JSONB DEFAULT '{}'` to `user_state` for MemPalace persistent role diaries |
 | `scripts/migrations/034_global_settings.sql` | Creates `global_settings` key-value table for runtime configuration; seeds `inline_thinking_level` default |
 | `scripts/migrations/018_add_missing_table_definitions.sql` | Backfill migration for databases that applied `000` without all tables |
-| `scripts/migrate.py` | Standalone CLI runner. Runs explicitly during deployment to guarantee schema safety. |
-| `app/db/migrations.py` | Internal migration framework. Implements fail-fast behavior: logs a CRITICAL error and aborts on any failure. |
-| `app/db/schema.py` | Startup validation — verifies all expected tables exist after migrations |
+| `scripts/migrate.py` | Standalone CLI runner with strict manifest validation. Runs explicitly during deployment to guarantee schema safety. |
+| `app/db/migrations.py` | Internal migration framework. Stops before legacy DDL when any numbered migration fails. |
+| `app/db/schema.py` | Fail-closed startup validation — verifies all expected tables exist after migrations |
 | `app/db/rls.py` | Row Level Security policy management |
 | `app/db/seed.py` | Initial data seeding (admin user, API keys, indexes) |
 
 **Workflow:**
 - **Deploy-time:** `scripts/migrate.py` runs in an ephemeral container. If any migration fails, deployment aborts.
-- **Startup-time:** `init_db()` -> `create_tables()` -> `setup_row_level_security()` -> `run_migrations()`. If `run_migrations()` detects drift or failure, it alerts admin via Telegram.
+- **CI:** apply the complete migration chain to clean pgvector PostgreSQL, rerun it as a no-op, then require `--check` to report zero drift.
+- **Startup-time:** `init_db()` -> `run_migrations()` -> `validate_schema()` -> `setup_row_level_security()` -> seed. Any numbered migration, schema, or RLS failure aborts startup.
 
 **Adding new tables:** Create a new numbered `.sql` file in `scripts/migrations/`, add the table name to `EXPECTED_TABLES` in `app/db/schema.py`, and add RLS configuration to `app/db/rls.py` if needed.
 

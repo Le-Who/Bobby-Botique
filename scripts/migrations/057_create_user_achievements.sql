@@ -15,4 +15,8 @@ CREATE POLICY user_achievements_policy ON public.user_achievements
 FOR ALL USING (
       user_id = (select NULLIF(current_setting('app.user_id', true), '')::bigint)
       OR (select current_setting('app.is_admin', true)) = 'true'
+  )
+WITH CHECK (
+      user_id = (select NULLIF(current_setting('app.user_id', true), '')::bigint)
+      OR (select current_setting('app.is_admin', true)) = 'true'
   );

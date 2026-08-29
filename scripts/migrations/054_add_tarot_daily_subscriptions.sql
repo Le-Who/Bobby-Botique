@@ -24,7 +24,7 @@ CREATE INDEX IF NOT EXISTS idx_tarot_daily_subs_delivery
     ON public.tarot_daily_subscriptions (is_subscribed, preferred_local_hour, last_sent_date)
     WHERE is_subscribed = TRUE;
 
--- Enable RLS (service_role bypasses automatically)
+-- Enable tenant isolation; application workers use app.user_id/app.is_admin.
 ALTER TABLE public.tarot_daily_subscriptions ENABLE ROW LEVEL SECURITY;
 
 DO $$
@@ -32,10 +32,19 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_policies
         WHERE tablename = 'tarot_daily_subscriptions'
-          AND policyname = 'tarot_daily_subs_open'
+          AND schemaname = 'public'
+          AND policyname = 'tarot_daily_subscriptions_policy'
     ) THEN
-        CREATE POLICY tarot_daily_subs_open
+        CREATE POLICY tarot_daily_subscriptions_policy
             ON public.tarot_daily_subscriptions
-            USING (true);   -- bot connects as service role — open policy
+            FOR ALL
+            USING (
+                user_id = NULLIF(current_setting('app.user_id', true), '')::BIGINT
+                OR current_setting('app.is_admin', true) = 'true'
+            )
+            WITH CHECK (
+                user_id = NULLIF(current_setting('app.user_id', true), '')::BIGINT
+                OR current_setting('app.is_admin', true) = 'true'
+            );
     END IF;
 END $$;

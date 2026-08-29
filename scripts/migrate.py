@@ -30,6 +30,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import asyncpg
 
+from app.db.migration_manifest import (
+    MigrationManifestError,
+    discover_migration_files,
+    migration_version,
+)
+
 MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parent / "migrations"
 logging.basicConfig(
     level=logging.INFO,
@@ -44,15 +50,12 @@ log = logging.getLogger("migrate")
 
 def _version(sql_file: pathlib.Path) -> str:
     """Extract the version prefix from a migration filename (e.g. '038b_...' → '038b')."""
-    return sql_file.stem.split("_", 1)[0]
+    return migration_version(sql_file)
 
 
 def _discover_files() -> list[pathlib.Path]:
-    """Return sorted list of migration .sql files."""
-    if not MIGRATIONS_DIR.exists():
-        log.error("Migrations directory not found: %s", MIGRATIONS_DIR)
-        sys.exit(1)
-    return sorted(MIGRATIONS_DIR.glob("*.sql"))
+    """Return the validated migration manifest."""
+    return discover_migration_files(MIGRATIONS_DIR)
 
 
 async def _ensure_tracking_table(conn: asyncpg.Connection) -> None:
@@ -148,6 +151,12 @@ async def main(args: argparse.Namespace) -> int:
     database_url = os.environ.get("DATABASE_URL", "").strip()
     if not database_url:
         log.error("DATABASE_URL environment variable is not set.")
+        return 1
+
+    try:
+        _discover_files()
+    except MigrationManifestError as exc:
+        log.error("Invalid migration manifest: %s", exc)
         return 1
 
     log.info("Connecting to database...")

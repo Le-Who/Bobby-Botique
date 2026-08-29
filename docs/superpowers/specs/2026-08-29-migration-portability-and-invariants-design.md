@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-29
 
-**Status:** Approved direction; awaiting written-spec review
+**Status:** Approved and implemented
 
 **Scope:** PostgreSQL migration portability, RLS correctness, schema validation, fail-fast execution, and CI migration invariants
 
@@ -20,7 +20,7 @@ The defect remained latent because the PostgreSQL integration job previously ran
 
 ## Audit findings
 
-The audit covers all 73 SQL migration files.
+The pre-implementation audit covered all 73 SQL migration files; implementation adds migration `070` as the 74th file.
 
 - All 73 files parse successfully as PostgreSQL SQL.
 - There are no empty migration files, duplicate version prefixes, or forward table-dependency violations in the current manifest.

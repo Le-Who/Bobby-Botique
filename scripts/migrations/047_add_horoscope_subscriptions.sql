@@ -27,20 +27,27 @@ CREATE INDEX IF NOT EXISTS idx_horoscope_subs_active
     ON public.horoscope_subscriptions (is_active)
     WHERE is_active = TRUE;
 
--- Enable RLS (service_role bypasses automatically)
+-- Enable tenant isolation; application workers use app.user_id/app.is_admin.
 ALTER TABLE public.horoscope_subscriptions ENABLE ROW LEVEL SECURITY;
 
--- Allow service role full access (bypasses RLS by default in Postgres with BYPASSRLS)
--- For users authenticated via JWT, restrict to own rows:
 DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_policies
         WHERE tablename = 'horoscope_subscriptions'
-          AND policyname = 'horoscope_subs_own'
+          AND schemaname = 'public'
+          AND policyname = 'horoscope_subscriptions_policy'
     ) THEN
-        CREATE POLICY horoscope_subs_own
+        CREATE POLICY horoscope_subscriptions_policy
             ON public.horoscope_subscriptions
-            USING (true);   -- bot connects as superuser / service role — open policy
+            FOR ALL
+            USING (
+                user_id = NULLIF(current_setting('app.user_id', true), '')::BIGINT
+                OR current_setting('app.is_admin', true) = 'true'
+            )
+            WITH CHECK (
+                user_id = NULLIF(current_setting('app.user_id', true), '')::BIGINT
+                OR current_setting('app.is_admin', true) = 'true'
+            );
     END IF;
 END $$;

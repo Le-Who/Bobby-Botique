@@ -2,7 +2,7 @@
 Session-scoped PostgreSQL testcontainer fixture for integration tests.
 
 Spins up an ephemeral pgvector Postgres instance, runs the full application
-migration chain (create_tables → RLS → run_migrations → seed), and yields the
+migration chain (run_migrations → validate_schema → RLS → seed), and yields the
 database URL. Safe to use alongside the Supabase TEST_DATABASE_URL strategy —
 they operate independently.
 
@@ -68,7 +68,7 @@ def postgres_container():
             from app.database import init_db  # noqa: PLC0415
 
             # init_db() calls create_pool() which reads DATABASE_URL from env,
-            # then calls _init_schema() → create_tables → RLS → run_migrations → seed.
+            # then calls _init_schema() → migrations → schema validation → RLS → seed.
             await init_db()
 
         try:

@@ -113,7 +113,10 @@ jobs:
           python -c "import os; assert os.environ.get('TEST_DATABASE_URL'),
           'TEST_DATABASE_URL must be set'"
       - name: Apply migrations
-        run: python scripts/migrate.py
+        run: |
+          python scripts/migrate.py
+          python scripts/migrate.py
+          python scripts/migrate.py --check
       - name: Run integration tests serially
         run: python -m pytest -m "integration" -n 0 tests/ -v
 

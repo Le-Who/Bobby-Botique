@@ -16,6 +16,12 @@ import pathlib
 
 import asyncpg
 
+from app.db.migration_manifest import (
+    MigrationManifestError,
+    discover_migration_files,
+    migration_version,
+)
+
 # ── Result container ──────────────────────────────────────────────────────────
 
 
@@ -81,6 +87,9 @@ async def run_migrations(db_query, db_manager) -> MigrationResult:
             len(result.failed),
         )
 
+    if result.failed:
+        return result
+
     # 4. Legacy inline migrations (for environments without SQL files)
     #    These are idempotent column-add checks that run on every startup.
     await _run_legacy_migrations(db_query)
@@ -115,15 +124,14 @@ async def _run_numbered_migrations_locked(locked_query, conn, result: MigrationR
     applied_versions = {row["version"] for row in applied}
 
     migrations_dir = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts" / "migrations"
-    if not migrations_dir.exists():
-        logging.info(
-            "No migrations directory found at %s — skipping file migrations",
-            migrations_dir,
-        )
+    try:
+        sql_files = discover_migration_files(migrations_dir)
+    except MigrationManifestError as e:
+        logging.critical("Invalid migration manifest: %s", e)
+        result.failed.append(("migration_manifest", str(e)))
         return
 
-    sql_files = sorted(migrations_dir.glob("*.sql"))
-    pending_files = [f for f in sql_files if f.stem.split("_", 1)[0] not in applied_versions]
+    pending_files = [f for f in sql_files if migration_version(f) not in applied_versions]
     result.pending_at_start = len(pending_files)
 
     if pending_files:
@@ -133,7 +141,7 @@ async def _run_numbered_migrations_locked(locked_query, conn, result: MigrationR
         )
 
     for sql_file in sql_files:
-        version = sql_file.stem.split("_", 1)[0]
+        version = migration_version(sql_file)
         if version in applied_versions:
             continue
 
