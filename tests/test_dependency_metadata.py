@@ -7,10 +7,12 @@ from pathlib import Path
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
 LOCKFILE = ROOT / "uv.lock"
+PYTEST_INI = ROOT / "pytest.ini"
 
 EXPECTED_PRODUCTION = {
     "asyncpg",
@@ -31,7 +33,6 @@ EXPECTED_PRODUCTION = {
     "python-telegram-bot",
     "quart",
     "redis",
-    "rich",
     "structlog",
     "tzdata",
     "uvloop",
@@ -82,6 +83,21 @@ def test_direct_dependency_names_are_unique_across_scopes() -> None:
     assert set(production).isdisjoint(development)
 
 
+def test_frontier_trial_dependencies_use_the_validated_major_ranges() -> None:
+    metadata = _metadata()
+    requirements = {Requirement(item).name: Requirement(item) for item in metadata["project"]["dependencies"]}
+
+    google_range = requirements["google-genai"].specifier
+    structlog_range = requirements["structlog"].specifier
+    assert Version("2.19.0") in google_range
+    assert Version("2.18.99") not in google_range
+    assert Version("3.0.0") not in google_range
+    assert Version("26.1.0") in structlog_range
+    assert Version("26.0.99") not in structlog_range
+    assert Version("27.0.0") not in structlog_range
+    assert "rich" not in {canonicalize_name(name) for name in requirements}
+
+
 def test_uv_and_frontier_policy_are_explicit() -> None:
     metadata = _metadata()
 
@@ -104,3 +120,9 @@ def test_uv_lock_contains_a_real_dependency_graph() -> None:
 
     assert len(packages) > len(EXPECTED_PRODUCTION)
     assert EXPECTED_PRODUCTION - {"uvloop"} <= locked_names
+
+
+def test_pytest_collection_is_confined_to_repository_tests() -> None:
+    pytest_config = PYTEST_INI.read_text(encoding="utf-8")
+
+    assert "testpaths = tests" in pytest_config

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict, cast
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
@@ -77,10 +77,23 @@ class DependencyEntry:
         except InvalidRequirement as exc:
             raise ValueError(f"invalid dependency requirement: {raw}") from exc
         return cls(
-            scope=scope,
+            scope=cast(Literal["production", "development"], scope),
             raw=str(requirement),
             name=canonicalize_name(requirement.name),
         )
+
+
+class AuditRow(TypedDict):
+    name: str
+    scope: Literal["production", "development"]
+    constraint: str
+    locked: list[str]
+    policy: list[str]
+    frontier: list[str]
+    policy_change: str
+    frontier_change: str
+    classification: str
+    actionable: bool
 
 
 def load_project(path: Path) -> tuple[FrontierPolicy, tuple[DependencyEntry, ...]]:
@@ -338,7 +351,7 @@ def write_audit_report(
     policy_versions = extract_locked_versions(policy_content, direct_names)
     frontier_versions = extract_locked_versions(frontier_content, direct_names)
 
-    rows: list[dict[str, object]] = []
+    rows: list[AuditRow] = []
     for dependency in sorted(dependencies, key=lambda item: item.name):
         locked = baseline_versions.get(dependency.name, ())
         policy = policy_versions.get(dependency.name, ())

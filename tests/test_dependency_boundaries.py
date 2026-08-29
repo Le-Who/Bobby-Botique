@@ -7,16 +7,21 @@ making important third-party API assumptions fail close to a dependency update.
 from __future__ import annotations
 
 import inspect
+import json
+import logging
 from io import BytesIO
 
 import asyncpg
 import geonamescache
+import httpx
 import msgspec
 import orjson
 import pypdf
 import pytest
+import structlog
 from cryptography.fernet import Fernet
 from docx import Document
+from google import genai
 from google.genai import types
 from hypercorn.config import Config as HypercornConfig
 from PIL import Image
@@ -29,6 +34,7 @@ from app.natal.calculator import calculate_chart
 from app.natal.models import BirthInput, ResolvedBirthData, TimePrecision
 from app.providers.stream_types import GenerationRequest, PromptRole, PromptTurn, TextPart
 from app.providers.typed_payloads import gemini_contents
+from app.utils.logging_config import configure_structlog_pipeline
 
 
 async def _telegram_callback(update, context) -> None:
@@ -43,6 +49,24 @@ def test_telegram_application_and_polling_contract() -> None:
     assert application.updater is not None
     polling_parameters = inspect.signature(application.updater.start_polling).parameters
     assert {"allowed_updates", "drop_pending_updates", "poll_interval", "timeout"} <= set(polling_parameters)
+
+
+def test_structlog_processor_formatter_contract() -> None:
+    try:
+        formatter = configure_structlog_pipeline(enable_structured=True, enable_pretty=False)
+        record = logging.LogRecord(
+            name="dependency-boundary",
+            level=logging.INFO,
+            pathname="boundary.py",
+            lineno=1,
+            msg="hello %s",
+            args=("world",),
+            exc_info=None,
+        )
+
+        assert json.loads(formatter.format(record))["event"] == "hello world"
+    finally:
+        structlog.reset_defaults()
 
 
 @pytest.mark.asyncio
@@ -60,6 +84,86 @@ async def test_google_genai_typed_request_adapter_contract() -> None:
     assert contents[0].parts is not None
     assert contents[0].parts[0].text == "dependency boundary"
     assert config.max_output_tokens == 8
+
+
+@pytest.mark.asyncio
+async def test_google_genai_manual_function_call_survives_sdk_wrapper() -> None:
+    requests: list[dict[str, object]] = []
+
+    async def handle_request(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "content": {
+                            "role": "model",
+                            "parts": [
+                                {
+                                    "functionCall": {
+                                        "name": "search_web",
+                                        "args": {"query": "Kyiv"},
+                                    }
+                                }
+                            ],
+                        },
+                        "finishReason": "STOP",
+                    }
+                ]
+            },
+        )
+
+    client = genai.Client(
+        api_key="test-key",
+        http_options=types.HttpOptions(async_client_args={"transport": httpx.MockTransport(handle_request)}),
+    )
+    config = types.GenerateContentConfig(
+        tools=[
+            types.Tool(
+                function_declarations=[
+                    types.FunctionDeclaration(
+                        name="search_web",
+                        description="Search the web",
+                        parameters={
+                            "type": "object",
+                            "properties": {"query": {"type": "string"}},
+                            "required": ["query"],
+                        },
+                    )
+                ]
+            )
+        ]
+    )
+
+    try:
+        response = await client.aio.models.generate_content(
+            model="gemini-test",
+            contents="Find Kyiv",
+            config=config,
+        )
+    finally:
+        await client.aio.aclose()
+
+    assert len(requests) == 1
+    assert requests[0]["tools"] == [
+        {
+            "functionDeclarations": [
+                {
+                    "description": "Search the web",
+                    "name": "search_web",
+                    "parameters": {
+                        "properties": {"query": {"type": "STRING"}},
+                        "required": ["query"],
+                        "type": "OBJECT",
+                    },
+                }
+            ]
+        }
+    ]
+    assert response.function_calls is not None
+    assert response.function_calls[0].name == "search_web"
+    assert response.function_calls[0].args == {"query": "Kyiv"}
 
 
 @pytest.mark.asyncio

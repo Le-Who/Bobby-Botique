@@ -12,11 +12,12 @@ from email.message import Message
 from pathlib import Path
 from typing import Any
 
-MetadataLoader = Callable[[str], Message]
+MetadataRecord = Message | importlib.metadata.PackageMetadata
+MetadataLoader = Callable[[str], MetadataRecord]
 _LICENSE_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
 
 
-def _optional_value(metadata: Message, name: str) -> str | None:
+def _optional_value(metadata: MetadataRecord, name: str) -> str | None:
     value = metadata.get(name)
     if value is None or not value.strip() or value.strip().upper() == "UNKNOWN":
         return None

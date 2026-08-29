@@ -1,31 +1,24 @@
 """
-Imagen 4 image generation provider.
+Gemini native image generation provider.
 
-Uses the google-genai SDK's `client.aio.models.generate_images()` endpoint.
+Uses the google-genai SDK's `client.aio.interactions.create()` endpoint.
 Keys are selected from the same GEMINI_API_KEYS pool but tracked via an
 *independent* in-memory RPD (requests-per-day) counter so that Imagen quota
 exhaustion does NOT suspend keys for LLM chat or audio traffic.
-
-Supported models (AI Studio / Gemini API free tier — 25 RPD each):
-    imagen-4.0-fast-generate-001   — fastest, lowest latency
-    imagen-4.0-generate-001        — balanced quality (default)
-    imagen-4.0-ultra-generate-001  — highest quality, slowest
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from google.genai import types
-from google.genai.errors import APIError
-
 from app.config import (
-    IMAGEN_MODEL_BASE,
-    IMAGEN_MODELS_ORDERED,
+    GEMINI_IMAGE_MODEL,
+    LEGACY_IMAGEN_MODELS,
     settings,
 )
 from app.providers.gemini import get_cached_genai_client
@@ -35,7 +28,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Aspect ratios supported by Imagen 4 (Gemini API)
+# Aspect ratios supported by Gemini native image generation
 SUPPORTED_ASPECT_RATIOS: tuple[str, ...] = (
     "1:1",
     "3:4",
@@ -55,9 +48,8 @@ ASPECT_RATIO_LABELS: dict[str, str] = {
 
 # Short human-readable model labels for UI
 MODEL_LABELS: dict[str, str] = {
-    "imagen-4.0-fast-generate-001": "⚡ Fast",
-    "imagen-4.0-generate-001": "✨ Base",
-    "imagen-4.0-ultra-generate-001": "💎 Ultra",
+    GEMINI_IMAGE_MODEL: "✨ Gemini Image",
+    **dict.fromkeys(LEGACY_IMAGEN_MODELS, "✨ Gemini Image"),
 }
 
 # ---------------------------------------------------------------------------
@@ -232,7 +224,7 @@ class ImageGenResult:
 
 class ImagenProvider:
     """
-    Generates images via the Imagen 4 API with automatic key rotation.
+    Generates images via Gemini with automatic key rotation.
 
     Key selection strategy:
         1. Use the same GEMINI_API_KEYS pool (from settings).
@@ -248,7 +240,7 @@ class ImagenProvider:
     async def generate(
         self,
         prompt: str,
-        model: str = IMAGEN_MODEL_BASE,
+        model: str = GEMINI_IMAGE_MODEL,
         aspect_ratio: str = "1:1",
         number_of_images: int = 1,
         user_id: int | None = None,
@@ -258,18 +250,23 @@ class ImagenProvider:
 
         Args:
             prompt: Text description of the desired image.
-            model: One of IMAGEN_MODELS_ORDERED.
+            model: Current Gemini image model or a retired Imagen 4 alias.
             aspect_ratio: One of SUPPORTED_ASPECT_RATIOS.
-            number_of_images: 1–4.
+            number_of_images: Legacy compatibility argument. The current
+                Gemini endpoint issues one generation request per call.
 
         Returns:
             ImageGenResult with raw image bytes on success.
         """
         if aspect_ratio not in SUPPORTED_ASPECT_RATIOS:
             aspect_ratio = "1:1"
-        if model not in IMAGEN_MODELS_ORDERED:
-            model = IMAGEN_MODEL_BASE
-        number_of_images = max(1, min(4, number_of_images))
+        if model != GEMINI_IMAGE_MODEL:
+            model = GEMINI_IMAGE_MODEL
+        if number_of_images != 1:
+            logger.info(
+                "Gemini image generation supports one request result per call; ignoring number_of_images=%d",
+                number_of_images,
+            )
 
         keys: list[str] = list(settings.GEMINI_API_KEYS)
         if not keys:
@@ -315,28 +312,24 @@ class ImagenProvider:
 
             try:
                 response = await asyncio.wait_for(
-                    client.aio.models.generate_images(
+                    client.aio.interactions.create(
                         model=model,
-                        prompt=prompt,
-                        config=types.GenerateImagesConfig(
-                            number_of_images=number_of_images,
-                            aspect_ratio=aspect_ratio,
-                            # Safety is already at BLOCK_NONE for text; Imagen
-                            # has its own policy — we do not override here.
-                        ),
+                        input=prompt,
+                        store=False,
+                        response_format={
+                            "type": "image",
+                            "aspect_ratio": aspect_ratio,
+                        },
                     ),
                     timeout=settings.IMAGE_GEN_TIMEOUT,
                 )
 
                 # Extract image bytes
                 images_bytes: list[bytes] = []
-                generated = getattr(response, "generated_images", None) or []
-                for img_obj in generated:
-                    image_data = getattr(img_obj, "image", None)
-                    if image_data is not None:
-                        raw_bytes = getattr(image_data, "image_bytes", None)
-                        if raw_bytes:
-                            images_bytes.append(bytes(raw_bytes))
+                output_image = getattr(response, "output_image", None)
+                encoded_data = getattr(output_image, "data", None)
+                if encoded_data:
+                    images_bytes.append(base64.b64decode(encoded_data, validate=True))
 
                 if not images_bytes:
                     logger.warning(
@@ -373,9 +366,17 @@ class ImagenProvider:
                 last_error = "timeout"
                 keys = [k for k in keys if k != selected_key]
 
-            except APIError as exc:
+            except Exception as exc:
                 err_lower = str(exc).lower()
-                logger.error("Imagen: APIError (key_id=%s)", key_id)
+                status_code = getattr(exc, "status_code", None)
+                if status_code is None:
+                    status_code = getattr(exc, "code", None)
+                logger.error(
+                    "Imagen: API failure (key_id=%s status=%s error_type=%s)",
+                    key_id,
+                    status_code,
+                    type(exc).__name__,
+                )
 
                 if "paid plan" in err_lower or "limit: 0" in err_lower:
                     # Google disabled Imagen on Free Tier or requires billing
@@ -385,13 +386,18 @@ class ImagenProvider:
                         model_used=model,
                         key_suffix=key_suffix,
                     )
-                elif "quota" in err_lower or "resource_exhausted" in err_lower or "429" in err_lower:
+                elif (
+                    status_code == 429
+                    or "quota" in err_lower
+                    or "resource_exhausted" in err_lower
+                    or "429" in err_lower
+                ):
                     # Count this key as depleted for the day
                     await _increment_key_usage(selected_key)
                     last_error = "quota"
                     keys = [k for k in keys if k != selected_key]
 
-                elif "safety" in err_lower or "block" in err_lower or "400" in err_lower:
+                elif status_code == 400 or "safety" in err_lower or "block" in err_lower:
                     # Safety block is not a key problem — fail fast, no rotation
                     return ImageGenResult(
                         success=False,
@@ -400,19 +406,13 @@ class ImagenProvider:
                         key_suffix=key_suffix,
                     )
 
-                elif "503" in err_lower or "unavailable" in err_lower or "overloaded" in err_lower:
+                elif status_code in {500, 502, 503, 504} or "unavailable" in err_lower or "overloaded" in err_lower:
                     last_error = "overloaded"
                     keys = [k for k in keys if k != selected_key]
 
                 else:
-                    last_error = f"api_error:{type(exc).__name__}"
+                    last_error = f"unexpected:{type(exc).__name__}"
                     keys = [k for k in keys if k != selected_key]
-
-            except Exception as exc:
-                error_type = type(exc).__name__
-                logger.error("Imagen: unexpected error (key_id=%s, error_type=%s)", key_id, error_type)
-                last_error = f"unexpected:{error_type}"
-                keys = [k for k in keys if k != selected_key]
 
             if not keys:
                 break

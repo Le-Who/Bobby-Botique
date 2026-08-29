@@ -31,12 +31,41 @@ def test_deploy_uses_exact_verified_commit_and_serializes_runs() -> None:
     workflow = _workflow()
 
     assert "concurrency:" in workflow
-    assert "cancel-in-progress: true" in workflow
+    assert "cancel-in-progress: false" in workflow
     assert "ref: ${{ github.event.workflow_run.head_sha }}" in workflow
     assert "${{ github.event.workflow_run.head_sha }}" in workflow
     assert "IMAGE_TAG" in workflow
     assert "docker pull $REGISTRY/$REPO:$IMAGE_TAG" in workflow
     assert "docker pull $REGISTRY/$REPO:latest" not in workflow
+
+
+def test_deploy_classifies_dependency_scope_before_exposing_production_secrets() -> None:
+    workflow = _workflow()
+    scope_job = workflow.split("  classify-dependency-scope:", 1)[1].split("  build-and-deploy:", 1)[0]
+    deploy_job = workflow.split("  build-and-deploy:", 1)[1]
+
+    assert "pull-requests: read" in scope_job
+    assert "secrets." not in scope_job
+    assert "listPullRequestsAssociatedWithCommit" in scope_job
+    assert "github.rest.pulls.listFiles" in scope_job
+    assert "scripts/dependency_deploy_scope.py" in scope_job
+    assert "needs: classify-dependency-scope" in deploy_job
+    assert "DEPENDENCY_ROLLBACK_ALLOWED" in deploy_job
+    assert "DEPENDENCY_BASE_SHA" in deploy_job
+
+
+def test_deploy_preserves_previous_container_until_candidate_is_healthy() -> None:
+    workflow = _workflow()
+
+    assert "tg-bot-previous" in workflow
+    assert "docker rename tg-bot tg-bot-previous" in workflow
+    assert 'PREVIOUS_SHA="${PREVIOUS_IMAGE##*:}"' in workflow
+    assert '"$PREVIOUS_SHA" = "$DEPENDENCY_BASE_SHA"' in workflow
+    assert "Automatic rollback is armed" in workflow
+    assert "Automatic rollback is not armed" in workflow
+    assert "Restoring previous bot container" in workflow
+    assert "Previous bot container restored and healthy" in workflow
+    assert "docker rm tg-bot-previous" in workflow
 
 
 def test_deploy_retries_build_without_hiding_second_failure() -> None:

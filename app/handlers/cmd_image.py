@@ -12,8 +12,8 @@ UX flow:
        explicitly presses [▶️ Сгенерировать].
 
 Provider routing:
-    - Models starting with "imagen-*"  → Google ImagenProvider  (requires paid key)
-    - All other models (flux, zimage…) → PollinationsProvider   (free tier, no key needed)
+    - gemini-3.1-flash-image and legacy "imagen-*" aliases → Google provider
+    - All other models (flux, zimage…) → PollinationsProvider (free tier, no key needed)
 
 Prompt translation:
     - If the selected model does not natively support Cyrillic (currently every
@@ -290,7 +290,7 @@ def _set_draw_state(
 
 
 def _is_imagen_model(model: str) -> bool:
-    return model.startswith("imagen-")
+    return model in IMAGEN_MODEL_LABELS or model.startswith("imagen-")
 
 
 def _is_fta_image_model(model: str) -> bool:
