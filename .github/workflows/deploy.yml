@@ -210,10 +210,46 @@ jobs:
               python /app/scripts/release_cloud_bot_api.py
 
             # ── Local Telegram Bot API Server ─────────────────────────────
-            # Only start if not already running — this is a stable, separate
-            # container that does NOT need to restart on every bot deploy.
-            if ! docker inspect -f '{{.State.Running}}' tg-api 2>/dev/null | grep -q true; then
-              echo ">>> Starting Local Bot API Server (not running)..."
+            # Probe from the application image over tg-net. The third-party
+            # Bot API image does not guarantee that wget/curl is installed.
+            tg_api_is_ready() {
+              docker run --rm \
+                --network tg-net \
+                -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+                "$REGISTRY/$REPO:$IMAGE_TAG" \
+                python -c '
+            import json
+            import os
+            import urllib.request
+
+            token = os.environ["TELEGRAM_BOT_TOKEN"]
+            response = urllib.request.urlopen(
+                f"http://tg-api:8081/bot{token}/getMe", timeout=5
+            )
+            payload = json.load(response)
+            response.close()
+            raise SystemExit(0 if payload.get("ok") is True else 1)
+            ' >/dev/null 2>&1
+            }
+
+            # Keep the stable infrastructure container when it is healthy.
+            # A container can report Running while it is stuck in a restart
+            # loop, so readiness—not Docker state—decides whether to reuse it.
+            TG_API_RECREATE=false
+            if docker inspect -f '{{.State.Running}}' tg-api 2>/dev/null | grep -q true; then
+              echo ">>> Checking existing Local Bot API Server..."
+              if ! tg_api_is_ready; then
+                echo ">>> Existing Local Bot API container is unhealthy; recreating."
+                docker inspect -f 'status={{.State.Status}} restarting={{.State.Restarting}} exit={{.State.ExitCode}} restart_count={{.RestartCount}}' tg-api || true
+                docker logs --tail 200 tg-api || true
+                TG_API_RECREATE=true
+              fi
+            else
+              TG_API_RECREATE=true
+            fi
+
+            if [ "$TG_API_RECREATE" = "true" ]; then
+              echo ">>> Starting Local Bot API Server..."
               docker stop tg-api 2>/dev/null || true
               docker rm   tg-api 2>/dev/null || true
 
@@ -227,20 +263,14 @@ jobs:
                 -e TZ=Europe/Kyiv \
                 -v tg-api-data:/var/lib/telegram-bot-api \
                 aiogram/telegram-bot-api:latest
-
             else
-              echo ">>> Local API Server already running, skipping restart."
+              echo ">>> Existing Local Bot API Server is healthy; keeping it."
             fi
 
             echo ">>> Waiting for Local Bot API Server readiness..."
             TG_API_READY=false
             for i in $(seq 1 30); do
-              # The server root is not a Bot API health endpoint and may return
-              # 404 even when the process is healthy. getMe verifies both the
-              # HTTP listener and the bot's local authenticated session.
-              if docker exec tg-api \
-                wget -qO- "http://localhost:8081/bot${TELEGRAM_BOT_TOKEN}/getMe" 2>/dev/null \
-                | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
+              if tg_api_is_ready; then
                 TG_API_READY=true
                 echo ">>> Local Bot API Server is ready."
                 break

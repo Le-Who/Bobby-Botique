@@ -54,8 +54,10 @@ def test_deploy_retries_build_without_hiding_second_failure() -> None:
 def test_deploy_fails_closed_when_runtime_health_checks_expire() -> None:
     workflow = _workflow()
 
-    assert "http://localhost:8081/bot${TELEGRAM_BOT_TOKEN}/getMe" in workflow
-    assert "http://localhost:8081/ 2>/dev/null" not in workflow
+    assert "tg_api_is_ready()" in workflow
+    assert "http://tg-api:8081/bot{token}/getMe" in workflow
+    assert "docker exec tg-api wget" not in workflow
+    assert "Existing Local Bot API container is unhealthy; recreating" in workflow
     assert "Telegram Bot API health check failed" in workflow
     assert 'curl -fsS "http://localhost:${PORT:-10000}/health"' in workflow
     assert "docker logs --tail 300 tg-bot" in workflow
