@@ -22,3 +22,7 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+## 2024-08-29 - [Timing Attack in Webhook Validation]
+**Vulnerability:** Timing attack vulnerability in webhook secret validation. The `inbound_secret` was compared against `webhook_secret` using a standard `!=` operator.
+**Learning:** Standard string comparison operators in Python evaluate characters sequentially and return `False` as soon as a mismatch is found. This allows an attacker to measure the time taken to reject a request, potentially guessing the secret character by character.
+**Prevention:** Always use `hmac.compare_digest()` for cryptographic or secret comparisons to ensure a constant-time evaluation and prevent timing side-channel attacks.
