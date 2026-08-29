@@ -64,6 +64,14 @@ def test_dependabot_uses_uv_exact_fortnightly_cooldown_and_no_automerge() -> Non
     assert "automerge" not in config.lower()
 
 
+def test_dependabot_tracks_the_pinned_production_base_separately() -> None:
+    config = _dependabot()
+
+    assert 'package-ecosystem: "docker"' in config
+    assert config.count('cronjob: "every 2 weeks"') == 2
+    assert config.count("default-days: 7") == 2
+
+
 def test_dependabot_groups_only_post_one_minor_patch_updates() -> None:
     config = _dependabot()
     group = config.split("safe-minor-and-patch:", 1)[1]
@@ -72,5 +80,5 @@ def test_dependabot_groups_only_post_one_minor_patch_updates() -> None:
     assert '- "minor"' in group
     assert '- "patch"' in group
     assert '- "major"' not in group
-    for pre_one_dependency in ("asyncpg", "httpx", "hypercorn", "msgspec", "quart", "ruff", "tavily-python"):
+    for pre_one_dependency in ("asyncpg", "httpx", "hypercorn", "msgspec", "quart", "ruff"):
         assert f'- "{pre_one_dependency}"' in group

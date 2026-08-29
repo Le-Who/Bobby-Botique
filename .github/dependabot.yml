@@ -27,7 +27,18 @@ updates:
           - "msgspec"
           - "quart"
           - "ruff"
-          - "tavily-python"
         update-types:
           - "minor"
           - "patch"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "cron"
+      cronjob: "every 2 weeks"
+    cooldown:
+      default-days: 7
+    rebase-strategy: auto
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "deps(docker)"

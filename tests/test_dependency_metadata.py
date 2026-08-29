@@ -33,7 +33,6 @@ EXPECTED_PRODUCTION = {
     "redis",
     "rich",
     "structlog",
-    "tavily-python",
     "tzdata",
     "uvloop",
 }

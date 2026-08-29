@@ -10,6 +10,9 @@ Format is optimized for agent-parseable context.
 - Replaced independent requirements manifests with PEP 621 dependencies in `pyproject.toml` and a committed `uv.lock`; local, CI, audit, and production-container installs now use the same exact graph through uv 0.12.6.
 - Added a read-only dependency-frontier audit that resolves both policy-constrained and unconstrained stable versions twice for Linux production and Windows development, applies a seven-day release cooldown, rejects source-only candidates, and reports policy-blocked major upgrades without presenting cooldown downgrades as updates.
 - Added contract coverage for dependency metadata, deterministic resolution, conservative pre-1.0 classification, platform enforcement, truthful terminal states, locked CI installation, and locked production-image construction.
+- Removed the unused `tavily-python` SDK; production Tavily traffic already uses the repository's tested `httpx` adapter, so retaining the SDK added supply-chain surface without exercising application behavior.
+- Added focused offline boundary tests for the third-party APIs used by Telegram, Gemini, Quart/Hypercorn, Pydantic, cryptography, document/image processing, serialization, astrology, Redis, and asyncpg.
+- Added a digest-pinned production base image, exact installed-versus-lock verification, an offline real `/health` container smoke, CycloneDX SBOM artifacts, and a license inventory that reports unknowns and fails only against an explicit repository denylist.
 
 ## [Unreleased] - 2026-08-29 - Trivia Resilience and Admin Observability
 

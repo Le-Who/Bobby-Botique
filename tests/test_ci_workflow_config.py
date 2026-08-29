@@ -82,3 +82,18 @@ def test_ci_gates_application_types_and_production_dependencies() -> None:
     assert "uv export --locked --no-dev" in workflow
     assert "production-requirements.txt" in workflow
     assert "uv run --locked pip-audit" in workflow
+    assert "--format cyclonedx1.5" in workflow
+    assert "sbom.cdx.json" in workflow
+    assert "scripts/dependency_license_inventory.py" in workflow
+    assert "licenses.json" in workflow
+    assert "actions/upload-artifact@v4" in workflow
+
+
+def test_ci_builds_and_offline_smokes_the_production_container() -> None:
+    container_job = _job(_workflow(), "container-smoke", "dependency-audit")
+
+    assert "docker build" in container_job
+    assert "docker run --rm --network none" in container_job
+    assert "scripts/dependency_container_smoke.py" in container_job
+    assert "uv pip check" in container_job
+    assert "continue-on-error" not in container_job

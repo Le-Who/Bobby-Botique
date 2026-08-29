@@ -71,6 +71,7 @@ def test_production_image_installs_only_the_committed_uv_lock() -> None:
     dockerignore = DOCKERIGNORE_PATH.read_text(encoding="utf-8")
 
     assert 'python -m pip install --no-cache-dir "uv==0.12.6"' in dockerfile
+    assert "FROM python:3.14-slim@sha256:cae66f2ef0ec51a9891263eeee7f987dacf0a9879e8aa9353d5606e0530619a5" in dockerfile
     assert "COPY pyproject.toml uv.lock ./" in dockerfile
     assert "uv sync --locked --no-dev --no-install-project" in dockerfile
     assert 'ENV PATH="/app/.venv/bin:$PATH"' in dockerfile
