@@ -107,3 +107,7 @@
 ## 2026-06-27 - Pillow imports were inside the for-loop, causing repeated attr lookups
 **Learning:** `from PIL import ImageFont` was inside the per-image loop in `_ensure_placeholders`. Moving it to the top of the enclosing block (alongside `Image, ImageDraw`) avoids repeated module attribute resolution and makes the two-phase refactor (build-then-gather) cleaner.
 **Action:** Always hoist repeated `from X import Y` statements out of loops.
+
+## 2026-08-01 - Python Generator vs Direct Addition String Counting Overhead
+**Learning:** In Python, using a generator expression like `sum(text.count(c) for c in "?!.")` carries significant overhead due to generator object creation and frame allocation compared to direct string `.count()` method additions like `text.count("?") + text.count("!") + text.count(".")`. In high-throughput synchronous text parsing paths (like the intent router checking every incoming message), this overhead accumulates.
+**Action:** When searching for a small, fixed set of characters or substrings in Python text paths, prefer direct `+` addition of `.count()` calls over `sum()` with a generator expression. Additionally, avoid redundant operations like `len(text.split())` by passing down pre-computed metrics like `word_count` to helper functions.

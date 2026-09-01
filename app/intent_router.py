@@ -319,14 +319,16 @@ class IntentResult:
         self.context_data = context_data
 
 
-def _is_complex_query(text: str) -> bool:
+def _is_complex_query(text: str, word_count: int) -> bool:
     """Determine if a query is complex and should NOT short-circuit to API cards."""
     # 1. Length heuristic (long text or article)
-    if len(text.split()) > 20:
+    # Optimized: Use pre-computed word_count instead of allocating a new list with len(text.split())
+    if word_count > 20:
         return True
 
     # 2. Multiple sentences/questions
-    sentence_enders = sum(text.count(c) for c in "?!.")
+    # Optimized: Direct addition of .count() is ~2x faster than a generator expression
+    sentence_enders = text.count("?") + text.count("!") + text.count(".")
     if sentence_enders > 1:
         return True
 
@@ -345,7 +347,7 @@ async def try_direct_intent(message_text: str) -> IntentResult | None:
     """
     text = message_text.strip()
     word_count = len(text.split())
-    is_complex = _is_complex_query(text)
+    is_complex = _is_complex_query(text, word_count)
 
     def _prepare_result(res: IntentResult | None) -> IntentResult | None:
         if res and is_complex:
