@@ -19,6 +19,7 @@ if sys.platform != "win32":
 
 import asyncio
 import hashlib
+import hmac
 import logging
 import signal
 import threading
@@ -463,7 +464,7 @@ async def run_bot_with_retry():
 
                 if webhook_secret:
                     inbound_secret = quart_request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-                    if inbound_secret != webhook_secret:
+                    if not hmac.compare_digest(inbound_secret, webhook_secret):
                         logging.warning("Webhook rejected: invalid secret token")
                         return "Forbidden", 403
 
