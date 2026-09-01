@@ -177,7 +177,7 @@
       </div>
 
       {% if error %}
-      <div class="error-msg">{{ error }}</div>
+      <div class="error-msg" role="alert">{{ error }}</div>
       {% endif %}
 
       <div class="field">
@@ -189,6 +189,7 @@
           autofocus
           autocomplete="current-password"
           required
+          {% if error %}aria-invalid="true"{% endif %}
         />
       </div>
 
