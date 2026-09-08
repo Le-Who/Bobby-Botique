@@ -1,0 +1,15 @@
+
+        [project]
+        dependencies = ["demo>=1"]
+
+        [dependency-groups]
+        dev = []
+
+        [tool.dependency-frontier]
+        python-version = "3.14"
+        production-platform = "x86_64-manylinux_2_28"
+        resolution-platforms = ["x86_64-pc-windows-msvc"]
+        cooldown-days = 7
+        allowed-source-builds = []
+        license-denylist = []
+        

@@ -1,0 +1,17 @@
+
+        {
+          "cities": [
+            {
+              "geoname_id": "manual-odesa-suburb",
+              "name": "Таирово",
+              "country_code": "UA",
+              "admin1_name": "Odesa Oblast",
+              "latitude": 46.3900,
+              "longitude": 30.7050,
+              "timezone": "Europe/Kyiv",
+              "population": 10000,
+              "alternatenames": ["Tairove", "Таїрове"]
+            }
+          ]
+        }
+        

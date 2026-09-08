@@ -1,5 +1,11 @@
 # Long-read keyboard preservation design
 
+> Historical design/plan, classified on 2026-09-08. Original status, checkboxes,
+> versions and commands below describe the work at that time, not current runtime
+> state or a new instruction to execute it. Consult [current documentation](../../README.md)
+> and repository AGENTS.md before reusing any step; completed behavior must be
+> established from current code and verification, not inferred from this record.
+
 ## Problem
 
 When a streamed AI response exceeds Telegram's message limit, `stream_and_display()` freezes the chat message, stores the full response for the Mini App Reader, and edits the message with a Reader button. It also starts background Telegraph publication as durable fallback storage.

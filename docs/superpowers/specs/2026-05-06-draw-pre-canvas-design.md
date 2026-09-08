@@ -1,5 +1,11 @@
 # /draw Pre-Canvas UI Design
 
+> Historical design/plan, classified on 2026-09-08. Original status, checkboxes,
+> versions and commands below describe the work at that time, not current runtime
+> state or a new instruction to execute it. Consult [current documentation](../../README.md)
+> and repository AGENTS.md before reusing any step; completed behavior must be
+> established from current code and verification, not inferred from this record.
+
 ## 1. Goal
 Modify the `/draw <prompt>` command to pause execution and render an interactive settings menu (Pre-Canvas UI) instead of immediately starting image generation. This gives the user the opportunity to change the generation model, aspect ratio, or prompt enhancement settings prior to consuming API limits.
 

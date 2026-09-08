@@ -1,5 +1,11 @@
 # Inline Tarot Model Routing Implementation Plan
 
+> Historical design/plan, classified on 2026-09-08. Original status, checkboxes,
+> versions and commands below describe the work at that time, not current runtime
+> state or a new instruction to execute it. Consult [current documentation](../../README.md)
+> and repository AGENTS.md before reusing any step; completed behavior must be
+> established from current code and verification, not inferred from this record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Route simple inline Tarot spreads exclusively through `gemini-3.1-flash-lite`, while giving `tarot_love` and `tarot_celtic` at most 23 seconds to return a stronger `gemini-3.5-flash` answer before publishing the ready lite answer.

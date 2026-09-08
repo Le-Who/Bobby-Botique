@@ -2,7 +2,7 @@
 
 ## Supported Branch
 
-Security fixes target the public default branch, `vps_testai`. If you run a fork or a pinned deployment, upgrade to the latest default-branch commit before reporting a vulnerability unless the issue is still reproducible there.
+Security maintenance targets `vps_testai`, the production branch configured in the checked-in workflows. Include your affected commit when reporting; you do not need to upgrade a live deployment before submitting a report. The current hosted default branch and private-reporting availability must be checked on GitHub, not inferred from this file.
 
 ## Reporting A Vulnerability
 
@@ -13,6 +13,19 @@ Preferred reporting path:
 1. Open a private GitHub Security Advisory for this repository.
 2. Include the affected commit or release, reproduction steps, expected impact, and any relevant logs with secrets redacted.
 3. If private advisories are not available to you, open a minimal public issue that says you have a security report and avoid sensitive details until a private contact path is established.
+
+## Implementation Boundaries (reviewed 2026-09-08)
+
+- API keys are encrypted using Fernet derived from `ADMIN_SECRET`; preserve that
+  secret when moving encrypted data. It is not an AES-GCM implementation.
+- Private-memory consent, provenance and account deletion are application
+  controls, not a blanket compliance or database-isolation guarantee. The current
+  single migration/runtime DSN may use a role that bypasses RLS; see
+  [database boundaries](docs/ARCHITECTURE.md#database-lifecycle-and-privacy-limits).
+- Telegraph publication is public and disabled by default, including Reader
+  mirrors. Local erasure cannot retract previously exported or third-party copies.
+- Integration tests and migration tools can mutate schema/data. Use disposable
+  targets as described in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## High-Risk Areas
 

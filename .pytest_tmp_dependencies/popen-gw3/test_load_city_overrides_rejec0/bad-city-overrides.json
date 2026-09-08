@@ -1,0 +1,14 @@
+
+        {
+          "cities": [
+            {
+              "geoname_id": "bad-city",
+              "name": "Bad City",
+              "country_code": "UA",
+              "latitude": 146.0,
+              "longitude": 30.0,
+              "timezone": "Definitely/Missing"
+            }
+          ]
+        }
+        

@@ -38,6 +38,13 @@
    `StreamingUIAdapter`, metadata `ContextVar` и error-as-text path удаляются в
    этой же миграции; постоянный compatibility façade не создаётся.
 
+### Уточнение текущего контракта (2026-09-08)
+
+Telegraph — публичная внешняя публикация. Как синхронный fallback, так и фоновый
+Reader mirror выполняются только при `TELEGRAPH_PUBLICATION_ENABLED=true`.
+Default — `false`; тогда цепочка сокращается до Reader → Telegram split.
+Это уточняет приватность, не меняя решение о единственном владельце delivery.
+
 ## Инварианты
 
 - В provider stream ровно один terminal event, после него нет событий.

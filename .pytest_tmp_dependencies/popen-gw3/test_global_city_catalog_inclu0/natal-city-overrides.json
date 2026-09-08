@@ -1,0 +1,14 @@
+
+        {
+          "cities": [
+            {
+              "geoname_id": "manual-test-city",
+              "name": "Codexgrad",
+              "country_code": "UA",
+              "latitude": 46.1000,
+              "longitude": 30.2000,
+              "timezone": "Europe/Kyiv"
+            }
+          ]
+        }
+        

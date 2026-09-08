@@ -1,4 +1,9 @@
 ## 2025-05-22 - [Security Enhancement] Robust URL Sanitization
+
+> Historical agent journal, reviewed as archival material on 2026-09-08. Statements
+> about timings, tests, vulnerabilities and implementation describe earlier work,
+> not current guarantees or mandatory coding rules. Revalidate against current
+> code and AGENTS.md; do not apply blanket lock/regex/escaping advice automatically.
 **Vulnerability:** The `sanitize_url` function relied on a regex that only matched IPv4 addresses in exact dot-decimal notation, failing to block `localhost`, IPv6 loopbacks, and URLs with ports (e.g., `http://127.0.0.1:8080`).
 **Learning:** Regex-based validation for URLs is brittle. `urllib.parse` splits the URL, but `netloc` includes the port, which breaks regexes expecting only an IP. `ipaddress` module is robust for IP validation.
 **Prevention:** Always parse the URL to extract the hostname (stripping port and brackets) before validating. Use dedicated libraries (`ipaddress`) instead of regex for IP checks. Explicitly block `localhost`.

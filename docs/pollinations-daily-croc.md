@@ -1,5 +1,8 @@
 # Pollinations and Daily Croc operations
 
+Implementation reviewed at `8fc19516` on 2026-09-08. Provider availability and
+paid/live generation were not revalidated by the documentation audit.
+
 ## Authentication and models
 
 Pollinations generation uses the server-side key from the existing provider-key store or `POLLINATIONS_API_KEY`. A 401/403 requires checking the key/permissions; a 402 requires checking the Pollen balance and key budget. There is no anonymous Flux fallback. Image failures remain best-effort for daily delivery. Crocodile text generation does not use Pollinations.
@@ -17,6 +20,10 @@ The image selector in each puzzle card is used by actual regeneration. New puzzl
 Ordinary Crocodile currently has no image-generation step. Per-puzzle image overrides remain specific to that daily puzzle; this shared text-model setting does not introduce a new image feature into ordinary games.
 
 ## Natal smoke and dependency validation
+
+The dependency narrative below is a dated implementation record, not a new
+validation result. Use `pyproject.toml`, `uv.lock` and the current CI/deploy
+workflows for authoritative dependency state.
 
 Both natal CLI entrypoints default to the configured `ADMIN_ID`. That user must already exist in `users`; `--user-id` can select another existing test user. Smoke checks this before generating a report and never creates a synthetic user. City performance thresholds remain unchanged.
 

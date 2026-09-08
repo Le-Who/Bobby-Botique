@@ -1,5 +1,10 @@
 ## 2026-04-18 - Inline regex patterns in hot-path intent detectors and formatters (cmd_image.py, msg_voice.py, text_format.py)
 
+> Historical agent journal, reviewed as archival material on 2026-09-08. Statements
+> about timings, tests, vulnerabilities and implementation describe earlier work,
+> not current guarantees or mandatory coding rules. Revalidate against current
+> code and AGENTS.md; do not apply blanket lock/regex/escaping advice automatically.
+
 **Learning:** `check_draw_intent_async` in `cmd_image.py` compiled `_VERB_HEURISTIC`, `_should_auto_route` in `msg_voice.py` compiled `action_pattern`, and `sanitize_html_tags` in `text_format.py` compiled `_TAG_RE` inline. All of these functions execute extremely frequently (per intent check, per voice message, or per formatted output block). Inline `re.compile` forces the `re._cache` lookup, bypassing true zero-overhead evaluation and risking cache eviction under high concurrency.
 **Action:** Relocated all static regex patterns (`_VERB_HEURISTIC`, `_VOICE_ACTION_PATTERN`, `_TAG_RE`, `_EMPTY_TAG_RE`) to module level constants to guarantee maximum performance per message. Pattern established: any `re.compile()` within an event handler or utility function triggered per-message must be ruthlessly extracted to module scope.
 
@@ -31,12 +36,12 @@
 
 ## 2026-04-19 - asyncio.Lock Overhead on Synchronous Caches
 
-**Learning:** This codebase previously wrapped standard TTLCache in-memory dictionary accesses with  sync with db_manager._cache_lock: (an  syncio.Lock). Because Python  syncio is single-threaded and co-routines only yield at  wait points, a purely synchronous cache dictionary lookup is fundamentally atomic under the GIL. Using  syncio.Lock for these lookups provides zero concurrency protection, but adds significant event-loop scheduling CPU overhead (firing __aenter__ and __aexit__) to the database repository hot-path across users.py, metrics_repo.py, and keys.py.
-**Action:** Removed _cache_lock property and all usages wrapping simple synchronous cache lookups across all apps repo files to eliminate the event-loop overhead. Next time, never use  syncio.Lock for purely synchronous dictionary/cache mutations in  syncio code unless spanning an  wait.
+**Learning:** This codebase previously wrapped standard TTLCache in-memory dictionary accesses with  async with db_manager._cache_lock: (an  asyncio.Lock). Because Python  asyncio is single-threaded and co-routines only yield at  await points, a purely synchronous cache dictionary lookup is fundamentally atomic under the GIL. Using  asyncio.Lock for these lookups provides zero concurrency protection, but adds significant event-loop scheduling CPU overhead (firing __aenter__ and __aexit__) to the database repository hot-path across users.py, metrics_repo.py, and keys.py.
+**Action:** Removed _cache_lock property and all usages wrapping simple synchronous cache lookups across all apps repo files to eliminate the event-loop overhead. Next time, never use  asyncio.Lock for purely synchronous dictionary/cache mutations in  asyncio code unless spanning an  await.
 
 ## 2026-04-27 - N+1 LLM API Calls Inside Active Postgres Transactions (memory_extraction.py)
 
-**Learning:**  xtract_and_store_graph resolved temporal edge conflicts by sequentially calling _resolve_ambiguous_conflict (which fires a Gemini API request) inside an active database transaction ( sync with conn.transaction():) within the or old_edge in conflicting: loop. This represents a catastrophic N+1 anti-pattern that holds connections from db_manager.pool hostage to external API latency, crippling backend concurrency. Additionally, using continue inside the old_edge loop to 'skip insert below' was observed to be a logical flaw as it merely bypasses the remaining loop instructions but still proceeds to the INSERT operation, creating duplicate edges.
+**Learning:**  extract_and_store_graph resolved temporal edge conflicts by sequentially calling _resolve_ambiguous_conflict (which fires a Gemini API request) inside an active database transaction ( async with conn.transaction():) within the for old_edge in conflicting: loop. This represents a catastrophic N+1 anti-pattern that holds connections from db_manager.pool hostage to external API latency, crippling backend concurrency. Additionally, using continue inside the old_edge loop to 'skip insert below' was observed to be a logical flaw as it merely bypasses the remaining loop instructions but still proceeds to the INSERT operation, creating duplicate edges.
 **Action:** Lifted the LLM calls out of the sequential iteration. Pre-fetched all required LLM consensus using asyncio.gather concurrently before mutating the database within the transaction loop. Introduced a skip_new_edge_insert flag to enforce correct skipping. Always pre-fetch API-bound evaluations concurrently *before* or at the start of a transaction to minimize Postgres lock contention.
 
 ## 2026-04-27 - Inline Regex Patterns in High-Frequency Hint Generators (judge.py, hinting.py)
@@ -70,13 +75,13 @@
 - **Impact**: Saves ~5-20ms of DB and event-loop overhead per triggered memory consolidation.
 
 ## Module: app/handlers/memory_commands.py
-- **Optimization**: Concurrent database queries (syncio.gather).
+- **Optimization**: Concurrent database queries (asyncio.gather).
 - **Why**: The _send_memory_page function executed list_memories and get_memory_stats sequentially, incurring double DB network round-trip delays. Running them concurrently eliminates the sequential blocking.
 - **Impact**: Reduces total latency of the /memory command page render by ~1 DB round-trip (roughly 5-15ms).
 
 ## Module: app/handlers/daily_crocodile.py
-- **Optimization**: Bounded concurrency for daily puzzle broadcasts (syncio.gather with Semaphore).
-- **Why**: The scheduled job check_daily_crocodile_jobs was iterating over users sequentially in a or loop to send messages. For N users, this blocked the entire job scheduler for O(N) seconds. Using syncio.gather parallelizes the delivery.
+- **Optimization**: Bounded concurrency for daily puzzle broadcasts (asyncio.gather with Semaphore).
+- **Why**: The scheduled job check_daily_crocodile_jobs was iterating over users sequentially in a for loop to send messages. For N users, this blocked the entire job scheduler for O(N) seconds. Using asyncio.gather parallelizes the delivery.
 - **Impact**: Reduces total broadcast execution time from O(N) to O(N/10), preventing scheduler drift and lag spikes during peak delivery hours.
 
 ## Module: app/repos/chats.py
@@ -86,13 +91,13 @@
 
 ## Module: app/voice_engine.py
 - **Optimization**: Asynchronous UI updates in Voice Engine (submit_task).
-- **Why**: _refresh_queued_statuses sequentially issues HTTP requests to Telegram to update the UI of queued voice jobs. Previously, this was waited synchronously in the enqueue handler (blocking the user's chat input loop) and inside the TTS _run_user_queue (blocking the next TTS job from starting). By moving these UI updates to background tasks, we eliminate Telegram API latency from critical paths.
+- **Why**: _refresh_queued_statuses sequentially issues HTTP requests to Telegram to update the UI of queued voice jobs. Previously, this was awaited synchronously in the enqueue handler (blocking the user's chat input loop) and inside the TTS _run_user_queue (blocking the next TTS job from starting). By moving these UI updates to background tasks, we eliminate Telegram API latency from critical paths.
 - **Impact**: Reduces total TTS response latency and eliminates main-thread blocking during rapid voice queuing.
 
 ## Module: app/handlers/msg_voice.py
-- **Optimization**: Concurrency in voice auto-routing (syncio.gather).
+- **Optimization**: Concurrency in voice auto-routing (asyncio.gather).
 - **Why**: When a voice message was auto-routed to chat or search, the system sequentially: 1) Sent a placeholder HTTP request to Telegram, 2) Loaded chat state from DB, 3) Made an LLM call to detect TTS intent. These independent I/O tasks were blocking each other.
-- **Impact**: Grouping these in syncio.gather shaves ~110-150ms off the voice message response latency, providing a much snappier feel for conversational audio.
+- **Impact**: Grouping these in asyncio.gather shaves ~110-150ms off the voice message response latency, providing a much snappier feel for conversational audio.
 
 ## 2026-05-04 - Inline re.search() Survived Inside _handle_weather (intent_router.py)
 

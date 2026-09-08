@@ -2,9 +2,11 @@
 
 This repository keeps active maintenance work visible through GitHub pull requests. The queue is intentionally labeled so reviewers can separate production-targeted work from generated, experimental, or staging-branch candidates.
 
-Snapshot date: 2026-06-01.
+Historical snapshot date: 2026-06-01. Reviewed as archival evidence on 2026-09-08;
+the live GitHub queue was not fetched. Counts, labels and branch names below are
+not a claim about today's remote state and must not trigger automatic PR changes.
 
-## Current Open Pull Request Snapshot
+## Historical Open Pull Request Snapshot
 
 | Group | Count |
 | --- | ---: |

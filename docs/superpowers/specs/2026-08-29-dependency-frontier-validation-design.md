@@ -1,5 +1,11 @@
 # Dependency Frontier Validation Design
 
+> Historical design/plan, classified on 2026-09-08. Original status, checkboxes,
+> versions and commands below describe the work at that time, not current runtime
+> state or a new instruction to execute it. Consult [current documentation](../../README.md)
+> and repository AGENTS.md before reusing any step; completed behavior must be
+> established from current code and verification, not inferred from this record.
+
 **Date:** 2026-08-29  
 **Status:** Approved for implementation  
 **Scope:** Python dependency discovery, reproducible locking, scheduled update proposals, and validation

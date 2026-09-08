@@ -1,5 +1,11 @@
 # /draw Pre-Canvas UI Implementation Plan
 
+> Historical design/plan, classified on 2026-09-08. Original status, checkboxes,
+> versions and commands below describe the work at that time, not current runtime
+> state or a new instruction to execute it. Consult [current documentation](../../README.md)
+> and repository AGENTS.md before reusing any step; completed behavior must be
+> established from current code and verification, not inferred from this record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Modify the `/draw` command to display the interactive Canvas keyboard (Pre-Canvas UI) instead of immediately starting image generation, allowing users to modify generation settings prior to execution.

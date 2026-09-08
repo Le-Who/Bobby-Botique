@@ -1,0 +1,37 @@
+{
+  "base_sha": "abc123",
+  "cutoff": "2026-08-22T10:30:00Z",
+  "dependencies": [
+    {
+      "actionable": false,
+      "classification": "cooldown-hold",
+      "constraint": "demo<3,>=1",
+      "frontier": [
+        "2.0"
+      ],
+      "frontier_change": "downgrade",
+      "locked": [
+        "2.1"
+      ],
+      "name": "demo",
+      "policy": [
+        "2.0"
+      ],
+      "policy_change": "downgrade",
+      "scope": "production"
+    }
+  ],
+  "input_hash": "deadbeef",
+  "platform": "x86_64-manylinux_2_28",
+  "python_version": "3.14",
+  "resolution_platforms": [
+    "x86_64-manylinux_2_28"
+  ],
+  "schema_version": 1,
+  "transitive": {
+    "baseline_count": 1,
+    "frontier_count": 1,
+    "policy_count": 1
+  },
+  "uv_version": "0.12.6"
+}

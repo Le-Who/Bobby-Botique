@@ -1,5 +1,8 @@
 # Domain Context
 
+Проверено по checkout `8fc19516` на 2026-09-08. Это словарь текущих контрактов;
+исторические планы не определяют состояние работающего deployment.
+
 ## AI response delivery
 
 ### Streaming Response
@@ -33,8 +36,8 @@ Reader или Telegraph добавляется первой; base rows сохр�
 ### Long Read
 
 Режим Response Delivery для ответа, formatted HTML которого не помещается в
-один Telegram message. Long Read использует фиксированную цепочку Reader →
-Telegraph → Telegram split.
+один Telegram message. Цепочка: Reader → разрешённый Telegraph → Telegram split.
+При `TELEGRAPH_PUBLICATION_ENABLED=false` (default) публичная публикация пропускается.
 
 ### Reader
 
@@ -44,9 +47,11 @@ Reader action пользователю.
 
 ### Telegraph Fallback
 
-Постоянная публикация Long Read в Telegraph. При недоступности Reader она
-создаётся синхронно; после успешного Reader delivery создаётся в фоне как cold
-storage и сохраняется для открытия после истечения Redis content.
+Публичная публикация Long Read в Telegraph только при явном
+`TELEGRAPH_PUBLICATION_ENABLED=true`. При недоступности Reader она создаётся
+синхронно; после успешного Reader delivery может создаваться в фоне как cold
+storage. Ни приватность ссылки, ни вечная доступность стороннего сервиса не
+гарантируются; без opt-in оба пути отключены.
 
 ### Delivery Outcome
 
@@ -59,3 +64,42 @@ Telegram Message Reference вместо mutable Telegram Message.
 Идентификаторы chat, message и optional thread, необходимые downstream
 операциям вроде TTS. Reference не разрешает handler повторно редактировать
 финальный response.
+
+## State и долгосрочная память
+
+### UserState
+
+Process-local LRU-состояние с локальным `asyncio.Lock` и отложенной записью
+persisted fields в PostgreSQL. Не является Redis-распределённым объектом.
+
+### Private Memory Consent
+
+Durable разрешение на приватную LTM-работу, связанное с уникальным `memory_epoch`.
+Provider leases удерживают актуальную эпоху во время внешних операций; disable
+или erasure отзывает старую эпоху. Групповые сообщения не включаются в приватную
+память неявно.
+
+### Durable Provenance
+
+Живые исходные `long_term_memory` rows, связанные с graph edges через
+tenant-scoped `memory_edge_sources`. Массив `source_memory_ids` — compatibility
+snapshot, а не самостоятельная замена нормализованному происхождению.
+
+### Graph Mutation Plan
+
+Immutable набор кандидатов nodes/edges и разрешённых temporal closures,
+подготовленный до write-транзакции. Общий writer использует соединение,
+транзакцию и tenant context вызывающего workflow; не выполняет provider calls.
+
+## Модели и эксплуатационные свидетельства
+
+### Role Model и Selectable Model
+
+Внутренняя модель роли и элемент пользовательского каталога — разные понятия.
+Env задаёт baseline; явный admin override имеет приоритет. `none` означает пустой
+каталог, а не запрос автоматически добавить скрытые defaults.
+
+### Verification Evidence
+
+Результат конкретной команды для конкретного checkout/окружения. Старый pass count,
+статус плана или успешная сборка не доказывают текущую работу VPS и внешних API.

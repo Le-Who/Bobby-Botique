@@ -1,5 +1,30 @@
 # Changelog
 
+This is a historical change record. Dated versions, test counts and deployment
+results below apply to their original work, not necessarily the current checkout.
+Use README.md and docs/README.md for the current project reference.
+
+## [Unreleased] - 2026-09-08 - Documentation integrity follow-up
+
+- Aligned pre-commit Ruff with locked/CI 0.15.2 and added the read-only Markdown
+  encoding guard to pre-commit and CI.
+- Expanded the guard to strict UTF-8, C0/C1 controls and known mojibake signatures
+  across tracked/non-ignored new Markdown or explicit filenames; added CLI tests.
+- Repaired 26 verified escape-damaged characters in historical CHANGELOG/Bolt
+  text without rewriting the recorded outcomes or performance claims.
+
+## [Unreleased] - 2026-09-08 - Documentation and agent-guidance audit
+
+- Reconciled AGENTS.md with official GPT-6 Astra guidance and actual repository
+  ownership, setup, verification and privacy boundaries; GEMINI.md now points to it.
+- Corrected current README/architecture/contributor/natal guidance, including
+  Python/uv, effective model defaults, local UserState, Fernet, PyEphem, webhook,
+  opt-in Telegraph and migration/test/deployment limitations.
+- Added a documentation index and source-backed audit report. Historical plans,
+  specs, journals, queue and rollout evidence are labeled rather than presented
+  as current behavior or new execution instructions.
+- No runtime code, dependency, database, workflow or deployment changes.
+
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
@@ -947,7 +972,7 @@ A systematic audit of all hot-path handlers and utilities was performed to elimi
 
 ### 🚀 Performance & UX Improvements
 
-- **Resilient AI Hint Generation (pp/games/judge.py):** Increased the background AI hint generator timeout from 12s to 25s. Because UI hints do not unlock until 10 seconds into the game anyway, this longer tolerance drastically reduces timeout-induced generation failures when Opencode models hit burst latency.
+- **Resilient AI Hint Generation (app/games/judge.py):** Increased the background AI hint generator timeout from 12s to 25s. Because UI hints do not unlock until 10 seconds into the game anyway, this longer tolerance drastically reduces timeout-induced generation failures when Opencode models hit burst latency.
 - **Instant Game Start (`app/handlers/inline.py`, `app/games/word_bank.py`):** Removed the blocking 15-second `resolve_custom_word_category` LLM call when users pass a custom word (`=Слово`). Instead, the category defaults statically to `"Слово игрока (особое)"`, letting players start immediately without LLM classification friction.
 - **Fast Word Generation (`app/games/word_bank.py`):** Eliminated the long initial wait when selecting an uncached random category. `pick_random_word` now calls `_generate_single_word_fast()` using the lighter `settings.OPENCODE_INLINE_MODEL` with a strict 7s timeout to generate exactly *one word*, returning to the player instantly. The full 20-word bank for the category is generated asynchronously via a background `asyncio.create_task`.
 - **Config-Driven Models (`app/games/word_bank.py`):** Word bank LLM tasks no longer hardcode `opencode-go/minimax-m2.7`. They now dynamically route to `settings.OPENCODE_QNA_MODEL`. The execution timeout limit was increased from 18s to 25s for full-bank processing to tolerate Opencode's longer latency.
@@ -1023,14 +1048,14 @@ A systematic audit of all hot-path handlers and utilities was performed to elimi
 
 ### Major Changes
 
-- **Opencode Go Primary Provider (pp/providers/opencode.py):** New OpencodeGoProvider class (subclassing OpenRouterProvider) routes primary LLM traffic through opencode.ai/zen/go/v1 using Bearer token auth. The opencode-go/ prefix is stripped before sending model names to the API. Canonical model list: minimax-m2.7, minimax-m2.5, qwen3.6-plus, kimi-k2.5, ig-pickle, qwen3.5-plus, mimo-v2-omni.
-- **Split-Brain Fallback Architecture (pp/providers/router.py):** _OPENCODE_GEMINI_FALLBACK maps every Opencode model to its closest-capability Gemini counterpart. When all Opencode keys are exhausted, ProviderRouter automatically retries on Gemini using the mapped model without user-visible interruption. The _is_fallback=True flag prevents infinite recursion.
-- **JINA AI Search Grounding (pp/search_jina.py):** Replaced Gemini-native Google Search with a JINA-based grounding pipeline for Opencode-routed requests. Calls s.jina.ai/?q=<query> and injects the LLM-ready markdown as <search_context> XML in the system prompt. Full error resilience: returns empty string on timeout, HTTP error, or network failure without propagating exceptions.
-- **Runtime Provider Admin Control (pp/handlers/commands.py, pp/config.py):** New /set_provider <name> admin command switches primary_provider in the global_settings DB table at runtime. Changes take effect immediately via _invalidate_primary_provider_cache(). Valid values: opencode, gemini, openrouter.
+- **Opencode Go Primary Provider (app/providers/opencode.py):** New OpencodeGoProvider class (subclassing OpenRouterProvider) routes primary LLM traffic through opencode.ai/zen/go/v1 using Bearer token auth. The opencode-go/ prefix is stripped before sending model names to the API. Canonical model list: minimax-m2.7, minimax-m2.5, qwen3.6-plus, kimi-k2.5, big-pickle, qwen3.5-plus, mimo-v2-omni.
+- **Split-Brain Fallback Architecture (app/providers/router.py):** _OPENCODE_GEMINI_FALLBACK maps every Opencode model to its closest-capability Gemini counterpart. When all Opencode keys are exhausted, ProviderRouter automatically retries on Gemini using the mapped model without user-visible interruption. The _is_fallback=True flag prevents infinite recursion.
+- **JINA AI Search Grounding (app/search_jina.py):** Replaced Gemini-native Google Search with a JINA-based grounding pipeline for Opencode-routed requests. Calls s.jina.ai/?q=<query> and injects the LLM-ready markdown as <search_context> XML in the system prompt. Full error resilience: returns empty string on timeout, HTTP error, or network failure without propagating exceptions.
+- **Runtime Provider Admin Control (app/handlers/commands.py, app/config.py):** New /set_provider <name> admin command switches primary_provider in the global_settings DB table at runtime. Changes take effect immediately via _invalidate_primary_provider_cache(). Valid values: opencode, gemini, openrouter.
 
 ### Configuration
 
-- **New settings** (pp/config.py): OPENCODE_API_KEYS, OPENCODE_AVAILABLE_MODELS, PRIMARY_PROVIDER, OPENCODE_DEFAULT_MODEL, OPENCODE_QNA_MODEL, OPENCODE_RESEARCH_MODEL, OPENCODE_VISION_MODEL, OPENCODE_INLINE_MODEL.
+- **New settings** (app/config.py): OPENCODE_API_KEYS, OPENCODE_AVAILABLE_MODELS, PRIMARY_PROVIDER, OPENCODE_DEFAULT_MODEL, OPENCODE_QNA_MODEL, OPENCODE_RESEARCH_MODEL, OPENCODE_VISION_MODEL, OPENCODE_INLINE_MODEL.
 - **get_primary_provider()**: DB-backed with in-process string cache. Reads global_settings table on first call, then caches until _invalidate_primary_provider_cache() is called.
 - **get_settings_safe()**: Null-safe settings accessor for modules imported before configuration initialization.
 
@@ -1038,9 +1063,9 @@ A systematic audit of all hot-path handlers and utilities was performed to elimi
 
 - **Canonical model-only enforcement:** Pruned all stale/hallucinated model names (glm-5, glm-5.1, mimo-v2-pro, gemini-2.0-flash, gemini-1.5-flash, gemini-2.5-flash-preview-05-20) from _OPENCODE_GEMINI_FALLBACK, _GEMINI_CASCADE, and _MODEL_TIER. Only models from the approved canonical lists are present.
 - **Gemini cascade** (_pick_transient_fallback_model): Simplified to 3-flash-preview > 2.5-flash-lite, 3.1-flash-lite-preview > 2.5-flash-lite, 2.5-flash > 2.5-flash-lite.
-- **Multimodal guard fix (pp/providers/router.py):** Opencode vision models (mimo-v2-omni) are no longer incorrectly forced through the Gemini path for image requests.
+- **Multimodal guard fix (app/providers/router.py):** Opencode vision models (mimo-v2-omni) are no longer incorrectly forced through the Gemini path for image requests.
 - **Streaming HTTP error hardening:** httpx.HTTPStatusError is now caught at the streaming layer for clearer provider failure diagnostics.
-- **URL construction fix (pp/search_jina.py):** Replaced broken httpx.URL.copy_with() usage with urllib.parse.quote to prevent InvalidURL exceptions.
+- **URL construction fix (app/search_jina.py):** Replaced broken httpx.URL.copy_with() usage with urllib.parse.quote to prevent InvalidURL exceptions.
 - **.gitignore**: Added .env to prevent accidental secret commits.
 
 ### Tests
@@ -4721,8 +4746,8 @@ Two modes for editing custom role prompts directly from the role details view:
 ## [2.8.33] - 2026-03-10 - Concurrency Scaling & Reliability
 
 - **Strict Context Isolation**: Relocated the _last_finish_reason state from a globally mutable module variable into a thread-safe contextvars.ContextVar. Resolved a dangerous race condition where parallel streams could leak safety block statuses into adjacent AI responses.
-- **Circuit Breaker Unblocking**: Severely refactored CircuitBreaker.call() to explicitly release its internal syncio.Lock during remote HTTP execution. This eradicated a critical head-of-line blocking bottleneck, allowing 100% concurrent request throughput without sacrificing state transition safety.
-- **Connection Pool Harmonization**: Enforced explicit limitations on incoming Telegram updates (concurrent_updates=50) to perfectly align with the syncpg maximum connection pool size. This prevents database saturation timeouts under burst conditions.
+- **Circuit Breaker Unblocking**: Severely refactored CircuitBreaker.call() to explicitly release its internal asyncio.Lock during remote HTTP execution. This eradicated a critical head-of-line blocking bottleneck, allowing 100% concurrent request throughput without sacrificing state transition safety.
+- **Connection Pool Harmonization**: Enforced explicit limitations on incoming Telegram updates (concurrent_updates=50) to perfectly align with the asyncpg maximum connection pool size. This prevents database saturation timeouts under burst conditions.
 
 ### 🛡️ Graceful Degradation & Memory Safety
 
@@ -4733,12 +4758,12 @@ Two modes for editing custom role prompts directly from the role details view:
 
 | File | Change |
 | --- | --- |
-| pp/streaming.py | Migrated _last_finish_reason to ContextVar |
-| pp/providers/gemini.py | Adapted finish reason propagation to ContextVars |
-| pp/providers/openrouter.py | Adapted finish reason propagation to ContextVars |
-| pp/circuit_breaker.py | Fractured continuous lock into pre/post-flight scopes |
-| ot.py | Hardcoded concurrent_updates=50 and registered TaskManager.drain() |
-| pp/utils/background_tasks.py | Bounded Task manager up to 100 max tasks |
+| app/streaming.py | Migrated _last_finish_reason to ContextVar |
+| app/providers/gemini.py | Adapted finish reason propagation to ContextVars |
+| app/providers/openrouter.py | Adapted finish reason propagation to ContextVars |
+| app/circuit_breaker.py | Fractured continuous lock into pre/post-flight scopes |
+| bot.py | Hardcoded concurrent_updates=50 and registered TaskManager.drain() |
+| app/utils/background_tasks.py | Bounded Task manager up to 100 max tasks |
 
 ### 🧪 Tests: 1060 passed (100% Core + Integration Coverage)
 

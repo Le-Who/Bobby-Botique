@@ -1,63 +1,85 @@
 #!/usr/bin/env python3
-"""
-Pre-commit hook: detects UTF-8 mojibake in documentation files.
+"""Read-only UTF-8/control-character guard for repository Markdown.
 
-Blocks commit if any of the known Latin-1-reinterpretation patterns are found
-in README.md or CHANGELOG.md.
-
-TYPE-A: C3 A2 followed by control byte (broken â + continuation)
-        = UTF-8 multi-byte sequence had bytes misread as Latin-1 codepoints
-TYPE-B: C3 B0 + C2 9F (broken ð + control)
-        = F0 9F emoji leader bytes misread as Latin-1
-
-Install: copy or symlink to .git/hooks/pre-commit and chmod +x
+With filenames, check exactly those files (pre-commit passes staged filenames).
+Without filenames, discover tracked and non-ignored new Markdown via Git.
+Install through pre-commit install; do not copy this script into .git/hooks.
 """
 
+import argparse
+import subprocess
 import sys
 from pathlib import Path
 
-# Patterns that indicate the file was written with wrong encoding
-BROKEN_PATTERNS: list[bytes] = [
-    bytes([0xC3, 0xA2, 0x20]),  # â + space  (broken E2 xx sequence)
-    bytes([0xC3, 0xA2, 0xC2, 0x8C]),  # â + U+008C (alt broken gear)
-    bytes([0xC3, 0xA2, 0xC2, 0x9C]),  # â + U+009C
-    bytes([0xC3, 0xA2, 0xC2, 0x86]),  # â + U+0086 (broken arrow →)
-    bytes([0xC3, 0xB0, 0xC2, 0x9F]),  # ð + U+009F (broken F0 9F emoji)
-]
-
-DOCS = ["README.md", "CHANGELOG.md"]
+# Retain the known corruption signatures used by the original guard.
+BROKEN_PATTERNS = (
+    bytes([0xC3, 0xA2, 0x20]),
+    bytes([0xC3, 0xA2, 0xC2, 0x8C]),
+    bytes([0xC3, 0xA2, 0xC2, 0x9C]),
+    bytes([0xC3, 0xA2, 0xC2, 0x86]),
+    bytes([0xC3, 0xB0, 0xC2, 0x9F]),
+)
 
 
 def check_file(path: Path) -> list[str]:
-    if not path.exists():
-        return []
-    data = path.read_bytes()
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        return [f"{path}: cannot read file ({exc.strerror})"]
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return [f"{path}: invalid UTF-8 at byte {exc.start}"]
+
     errors = []
-    for pat in BROKEN_PATTERNS:
-        count = data.count(pat)
-        if count:
-            errors.append(
-                f"  {path.name}: found broken pattern {pat.hex()} "
-                f"({count} occurrences) — likely Latin-1 reinterpretation of UTF-8"
-            )
+    for pattern in BROKEN_PATTERNS:
+        if pattern in data:
+            errors.append(f"{path}: known mojibake pattern {pattern.hex()}")
+    # Split only on LF: str.splitlines() would hide form feed and C1 controls.
+    for line_number, line in enumerate(text.split("\n"), 1):
+        controls = sorted(
+            {ord(char) for char in line if (ord(char) < 32 and char not in "\t\r") or 127 <= ord(char) <= 159}
+        )
+        if controls:
+            codes = ", ".join(f"U+{code:04X}" for code in controls)
+            errors.append(f"{path}:{line_number}: unexpected control characters {codes}")
     return errors
 
 
-root = Path(__file__).parent.parent  # .git/hooks/pre-commit → repo root
-all_errors: list[str] = []
-for doc in DOCS:
-    all_errors.extend(check_file(root / doc))
+def discover_documents(root: Path) -> list[Path]:
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    paths = {root / name for name in result.stdout.decode("utf-8").split("\0") if name}
+    # Deleted tracked files have no working-tree content to validate.
+    return sorted(path for path in paths if path.suffix.lower() == ".md" and path.exists())
 
-if all_errors:
-    print("❌ PRE-COMMIT BLOCKED: UTF-8 mojibake detected in docs:")
-    for e in all_errors:
-        print(e)
-    print()
-    print("Fix: run  python _fix_encoding.py  in the project root,")
-    print("     then re-stage the file and retry the commit.")
-    print()
-    print("Root cause: agent opened file without encoding='utf-8'.")
-    print("Always use: open(file, encoding='utf-8') for README.md / CHANGELOG.md")
-    sys.exit(1)
 
-sys.exit(0)
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("files", nargs="*", type=Path)
+    args = parser.parse_args(argv)
+    # Diagnostics must work even on an ASCII/cp1251 terminal with Unicode paths.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")
+    try:
+        paths = args.files or discover_documents(Path(__file__).resolve().parents[1])
+    except (OSError, UnicodeError, subprocess.SubprocessError) as exc:
+        print(f"FAIL: cannot discover Markdown files ({type(exc).__name__})")
+        return 2
+    errors = [error for path in paths for error in check_file(path)]
+    if errors:
+        print("FAIL: documentation encoding integrity")
+        for error in errors:
+            print(error)
+        print("Restore the affected text from a verified source; no files were modified.")
+        return 1
+    print(f"PASS: encoding integrity ({len(paths)} Markdown files)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

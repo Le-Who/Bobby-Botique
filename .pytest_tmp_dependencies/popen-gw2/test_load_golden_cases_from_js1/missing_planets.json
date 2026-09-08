@@ -1,0 +1,56 @@
+
+        {
+          "cases": [
+            {
+              "case_id": "partial-planets",
+              "resolved": {
+                "birth_input": {
+                  "birth_date": "1995-02-14",
+                  "time_precision": "exact",
+                  "birth_time": "06:30",
+                  "birth_place": "Kyiv, Ukraine"
+                },
+                "latitude": 50.4501,
+                "longitude": 30.5234,
+                "timezone": "Europe/Kyiv",
+                "local_datetime": "1995-02-14T06:30:00+02:00",
+                "utc_datetime": "1995-02-14T04:30:00+00:00",
+                "display_place": "Kyiv, Ukraine"
+              },
+              "expected_planet_longitudes": {"sun": 325.0797},
+              "expected_retrogrades": {
+                "sun": false,
+                "moon": false,
+                "mercury": true,
+                "venus": false,
+                "mars": true,
+                "jupiter": false,
+                "saturn": false,
+                "uranus": false,
+                "neptune": false,
+                "pluto": false
+              },
+              "expected_angles": {
+                "ascendant": 304.6017,
+                "mc": 63.76
+              },
+              "expected_house_cusps": {
+                "1": 304.6017,
+                "2": 334.6017,
+                "3": 4.6017,
+                "4": 34.6017,
+                "5": 64.6017,
+                "6": 94.6017,
+                "7": 124.6017,
+                "8": 154.6017,
+                "9": 184.6017,
+                "10": 214.6017,
+                "11": 244.6017,
+                "12": 274.6017
+              },
+              "reference_source": "external fixture",
+              "externally_verified": true
+            }
+          ]
+        }
+        

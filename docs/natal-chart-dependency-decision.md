@@ -1,24 +1,48 @@
 # Natal Chart Dependency Decision
 
-Chosen library: clean-room local implementation for release 1.
+Reviewed against checkout `8fc19516` on 2026-09-08.
 
-Chosen version constraint: no new production astrology dependency.
+## Current implementation
 
-License: project-owned code under the repository license. Swiss Ephemeris and pyswisseph were evaluated but are not added to production dependencies in release 1.
+`app/natal/calculator.py` uses **PyEphem (`ephem`)** for planet positions and
+retrograde calculations. `app/natal/astronomy.py` implements local angle math;
+houses are equal-house cusps from the Ascendant. This is not an entirely
+dependency-free clean-room planetary engine.
 
-Can this be used in a hosted Telegram bot: yes. The release-1 implementation does not depend on Swiss Ephemeris licensing terms. If Swiss Ephemeris/pyswisseph is added later, the open-source hosted bot must comply with AGPL network-use obligations or use a commercial Swiss Ephemeris license for incompatible proprietary deployment.
+Production dependencies include `ephem>=4.1.0,<5.0.0`,
+`geonamescache>=3.0.1,<4.0.0` and `tzdata>=2024.1`; exact versions belong to
+`uv.lock`. The city catalog supplies local coordinates/timezones, avoiding network
+geocoding on the normal path. No Swiss Ephemeris, pyswisseph, flatlib, kerykeion or
+Moira package is in the production manifest.
 
-Do we need a commercial Swiss Ephemeris license: no for the release-1 clean-room implementation. No for an AGPL-compliant open-source Swiss Ephemeris deployment. Yes only for a proprietary or otherwise incompatible Swiss Ephemeris deployment.
+## Rationale and limits
 
-Docker/alpine compatibility: the production Dockerfile currently uses `python:3.14-slim`. `pyswisseph>=2.10,<3` and plan-era `timezonefinder` do not have suitable Python 3.14 binary wheels in the verified environment, so adding them would require native build tooling in the image. On `C:\Python314`, `pip download pyswisseph==2.10.3.2 --only-binary=:all:` found no matching binary distribution, and `pip install pyswisseph==2.10.3.2` fell back to source build and failed without Microsoft C++ Build Tools. Release 1 avoids that Docker risk.
+Keep the existing modest dependency set and local calculation path. The original
+plan to add Swiss-based libraries was not the shipped implementation. Introducing
+another engine would require accuracy, Python 3.14 Linux/Windows packaging,
+image-size, data-file and licensing review; old install experiments do not prove
+current package availability.
 
-Ephemeris data files required: none for release 1.
+The committed `natal-reference-fixture.moira-jpl.json` is independent reference
+evidence, not a Moira runtime dependency. It supports the limited equal-house
+validation scope; it does not establish Swiss parity or every date/location.
+Use [product readiness](natal-chart-product-readiness.md) for release checks.
 
-Fallback if dependency install fails: no release-1 astrology dependency is installed. If a future optional dependency install fails, keep the natal feature disabled via configuration and return a user-facing temporary unavailable message; do not send raw birth data to an LLM as a calculation fallback. Code copied or adapted from AGPL Swiss Ephemeris/pyswisseph remains subject to the original license obligations; clean-room code must be written from public formulas and project-specific tests.
+Do not substitute raw birth-data transmission to an LLM when a local calculation
+dependency fails. Keep reports disabled/fail closed until the environment is ready.
+The default interpretation contract uses derived chart data.
 
-## Alternative Libraries Checked
+## Licensing and historical evaluation
 
-- `flatlib==0.2.3`: pure-Python package, but runtime dependency is pinned to `pyswisseph==2.08.00-1`; it does not remove the Swiss/native-build dependency.
-- `kerykeion==5.12.9`: AGPL-3.0 package and runtime dependency includes `pyswisseph>=2.10.3.2`; it does not remove the Swiss/native-build dependency.
-- `libephemeris==2.0.2`: `py3-none-any`, no runtime Swiss dependency in metadata. It depends on Skyfield/Skyfield-data/Astroquery/Astropy/Numpy/Pyerfa/Zstandard and downloaded roughly 60+ MB of wheels in the Python 3.14 check. This is a plausible future accuracy engine, but it is a larger integration and packaging change than the release-1 local calculator.
-- `moira-astro==3.2.3`: has a Windows `cp314` wheel and was used as a dev-only independent verifier for Ascendant, MC, and equal-house cusps in `docs/natal-reference-fixture.moira-jpl.json`. It is still not a production dependency: `pip download --platform manylinux_2_28_x86_64 --implementation cp --python-version 314 --abi cp314` did not find `3.2.3`, so treat it as Docker build risk until Linux Python 3.14 wheel availability is verified for the production image platform.
+The repository's own code is MIT; third-party code/data retain their own terms.
+GeoNames attribution is included in hosted reports. Dependency CI produces a
+license inventory; review the actual selected packages/data before a distribution
+or engine change. This document is not a blanket legal approval for a hosted
+deployment or a future Swiss-based implementation.
+
+Earlier notes recorded Python 3.14 wheel/install experiments for
+`pyswisseph==2.10.3.2`, `flatlib==0.2.3`, `kerykeion==5.12.9`,
+`libephemeris==2.0.2` and dev-only `moira-astro==3.2.3`. Those were historical
+candidate evaluations, not current dependency choices or a maintained availability
+matrix. Re-run target-platform resolution if revisiting them; do not copy the
+plan-era package list into production.

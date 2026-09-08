@@ -8,10 +8,18 @@
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.2
+    rev: v0.15.2
     hooks:
       # Lint: catches F402, B, SIM, etc. — matches pyproject.toml [tool.ruff.lint]
-      - id: ruff
+      - id: ruff-check
         args: [--fix, --exit-non-zero-on-fix]
       # Format: enforces consistent style
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: documentation-encoding
+        name: Documentation UTF-8 integrity
+        entry: python scripts/check_encoding.py
+        language: python
+        files: '(?i)\.md$'

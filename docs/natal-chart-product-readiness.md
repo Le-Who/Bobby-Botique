@@ -6,7 +6,12 @@ Current state: beta-ready for controlled testing, not a fully finished public pr
 
 This document tracks the changes required to move natal charts from MVP to product-ready. It also records which parts are already implemented so rollout decisions do not depend on memory.
 
-## Implemented in this pass
+Documentation reviewed on 2026-09-08 against `8fc19516`. The implementation below
+uses PyEphem for planets and local angle/equal-house math; see the corrected
+[dependency decision](natal-chart-dependency-decision.md). Historical benchmark,
+test and VPS results below were not rerun in this audit and do not approve a new rollout.
+
+## Implemented paths and historical observations
 
 - Local city autocomplete is backed by `geonamescache`, a pure-Python GeoNames dataset package.
 - City records include `name`, alternate names, country, latitude, longitude, IANA timezone, and population.
@@ -69,7 +74,11 @@ This document tracks the changes required to move natal charts from MVP to produ
 - The deploy script uses `set -e`, so failed natal smoke checks now fail the deployment instead of being hidden behind a green workflow.
 - After live smoke, deployment runs `scripts/natal_maintenance.py` inside `tg-bot`, verifying the real PostgreSQL storage contract and applying `NATAL_REPORT_TTL_DAYS` soft-deletion on the VPS.
 
-## Current Verification Evidence
+## Historical Verification Evidence
+
+These are retained reports from prior work, including deployment commit `9737103`.
+They are not results for the currently checked-out commit. Re-run the appropriate
+gates in the intended environment before treating any item as current evidence.
 
 - Local Python 3.14 focused suite: `190 passed, 1 warning` for all `tests/test_natal_*.py`.
 - Telegram handler-level flow tests cover step-by-step exact-time and unknown-time paths from mode/date/country/city selection through final hosted report URL reply, with city coordinates/timezone embedded before report generation.
@@ -85,6 +94,12 @@ This document tracks the changes required to move natal charts from MVP to produ
 
 ## Required Before Public Release
 
+Items marked "Done" below describe the earlier rollout record, not a permanent
+waiver. New deployment checks must use the current workflow and an existing user:
+natal smoke defaults to configured `ADMIN_ID`, validates that user in `users`,
+and writes a sample report. It is not read-only and must not run casually against
+production. Use `--user-id` for another existing test user where appropriate.
+
 1. Done: live report smoke has run on the VPS inside the deployed `tg-bot` container with real `WEBHOOK_URL`, database, Telegram bot token, and `NATAL_REPORTS_ENABLED=true`.
 2. Verify the hosted report link opens from Telegram on mobile and desktop.
 3. Done by deploy gate when `NATAL_REPORTS_ENABLED=true`: `python scripts/natal_maintenance.py` runs inside `tg-bot` after live smoke and verifies report persistence plus deletion/TTL behavior against the real PostgreSQL migration.
@@ -98,7 +113,11 @@ This document tracks the changes required to move natal charts from MVP to produ
 
 ## City Data Decision
 
-Use local GeoNames-backed data for the main product path. The important fields for natal charts are latitude, longitude, and timezone. `geonamescache==3.0.1` ships those fields in a `py3-none-any` wheel, so it avoids Python 3.14 native build risk and avoids network latency during normal user interaction.
+Use local GeoNames-backed data for the main product path. The important fields
+are latitude, longitude and timezone. The manifest accepts
+`geonamescache>=3.0.1,<4.0.0`; the lockfile fixes the installed version. Local
+lookup avoids network geocoding during normal interaction. Earlier timings and
+package versions in this record are historical, not current installation evidence.
 
 GeoNames data is distributed under CC BY 4.0. Hosted reports and Telegraph mirrors include attribution to GeoNames.
 
