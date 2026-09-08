@@ -1,7 +1,7 @@
 # Pollinations and Daily Croc operations
 
-Implementation reviewed at `8fc19516` on 2026-09-08. Provider availability and
-paid/live generation were not revalidated by the documentation audit.
+Control behavior below is covered by local tests and browser checks with fixtures.
+Paid/live provider generation is not performed by those checks.
 
 ## Authentication and models
 
@@ -11,13 +11,33 @@ The public [image catalog](https://gen.pollinations.ai/image/models) supplies cu
 
 ## Admin Daily Croc
 
-In `/admin_daily#croc`, **Текстовая модель Gemini · Крокодил (оба режима)** selects a shared Gemini model for both daily and ordinary Crocodile: AI word generation, category classification, initial hints, and semantic answer checking. Daily image-prompt descriptions use the same model. The historical setting key `daily_croc_text_model` is preserved, so existing selections need no migration. Calls for an explicit selection use `google-genai` and existing Gemini key management, not Pollinations or the multi-provider router.
+In `/admin_daily#croc`, the shared Gemini default applies to daily and ordinary Crocodile. Each process can override it independently:
+
+| Process | Setting key |
+| --- | --- |
+| Word generation, including fast words | `daily_croc_text_model_words` |
+| Category classification | `daily_croc_text_model_category` |
+| Hints, including background prewarming | `daily_croc_text_model_hints` |
+| Semantic answer checking | `daily_croc_text_model_judge` |
+| Daily image-prompt descriptions | `daily_croc_text_model_image_prompt` |
+
+An empty override (**Наследовать общую**) uses the historical `daily_croc_text_model` default; if that is also empty, the existing automatic scheme remains. Existing selections need no migration. Calls for explicit selections use `google-genai` and existing Gemini key management, not Pollinations.
 
 **Авто** preserves the previous generation scheme. Existing words, image prompts, and prepared session hints are not regenerated automatically. New AI results are cached separately by selected model. Exact-match checks remain local; other answers are judged by the selected Gemini model, which returns both score and hint in one request. An unavailable judge does not consume a player's attempt. Local word banks and deterministic fallback hints remain available.
 
-The image selector in each puzzle card is used by actual regeneration. New puzzles inherit the global image-provider setting; changing a word preserves that puzzle's image model. A failed or busy forced regeneration reports an error and does not claim an old image is a new result. The existing FTA-to-Pollinations fallback remains, and the actual model is recorded on successful generation.
+**Модель изображения по умолчанию** selects an actual Pollinations catalog model for newly created puzzles, not just a provider. The `daily_croc_image_model` setting stores its canonical ID; legacy `pollinations` maps to `qwen-image`, and FTA remains available. Catalog aliases are resolved when saving. A catalog outage leaves the saved setting unchanged. Each existing puzzle keeps its own model; its card selector still controls actual regeneration. Changing a word does not reset that image-model choice.
 
 Ordinary Crocodile currently has no image-generation step. Per-puzzle image overrides remain specific to that daily puzzle; this shared text-model setting does not introduce a new image feature into ordinary games.
+
+## Prepare an arbitrary day
+
+Choose a date in **Подготовка дня**, including a date absent from the calendar:
+
+- **Проверить готовность** reads persisted Easy/Hard assets only; it never creates puzzles or calls a model.
+- **Подготовить день** queues both difficulties and fills missing assets without forcing regeneration, changing existing words, or clearing player progress. The page polls until the job finishes and refreshes the calendar.
+- Readiness displays word, hints, image prompt, and image separately. Delivery can be ready without art, but **Всё готово** requires all four parts for both difficulties. Missing art due to quota/provider failure is reported as partial, not success.
+
+The endpoints are authenticated `GET /api/admin/dailycroc/day?date=YYYY-MM-DD` and `POST /api/admin/dailycroc/day/prepare` with `{"date":"YYYY-MM-DD"}`. Preparation runs in a managed background task, with Redis ownership/deduplication when available and local guards otherwise. A job has a ten-minute execution timeout; completed/partial/failed status expires after one day. Failed or interrupted preparation can be retried. Image generation still respects the existing hourly quota.
 
 ## Natal smoke and dependency validation
 

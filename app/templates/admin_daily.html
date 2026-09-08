@@ -477,6 +477,7 @@ input:checked + .slider:before { transform: translateX(16px); }
 .btn-save:hover { background: #08d9fd; }
 .btn-row { display: flex; gap: 8px; }
 .btn-row .btn { flex: 1; }
+#croc-day-date { background: var(--bg-surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px; color-scheme: dark; min-width: 140px; }
 .btn-refresh { font-size: 0.8rem; font-weight: 600; padding: 6px 12px; height: 32px; border-radius: 6px; width: auto; }
 .btn-primary { background: rgba(139,92,246,0.18); color: var(--violet); border-color: rgba(139,92,246,0.35); font-weight: 600; }
 .btn-primary:hover:not(:disabled) { background: rgba(139,92,246,0.3); border-color: var(--violet); }
@@ -909,10 +910,25 @@ input:checked + .slider:before { transform: translateX(16px); }
 
   <div class="main-content">
     <div class="prompt-section">
-      <label for="croc-text-model">Текстовая модель Gemini · Крокодил (оба режима)</label>
+      <label for="croc-text-model">Общая текстовая модель Gemini · Крокодил (оба режима)</label>
       <select id="croc-text-model" class="model-select" disabled><option>Загрузка моделей…</option></select>
       <p class="stat-card-sub">Общая модель для дневного и обычного крокодила: новые слова, подсказки и AI-проверка ответов — через Gemini (google-genai). В дневном режиме также используется для промптов изображений. Готовые пазлы сохраняются.</p>
+      <div id="croc-process-models" class="form-row"></div>
+      <p class="stat-card-sub">Для каждого процесса можно выбрать свою модель. «Наследовать общую» использует настройку выше.</p>
+      <label for="croc-default-image-model">Модель изображения по умолчанию · Pollinations / FTA</label>
+      <select id="croc-default-image-model" class="model-select" disabled><option>Загрузка моделей…</option></select>
+      <p class="stat-card-sub">Применяется к новым пазлам. Индивидуальные модели и готовые изображения не меняются.</p>
       <p id="croc-model-status" role="status" class="stat-card-sub"></p>
+    </div>
+    <div class="prompt-section">
+      <label for="croc-day-date">Подготовка дня</label>
+      <div class="btn-row">
+        <input id="croc-day-date" type="date" aria-label="Дата пазла крокодила">
+        <button id="croc-day-check" class="btn">Проверить готовность</button>
+        <button id="croc-day-prepare" class="btn btn-save">Подготовить день</button>
+      </div>
+      <p class="stat-card-sub">Можно указать дату, которой ещё нет в календаре. Подготовка создаёт недостающее для Easy и Hard без сброса прогресса и готовых частей.</p>
+      <div id="croc-day-status" role="status" aria-live="polite"></div>
     </div>
     <h2 class="section-title">Календарь пазлов (последние 20 дней)</h2>
     <div class="puzzle-grid" id="croc-puzzle-container">
@@ -1762,6 +1778,11 @@ const CrocModule = (() => {
   let kyivTodayStr = '';
   let imageModels = [];
   let savedTextModel = '';
+  let savedProcessModels = {};
+  let savedImageModel = '';
+  let dayPoll = null;
+  let dayRequest = 0;
+  let activePreparationDate = null;
 
   function fillModels(select, models, saved) {
     select.replaceChildren();
@@ -1783,6 +1804,27 @@ const CrocModule = (() => {
       savedTextModel = data.text_model || '';
       fillModels(select, data.text_models || [], savedTextModel);
       select.disabled = false;
+      const processRoot = document.getElementById('croc-process-models');
+      processRoot.replaceChildren();
+      for (const process of data.text_processes || []) {
+        savedProcessModels[process.id] = process.model || '';
+        const field = document.createElement('div');
+        field.className = 'field';
+        const label = document.createElement('label');
+        const input = document.createElement('select');
+        input.id = `croc-process-${process.id}`;
+        input.className = 'model-select';
+        input.dataset.process = process.id;
+        label.htmlFor = input.id;
+        label.textContent = process.label;
+        fillModels(input, (data.text_models || []).map(model => model.id ? model : {...model, title: 'Наследовать общую'}), process.model || '');
+        field.append(label, input);
+        processRoot.append(field);
+      }
+      const imageSelect = document.getElementById('croc-default-image-model');
+      fillModels(imageSelect, imageModels, data.default_image_model || 'qwen-image');
+      savedImageModel = imageSelect.value;
+      imageSelect.disabled = false;
       document.getElementById('croc-model-status').textContent = data.catalog_unavailable
         ? 'Каталог Pollinations недоступен; сохранённые модели не изменены.' : '';
     } catch (e) {
@@ -1790,21 +1832,112 @@ const CrocModule = (() => {
     }
   }
 
-  async function saveTextModel() {
-    const select = document.getElementById('croc-text-model');
+  async function saveTextModel(event) {
+    const select = event?.target || document.getElementById('croc-text-model');
+    const process = select.dataset.process || '';
     select.disabled = true;
     try {
       const res = await fetch('/api/admin/dailycroc/text-model', {
-        method: 'POST', headers: apiHeaders, body: JSON.stringify({ model: select.value })
+        method: 'POST', headers: apiHeaders, body: JSON.stringify({ model: select.value, process })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      savedTextModel = data.model;
+      if (process) savedProcessModels[process] = data.model;
+      else savedTextModel = data.model;
       showToast('Текстовая модель сохранена');
     } catch (e) {
-      select.value = savedTextModel;
+      select.value = process ? savedProcessModels[process] : savedTextModel;
       showToast(`Ошибка: ${e.message}`, 'error');
     } finally { select.disabled = false; }
+  }
+
+  async function saveDefaultImage() {
+    const select = document.getElementById('croc-default-image-model');
+    select.disabled = true;
+    try {
+      const res = await fetch('/api/admin/dailycroc/image-default', {
+        method: 'POST', headers: apiHeaders, body: JSON.stringify({model: select.value})
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      savedImageModel = data.model;
+      showToast('Модель новых изображений сохранена');
+      loadStats();
+    } catch (e) {
+      select.value = savedImageModel;
+      showToast(`Ошибка: ${e.message}`, 'error');
+    } finally { select.disabled = false; }
+  }
+
+  function renderDayStatus(data) {
+    const root = document.getElementById('croc-day-status');
+    root.replaceChildren();
+    const states = {queued:'В очереди', running:'Подготовка идёт…', completed:'Подготовка завершена', partial:'Подготовлено частично', failed:'Не удалось завершить подготовку', interrupted:'Подготовка прервана'};
+    const title = document.createElement('p');
+    title.textContent = `${data.date}: ${data.fully_ready ? 'Всё готово' : 'Есть недостающие части'}${data.job ? ' · ' + (states[data.job.state] || data.job.state) : ''}`;
+    root.append(title);
+    for (const puzzle of data.puzzles || []) {
+      const line = document.createElement('p');
+      const flag = ready => ready ? '✅' : '❌';
+      line.textContent = `${puzzle.difficulty.toUpperCase()}: слово ${flag(puzzle.word_ready)} · подсказки ${flag(puzzle.hints_ready)} · промпт ${flag(puzzle.prompt_ready)} · картинка ${flag(puzzle.image_ready)}`;
+      root.append(line);
+    }
+    if (data.job?.errors?.length) {
+      const error = document.createElement('p');
+      error.textContent = `Проблемы: ${data.job.errors.join('; ')}`;
+      root.append(error);
+    }
+  }
+
+  async function inspectDay() {
+    clearTimeout(dayPoll);
+    const date = document.getElementById('croc-day-date').value;
+    const ticket = ++dayRequest;
+    if (!date) {
+      document.getElementById('croc-day-status').textContent = 'Выберите дату.';
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/dailycroc/day?date=${encodeURIComponent(date)}`, {headers:getHeaders});
+      const data = await res.json();
+      if (ticket !== dayRequest) return;
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      renderDayStatus(data);
+      const running = ['queued','running'].includes(data.job?.state);
+      document.getElementById('croc-day-prepare').disabled = running;
+      if (running) {
+        activePreparationDate = date;
+        dayPoll = setTimeout(inspectDay, 2000);
+      } else if (activePreparationDate === date) {
+        activePreparationDate = null;
+        loadPuzzles();
+      }
+    } catch (e) {
+      if (ticket !== dayRequest) return;
+      document.getElementById('croc-day-status').textContent = `Проверка недоступна: ${e.message}. Нажмите «Проверить готовность», чтобы повторить.`;
+      document.getElementById('croc-day-prepare').disabled = false;
+    }
+  }
+
+  async function prepareDay() {
+    const date = document.getElementById('croc-day-date').value;
+    if (!date) { await inspectDay(); return; }
+    if (!await showConfirm('Подготовка дня', `Создать недостающие части Easy и Hard на ${date}? Генерация расходует квоты моделей.`)) return;
+    const button = document.getElementById('croc-day-prepare');
+    button.disabled = true;
+    try {
+      const res = await fetch('/api/admin/dailycroc/day/prepare', {
+        method:'POST', headers:apiHeaders, body:JSON.stringify({date})
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      activePreparationDate = date;
+      showToast(`Подготовка на ${date} запущена`);
+      await inspectDay();
+    } catch (e) {
+      showToast(`Ошибка запуска: ${e.message}`, 'error');
+      button.disabled = false;
+    }
   }
 
   async function loadStats() {
@@ -1989,6 +2122,14 @@ const CrocModule = (() => {
     initialized = true;
     loadPuzzles();
     document.getElementById('croc-text-model').addEventListener('change', saveTextModel);
+    document.getElementById('croc-process-models').addEventListener('change', event => {
+      if (event.target.matches('select[data-process]')) saveTextModel(event);
+    });
+    document.getElementById('croc-default-image-model').addEventListener('change', saveDefaultImage);
+    document.getElementById('croc-day-date').value = getKyivDateString();
+    document.getElementById('croc-day-date').addEventListener('change', inspectDay);
+    document.getElementById('croc-day-check').addEventListener('click', inspectDay);
+    document.getElementById('croc-day-prepare').addEventListener('click', prepareDay);
     document.getElementById('croc-puzzle-container').addEventListener('click', (e) => {
       const target = e.target.closest('[data-croc-action]');
       if (!target) return;

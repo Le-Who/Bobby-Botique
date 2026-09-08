@@ -4,6 +4,13 @@ This is a historical change record. Dated versions, test counts and deployment
 results below apply to their original work, not necessarily the current checkout.
 Use README.md and docs/README.md for the current project reference.
 
+## [Unreleased] - 2026-09-08 - Crocodile process models and date preparation
+
+- Added independent Gemini overrides for words, category classification, hints, judging, and daily image descriptions, shared by daily and ordinary Crocodile and inheriting the existing default when empty.
+- Added a catalog-backed Pollinations image default for new puzzles while preserving existing per-puzzle model choices.
+- Added arbitrary-date read-only readiness and tracked background preparation of both Easy/Hard slots, including dates absent from the calendar, with partial results, cancellation recovery, and duplicate-run protection.
+- Isolated the encoding guard's no-repository test from the surrounding checkout when pytest temporary files live inside the repository.
+
 ## [Unreleased] - 2026-09-08 - Documentation integrity follow-up
 
 - Aligned pre-commit Ruff with locked/CI 0.15.2 and added the read-only Markdown

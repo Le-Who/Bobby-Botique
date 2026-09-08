@@ -942,7 +942,7 @@ async def resolve_custom_word_category(word: str) -> str:
     # Check in-process+disk cache before calling the LLM
     from app.games.judgement_cache import cache_word_category, get_cached_word_category
 
-    selected_model = await daily_ai.get_daily_text_model()
+    selected_model = await daily_ai.get_daily_text_model_for("category")
     category_cache_word = f"model:{selected_model}:{word}" if selected_model else word
     cached_cat = await get_cached_word_category(category_cache_word)
     if cached_cat:
@@ -1262,7 +1262,7 @@ async def generate_words_for_category(
     from app.games.judgement_cache import cache_generated_words, get_cached_generated_words
 
     category = category.strip()
-    selected_model = await daily_ai.get_daily_text_model() if model is None else model
+    selected_model = await daily_ai.get_daily_text_model_for("words") if model is None else model
     source_topic_id = (topic_id or "").strip()
     topic_id_norm = _model_topic_id(selected_model, lang, category, source_topic_id)
     cache_key = _generated_cache_key(lang, category, topic_id=topic_id_norm or None)
@@ -1415,7 +1415,7 @@ async def clear_generated_category(
     from app.games.judgement_cache import clear_cached_generated_words
 
     category_norm = category.strip()
-    selected_model = await daily_ai.get_daily_text_model()
+    selected_model = await daily_ai.get_daily_text_model_for("words")
     topic_id_norm = _model_topic_id(selected_model, lang, category_norm, (topic_id or "").strip())
     cache_key = _generated_cache_key(lang, category_norm, topic_id=topic_id_norm or None)
 
@@ -1452,7 +1452,7 @@ async def _generate_single_word_fast(category: str, lang: str = "ru", *, model: 
             return None
         return _normalise_fast_word_candidate(cleaned, lang=lang)
 
-    selected_model = await daily_ai.get_daily_text_model() if model is None else model
+    selected_model = await daily_ai.get_daily_text_model_for("words") if model is None else model
     if selected_model:
         try:
             lease = await acquire_foreground_slot("fast_word", "ai_studio", selected_model)
@@ -1590,7 +1590,7 @@ async def pick_random_word_for_topic(
 
         lang = topic.lang
         category = topic.category
-        selected_model = await daily_ai.get_daily_text_model()
+        selected_model = await daily_ai.get_daily_text_model_for("words")
         cache_topic_id = _model_topic_id(selected_model, lang, category, topic.topic_id)
         cache_key = _generated_cache_key(lang, category, topic_id=cache_topic_id)
         cached_words = _GENERATED_CACHE.get(cache_key)

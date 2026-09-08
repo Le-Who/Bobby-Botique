@@ -1067,6 +1067,8 @@ async def api_admin_dailycroc_update_model():
 @require_auth
 async def api_admin_dailycroc_models():
     from app.config import is_gemini_chat_model_id
+    from app.games.crocodile_daily import get_daily_image_model
+    from app.games.daily_ai import TEXT_MODEL_PROCESSES, get_daily_text_model_for
     from app.providers.pollinations import fetch_models
     from app.repos.settings_repo import get_global_setting
 
@@ -1088,6 +1090,16 @@ async def api_admin_dailycroc_models():
             "image_models": image_models,
             "text_models": text_models,
             "text_model": await get_global_setting("daily_croc_text_model", ""),
+            "text_processes": [
+                {
+                    "id": process,
+                    "label": label,
+                    "model": await get_global_setting(f"daily_croc_text_model_{process}", ""),
+                    "effective_model": await get_daily_text_model_for(process),
+                }
+                for process, label in TEXT_MODEL_PROCESSES.items()
+            ],
+            "default_image_model": await get_daily_image_model(),
             "catalog_unavailable": catalog_unavailable,
         }
     )
@@ -1097,6 +1109,7 @@ async def api_admin_dailycroc_models():
 @require_auth
 async def api_admin_dailycroc_text_model():
     from app.config import is_gemini_chat_model_id
+    from app.games.daily_ai import TEXT_MODEL_PROCESSES
     from app.repos.settings_repo import set_global_setting
 
     data = await request.get_json()
@@ -1105,8 +1118,77 @@ async def api_admin_dailycroc_text_model():
         return jsonify({"error": "invalid model"}), 400
     if model and (model not in settings.AVAILABLE_MODELS or not is_gemini_chat_model_id(model)):
         return jsonify({"error": "unknown Gemini text model"}), 400
-    await set_global_setting("daily_croc_text_model", model)
+    process = data.get("process", "")
+    if not isinstance(process, str) or (process and process not in TEXT_MODEL_PROCESSES):
+        return jsonify({"error": "unknown text process"}), 400
+    key = f"daily_croc_text_model_{process}" if process else "daily_croc_text_model"
+    await set_global_setting(key, model)
+    return jsonify({"success": True, "model": model, "process": process})
+
+
+@quart_app.route("/api/admin/dailycroc/image-default", methods=["POST"])
+@require_auth
+async def api_admin_dailycroc_image_default():
+    from app.providers.pollinations import fetch_models
+    from app.repos.crocodile_daily import DAILY_IMAGE_MODEL_SETTING_KEY
+    from app.repos.settings_repo import set_global_setting
+
+    data = await request.get_json()
+    model = data.get("model") if isinstance(data, dict) else None
+    if not isinstance(model, str) or not model.strip() or len(model) > 200:
+        return jsonify({"error": "invalid model"}), 400
+    if model != "fta-gpt-image-2":
+        try:
+            catalog = await fetch_models("image")
+        except Exception:
+            return jsonify({"error": "Pollinations catalog unavailable; setting unchanged"}), 503
+        match = next((item for item in catalog if model in [item["id"], *item["aliases"]]), None)
+        if match is None:
+            return jsonify({"error": "unknown image model"}), 400
+        model = match["id"]
+    await set_global_setting(DAILY_IMAGE_MODEL_SETTING_KEY, model)
     return jsonify({"success": True, "model": model})
+
+
+@quart_app.route("/api/admin/dailycroc/day", methods=["GET"])
+@require_auth
+async def api_admin_dailycroc_day():
+    from datetime import date
+
+    value = request.args.get("date", "")
+    try:
+        day = date.fromisoformat(value)
+        if day.isoformat() != value:
+            raise ValueError("non-canonical date")
+    except ValueError:
+        return jsonify({"error": "date must be YYYY-MM-DD"}), 400
+    from app.games.daily_preparation import get_day_readiness
+
+    return jsonify(await get_day_readiness(day))
+
+
+@quart_app.route("/api/admin/dailycroc/day/prepare", methods=["POST"])
+@require_auth
+@rate_limit_api
+async def api_admin_dailycroc_prepare_day():
+    from datetime import date
+
+    data = await request.get_json()
+    value = data.get("date") if isinstance(data, dict) else None
+    try:
+        day = date.fromisoformat(value)
+        if day.isoformat() != value:
+            raise ValueError("non-canonical date")
+    except ValueError, TypeError:
+        return jsonify({"error": "date must be YYYY-MM-DD"}), 400
+    from app.bot_instance import get_bot
+    from app.games.daily_preparation import start_day_preparation
+
+    bot = get_bot()
+    if bot is None:
+        return jsonify({"error": "bot not ready"}), 503
+    job = await start_day_preparation(day, bot)
+    return jsonify({"date": day.isoformat(), "job": job}), 202
 
 
 @quart_app.route("/api/admin/dailycroc/reset-word", methods=["POST"])

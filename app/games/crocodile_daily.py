@@ -126,10 +126,10 @@ async def get_daily_hints(puzzle: repo.DailyPuzzle) -> list[str]:
     if puzzle.hints:
         return puzzle.hints
 
-    from app.games.daily_ai import generate_daily_hints, get_daily_text_model
+    from app.games.daily_ai import generate_daily_hints, get_daily_text_model_for
     from app.games.hinting import get_or_generate_cached_hints
 
-    model = await get_daily_text_model()
+    model = await get_daily_text_model_for("hints")
     hints = await generate_daily_hints(puzzle.target_word, puzzle.topic, model) if model else None
     if not hints:
         hints = await get_or_generate_cached_hints(
@@ -200,18 +200,14 @@ _fta_rate_limiter = _FtaImageRateLimiter(max_per_min=10)
 
 
 async def get_daily_image_model() -> str:
-    """Return the currently configured daily image model from global settings.
-
-    Returns:
-        ``"pollinations"`` (default) or ``"fta-gpt-image-2"``.
-    """
+    """Return the image default, accepting saved Pollinations IDs and legacy provider choices."""
     from app.repos.settings_repo import get_global_setting
 
     value = await get_global_setting(repo.DAILY_IMAGE_MODEL_SETTING_KEY, "pollinations")
-    value = value.strip().lower()
-    if value in _FTA_IMG_MODELS:
-        return value
-    return "pollinations"
+    value = value.strip()
+    if not value or value == "pollinations":
+        return repo.DAILY_IMAGE_MODEL
+    return "fta-gpt-image-2" if value == _FTA_DAILY_MODEL_ID else value
 
 
 async def _translate_word_for_prompt(word: str) -> str | None:
@@ -221,11 +217,11 @@ async def _translate_word_for_prompt(word: str) -> str | None:
     calls never hit the LLM twice for the same word.
     """
     from app.config import settings
-    from app.games.daily_ai import generate_daily_text, get_daily_text_model
+    from app.games.daily_ai import generate_daily_text, get_daily_text_model_for
     from app.games.word_bank import _PROMPT_TRANSLATION_CACHE
     from app.utils.json_compat import json
 
-    model = await get_daily_text_model()
+    model = await get_daily_text_model_for("image_prompt")
     key = f"daily:{model}:{word.strip().lower()}" if model else word.strip().lower()
     if key in _PROMPT_TRANSLATION_CACHE:
         return _PROMPT_TRANSLATION_CACHE[key]
@@ -267,10 +263,10 @@ async def _translate_word_for_prompt(word: str) -> str | None:
 
 
 async def _build_daily_image_prompt(word: str, topic: str, *, difficulty: str) -> str:
-    from app.games.daily_ai import get_daily_text_model
+    from app.games.daily_ai import get_daily_text_model_for
     from app.games.word_bank import get_english_equivalent
 
-    model = await get_daily_text_model()
+    model = await get_daily_text_model_for("image_prompt")
     if model:
         en_word = await _translate_word_for_prompt(word) or get_english_equivalent(word)
     else:

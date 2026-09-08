@@ -720,9 +720,9 @@ async def generate_hints(
             deduped.append((lane_name, lane_type, model_name))
         return deduped
 
-    from app.games.daily_ai import generate_daily_text, get_daily_text_model
+    from app.games.daily_ai import generate_daily_text, get_daily_text_model_for
 
-    selected_model = await get_daily_text_model() if model is None else model
+    selected_model = await get_daily_text_model_for("hints") if model is None else model
     if selected_model:
         c_str = f" (категория: {category})" if category and "особое" not in category.lower() else ""
         try:
@@ -1023,9 +1023,9 @@ async def judge_guess(
         await metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
         return "exact_match", j
 
-    from app.games.daily_ai import generate_daily_text, get_daily_text_model
+    from app.games.daily_ai import generate_daily_text, get_daily_text_model_for
 
-    selected_model = await get_daily_text_model()
+    selected_model = await get_daily_text_model_for("judge")
     cache_topic = model_cache_topic(topic_id, category, selected_model)
     # 2. Judgement cache (<5ms, local file)
     cached = await get_cached_judgement(

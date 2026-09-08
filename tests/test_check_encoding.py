@@ -88,7 +88,10 @@ def test_default_discovery_checks_new_and_tracked_docs_but_not_ignored_files(tmp
     assert run_check(script).returncode == 1
 
 
-def test_discovery_failure_is_not_a_clean_result(tmp_path):
+def test_discovery_failure_is_not_a_clean_result(tmp_path, monkeypatch):
+    # pytest's configured temp root is inside the checkout; prevent Git from
+    # discovering that ancestor when this fixture is intended to be no-repo.
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
     (tmp_path / "scripts").mkdir()
     script = tmp_path / "scripts" / "check_encoding.py"
     shutil.copyfile(SCRIPT, script)

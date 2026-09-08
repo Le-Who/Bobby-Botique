@@ -309,10 +309,10 @@ async def get_used_daily_words(*, days_back: int = 365, conn=None) -> set[str]:
 
 
 async def _pick_daily_word(topic, *, used_words: set[str], difficulty: str, model: str | None = None):
-    from app.games.daily_ai import generate_daily_word, get_daily_text_model
+    from app.games.daily_ai import generate_daily_word, get_daily_text_model_for
     from app.games.word_bank import pick_random_word_for_topic
 
-    selected_model = await get_daily_text_model() if model is None else model
+    selected_model = await get_daily_text_model_for("words") if model is None else model
     if selected_model:
         word = await generate_daily_word(topic.category, difficulty, used_words, selected_model)
         if word:
@@ -322,10 +322,10 @@ async def _pick_daily_word(topic, *, used_words: set[str], difficulty: str, mode
 
 async def _prepare_daily_word_candidate(puzzle_date: date, difficulty: str, model: str | None = None):
     """Do external generation before acquiring the puzzle table transaction."""
-    from app.games.daily_ai import generate_daily_word, get_daily_text_model
+    from app.games.daily_ai import generate_daily_word, get_daily_text_model_for
     from app.games.word_bank import WORD_BANK, _filter_words_by_difficulty, resolve_topic
 
-    selected_model = await get_daily_text_model() if model is None else model
+    selected_model = await get_daily_text_model_for("words") if model is None else model
     if not selected_model:
         return None
     used_words = await get_used_daily_words()

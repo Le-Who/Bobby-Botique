@@ -13,6 +13,13 @@ from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 DAILY_TEXT_MODEL_SETTING_KEY = "daily_croc_text_model"
+TEXT_MODEL_PROCESSES = {
+    "words": "Генерация слов",
+    "category": "Определение категории",
+    "hints": "Подсказки",
+    "judge": "Проверка ответов",
+    "image_prompt": "Описание для картинки",
+}
 
 
 async def get_daily_text_model() -> str:
@@ -21,6 +28,17 @@ async def get_daily_text_model() -> str:
 
     model = (await get_global_setting(DAILY_TEXT_MODEL_SETTING_KEY, "") or "").strip()
     return model if is_gemini_chat_model_id(model) else ""
+
+
+async def get_daily_text_model_for(process: str) -> str:
+    """Resolve a shared daily/classic role, inheriting the historical default."""
+    from app.config import is_gemini_chat_model_id
+    from app.repos.settings_repo import get_global_setting
+
+    if process not in TEXT_MODEL_PROCESSES:
+        raise ValueError(f"Unknown Crocodile text model process: {process}")
+    model = (await get_global_setting(f"{DAILY_TEXT_MODEL_SETTING_KEY}_{process}", "") or "").strip()
+    return model if is_gemini_chat_model_id(model) else await get_daily_text_model()
 
 
 async def generate_daily_text(prompt: str, model: str, timeout: float = 30.0) -> str:

@@ -123,11 +123,11 @@ async def _generate_batched_hints(
     import app.config as config_module
     from app.errors import classify_key_error, extract_retry_after_seconds, is_error_message, strip_error_tag
     from app.games.ai_budget import acquire_background_slot, record_result
-    from app.games.daily_ai import generate_daily_text, get_daily_text_model
+    from app.games.daily_ai import generate_daily_text, get_daily_text_model_for
     from app.providers import get_provider_router
 
     settings_obj = getattr(config_module, "settings", None)
-    selected_model = await get_daily_text_model() if model is None else model
+    selected_model = await get_daily_text_model_for("hints") if model is None else model
     model_name = selected_model or _pick_batch_hint_model(settings_obj)
     if not model_name:
         return {}
@@ -192,11 +192,11 @@ async def _generate_batched_hints(
 
 
 async def _prewarm_topic_hints(words: tuple[str, ...], category: str, *, topic_id: str = "") -> None:
-    from app.games.daily_ai import get_daily_text_model
+    from app.games.daily_ai import get_daily_text_model_for
     from app.games.judge import generate_hints, model_cache_topic
     from app.games.judgement_cache import cache_hints, get_cached_hints
 
-    model = await get_daily_text_model()
+    model = await get_daily_text_model_for("hints")
     cache_topic = model_cache_topic(topic_id, category, model)
     pending_words: list[str] = []
     for word in words:
@@ -226,11 +226,11 @@ async def get_or_generate_cached_hints(
     topic_id: str = "",
     mode: HintGenerationMode = "foreground",
 ) -> list[str] | None:
-    from app.games.daily_ai import get_daily_text_model
+    from app.games.daily_ai import get_daily_text_model_for
     from app.games.judge import generate_hints, model_cache_topic
     from app.games.judgement_cache import cache_hints, get_cached_hints
 
-    model = await get_daily_text_model()
+    model = await get_daily_text_model_for("hints")
     cache_topic = model_cache_topic(topic_id, category, model)
     cached = await get_cached_hints(word, category, topic_id=cache_topic)
     if cached:
