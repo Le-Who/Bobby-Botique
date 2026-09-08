@@ -1788,8 +1788,22 @@ const CrocModule = (() => {
     select.replaceChildren();
     const match = models.find(model => model.id === saved || (model.aliases || []).includes(saved));
     const selected = match ? match.id : saved;
+    const groups = new Map();
+    const sourceLabels = {pollinations: 'Pollinations', fta: 'FTA'};
     for (const model of models) {
-      select.add(new Option(model.title || model.id, model.id, false, model.id === selected));
+      const option = new Option(model.title || model.id, model.id, false, model.id === selected);
+      const sourceLabel = sourceLabels[model.source];
+      if (sourceLabel) {
+        if (!groups.has(model.source)) {
+          const group = document.createElement('optgroup');
+          group.label = sourceLabel;
+          groups.set(model.source, group);
+          select.append(group);
+        }
+        groups.get(model.source).append(option);
+      } else {
+        select.add(option);
+      }
     }
     if (!match) select.add(new Option(`${saved || 'Авто'} (сохранено)`, saved, true, true));
   }

@@ -9,6 +9,8 @@ Pollinations generation uses the server-side key from the existing provider-key 
 
 The public [image catalog](https://gen.pollinations.ai/image/models) supplies current image model IDs, aliases, and publisher metadata. Saved aliases remain usable. The admin UI retains unavailable saved selections instead of silently selecting another model. No keys are sent to the browser.
 
+Both the default image selector and each puzzle's image selector group available models by API source: **Pollinations** and **FTA**. This grouping is independent of the model publisher (for example, OpenAI or Qwen). Text-model selectors remain Gemini-only.
+
 ## Admin Daily Croc
 
 In `/admin_daily#croc`, the shared Gemini default applies to daily and ordinary Crocodile. Each process can override it independently:

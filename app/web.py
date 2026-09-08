@@ -1073,7 +1073,7 @@ async def api_admin_dailycroc_models():
     from app.repos.settings_repo import get_global_setting
 
     try:
-        image_models = await fetch_models("image")
+        image_models = [{**model, "source": "pollinations"} for model in await fetch_models("image")]
         catalog_unavailable = False
     except Exception:
         image_models = []
@@ -1084,7 +1084,9 @@ async def api_admin_dailycroc_models():
         for model in settings.AVAILABLE_MODELS
         if is_gemini_chat_model_id(model)
     )
-    image_models.append({"id": "fta-gpt-image-2", "title": "GPT Image 2 (FTA)", "aliases": ["vhr/gpt_image_2"]})
+    image_models.append(
+        {"id": "fta-gpt-image-2", "title": "GPT Image 2 (FTA)", "aliases": ["vhr/gpt_image_2"], "source": "fta"}
+    )
     return jsonify(
         {
             "image_models": image_models,
