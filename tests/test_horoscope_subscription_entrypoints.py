@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from telegram.ext import CallbackQueryHandler, CommandHandler, ConversationHandler
+from telegram.ext import CallbackQueryHandler, CommandHandler, ConversationHandler, MessageHandler
 
 from app.handlers import horoscope_subscription as horoscope
 
@@ -39,6 +39,12 @@ def entry_callback(entrypoint):
         ]
         assert len(commands) == 1, "/horoscope must be registered as a subscription entrypoint"
         return commands[0].callback
+    if entrypoint == "гороскоп":
+        return next(
+            item.callback
+            for item in horoscope.build_horoscope_subscription_handler().entry_points
+            if isinstance(item, MessageHandler)
+        )
     if entrypoint == "horo_settings:start":
         return horoscope.horoscope_settings_callback
     return horoscope.start_subscribe_horoscope
@@ -71,11 +77,13 @@ async def test_existing_subscription_entrypoints_show_management_not_setup(monke
     assert ("Активна" if active else "Приостановлена") in messages[0]["text"]
     buttons = [button for row in messages[0]["reply_markup"].inline_keyboard for button in row]
     assert [button.callback_data for button in buttons] == [
+        "horo_settings:now:today",
+        "horo_settings:now:tomorrow",
         "horo_settings:edit",
         "horo_settings:toggle",
         "horo_settings:delete",
     ]
-    assert ("Приостановить" if active else "Возобновить") in buttons[1].text
+    assert ("Приостановить" if active else "Возобновить") in buttons[3].text
     assert context.user_data == original_user_data
 
 
@@ -89,6 +97,15 @@ async def test_new_subscriber_entrypoints_still_open_sign_selection(monkeypatch,
 
     state = await entry_callback(entrypoint)(update, context)
 
+    if entrypoint in ("/horoscope", "гороскоп"):
+        assert state == ConversationHandler.END
+        buttons = [button for row in messages[0]["reply_markup"].inline_keyboard for button in row]
+        assert {button.callback_data for button in buttons} == {
+            "horo_settings:now:today",
+            "horo_settings:now:tomorrow",
+            "start_horoscope",
+        }
+        return
     assert state == horoscope.CHOOSE_SIGN
     buttons = [button for row in messages[0]["reply_markup"].inline_keyboard for button in row]
     assert len(buttons) == 12

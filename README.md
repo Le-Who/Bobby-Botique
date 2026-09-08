@@ -136,7 +136,7 @@ Additional Codex and API capacity would be used for maintainer work on this publ
 - **Esoteric & Astrology Suite**: A fully-integrated suite of esoteric tools and services:
   - **Interactive Natal Charts (`/natal` / `/webapp/natal-form`):** Builds and interprets birth charts using date, place (local GeoNames-backed city catalog with an opt-in Nominatim fallback), and time precision details. Features an interactive webapp form, step-by-step chat flow, and produces a hosted full report; a public Telegraph mirror is optional and disabled by default.
   - **Tarot Readings (`/tarot` / inline mode):** Multi-spread interactive tarot card readings (Classic, Card of the Day, Yes/No, Career/Finance, Relationships, Personal Growth) with live session memory, replies context, and one-tap additional cards draw.
-  - **Daily Horoscopes (`/horoscope_settings` / `/horoscope_stop`):** Automated delivery of daily morning/evening horoscopes tailored to the user's zodiac sign, delivery time, and local timezone offset (UTC offset). Initial subscriptions persist the chosen morning/evening schedule immediately, while later partial settings updates leave unrelated times unchanged.
+  - **Horoscopes (`/horoscope`, `гороскоп`, `/horoscope_settings` / `/horoscope_stop`):** The menu offers an immediate forecast for today or tomorrow, using the saved zodiac sign or a one-off sign selection without subscribing. Manual forecasts are sent privately and do not change subscription times, paused status, or scheduled-delivery markers. Duplicate clicks are guarded; failures can be retried. Automated morning/evening delivery retains the user's schedule and timezone offset. Initial subscriptions persist their chosen schedule, while partial settings updates leave unrelated times unchanged.
 - **Core Ops & Admin Enhancements**:
   - **Admin alerts for unauthorized access:** Real-time Telegram notifications to admins when unauthorized users attempt to interact with the bot. Features inline keyboard options to instantly approve or dismiss access request (`unauthorized_add:` and `unauthorized_dismiss:` callbacks).
   - **Token count logging:** Displays response token counts for all Gemini requests (both streaming and non-streaming) in the operator console for cost auditing and tracking.
@@ -747,7 +747,7 @@ Any functional regression, schema/type error from a provider, unexplained error-
   - **Conversation history:** `/save`, `/conversations`, `/switch`, `/rename`, `/delete`, `/export`, `/stats`.
   - **Memory and privacy:** `/memory`, `/clearmemory`, `/mydata`, `/deleteme`. Private-data commands require a direct chat; irreversible deletion requires explicit confirmation.
   - **Games and reminders:** `/games`, `/dailycroc`, `/daily2048`, `/trivia`, `/remind`.
-  - **Tarot and astrology:** `/tarot`, `/natal`, `/horoscope_settings`, `/horoscope_stop`.
+  - **Tarot and astrology:** `/tarot`, `/natal`, `/horoscope`, `/horoscope_settings`, `/horoscope_stop`.
 
 Administrative and developer commands are deliberately excluded from `app/bot_commands.py` and Telegram's public slash-command menu.
 

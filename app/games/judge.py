@@ -729,9 +729,9 @@ async def generate_hints(
             response = await generate_daily_text(
                 _HINTS_PROMPT.format(W=word, C_STR=c_str), selected_model, timeout=_HINTS_TIMEOUT_S
             )
-            hints = _extract_hints(response)
-            if len(hints) == 3:
-                return hints
+            selected_hints = _extract_hints(response)
+            if len(selected_hints) == 3:
+                return selected_hints
         except Exception as exc:
             logger.warning("Selected Gemini hints failed model=%s: %s", selected_model, type(exc).__name__)
         return _local_fallback_hints(word, category)

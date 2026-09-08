@@ -50,7 +50,7 @@ async def _deliver_horoscope(
 ) -> bool:
     """Generate and send one horoscope message. Returns True on success."""
     from app.intent_router import _handle_horoscope
-    from app.utils.text_format import markdown_to_html
+    from app.utils.text_format import markdown_to_html, split_text_safe
 
     sign_label = _SIGN_LABELS.get(sign, sign.capitalize())
     day_label = "сегодня" if kind == "today" else "завтра"
@@ -89,12 +89,14 @@ async def _deliver_horoscope(
     )
 
     try:
-        await bot.send_message(
-            chat_id=user_id,
-            text=full_text[:4096],
-            parse_mode="HTML",
-            reply_markup=keyboard,
-        )
+        chunks = split_text_safe(full_text, max_length=3900)
+        for index, chunk in enumerate(chunks):
+            await bot.send_message(
+                chat_id=user_id,
+                text=chunk,
+                parse_mode="HTML",
+                reply_markup=keyboard if index == len(chunks) - 1 else None,
+            )
         return True
     except Exception as send_err:
         logger.error(

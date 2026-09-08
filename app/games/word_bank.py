@@ -1591,7 +1591,6 @@ async def pick_random_word_for_topic(
         lang = topic.lang
         category = topic.category
         selected_model = await daily_ai.get_daily_text_model()
-        model_options = {"model": selected_model}
         cache_topic_id = _model_topic_id(selected_model, lang, category, topic.topic_id)
         cache_key = _generated_cache_key(lang, category, topic_id=cache_topic_id)
         cached_words = _GENERATED_CACHE.get(cache_key)
@@ -1610,7 +1609,7 @@ async def pick_random_word_for_topic(
                 logger.info("Using persisted AI-generated words for category %r (%s)", category, lang)
             elif provisional_word:
                 generated = await generate_words_for_category(
-                    category, lang=lang, topic_id=topic.topic_id, **model_options
+                    category, lang=lang, topic_id=topic.topic_id, model=selected_model
                 )
                 words = generated or [provisional_word]
                 is_generated = True
@@ -1620,10 +1619,10 @@ async def pick_random_word_for_topic(
                     logger.info("Using provisional fast-word cache for category %r (%s)", category, lang)
             else:
                 # First response path: return one fast word, pre-warm full bank in background.
-                fast_word = await _generate_single_word_fast(category, lang, **model_options)
+                fast_word = await _generate_single_word_fast(category, lang, model=selected_model)
                 if not fast_word:
                     generated = await generate_words_for_category(
-                        category, lang=lang, topic_id=topic.topic_id, **model_options
+                        category, lang=lang, topic_id=topic.topic_id, model=selected_model
                     )
                     if not generated:
                         from app.errors import ProviderOverloadError
@@ -1634,7 +1633,7 @@ async def pick_random_word_for_topic(
                     _PROVISIONAL_GENERATED[cache_key] = fast_word
                     submit_task(
                         generate_words_for_category(
-                            category, lang=lang, topic_id=topic.topic_id, background=True, **model_options
+                            category, lang=lang, topic_id=topic.topic_id, background=True, model=selected_model
                         )
                     )
                     return fast_word, lang, category, True

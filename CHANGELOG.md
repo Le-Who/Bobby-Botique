@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-09-08 - On-demand horoscopes and CI type checks
+
+- `/horoscope`, `/horoscope_settings`, and existing text aliases offer immediate today/tomorrow forecasts. A saved sign is reused even for paused subscriptions; users without a subscription can choose a sign for a one-off private forecast.
+- Manual delivery does not modify subscriptions or scheduler sent markers. Concurrent requests are coalesced, successful requests have a short cooldown, and failed/cancelled requests remain retryable. Long forecasts are split into HTML-safe messages rather than truncated.
+- Fixed CI #266's four Mypy errors: separate optional hint-lane result inference from configured-model hints, and pass the frozen word-generation model explicitly instead of expanding an untyped keyword dictionary. Deploy #460 was skipped by its existing CI-success gate, not an independent deployment failure.
+
 ## [Unreleased] - 2026-09-08 - Pollinations and Daily Croc compatibility
 
 - Updated Pollinations authentication, canonical model IDs/aliases, image catalog discovery, and transcription endpoint; removed anonymous/payment-error model fallbacks.

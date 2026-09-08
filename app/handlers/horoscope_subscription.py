@@ -19,9 +19,11 @@ Commands:
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Final
 from zoneinfo import ZoneInfo
@@ -533,6 +535,7 @@ async def _show_subscription_settings(message, sub: dict | None) -> None:
 
         keyboard = InlineKeyboardMarkup(
             [
+                _instant_horoscope_buttons(),
                 [InlineKeyboardButton("✏️ Изменить подписку", callback_data="horo_settings:edit")],
                 [
                     InlineKeyboardButton(
@@ -550,18 +553,87 @@ async def _show_subscription_settings(message, sub: dict | None) -> None:
             f"{today_str}\n"
             f"{tomorrow_str}\n"
             f"Часовой пояс: UTC{tz_sign}{utc_offset}\n"
-            f"Статус: {status}",
+            f"Статус: {status}\n\nПолучить прогноз прямо сейчас:",
             parse_mode="HTML",
             reply_markup=keyboard,
         )
     else:
         await message.reply_text(
-            "У вас нет активной подписки на гороскоп.\n\n"
-            "Вы можете оформить её прямо сейчас, чтобы получать ежедневные прогнозы в удобное время.",
+            "🔮 Гороскоп\n\nПолучите прогноз прямо сейчас без подписки или настройте ежедневную доставку.",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("✨ Оформить подписку", callback_data="start_horoscope")]]
+                [
+                    _instant_horoscope_buttons(),
+                    [InlineKeyboardButton("✨ Оформить подписку", callback_data="start_horoscope")],
+                ]
             ),
         )
+
+
+def _instant_horoscope_buttons() -> list[InlineKeyboardButton]:
+    return [
+        InlineKeyboardButton("🔮 На сегодня", callback_data="horo_settings:now:today"),
+        InlineKeyboardButton("🌙 На завтра", callback_data="horo_settings:now:tomorrow"),
+    ]
+
+
+async def horoscope_now_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """One-off delivery, independent of subscription state and scheduler bookkeeping."""
+    query = update.callback_query
+    message = update.effective_message
+    if not query or not update.effective_user or not message:
+        return ConversationHandler.END
+    parts = (query.data or "").split(":")
+    if (
+        len(parts) not in (3, 4)
+        or parts[:2] != ["horo_settings", "now"]
+        or parts[2] not in ("today", "tomorrow")
+        or (len(parts) == 4 and parts[3] not in SIGNS)
+    ):
+        await query.answer("Неизвестный запрос. Откройте /horoscope заново.", show_alert=True)
+        return ConversationHandler.END
+
+    await query.answer("Готовлю гороскоп…")
+    kind = parts[2]
+    sub = await get_horoscope_subscription(update.effective_user.id)
+    sign = parts[3] if len(parts) == 4 else (sub or {}).get("sign", "")
+    if sign not in SIGNS:
+        buttons = [
+            InlineKeyboardButton(label, callback_data=f"horo_settings:now:{kind}:{value}")
+            for value, label in SIGNS.items()
+        ]
+        await message.reply_text(
+            "Выберите знак для разового прогноза. Подписка не будет создана.",
+            reply_markup=InlineKeyboardMarkup([buttons[i : i + 3] for i in range(0, len(buttons), 3)]),
+        )
+        return ConversationHandler.END
+
+    if context.user_data.get("horo_now_busy"):
+        await message.reply_text("Гороскоп уже готовится — дождитесь ответа.")
+        return ConversationHandler.END
+    last_success = context.user_data.get("horo_now_last_success")
+    if last_success is not None and time.monotonic() - last_success < 10:
+        await message.reply_text("Прогноз уже отправлен. Новый запрос будет доступен через несколько секунд.")
+        return ConversationHandler.END
+
+    # Set before awaiting generation so concurrent callbacks for this user coalesce.
+    context.user_data["horo_now_busy"] = True
+    try:
+        from app.handlers.scheduled_horoscopes import _deliver_horoscope
+
+        async with asyncio.timeout(60):
+            delivered = await _deliver_horoscope(context.bot, update.effective_user.id, sign, kind)
+        if delivered:
+            context.user_data["horo_now_last_success"] = time.monotonic()
+        else:
+            await message.reply_text(
+                "Не удалось получить гороскоп. Попробуйте ещё раз; расписание подписки не изменено."
+            )
+    except Exception as exc:
+        logger.warning("On-demand horoscope failed: %s", type(exc).__name__)
+        await message.reply_text("Не удалось получить гороскоп. Попробуйте ещё раз чуть позже.")
+    finally:
+        context.user_data.pop("horo_now_busy", None)
+    return ConversationHandler.END
 
 
 # ── /horoscope_settings callbacks ────────────────────────────────────────────
@@ -571,6 +643,8 @@ async def horoscope_settings_callback(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     if not query or not update.effective_user:
         return ConversationHandler.END
+    if (query.data or "").startswith("horo_settings:now:"):
+        return await horoscope_now_callback(update, context)
     if query.data == "horo_settings:start":
         return await start_subscribe_horoscope(update, context)
     await query.answer()
@@ -647,8 +721,8 @@ def build_horoscope_subscription_handler() -> ConversationHandler:
             entry_points=[
                 # Deep link entry — called programmatically from start_command
                 CommandHandler("horoscope_settings", horoscope_settings_command),
-                CommandHandler("horoscope", start_subscribe_horoscope),
-                MessageHandler(filters.TEXT & filters.Regex(HOROSCOPE_INTENT_RE), start_subscribe_horoscope),
+                CommandHandler("horoscope", horoscope_settings_command),
+                MessageHandler(filters.TEXT & filters.Regex(HOROSCOPE_INTENT_RE), horoscope_settings_command),
                 CallbackQueryHandler(start_subscribe_horoscope, pattern="^start_horoscope$"),
                 CallbackQueryHandler(horoscope_settings_callback, pattern=r"^horo_settings:(?:start|edit)$"),
             ],
