@@ -8,6 +8,20 @@ from app.natal.smoke import NatalSmokeResult
 from scripts import natal_readiness
 
 
+@pytest.mark.parametrize("user_args, expected", [([], 321), (["--user-id", "123"], 123)])
+def test_cli_smoke_defaults_to_configured_admin_but_allows_explicit_user(monkeypatch, user_args, expected):
+    monkeypatch.setattr(natal_readiness.settings, "ADMIN_ID", 321)
+    captured = {}
+
+    async def fake_main(**kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(natal_readiness, "_main", fake_main)
+    assert natal_readiness.main(["--smoke", *user_args]) == 0
+    assert captured["user_id"] == expected
+
+
 @pytest.mark.asyncio
 async def test_readiness_cli_passes_local_city_and_accuracy_checks(monkeypatch, capsys):
     def fake_check_city_catalog_readiness(**kwargs):

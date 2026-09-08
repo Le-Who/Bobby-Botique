@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.database import db_query
 from app.natal.models import BirthInput, TimePrecision
 from app.natal.report_builder import build_hosted_report_html
 from app.natal.report_ids import is_valid_report_id
@@ -21,7 +22,13 @@ class NatalSmokeResult:
 
 
 async def run_natal_smoke(webhook_url: str, user_id: int = 0, chat_id: int = 0) -> NatalSmokeResult:
+    if user_id <= 0:
+        raise ValueError("Natal smoke requires a positive registered user id; set ADMIN_ID or pass --user-id.")
     await check_storage_ready()
+    # Check the FK prerequisite before invoking paid generation; never provision users in a smoke check.
+    users = await db_query("SELECT user_id FROM public.users WHERE user_id = $1", (user_id,))
+    if not users:
+        raise ValueError("Natal smoke user is not registered in users; choose an existing user with --user-id.")
     birth_input = BirthInput(
         birth_date="1995-02-14",
         time_precision=TimePrecision.EXACT,

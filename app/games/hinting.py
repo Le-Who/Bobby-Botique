@@ -114,17 +114,21 @@ def _extract_batched_hints(response_text: str, requested_words: tuple[str, ...])
     return accepted
 
 
-async def _generate_batched_hints(words: tuple[str, ...], category: str) -> dict[str, list[str]]:
+async def _generate_batched_hints(
+    words: tuple[str, ...], category: str, *, model: str | None = None
+) -> dict[str, list[str]]:
     if len(words) < 2:
         return {}
 
     import app.config as config_module
     from app.errors import classify_key_error, extract_retry_after_seconds, is_error_message, strip_error_tag
     from app.games.ai_budget import acquire_background_slot, record_result
+    from app.games.daily_ai import generate_daily_text, get_daily_text_model
     from app.providers import get_provider_router
 
     settings_obj = getattr(config_module, "settings", None)
-    model_name = _pick_batch_hint_model(settings_obj)
+    selected_model = await get_daily_text_model() if model is None else model
+    model_name = selected_model or _pick_batch_hint_model(settings_obj)
     if not model_name:
         return {}
 
@@ -143,7 +147,16 @@ async def _generate_batched_hints(words: tuple[str, ...], category: str) -> dict
         "- Не называй само слово и не используй однокоренные слова."
     )
 
-    lease = await acquire_background_slot("hint_generation_batch", "opencode_go", model_name)
+    if selected_model:
+        try:
+            response_text = await generate_daily_text(prompt, selected_model, timeout=25.0)
+            return _extract_batched_hints(response_text, words)
+        except Exception as exc:
+            logger.debug("Selected Gemini batch hints failed model=%s: %s", selected_model, type(exc).__name__)
+            return {}
+
+    provider_name = "opencode_go"
+    lease = await acquire_background_slot("hint_generation_batch", provider_name, model_name)
     if lease is None:
         return {}
     try:
@@ -158,13 +171,13 @@ async def _generate_batched_hints(words: tuple[str, ...], category: str) -> dict
                 timeout=25.0,
             )
     except Exception as exc:
-        await record_result("opencode_go", model_name, "transient", reason=str(exc)[:500])
+        await record_result(provider_name, model_name, "transient", reason=str(exc)[:500])
         logger.debug("Batch hint prewarm failed category=%r words=%r: %s", category, words, exc)
         return {}
 
     if is_error_message(response_text):
         await record_result(
-            "opencode_go",
+            provider_name,
             model_name,
             classify_key_error(response_text),
             retry_after_seconds=extract_retry_after_seconds(response_text),
@@ -174,33 +187,36 @@ async def _generate_batched_hints(words: tuple[str, ...], category: str) -> dict
 
     accepted = _extract_batched_hints(response_text or "", words)
     if accepted:
-        await record_result("opencode_go", model_name, "success")
+        await record_result(provider_name, model_name, "success")
     return accepted
 
 
 async def _prewarm_topic_hints(words: tuple[str, ...], category: str, *, topic_id: str = "") -> None:
-    from app.games.judge import generate_hints
+    from app.games.daily_ai import get_daily_text_model
+    from app.games.judge import generate_hints, model_cache_topic
     from app.games.judgement_cache import cache_hints, get_cached_hints
 
+    model = await get_daily_text_model()
+    cache_topic = model_cache_topic(topic_id, category, model)
     pending_words: list[str] = []
     for word in words:
-        cached = await get_cached_hints(word, category, topic_id=topic_id)
+        cached = await get_cached_hints(word, category, topic_id=cache_topic)
         if cached:
             continue
         pending_words.append(word)
     if not pending_words:
         return
 
-    batch_hits = await _generate_batched_hints(tuple(pending_words), category)
+    batch_hits = await _generate_batched_hints(tuple(pending_words), category, model=model)
     for word in pending_words:
         normalized_word = _normalize_batch_word(word)
         hints = batch_hits.get(normalized_word)
         if hints:
-            await cache_hints(word, category, hints, topic_id=topic_id)
+            await cache_hints(word, category, hints, topic_id=cache_topic)
             continue
-        fallback_hints = await generate_hints(word, category, mode="background")
+        fallback_hints = await generate_hints(word, category, mode="background", model=model)
         if fallback_hints:
-            await cache_hints(word, category, fallback_hints, topic_id=topic_id)
+            await cache_hints(word, category, fallback_hints, topic_id=cache_topic)
 
 
 async def get_or_generate_cached_hints(
@@ -210,17 +226,20 @@ async def get_or_generate_cached_hints(
     topic_id: str = "",
     mode: HintGenerationMode = "foreground",
 ) -> list[str] | None:
-    from app.games.judge import generate_hints
+    from app.games.daily_ai import get_daily_text_model
+    from app.games.judge import generate_hints, model_cache_topic
     from app.games.judgement_cache import cache_hints, get_cached_hints
 
-    cached = await get_cached_hints(word, category, topic_id=topic_id)
+    model = await get_daily_text_model()
+    cache_topic = model_cache_topic(topic_id, category, model)
+    cached = await get_cached_hints(word, category, topic_id=cache_topic)
     if cached:
         return cached
 
     if mode == "background" and should_pause_background_prefetch():
         return None
 
-    key = _hint_key(word, category, topic_id)
+    key = _hint_key(word, category, cache_topic)
     inflight = _HINTS_INFLIGHT.get(key)
     if inflight is not None:
         return await asyncio.shield(inflight)
@@ -228,9 +247,9 @@ async def get_or_generate_cached_hints(
     async def _do_generate() -> list[str] | None:
         if mode == "background" and should_pause_background_prefetch():
             return None
-        hints = await generate_hints(word, category, mode=mode)
+        hints = await generate_hints(word, category, mode=mode, model=model)
         if hints:
-            await cache_hints(word, category, hints, topic_id=topic_id)
+            await cache_hints(word, category, hints, topic_id=cache_topic)
         return hints
 
     task = asyncio.create_task(_do_generate())

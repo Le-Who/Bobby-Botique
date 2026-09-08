@@ -3,6 +3,15 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-09-08 - Pollinations and Daily Croc compatibility
+
+- Updated Pollinations authentication, canonical model IDs/aliases, image catalog discovery, and transcription endpoint; removed anonymous/payment-error model fallbacks.
+- Added a shared Gemini-only `google-genai` text-model setting for daily and ordinary Crocodile words, hints, and semantic answer checking, plus daily image descriptions. Caches isolate generated results by model. Image regeneration honors each daily card's model and reports failure/busy state without treating an old asset as new.
+- Moved AI word candidate generation outside daily table locks, rechecking uniqueness before persistence.
+- Repeated `/horoscope` and `гороскоп` entries now open an existing subscription's menu; subscription editing callbacks participate in the conversation handler.
+- Natal smoke uses an existing configured administrator by default and checks the user foreign key before generation. City-index construction avoids redundant work without relaxing performance thresholds.
+- Adopted compatible Dependency Frontier patch updates: cryptography 50.0.1, pydantic 2.13.5, pydantic-core 2.46.5, pypdf 6.16.2. Major updates remain outside this checkout's current dependency policy.
+
 ## [Unreleased] - 2026-08-29 - Reproducible Dependency Frontier
 
 ### 📦 Dependency resolution and verification

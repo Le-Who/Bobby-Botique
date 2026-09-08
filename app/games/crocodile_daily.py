@@ -32,6 +32,10 @@ DAILY_IMAGE_QUOTA_PER_HOUR: int = 2
 _local_image_quota: dict[str, int] = {}  # {"YYYY-MM-DDTHH": count}
 
 
+class DailyImageBusyError(RuntimeError):
+    """A forced regeneration cannot reuse another operation's old asset."""
+
+
 def _prep_lock_key(puzzle_date: date, difficulty: str) -> str:
     return f"{puzzle_date.isoformat()}:{difficulty}"
 
@@ -122,14 +126,18 @@ async def get_daily_hints(puzzle: repo.DailyPuzzle) -> list[str]:
     if puzzle.hints:
         return puzzle.hints
 
+    from app.games.daily_ai import generate_daily_hints, get_daily_text_model
     from app.games.hinting import get_or_generate_cached_hints
 
-    hints = await get_or_generate_cached_hints(
-        puzzle.target_word,
-        puzzle.topic,
-        topic_id=_daily_topic_id(puzzle),
-        mode="foreground",
-    )
+    model = await get_daily_text_model()
+    hints = await generate_daily_hints(puzzle.target_word, puzzle.topic, model) if model else None
+    if not hints:
+        hints = await get_or_generate_cached_hints(
+            puzzle.target_word,
+            puzzle.topic,
+            topic_id=_daily_topic_id(puzzle),
+            mode="foreground",
+        )
     if not hints:
         hints = []
     await repo.set_puzzle_hints(puzzle.puzzle_date, hints, difficulty=puzzle.difficulty)
@@ -212,10 +220,13 @@ async def _translate_word_for_prompt(word: str) -> str | None:
     Result is cached in ``word_bank._PROMPT_TRANSLATION_CACHE`` so repeated
     calls never hit the LLM twice for the same word.
     """
+    from app.config import settings
+    from app.games.daily_ai import generate_daily_text, get_daily_text_model
     from app.games.word_bank import _PROMPT_TRANSLATION_CACHE
     from app.utils.json_compat import json
 
-    key = word.strip().lower()
+    model = await get_daily_text_model()
+    key = f"daily:{model}:{word.strip().lower()}" if model else word.strip().lower()
     if key in _PROMPT_TRANSLATION_CACHE:
         return _PROMPT_TRANSLATION_CACHE[key]
 
@@ -228,14 +239,10 @@ async def _translate_word_for_prompt(word: str) -> str | None:
         '{"is_drawable": true, "visual_description": "english phrase"}'
     )
     try:
-        from app.providers.router import get_provider_router
-
-        router = get_provider_router()
-        response_text, _ = await router.get_response(
-            preferred_model="opencode-go/minimax-m2.5",
-            history=[{"role": "user", "parts": [prompt]}],
-            max_key_retries=1,
-            timeout=8.0,
+        response_text = await generate_daily_text(
+            prompt,
+            model or settings.DEFAULT_MODEL,
+            timeout=30.0 if model else 8.0,
         )
 
         resp_clean = (response_text or "").strip()
@@ -260,10 +267,15 @@ async def _translate_word_for_prompt(word: str) -> str | None:
 
 
 async def _build_daily_image_prompt(word: str, topic: str, *, difficulty: str) -> str:
+    from app.games.daily_ai import get_daily_text_model
     from app.games.word_bank import get_english_equivalent
 
-    en_word = get_english_equivalent(word)
-    if not en_word:
+    model = await get_daily_text_model()
+    if model:
+        en_word = await _translate_word_for_prompt(word) or get_english_equivalent(word)
+    else:
+        en_word = get_english_equivalent(word)
+    if not en_word and not model:
         en_word = await _translate_word_for_prompt(word)
     display_word = en_word or word
 
@@ -346,6 +358,7 @@ async def _generate_via_pollinations(
     puzzle_date: date,
     difficulty: str,
     now: datetime | None = None,
+    model: str = repo.DAILY_IMAGE_MODEL,
 ) -> tuple[list[bytes], str]:
     """Generate image bytes via Pollinations. Returns (images, model_label)."""
     from app.providers.pollinations import get_pollinations_provider
@@ -357,12 +370,12 @@ async def _generate_via_pollinations(
             difficulty,
             DAILY_IMAGE_QUOTA_PER_HOUR,
         )
-        return [], repo.DAILY_IMAGE_MODEL
+        return [], model
 
     provider = get_pollinations_provider()
     result = await provider.generate(
         prompt=prompt,
-        model=repo.DAILY_IMAGE_MODEL,
+        model=model,
         width=1024,
         height=1024,
         seed=_daily_image_seed(puzzle_date, difficulty),
@@ -393,12 +406,12 @@ async def _generate_via_pollinations(
             "daily puzzle image generation failed date=%s difficulty=%s model=%s error=%s",
             puzzle_date,
             difficulty,
-            repo.DAILY_IMAGE_MODEL,
+            model,
             result.error_message or "unknown",
         )
-        return [], repo.DAILY_IMAGE_MODEL
+        return [], model
 
-    return result.images, repo.DAILY_IMAGE_MODEL
+    return result.images, result.model_used or model
 
 
 async def _generate_via_fta(
@@ -446,6 +459,7 @@ async def _generate_daily_image_file_id(
     puzzle_date: date,
     difficulty: str,
     now: datetime | None = None,
+    image_model: str | None = None,
 ) -> tuple[str | None, str]:
     """Generate a daily image and upload it to Telegram.
 
@@ -459,7 +473,9 @@ async def _generate_daily_image_file_id(
         logger.warning("daily puzzle image skipped for %s/%s: ADMIN_ID is not configured", puzzle_date, difficulty)
         return None, repo.DAILY_IMAGE_MODEL
 
-    image_model = await get_daily_image_model()
+    image_model = image_model or await get_daily_image_model()
+    if image_model == "vhr/gpt_image_2":
+        image_model = "fta-gpt-image-2"
 
     if image_model in _FTA_IMG_MODELS:
         images, model_label = await _generate_via_fta(
@@ -484,6 +500,7 @@ async def _generate_daily_image_file_id(
             puzzle_date=puzzle_date,
             difficulty=difficulty,
             now=now,
+            model=repo.DAILY_IMAGE_MODEL if image_model == "pollinations" else image_model,
         )
 
     if not images:
@@ -515,6 +532,7 @@ async def prepare_daily_puzzle(
     difficulty: str = "easy",
     include_image: bool = True,
     force_image: bool = False,
+    image_model: str | None = None,
 ) -> repo.DailyPuzzle:
     difficulty = repo.normalize_daily_difficulty(difficulty)
     local_lock = _get_local_prep_lock(puzzle_date, difficulty)
@@ -531,6 +549,8 @@ async def prepare_daily_puzzle(
                 _redis_lock_ctx = redis_client.lock(_redis_lock_key, timeout=180, blocking_timeout=30)
                 acquired = await _redis_lock_ctx.acquire()
                 if not acquired:
+                    if force_image:
+                        raise DailyImageBusyError("Image preparation already in progress; retry shortly")
                     # Another worker is already preparing — load whatever it wrote
                     logger.info(
                         "daily prep lock: another worker is preparing date=%s/%s, loading existing",
@@ -538,6 +558,8 @@ async def prepare_daily_puzzle(
                         difficulty,
                     )
                     return await repo.create_puzzle_if_missing(puzzle_date, difficulty=difficulty)
+            except DailyImageBusyError:
+                raise
             except Exception as exc:
                 logger.warning(
                     "daily prep: Redis lock unavailable, proceeding without dist-lock date=%s/%s: %s",
@@ -555,8 +577,14 @@ async def prepare_daily_puzzle(
                 puzzle = replace(puzzle, hints=hints, prepared_at=None)
 
             # Resolve the currently configured image model for DB tagging
-            active_model = await get_daily_image_model()
-            model_tag = _FTA_DAILY_MODEL_ID if active_model in _FTA_IMG_MODELS else repo.DAILY_IMAGE_MODEL
+            active_model = image_model or puzzle.image_model or await get_daily_image_model()
+            if active_model == "vhr/gpt_image_2":
+                active_model = "fta-gpt-image-2"
+            model_tag = (
+                _FTA_DAILY_MODEL_ID
+                if active_model in _FTA_IMG_MODELS
+                else (repo.DAILY_IMAGE_MODEL if active_model == "pollinations" else active_model)
+            )
 
             if not puzzle.image_prompt:
                 image_prompt = await _build_daily_image_prompt(
@@ -581,6 +609,7 @@ async def prepare_daily_puzzle(
                     prompt=puzzle.image_prompt,
                     puzzle_date=puzzle.puzzle_date,
                     difficulty=puzzle.difficulty,
+                    image_model=active_model,
                 )
                 if image_file_id:
                     await repo.set_puzzle_image_asset(
@@ -595,6 +624,9 @@ async def prepare_daily_puzzle(
                         image_model=used_model,
                         prepared_at=None,
                     )
+                elif force_image:
+                    # Do not report the old asset as a successful regeneration.
+                    raise RuntimeError("Failed to generate or upload the requested image")
 
             if repo.is_puzzle_fully_prepared(puzzle) and not puzzle.prepared_at:
                 await repo.mark_puzzle_prepared(puzzle.puzzle_date, difficulty=puzzle.difficulty)

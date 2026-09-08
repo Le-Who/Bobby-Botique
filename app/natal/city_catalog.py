@@ -381,7 +381,9 @@ def _build_prefix_index(
 ) -> dict[str, list[tuple[CityRecord, set[str]]]]:
     indexed: dict[str, list[tuple[CityRecord, set[str]]]] = {}
     for city, names in rows:
-        keys = {token[0] for name in names for token in (name, *name.split()) if token}
+        # Names are whitespace-normalized: the first word already covers the full
+        # name's initial. Avoid allocating a duplicate tuple for every alias at startup.
+        keys = {token[0] for name in names for token in name.split()}
         for key in keys:
             indexed.setdefault(key, []).append((city, names))
     return indexed

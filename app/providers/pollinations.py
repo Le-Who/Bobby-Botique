@@ -1,27 +1,4 @@
-"""
-Pollinations.ai image generation provider.
-
-Transport:
-    Primary:  POST /v1/images/generations  — OpenAI-compatible, returns JSON url/b64.
-              Requires an API key for best rate limits (optional, works without key too).
-    Fallback: GET  /image/{prompt}?model=… — keyless, returns raw image bytes directly.
-
-The provider uses `httpx` (already in requirements.txt) for async HTTP and performs
-Content-Type validation on the GET fallback to prevent returning an HTML error page
-as an "image".
-
-Supported free models (no key required):
-    flux    — Flux Schnell, fast high-quality generation.
-    zimage  — Z-Image Turbo, 6B Flux with 2× upscaling.
-
-Additional models (paid or with key):
-    gptimage, gptimage-large, kontext, klein, seedream5, grok-imagine, …
-
-Usage:
-    provider = get_pollinations_provider()
-    result   = await provider.generate("a cat in space", model="flux")
-    transcript = await provider.transcribe_audio(audio_bytes)
-"""
+"""Authenticated Pollinations generation using the current gen.pollinations.ai API."""
 
 from __future__ import annotations
 
@@ -45,6 +22,41 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+async def fetch_models(kind: str) -> list[dict]:
+    """Read the public catalog, retaining canonical IDs and legacy aliases."""
+    if kind not in {"image", "text"}:
+        raise ValueError("Unsupported catalog kind")
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(f"{POLLINATIONS_BASE_URL}/{kind}/models")
+        response.raise_for_status()
+    payload = response.json()
+    entries = payload.get("data", []) if isinstance(payload, dict) else payload
+    if not isinstance(entries, list):
+        raise ValueError("Invalid Pollinations catalog")
+    endpoint = "/v1/images/generations" if kind == "image" else "/v1/chat/completions"
+    models = []
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        model_id = item.get("name") or item.get("id")
+        if not isinstance(model_id, str) or not model_id:
+            continue
+        if kind not in item.get("output_modalities", [kind]):
+            continue
+        if endpoint not in item.get("supported_endpoints", [endpoint]):
+            continue
+        models.append(
+            {
+                "id": model_id,
+                "title": item.get("title") or model_id,
+                "aliases": [alias for alias in item.get("aliases", []) if isinstance(alias, str)],
+                "publisher": item.get("publisher", ""),
+            }
+        )
+    return models
+
+
 # ---------------------------------------------------------------------------
 # Human-readable labels for Pollinations models (used in Telegram UI)
 # New models that arrive via env are auto-labeled via _make_label().
@@ -53,7 +65,7 @@ logger = logging.getLogger(__name__)
 _KNOWN_LABELS: dict[str, str] = {
     "flux": "✨ Flux (Универсальная)",
     "zimage": "⚡ Z-Image (Быстрая)",
-    "gptimage": "🤖 DALL-E 3 (Точная)",
+    "gptimage": "🤖 GPT Image (Точная)",
     "gptimage-large": "💎 GPT Image HD",
     "kontext": "🖋️ Kontext",
     "klein": "🎨 Klein (Креативная)",
@@ -100,18 +112,7 @@ class PollinationsResult:
 
 
 class PollinationsProvider:
-    """
-    Async image generation via Pollinations.ai.
-
-    Key selection strategy:
-        1. POST /v1/images/generations with optional Bearer token.
-           Returns JSON {"data": [{"url": "..."} | {"b64_json": "..."}]}.
-        2. On any failure (timeout / non-2xx / parse error), falls back to
-           GET /image/{encoded_prompt}?model=…&seed=0&enhance=false .
-           Response must have Content-Type: image/* to be accepted.
-
-    Both paths respect settings.IMAGE_GEN_TIMEOUT.
-    """
+    """Async authenticated images and transcription; no anonymous fallback."""
 
     # ------------------------------------------------------------------
     # Public API
@@ -144,16 +145,13 @@ class PollinationsProvider:
         if not prompt or not prompt.strip():
             return PollinationsResult(success=False, error_message="empty_prompt")
 
-        # Validate model falls back to flux if unknown
-        available = settings.POLLINATIONS_IMAGE_MODELS
-        if model not in available:
-            logger.warning("Pollinations: unknown model %r, falling back to flux", model)
-            model = settings.POLLINATIONS_DEFAULT_IMAGE_MODEL or "flux"
+        from app.repos.provider_keys import get_provider_key
 
-        timeout = settings.IMAGE_GEN_TIMEOUT
-
-        # --- Primary: POST endpoint ---
-        result = await self._try_post(
+        if not await get_provider_key("pollinations"):
+            return PollinationsResult(success=False, error_message="unauthorized", model_used=model)
+        # Canonical publisher/model IDs and saved aliases are accepted by the API.
+        # Do not replace an explicit choice with a different (potentially paid) model.
+        return await self._try_post(
             prompt=prompt,
             model=model,
             width=width,
@@ -161,80 +159,8 @@ class PollinationsProvider:
             seed=seed,
             enhance=enhance,
             negative_prompt=negative_prompt,
-            timeout=timeout,
+            timeout=settings.IMAGE_GEN_TIMEOUT,
         )
-
-        if result.success:
-            return result
-
-        # Log the POST failure but attempt GET fallback transparently
-        logger.info("Pollinations: POST failed (%s), trying GET fallback", result.error_message)
-
-        # If the failure is auth/payment related (e.g. key exhausted), omit
-        # the key in the GET fallback so that genuinely free models (flux, zimage)
-        # can still succeed anonymously.  Note: qwen-image, gptimage, klein etc.
-        # are NOT free — they require a key even on the GET endpoint.
-        omit_key = result.error_message in ("paid_tier_required", "unauthorized")
-
-        get_result = await self._try_get(
-            prompt=prompt,
-            model=model,
-            width=width,
-            height=height,
-            seed=seed,
-            enhance=enhance,
-            negative_prompt=negative_prompt,
-            timeout=timeout,
-            omit_key=omit_key,
-        )
-
-        if get_result.success:
-            get_result.warning = "used GET fallback (key omitted)" if omit_key else "used GET fallback"
-            return get_result
-
-        # Always log the GET fallback error so it's visible in logs.
-        logger.info(
-            "Pollinations: GET fallback also failed (%s) for model=%s",
-            get_result.error_message,
-            model,
-        )
-
-        # If the original failure was payment/auth AND the model is not a free model,
-        # make one final attempt using 'flux' (genuinely keyless) before giving up.
-        # This keeps daily puzzle image generation alive even when pollen runs out.
-        _FREE_MODELS = {"flux", "zimage"}
-        if omit_key and model not in _FREE_MODELS:
-            logger.info(
-                "Pollinations: retrying with free model 'flux' after paid-model failure (original model=%s)",
-                model,
-            )
-            free_result = await self._try_get(
-                prompt=prompt,
-                model="flux",
-                width=width,
-                height=height,
-                seed=seed,
-                enhance=enhance,
-                negative_prompt=negative_prompt,
-                timeout=timeout,
-                omit_key=True,
-            )
-            if free_result.success:
-                free_result.warning = f"used free-model fallback flux (original={model}, pollen exhausted)"
-                logger.info("Pollinations: free-model flux fallback succeeded for original model=%s", model)
-                return free_result
-            logger.warning(
-                "Pollinations: free-model flux fallback also failed (%s)",
-                free_result.error_message,
-            )
-
-        # If the keyless fallback ALSO failed, and the original POST error was auth/payment related,
-        # return the ORIGINAL result so the caller sees "paid_tier_required" (more actionable than
-        # a generic "get_http_401").
-        if omit_key:
-            return result
-
-        return get_result
 
     async def transcribe_audio(
         self,
@@ -253,11 +179,13 @@ class PollinationsProvider:
         Returns:
             Transcribed text or None on failure.
         """
-        url = "https://text.pollinations.ai/openai/audio/transcriptions"
+        url = f"{POLLINATIONS_BASE_URL}/v1/audio/transcriptions"
         from app.repos.provider_keys import get_provider_key
 
         api_key = await get_provider_key("pollinations")
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+        if not api_key:
+            return None
+        headers = {"Authorization": f"Bearer {api_key}"}
 
         # httpx expects files in format: {'file': ('filename', b'content', 'mime_type')}
         files: dict[str, tuple[str, bytes, str]] = {"file": ("audio.ogg", audio_bytes, "audio/ogg")}
@@ -380,7 +308,6 @@ class PollinationsProvider:
         enhance: bool,
         negative_prompt: str,
         timeout: float,
-        omit_key: bool = False,
     ) -> PollinationsResult:
         encoded_prompt = urllib.parse.quote(prompt, safe="")
         params: dict = {
@@ -395,23 +322,26 @@ class PollinationsProvider:
         if negative_prompt:
             params["negative_prompt"] = negative_prompt
 
-        if not omit_key:
-            from app.repos.provider_keys import get_provider_key
+        from app.repos.provider_keys import get_provider_key
 
-            api_key = await get_provider_key("pollinations")
-            if api_key:
-                params["key"] = api_key
+        api_key = await get_provider_key("pollinations")
+        if not api_key:
+            return PollinationsResult(success=False, error_message="unauthorized", model_used=model)
 
         url = f"{POLLINATIONS_BASE_URL}/image/{encoded_prompt}"
 
         try:
             request_url = str(httpx.URL(url, params=params))
-            image_bytes = await download_media(
-                request_url,
-                allowed_mime_types=IMAGE_MIME_TYPES,
-                max_bytes=MAX_IMAGE_DOWNLOAD_BYTES,
-                timeout=timeout,
-            )
+            async with httpx.AsyncClient(headers={"Authorization": f"Bearer {api_key}"}) as client:
+                image_bytes = await download_media(
+                    request_url,
+                    allowed_mime_types=IMAGE_MIME_TYPES,
+                    max_bytes=MAX_IMAGE_DOWNLOAD_BYTES,
+                    timeout=timeout,
+                    client=client,
+                    # Never forward generation credentials to a redirect target.
+                    max_redirects=0,
+                )
 
             logger.info(
                 "Pollinations GET fallback: success — model=%s size=%dx%d bytes=%d",

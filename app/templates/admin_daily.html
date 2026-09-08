@@ -908,6 +908,12 @@ input:checked + .slider:before { transform: translateX(16px); }
   </div>
 
   <div class="main-content">
+    <div class="prompt-section">
+      <label for="croc-text-model">Текстовая модель Gemini · Крокодил (оба режима)</label>
+      <select id="croc-text-model" class="model-select" disabled><option>Загрузка моделей…</option></select>
+      <p class="stat-card-sub">Общая модель для дневного и обычного крокодила: новые слова, подсказки и AI-проверка ответов — через Gemini (google-genai). В дневном режиме также используется для промптов изображений. Готовые пазлы сохраняются.</p>
+      <p id="croc-model-status" role="status" class="stat-card-sub"></p>
+    </div>
     <h2 class="section-title">Календарь пазлов (последние 20 дней)</h2>
     <div class="puzzle-grid" id="croc-puzzle-container">
       <div class="loading-container">
@@ -1754,6 +1760,52 @@ const CrocModule = (() => {
   let initialized = false;
   let currentPuzzles = [];
   let kyivTodayStr = '';
+  let imageModels = [];
+  let savedTextModel = '';
+
+  function fillModels(select, models, saved) {
+    select.replaceChildren();
+    const match = models.find(model => model.id === saved || (model.aliases || []).includes(saved));
+    const selected = match ? match.id : saved;
+    for (const model of models) {
+      select.add(new Option(model.title || model.id, model.id, false, model.id === selected));
+    }
+    if (!match) select.add(new Option(`${saved || 'Авто'} (сохранено)`, saved, true, true));
+  }
+
+  async function loadModels() {
+    const select = document.getElementById('croc-text-model');
+    try {
+      const res = await fetch('/api/admin/dailycroc/models', { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      imageModels = data.image_models || [];
+      savedTextModel = data.text_model || '';
+      fillModels(select, data.text_models || [], savedTextModel);
+      select.disabled = false;
+      document.getElementById('croc-model-status').textContent = data.catalog_unavailable
+        ? 'Каталог Pollinations недоступен; сохранённые модели не изменены.' : '';
+    } catch (e) {
+      document.getElementById('croc-model-status').textContent = `Не удалось загрузить модели: ${e.message}`;
+    }
+  }
+
+  async function saveTextModel() {
+    const select = document.getElementById('croc-text-model');
+    select.disabled = true;
+    try {
+      const res = await fetch('/api/admin/dailycroc/text-model', {
+        method: 'POST', headers: apiHeaders, body: JSON.stringify({ model: select.value })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      savedTextModel = data.model;
+      showToast('Текстовая модель сохранена');
+    } catch (e) {
+      select.value = savedTextModel;
+      showToast(`Ошибка: ${e.message}`, 'error');
+    } finally { select.disabled = false; }
+  }
 
   async function loadStats() {
     try {
@@ -1801,6 +1853,7 @@ const CrocModule = (() => {
       if (data.error) throw new Error(data.error);
       currentPuzzles = data.puzzles || [];
       kyivTodayStr = getKyivDateString();
+      await loadModels();
       renderPuzzles(currentPuzzles, container);
       loadStats();
     } catch (e) {
@@ -1862,14 +1915,6 @@ const CrocModule = (() => {
               <div class="prompt-section mt-8">
                 <div class="prompt-header"><span class="prompt-title">IMAGE MODEL</span></div>
                 <select class="model-select" id="croc-model-${p.date}-${p.difficulty}" data-croc-action="saveModel" data-date="${p.date}" data-diff="${p.difficulty}">
-                  <option value="flux" ${(p.image_model||'flux')==='flux'?'selected':''}>Flux Schnell</option>
-                  <option value="zimage" ${(p.image_model||'flux')==='zimage'?'selected':''}>Z-Image Turbo ⚡</option>
-                  <option value="gptimage-1-5" ${(p.image_model||'flux')==='gptimage-1-5'?'selected':''}>GPT Image 1.5</option>
-                  <option value="gptimage" ${(p.image_model||'flux')==='gptimage'?'selected':''}>GPT Image (DALL-E 3)</option>
-                  <option value="qwen-image" ${(p.image_model||'flux')==='qwen-image'?'selected':''}>Qwen Image</option>
-                  <option value="wan-image" ${(p.image_model||'flux')==='wan-image'?'selected':''}>Wan Image</option>
-                  <option value="klein" ${(p.image_model||'flux')==='klein'?'selected':''}>Klein</option>
-                  <option value="fta-gpt-image-2" ${(p.image_model||'flux')==='fta-gpt-image-2'?'selected':''}>🖼️ GPT Image 2 (FTA)</option>
                 </select>
               </div>`
           }
@@ -1882,6 +1927,8 @@ const CrocModule = (() => {
           </div>
         </div>`;
       container.appendChild(card);
+      const modelSelect = card.querySelector('select.model-select');
+      if (modelSelect) fillModels(modelSelect, imageModels, p.image_model || 'qwen-image');
     });
     container.querySelectorAll('img[data-file-id]').forEach(loadImage);
   }
@@ -1891,7 +1938,7 @@ const CrocModule = (() => {
     if (!confirmed) return;
     const btn = document.getElementById(`croc-regen-${date}-${diff}`);
     btn.disabled = true; btn.textContent = '⏳ Генерация…';
-    const model = document.getElementById('global-regen-model')?.value || 'gemini-3.6-flash';
+    const model = document.getElementById(`croc-model-${date}-${diff}`)?.value;
     try {
       const res = await fetch('/api/admin/dailycroc/regenerate', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date, difficulty: diff, model }) });
       const data = await res.json();
@@ -1941,6 +1988,7 @@ const CrocModule = (() => {
     if (initialized) return;
     initialized = true;
     loadPuzzles();
+    document.getElementById('croc-text-model').addEventListener('change', saveTextModel);
     document.getElementById('croc-puzzle-container').addEventListener('click', (e) => {
       const target = e.target.closest('[data-croc-action]');
       if (!target) return;
@@ -1969,7 +2017,7 @@ const CrocModule = (() => {
     const target = e.target.closest('[data-croc-action]');
     if (!target) return;
     const action = target.dataset.crocAction;
-    if (action === 'loadPuzzles') { initialized = false; init(); }
+    if (action === 'loadPuzzles') loadPuzzles();
     else if (action === 'toggleSecurity') {
       document.body.classList.toggle('security-mode');
       target.textContent = document.body.classList.contains('security-mode') ? '👁 Показать' : '🔒 Скрыть слова';

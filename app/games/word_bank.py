@@ -25,6 +25,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from app.games import daily_ai
 from app.games.ai_budget import acquire_background_slot, acquire_foreground_slot, record_result
 from app.games.hinting import enqueue_bank_hint_prewarm
 from app.utils.background_tasks import submit_task
@@ -941,7 +942,9 @@ async def resolve_custom_word_category(word: str) -> str:
     # Check in-process+disk cache before calling the LLM
     from app.games.judgement_cache import cache_word_category, get_cached_word_category
 
-    cached_cat = await get_cached_word_category(word)
+    selected_model = await daily_ai.get_daily_text_model()
+    category_cache_word = f"model:{selected_model}:{word}" if selected_model else word
+    cached_cat = await get_cached_word_category(category_cache_word)
     if cached_cat:
         return cached_cat
 
@@ -965,6 +968,20 @@ async def resolve_custom_word_category(word: str) -> str:
         "Ответь ТОЛЬКО названием одной категории. "
         "Если ни одна категория строго не подходит, ответь 'Разное'."
     )
+
+    if selected_model:
+        try:
+            raw = daily_ai._json_object(
+                await daily_ai.generate_daily_text(
+                    prompt + '\nОтветь JSON: {"category":"название категории"}.', selected_model, timeout=8.0
+                )
+            ).get("category")
+            category = raw if raw in _ALL_CATS else "Разное"
+            await cache_word_category(category_cache_word, category)
+            return category
+        except Exception as exc:
+            logger.warning("Selected-model category resolution failed: %s", type(exc).__name__)
+            return "Слово игрока (произвольная тема)"
 
     for model in (_GEN_PRIMARY_MODEL, _GEN_FALLBACK_MODEL):
         try:
@@ -1036,6 +1053,14 @@ def _generated_cache_key(lang: str, category: str, *, topic_id: str | None = Non
         return f"topic:{topic_norm}"
     normalized = f"{lang.lower().strip()}:{category.lower().strip()}"
     return normalized
+
+
+def _model_topic_id(model: str, lang: str, category: str, topic_id: str = "") -> str:
+    """Keep explicit-model banks separate from automatic and other-model content."""
+    if not model:
+        return topic_id
+    identity = _generated_cache_key(lang, category, topic_id=topic_id)
+    return f"model:{model}:{identity}"
 
 
 def _has_full_generated_bank(words: list[str] | None) -> bool:
@@ -1226,6 +1251,7 @@ async def generate_words_for_category(
     lang: str = "ru",
     topic_id: str | None = None,
     background: bool = False,
+    model: str | None = None,
 ) -> list[str] | None:
     """Call LLM to generate 20 words for an unknown category.
 
@@ -1236,7 +1262,9 @@ async def generate_words_for_category(
     from app.games.judgement_cache import cache_generated_words, get_cached_generated_words
 
     category = category.strip()
-    topic_id_norm = (topic_id or "").strip()
+    selected_model = await daily_ai.get_daily_text_model() if model is None else model
+    source_topic_id = (topic_id or "").strip()
+    topic_id_norm = _model_topic_id(selected_model, lang, category, source_topic_id)
     cache_key = _generated_cache_key(lang, category, topic_id=topic_id_norm or None)
     cached_words = _GENERATED_CACHE.get(cache_key)
     if _has_full_generated_bank(cached_words):
@@ -1264,6 +1292,27 @@ async def generate_words_for_category(
     prompt = _GEN_PROMPT.format(category=category.strip(), lang_hint=lang_hint)
 
     async def _do_generate() -> list[str] | None:
+        if selected_model:
+            try:
+                acquire = acquire_background_slot if background else acquire_foreground_slot
+                lease = await acquire("word_bank_generation", "ai_studio", selected_model)
+                if lease is None:
+                    return None
+                async with lease:
+                    raw = await daily_ai.generate_daily_text(prompt, selected_model, timeout=_GEN_TIMEOUT_S)
+                raw = _MD_FENCE_END_RE.sub("", _MD_FENCE_START_RE.sub("", raw)).strip()
+                payload = json.loads(raw)
+                clean = _normalise_generated_words(payload) if isinstance(payload, list) else []
+                if len(clean) < 5:
+                    return None
+                _GENERATED_CACHE[cache_key] = clean
+                _PROVISIONAL_GENERATED.pop(cache_key, None)
+                await cache_generated_words(lang, category, clean, topic_id=topic_id_norm)
+                await enqueue_bank_hint_prewarm(clean, category, topic_id=source_topic_id)
+                return clean
+            except Exception as exc:
+                logger.warning("Selected-model word generation failed: %s", type(exc).__name__)
+                return None
         for model in (_GEN_PRIMARY_MODEL, _GEN_FALLBACK_MODEL):
             try:
                 from app.errors import (
@@ -1366,7 +1415,8 @@ async def clear_generated_category(
     from app.games.judgement_cache import clear_cached_generated_words
 
     category_norm = category.strip()
-    topic_id_norm = (topic_id or "").strip()
+    selected_model = await daily_ai.get_daily_text_model()
+    topic_id_norm = _model_topic_id(selected_model, lang, category_norm, (topic_id or "").strip())
     cache_key = _generated_cache_key(lang, category_norm, topic_id=topic_id_norm or None)
 
     _GENERATED_CACHE.pop(cache_key, None)
@@ -1374,7 +1424,7 @@ async def clear_generated_category(
     await clear_cached_generated_words(lang, category_norm, topic_id=topic_id_norm)
 
 
-async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | None:
+async def _generate_single_word_fast(category: str, lang: str = "ru", *, model: str | None = None) -> str | None:
     """Фаст-генерация одного слова — рейтинг Vertex AI Express (приоритет) vs Opencode (резерв).
 
     Slot A: gemini-3.1-flash-lite on Vertex AI Express with Search Grounding.
@@ -1401,6 +1451,23 @@ async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | N
         if is_error_message(cleaned):
             return None
         return _normalise_fast_word_candidate(cleaned, lang=lang)
+
+    selected_model = await daily_ai.get_daily_text_model() if model is None else model
+    if selected_model:
+        try:
+            lease = await acquire_foreground_slot("fast_word", "ai_studio", selected_model)
+            if lease is None:
+                return None
+            async with lease:
+                raw = daily_ai._json_object(
+                    await daily_ai.generate_daily_text(
+                        prompt + '\nОтветь JSON: {"word":"слово"}.', selected_model, timeout=9.0
+                    )
+                ).get("word")
+            return _validate(raw) if isinstance(raw, str) else None
+        except Exception as exc:
+            logger.warning("Selected-model fast word generation failed: %s", type(exc).__name__)
+            return None
 
     # ── Slot A: Vertex AI Express + Search Grounding (primary) ────────────────
     async def _vertex_slot() -> str | None:
@@ -1523,7 +1590,10 @@ async def pick_random_word_for_topic(
 
         lang = topic.lang
         category = topic.category
-        cache_key = _generated_cache_key(lang, category, topic_id=topic.topic_id)
+        selected_model = await daily_ai.get_daily_text_model()
+        model_options = {"model": selected_model}
+        cache_topic_id = _model_topic_id(selected_model, lang, category, topic.topic_id)
+        cache_key = _generated_cache_key(lang, category, topic_id=cache_topic_id)
         cached_words = _GENERATED_CACHE.get(cache_key)
         provisional_word = _PROVISIONAL_GENERATED.get(cache_key)
 
@@ -1531,7 +1601,7 @@ async def pick_random_word_for_topic(
             words = cached_words
             is_generated = True
         else:
-            persisted_words = await get_cached_generated_words(lang, category, topic_id=topic.topic_id)
+            persisted_words = await get_cached_generated_words(lang, category, topic_id=cache_topic_id)
             if persisted_words:
                 _GENERATED_CACHE[cache_key] = persisted_words
                 _PROVISIONAL_GENERATED.pop(cache_key, None)
@@ -1539,7 +1609,9 @@ async def pick_random_word_for_topic(
                 is_generated = True
                 logger.info("Using persisted AI-generated words for category %r (%s)", category, lang)
             elif provisional_word:
-                generated = await generate_words_for_category(category, lang=lang, topic_id=topic.topic_id)
+                generated = await generate_words_for_category(
+                    category, lang=lang, topic_id=topic.topic_id, **model_options
+                )
                 words = generated or [provisional_word]
                 is_generated = True
                 if _has_full_generated_bank(generated):
@@ -1548,9 +1620,11 @@ async def pick_random_word_for_topic(
                     logger.info("Using provisional fast-word cache for category %r (%s)", category, lang)
             else:
                 # First response path: return one fast word, pre-warm full bank in background.
-                fast_word = await _generate_single_word_fast(category, lang)
+                fast_word = await _generate_single_word_fast(category, lang, **model_options)
                 if not fast_word:
-                    generated = await generate_words_for_category(category, lang=lang, topic_id=topic.topic_id)
+                    generated = await generate_words_for_category(
+                        category, lang=lang, topic_id=topic.topic_id, **model_options
+                    )
                     if not generated:
                         from app.errors import ProviderOverloadError
 
@@ -1559,7 +1633,9 @@ async def pick_random_word_for_topic(
                 else:
                     _PROVISIONAL_GENERATED[cache_key] = fast_word
                     submit_task(
-                        generate_words_for_category(category, lang=lang, topic_id=topic.topic_id, background=True)
+                        generate_words_for_category(
+                            category, lang=lang, topic_id=topic.topic_id, background=True, **model_options
+                        )
                     )
                     return fast_word, lang, category, True
 

@@ -989,7 +989,12 @@ async def api_admin_dailycroc_regen():
 
         from app.games.crocodile_daily import prepare_daily_puzzle
 
-        updated_puzzle = await prepare_daily_puzzle(dt, bot=bot, difficulty=difficulty, force_image=True)
+        model = data.get("model")
+        if model is not None and (not isinstance(model, str) or not model.strip() or len(model) > 200):
+            return jsonify({"error": "invalid model"}), 400
+        updated_puzzle = await prepare_daily_puzzle(
+            dt, bot=bot, difficulty=difficulty, force_image=True, image_model=model
+        )
 
         if not updated_puzzle or not updated_puzzle.image_file_id:
             return jsonify({"error": "Failed to generate or upload image"}), 500
@@ -1033,7 +1038,7 @@ async def api_admin_dailycroc_update_model():
     puzzle_date = data.get("date")
     difficulty = data.get("difficulty")
     model = data.get("model")
-    if not puzzle_date or not difficulty or model is None:
+    if not puzzle_date or not difficulty or not isinstance(model, str) or not model.strip() or len(model) > 200:
         return jsonify({"error": "missing fields"}), 400
     import datetime
 
@@ -1056,6 +1061,52 @@ async def api_admin_dailycroc_update_model():
             difficulty,
         )
     return jsonify({"success": True})
+
+
+@quart_app.route("/api/admin/dailycroc/models", methods=["GET"])
+@require_auth
+async def api_admin_dailycroc_models():
+    from app.config import is_gemini_chat_model_id
+    from app.providers.pollinations import fetch_models
+    from app.repos.settings_repo import get_global_setting
+
+    try:
+        image_models = await fetch_models("image")
+        catalog_unavailable = False
+    except Exception:
+        image_models = []
+        catalog_unavailable = True
+    text_models = [{"id": "", "title": "Авто (текущая схема)", "aliases": []}]
+    text_models.extend(
+        {"id": model, "title": model, "aliases": []}
+        for model in settings.AVAILABLE_MODELS
+        if is_gemini_chat_model_id(model)
+    )
+    image_models.append({"id": "fta-gpt-image-2", "title": "GPT Image 2 (FTA)", "aliases": ["vhr/gpt_image_2"]})
+    return jsonify(
+        {
+            "image_models": image_models,
+            "text_models": text_models,
+            "text_model": await get_global_setting("daily_croc_text_model", ""),
+            "catalog_unavailable": catalog_unavailable,
+        }
+    )
+
+
+@quart_app.route("/api/admin/dailycroc/text-model", methods=["POST"])
+@require_auth
+async def api_admin_dailycroc_text_model():
+    from app.config import is_gemini_chat_model_id
+    from app.repos.settings_repo import set_global_setting
+
+    data = await request.get_json()
+    model = data.get("model") if isinstance(data, dict) else None
+    if not isinstance(model, str) or len(model) > 200:
+        return jsonify({"error": "invalid model"}), 400
+    if model and (model not in settings.AVAILABLE_MODELS or not is_gemini_chat_model_id(model)):
+        return jsonify({"error": "unknown Gemini text model"}), 400
+    await set_global_setting("daily_croc_text_model", model)
+    return jsonify({"success": True, "model": model})
 
 
 @quart_app.route("/api/admin/dailycroc/reset-word", methods=["POST"])

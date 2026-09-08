@@ -315,7 +315,7 @@ class TestPickRandomWord:
         assert lang == "ru"
         assert cat == "персонаж валорант"
         assert is_gen
-        gen_mock.assert_awaited_once_with(topic.category, lang=topic.lang, topic_id=topic.topic_id)
+        gen_mock.assert_awaited_once_with(topic.category, lang=topic.lang, topic_id=topic.topic_id, model="")
         pick_mock.assert_called_once_with(topic.topic_id, full_bank, used=set())
 
     async def test_similar_custom_topic_variants_share_persisted_bank(self):
@@ -366,7 +366,9 @@ class TestPickRandomWord:
         assert first_topic.topic_id != second_topic.topic_id
         assert word == "кафка"
         assert is_gen
-        gen_mock.assert_awaited_once_with(second_topic.category, lang=second_topic.lang, topic_id=second_topic.topic_id)
+        gen_mock.assert_awaited_once_with(
+            second_topic.category, lang=second_topic.lang, topic_id=second_topic.topic_id, model=""
+        )
         pick_mock.assert_called_once_with(second_topic.topic_id, second_bank, used=set())
 
     async def test_full_bank_reuse_drops_stale_provisional_word(self):
@@ -406,7 +408,9 @@ class TestPickRandomWord:
 
         assert word == "джетт"
         assert submit_mock.called
-        gen_mock.assert_called_once_with(topic.category, lang=topic.lang, topic_id=topic.topic_id, background=True)
+        gen_mock.assert_called_once_with(
+            topic.category, lang=topic.lang, topic_id=topic.topic_id, background=True, model=""
+        )
         submit_mock.call_args.args[0].close()
 
     async def test_enqueue_bank_hint_prewarm_skips_when_gemini_cooldown_active(self):

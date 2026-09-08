@@ -533,7 +533,16 @@ _HINT_QUOTED_RE = re.compile(r'"([^"]+)"')
 _HINT_SPLIT_RE = re.compile(r"[\s\-]+")
 
 
-async def generate_hints(word: str, category: str, mode: HintGenerationMode = "foreground") -> list[str]:
+def model_cache_topic(topic_id: str, category: str, model: str) -> str:
+    """Keep explicit-model results separate while retaining the legacy Auto keys."""
+    if not model:
+        return topic_id
+    return json.dumps(["gemini", model, topic_id or "", "" if topic_id else category], ensure_ascii=False)
+
+
+async def generate_hints(
+    word: str, category: str, mode: HintGenerationMode = "foreground", *, model: str | None = None
+) -> list[str]:
     """Generate 3 progressive hints for the given word asynchronously.
 
     Always returns 3 hints, falling back to deterministic local hints if all
@@ -710,6 +719,22 @@ async def generate_hints(word: str, category: str, mode: HintGenerationMode = "f
             seen.add(key)
             deduped.append((lane_name, lane_type, model_name))
         return deduped
+
+    from app.games.daily_ai import generate_daily_text, get_daily_text_model
+
+    selected_model = await get_daily_text_model() if model is None else model
+    if selected_model:
+        c_str = f" (категория: {category})" if category and "особое" not in category.lower() else ""
+        try:
+            response = await generate_daily_text(
+                _HINTS_PROMPT.format(W=word, C_STR=c_str), selected_model, timeout=_HINTS_TIMEOUT_S
+            )
+            hints = _extract_hints(response)
+            if len(hints) == 3:
+                return hints
+        except Exception as exc:
+            logger.warning("Selected Gemini hints failed model=%s: %s", selected_model, type(exc).__name__)
+        return _local_fallback_hints(word, category)
 
     try:
         import app.config as config_module
@@ -998,12 +1023,16 @@ async def judge_guess(
         await metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
         return "exact_match", j
 
+    from app.games.daily_ai import generate_daily_text, get_daily_text_model
+
+    selected_model = await get_daily_text_model()
+    cache_topic = model_cache_topic(topic_id, category, selected_model)
     # 2. Judgement cache (<5ms, local file)
     cached = await get_cached_judgement(
         target,
         guess,
         category=category,
-        topic_id=topic_id,
+        topic_id=cache_topic,
         sense_context=sense_context,
     )
     if cached is not None:
@@ -1018,13 +1047,30 @@ async def judge_guess(
         return cached.status, cached
 
     # 3. Race×3 LLM
-    result = await _race_generate(
-        target,
-        guess,
-        category=category,
-        topic_id=topic_id,
-        sense_context=sense_context,
-    )
+    if selected_model:
+        result = None
+        prompt = _SYSTEM_PROMPT.format(
+            W=target,
+            G=guess,
+            C=category or "не указана",
+            T=topic_id or "-",
+            S=sense_context or category or "не указан",
+        )
+        prompt += "\nОтветь только JSON по схеме: " + json.dumps(GuessJudgement.model_json_schema())
+        try:
+            response = await generate_daily_text(prompt, selected_model, timeout=_LLM_TIMEOUT_S)
+            result = GuessJudgement.model_validate_json(response)
+            result.cached = False
+        except Exception as exc:
+            logger.warning("Selected Gemini judge failed model=%s: %s", selected_model, type(exc).__name__)
+    else:
+        result = await _race_generate(
+            target,
+            guess,
+            category=category,
+            topic_id=topic_id,
+            sense_context=sense_context,
+        )
 
     elapsed = time.monotonic() - t0
 
@@ -1057,7 +1103,7 @@ async def judge_guess(
             guess,
             result,
             category=category,
-            topic_id=topic_id,
+            topic_id=cache_topic,
             sense_context=sense_context,
         )
     )

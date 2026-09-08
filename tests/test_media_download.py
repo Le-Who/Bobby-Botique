@@ -368,7 +368,9 @@ async def test_pollinations_direct_get_fallback_uses_bounded_downloader(monkeypa
     assert result.images == [b"bounded-direct-image"]
     downloader.assert_awaited_once()
     assert downloader.await_args.kwargs["max_bytes"] == pollinations.MAX_IMAGE_DOWNLOAD_BYTES
-    assert "key=runtime-key" in downloader.await_args.args[0]
+    assert "runtime-key" not in downloader.await_args.args[0]
+    assert downloader.await_args.kwargs["client"].headers["Authorization"] == "Bearer runtime-key"
+    assert downloader.await_args.kwargs["max_redirects"] == 0
 
 
 @pytest.mark.asyncio

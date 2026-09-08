@@ -133,7 +133,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Generate a live sample report through storage and hosted report retrieval.",
     )
-    parser.add_argument("--user-id", type=int, default=0, help="Synthetic user id for live smoke.")
+    parser.add_argument(
+        "--user-id",
+        type=int,
+        default=settings.ADMIN_ID,
+        help="Existing registered user id for live smoke (defaults to configured ADMIN_ID).",
+    )
     parser.add_argument("--chat-id", type=int, default=0, help="Synthetic chat id for live smoke.")
     parser.add_argument(
         "--max-city-warmup-ms",

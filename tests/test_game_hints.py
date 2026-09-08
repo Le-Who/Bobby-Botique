@@ -206,4 +206,4 @@ async def test_batch_prewarm_rejects_invalid_entries_and_falls_back_per_word(hin
     assert first_call.kwargs == {"topic_id": "custom:1"}
     assert second_call.args == ("венти", "персонаж genshin impact", fallback_hints)
     assert second_call.kwargs == {"topic_id": "custom:1"}
-    generate_mock.assert_awaited_once_with("венти", "персонаж genshin impact", mode="background")
+    generate_mock.assert_awaited_once_with("венти", "персонаж genshin impact", mode="background", model="")

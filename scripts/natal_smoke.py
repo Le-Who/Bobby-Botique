@@ -10,9 +10,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def main() -> int:
+    from app.config import settings
+
     parser = argparse.ArgumentParser(description="Run a live natal report smoke check.")
     parser.add_argument("--webhook-url", default=os.getenv("WEBHOOK_URL", ""), help="Public bot WEBHOOK_URL.")
-    parser.add_argument("--user-id", type=int, default=0, help="Synthetic user id for the smoke report.")
+    parser.add_argument(
+        "--user-id",
+        type=int,
+        default=settings.ADMIN_ID,
+        help="Existing registered user id for live smoke (defaults to configured ADMIN_ID).",
+    )
     parser.add_argument("--chat-id", type=int, default=0, help="Synthetic chat id for the smoke report.")
     args = parser.parse_args()
 

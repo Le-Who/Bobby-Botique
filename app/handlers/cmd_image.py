@@ -13,7 +13,7 @@ UX flow:
 
 Provider routing:
     - gemini-3.1-flash-image and legacy "imagen-*" aliases → Google provider
-    - All other models (flux, zimage…) → PollinationsProvider (free tier, no key needed)
+    - All other models (flux, zimage…) → PollinationsProvider (authenticated Pollen balance)
 
 Prompt translation:
     - If the selected model does not natively support Cyrillic (currently every
@@ -710,8 +710,9 @@ def _error_text(err: str) -> str:
         return "⏳ *Ваш дневной лимит генераций Imagen исчерпан.* Попробуйте снова завтра."
     if err == "paid_tier_required":
         return (
-            "💳 *Эта модель требует оплаченного аккаунта.*\n\n"
-            "Переключитесь на **✨ Flux** или **⚡ Z-Image** — они работают бесплатно."
+            "💳 *Недостаточно Pollen на балансе Pollinations.*\n\n"
+            "Сообщите администратору: нужно проверить баланс и бюджет API-ключа. "
+            "Генерация без ключа, в том числе Flux и Z-Image, больше не поддерживается."
         )
     if err == "no_keys":
         return "🖼️ *Эта модель сейчас недоступна.*\n\nПереключитесь на другую модель или попробуйте позже."

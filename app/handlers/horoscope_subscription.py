@@ -180,6 +180,14 @@ async def start_subscribe_horoscope(update: Update, context: ContextTypes.DEFAUL
     if not update.effective_message:
         return ConversationHandler.END
 
+    if update.effective_user:
+        sub = await get_horoscope_subscription(update.effective_user.id)
+        if sub:
+            if update.callback_query:
+                await update.callback_query.answer()
+            await _show_subscription_settings(update.effective_message, sub)
+            return ConversationHandler.END
+
     payload: str = context.user_data.get("horo_payload", "")
     sign = payload.replace("subscribe_horoscope_", "").lower().strip()
 
@@ -493,13 +501,19 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
 
 
 async def horoscope_settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | str:
-    """Re-open the subscription wizard from any state."""
+    """Show the subscription management panel from any state."""
     if not update.message or not update.effective_user:
         return ConversationHandler.END
 
     user_id = update.effective_user.id
     sub = await get_horoscope_subscription(user_id)
 
+    await _show_subscription_settings(update.message, sub)
+    return ConversationHandler.END
+
+
+async def _show_subscription_settings(message, sub: dict | None) -> None:
+    """Render the saved subscription without starting or modifying a setup draft."""
     if sub:
         sign = sub.get("sign", "aries")
         time_today = sub.get("time_today")
@@ -530,7 +544,7 @@ async def horoscope_settings_command(update: Update, context: ContextTypes.DEFAU
             ]
         )
 
-        await update.message.reply_text(
+        await message.reply_text(
             f"<b>Ваша подписка на гороскоп</b>\n\n"
             f"Знак: {sign_label}\n"
             f"{today_str}\n"
@@ -541,14 +555,13 @@ async def horoscope_settings_command(update: Update, context: ContextTypes.DEFAU
             reply_markup=keyboard,
         )
     else:
-        await update.message.reply_text(
+        await message.reply_text(
             "У вас нет активной подписки на гороскоп.\n\n"
             "Вы можете оформить её прямо сейчас, чтобы получать ежедневные прогнозы в удобное время.",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("✨ Оформить подписку", callback_data="start_horoscope")]]
             ),
         )
-    return ConversationHandler.END
 
 
 # ── /horoscope_settings callbacks ────────────────────────────────────────────
@@ -558,18 +571,12 @@ async def horoscope_settings_callback(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     if not query or not update.effective_user:
         return ConversationHandler.END
+    if query.data == "horo_settings:start":
+        return await start_subscribe_horoscope(update, context)
     await query.answer()
 
     user_id = update.effective_user.id
     action = query.data.replace("horo_settings:", "")
-
-    if action == "start":
-        # Triggered from admin-sent discovery invite — open sign selection wizard
-        await query.edit_message_text(
-            "✨ Выберите ваш знак зодиака:",
-            reply_markup=_sign_keyboard(),
-        )
-        return CHOOSE_SIGN
 
     if action == "edit":
         sub = await get_horoscope_subscription(user_id)
@@ -640,8 +647,10 @@ def build_horoscope_subscription_handler() -> ConversationHandler:
             entry_points=[
                 # Deep link entry — called programmatically from start_command
                 CommandHandler("horoscope_settings", horoscope_settings_command),
+                CommandHandler("horoscope", start_subscribe_horoscope),
                 MessageHandler(filters.TEXT & filters.Regex(HOROSCOPE_INTENT_RE), start_subscribe_horoscope),
                 CallbackQueryHandler(start_subscribe_horoscope, pattern="^start_horoscope$"),
+                CallbackQueryHandler(horoscope_settings_callback, pattern=r"^horo_settings:(?:start|edit)$"),
             ],
             states={
                 CHOOSE_SIGN: [CallbackQueryHandler(on_sign_chosen, pattern="^horo_sign:")],
