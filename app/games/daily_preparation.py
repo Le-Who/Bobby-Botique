@@ -118,7 +118,12 @@ async def _run(puzzle_date: date, bot: Any, job: dict[str, Any], client: Any) ->
             for difficulty in repo.DAILY_DIFFICULTIES:
                 try:
                     await prepare_daily_puzzle(
-                        puzzle_date, bot, difficulty=difficulty, include_image=True, force_image=False
+                        puzzle_date,
+                        bot,
+                        difficulty=difficulty,
+                        include_image=True,
+                        force_image=False,
+                        bypass_image_quota=True,
                     )
                 except Exception:
                     # Do not expose provider error payloads or credentials through admin JSON.

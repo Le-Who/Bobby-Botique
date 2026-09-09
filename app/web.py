@@ -993,7 +993,7 @@ async def api_admin_dailycroc_regen():
         if model is not None and (not isinstance(model, str) or not model.strip() or len(model) > 200):
             return jsonify({"error": "invalid model"}), 400
         updated_puzzle = await prepare_daily_puzzle(
-            dt, bot=bot, difficulty=difficulty, force_image=True, image_model=model
+            dt, bot=bot, difficulty=difficulty, force_image=True, image_model=model, bypass_image_quota=True
         )
 
         if not updated_puzzle or not updated_puzzle.image_file_id:
@@ -1150,6 +1150,26 @@ async def api_admin_dailycroc_image_default():
         model = match["id"]
     await set_global_setting(DAILY_IMAGE_MODEL_SETTING_KEY, model)
     return jsonify({"success": True, "model": model})
+
+
+@quart_app.route("/api/admin/dailycroc/image-quota", methods=["GET", "POST"])
+@require_auth
+async def api_admin_dailycroc_image_quota():
+    from app.games.crocodile_daily import (
+        DAILY_IMAGE_QUOTA_MAX,
+        DAILY_IMAGE_QUOTA_SETTING_KEY,
+        get_daily_image_quota_limit,
+    )
+    from app.repos.settings_repo import set_global_setting
+
+    if request.method == "GET":
+        return jsonify({"limit": await get_daily_image_quota_limit()})
+    data = await request.get_json()
+    limit = data.get("limit") if isinstance(data, dict) else None
+    if type(limit) is not int or not 0 <= limit <= DAILY_IMAGE_QUOTA_MAX:
+        return jsonify({"error": f"limit must be an integer from 0 to {DAILY_IMAGE_QUOTA_MAX}"}), 400
+    await set_global_setting(DAILY_IMAGE_QUOTA_SETTING_KEY, str(limit))
+    return jsonify({"success": True, "limit": limit})
 
 
 @quart_app.route("/api/admin/dailycroc/day", methods=["GET"])

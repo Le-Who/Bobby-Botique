@@ -49,8 +49,9 @@ async def test_day_prepares_both_without_forcing_and_deduplicates(store, monkeyp
     release = asyncio.Event()
     bot = object()
 
-    async def prepare(puzzle_date, given_bot, *, difficulty, include_image, force_image):
+    async def prepare(puzzle_date, given_bot, *, difficulty, include_image, force_image, bypass_image_quota):
         assert given_bot is bot and include_image and not force_image
+        assert bypass_image_quota
         entered.set()
         await release.wait()
         store[difficulty] = repo.DailyPuzzle(

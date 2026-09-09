@@ -1375,7 +1375,7 @@ async def regenerate_dailycroc_image_callback(update: Update, context: ContextTy
     await query.answer(f"🖼 Перегенерация {diff}...", show_alert=False)
     try:
         today = daily_croc_repo.today_puzzle_date(datetime.now(tz=UTC))
-        await prepare_daily_puzzle(today, bot=context.bot, difficulty=diff, force_image=True)
+        await prepare_daily_puzzle(today, bot=context.bot, difficulty=diff, force_image=True, bypass_image_quota=True)
         await _refresh_dailycroc_status_message(query)
     except BadRequest as exc:
         if _is_message_not_modified_error(exc):

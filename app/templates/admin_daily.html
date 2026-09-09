@@ -919,6 +919,13 @@ input:checked + .slider:before { transform: translateX(16px); }
       <select id="croc-default-image-model" class="model-select" disabled><option>Загрузка моделей…</option></select>
       <p class="stat-card-sub">Применяется к новым пазлам. Индивидуальные модели и готовые изображения не меняются.</p>
       <p id="croc-model-status" role="status" class="stat-card-sub"></p>
+      <label for="croc-image-quota">Лимит автоматических изображений в час</label>
+      <div class="btn-row">
+        <input id="croc-image-quota" type="number" min="0" max="1000" step="1" disabled aria-describedby="croc-image-quota-help">
+        <button id="croc-image-quota-save" class="btn btn-save" disabled>Сохранить лимит</button>
+      </div>
+      <p id="croc-image-quota-help" class="stat-card-sub">По умолчанию 6 попыток/час (Pollinations и FTA), включая неудачные. 0 — пауза автогенерации. Ручная перегенерация и «Подготовить день» не расходуют эту квоту и не блокируются ею. Лимиты провайдера сохраняются.</p>
+      <p id="croc-image-quota-status" role="status" class="stat-card-sub"></p>
     </div>
     <div class="prompt-section">
       <label for="croc-day-date">Подготовка дня</label>
@@ -1883,6 +1890,44 @@ const CrocModule = (() => {
     } finally { select.disabled = false; }
   }
 
+  async function loadImageQuota() {
+    const input = document.getElementById('croc-image-quota');
+    const button = document.getElementById('croc-image-quota-save');
+    const status = document.getElementById('croc-image-quota-status');
+    try {
+      const res = await fetch('/api/admin/dailycroc/image-quota', {headers: getHeaders});
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      input.value = data.limit;
+      input.disabled = false;
+      button.disabled = false;
+      status.textContent = '';
+    } catch (e) { status.textContent = `Не удалось загрузить лимит: ${e.message}. Обновите страницу для повтора.`; }
+  }
+
+  async function saveImageQuota() {
+    const input = document.getElementById('croc-image-quota');
+    const button = document.getElementById('croc-image-quota-save');
+    const status = document.getElementById('croc-image-quota-status');
+    const limit = Number(input.value);
+    if (!input.value.trim() || !Number.isInteger(limit) || limit < 0 || limit > 1000) {
+      status.textContent = 'Введите целое число от 0 до 1000.';
+      return;
+    }
+    input.disabled = true;
+    button.disabled = true;
+    try {
+      const res = await fetch('/api/admin/dailycroc/image-quota', {
+        method: 'POST', headers: apiHeaders, body: JSON.stringify({limit})
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      input.value = data.limit;
+      status.textContent = 'Лимит сохранён. Применение на всех процессах — до 30 секунд; текущий расход не сбрасывается.';
+    } catch (e) { status.textContent = `Лимит не сохранён: ${e.message}`; }
+    finally { input.disabled = false; button.disabled = false; }
+  }
+
   function renderDayStatus(data) {
     const root = document.getElementById('croc-day-status');
     root.replaceChildren();
@@ -2140,6 +2185,8 @@ const CrocModule = (() => {
       if (event.target.matches('select[data-process]')) saveTextModel(event);
     });
     document.getElementById('croc-default-image-model').addEventListener('change', saveDefaultImage);
+    loadImageQuota();
+    document.getElementById('croc-image-quota-save').addEventListener('click', saveImageQuota);
     document.getElementById('croc-day-date').value = getKyivDateString();
     document.getElementById('croc-day-date').addEventListener('change', inspectDay);
     document.getElementById('croc-day-check').addEventListener('click', inspectDay);

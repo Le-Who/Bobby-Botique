@@ -31,6 +31,14 @@ An empty override (**Наследовать общую**) uses the historical `d
 
 Ordinary Crocodile currently has no image-generation step. Per-puzzle image overrides remain specific to that daily puzzle; this shared text-model setting does not introduce a new image feature into ordinary games.
 
+### Automatic image quota
+
+**Лимит автоматических изображений в час** stores `daily_croc_image_quota_per_hour` in existing global settings (no migration). The default is 6 attempts per UTC calendar hour, enough for Easy/Hard over today and the two-day image horizon. Allowed values are 0–1000; 0 pauses automatic images. Saving changes the limit without resetting consumed attempts; other workers pick it up within the settings cache's 30-second TTL. Invalid stored values fall back to 6.
+
+The budget covers Pollinations and FTA automatic generation. One puzzle attempt consumes one slot, including failures and an FTA → Pollinations fallback, so outages cannot trigger unlimited automatic retries. Redis shares the counter across workers; without Redis the fallback is process-local, not a global cap. The bucket rolls over each hour. Text-capable delivery remains available without an image.
+
+Admin card regeneration (web and Telegram) and **Подготовить день** bypass and do not consume this automatic quota. Provider limits and preparation locks still apply. The internal `force_image` flag alone does not bypass quota, since player completion also uses it. Authenticated `GET/POST /api/admin/dailycroc/image-quota` reads/saves the limit (`{"limit":6}` for POST).
+
 ## Prepare an arbitrary day
 
 Choose a date in **Подготовка дня**, including a date absent from the calendar:
@@ -39,7 +47,7 @@ Choose a date in **Подготовка дня**, including a date absent from t
 - **Подготовить день** queues both difficulties and fills missing assets without forcing regeneration, changing existing words, or clearing player progress. The page polls until the job finishes and refreshes the calendar.
 - Readiness displays word, hints, image prompt, and image separately. Delivery can be ready without art, but **Всё готово** requires all four parts for both difficulties. Missing art due to quota/provider failure is reported as partial, not success.
 
-The endpoints are authenticated `GET /api/admin/dailycroc/day?date=YYYY-MM-DD` and `POST /api/admin/dailycroc/day/prepare` with `{"date":"YYYY-MM-DD"}`. Preparation runs in a managed background task, with Redis ownership/deduplication when available and local guards otherwise. A job has a ten-minute execution timeout; completed/partial/failed status expires after one day. Failed or interrupted preparation can be retried. Image generation still respects the existing hourly quota.
+The endpoints are authenticated `GET /api/admin/dailycroc/day?date=YYYY-MM-DD` and `POST /api/admin/dailycroc/day/prepare` with `{"date":"YYYY-MM-DD"}`. Preparation runs in a managed background task, with Redis ownership/deduplication when available and local guards otherwise. A job has a ten-minute execution timeout; completed/partial/failed status expires after one day. Failed or interrupted preparation can be retried. This explicit admin operation bypasses the automatic image quota, but not provider limits.
 
 ## Natal smoke and dependency validation
 

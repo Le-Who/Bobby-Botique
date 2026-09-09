@@ -25,10 +25,11 @@ logger = logging.getLogger(__name__)
 _PREP_LOCKS: dict[str, asyncio.Lock] = {}
 
 # -- Hourly image generation quota for daily croc ---------------------------
-# Max 2 images may be generated per calendar hour to avoid hammering the
-# qwen-image model endpoint.  Redis is the primary counter (distributed-safe);
-# the in-process dict is a fallback when Redis is unavailable.
-DAILY_IMAGE_QUOTA_PER_HOUR: int = 2
+# Default covers both tracks for today and the two-day image horizon.
+# Counts automatic attempts, including failures, to bound provider retries.
+DAILY_IMAGE_QUOTA_PER_HOUR: int = 6
+DAILY_IMAGE_QUOTA_SETTING_KEY = "daily_croc_image_quota_per_hour"
+DAILY_IMAGE_QUOTA_MAX = 1000
 _local_image_quota: dict[str, int] = {}  # {"YYYY-MM-DDTHH": count}
 
 
@@ -297,16 +298,32 @@ def _daily_image_seed(puzzle_date: date, difficulty: str) -> int:
 
 def _image_quota_key(now: datetime | None = None) -> str:
     """Redis/local key for the current calendar-hour image quota bucket."""
-    ts = (now or datetime.now(tz=UTC)).strftime("%Y-%m-%dT%H")
+    ts = (now or datetime.now(tz=UTC)).astimezone(UTC).strftime("%Y-%m-%dT%H")
     return f"daily:img:quota:{ts}"
 
 
-async def _check_and_consume_image_quota(*, now: datetime | None = None) -> bool:
+async def get_daily_image_quota_limit() -> int:
+    """Read the persisted automatic-attempt limit; zero pauses automatic art."""
+    from app.repos.settings_repo import get_global_setting
+
+    raw = await get_global_setting(DAILY_IMAGE_QUOTA_SETTING_KEY, str(DAILY_IMAGE_QUOTA_PER_HOUR))
+    try:
+        limit = int(raw)
+    except ValueError, TypeError:
+        return DAILY_IMAGE_QUOTA_PER_HOUR
+    return limit if 0 <= limit <= DAILY_IMAGE_QUOTA_MAX else DAILY_IMAGE_QUOTA_PER_HOUR
+
+
+async def _check_and_consume_image_quota(*, now: datetime | None = None, limit: int | None = None) -> bool:
     """Return True and increment the counter if quota is available; False if exhausted.
 
-    Uses Redis INCR + EXPIRE (atomic) when available, falls back to an
+    Uses Redis INCR with expiry when available, falls back to an
     in-process dict so a single worker can still respect the limit without Redis.
     """
+    if limit is None:
+        limit = await get_daily_image_quota_limit()
+    if limit == 0:
+        return False
     key = _image_quota_key(now)
     try:
         from app.cache import redis_client
@@ -316,14 +333,14 @@ async def _check_and_consume_image_quota(*, now: datetime | None = None) -> bool
             if current == 1:
                 # First use of this bucket — set TTL to 2 h so keys self-clean
                 await redis_client.expire(key, 7200)
-            if current > DAILY_IMAGE_QUOTA_PER_HOUR:
+            if current > limit:
                 # Over-counted: decrement back so other processes see the right value
                 await redis_client.decr(key)
                 logger.info(
                     "daily image quota exhausted for hour %s (redis count=%d, limit=%d)",
                     key,
-                    current,
-                    DAILY_IMAGE_QUOTA_PER_HOUR,
+                    current - 1,
+                    limit,
                 )
                 return False
             return True
@@ -332,16 +349,16 @@ async def _check_and_consume_image_quota(*, now: datetime | None = None) -> bool
 
     # In-process fallback
     count = _local_image_quota.get(key, 0)
-    if count >= DAILY_IMAGE_QUOTA_PER_HOUR:
+    if count >= limit:
         logger.info(
             "daily image quota exhausted for hour %s (local count=%d, limit=%d)",
             key,
             count,
-            DAILY_IMAGE_QUOTA_PER_HOUR,
+            limit,
         )
         return False
     _local_image_quota[key] = count + 1
-    # Evict stale buckets (keep only the 2 most recent hours) to avoid unbounded growth
+    # Evict stale buckets to avoid unbounded growth.
     current_hour = _image_quota_key(now)
     for old_key in [k for k in list(_local_image_quota) if k != current_hour]:
         del _local_image_quota[old_key]
@@ -358,15 +375,6 @@ async def _generate_via_pollinations(
 ) -> tuple[list[bytes], str]:
     """Generate image bytes via Pollinations. Returns (images, model_label)."""
     from app.providers.pollinations import get_pollinations_provider
-
-    if not await _check_and_consume_image_quota(now=now):
-        logger.info(
-            "daily puzzle image deferred for %s/%s: hourly quota (%d/h) exhausted",
-            puzzle_date,
-            difficulty,
-            DAILY_IMAGE_QUOTA_PER_HOUR,
-        )
-        return [], model
 
     provider = get_pollinations_provider()
     result = await provider.generate(
@@ -456,6 +464,7 @@ async def _generate_daily_image_file_id(
     difficulty: str,
     now: datetime | None = None,
     image_model: str | None = None,
+    bypass_image_quota: bool = False,
 ) -> tuple[str | None, str]:
     """Generate a daily image and upload it to Telegram.
 
@@ -472,6 +481,19 @@ async def _generate_daily_image_file_id(
     image_model = image_model or await get_daily_image_model()
     if image_model == "vhr/gpt_image_2":
         image_model = "fta-gpt-image-2"
+
+    # One automatic attempt per puzzle, not per provider/fallback. Explicit
+    # admin operations bypass this budget, not provider limits or prep locks.
+    if not bypass_image_quota:
+        limit = await get_daily_image_quota_limit()
+        if not await _check_and_consume_image_quota(now=now, limit=limit):
+            logger.info(
+                "daily puzzle image deferred for %s/%s: automatic hourly quota (%d/h) exhausted",
+                puzzle_date,
+                difficulty,
+                limit,
+            )
+            return None, image_model
 
     if image_model in _FTA_IMG_MODELS:
         images, model_label = await _generate_via_fta(
@@ -529,7 +551,12 @@ async def prepare_daily_puzzle(
     include_image: bool = True,
     force_image: bool = False,
     image_model: str | None = None,
+    bypass_image_quota: bool = False,
 ) -> repo.DailyPuzzle:
+    """Prepare assets; only authenticated admin callers may bypass auto quota.
+
+    force_image alone does not bypass quota: player completion also uses it.
+    """
     difficulty = repo.normalize_daily_difficulty(difficulty)
     local_lock = _get_local_prep_lock(puzzle_date, difficulty)
 
@@ -606,6 +633,7 @@ async def prepare_daily_puzzle(
                     puzzle_date=puzzle.puzzle_date,
                     difficulty=puzzle.difficulty,
                     image_model=active_model,
+                    bypass_image_quota=bypass_image_quota,
                 )
                 if image_file_id:
                     await repo.set_puzzle_image_asset(
