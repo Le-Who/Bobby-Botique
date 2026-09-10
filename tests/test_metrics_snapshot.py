@@ -182,3 +182,18 @@ class TestMetricsSnapshotAtomicity:
 
         # db_query should not have been called for metrics insert
         mock_query.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_record_error_sanitizes_before_queue_and_persistence(self, metrics_collector):
+        token = "987654321:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi_12"
+
+        await metrics_collector.record_error("ProviderError", f"failed URL /bot{token}/getMe")
+
+        event = metrics_collector._events_queue.get_nowait()
+        assert token not in event["error_message"]
+        assert event["message_fingerprint"]
+
+        metrics_collector._process_event(event)
+        stored = metrics_collector.error_log[-1]
+        assert token not in stored["message"]
+        assert stored["message_fingerprint"] == event["message_fingerprint"]

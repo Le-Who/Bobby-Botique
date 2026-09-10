@@ -342,6 +342,12 @@ def setup_detailed_logging(
 
     global _ACTIVE_HANDLER, _ACTIVE_WRITER, _ATEXIT_REGISTERED, _OWNED_STREAMS
 
+    # Register bootstrap credentials before any application event can echo them.
+    # The exact value is retained only in the in-process scrubber set.
+    from app.observability.redaction import register_sensitive_credential
+
+    register_sensitive_credential("bot_token", os.environ.get("TELEGRAM_BOT_TOKEN"))
+
     resolved = LoggingSettings.from_environ()
     log_level = log_level or resolved.level_name
 
@@ -415,6 +421,12 @@ def setup_detailed_logging(
                 "logging.loss_summary",
                 level="warning",
                 message="Log events were dropped by the bounded writer",
+                fields=snapshot,
+            ),
+            recovery_summary_factory=lambda snapshot: standalone_event_bytes(
+                "logging.sink_recovered",
+                level="warning",
+                message="Logging output recovered after one or more uncertain event deliveries",
                 fields=snapshot,
             ),
         )

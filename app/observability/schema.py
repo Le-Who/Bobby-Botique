@@ -7,7 +7,7 @@ import traceback
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
@@ -118,17 +118,39 @@ def exception_from_log_value(value: object) -> BaseException | None:
 
 
 def json_compatible_mapping(value: Mapping[str, Any]) -> dict[str, JsonValue]:
-    """Convert ordinary structured fields; strict bounded conversion is added in Task 2."""
-    result: dict[str, JsonValue] = {}
-    for key, item in value.items():
+    """Convert built-in containers without invoking untrusted conversion hooks."""
+
+    def safe_name(key: object) -> str:
+        return key if isinstance(key, str) else f"<{type(key).__name__}>"
+
+    def convert(item: object, *, depth: int = 0) -> JsonValue:
         if item is None or isinstance(item, (bool, int, float, str)):
-            result[str(key)] = item
-        elif isinstance(item, list):
-            result[str(key)] = [
-                entry if isinstance(entry, (type(None), bool, int, float, str)) else str(entry) for entry in item
-            ]
-        elif isinstance(item, dict):
-            result[str(key)] = json_compatible_mapping(item)
-        else:
-            result[str(key)] = str(item)
+            return item
+        if isinstance(item, bytes):
+            return {"type": "bytes", "size": len(item)}
+        if depth >= 5:
+            return "[max-depth]"
+        if type(item) is dict:
+            mapping = cast(dict[object, object], item)
+            entries = list(mapping.items())[:32]
+            mapping_result = {safe_name(key): convert(entry, depth=depth + 1) for key, entry in entries}
+            if len(mapping) > len(entries):
+                mapping_result["truncated_fields"] = len(mapping) - len(entries)
+            return mapping_result
+        if type(item) in (list, tuple, set, frozenset):
+            collection = cast(list[object] | tuple[object, ...] | set[object] | frozenset[object], item)
+            collection_entries = list(collection)[:32]
+            list_result = [convert(entry, depth=depth + 1) for entry in collection_entries]
+            if len(collection) > len(collection_entries):
+                list_result.append(f"[truncated {len(collection) - len(collection_entries)} items]")
+            return list_result
+        return f"<{type(item).__name__}>"
+
+    if type(value) is not dict:
+        return {"value": f"<{type(value).__name__}>"}
+    result: dict[str, JsonValue] = {}
+    for key, item in list(value.items())[:32]:
+        result[safe_name(key)] = convert(item)
+    if len(value) > len(result):
+        result["truncated_fields"] = len(value) - len(result)
     return result

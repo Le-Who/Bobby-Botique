@@ -18,6 +18,7 @@ _CONTENT_FIELDS = {
     "body",
     "content",
     "content_preview",
+    "content_text",
     "document_text",
     "message_preview",
     "prompt",
@@ -27,6 +28,26 @@ _CONTENT_FIELDS = {
     "text",
 }
 _IDENTIFIER_FIELDS = {"user_id", "chat_id", "actor_user_id", "actor_chat_id"}
+_CORRELATION_FIELDS = {
+    "request_id": "request",
+    "origin_request_id": "request",
+    "client_request_id": "client_request",
+    "trace_id": "trace",
+    "origin_trace_id": "trace",
+    "span_id": "span",
+    "parent_span_id": "span",
+    "origin_span_id": "span",
+    "task_id": "task",
+    "job_id": "task",
+    "execution_id": "execution",
+    "attempt_id": "attempt",
+    "race_id": "race",
+    "delivery_id": "delivery",
+    "operation_id": "operation",
+    "error_id": "error",
+    "upstream_error_id": "error",
+    "original_error_id": "error",
+}
 _START_TO_FINISH = {
     "provider.attempt_started": "provider.attempt_finished",
     "workload.attempt_started": "workload.attempt_finished",
@@ -102,6 +123,24 @@ def _matches(event: dict[str, Any], criteria: IncidentCriteria) -> bool:
     if criteria.user_id is not None:
         candidates.append(event.get("user_id") == criteria.user_id or event.get("actor_user_id") == criteria.user_id)
     return any(candidates)
+
+
+def _within_time_window(event: dict[str, Any], criteria: IncidentCriteria) -> bool:
+    timestamp = _event_time(event)
+    if timestamp is None:
+        return False
+    if criteria.since and timestamp < criteria.since:
+        return False
+    return not (criteria.until and timestamp > criteria.until)
+
+
+def _correlation_tokens(event: dict[str, Any]) -> set[tuple[str, str]]:
+    tokens: set[tuple[str, str]] = set()
+    for field, family in _CORRELATION_FIELDS.items():
+        value = event.get(field)
+        if isinstance(value, str) and value:
+            tokens.add((family, value))
+    return tokens
 
 
 def _pseudonym(kind: str, value: object) -> str:
@@ -203,7 +242,7 @@ def export_incident(
     if output_dir.exists() or output_dir.is_symlink():
         raise IncidentExportError(f"output path already exists: {output_dir}")
 
-    selected: list[tuple[int, dict[str, Any]]] = []
+    parsed_rows: list[tuple[int, dict[str, Any]]] = []
     invalid_lines = 0
     total_bytes = 0
     total_events = 0
@@ -232,14 +271,41 @@ def export_incident(
         if total_events > max_events:
             invalid_lines += 1
             break
-        if _matches(event, criteria):
-            safe = _safe_selected_event(
-                event,
-                include_identifiers=include_identifiers,
-                include_content=include_content,
-            )
-            safe["source_line"] = source_line
-            selected.append((source_line, safe))
+        parsed_rows.append((source_line, event))
+
+    direct_indices = {index for index, (_line, event) in enumerate(parsed_rows) if _matches(event, criteria)}
+    selected_indices = set(direct_indices)
+    token_index: dict[tuple[str, str], list[int]] = {}
+    row_tokens: list[set[tuple[str, str]]] = []
+    for index, (_line, event) in enumerate(parsed_rows):
+        tokens = _correlation_tokens(event) if _within_time_window(event, criteria) else set()
+        row_tokens.append(tokens)
+        for token in tokens:
+            token_index.setdefault(token, []).append(index)
+
+    pending_tokens = [token for index in direct_indices for token in row_tokens[index]]
+    visited_tokens: set[tuple[str, str]] = set()
+    while pending_tokens:
+        token = pending_tokens.pop()
+        if token in visited_tokens:
+            continue
+        visited_tokens.add(token)
+        for index in token_index.get(token, ()):
+            if index in selected_indices:
+                continue
+            selected_indices.add(index)
+            pending_tokens.extend(row_tokens[index] - visited_tokens)
+
+    selected: list[tuple[int, dict[str, Any]]] = []
+    for index in selected_indices:
+        source_line, event = parsed_rows[index]
+        safe = _safe_selected_event(
+            event,
+            include_identifiers=include_identifiers,
+            include_content=include_content,
+        )
+        safe["source_line"] = source_line
+        selected.append((source_line, safe))
 
     selected.sort(key=lambda item: (str(item[1].get("timestamp", "")), item[0]))
     events = [event for _line, event in selected]
@@ -290,6 +356,8 @@ def export_incident(
         "bundle_schema_version": 1,
         "source": Path(source_name).name,
         "selected_events": len(events),
+        "direct_matches": len(direct_indices),
+        "correlated_events": len(events) - len(direct_indices),
         "parsed_events": total_events,
         "invalid_lines": invalid_lines,
         "duplicate_event_ids": duplicates,

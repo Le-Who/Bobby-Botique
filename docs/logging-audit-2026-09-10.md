@@ -414,24 +414,27 @@ credentials. OWASP отдельно выделяет access tokens, passwords и
 как данные, которые не следует записывать напрямую.
 [Рекомендации OWASP](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html).
 
-Предлагаемая политика, которую нужно утвердить вместе с планом:
+Политика обновлена владельцем 2026-09-10 и реализована в protected operational
+stream. Приоритет — воспроизводимый debugging; ограничения ниже по-прежнему
+запрещают полные credentials и перенос message-bearing rows в alerts/CI/public
+artifacts:
 
 | Данные | Обычный operational log | Ограниченный diagnostic режим |
 | --- | --- | --- |
 | user_id/chat_id/update_id/message_id/job_id | Полностью в закрытом хранилище | Полностью; экспорт умеет стабильно псевдонимизировать |
 | Provider key | Стабильный key_fingerprint, provider, key source, состояние лимита **и минимум последние 4 символа ключа** для каждого запроса с ключом и каждой ошибки ключа | Те же обязательные последние 4 символа; scoped diagnostic может добавлять контекст попытки, но не раскрывает полный ключ |
 | ADMIN_SECRET, password, bot token, DB/Redis credentials, cookies, initData, JWT, service-account JSON | Никогда, включая части | Никогда |
-| Обычное приватное текстовое сообщение авторизованного пользователя | Metadata по умолчанию; после включения preview-policy очищенные первые 160 Unicode chars | До 512 chars, строго по scope и сроку |
-| Команды добавления ключей, auth payload, birth/natal data, LTM contents, документы, group messages | Только тип, длина, IDs/счётчики | Не открывать автоматически этим режимом |
+| Обычное текстовое сообщение авторизованного пользователя, включая group chat | Очищенный bounded текст до 2048 Unicode chars + длина/fingerprint | `preview` оставлен как scoped 256-char compatibility mode |
+| Команды добавления ключей, auth/initData payload, birth/natal data, LTM contents, документы | Только тип, длина, IDs/счётчики | Не открывать автоматически этим режимом |
 | URL/HTTP headers/body | method, allowlisted host/route, status, lengths | Разрешённые структурированные поля; query/userinfo/token path вырезать, body preview только явно разрешённого error schema |
-| Provider output | length/tokens/finish reason/validation code | Очищенный preview до 512 chars для разрешённого сценария, не полный dump |
+| Provider output в явно инструментированных путях | Очищенный bounded текст до 2048 chars + length/tokens/finish reason/validation code | Scoped preview при явном `preview` mode |
 | Изображения, voice/audio bytes, attachments | mime, bytes, duration, dimensions, IDs | Никаких base64/bytes |
 
-Рекомендуемый production rollout: metadata baseline, затем явно включить
-`LOG_CONTENT_MODE=preview` для разрешённого обычного private-chat текста, если
-владелец подтвердил цель, доступ и срок хранения. План не предполагает, что
-LTM consent автоматически даёт согласие на diagnostic logging, или наоборот.
-Политика просмотра group/LTM/natal требует отдельного решения.
+Текущий production default — `LOG_CONTENT_MODE=full`; `metadata` является явным
+операторским rollback для отключения текста. Доступ к operational stream должен
+оставаться ограниченным, а Docker rotation — включённой. LTM consent не даёт
+разрешение логировать private-memory contents; natal/document/auth data также
+остаются metadata-only.
 
 Fingerprint: использовать уже имеющийся необратимый `key_hash`, с provider namespace
 и единым форматированием; если у specialized key нет такого hash — helper с тем же
@@ -456,10 +459,10 @@ suffix обязателен даже вне diagnostic режима. Это ос
 UTC deadline ≤15 минут; при истечении автоматический возврат к обычной политике.
 Все заданные selectors применяются через AND. Нельзя включить широкую диагностику
 одной переменной `LOG_LEVEL=DEBUG`. Activation/expiry логируются без содержимого.
-Предложение retention: metadata 14 дней; error summaries без content 30 дней;
-preview/diagnostics 24 часа. Это начальная эксплуатационная политика, не текущие
-настройки. Если backend не умеет раздельные сроки, выделить отдельный stream/sink
-или не включать previews. Сроки учитывают backup, CI artifacts и Telegram copies.
+Runtime ограничивает Docker logs ротацией `20m × 5` на контейнер; это фактический
+bounded retention по объёму, но не архивная гарантия по времени. Message-bearing
+rows нельзя копировать в CI artifacts/Telegram alerts. Для внешнего collector
+потребуется отдельное решение о сроке, access control и удалении.
 
 ## 8. Покрытие подсистем: какие факты нужны
 
@@ -626,9 +629,11 @@ retention/backup, ACL/CI viewers, disk budget, event volume, clock synchronizati
   символа и fingerprint фактически выбранного ключа присутствуют на start и
   terminal/error. Непровайдерские bot/access/database credentials не раскрывают
   суффикс;
-- content preview требует полного scope: incident ID, точный subsystem, deadline
-  не более 15 минут и request/user selector. Все selectors применяются через AND;
-  auth, key management, natal, LTM, documents и group content запрещены;
+- обычный авторизованный chat text, включая group chat, сохраняется в protected
+  operational sink после scrubbing и с лимитом 2048 символов. Режим `preview`
+  требует полного scope: incident ID, точный subsystem, deadline не более 15 минут
+  и request/user selector. Все selectors применяются через AND; auth, key management,
+  natal, LTM и documents остаются запрещёнными для content logging;
 - typed provider, specialized workload, delivery, job, DB, cache, concurrency,
   state, context, memory, research и Live boundaries получили semantic events;
 - offline incident exporter ограничивает строки/объём/число событий, повторно
@@ -644,7 +649,7 @@ uv run --locked ruff check .
 uv run --locked ruff format --check .
 uv run --locked mypy app bot.py
 uv run --locked pytest tests/ --ignore=tests/integration -m "not integration" --override-ini="addopts=" --timeout=30
-3091 passed, 28 skipped, 2 deselected in 238.67s
+3110 passed, 28 skipped, 2 deselected in 257.85s
 ```
 
 Синтетический benchmark: 10 000 событий записаны без потерь, producer p95
@@ -659,43 +664,30 @@ Docker daemon driver, долговременного collector/retention/backup/
 OOM/restart alerts. Эти пункты остаются отдельным operational rollout, а не
 скрытым допущением baseline.
 
-## 14. Независимое ревью текущей реализации
+## 14. Независимое ревью и закрытие findings
 
-Повторное read-only ревью не нашло дефектов уровня Critical, но подтвердило девять
-Important-разрывов. Они не должны теряться за зелёными unit-тестами и являются
-обязательными задачами следующего агента до заявления о production-complete:
+Повторное read-only ревью не нашло дефектов уровня Critical, но выявило девять
+Important-разрывов. Последующая реализация закрыла их; список сохранён как evidence
+того, какие контракты были исправлены и покрыты тестами:
 
-1. `admin_alerts.py`, `metrics.py` и Telegram error handler всё ещё образуют
-   вторичные sink'и для raw error message/traceback в Telegram и PostgreSQL,
-   минуя общий sanitizer. Оставлять только error ID, type, fingerprint и
-   allowlisted metadata.
-2. `observability/schema.py` превращает неизвестные `extra`-объекты через `str()`
-   до очистки. Это может выполнить пользовательский `__str__`, раскрыть данные
-   или увести formatter error в `logging.Handler.handleError`. Нужен bounded safe
-   converter, который неизвестный объект заменяет маркером типа.
-3. Pattern scrubber не распознаёт Telegram Bot API token/path без предварительной
-   регистрации токена. Нужен строгий fallback-pattern для `bot<TOKEN>` и ранняя
-   регистрация bot token до импорта интеграций.
-4. Обработка edited message всё ещё пишет первые 80 символов в INFO без diagnostic
-   scope. Этот путь должен использовать ту же metadata/content policy, что и
-   обычное сообщение.
-5. Provider observer может записать `StreamCompleted` как успешный attempt до того,
-   как router преобразует completion без `TextDelta` в `EMPTY_RESPONSE`. Terminal
-   должен появляться только после семантической валидации владельцем.
-6. OpenRouter/Opencode начинают `api.request_started` до локальной сборки payload;
-   пустой список messages возвращается без terminal и без HTTP-вызова. Начинать
-   attempt перед `post()` либо завершать его явным local validation outcome.
-7. Live WebSocket не создаёт отдельный server request scope после аутентификации;
-   HTTP hook на WebSocket не распространяется. Нужен scope с user/request/trace и
-   гарантированным reset в `finally`.
-8. Incident exporter выбирает только строки с прямым совпадением selector и не
-   строит bounded correlation closure по trace/task/attempt/error IDs. Из-за этого
-   экспорт по error ID может потерять начало, fallback и delivery timeline.
-9. При отказе всех sink'ов writer увеличивает только внутренний `write_failures`;
-   после восстановления нет loss/recovery summary. Нужен накопительный счётчик и
-   безопасный summary при первом успешном выводе.
+1. **Закрыто:** Telegram alerts и PostgreSQL metrics получают sanitized summary,
+   error ID/type/fingerprint и allowlisted metadata вместо raw error traceback.
+2. **Закрыто:** bounded converter заменяет неизвестные `extra` маркером типа, не
+   вызывает пользовательские conversion hooks и не уходит в raw `handleError`.
+3. **Закрыто:** scrubber распознаёт Telegram Bot API token/path fallback-pattern,
+   а bootstrap регистрирует фактический bot token до application events.
+4. **Закрыто:** edited messages используют общую bounded content policy.
+5. **Закрыто:** empty `StreamCompleted` получает один truthful failed terminal с
+   `EMPTY_RESPONSE`, а не предварительный success.
+6. **Закрыто:** OpenRouter/Opencode эмитят terminal local-validation event для
+   пустого messages payload до любого HTTP-вызова.
+7. **Закрыто:** WebSocket получает server request/user/trace scope после auth и
+   гарантированно восстанавливает ContextVar при teardown.
+8. **Закрыто:** incident exporter строит bounded correlation closure по
+   trace/task/attempt/delivery/error IDs и считает direct/correlated rows отдельно.
+9. **Закрыто:** writer накапливает uncertain deliveries и после восстановления
+   эмитит один безопасный `logging.sink_recovered` summary.
 
-Minor contract drift: queue использует `job.rejected`, не эмитит успешный
-`job.enqueued` и отдельный `job.retry_scheduled`, хотя каталог обещает
-`job.capacity_rejected` и полный lifecycle. Нужно синхронизировать owner events,
-тесты и каталог без изменения ack/retry semantics.
+**Minor drift закрыт:** queue и in-process task manager используют единый каталог
+`job.enqueued`, `job.started`, `job.retry_scheduled`, `job.capacity_rejected`,
+`job.finished` без изменения ack/retry semantics.

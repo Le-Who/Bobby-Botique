@@ -123,10 +123,10 @@ class LoggingSettings:
             invalid.append("LOG_LEVEL")
             level_name = "INFO"
 
-        content_mode = source.get("LOG_CONTENT_MODE", "metadata").strip().casefold()
-        if content_mode not in {"metadata", "preview"}:
+        content_mode = source.get("LOG_CONTENT_MODE", "full").strip().casefold()
+        if content_mode not in {"metadata", "preview", "full"}:
             invalid.append("LOG_CONTENT_MODE")
-            content_mode = "metadata"
+            content_mode = "full"
 
         event_max_bytes = _positive_int(
             source,

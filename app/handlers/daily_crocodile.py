@@ -365,7 +365,7 @@ async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None
         logger.error("daily Crocodile: ensure_prepared_puzzles failed: %s", exc, exc_info=True)
         await alert_admin(
             context.application,
-            f"🐊 *Daily Croc* — `ensure_prepared_puzzles` завершился с ошибкой:\n`{type(exc).__name__}: {exc}`",
+            f"🐊 *Daily Croc* — `ensure_prepared_puzzles` завершился с ошибкой: `{type(exc).__name__}`",
             severity=AlertSeverity.CRITICAL,
             exc=exc,
         )

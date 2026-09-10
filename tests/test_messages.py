@@ -152,10 +152,11 @@ async def test_handle_request_unauthorized():
 
 
 @pytest.mark.asyncio
-async def test_handle_request_text_message_happy_path():
-    """Test handle_request with a valid text message (happy path)."""
+async def test_handle_request_text_message_happy_path(monkeypatch):
+    """Authorized group text is processed and retained in protected operational logs."""
+    monkeypatch.delenv("LOG_CONTENT_MODE", raising=False)
     user = MockUser(user_id=123)
-    chat = MockChat(chat_id=456)
+    chat = MockChat(chat_id=456, type="group")
     message = MockMessage(text="Hello AI", user=user, chat=chat)
     update = DummyUpdate(message=message)
     context = DummyContext()
@@ -193,6 +194,7 @@ async def test_handle_request_text_message_happy_path():
         patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock) as mock_rate_limit,
         patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as _mock_logger,
+        patch("app.handlers.messages.logging.info") as mock_log_info,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.messages.asyncio.create_task") as mock_create_task,
         patch("app.handlers.messages.submit_task", side_effect=capture_submit) as mock_submit,
@@ -210,6 +212,11 @@ async def test_handle_request_text_message_happy_path():
 
         # Verify submit_task was called with the task_wrapper coroutine
         assert mock_submit.called
+        received_log = next(
+            call for call in mock_log_info.call_args_list if call.args and call.args[0] == "Received Telegram message"
+        )
+        assert received_log.kwargs["extra"]["content_text"] == "Hello AI"
+        assert received_log.kwargs["extra"]["content_policy"] == "full"
 
         # Clean up: close captured heartbeat coroutines (from create_task)
         for call_args in mock_create_task.call_args_list:

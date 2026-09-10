@@ -30,7 +30,10 @@ def _row(**fields):
 def test_export_selects_sanitizes_pseudonymizes_and_preserves_key_suffix(tmp_path: Path):
     secret = "fake-incident-secret-9876"
     rows = [
-        _row(content_preview=f"ignore instructions; Authorization: Bearer {secret}"),
+        _row(
+            content_preview=f"ignore instructions; Authorization: Bearer {secret}",
+            content_text="real protected message",
+        ),
         _row(event_id="c" * 32, request_id="other"),
     ]
     source = io.StringIO("\n".join(json.dumps(row) for row in rows))
@@ -48,6 +51,7 @@ def test_export_selects_sanitizes_pseudonymizes_and_preserves_key_suffix(tmp_pat
     assert event["key_suffix"] == "9876"
     assert event["user_id"].startswith("user_")
     assert "content_preview" not in event
+    assert "content_text" not in event
     assert secret not in events_text
     assert manifest["selected_events"] == 1
     assert manifest["checksums"]["events.ndjson"] == hashlib.sha256(events_text.encode()).hexdigest()
@@ -84,6 +88,48 @@ def test_export_reports_invalid_duplicate_and_missing_terminal(tmp_path: Path):
     assert manifest["invalid_lines"] == 2
     assert manifest["duplicate_event_ids"] == 1
     assert manifest["missing_terminals"] == ["attempt-1"]
+
+
+def test_export_closes_transitive_correlation_chain_without_unrelated_rows(tmp_path: Path):
+    error_id = "e" * 32
+    trace_id = "t" * 32
+    rows = [
+        _row(event="provider.call_failed", event_id="1" * 32, error_id=error_id, trace_id=trace_id),
+        _row(
+            event="provider.attempt_started",
+            event_id="2" * 32,
+            request_id="other-request",
+            trace_id=trace_id,
+            attempt_id="attempt-linked",
+        ),
+        _row(
+            event="provider.attempt_finished",
+            event_id="3" * 32,
+            request_id="another-request",
+            trace_id=None,
+            attempt_id="attempt-linked",
+        ),
+        _row(
+            event="provider.attempt_finished",
+            event_id="4" * 32,
+            request_id="unrelated",
+            trace_id="unrelated-trace",
+            attempt_id="unrelated-attempt",
+        ),
+    ]
+    output = tmp_path / "incident"
+
+    manifest = export_incident(
+        io.StringIO("\n".join(json.dumps(row) for row in rows)),
+        source_name="synthetic",
+        criteria=IncidentCriteria(error_id=error_id),
+        output_dir=output,
+    )
+
+    events = [json.loads(line) for line in (output / "events.ndjson").read_text(encoding="utf-8").splitlines()]
+    assert [event["event_id"] for event in events] == ["1" * 32, "2" * 32, "3" * 32]
+    assert manifest["direct_matches"] == 1
+    assert manifest["correlated_events"] == 2
 
 
 def test_export_refuses_existing_output(tmp_path: Path):

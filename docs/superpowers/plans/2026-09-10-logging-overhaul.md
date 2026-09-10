@@ -36,7 +36,7 @@ separately authorized operational work.
 - Не менять retry count, timeout, key rotation, model precedence, deferred ack/retry, Telegram UI/публикацию в рамках logging refactor.
 - `TELEGRAPH_PUBLICATION_ENABLED=false` и `private_content` gates не ослаблять.
 - Все durations monotonic; timestamp UTC RFC3339; JSON UTF-8, одна строка на event.
-- Нет полных credentials, stack locals, full messages/headers/body или base64. Для каждого фактически выбранного provider key обязательны `key_suffix` (минимум последние 4 символа) и fingerprint как в спецификации; raw user/chat IDs допустимы в закрытом operational sink; контент только по утверждённой policy.
+- Нет полных credentials, stack locals, неограниченных headers/body или base64. Для каждого фактически выбранного provider key обязательны `key_suffix` (минимум последние 4 символа) и fingerprint как в спецификации; raw user/chat IDs и bounded scrubbed chat messages допустимы в закрытом operational sink; контент только по утверждённой policy.
 - Не добавлять сеть/DB в log handler; не превращать ошибку logging в сбой бизнес-операции.
 - Новые integrations выключены по умолчанию до отдельной эксплуатационной проверки.
 - Документы UTF-8; до/после правок `python -X utf8 scripts/check_encoding.py`, после — `git diff --check`.
@@ -204,7 +204,7 @@ assert event["schema_version"] == 1
 | LOG_LEVEL | INFO; invalid value = configuration warning + INFO, без печати env |
 | STRUCTURED_LOGGING / LOG_PRETTY | Compatibility aliases; LOG_FORMAT имеет приоритет, конфликт логируется |
 | SERVICE_NAME / APP_ENV / APP_RELEASE | gemaibotv2 / unknown / unknown; deployed release отдельно передаёт workflow |
-| LOG_CONTENT_MODE | metadata; preview явно включает §7 spec, не меняется через DEBUG |
+| LOG_CONTENT_MODE | full: scrubbed/bounded operational content; metadata отключает text; preview требует scope; DEBUG policy не меняет |
 | LOG_EVENT_MAX_BYTES | 32768, hard ceiling; не допускает безлимит |
 | LOG_QUEUE_MAX_EVENTS / LOG_QUEUE_MAX_BYTES | 4096 / 8388608, валидировать положительные пределы |
 | LOG_DIAGNOSTIC_REQUEST_ID / LOG_DIAGNOSTIC_USER_ID | Нет scope по умолчанию; нужен хотя бы один selector |
@@ -795,19 +795,19 @@ production completeness или что пароль делает safe любое 
 
 До production-complete следующий агент должен закрыть и отдельно проверить:
 
-- вторичные Telegram/PostgreSQL error sink'и через единый sanitized incident
+- [x] вторичные Telegram/PostgreSQL error sink'и через единый sanitized incident
   summary вместо raw message/traceback;
-- bounded conversion неизвестных `extra` без вызова `str()`/пользовательского
+- [x] bounded conversion неизвестных `extra` без вызова `str()`/пользовательского
   кода и без обходного `handleError(record)`;
-- Telegram Bot API token/path fallback-pattern плюс раннюю регистрацию bot token;
-- edited-message content policy без безусловного 80-символьного INFO preview;
-- один правдивый provider attempt terminal после проверки empty completion;
-- terminal local-validation для OpenRouter/Opencode до HTTP attempt;
-- отдельный authenticated WebSocket request/user/trace scope с cleanup;
-- bounded correlation closure incident export по связанным trace/task/attempt/error
+- [x] Telegram Bot API token/path fallback-pattern плюс раннюю регистрацию bot token;
+- [x] edited-message content policy без безусловного 80-символьного INFO preview;
+- [x] один правдивый provider attempt terminal после проверки empty completion;
+- [x] terminal local-validation для OpenRouter/Opencode до HTTP attempt;
+- [x] отдельный authenticated WebSocket request/user/trace scope с cleanup;
+- [x] bounded correlation closure incident export по связанным trace/task/attempt/error
   IDs, чтобы selector не обрезал причинную цепочку;
-- recovery/loss summary после временного отказа всех sink'ов;
-- соответствие queue event catalog: `job.enqueued`, `job.capacity_rejected`,
+- [x] recovery/loss summary после временного отказа всех sink'ов;
+- [x] соответствие queue event catalog: `job.enqueued`, `job.capacity_rejected`,
   `job.retry_scheduled` и ровно один owner terminal на execution.
 
 Для каждого пункта сначала добавить failing regression на фактический producer
@@ -822,5 +822,5 @@ contract, затем минимальное исправление и профи
 - Все области spec §8 имеют owner/task; scripts и специализированные SDK paths
   не считаются автоматически покрытыми chat router.
 - Обязательный baseline без новой зависимости; нет скрытой DB migration или deploy.
-- Sensitive-content choices являются явной policy, metadata default; работа
+- Sensitive-content choices являются явной policy, bounded full operational default; работа
   над планом не означает согласия пользователей на дополнительные формы хранения.

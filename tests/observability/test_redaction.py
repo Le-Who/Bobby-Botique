@@ -74,3 +74,19 @@ def test_sensitive_non_provider_credential_is_scrubbed_without_exposing_suffix()
     assert fields == {"credential_kind": "bot_token", "credential_present": True}
     assert token not in json.dumps(sanitized)
     assert "XY99" not in json.dumps(sanitized)
+
+
+def test_unknown_telegram_bot_token_and_api_path_are_scrubbed_without_registration():
+    token = "987654321:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi_12"
+
+    sanitized = sanitize_event(
+        {
+            "message": f"request failed at https://api.telegram.org/bot{token}/getMe",
+            "detail": token,
+        }
+    )
+    wire = json.dumps(sanitized)
+
+    assert token not in wire
+    assert "api.telegram.org/bot[redacted]/getMe" in sanitized["message"]
+    assert sanitized["detail"] == "[redacted]"

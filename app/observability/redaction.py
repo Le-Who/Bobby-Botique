@@ -7,7 +7,7 @@ import re
 import threading
 from collections import deque
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from app.observability.schema import JsonValue
 
@@ -24,6 +24,7 @@ _CREDENTIAL_PATTERN = re.compile(r"(?i)(?:bearer\s+)?(?:sk[-_]|AIza|synthetic-pr
 _AUTH_PATTERN = re.compile(r"(?i)(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+")
 _URL_CREDENTIAL_PATTERN = re.compile(r"(?i)(https?://)([^/@\s:]+):([^/@\s]+)@")
 _QUERY_SECRET_PATTERN = re.compile(r"(?i)([?&](?:token|key|secret|password|signature)=)[^&#\s]+")
+_TELEGRAM_BOT_TOKEN_PATTERN = re.compile(r"(?<!\d)\d{6,12}:[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])")
 
 
 def _register_secret(secret: str) -> None:
@@ -118,6 +119,7 @@ def _scrub_text(value: str, *, suffixes: tuple[str, ...]) -> str:
     scrubbed = _AUTH_PATTERN.sub(r"\1[redacted]", scrubbed)
     scrubbed = _URL_CREDENTIAL_PATTERN.sub(r"\1[redacted]@", scrubbed)
     scrubbed = _QUERY_SECRET_PATTERN.sub(r"\1[redacted]", scrubbed)
+    scrubbed = _TELEGRAM_BOT_TOKEN_PATTERN.sub(REDACTED, scrubbed)
     scrubbed = _CREDENTIAL_PATTERN.sub(REDACTED, scrubbed)
     if len(scrubbed) > MAX_STRING_CHARS:
         return f"{scrubbed[:MAX_STRING_CHARS]}…[truncated]"
@@ -149,35 +151,38 @@ def _convert(
     if identity in seen:
         return "[cycle]"
 
-    if isinstance(value, Mapping):
+    if type(value) is dict:
+        mapping = cast(dict[object, object], value)
         seen.add(identity)
         try:
-            items = list(value.items())[:MAX_COLLECTION_ITEMS]
+            items = list(mapping.items())[:MAX_COLLECTION_ITEMS]
             mapping_result: dict[str, JsonValue] = {
-                str(key): _convert(
+                (key if isinstance(key, str) else f"<{type(key).__name__}>"): _convert(
                     item,
-                    field_name=str(key),
+                    field_name=key if isinstance(key, str) else f"<{type(key).__name__}>",
                     suffixes=suffixes,
                     depth=depth + 1,
                     seen=seen,
                 )
                 for key, item in items
             }
-            if len(value) > len(items):
-                mapping_result["truncated_fields"] = len(value) - len(items)
+            if len(mapping) > len(items):
+                mapping_result["truncated_fields"] = len(mapping) - len(items)
             return mapping_result
         finally:
             seen.remove(identity)
 
-    if isinstance(value, (list, tuple, set, frozenset)):
+    if type(value) in (list, tuple, set, frozenset):
+        collection = cast(list[object] | tuple[object, ...] | set[object] | frozenset[object], value)
         seen.add(identity)
         try:
-            items = list(value)[:MAX_COLLECTION_ITEMS]
+            collection_items = list(collection)[:MAX_COLLECTION_ITEMS]
             list_result: list[JsonValue] = [
-                _convert(item, field_name=field_name, suffixes=suffixes, depth=depth + 1, seen=seen) for item in items
+                _convert(item, field_name=field_name, suffixes=suffixes, depth=depth + 1, seen=seen)
+                for item in collection_items
             ]
-            if len(value) > len(items):
-                list_result.append(f"[truncated {len(value) - len(items)} items]")
+            if len(collection) > len(collection_items):
+                list_result.append(f"[truncated {len(collection) - len(collection_items)} items]")
             return list_result
         finally:
             seen.remove(identity)

@@ -8,6 +8,7 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+from app.errors import ErrorCode
 from app.observability.events import emit, record_exception
 from app.observability.redaction import provider_key_fields
 from app.observability.schema import JsonValue
@@ -115,6 +116,31 @@ def record_provider_exception(
     )
 
 
+def record_provider_validation_failure(
+    *,
+    provider: str,
+    requested_model: str,
+    actual_model: str,
+    api_key: str | None,
+    validation_code: str,
+) -> None:
+    """Record a terminal local-validation result before any HTTP attempt."""
+    emit(
+        "provider.local_validation_finished",
+        level="warning",
+        operation="provider.local_validation",
+        outcome="failed",
+        reason_code="invalid_request",
+        failure_phase="local_validation",
+        validation_code=validation_code,
+        provider=provider,
+        requested_model=requested_model,
+        actual_model=actual_model,
+        transport_started=False,
+        **provider_key_fields(provider, api_key),
+    )
+
+
 def _duration_ms(attempt: ProviderAttempt) -> float:
     return round(max(0, time.monotonic_ns() - attempt.started_ns) / 1_000_000, 2)
 
@@ -193,7 +219,19 @@ async def observe_provider_stream(
                 )
             if is_terminal_event(event):
                 terminal_seen = True
-                outcome, level, terminal_fields = _terminal_fields(event)
+                if isinstance(event, StreamCompleted) and not saw_text:
+                    outcome = "failed"
+                    level = "warning"
+                    terminal_fields: dict[str, JsonValue] = {
+                        "reason_code": ErrorCode.EMPTY_RESPONSE.value,
+                        "failure_phase": "before_text",
+                        "retry_disposition": "try_next_key",
+                        "key_disposition": "transient_failure",
+                        "finish_kind": event.finish_reason.kind.value,
+                        "finish_reason_raw": event.finish_reason.raw,
+                    }
+                else:
+                    outcome, level, terminal_fields = _terminal_fields(event)
                 emit(
                     "provider.attempt_finished",
                     level=level,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import threading
 import time
@@ -156,3 +157,71 @@ def test_warning_evicts_oldest_low_priority_event_when_total_queue_is_full():
     assert writer.submit(b"critical", levelno=logging.CRITICAL)
     assert writer.queued_events == 4
     assert writer.dropped_by_reason == {"evicted_for_priority": 1}
+
+
+def test_formatter_failure_uses_safe_structured_fallback_without_handle_error():
+    stream = io.StringIO()
+    writer = BoundedLogWriter(stream, auto_start=False)
+    handler = BoundedQueueHandler(writer)
+
+    class _BrokenFormatter(logging.Formatter):
+        def format(self, record: logging.LogRecord) -> str:
+            raise RuntimeError("formatter echoed full-secret-value")
+
+    handler.setFormatter(_BrokenFormatter())
+    handler.handleError = lambda _record: (_ for _ in ()).throw(AssertionError("handleError must not run"))
+    record = logging.LogRecord(
+        "probe",
+        logging.ERROR,
+        __file__,
+        123,
+        "raw full-secret-value",
+        (),
+        None,
+    )
+
+    handler.handle(record)
+    assert writer.stop(timeout=1.0)
+
+    event = json.loads(stream.getvalue())
+    assert event["event"] == "logging.format_failed"
+    assert event["error_type"] == "RuntimeError"
+    assert "full-secret-value" not in stream.getvalue()
+
+
+def test_sink_recovery_emits_summary_for_events_lost_during_outage():
+    class _FailOnceStream:
+        def __init__(self) -> None:
+            self.failed = False
+            self.rows: list[str] = []
+
+        def write(self, value: str) -> int:
+            if not self.failed:
+                self.failed = True
+                raise OSError("temporary outage")
+            self.rows.append(value)
+            return len(value)
+
+        def flush(self) -> None:
+            return
+
+    stream = _FailOnceStream()
+    snapshots: list[dict[str, object]] = []
+
+    def recovery_factory(snapshot):
+        snapshots.append(dict(snapshot))
+        return b"sink-recovered"
+
+    writer = BoundedLogWriter(
+        stream,
+        auto_start=False,
+        recovery_summary_factory=recovery_factory,
+    )
+    assert writer.submit(b"lost-during-outage", levelno=logging.ERROR)
+    assert writer.submit(b"first-after-recovery", levelno=logging.INFO)
+
+    assert writer.stop(timeout=1.0)
+    assert stream.rows == ["first-after-recovery\n", "sink-recovered\n"]
+    assert snapshots[0]["write_failures"] == 1
+    assert snapshots[0]["events_delivery_uncertain"] == 1
+    assert snapshots[0]["recovered"] is True

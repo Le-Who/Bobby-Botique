@@ -11,7 +11,7 @@ from PIL import Image
 
 from app.errors import ErrorCode, tag_error
 from app.metrics import metrics_collector
-from app.observability.provider_events import record_provider_exception
+from app.observability.provider_events import record_provider_exception, record_provider_validation_failure
 from app.providers.base import AIResponse, BaseAIProvider
 from app.providers.stream_types import (
     FailurePhase,
@@ -79,6 +79,13 @@ class OpenRouterProvider(BaseAIProvider):
         )
         messages = await openai_messages(request)
         if not messages:
+            record_provider_validation_failure(
+                provider=self.provider_name,
+                requested_model=request.models[0],
+                actual_model=model_name,
+                api_key=self.api_key,
+                validation_code="empty_messages",
+            )
             yield StreamFailed(
                 code=ErrorCode.INVALID_REQUEST,
                 phase=FailurePhase.BEFORE_TEXT,

@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.observability.content import content_fields
 from app.observability.context import request_scope
+from app.observability.redaction import provider_key_fields
 
 
 def _enable_scoped_preview(monkeypatch, *, request_id: str = "a" * 32, user_id: int = 42) -> None:
@@ -16,7 +17,7 @@ def _enable_scoped_preview(monkeypatch, *, request_id: str = "a" * 32, user_id: 
 
 
 def test_metadata_mode_never_contains_raw_content(monkeypatch):
-    monkeypatch.delenv("LOG_CONTENT_MODE", raising=False)
+    monkeypatch.setenv("LOG_CONTENT_MODE", "metadata")
     text = "private user message synthetic-secret"
 
     fields = content_fields("user_message", text)
@@ -26,6 +27,33 @@ def test_metadata_mode_never_contains_raw_content(monkeypatch):
     assert len(fields["content_fingerprint"]) == 16
     assert "content_preview" not in fields
     assert text not in repr(fields)
+
+
+def test_default_operational_mode_keeps_bounded_scrubbed_message_text(monkeypatch):
+    monkeypatch.delenv("LOG_CONTENT_MODE", raising=False)
+    token = "987654321:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi_12"
+    text = f"Please debug this exact message {token} " + ("x" * 3000)
+
+    fields = content_fields("user_message", text, subsystem="telegram_message")
+
+    assert fields["content_policy"] == "full"
+    assert fields["content_text"].startswith("Please debug this exact message [redacted]")
+    assert token not in fields["content_text"]
+    assert fields["content_truncated"] is True
+    assert len(fields["content_text"]) < len(text)
+
+
+def test_full_mode_scrubs_registered_credential_before_content_boundary(monkeypatch):
+    monkeypatch.delenv("LOG_CONTENT_MODE", raising=False)
+    credential = "provider-secret-crossing-the-log-boundary-ABCDEFGH"
+    provider_key_fields("synthetic", credential)
+    text = ("x" * 2030) + credential + " visible tail"
+
+    fields = content_fields("user_message", text, subsystem="telegram_message")
+
+    assert credential not in fields["content_text"]
+    assert "provider-secret-crossing" not in fields["content_text"]
+    assert "[redacted]" in fields["content_text"]
 
 
 def test_preview_mode_keeps_bounded_scrubbed_excerpt(monkeypatch):

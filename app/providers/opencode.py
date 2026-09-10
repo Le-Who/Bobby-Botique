@@ -20,7 +20,7 @@ import httpx
 from PIL import Image
 
 from app.errors import ErrorCode, tag_error
-from app.observability.provider_events import record_provider_exception
+from app.observability.provider_events import record_provider_exception, record_provider_validation_failure
 from app.providers import openrouter as openrouter_provider
 from app.providers.base import AIResponse
 from app.providers.openrouter import OpenRouterProvider
@@ -77,6 +77,13 @@ class OpencodeGoProvider(OpenRouterProvider):
             max_tokens=self._MESSAGES_MAX_TOKENS,
         )
         if not payload["messages"]:
+            record_provider_validation_failure(
+                provider=self.provider_name,
+                requested_model=request.models[0],
+                actual_model=model_name,
+                api_key=self.api_key,
+                validation_code="empty_messages",
+            )
             yield StreamFailed(
                 code=ErrorCode.INVALID_REQUEST,
                 phase=FailurePhase.BEFORE_TEXT,

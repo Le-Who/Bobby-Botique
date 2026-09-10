@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import hashlib
 import logging
 import time
 from collections import defaultdict, deque
@@ -9,8 +10,15 @@ from typing import Any
 
 from app import database as db
 from app.crypto import safe_decrypt
+from app.observability.redaction import sanitize_event
 from app.request_context import get_request_id
 from app.utils import time as time_utils
+
+
+def _safe_error_message(message: str) -> tuple[str, str]:
+    sanitized = sanitize_event({"message": message})["message"]
+    safe_message = sanitized if isinstance(sanitized, str) else "[unavailable]"
+    return safe_message, hashlib.sha256(message.encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass
@@ -158,11 +166,19 @@ class MetricsCollector:
             self.daily_metrics[today].cache_misses += 1
 
         elif event_type == "error":
+            safe_message, fallback_fingerprint = _safe_error_message(event["error_message"])
+            supplied_fingerprint = event.get("message_fingerprint")
+            message_fingerprint = (
+                supplied_fingerprint
+                if isinstance(supplied_fingerprint, str) and supplied_fingerprint
+                else fallback_fingerprint
+            )
             self.error_log.append(
                 {
                     "timestamp": event["timestamp"],
                     "type": event["error_type"],
-                    "message": event["error_message"],
+                    "message": safe_message,
+                    "message_fingerprint": message_fingerprint,
                     "request_id": event["request_id"],
                     "saved": False,
                 }
@@ -440,11 +456,13 @@ class MetricsCollector:
             # Query returns newest-first; store chronologically so append() keeps
             # the deque invariant of oldest -> newest for live events as well.
             for row in reversed(error_result):
+                safe_message, message_fingerprint = _safe_error_message(row["error_message"])
                 self.error_log.append(
                     {
                         "timestamp": row["created_at"].isoformat(),
                         "type": row["error_type"],
-                        "message": row["error_message"],
+                        "message": safe_message,
+                        "message_fingerprint": message_fingerprint,
                         "request_id": row.get("request_id"),
                         "saved": True,  # Loaded from DB, so it is saved
                     }
@@ -506,11 +524,13 @@ class MetricsCollector:
     async def record_error(self, error_type: str, error_message: str, request_id: str | None = None):
         """Записывает ошибку"""
         current_request_id = request_id or get_request_id()
+        safe_message, message_fingerprint = _safe_error_message(error_message)
         self._events_queue.put_nowait(
             {
                 "type": "error",
                 "error_type": error_type,
-                "error_message": error_message,
+                "error_message": safe_message,
+                "message_fingerprint": message_fingerprint,
                 "request_id": current_request_id,
                 "timestamp": datetime.now().isoformat(),
             }

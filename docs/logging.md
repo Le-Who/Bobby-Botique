@@ -34,13 +34,16 @@ credentials are always removed, including from exception strings and nested
 extras. Actor IDs are retained in the protected operational stream; untrusted
 client request IDs never replace the server request ID.
 
-Message content defaults to metadata only: size, kind and fingerprint.
-`LOG_CONTENT_MODE=preview` alone does nothing: preview appears only when a
-complete diagnostic scope is active and the current request matches every
-configured selector. Preview is scrubbed and capped at 256 characters;
-key-management, authentication, natal, private-memory, document and
-group-content paths remain no-preview. `DEBUG` does not enable content by
-itself.
+Protected operational logs default to `full` content mode. Authorized chat
+messages and explicitly instrumented provider inputs/outputs are scrubbed and
+bounded to 2048 Unicode characters while retaining size and fingerprint fields.
+This stream must stay access-restricted and use the configured Docker rotation;
+do not paste message-bearing rows into CI, public artifacts or Telegram alerts.
+`LOG_CONTENT_MODE=metadata` is the explicit content-free override. The legacy
+`preview` mode remains available for a selector-scoped 256-character diagnostic
+excerpt. Key-management/auth payloads, full credentials, initData, birth data,
+private-memory/document bodies and binary media remain content-forbidden in every
+mode. `DEBUG` does not change any content or credential rule.
 
 ## Configuration
 
@@ -51,7 +54,7 @@ itself.
 | `SERVICE_NAME` | `gemaibotv2` | Stable service name |
 | `APP_ENV` | `unknown` | Deployment environment |
 | `APP_RELEASE` | `unknown` | Deployed image/SHA; VPS passes `IMAGE_TAG` |
-| `LOG_CONTENT_MODE` | `metadata` | `metadata` or controlled `preview` |
+| `LOG_CONTENT_MODE` | `full` | bounded protected text; `metadata` disables text, `preview` requires diagnostic scope |
 | `LOG_EVENT_MAX_BYTES` | `32768` | Hard UTF-8 size ceiling per row |
 | `LOG_QUEUE_MAX_EVENTS` | `4096` | Count bound; 25% reserved for warning/error |
 | `LOG_QUEUE_MAX_BYTES` | `8388608` | Total queued-byte bound |
@@ -105,7 +108,9 @@ and contains `events.ndjson`, `incident.md` and
 `manifest.json` with checksums, selection/redaction flags and integrity findings.
 Identifiers are pseudonymized and content hidden by default. `--include-identifiers`
 and `--include-content` relax those two presentation filters; credential
-scrubbing is never disabled. `key_suffix` remains visible in all modes.
+scrubbing is never disabled. `key_suffix` remains visible in all modes. Selection
+performs a bounded transitive closure over trace/span/request/task/attempt/delivery/
+error links, and the manifest distinguishes direct from correlated rows.
 
 ## Root-cause recipes
 
@@ -122,6 +127,7 @@ scrubbing is never disabled. `key_suffix` remains visible in all modes.
   attempts, `memory.graph_write_finished` (`applied`) and the owner-emitted
   `memory.graph_write_committed`/`memory.consolidation_finished` event.
 - Missing evidence: inspect `logging.loss_summary`, `logging.sink_failed`,
+  `logging.sink_recovered`, `logging.format_failed`,
   malformed/unsupported counts
   and missing terminal IDs in the bundle. State the cause as unknown when the
   evidence ends before the owner terminal.

@@ -128,9 +128,10 @@ class TaskManager:
 
         if len(self._tasks) >= self.MAX_TASKS:
             emit(
-                "background_task.rejected",
+                "job.capacity_rejected",
                 level="warning",
                 operation=operation_name,
+                job_id=task_id,
                 task_name=coro_name,
                 reason_code="capacity",
                 capacity=self.MAX_TASKS,
@@ -144,6 +145,16 @@ class TaskManager:
 
             return asyncio.create_task(_noop())
 
+        emit(
+            "job.enqueued",
+            operation=operation_name,
+            job_id=task_id,
+            task_name=coro_name,
+            backend="process_memory",
+            max_attempts=retry + 1,
+            **safe_metadata,
+        )
+
         # Capture caller's tracing context (request_id, user_id, chat_id)
         # at submission time so background tasks inherit the correct trace.
         ctx = contextvars.copy_context()
@@ -154,8 +165,9 @@ class TaskManager:
             with restore_job_context(portable_context, task_id=task_id, execution_id=execution_id):
                 replace_current_context(operation=operation_name)
                 emit(
-                    "background_task.started",
+                    "job.started",
                     operation=operation_name,
+                    job_id=task_id,
                     task_name=coro_name,
                     max_attempts=retry + 1,
                     **safe_metadata,
@@ -167,10 +179,11 @@ class TaskManager:
                         # Note: bare coroutines can only be awaited once, but retry is 0 for them.
                         await target  # type: ignore[misc]
                         emit(
-                            "background_task.finished",
+                            "job.finished",
                             operation=operation_name,
+                            job_id=task_id,
                             task_name=coro_name,
-                            outcome="completed",
+                            outcome="succeeded",
                             attempts=attempts + 1,
                             duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
                             **safe_metadata,
@@ -178,9 +191,10 @@ class TaskManager:
                         return
                     except asyncio.CancelledError:
                         emit(
-                            "background_task.finished",
+                            "job.finished",
                             level="warning",
                             operation=operation_name,
+                            job_id=task_id,
                             task_name=coro_name,
                             outcome="cancelled",
                             attempts=attempts + 1,
@@ -191,7 +205,7 @@ class TaskManager:
                     except Exception as e:
                         attempts += 1
                         error_id = record_exception(
-                            "background_task.attempt_failed",
+                            "job.attempt_failed",
                             e,
                             operation=operation_name,
                             fields={
@@ -204,9 +218,10 @@ class TaskManager:
                         if attempts <= retry:
                             delay_seconds = 2**attempts
                             emit(
-                                "background_task.retry_scheduled",
+                                "job.retry_scheduled",
                                 level="warning",
                                 operation=operation_name,
+                                job_id=task_id,
                                 task_name=coro_name,
                                 attempt=attempts,
                                 delay_seconds=delay_seconds,
@@ -215,9 +230,10 @@ class TaskManager:
                             await asyncio.sleep(delay_seconds)
                         else:
                             emit(
-                                "background_task.finished",
+                                "job.finished",
                                 level="error",
                                 operation=operation_name,
+                                job_id=task_id,
                                 task_name=coro_name,
                                 outcome="failed",
                                 attempts=attempts,
@@ -235,7 +251,7 @@ class TaskManager:
                                         cb_task.add_done_callback(self._tasks.discard)
                                 except Exception as cb_err:
                                     record_exception(
-                                        "background_task.error_callback_failed",
+                                        "job.error_callback_failed",
                                         cb_err,
                                         operation=operation_name,
                                         fields={"original_error_id": error_id},

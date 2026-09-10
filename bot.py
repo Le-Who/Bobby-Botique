@@ -59,9 +59,10 @@ async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYP
 
         await alert_admin(
             context.application,
-            f"Unhandled exception in update handler:\n`{type(context.error).__name__}: {str(context.error)[:200]}`",
+            f"Unhandled exception in update handler: {type(error).__name__}",
             severity=AlertSeverity.CRITICAL,
-            exc=context.error,
+            exc=error,
+            error_id=error_id,
         )
     except Exception as alert_error:
         record_exception(

@@ -201,6 +201,17 @@ class TaskQueue:
                     await redis.lpush(_queue_key(task.priority), _task_to_json(task).encode())
                     # Update in-memory cache
                     self.tasks[task.id] = task
+                    emit(
+                        "job.retry_scheduled",
+                        level="warning",
+                        operation="job.recover",
+                        job_id=task.id,
+                        task_type=task.task_type,
+                        retry_count=task.retry_count,
+                        reason_code="process_recovery",
+                        backend="redis",
+                        delay_seconds=0,
+                    )
                 except Exception as e:
                     logging.error("Failed to recover task: %s", e, exc_info=True)
 
@@ -277,6 +288,14 @@ class TaskQueue:
                 if redis:
                     await redis.lpush(_queue_key(priority), _task_to_json(task).encode())
                     self._work_available.set()  # Wake idle workers
+                    emit(
+                        "job.enqueued",
+                        operation="job.enqueue",
+                        job_id=task_id,
+                        task_type=task_type,
+                        backend="redis",
+                        priority=priority.value,
+                    )
                     logging.info("Added task %s (type=%s, user=%s) to Redis queue", task_id, task_type, user_id)
                     return task_id
             except Exception as e:
@@ -288,10 +307,10 @@ class TaskQueue:
         except TimeoutError:
             self.tasks.pop(task_id, None)
             emit(
-                "job.rejected",
+                "job.capacity_rejected",
                 level="warning",
                 operation="job.enqueue",
-                task_id=task_id,
+                job_id=task_id,
                 task_type=task_type,
                 reason_code="fallback_queue_timeout",
                 backend="memory",
@@ -299,6 +318,14 @@ class TaskQueue:
             return ""
 
         self._work_available.set()  # Wake idle workers
+        emit(
+            "job.enqueued",
+            operation="job.enqueue",
+            job_id=task_id,
+            task_type=task_type,
+            backend="memory",
+            priority=priority.value,
+        )
         logging.info("Added task %s (type=%s, user=%s) to in-memory queue", task_id, task_type, user_id)
         return task_id
 
@@ -440,6 +467,7 @@ class TaskQueue:
                         emit(
                             "job.started",
                             operation="job.execute",
+                            job_id=task.id,
                             task_type=task.task_type,
                             worker_name=worker_name,
                             retry_count=task.retry_count,
@@ -460,6 +488,7 @@ class TaskQueue:
                                 "job.finished",
                                 level="warning" if business_status == "failed" else "info",
                                 operation="job.execute",
+                                job_id=task.id,
                                 outcome="failed" if business_status == "failed" else "succeeded",
                                 execution_outcome="returned",
                                 business_outcome=business_status or "unknown",
@@ -476,6 +505,7 @@ class TaskQueue:
                                 e,
                                 operation="job.execute",
                                 fields={
+                                    "job_id": task.id,
                                     "task_type": task.task_type,
                                     "retry_count": task.retry_count,
                                 },
@@ -497,6 +527,7 @@ class TaskQueue:
                                 "job.finished",
                                 level="error",
                                 operation="job.execute",
+                                job_id=task.id,
                                 outcome="failed",
                                 execution_outcome="raised",
                                 business_outcome="failed",
@@ -509,6 +540,18 @@ class TaskQueue:
                                     2,
                                 ),
                             )
+                            if retry_disposition == "scheduled":
+                                emit(
+                                    "job.retry_scheduled",
+                                    level="warning",
+                                    operation="job.retry",
+                                    job_id=task.id,
+                                    task_type=task.task_type,
+                                    retry_count=task.retry_count,
+                                    max_retries=task.max_retries,
+                                    delay_seconds=0,
+                                    error_id=error_id,
+                                )
 
             except asyncio.CancelledError:
                 break

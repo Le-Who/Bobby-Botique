@@ -23,7 +23,11 @@ async def test_init(task_queue):
 
 @pytest.mark.asyncio
 async def test_add_task(task_queue):
-    with request_scope(request_id="a" * 32, user_id=1, chat_id=2):
+    captured = []
+    with (
+        request_scope(request_id="a" * 32, user_id=1, chat_id=2),
+        patch("app.queue.emit", side_effect=lambda event, **fields: captured.append((event, fields))),
+    ):
         task_id = await task_queue.add_task(
             user_id=1,
             task_type="test_task",
@@ -39,6 +43,18 @@ async def test_add_task(task_queue):
     # Check task is in tasks dict (queued to fallback since no Redis)
     assert task.user_id == 1
     assert task.observability_context["trace_id"] == "a" * 32
+    assert captured == [
+        (
+            "job.enqueued",
+            {
+                "operation": "job.enqueue",
+                "job_id": task_id,
+                "task_type": "test_task",
+                "backend": "memory",
+                "priority": TaskPriority.HIGH.value,
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -140,8 +156,31 @@ async def test_worker_failure_retry(task_queue):
     assert len(task.error.partition(":")[2]) == 32
     assert task.retry_count == task.max_retries
     terminal = [fields for event, fields in captured if event == "job.finished"]
-    assert terminal
+    starts = [fields for event, fields in captured if event == "job.started"]
+    retries = [fields for event, fields in captured if event == "job.retry_scheduled"]
+    assert len(terminal) == len(starts) == task.max_retries
+    assert len(retries) == task.max_retries - 1
     assert all(fields["outcome"] == "failed" for fields in terminal)
+
+
+@pytest.mark.asyncio
+async def test_queue_capacity_rejection_uses_catalog_event(task_queue):
+    captured = []
+
+    async def force_timeout(awaitable, *, timeout):
+        del timeout
+        awaitable.close()
+        raise TimeoutError
+
+    with (
+        patch("app.queue.asyncio.wait_for", side_effect=force_timeout),
+        patch("app.queue.emit", side_effect=lambda event, **fields: captured.append((event, fields))),
+    ):
+        task_id = await task_queue.add_task(user_id=1, task_type="test_task", data={})
+
+    assert task_id == ""
+    assert captured[0][0] == "job.capacity_rejected"
+    assert captured[0][1]["reason_code"] == "fallback_queue_timeout"
 
 
 @pytest.mark.asyncio

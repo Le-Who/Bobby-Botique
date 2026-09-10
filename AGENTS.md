@@ -108,11 +108,17 @@ because the coding agent uses Astra.
 
 ## Secrets and privacy
 
-Never print or commit `.env`, credentials, real chat contents, birth data, database
-dumps or unredacted logs. Inspect example/config code instead. API keys use Fernet
-derived from `ADMIN_SECRET` (`app/crypto.py`); changing the secret can make existing
-keys unreadable. Telegram Mini App and web/admin guards are separate boundaries.
-Preserve webhook token hashing, optional secret-header validation and deduplication.
+Never print or commit `.env`, full credentials, birth data, database dumps or
+unrestricted log archives. Protected operational logs may include real chat message
+text when it materially improves debugging. They may also include partial provider
+credential identifiers: at minimum the last four characters plus a non-reversible
+fingerprint. Never log a complete key, token, password, authorization header or DSN.
+Treat message-bearing logs as sensitive: keep access restricted, bound each event and
+retention window, and do not copy them into public artifacts, CI output or alerts.
+Inspect example/config code instead of live secret files. API keys use Fernet derived
+from `ADMIN_SECRET` (`app/crypto.py`); changing the secret can make existing keys
+unreadable. Telegram Mini App and web/admin guards are separate boundaries. Preserve
+webhook token hashing, optional secret-header validation and deduplication.
 
 Telegraph publishing is public and opt-in via `TELEGRAPH_PUBLICATION_ENABLED`
 (default false), including Reader cold storage and natal mirrors. Keep that gate.

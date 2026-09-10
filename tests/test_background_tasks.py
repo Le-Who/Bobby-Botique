@@ -2,7 +2,7 @@
 
 import asyncio
 import contextlib
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -110,8 +110,6 @@ async def test_cancel_background_task_noop_when_none():
 async def test_taskmanager_submit_retryable():
     tm = TaskManager()  # fresh instance for test isolation
 
-    from unittest.mock import patch
-
     attempts = 0
     success = False
 
@@ -134,6 +132,53 @@ async def test_taskmanager_submit_retryable():
 
     assert success is True
     assert attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_taskmanager_emits_canonical_job_lifecycle_once_per_execution():
+    tm = TaskManager()
+    captured = []
+    attempts = 0
+
+    async def retry_once():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("retry me")
+
+    async def fast_sleep(_delay):
+        return None
+
+    with (
+        patch("app.utils.background_tasks.emit", side_effect=lambda event, **fields: captured.append((event, fields))),
+        patch("app.utils.background_tasks.asyncio.sleep", side_effect=fast_sleep),
+    ):
+        tm.submit_retryable(retry_once, retry=1, operation="test.retry")
+        await tm.drain(timeout=2.0)
+
+    names = [event for event, _fields in captured]
+    assert names == ["job.enqueued", "job.started", "job.retry_scheduled", "job.finished"]
+    assert len([event for event in names if event == "job.finished"]) == 1
+    assert captured[-1][1]["outcome"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_taskmanager_capacity_rejection_uses_catalog_event():
+    tm = TaskManager()
+    tm.MAX_TASKS = 0
+    captured = []
+
+    async def work():
+        return None
+
+    with patch(
+        "app.utils.background_tasks.emit",
+        side_effect=lambda event, **fields: captured.append((event, fields)),
+    ):
+        task = tm.submit(work(), operation="test.capacity")
+        await task
+
+    assert [event for event, _fields in captured] == ["job.capacity_rejected"]
 
 
 @pytest.mark.asyncio

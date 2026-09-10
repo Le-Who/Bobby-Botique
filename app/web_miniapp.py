@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 from functools import wraps
 from typing import Any
 
-from quart import Blueprint, jsonify, render_template, request
+from quart import Blueprint, g, jsonify, render_template, request, websocket
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
@@ -34,15 +34,65 @@ from app.games import crocodile_runtime as _croc_runtime
 from app.natal.city_catalog import find_city_by_id, search_cities, search_countries
 from app.natal.models import BirthInput, ReportType, TimePrecision
 from app.natal.service import create_natal_report
-from app.observability.events import emit
+from app.observability.context import current_context, request_scope
+from app.observability.events import emit, record_exception
 from app.observability.schema import JsonValue
 from app.observability.workload_events import start_workload_attempt
+from app.request_context import set_user_context
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 
 miniapp_blueprint = Blueprint("miniapp", __name__, template_folder="templates")
+
+
+@miniapp_blueprint.before_websocket
+async def start_websocket_observability() -> None:
+    """Create one server-owned correlation scope for every WebSocket session."""
+    scope = request_scope(operation="websocket.session")
+    scope.__enter__()
+    g.websocket_observability_scope = scope
+    g.websocket_observability_started_ns = time.monotonic_ns()
+    emit(
+        "websocket.session_started",
+        operation="websocket.session",
+        endpoint=websocket.endpoint,
+    )
+
+
+@miniapp_blueprint.teardown_websocket
+async def finish_websocket_observability(error: BaseException | None) -> None:
+    """Emit the session terminal and always restore the previous ContextVar value."""
+    scope = getattr(g, "websocket_observability_scope", None)
+    try:
+        fields: dict[str, JsonValue] = {
+            "endpoint": websocket.endpoint,
+            "duration_ms": round(
+                (time.monotonic_ns() - getattr(g, "websocket_observability_started_ns", time.monotonic_ns()))
+                / 1_000_000,
+                2,
+            ),
+            "authenticated": current_context().user_id is not None,
+        }
+        if error is not None:
+            fields["error_id"] = record_exception(
+                "websocket.session_failed",
+                error,
+                operation="websocket.session",
+                fields={"endpoint": websocket.endpoint},
+            )
+        emit(
+            "websocket.session_finished",
+            level="error" if error is not None else "info",
+            operation="websocket.session",
+            outcome="failed" if error is not None else "closed",
+            **fields,
+        )
+    finally:
+        if scope is not None:
+            scope.__exit__(None, None, None)
+
 
 _INIT_DATA_MAX_AGE_SECONDS = 3600
 _INIT_DATA_MAX_FUTURE_SKEW_SECONDS = 30
@@ -453,6 +503,13 @@ async def _require_authorized_websocket_user(user_id: int) -> bool:
     if not authorized:
         await websocket.close(4003, "Access revoked")
         return False
+    set_user_context(user_id=user_id, chat_id=user_id)
+    emit(
+        "websocket.authenticated",
+        operation="websocket.authenticate",
+        outcome="succeeded",
+        endpoint=websocket.endpoint,
+    )
     return True
 
 

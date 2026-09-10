@@ -234,6 +234,50 @@ class TestOpencodeGoProvider:
         assert events[1].usage.completion == 2
         assert events[1].route.provider.value == "opencode"
 
+    @pytest.mark.asyncio
+    async def test_messages_empty_local_payload_has_validation_terminal_before_http(self):
+        from app.providers.stream_types import (
+            GenerationRequest,
+            PromptRole,
+            PromptTurn,
+            StreamFailed,
+            TextPart,
+        )
+
+        provider = self._make_provider("test-key-9876")
+        request = GenerationRequest(
+            models=("opencode-go/minimax-m2.7",),
+            turns=(PromptTurn(PromptRole.USER, (TextPart("hello"),)),),
+        )
+        client = MagicMock()
+
+        with (
+            patch(
+                "app.providers.opencode.anthropic_messages_payload",
+                new_callable=AsyncMock,
+                return_value={"messages": [], "model": "minimax-m2.7", "max_tokens": 8192},
+            ),
+            patch("app.providers.openrouter._openrouter_http_client", client),
+            patch("app.providers.opencode.record_provider_validation_failure") as validation_terminal,
+        ):
+            events = [
+                event
+                async for event in provider.stream(
+                    request,
+                    model_name="opencode-go/minimax-m2.7",
+                )
+            ]
+
+        assert isinstance(events[0], StreamFailed)
+        validation_terminal.assert_called_once_with(
+            provider="opencode",
+            requested_model="opencode-go/minimax-m2.7",
+            actual_model="opencode-go/minimax-m2.7",
+            api_key="test-key-9876",
+            validation_code="empty_messages",
+        )
+        client.stream.assert_not_called()
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Provider factory routing

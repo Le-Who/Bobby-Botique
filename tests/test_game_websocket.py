@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.observability.context import current_context
 from app.web import quart_app
 from tests.factories import make_crocodile_game, make_valid_init_data
 
@@ -72,9 +73,14 @@ class TestWebSocketEvents:
         url = f"/webapp/game/ws?initData={urllib.parse.quote(init_data)}&game_id=game1"
 
         game = make_crocodile_game(game_id="game1", creator_id=111, guesser_id=222)
+        observed_contexts = []
+
+        async def load_with_context(_game_id):
+            observed_contexts.append(current_context())
+            return game
 
         with (
-            patch("app.games.crocodile.load_game", new_callable=AsyncMock) as load_mock,
+            patch("app.games.crocodile.load_game", new_callable=AsyncMock, side_effect=load_with_context) as load_mock,
             patch("app.games.crocodile.get_game_history") as hist_mock,
         ):
             load_mock.return_value = game
@@ -98,6 +104,13 @@ class TestWebSocketEvents:
                 assert "seq" in hist
 
         authorized_websocket_user.assert_awaited_once_with(222)
+        assert load_mock.await_count == 1
+        assert observed_contexts[0].user_id == 222
+        assert observed_contexts[0].chat_id == 222
+        assert observed_contexts[0].request_id
+        assert observed_contexts[0].trace_id == observed_contexts[0].request_id
+        assert current_context().request_id is None
+        assert current_context().user_id is None
 
     async def test_hint_messaging(self, test_client, mock_bot_token):
         """WS-03: Hint request loop."""

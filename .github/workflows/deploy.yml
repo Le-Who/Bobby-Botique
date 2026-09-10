@@ -15,7 +15,7 @@ env:
   IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
   APP_ENV: vps_testai
   LOG_FORMAT: json
-  LOG_CONTENT_MODE: metadata
+  LOG_CONTENT_MODE: full
 
 jobs:
   classify-dependency-scope:

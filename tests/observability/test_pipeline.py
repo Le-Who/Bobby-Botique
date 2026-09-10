@@ -176,6 +176,49 @@ def test_untrusted_extra_cannot_override_envelope_identity():
     assert set(event["reserved_field_collisions"]) == {"event_id", "request_id", "user_id"}
 
 
+def test_unknown_extra_objects_are_never_stringified_before_sanitizing():
+    event = _run_probe(
+        """
+        import logging
+        from app.utils.logging_config import setup_detailed_logging
+
+        class Dangerous:
+            def __str__(self):
+                raise AssertionError("__str__ must not run")
+
+            def __repr__(self):
+                raise AssertionError("__repr__ must not run")
+
+        setup_detailed_logging(enable_structured_logging=True)
+        logging.getLogger("audit.objects").info(
+            "safe conversion",
+            extra={"dangerous": Dangerous(), "nested": [Dangerous()]},
+        )
+        """
+    )[-1]
+
+    assert event["dangerous"] == "<Dangerous>"
+    assert event["nested"] == ["<Dangerous>"]
+
+
+def test_logging_bootstrap_registers_bot_token_before_first_application_event():
+    token = "telegram-token-with-unusual-format$short"
+    event = _run_probe(
+        f"""
+        import logging
+        import os
+        from app.utils.logging_config import setup_detailed_logging
+
+        os.environ["TELEGRAM_BOT_TOKEN"] = {token!r}
+        setup_detailed_logging(enable_structured_logging=True)
+        logging.error("bootstrap echoed %s", os.environ["TELEGRAM_BOT_TOKEN"])
+        """
+    )[-1]
+
+    assert token not in json.dumps(event)
+    assert "[redacted]" in event["message"]
+
+
 def test_event_budget_keeps_json_valid_and_root_cause_fields(monkeypatch):
     monkeypatch.setenv("LOG_EVENT_MAX_BYTES", "2048")
     event = _run_probe(

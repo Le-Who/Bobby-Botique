@@ -14,7 +14,6 @@ from app.observability.redaction import sanitize_event
 from app.observability.schema import (
     JsonValue,
     exception_from_log_value,
-    json_compatible_mapping,
     repository_path,
     serialize_exception,
     utc_timestamp,
@@ -110,11 +109,14 @@ def _source(record: logging.LogRecord | None, fields: Mapping[str, Any]) -> dict
             "function": record.funcName,
             "line": record.lineno,
         }
-    pathname = fields.get("pathname") or fields.get("filename") or "unknown"
+    pathname_value = fields.get("pathname") or fields.get("filename")
+    pathname = pathname_value if isinstance(pathname_value, str) and pathname_value else "unknown"
+    function_value = fields.get("func_name")
+    function = function_value if isinstance(function_value, str) and function_value else "unknown"
     line = fields.get("lineno")
     return {
-        "file": repository_path(str(pathname)),
-        "function": str(fields.get("func_name") or "unknown"),
+        "file": repository_path(pathname),
+        "function": function,
         "line": line if isinstance(line, int) else 0,
     }
 
@@ -124,7 +126,7 @@ def normalize_event(logger: object, method_name: str, event_dict: MutableMapping
     record_value = event_dict.get("_record")
     record = record_value if isinstance(record_value, logging.LogRecord) else None
     message_value = event_dict.get("event", "")
-    message = message_value if isinstance(message_value, str) else str(message_value)
+    message = message_value if isinstance(message_value, str) else f"<{type(message_value).__name__}>"
     event_name = event_dict.get("_event_name")
     if not isinstance(event_name, str) or not event_name:
         event_name = "legacy.log"
@@ -148,14 +150,13 @@ def normalize_event(logger: object, method_name: str, event_dict: MutableMapping
         for key, value in event_dict.items()
         if key not in _RESERVED_FIELDS and key not in _PROCESSOR_FIELDS and not key.startswith("_")
     }
-    normalized_extras = json_compatible_mapping(extras)
     collisions = sorted(
         key
         for key in event_dict
         if key in _RESERVED_FIELDS and key not in {"event", "message", "logger", "level", "timestamp", "exception"}
     )
 
-    envelope: dict[str, JsonValue] = {
+    envelope: dict[str, Any] = {
         "schema_version": 1,
         "timestamp": timestamp,
         "level": level,
@@ -179,13 +180,13 @@ def normalize_event(logger: object, method_name: str, event_dict: MutableMapping
         "execution_id": trace["execution_id"],
         "operation": trace["operation"],
         "client_request_id": trace["client_request_id"],
-        **normalized_extras,
+        **extras,
     }
     if collisions:
         collision_values: list[JsonValue] = list(collisions)
         envelope["reserved_field_collisions"] = collision_values
     if isinstance(exception_snapshot, Mapping):
-        envelope["exception"] = json_compatible_mapping(exception_snapshot)
+        envelope["exception"] = exception_snapshot
     elif error is not None:
         envelope["exception"] = serialize_exception(error)
     return sanitize_event(envelope)

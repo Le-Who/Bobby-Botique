@@ -31,6 +31,7 @@ class BoundedLogWriter:
         max_bytes: int = 8 * 1024 * 1024,
         auto_start: bool = True,
         loss_summary_factory: Callable[[Mapping[str, object]], bytes] | None = None,
+        recovery_summary_factory: Callable[[Mapping[str, object]], bytes] | None = None,
         loss_summary_interval: float = 30.0,
     ) -> None:
         if max_events <= 0 or max_bytes <= 0 or loss_summary_interval <= 0:
@@ -47,10 +48,13 @@ class BoundedLogWriter:
         self._pending_drops: Counter[str] = Counter()
         self._pending_drop_reasons: Counter[str] = Counter()
         self._loss_summary_factory = loss_summary_factory
+        self._recovery_summary_factory = recovery_summary_factory
         self._loss_summary_interval = loss_summary_interval
         self._loss_window_started: float | None = None
         self._loss_summary_deadline: float | None = None
         self._write_failures = 0
+        self._pending_write_failures = 0
+        self._write_failure_window_started: float | None = None
         self._accepting = True
         self._condition = threading.Condition()
         self._thread: threading.Thread | None = None
@@ -142,7 +146,9 @@ class BoundedLogWriter:
         """Stop accepting new events and drain accepted events within ``timeout``."""
         with self._condition:
             if self._thread is None and (
-                self._queue or (self._pending_drops and self._loss_summary_factory is not None)
+                self._queue
+                or (self._pending_drops and self._loss_summary_factory is not None)
+                or (self._pending_write_failures and self._recovery_summary_factory is not None)
             ):
                 self.start()
             self._accepting = False
@@ -192,18 +198,64 @@ class BoundedLogWriter:
         self._loss_summary_deadline = None
         return snapshot
 
+    def _record_write_failure(self) -> None:
+        with self._condition:
+            self._write_failures += 1
+            self._pending_write_failures += 1
+            if self._write_failure_window_started is None:
+                self._write_failure_window_started = time.time()
+
+    def _take_recovery_summary(self) -> Mapping[str, object] | None:
+        with self._condition:
+            if self._pending_write_failures <= 0 or self._recovery_summary_factory is None:
+                return None
+            snapshot: dict[str, object] = {
+                "write_failures": self._pending_write_failures,
+                "events_delivery_uncertain": self._pending_write_failures,
+                "window_started_epoch": self._write_failure_window_started,
+                "window_ended_epoch": time.time(),
+                "recovered": True,
+            }
+            self._pending_write_failures = 0
+            self._write_failure_window_started = None
+            return snapshot
+
+    def _restore_recovery_summary(self, snapshot: Mapping[str, object]) -> None:
+        prior = snapshot.get("write_failures")
+        prior_count = prior if isinstance(prior, int) else 0
+        with self._condition:
+            self._write_failures += 1
+            self._pending_write_failures += prior_count + 1
+            started = snapshot.get("window_started_epoch")
+            if self._write_failure_window_started is None:
+                self._write_failure_window_started = started if isinstance(started, float) else time.time()
+
+    def _emit_recovery_summary(self) -> None:
+        snapshot = self._take_recovery_summary()
+        if snapshot is None:
+            return
+        assert self._recovery_summary_factory is not None
+        try:
+            payload = self._recovery_summary_factory(snapshot)
+            self._stream.write(payload.decode("utf-8") + "\n")
+            self._stream.flush()
+        except Exception:
+            self._restore_recovery_summary(snapshot)
+
     def _write_payload(self, payload: bytes) -> None:
         try:
             self._stream.write(payload.decode("utf-8") + "\n")
             self._stream.flush()
         except Exception:
-            with self._condition:
-                self._write_failures += 1
+            self._record_write_failure()
+            return
+        self._emit_recovery_summary()
 
     def _run(self) -> None:
         while True:
             payload: bytes | None = None
             summary: Mapping[str, object] | None = None
+            should_stop = False
             with self._condition:
                 while payload is None and summary is None:
                     if self._queue:
@@ -216,12 +268,17 @@ class BoundedLogWriter:
                     if summary is not None:
                         break
                     if not self._accepting:
-                        return
+                        should_stop = True
+                        break
 
                     wait_timeout = None
                     if self._loss_summary_deadline is not None:
                         wait_timeout = max(0.0, self._loss_summary_deadline - time.monotonic())
                     self._condition.wait(timeout=wait_timeout)
+
+            if should_stop:
+                self._emit_recovery_summary()
+                return
 
             if summary is not None:
                 assert self._loss_summary_factory is not None
@@ -248,5 +305,24 @@ class BoundedQueueHandler(logging.Handler):
         try:
             payload = self.format(record).encode("utf-8")
             self.writer.submit(payload, levelno=record.levelno)
-        except Exception:
-            self.handleError(record)
+        except Exception as error:
+            try:
+                from app.observability.pipeline import standalone_event_bytes
+
+                payload = standalone_event_bytes(
+                    "logging.format_failed",
+                    level="error",
+                    message="A log record formatter failed; raw record content was discarded",
+                    fields={
+                        "operation": "logging.format",
+                        "error_type": type(error).__name__,
+                        "record_logger": record.name if isinstance(record.name, str) else "unknown",
+                        "record_level": record.levelname if isinstance(record.levelname, str) else "unknown",
+                        "source_line": record.lineno if isinstance(record.lineno, int) else 0,
+                    },
+                )
+                self.writer.submit(payload, levelno=logging.ERROR)
+            except Exception:
+                # Deliberately avoid logging.Handler.handleError(record): it may
+                # print the raw message, args and credentials directly to stderr.
+                return

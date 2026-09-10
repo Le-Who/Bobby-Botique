@@ -15,7 +15,7 @@ services:
     environment:
       - PORT=10000
       - LOG_FORMAT=json
-      - LOG_CONTENT_MODE=metadata
+      - LOG_CONTENT_MODE=full
       - APP_ENV=local-compose
       - ENABLE_PERSISTENT_QUEUE=true
     logging:

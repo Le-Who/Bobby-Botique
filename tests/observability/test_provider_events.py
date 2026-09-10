@@ -7,10 +7,15 @@ import pytest
 from app.errors import ErrorCode
 from app.providers.stream_types import (
     FailurePhase,
+    FinishReason,
+    GroundingReport,
     KeyDisposition,
     RetryDisposition,
+    RouteUsed,
+    StreamCompleted,
     StreamFailed,
     TextDelta,
+    TokenUsage,
 )
 
 
@@ -164,3 +169,42 @@ async def test_observed_stream_logs_race_loser_cancellation(monkeypatch):
     assert captured[-1][0] == "provider.attempt_finished"
     assert captured[-1][1]["outcome"] == "cancelled"
     assert captured[-1][1]["cancellation_reason"] == "race_loser_or_parent_cancelled"
+
+
+@pytest.mark.asyncio
+async def test_empty_completion_records_failed_attempt_terminal(monkeypatch):
+    from app.observability import provider_events
+    from app.providers.stream_types import ProviderKind
+
+    captured: list[tuple[str, dict]] = []
+    monkeypatch.setattr(provider_events, "emit", lambda event, **fields: captured.append((event, fields)))
+
+    async def source():
+        yield StreamCompleted(
+            finish_reason=FinishReason.from_raw("stop"),
+            usage=TokenUsage(),
+            grounding=GroundingReport(),
+            route=RouteUsed(
+                provider=ProviderKind.OPENROUTER,
+                requested_model="requested",
+                actual_model="actual",
+            ),
+        )
+
+    observed = [
+        event
+        async for event in provider_events.observe_provider_stream(
+            source(),
+            provider="openrouter",
+            requested_model="requested",
+            actual_model="actual",
+            api_key="provider-key-1234",
+        )
+    ]
+
+    assert isinstance(observed[0], StreamCompleted)
+    finished = [fields for name, fields in captured if name == "provider.attempt_finished"]
+    assert len(finished) == 1
+    assert finished[0]["outcome"] == "failed"
+    assert finished[0]["reason_code"] == ErrorCode.EMPTY_RESPONSE.value
+    assert finished[0]["failure_phase"] == FailurePhase.BEFORE_TEXT.value

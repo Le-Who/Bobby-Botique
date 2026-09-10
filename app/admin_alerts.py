@@ -7,9 +7,9 @@ with rate limiting to prevent spam during cascading failures.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
-import traceback
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -17,6 +17,15 @@ if TYPE_CHECKING:
     from telegram.ext import Application
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_alert_message(message: str) -> tuple[str, str]:
+    from app.observability.redaction import sanitize_event
+
+    sanitized = sanitize_event({"message": message})["message"]
+    safe_message = sanitized if isinstance(sanitized, str) else "[unavailable]"
+    fingerprint = hashlib.sha256(message.encode("utf-8")).hexdigest()[:16]
+    return safe_message, fingerprint
 
 
 class AlertSeverity(Enum):
@@ -73,6 +82,7 @@ async def alert_admin(
     message: str,
     severity: AlertSeverity = AlertSeverity.CRITICAL,
     exc: BaseException | None = None,
+    error_id: str | None = None,
 ) -> None:
     """Send a rate-limited alert to the bot admin via Telegram.
 
@@ -80,10 +90,15 @@ async def alert_admin(
         app: The PTB Application instance (needed for bot.send_message).
         message: Human-readable description of the issue.
         severity: Alert severity level.
-        exc: Optional exception to include traceback for.
+        exc: Optional exception to summarize without exposing its raw message.
+        error_id: Correlation identifier from the primary structured incident.
     """
+    safe_message, alert_fingerprint = _safe_alert_message(message)
     if _is_rate_limited():
-        logger.debug("Admin alert rate-limited, dropping: %s", message)
+        logger.debug(
+            "Admin alert rate-limited",
+            extra={"_event_name": "alert.rate_limited", "alert_fingerprint": alert_fingerprint},
+        )
         return
 
     from app.config import settings
@@ -96,15 +111,28 @@ async def alert_admin(
     parts = [
         f"{severity.value} *{severity.name}*",
         "",
-        message,
+        safe_message,
+        f"Alert fingerprint: `{alert_fingerprint}`",
     ]
 
     if exc:
-        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-        # Truncate to avoid Telegram 4096-char limit
-        if len(tb) > 2000:
-            tb = tb[:1000] + "\n...\n" + tb[-800:]
-        parts.append(f"\n```\n{tb}```")
+        from app.observability.schema import serialize_exception
+
+        snapshot = serialize_exception(exc)
+        parts.append(f"Exception: `{snapshot['type']}`")
+        fingerprint = snapshot.get("message_fingerprint")
+        if isinstance(fingerprint, str):
+            parts.append(f"Exception fingerprint: `{fingerprint}`")
+        stack = snapshot.get("stack")
+        if isinstance(stack, list) and stack:
+            locations = []
+            for frame in stack[-8:]:
+                if isinstance(frame, dict):
+                    locations.append(f"{frame.get('file')}:{frame.get('line')}:{frame.get('function')}")
+            if locations:
+                parts.append("Stack locations:\n```\n" + "\n".join(locations) + "\n```")
+    if error_id:
+        parts.append(f"Error ID: `{error_id}`")
 
     text = "\n".join(parts)
     # Hard cap at Telegram limit
@@ -121,10 +149,21 @@ async def alert_admin(
             parse_mode=fmt_pm,
         )
         _record_alert()
-        logger.info("Admin alert sent: %s", message[:80])
-    except Exception as send_err:
+        logger.info(
+            "Admin alert sent",
+            extra={
+                "_event_name": "alert.sent",
+                "alert_fingerprint": alert_fingerprint,
+                "error_id": error_id,
+            },
+        )
+    except Exception:
         # Never let alerting crash the main flow
-        logger.warning("Failed to send admin alert: %s", send_err)
+        logger.warning(
+            "Failed to send admin alert",
+            extra={"_event_name": "alert.delivery_failed", "alert_fingerprint": alert_fingerprint},
+            exc_info=True,
+        )
 
 
 async def alert_admin_shutdown(app: Application, reason: str = "normal") -> None:
@@ -190,8 +229,12 @@ async def alert_admin_raw(
     (e.g. migration drift detected in database.py during init_db()).
     Falls back to logging if the bot singleton is not yet registered.
     """
+    safe_message, alert_fingerprint = _safe_alert_message(message)
     if _is_rate_limited():
-        logger.debug("Admin alert rate-limited, dropping: %s", message)
+        logger.debug(
+            "Admin alert rate-limited",
+            extra={"_event_name": "alert.rate_limited", "alert_fingerprint": alert_fingerprint},
+        )
         return
 
     from app.config import settings
@@ -200,7 +243,7 @@ async def alert_admin_raw(
     if not admin_id:
         return
 
-    parts = [f"{severity.value} *{severity.name}*", "", message]
+    parts = [f"{severity.value} *{severity.name}*", "", safe_message, f"Alert fingerprint: `{alert_fingerprint}`"]
     text = "\n".join(parts)
     if len(text) > 4000:
         text = text[:3990] + "\n…"
@@ -210,7 +253,10 @@ async def alert_admin_raw(
 
         bot = get_bot()
         if bot is None:
-            logger.warning("alert_admin_raw: bot not yet registered — logging only: %s", message)
+            logger.warning(
+                "alert_admin_raw: bot not yet registered",
+                extra={"_event_name": "alert.bot_unavailable", "alert_fingerprint": alert_fingerprint},
+            )
             return
 
         from app.utils.formatting import TelegramFormatter
@@ -218,9 +264,16 @@ async def alert_admin_raw(
         fmt_text, fmt_pm = TelegramFormatter.format_text(text)
         await bot.send_message(chat_id=admin_id, text=fmt_text, parse_mode=fmt_pm)
         _record_alert()
-        logger.info("Admin alert (raw) sent: %s", message[:80])
-    except Exception as send_err:
-        logger.warning("Failed to send raw admin alert: %s", send_err)
+        logger.info(
+            "Admin alert (raw) sent",
+            extra={"_event_name": "alert.sent", "alert_fingerprint": alert_fingerprint},
+        )
+    except Exception:
+        logger.warning(
+            "Failed to send raw admin alert",
+            extra={"_event_name": "alert.delivery_failed", "alert_fingerprint": alert_fingerprint},
+            exc_info=True,
+        )
 
 
 async def alert_admin_unauthorized_user(
@@ -249,9 +302,8 @@ async def alert_admin_unauthorized_user(
     name = html.escape(first_name or "Unknown")
     user_handle = f"@{html.escape(username)}" if username else "No username"
     lang = html.escape(language_code or "unknown")
-    text_preview = html.escape((message_text or "")[:100])
-    if message_text and len(message_text) > 100:
-        text_preview += "..."
+    content = message_text or ""
+    content_fingerprint = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
     message = (
         f"🚨 <b>Попытка доступа от неавторизованного пользователя</b>\n\n"
@@ -260,7 +312,8 @@ async def alert_admin_unauthorized_user(
         f"<b>Username:</b> {user_handle}\n"
         f"<b>Язык:</b> {lang}\n"
         f"<b>Тип чата:</b> {chat_type}\n\n"
-        f"<b>Сообщение:</b>\n<i>{text_preview}</i>"
+        f"<b>Длина сообщения:</b> {len(content)}\n"
+        f"<b>Message fingerprint:</b> <code>{content_fingerprint}</code>"
     )
 
     # Note: url="tg://user?id=USER_ID" opens the user's profile in Telegram clients
@@ -285,5 +338,13 @@ async def alert_admin_unauthorized_user(
         )
         _record_unauthorized_alert(user_id)
         logger.info("Admin alert sent for unauthorized user %s", user_id)
-    except Exception as send_err:
-        logger.warning("Failed to send unauthorized user alert: %s", send_err)
+    except Exception:
+        logger.warning(
+            "Failed to send unauthorized user alert",
+            extra={
+                "_event_name": "alert.delivery_failed",
+                "actor_user_id": user_id,
+                "content_fingerprint": content_fingerprint,
+            },
+            exc_info=True,
+        )

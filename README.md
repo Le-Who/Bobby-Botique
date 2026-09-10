@@ -414,9 +414,11 @@ The default is one correlated UTF-8 NDJSON stream with structured exceptions,
 request/trace/job IDs, release metadata and bounded non-blocking output. Every
 actually selected provider key is represented by its last four characters plus
 a fingerprint on both request and terminal/error events; full credentials are
-always scrubbed. Content defaults to metadata and a bounded scrubbed preview is
-an explicit `LOG_CONTENT_MODE=preview` incident setting, not a side effect of
-`DEBUG`.
+always scrubbed. Protected operational logs default to bounded scrubbed message
+text (`LOG_CONTENT_MODE=full`, up to 2048 characters) plus size/fingerprint
+metadata. Operators can explicitly switch to `metadata`, while `preview` remains
+a selector-scoped diagnostic mode. Message-bearing rows are restricted evidence,
+not CI/public/alert payloads; `DEBUG` never relaxes credential rules.
 
 Use canonical `LOG_FORMAT=json|text`; `STRUCTURED_LOGGING` and `LOG_PRETTY` are
 compatibility aliases. See the [operator/agent runbook](docs/logging.md),

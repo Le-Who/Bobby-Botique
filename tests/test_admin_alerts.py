@@ -11,6 +11,7 @@ from app.admin_alerts import (
     _is_rate_limited,
     _record_alert,
     alert_admin,
+    alert_admin_unauthorized_user,
 )
 
 
@@ -100,6 +101,52 @@ class TestAlertAdmin:
         with patch("app.config.settings", MagicMock(ADMIN_ID=12345)):
             # Should not raise
             await alert_admin(mock_app, "Alert with exception")
+
+    @pytest.mark.asyncio
+    async def test_exception_alert_uses_safe_incident_summary(self):
+        token = "987654321:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi_12"
+        mock_app = MagicMock()
+        mock_app.bot = AsyncMock()
+
+        try:
+            raise ValueError(f"provider echoed {token}")
+        except ValueError as error:
+            with patch("app.config.settings", MagicMock(ADMIN_ID=12345)):
+                await alert_admin(
+                    mock_app,
+                    f"Provider request failed: {token}",
+                    severity=AlertSeverity.CRITICAL,
+                    exc=error,
+                    error_id="e" * 32,
+                )
+
+        text = mock_app.bot.send_message.await_args.kwargs["text"]
+        assert token not in text
+        assert "ValueError" in text
+        assert "e" * 32 in text
+        assert "fingerprint" in text.casefold()
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_alert_uses_message_fingerprint_not_message_content(self):
+        mock_app = MagicMock()
+        mock_app.bot = AsyncMock()
+        message = "real unauthorized message must stay in operational logs only"
+
+        with patch("app.config.settings", MagicMock(ADMIN_ID=12345)):
+            await alert_admin_unauthorized_user(
+                mock_app,
+                user_id=998877,
+                username="outsider",
+                first_name="Out",
+                language_code="ru",
+                chat_type="private",
+                message_text=message,
+            )
+
+        text = mock_app.bot.send_message.await_args.kwargs["text"]
+        assert message not in text
+        assert "fingerprint" in text.casefold()
+        assert str(len(message)) in text
 
 
 # ── AlertSeverity ────────────────────────────────────────────────────────────

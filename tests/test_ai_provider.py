@@ -382,6 +382,40 @@ class TestProviders:
         assert events[1].usage.total == 5
         assert client.stream.call_args.kwargs["timeout"] == 45.0
 
+    @pytest.mark.asyncio
+    async def test_openrouter_empty_local_payload_has_validation_terminal_before_http(self):
+        from app.providers.stream_types import (
+            GenerationRequest,
+            PromptRole,
+            PromptTurn,
+            StreamFailed,
+            TextPart,
+        )
+
+        request = GenerationRequest(
+            models=("openai/gpt-4o",),
+            turns=(PromptTurn(PromptRole.USER, (TextPart("hello"),)),),
+        )
+        provider = OpenRouterProvider("test-key-9876")
+        client = MagicMock()
+
+        with (
+            patch("app.providers.openrouter.openai_messages", new_callable=AsyncMock, return_value=[]),
+            patch("app.providers.openrouter._openrouter_http_client", client),
+            patch("app.providers.openrouter.record_provider_validation_failure") as validation_terminal,
+        ):
+            events = [event async for event in provider.stream(request, model_name="openai/gpt-4o")]
+
+        assert isinstance(events[0], StreamFailed)
+        validation_terminal.assert_called_once_with(
+            provider="openrouter",
+            requested_model="openai/gpt-4o",
+            actual_model="openai/gpt-4o",
+            api_key="test-key-9876",
+            validation_code="empty_messages",
+        )
+        client.stream.assert_not_called()
+
 
 class TestGetAIResponse:
     """Tests for unified get_ai_response function."""

@@ -208,10 +208,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     "user_message",
                     message_text,
                     sensitive=(
-                        not is_auth_ok
-                        or effective_msg.chat.type != "private"
-                        or message_type != "text"
-                        or message_text.startswith(("/addkey", "/keys"))
+                        not is_auth_ok or message_type != "text" or message_text.startswith(("/addkey", "/keys"))
                     ),
                     subsystem="telegram_message",
                 ),
@@ -709,7 +706,14 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     new_text = edited_msg.text.strip()
-    logging.info("edited_message from user %s: %r", user_id, new_text[:80])
+    logging.info(
+        "Edited Telegram message received",
+        extra={
+            "_event_name": "telegram.message_edited",
+            "message_type": "text",
+            **content_fields("user_message", new_text, subsystem="telegram_message"),
+        },
+    )
 
     # ── Cancel any inflight task ──────────────────────────────────────────────
     was_cancelled = state.cancel_active_task(user_id)

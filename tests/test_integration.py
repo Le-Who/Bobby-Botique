@@ -124,7 +124,7 @@ class TestAdminAlerts:
 
     @pytest.mark.asyncio
     async def test_alert_admin_includes_traceback(self):
-        """alert_admin with exc should include traceback in message."""
+        """alert_admin includes safe exception evidence without its raw message."""
         from app.admin_alerts import AlertSeverity, _alert_timestamps, alert_admin
 
         _alert_timestamps.clear()
@@ -140,7 +140,9 @@ class TestAdminAlerts:
 
         call_kwargs = mock_app.bot.send_message.call_args[1]
         assert "ValueError" in call_kwargs["text"]
-        assert "Test exception for alert" in call_kwargs["text"]
+        assert "Exception fingerprint" in call_kwargs["text"]
+        assert "test_alert_admin_includes_traceback" in call_kwargs["text"]
+        assert "Test exception for alert" not in call_kwargs["text"]
 
         _alert_timestamps.clear()
 

@@ -5,12 +5,12 @@ from datetime import UTC, datetime, timedelta
 from app.observability.config import LoggingSettings
 
 
-def test_safe_defaults_do_not_enable_content_or_diagnostics():
+def test_operational_defaults_include_bounded_content_without_enabling_diagnostics():
     config = LoggingSettings.from_mapping({})
 
     assert config.format == "json"
     assert config.level_name == "INFO"
-    assert config.content_mode == "metadata"
+    assert config.content_mode == "full"
     assert config.event_max_bytes == 32_768
     assert config.queue_max_events == 4_096
     assert config.queue_max_bytes == 8_388_608
@@ -100,4 +100,10 @@ def test_debug_level_does_not_implicitly_enable_content_preview():
     config = LoggingSettings.from_mapping({"LOG_LEVEL": "DEBUG"})
 
     assert config.level_name == "DEBUG"
+    assert config.content_mode == "full"
+
+
+def test_metadata_mode_remains_an_explicit_operator_override():
+    config = LoggingSettings.from_mapping({"LOG_CONTENT_MODE": "metadata"})
+
     assert config.content_mode == "metadata"
