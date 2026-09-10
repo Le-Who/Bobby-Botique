@@ -66,8 +66,8 @@ _UNAUTHORIZED_COOLDOWN_S = 600.0  # 10 minutes per user
 def _can_alert_unauthorized(user_id: int) -> bool:
     """Return True if enough time has passed since last alert for this user."""
     now = time.monotonic()
-    last = _unauthorized_last_alerted.get(user_id, 0.0)
-    return (now - last) >= _UNAUTHORIZED_COOLDOWN_S
+    last = _unauthorized_last_alerted.get(user_id)
+    return last is None or (now - last) >= _UNAUTHORIZED_COOLDOWN_S
 
 
 def _record_unauthorized_alert(user_id: int) -> None:

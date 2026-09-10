@@ -8,6 +8,7 @@ import pytest
 from app.admin_alerts import (
     AlertSeverity,
     _alert_timestamps,
+    _can_alert_unauthorized,
     _is_rate_limited,
     _record_alert,
     _unauthorized_last_alerted,
@@ -50,6 +51,10 @@ class TestRateLimiter:
     def test_record_alert_adds_timestamp(self):
         _record_alert()
         assert len(_alert_timestamps) == 1
+
+    def test_first_unauthorized_alert_is_allowed_during_process_startup(self):
+        with patch("app.admin_alerts.time.monotonic", return_value=1.0):
+            assert _can_alert_unauthorized(998877) is True
 
 
 # ── alert_admin ──────────────────────────────────────────────────────────────

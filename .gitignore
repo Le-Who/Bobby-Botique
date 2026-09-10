@@ -61,6 +61,7 @@ test_size.py
 test_stream.py
 load_test.py
 benchmark*.py
+!scripts/benchmark_logging.py
 _patch_*.py
 _test_*.py
 scratch*.py
