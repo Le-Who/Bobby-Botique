@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -46,10 +47,7 @@ def test_benchmark_script_runs_with_synthetic_input_only():
     root = Path(__file__).resolve().parents[2]
     completed = subprocess.run(
         [
-            "uv",
-            "run",
-            "--locked",
-            "python",
+            sys.executable,
             "scripts/benchmark_logging.py",
             "--events",
             "100",

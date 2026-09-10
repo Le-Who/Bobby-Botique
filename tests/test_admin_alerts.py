@@ -10,6 +10,7 @@ from app.admin_alerts import (
     _alert_timestamps,
     _is_rate_limited,
     _record_alert,
+    _unauthorized_last_alerted,
     alert_admin,
     alert_admin_unauthorized_user,
 )
@@ -19,8 +20,10 @@ from app.admin_alerts import (
 def _clean_alert_state():
     """Reset rate limiter state for each test."""
     _alert_timestamps.clear()
+    _unauthorized_last_alerted.clear()
     yield
     _alert_timestamps.clear()
+    _unauthorized_last_alerted.clear()
 
 
 # ── Rate limiter ─────────────────────────────────────────────────────────────
