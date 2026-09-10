@@ -308,6 +308,7 @@ class StreamFailed:
     key: KeyDisposition
     diagnostic: str
     route: RouteUsed | None = None
+    error_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.diagnostic, str) or not self.diagnostic.strip():

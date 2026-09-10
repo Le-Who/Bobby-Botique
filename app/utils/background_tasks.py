@@ -9,8 +9,13 @@ import asyncio
 import contextlib
 import contextvars
 import logging
+import time
+import uuid
 from collections.abc import Callable, Coroutine
 from typing import Any
+
+from app.observability.context import export_job_context, replace_current_context, restore_job_context
+from app.observability.events import emit, record_exception
 
 
 def start_background_task(
@@ -61,20 +66,41 @@ class TaskManager:
         """Register a callback to be invoked when a background task exhausts all retries."""
         self._error_callback = callback
 
-    def submit(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
+    def submit(
+        self,
+        coro: Coroutine[Any, Any, Any],
+        *,
+        operation: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> asyncio.Task:
         """Run a background task (fire-and-forget, no retries)."""
-        return self._schedule(coro, coro_factory=None, retry=0)
+        return self._schedule(
+            coro,
+            coro_factory=None,
+            retry=0,
+            operation=operation,
+            metadata=metadata,
+        )
 
     def submit_retryable(
         self,
         factory: Callable[[], Coroutine[Any, Any, Any]],
         retry: int = 3,
+        *,
+        operation: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> asyncio.Task:
         """Run a background task with retry capabilities.
 
         The factory must return a fresh coroutine on each call.
         """
-        return self._schedule(None, coro_factory=factory, retry=retry)
+        return self._schedule(
+            None,
+            coro_factory=factory,
+            retry=retry,
+            operation=operation,
+            metadata=metadata,
+        )
 
     def _schedule(
         self,
@@ -82,6 +108,8 @@ class TaskManager:
         *,
         coro_factory: Callable[[], Coroutine[Any, Any, Any]] | None,
         retry: int,
+        operation: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> asyncio.Task:
         # ── Audit Fix 2: guard against bare-coroutine + retry > 0 ────────
         if retry > 0 and coro_factory is None:
@@ -92,13 +120,20 @@ class TaskManager:
 
         # Determine task name for logging
         name_source = coro_factory if coro_factory else coro
-        coro_name = getattr(name_source, "__name__", getattr(name_source, "__qualname__", str(name_source)))
+        coro_name = getattr(name_source, "__name__", getattr(name_source, "__qualname__", type(name_source).__name__))
+        operation_name = operation or f"background.{coro_name}"
+        task_id = uuid.uuid4().hex
+        portable_context = export_job_context()
+        safe_metadata = dict(metadata or {})
 
         if len(self._tasks) >= self.MAX_TASKS:
-            logging.warning(
-                "TaskManager at capacity (%d). Rejecting task %s",
-                self.MAX_TASKS,
-                coro_name,
+            emit(
+                "background_task.rejected",
+                level="warning",
+                operation=operation_name,
+                task_name=coro_name,
+                reason_code="capacity",
+                capacity=self.MAX_TASKS,
             )
 
             if coro is not None:
@@ -114,38 +149,97 @@ class TaskManager:
         ctx = contextvars.copy_context()
 
         async def _wrapper():
-            attempts = 0
-            while attempts <= retry:
-                try:
-                    target = coro_factory() if coro_factory else coro
-                    # Note: bare coroutines can only be awaited once, but retry is 0 for them.
-                    await target  # type: ignore[misc]
-                    return
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    attempts += 1
-                    logging.error(
-                        "Background task %s failed (attempt %d/%d): %s",
-                        coro_name,
-                        attempts,
-                        retry + 1,
-                        e,
-                        exc_info=True,
-                    )
-                    if attempts <= retry:
-                        await asyncio.sleep(2**attempts)  # Exponential backoff
-                    else:
-                        if self._error_callback:
-                            try:
-                                res = self._error_callback(e, f"Task {coro_name}")
-                                # Execute asynchronously if it's a coroutine
-                                if asyncio.iscoroutine(res):
-                                    cb_task = asyncio.create_task(res)
-                                    self._tasks.add(cb_task)
-                                    cb_task.add_done_callback(self._tasks.discard)
-                            except Exception as cb_err:
-                                logging.error("TaskManager error callback failed: %s", cb_err)
+            execution_id = uuid.uuid4().hex
+            started_ns = time.monotonic_ns()
+            with restore_job_context(portable_context, task_id=task_id, execution_id=execution_id):
+                replace_current_context(operation=operation_name)
+                emit(
+                    "background_task.started",
+                    operation=operation_name,
+                    task_name=coro_name,
+                    max_attempts=retry + 1,
+                    **safe_metadata,
+                )
+                attempts = 0
+                while attempts <= retry:
+                    try:
+                        target = coro_factory() if coro_factory else coro
+                        # Note: bare coroutines can only be awaited once, but retry is 0 for them.
+                        await target  # type: ignore[misc]
+                        emit(
+                            "background_task.finished",
+                            operation=operation_name,
+                            task_name=coro_name,
+                            outcome="completed",
+                            attempts=attempts + 1,
+                            duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+                            **safe_metadata,
+                        )
+                        return
+                    except asyncio.CancelledError:
+                        emit(
+                            "background_task.finished",
+                            level="warning",
+                            operation=operation_name,
+                            task_name=coro_name,
+                            outcome="cancelled",
+                            attempts=attempts + 1,
+                            duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+                            **safe_metadata,
+                        )
+                        raise
+                    except Exception as e:
+                        attempts += 1
+                        error_id = record_exception(
+                            "background_task.attempt_failed",
+                            e,
+                            operation=operation_name,
+                            fields={
+                                "task_name": coro_name,
+                                "attempt": attempts,
+                                "max_attempts": retry + 1,
+                                **safe_metadata,
+                            },
+                        )
+                        if attempts <= retry:
+                            delay_seconds = 2**attempts
+                            emit(
+                                "background_task.retry_scheduled",
+                                level="warning",
+                                operation=operation_name,
+                                task_name=coro_name,
+                                attempt=attempts,
+                                delay_seconds=delay_seconds,
+                                error_id=error_id,
+                            )
+                            await asyncio.sleep(delay_seconds)
+                        else:
+                            emit(
+                                "background_task.finished",
+                                level="error",
+                                operation=operation_name,
+                                task_name=coro_name,
+                                outcome="failed",
+                                attempts=attempts,
+                                error_id=error_id,
+                                duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+                                **safe_metadata,
+                            )
+                            if self._error_callback:
+                                try:
+                                    res = self._error_callback(e, f"Task {coro_name}")
+                                    # Execute asynchronously if it's a coroutine
+                                    if asyncio.iscoroutine(res):
+                                        cb_task = asyncio.create_task(res)
+                                        self._tasks.add(cb_task)
+                                        cb_task.add_done_callback(self._tasks.discard)
+                                except Exception as cb_err:
+                                    record_exception(
+                                        "background_task.error_callback_failed",
+                                        cb_err,
+                                        operation=operation_name,
+                                        fields={"original_error_id": error_id},
+                                    )
 
         # Run wrapper within the captured context snapshot for trace propagation
         task = ctx.run(asyncio.create_task, _wrapper(), name=f"background:{coro_name}")

@@ -29,7 +29,8 @@ from app.handlers.callbacks import (
 )
 from app.i18n import t
 from app.repos.chats import get_user_chat
-from app.request_context import set_request_id, set_user_context
+from app.request_context import ensure_request_id as set_request_id
+from app.request_context import set_user_context
 
 
 async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

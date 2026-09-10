@@ -2,12 +2,14 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
 from app import database as db
+from app.observability.context import export_job_context, restore_job_context
+from app.observability.events import emit, record_exception
 from app.utils.json_compat import json
 
 
@@ -43,6 +45,8 @@ class Task:
     error: str | None = None
     retry_count: int = 0
     max_retries: int = 3
+    observability_schema_version: int = 1
+    observability_context: dict[str, Any] = field(default_factory=dict)
 
 
 # ── Redis key constants ─────────────────────────────────────────────────
@@ -73,6 +77,8 @@ def _task_to_json(task: Task) -> str:
             "error": task.error,
             "retry_count": task.retry_count,
             "max_retries": task.max_retries,
+            "observability_schema_version": task.observability_schema_version,
+            "observability_context": task.observability_context,
         }
     )
 
@@ -96,6 +102,8 @@ def _task_from_json(raw: str | bytes) -> Task:
         error=d.get("error"),
         retry_count=d.get("retry_count", 0),
         max_retries=d.get("max_retries", 3),
+        observability_schema_version=d.get("observability_schema_version", 1),
+        observability_context=d.get("observability_context") or {},
     )
 
 
@@ -258,6 +266,7 @@ class TaskQueue:
             priority=priority,
             status=TaskStatus.PENDING,
             created_at=datetime.now(tz=UTC),
+            observability_context=export_job_context(),
         )
 
         self.tasks[task_id] = task
@@ -278,7 +287,15 @@ class TaskQueue:
             await asyncio.wait_for(self._fallback_queue.put((-priority.value, task_id)), timeout=2.0)
         except TimeoutError:
             self.tasks.pop(task_id, None)
-            logging.warning("Task queue put timeout. Rejecting task %s", task_id)
+            emit(
+                "job.rejected",
+                level="warning",
+                operation="job.enqueue",
+                task_id=task_id,
+                task_type=task_type,
+                reason_code="fallback_queue_timeout",
+                backend="memory",
+            )
             return ""
 
         self._work_available.set()  # Wake idle workers
@@ -298,6 +315,14 @@ class TaskQueue:
         if task.status in [TaskStatus.PENDING, TaskStatus.RUNNING]:
             task.status = TaskStatus.CANCELLED
             task.completed_at = datetime.now(tz=UTC)
+            emit(
+                "job.cancelled",
+                level="warning",
+                operation="job.cancel",
+                task_id=task.id,
+                task_type=task.task_type,
+                previous_status="pending" if task.started_at is None else "running",
+            )
             return True
 
         return False
@@ -405,32 +430,85 @@ class TaskQueue:
                     task.started_at = datetime.now(tz=UTC)
                     self.tasks[task.id] = task
 
-                    logging.info("Worker %s processing task %s", worker_name, task.id)
+                    execution_id = uuid.uuid4().hex
+                    execution_started = datetime.now(tz=UTC)
+                    with restore_job_context(
+                        task.observability_context,
+                        task_id=task.id,
+                        execution_id=execution_id,
+                    ):
+                        emit(
+                            "job.started",
+                            operation="job.execute",
+                            task_type=task.task_type,
+                            worker_name=worker_name,
+                            retry_count=task.retry_count,
+                            max_retries=task.max_retries,
+                            queue_wait_ms=round((execution_started - task.created_at).total_seconds() * 1000, 2),
+                        )
+                        try:
+                            result = await self._execute_task(task)
 
-                    try:
-                        result = await self._execute_task(task)
-
-                        task.status = TaskStatus.COMPLETED
-                        task.completed_at = datetime.now(tz=UTC)
-                        task.result = result
-                        self.tasks[task.id] = task
-
-                        await self._ack_task(original_json)
-                        logging.info("Task %s completed successfully", task.id)
-
-                    except Exception as e:
-                        logging.error("Task %s failed: %s", task.id, e, exc_info=True)
-
-                        task.error = str(e)
-                        task.retry_count += 1
-
-                        if task.retry_count < task.max_retries:
-                            await self._nack_task(task, original_json)
-                        else:
-                            task.status = TaskStatus.FAILED
+                            task.status = TaskStatus.COMPLETED
                             task.completed_at = datetime.now(tz=UTC)
+                            task.result = result
+                            self.tasks[task.id] = task
+
                             await self._ack_task(original_json)
-                        self.tasks[task.id] = task
+                            business_status = result.get("status") if isinstance(result, dict) else None
+                            emit(
+                                "job.finished",
+                                level="warning" if business_status == "failed" else "info",
+                                operation="job.execute",
+                                outcome="failed" if business_status == "failed" else "succeeded",
+                                execution_outcome="returned",
+                                business_outcome=business_status or "unknown",
+                                task_type=task.task_type,
+                                duration_ms=round(
+                                    (task.completed_at - execution_started).total_seconds() * 1000,
+                                    2,
+                                ),
+                            )
+
+                        except Exception as e:
+                            error_id = record_exception(
+                                "job.execution_failed",
+                                e,
+                                operation="job.execute",
+                                fields={
+                                    "task_type": task.task_type,
+                                    "retry_count": task.retry_count,
+                                },
+                            )
+
+                            task.error = f"{type(e).__name__}:{error_id}"
+                            task.retry_count += 1
+
+                            if task.retry_count < task.max_retries:
+                                await self._nack_task(task, original_json)
+                                retry_disposition = "scheduled"
+                            else:
+                                task.status = TaskStatus.FAILED
+                                task.completed_at = datetime.now(tz=UTC)
+                                await self._ack_task(original_json)
+                                retry_disposition = "exhausted"
+                            self.tasks[task.id] = task
+                            emit(
+                                "job.finished",
+                                level="error",
+                                operation="job.execute",
+                                outcome="failed",
+                                execution_outcome="raised",
+                                business_outcome="failed",
+                                task_type=task.task_type,
+                                error_id=error_id,
+                                retry_disposition=retry_disposition,
+                                retry_count=task.retry_count,
+                                duration_ms=round(
+                                    (datetime.now(tz=UTC) - execution_started).total_seconds() * 1000,
+                                    2,
+                                ),
+                            )
 
             except asyncio.CancelledError:
                 break

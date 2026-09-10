@@ -17,6 +17,8 @@ import re
 
 import httpx
 
+from app.observability.workload_events import start_workload_attempt
+
 # ── Constants ────────────────────────────────────────────────────────────────
 
 _WEATHER_PATTERNS = re.compile(
@@ -425,6 +427,13 @@ async def _handle_weather(text: str) -> IntentResult | None:
 
 async def _fetch_weatherapi(api_key: str, city: str) -> IntentResult | None:
     """Fetch weather from WeatherAPI.com — single request, includes geocoding."""
+    attempt = start_workload_attempt(
+        workload="weather_lookup",
+        provider="weatherapi",
+        model=None,
+        api_key=api_key,
+        origin="intent_router",
+    )
     try:
         resp = await _get_http().get(
             "https://api.weatherapi.com/v1/current.json",
@@ -433,6 +442,7 @@ async def _fetch_weatherapi(api_key: str, city: str) -> IntentResult | None:
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
+        attempt.fail(exc)
         logging.warning("WeatherAPI.com failed (%s)", type(exc).__name__)
         return None
 
@@ -459,8 +469,10 @@ async def _fetch_weatherapi(api_key: str, city: str) -> IntentResult | None:
             f"💨 Ветер: **{wind} км/ч**\n\n"
             f"_Данные: WeatherAPI.com_"
         )
+        attempt.finish(outcome="succeeded", status_code=resp.status_code)
         return IntentResult(response)
     except (KeyError, TypeError) as exc:
+        attempt.fail(exc, reason_code="invalid_response")
         logging.warning("WeatherAPI.com returned an unexpected response structure (%s)", type(exc).__name__)
         return None
 
@@ -688,22 +700,42 @@ async def _fetch_exchangerate_api(
     amount: float = 1.0,
 ) -> IntentResult | None:
     """Fetch rate from ExchangeRate-API v6 (free tier: 1,500 req/month)."""
+    attempt = start_workload_attempt(
+        workload="exchange_rate_lookup",
+        provider="exchangerate_api",
+        model=None,
+        api_key=api_key,
+        origin="intent_router",
+        base_currency=base,
+        target_currency=target,
+    )
     try:
         resp = await _get_http().get(
             f"https://v6.exchangerate-api.com/v6/{api_key}/pair/{base}/{target}",
         )
         resp.raise_for_status()
         data = resp.json()
+        if not isinstance(data, dict):
+            raise TypeError("ExchangeRate-API response must be an object")
     except Exception as exc:
+        reason_code = "invalid_response" if isinstance(exc, TypeError) else "request_failed"
+        attempt.fail(exc, reason_code=reason_code)
         logging.warning("ExchangeRate-API failed for %s→%s (%s)", base, target, type(exc).__name__)
         return None
 
     if data.get("result") != "success":
+        attempt.finish(
+            outcome="remote_error",
+            level="warning",
+            reason_code="remote_rejected",
+            provider_error_code=str(data.get("error-type") or "unknown"),
+        )
         logging.warning("ExchangeRate-API error: %s", data.get("error-type"))
         return None
 
     rate: float = data.get("conversion_rate", 0)
     if not rate:
+        attempt.finish(outcome="invalid_response", level="warning", reason_code="missing_conversion_rate")
         return None
 
     update_time = data.get("time_last_update_utc", "")
@@ -720,6 +752,7 @@ async def _fetch_exchangerate_api(
         f"{conversion_line}"
         f"_Данные: ExchangeRate-API ({update_time[:16] if update_time else 'сейчас'})_"
     )
+    attempt.finish(outcome="succeeded", status_code=resp.status_code)
     return IntentResult(response)
 
 

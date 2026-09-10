@@ -8,6 +8,8 @@ from tenacity import (
     wait_exponential,
 )
 
+from app.observability.workload_events import observe_workload_call
+
 MAX_PAGE_CHARS = 15_000  # ~5K tokens
 
 logger = logging.getLogger(__name__)
@@ -37,7 +39,14 @@ async def _fetch_jina(url: str, timeout: float) -> str:
 
     jina_url = f"https://r.jina.ai/{url}"
 
-    response = await _client.get(jina_url, headers=headers, timeout=timeout)
+    response = await observe_workload_call(
+        _client.get(jina_url, headers=headers, timeout=timeout),
+        workload="research_tool",
+        provider="jina",
+        model="reader",
+        api_key=api_key,
+        origin="web_reader",
+    )
     response.raise_for_status()
     return response.text
 

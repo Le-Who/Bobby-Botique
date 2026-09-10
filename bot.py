@@ -8,6 +8,17 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
+# Configure the logging pipeline before importing application configuration or
+# integrations that can emit startup diagnostics.
+from app.utils.logging_config import (
+    install_asyncio_exception_handler,
+    setup_detailed_logging,
+    shutdown_detailed_logging,
+)
+
+if __name__ == "__main__":
+    setup_detailed_logging()
+
 # Install uvloop on Linux/Docker for 2-4× event loop throughput
 if sys.platform != "win32":
     try:
@@ -31,7 +42,16 @@ from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log the error and send a telegram message to notify the user."""
-    logging.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
+    from app.observability.events import record_exception
+
+    error = (
+        context.error if isinstance(context.error, BaseException) else RuntimeError("Unknown Telegram handler error")
+    )
+    error_id = record_exception(
+        "telegram.unhandled_update_failed",
+        error,
+        operation="telegram.update",
+    )
 
     # Alert admin about unhandled exceptions
     try:
@@ -43,8 +63,14 @@ async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYP
             severity=AlertSeverity.CRITICAL,
             exc=context.error,
         )
-    except Exception:
-        pass  # Never let alerting crash error handling
+    except Exception as alert_error:
+        record_exception(
+            "alert.delivery_failed",
+            alert_error,
+            operation="admin.alert",
+            level="warning",
+            fields={"original_error_id": error_id},
+        )
 
     # Send message to user if possible
     if isinstance(update, Update) and update.effective_message:
@@ -52,8 +78,14 @@ async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYP
             # Avoid infinite loops if error happens during sending error message
             text = "❌ Произошла непредвиденная ошибка. Попробуйте позже."
             await update.effective_message.reply_text(text)
-        except Exception:
-            pass
+        except Exception as notification_error:
+            record_exception(
+                "delivery.error_notification_failed",
+                notification_error,
+                operation="telegram.error_notification",
+                level="warning",
+                fields={"original_error_id": error_id},
+            )
 
 
 from hypercorn.asyncio import serve
@@ -69,7 +101,6 @@ from app.handlers.cb_navigation import new_topic_callback
 from app.metrics import metrics_collector
 from app.queue import start_task_queue, stop_task_queue
 from app.update_processor import UserScopedUpdateProcessor
-from app.utils.logging_config import setup_detailed_logging
 
 # Import extracted modules
 from app.web import quart_app
@@ -493,8 +524,14 @@ async def run_bot_with_retry():
 
                 # Correctly leverage PTB's update_queue to apply `concurrent_updates()` bounds
                 try:
+                    if isinstance(update_id, int):
+                        from app.observability.ingress import webhook_origins
+
+                        webhook_origins.remember(update_id)
                     application.update_queue.put_nowait(update_obj)
                 except QueueFull:
+                    if isinstance(update_id, int):
+                        webhook_origins.discard(update_id)
                     # Signal temporary overload so Telegram retries delivery.
                     logging.warning("Webhook update_queue is full; returning 503 for retry")
                     return "Service Unavailable", 503
@@ -823,40 +860,13 @@ async def startup_health_check():
 
 async def main():
     # Quart is ASGI-native; no event loop injection needed.
+    install_asyncio_exception_handler()
 
     database_available = False
     memory_manager = None
 
     try:
-        # Auto-enable structured JSON logging in production containers
-        # Supports: STRUCTURED_LOGGING=1, LOG_FORMAT=json, or auto-detect from DATABASE_URL
-        _structured = os.environ.get("STRUCTURED_LOGGING", "").lower()
-        _log_format = os.environ.get("LOG_FORMAT", "").lower()
-        if _structured in ("1", "true", "yes") or _log_format == "json":
-            _use_json = True
-        elif _structured in ("0", "false", "no") or _log_format == "text":
-            _use_json = False
-        else:
-            # Auto-detect: production has DATABASE_URL set
-            _use_json = bool(os.environ.get("DATABASE_URL"))
-
-        setup_detailed_logging(enable_structured_logging=_use_json)
-
-        if _use_json and os.environ.get("LOG_PRETTY", "").lower() in (
-            "1",
-            "true",
-            "yes",
-        ):
-            logging.warning(
-                "LOG_PRETTY is set but structured JSON logging is active — "
-                "Rich output is disabled. Unset LOG_PRETTY or set STRUCTURED_LOGGING=0 "
-                "to enable pretty mode."
-            )
-
-        logging.info(
-            "Bot starting up — %s logging enabled",
-            "structured JSON" if _use_json else "text",
-        )
+        logging.info("Bot startup entered")
 
         try:
             await database.init_db()
@@ -983,3 +993,4 @@ if __name__ == "__main__":
         sys.exit(1)
     finally:
         logging.info("Bot shutdown complete.")
+        shutdown_detailed_logging()

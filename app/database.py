@@ -1,6 +1,9 @@
 import asyncio
 import contextlib
+import hashlib
 import logging
+import time
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +17,7 @@ from app.errors import (
     DatabasePoolError,
     DatabaseRateLimitError,
 )
+from app.observability.events import emit, record_exception
 
 _background_tasks = set()
 
@@ -236,6 +240,18 @@ class DatabaseManager:
             retries: Number of retry attempts.
         """
         last_exception = None
+        operation_id = uuid.uuid4().hex
+        statement_fingerprint = hashlib.sha256(query_str.encode()).hexdigest()[:16]
+        statement_kind = query_str.lstrip().partition(" ")[0].upper()[:16] or "UNKNOWN"
+        started_ns = time.monotonic_ns()
+        emit(
+            "database.operation_started",
+            operation=operation_name,
+            operation_id=operation_id,
+            statement_kind=statement_kind,
+            statement_fingerprint=statement_fingerprint,
+            max_attempts=retries + 1,
+        )
         for attempt in range(retries + 1):
             try:
                 if not self.pool or self._is_pool_closed():
@@ -244,34 +260,118 @@ class DatabaseManager:
                     if not self.pool or self._is_pool_closed():
                         raise Exception("Database pool is closed")
 
+                acquire_started_ns = time.monotonic_ns()
                 async with self.pool.acquire() as connection:
-                    return await asyncio.wait_for(operation(connection), timeout=30.0)
+                    pool_wait_ms = (time.monotonic_ns() - acquire_started_ns) / 1_000_000
+                    query_started_ns = time.monotonic_ns()
+                    result = await asyncio.wait_for(operation(connection), timeout=30.0)
+                    query_duration_ms = (time.monotonic_ns() - query_started_ns) / 1_000_000
+                emit(
+                    "database.operation_finished",
+                    operation=operation_name,
+                    operation_id=operation_id,
+                    outcome="succeeded",
+                    attempt=attempt + 1,
+                    pool_wait_ms=round(pool_wait_ms, 2),
+                    query_duration_ms=round(query_duration_ms, 2),
+                    duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+                    row_count=len(result) if isinstance(result, (list, tuple)) else None,
+                    statement_kind=statement_kind,
+                    statement_fingerprint=statement_fingerprint,
+                )
+                return result
 
             except TimeoutError:
-                last_exception = Exception(f"Database {operation_name} timeout: {query_str[:100]}...")
+                last_exception = TimeoutError(f"Database {operation_name} timed out")
                 logging.warning("Database %s timeout (attempt %s)", operation_name, attempt + 1)
 
             except (asyncpg.InterfaceError, asyncpg.PostgresConnectionError) as e:
                 last_exception = e
                 logging.warning("Database connection issue (attempt %s): %s", attempt + 1, e)
                 if attempt < retries:
-                    await asyncio.sleep(min(2**attempt, 10))
                     with contextlib.suppress(Exception):
                         await self.reconnect()
-                    continue
 
             except asyncpg.PostgresError as e:
                 last_exception = e
                 if "rate limit" in str(e).lower():
+                    error_id = record_exception(
+                        "database.operation_failed",
+                        e,
+                        operation=operation_name,
+                        fields={
+                            "operation_id": operation_id,
+                            "attempts": attempt + 1,
+                            "reason_code": "rate_limited",
+                            "statement_kind": statement_kind,
+                            "statement_fingerprint": statement_fingerprint,
+                        },
+                    )
+                    emit(
+                        "database.operation_finished",
+                        level="error",
+                        operation=operation_name,
+                        operation_id=operation_id,
+                        outcome="failed",
+                        reason_code="rate_limited",
+                        error_id=error_id,
+                        attempts=attempt + 1,
+                        duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+                        statement_kind=statement_kind,
+                        statement_fingerprint=statement_fingerprint,
+                    )
                     raise
                 logging.error("Database %s error (attempt %s): %s", operation_name, attempt + 1, e)
                 if attempt == retries:
                     break
+
+            if attempt < retries:
+                emit(
+                    "database.retry_scheduled",
+                    level="warning",
+                    operation=operation_name,
+                    operation_id=operation_id,
+                    attempt=attempt + 1,
+                    next_attempt=attempt + 2,
+                    error_type=type(last_exception).__name__,
+                    statement_fingerprint=statement_fingerprint,
+                )
                 await asyncio.sleep(min(2**attempt, 10))
 
-        raise last_exception or Exception(f"Database {operation_name} failed")
+        final_error = last_exception or Exception(f"Database {operation_name} failed")
+        error_id = record_exception(
+            "database.operation_failed",
+            final_error,
+            operation=operation_name,
+            fields={
+                "operation_id": operation_id,
+                "attempts": retries + 1,
+                "statement_kind": statement_kind,
+                "statement_fingerprint": statement_fingerprint,
+            },
+        )
+        emit(
+            "database.operation_finished",
+            level="error",
+            operation=operation_name,
+            operation_id=operation_id,
+            outcome="failed",
+            error_id=error_id,
+            attempts=retries + 1,
+            duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+            statement_kind=statement_kind,
+            statement_fingerprint=statement_fingerprint,
+        )
+        raise final_error
 
-    async def query(self, query_str: str, params: tuple = (), retries: int = 3, conn=None):
+    async def query(
+        self,
+        query_str: str,
+        params: tuple = (),
+        retries: int = 3,
+        conn=None,
+        operation_name: str | None = None,
+    ):
         if not isinstance(query_str, str) or not query_str.strip():
             raise ValueError("Query must be a non-empty string")
 
@@ -287,7 +387,7 @@ class DatabaseManager:
             result = await connection.fetch(query_str, *params)
             return [dict(record) for record in result]
 
-        return await self._execute_with_retry("query", _do_fetch, query_str, retries)
+        return await self._execute_with_retry(operation_name or "database.query", _do_fetch, query_str, retries)
 
     async def execute_many(self, query_str: str, params_list: list[tuple], retries: int = 3, conn=None):
         if not isinstance(query_str, str) or not query_str.strip():
@@ -320,8 +420,15 @@ async def reconnect_database():
     return await db_manager.reconnect()
 
 
-async def db_query(query: str, params: tuple = (), retries: int = 3, conn=None):
-    return await db_manager.query(query, params, retries, conn)
+async def db_query(
+    query: str,
+    params: tuple = (),
+    retries: int = 3,
+    conn=None,
+    *,
+    operation: str | None = None,
+):
+    return await db_manager.query(query, params, retries, conn, operation)
 
 
 async def db_execute_many(query: str, params_list: list[tuple], retries: int = 3, conn=None):

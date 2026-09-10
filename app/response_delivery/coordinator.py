@@ -221,6 +221,7 @@ class AIStreamCoordinator:
                     error_code=terminal.code,
                     displayed_text=displayed,
                     receipt=receipt,
+                    upstream_error_id=terminal.error_id,
                 )
 
             content = prepared.content_text

@@ -3,7 +3,6 @@
 import asyncio
 import base64
 import logging
-import time
 from typing import Any
 
 import httpx
@@ -12,6 +11,7 @@ from PIL import Image
 
 from app.errors import ErrorCode, tag_error
 from app.metrics import metrics_collector
+from app.observability.provider_events import record_provider_exception
 from app.providers.base import AIResponse, BaseAIProvider
 from app.providers.stream_types import (
     FailurePhase,
@@ -163,7 +163,22 @@ class OpenRouterProvider(BaseAIProvider):
         except asyncio.CancelledError:
             raise
         except httpx.HTTPStatusError as exc:
-            await exc.response.aread()
+            error_id = record_provider_exception(
+                exc,
+                provider=self.provider_name,
+                model=model_name,
+                api_key=self.api_key,
+                failure_phase=(FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT).value,
+            )
+            body_error_type: str | None
+            try:
+                await exc.response.aread()
+                response_chars = len(exc.response.text)
+            except Exception as body_error:
+                response_chars = None
+                body_error_type = type(body_error).__name__
+            else:
+                body_error_type = None
             status = exc.response.status_code
             if status == 429:
                 code = ErrorCode.RATE_LIMIT
@@ -197,11 +212,21 @@ class OpenRouterProvider(BaseAIProvider):
                 phase=FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT,
                 retry=retry,
                 key=key,
-                diagnostic=f"HTTP {status}: {exc.response.text[:400]}",
+                diagnostic=(
+                    f"HTTP {status}; response_chars={response_chars}; body_error_type={body_error_type or 'none'}"
+                ),
                 route=route,
+                error_id=error_id,
             )
             return
         except Exception as exc:
+            error_id = record_provider_exception(
+                exc,
+                provider=self.provider_name,
+                model=model_name,
+                api_key=self.api_key,
+                failure_phase=(FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT).value,
+            )
             diagnostic = f"{type(exc).__name__}: {exc}"[:500].replace(self.api_key, "[redacted]")
             yield StreamFailed(
                 code=ErrorCode.NETWORK if isinstance(exc, httpx.HTTPError) else ErrorCode.GENERIC,
@@ -210,6 +235,7 @@ class OpenRouterProvider(BaseAIProvider):
                 key=(KeyDisposition.UNCHANGED if text_emitted else KeyDisposition.TRANSIENT_FAILURE),
                 diagnostic=diagnostic,
                 route=route,
+                error_id=error_id,
             )
             return
 
@@ -304,7 +330,12 @@ class OpenRouterProvider(BaseAIProvider):
 
         try:
             await metrics_collector.record_api_call("openrouter", model_name)
-            start_time = time.time()
+            start_time = api_logger.log_request(
+                self.provider_name,
+                model=model_name,
+                api_key=self.api_key,
+                transport="chat_completions",
+            )
 
             # Convert Gemini history → OpenAI format
             messages = await self._build_messages(history, system_instruction)
@@ -347,7 +378,8 @@ class OpenRouterProvider(BaseAIProvider):
                 response_data = response.json()
             except httpx.HTTPStatusError as e:
                 return await self._handle_http_error(e, model_name, start_time, user_id, chat_id)
-            except TimeoutError:
+            except TimeoutError as error:
+                self._record_legacy_error(error, model_name)
                 msg = f"OpenRouter API request timed out for model {model_name}"
                 logging.error(msg)
                 await metrics_collector.record_error("openrouter_timeout", msg)
@@ -364,6 +396,7 @@ class OpenRouterProvider(BaseAIProvider):
                     model=model_name,
                 )
             except (APIError, httpx.HTTPError) as e:
+                self._record_legacy_error(e, model_name)
                 msg = f"OpenRouter API error: {e!r}"
                 logging.error(msg)
                 await metrics_collector.record_error("openrouter_api", msg)
@@ -446,6 +479,7 @@ class OpenRouterProvider(BaseAIProvider):
             )
 
         except (APIError, httpx.HTTPError) as e:
+            self._record_legacy_error(e, model_name)
             logging.error("OpenRouter API generic error: %s", e, exc_info=True)
             await metrics_collector.record_error("openrouter_api", str(e))
             self._log_failure(start_time, model_name, str(e), user_id, chat_id)
@@ -555,8 +589,20 @@ class OpenRouterProvider(BaseAIProvider):
         user_id,
         chat_id,
     ) -> AIResponse:
-        msg = f"OpenRouter API HTTP error: {e.response.status_code} - {e.response.text}"
-        logging.error(msg)
+        error_id = self._record_legacy_error(e, model)
+        msg = f"OpenRouter API HTTP error: {e.response.status_code}"
+        logging.error(
+            "OpenRouter API HTTP error",
+            extra={
+                "_event_name": "provider.http_error",
+                "provider": self.provider_name,
+                "model": model,
+                "status_code": e.response.status_code,
+                "response_chars": len(e.response.text),
+                "provider_request_id": e.response.headers.get("x-request-id"),
+                "error_id": error_id,
+            },
+        )
         await metrics_collector.record_error("openrouter_http", msg)
         self._log_failure(start_time, model, msg, user_id, chat_id)
 
@@ -572,10 +618,21 @@ class OpenRouterProvider(BaseAIProvider):
             model=model,
         )
 
+    def _record_legacy_error(self, error: Exception, model: str) -> str:
+        return api_logger.log_error(
+            self.provider_name,
+            error,
+            context={
+                "api_key": self.api_key,
+                "model": model,
+                "failure_phase": "request",
+            },
+        )
+
     def _log_failure(self, start_time, model, msg, user_id, chat_id):
         if start_time is not None:
             api_logger.log_response(
-                "openrouter",
+                self.provider_name,
                 start_time,
                 model=model,
                 response_length=0,

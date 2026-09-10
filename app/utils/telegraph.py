@@ -17,6 +17,9 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from app.observability.redaction import register_sensitive_credential
+from app.observability.workload_events import start_workload_attempt
+
 if TYPE_CHECKING:
     pass
 
@@ -57,19 +60,32 @@ async def _ensure_account() -> str:
     if _access_token:
         return _access_token
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.post(
-            f"{_TELEGRAPH_API}/createAccount",
-            json={
-                "short_name": "GemAI Bot",
-                "author_name": "GemAI Bot",
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    attempt = start_workload_attempt(
+        workload="telegraph_account",
+        provider="telegraph",
+        model=None,
+        api_key=None,
+        origin="telegraph",
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{_TELEGRAPH_API}/createAccount",
+                json={
+                    "short_name": "GemAI Bot",
+                    "author_name": "GemAI Bot",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as error:
+        attempt.fail(error)
+        raise
 
     if not data.get("ok"):
+        attempt.finish(outcome="remote_error", level="warning", reason_code="remote_rejected")
         raise RuntimeError("Telegraph createAccount failed")
+    attempt.finish(outcome="succeeded", status_code=resp.status_code)
 
     _access_token = data["result"]["access_token"]
     assert isinstance(_access_token, str)
@@ -179,29 +195,48 @@ async def create_telegraph_page(title: str, markdown_content: str) -> str | None
         if not nodes:
             return None
 
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{_TELEGRAPH_API}/createPage",
-                json={
-                    "access_token": token,
-                    "title": title[:256],
-                    "author_name": "GemAI Bot",
-                    "content": nodes,
-                    "return_content": False,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        credential_fields = register_sensitive_credential("access_token", token)
+        attempt = start_workload_attempt(
+            workload="telegraph_page",
+            provider="telegraph",
+            model=None,
+            api_key=None,
+            origin="telegraph",
+            credential_kind=credential_fields["credential_kind"],
+            credential_present=credential_fields["credential_present"],
+            content_chars=len(markdown_content),
+            content_nodes=len(nodes),
+        )
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    f"{_TELEGRAPH_API}/createPage",
+                    json={
+                        "access_token": token,
+                        "title": title[:256],
+                        "author_name": "GemAI Bot",
+                        "content": nodes,
+                        "return_content": False,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as error:
+            attempt.fail(error)
+            raise
 
         if not data.get("ok"):
+            attempt.finish(outcome="remote_error", level="warning", reason_code="remote_rejected")
             logger.warning("Telegraph createPage failed")
             return None
 
         url = data["result"]["url"]
         if not is_safe_telegraph_url(url):
+            attempt.finish(outcome="invalid_response", level="warning", reason_code="invalid_url")
             logger.warning("Telegraph createPage returned an invalid URL")
             return None
-        logger.info("Telegraph page created: %s (%d chars)", url, len(markdown_content))
+        attempt.finish(outcome="succeeded", status_code=resp.status_code)
+        logger.info("Telegraph page created (%d chars)", len(markdown_content))
         return url
 
     except Exception as e:

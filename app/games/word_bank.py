@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from app.games import daily_ai
 from app.games.ai_budget import acquire_background_slot, acquire_foreground_slot, record_result
 from app.games.hinting import enqueue_bank_hint_prewarm
+from app.observability.workload_events import observe_workload_call
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
 
@@ -1483,17 +1484,24 @@ async def _generate_single_word_fast(category: str, lang: str = "ru", *, model: 
             if vertex_client is None:
                 return None
             async with lease:
-                resp = await asyncio.wait_for(
-                    vertex_client.aio.models.generate_content(
-                        model="gemini-3.1-flash-lite",
-                        contents=prompt,
-                        config=_gtypes.GenerateContentConfig(
-                            tools=[_gtypes.Tool(google_search=_gtypes.GoogleSearch())],
-                            temperature=0.7,
-                            max_output_tokens=64,
+                resp = await observe_workload_call(
+                    asyncio.wait_for(
+                        vertex_client.aio.models.generate_content(
+                            model="gemini-3.1-flash-lite",
+                            contents=prompt,
+                            config=_gtypes.GenerateContentConfig(
+                                tools=[_gtypes.Tool(google_search=_gtypes.GoogleSearch())],
+                                temperature=0.7,
+                                max_output_tokens=64,
+                            ),
                         ),
+                        timeout=9.0,
                     ),
-                    timeout=9.0,
+                    workload="game_word_generation",
+                    provider="vertex",
+                    model="gemini-3.1-flash-lite",
+                    api_key=settings.VERTEX_AI_KEY or None,
+                    origin="crocodile_word_bank",
                 )
             result = _validate(getattr(resp, "text", None))
             if result:

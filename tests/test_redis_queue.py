@@ -51,6 +51,8 @@ class TestTaskSerialization:
         assert restored.data == sample_task.data
         assert restored.priority == sample_task.priority
         assert restored.status == sample_task.status
+        assert restored.observability_schema_version == 1
+        assert restored.observability_context == sample_task.observability_context
 
     def test_deserialize_from_bytes(self, sample_task):
         json_bytes = _task_to_json(sample_task).encode("utf-8")

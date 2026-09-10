@@ -13,6 +13,7 @@ from telegram.ext import ContextTypes
 from app.handlers import menus
 from app.i18n import t
 from app.metrics import role_conv_metrics
+from app.observability.content import content_fields
 from app.prompt_registry import get_registry
 from app.repos.chats import get_user_chat
 from app.repos.conversations import rename_conversation
@@ -266,7 +267,13 @@ async def handle_custom_role_generation(
 ) -> bool:
     """Handle AI-powered custom role generation. Returns True if consumed."""
     if is_awaiting_custom_role_input(user_id):
-        logging.info("User %s sent custom role description: %s", user_id, message_text)
+        logging.info(
+            "Custom role description received",
+            extra={
+                "_event_name": "role.description_received",
+                **content_fields("role_description", message_text, subsystem="roles"),
+            },
+        )
 
         chat_state = await get_user_chat(user_id)
         from app.config import settings
@@ -305,7 +312,13 @@ async def handle_custom_role_generation(
             )
             await agent._increment_key_usage(key_data["key_hash"], model_used)
 
-            logging.info("Model response for role generation: %.500s...", response_text)
+            logging.info(
+                "Role generation response received",
+                extra={
+                    "_event_name": "role.generation_response_received",
+                    **content_fields("provider_response", response_text, subsystem="roles"),
+                },
+            )
 
             role_obj = extract_json_object(response_text)
 
@@ -322,7 +335,14 @@ async def handle_custom_role_generation(
                         reply_markup=error_kb,
                     )
                 else:
-                    logging.error("Failed to parse role JSON. Response: %s", response_text)
+                    logging.error(
+                        "Failed to parse role JSON",
+                        extra={
+                            "_event_name": "role.response_parse_failed",
+                            "response_type": type(response_text).__name__,
+                            **content_fields("provider_response", response_text, subsystem="roles"),
+                        },
+                    )
                     await progress_msg.edit_text(
                         t("role.generation_failed"),
                         reply_markup=error_kb,

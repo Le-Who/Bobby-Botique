@@ -14,8 +14,15 @@ services:
       - .env
     environment:
       - PORT=10000
-      - LOG_JSON=true
+      - LOG_FORMAT=json
+      - LOG_CONTENT_MODE=metadata
+      - APP_ENV=local-compose
       - ENABLE_PERSISTENT_QUEUE=true
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
     volumes:
       - ./data:/app/data
     healthcheck:

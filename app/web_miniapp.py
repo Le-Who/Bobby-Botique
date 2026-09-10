@@ -34,6 +34,9 @@ from app.games import crocodile_runtime as _croc_runtime
 from app.natal.city_catalog import find_city_by_id, search_cities, search_countries
 from app.natal.models import BirthInput, ReportType, TimePrecision
 from app.natal.service import create_natal_report
+from app.observability.events import emit
+from app.observability.schema import JsonValue
+from app.observability.workload_events import start_workload_attempt
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
 
@@ -3032,6 +3035,27 @@ async def _handle_live_session(
         return
 
     transport_backend = "vertex_live" if transport_mode == _LIVE_VERTEX_CONNECTION_MODE else "gemini_live"
+    live_api_key = (
+        None
+        if transport_mode == _LIVE_VERTEX_CONNECTION_MODE
+        else (settings.GEMINI_API_KEYS[0] if settings.GEMINI_API_KEYS else None)
+    )
+    live_attempt = start_workload_attempt(
+        workload="live_session",
+        provider=transport_backend,
+        model=model_name,
+        api_key=live_api_key,
+        origin="miniapp_live_audio",
+        transport_mode=transport_mode,
+        resumed=bool(session_resumption_token or resumption_token),
+    )
+    session_failure: BaseException | None = None
+    session_input_audio_bytes = 0
+    session_input_text_chars = 0
+    session_output_audio_bytes = 0
+    session_output_transcript_chars = 0
+    completed_turns = 0
+    close_reason = "session_ended"
     logger.info(
         "live_audio_ws: connecting user=%d mode=%s model=%s resumption_token=%s voice=%s thinking=%s via=%s",
         user_id,
@@ -3050,21 +3074,51 @@ async def _handle_live_session(
 
             turn_ready = asyncio.Event()
             producer_alive = True
+            turn_sequence = 0
+            turn_started_ns: int | None = None
+            turn_input_audio_bytes = 0
+            turn_input_text_chars = 0
+            turn_output_audio_bytes = 0
+            turn_output_transcript_chars = 0
             if resumption_token:
                 turn_ready.set()
 
+            def _ensure_turn_started(trigger: str) -> None:
+                nonlocal turn_sequence, turn_started_ns
+                nonlocal turn_input_audio_bytes, turn_input_text_chars
+                nonlocal turn_output_audio_bytes, turn_output_transcript_chars
+                if turn_started_ns is not None:
+                    return
+                turn_sequence += 1
+                turn_started_ns = time.monotonic_ns()
+                turn_input_audio_bytes = 0
+                turn_input_text_chars = 0
+                turn_output_audio_bytes = 0
+                turn_output_transcript_chars = 0
+                emit(
+                    "live.turn_started",
+                    operation="live.turn",
+                    turn_sequence=turn_sequence,
+                    trigger=trigger,
+                    **live_attempt.fields(),
+                )
+
             # ── Producer: browser → Gemini ────────────────────────────────
             async def _producer() -> None:
-                nonlocal producer_alive
+                nonlocal close_reason, producer_alive, session_failure
+                nonlocal session_input_audio_bytes, session_input_text_chars
+                nonlocal turn_input_audio_bytes, turn_input_text_chars
                 start_time = time.monotonic()
                 try:
                     while True:
                         if time.monotonic() - start_time > 1800:
+                            close_reason = "duration_limit"
                             await websocket.close(1008, "Session duration limit reached (30m)")
                             return
                         try:
                             raw = await asyncio.wait_for(websocket.receive(), timeout=600.0)
                         except TimeoutError:
+                            close_reason = "idle_timeout"
                             logger.info("live_audio_ws: websocket idle timeout user=%d", user_id)
                             await websocket.close(1000, "Idle timeout")
                             return
@@ -3080,47 +3134,64 @@ async def _handle_live_session(
                             audio_b64 = msg.get("data", "")
                             mime_type = msg.get("mime_type", "audio/pcm;rate=16000")
                             if audio_b64:
+                                _ensure_turn_started("realtime_input")
                                 audio_bytes = base64.b64decode(audio_b64)
+                                turn_input_audio_bytes += len(audio_bytes)
+                                session_input_audio_bytes += len(audio_bytes)
                                 await session.send_realtime_input(
                                     audio=types.Blob(data=audio_bytes, mime_type=mime_type)
                                 )
                         elif msg_type == "activity_start":
+                            _ensure_turn_started("activity_start")
                             await session.send_realtime_input(
                                 activity_start=types.ActivityStart(),
                             )
                         elif msg_type == "activity_end":
+                            _ensure_turn_started("activity_end")
                             await session.send_realtime_input(
                                 activity_end=types.ActivityEnd(),
                             )
                             turn_ready.set()
                         elif msg_type == "audio_stream_end":
+                            _ensure_turn_started("audio_stream_end")
                             await session.send_realtime_input(audio_stream_end=True)
                             turn_ready.set()
                         elif msg_type == "text":
                             text = msg.get("text", "")
                             if text:
+                                _ensure_turn_started("text")
+                                turn_input_text_chars += len(text)
+                                session_input_text_chars += len(text)
                                 await session.send_realtime_input(text=text)
                                 turn_ready.set()
 
                 except asyncio.CancelledError:
                     pass
                 except Exception as exc:
-                    logger.warning("live_audio_ws producer error user=%d: %s", user_id, exc)
+                    session_failure = exc
+                    logger.warning("live_audio_ws producer error user=%d error_type=%s", user_id, type(exc).__name__)
                 finally:
                     producer_alive = False
                     turn_ready.set()
 
             # ── Consumer: Gemini → browser ────────────────────────────────
             async def _consumer() -> None:
-                nonlocal session_resumption_token
+                nonlocal session_failure, session_resumption_token
+                nonlocal close_reason, completed_turns, turn_started_ns
+                nonlocal session_output_audio_bytes, session_output_transcript_chars
+                nonlocal turn_output_audio_bytes, turn_output_transcript_chars
                 try:
                     while True:
                         await turn_ready.wait()
                         turn_ready.clear()
                         if not producer_alive:
+                            close_reason = "producer_ended"
                             break
 
+                        _ensure_turn_started("resumed_session" if resumption_token else "turn_ready")
+
                         saw_message = False
+                        turn_interrupted = False
                         turn_input_transcript: str | None = None
                         input_transcript_sent = False
                         async for response in session.receive():
@@ -3130,6 +3201,9 @@ async def _handle_live_session(
                                 if content.model_turn and content.model_turn.parts:
                                     for part in content.model_turn.parts:
                                         if part.inline_data and part.inline_data.data:
+                                            output_bytes = len(part.inline_data.data)
+                                            turn_output_audio_bytes += output_bytes
+                                            session_output_audio_bytes += output_bytes
                                             audio_b64 = base64.b64encode(part.inline_data.data).decode("ascii")
                                             await websocket.send_json(
                                                 {
@@ -3141,6 +3215,9 @@ async def _handle_live_session(
                                 if content.input_transcription and content.input_transcription.text:
                                     turn_input_transcript = content.input_transcription.text
                                 if content.output_transcription:
+                                    transcript_text = content.output_transcription.text or ""
+                                    turn_output_transcript_chars += len(transcript_text)
+                                    session_output_transcript_chars += len(transcript_text)
                                     if turn_input_transcript and not input_transcript_sent:
                                         await websocket.send_json(
                                             {
@@ -3157,6 +3234,7 @@ async def _handle_live_session(
                                     )
 
                                 if content.interrupted is True:
+                                    turn_interrupted = True
                                     await websocket.send_json({"type": "interrupt"})
 
                                 if content.turn_complete or content.waiting_for_input:
@@ -3203,18 +3281,38 @@ async def _handle_live_session(
                                 )
 
                         if not saw_message:
+                            close_reason = "provider_stream_ended"
                             logger.info("live_audio_ws: receive stream ended without messages user=%d", user_id)
+                        if turn_started_ns is not None:
+                            emit(
+                                "live.turn_finished",
+                                level="warning" if not saw_message else "info",
+                                operation="live.turn",
+                                outcome=(
+                                    "interrupted" if turn_interrupted else "succeeded" if saw_message else "empty"
+                                ),
+                                turn_sequence=turn_sequence,
+                                duration_ms=round((time.monotonic_ns() - turn_started_ns) / 1_000_000, 2),
+                                input_audio_bytes=turn_input_audio_bytes,
+                                input_text_chars=turn_input_text_chars,
+                                output_audio_bytes=turn_output_audio_bytes,
+                                output_transcript_chars=turn_output_transcript_chars,
+                                **live_attempt.fields(),
+                            )
+                            completed_turns += 1
+                            turn_started_ns = None
+                        if not saw_message:
                             break
 
                     logger.info("live_audio_ws: consumer receive loop ended normally user=%d", user_id)
                 except asyncio.CancelledError:
                     logger.debug("live_audio_ws: consumer cancelled user=%d", user_id)
                 except Exception as exc:
+                    session_failure = exc
                     logger.warning(
-                        "live_audio_ws consumer error user=%d: %s: %s",
+                        "live_audio_ws consumer error user=%d error_type=%s",
                         user_id,
                         type(exc).__name__,
-                        exc,
                     )
                     try:
                         await websocket.send_json({"type": "error", "message": str(exc)})
@@ -3243,8 +3341,89 @@ async def _handle_live_session(
                         except asyncio.CancelledError, TimeoutError:
                             pass
 
+        if session_failure is not None and turn_started_ns is not None:
+            emit(
+                "live.turn_finished",
+                level="error",
+                operation="live.turn",
+                outcome="failed",
+                reason_code="session_io_error",
+                turn_sequence=turn_sequence,
+                duration_ms=round((time.monotonic_ns() - turn_started_ns) / 1_000_000, 2),
+                input_audio_bytes=turn_input_audio_bytes,
+                input_text_chars=turn_input_text_chars,
+                output_audio_bytes=turn_output_audio_bytes,
+                output_transcript_chars=turn_output_transcript_chars,
+                **live_attempt.fields(),
+            )
+            completed_turns += 1
+            turn_started_ns = None
+
+        terminal_fields: dict[str, JsonValue] = {
+            "turn_count": completed_turns,
+            "input_audio_bytes": session_input_audio_bytes,
+            "input_text_chars": session_input_text_chars,
+            "output_audio_bytes": session_output_audio_bytes,
+            "output_transcript_chars": session_output_transcript_chars,
+            "close_reason": close_reason,
+        }
+        if session_failure is None:
+            live_attempt.finish(outcome="succeeded", **terminal_fields)
+            emit(
+                "live.session_disconnected",
+                operation="live.session",
+                outcome="succeeded",
+                **live_attempt.fields(),
+                **terminal_fields,
+            )
+        else:
+            error_id = live_attempt.fail(session_failure, reason_code="session_io_error", **terminal_fields)
+            emit(
+                "live.session_disconnected",
+                level="error",
+                operation="live.session",
+                outcome="failed",
+                reason_code="session_io_error",
+                error_id=error_id,
+                **live_attempt.fields(),
+                **terminal_fields,
+            )
+    except asyncio.CancelledError:
+        live_attempt.finish(
+            outcome="cancelled",
+            level="warning",
+            reason_code="cancelled",
+            turn_count=completed_turns,
+        )
+        emit(
+            "live.session_disconnected",
+            level="warning",
+            operation="live.session",
+            outcome="cancelled",
+            reason_code="cancelled",
+            turn_count=completed_turns,
+            **live_attempt.fields(),
+        )
+        raise
     except Exception as exc:
         err_str = str(exc)
+        failure_reason_code = "resource_exhausted" if _is_live_resource_exhausted(err_str) else "connect_failed"
+        error_id = live_attempt.fail(
+            exc,
+            reason_code=failure_reason_code,
+            transport_mode=transport_mode,
+            turn_count=completed_turns,
+        )
+        emit(
+            "live.session_disconnected",
+            level="error",
+            operation="live.session",
+            outcome="failed",
+            reason_code=failure_reason_code,
+            error_id=error_id,
+            turn_count=completed_turns,
+            **live_attempt.fields(),
+        )
         if _is_live_resource_exhausted(err_str):
             retry_after_seconds = _extract_live_retry_after_seconds(err_str) or 60
             if transport_mode == _LIVE_DEFAULT_CONNECTION_MODE:
@@ -3256,12 +3435,11 @@ async def _handle_live_session(
                 else "Голосовой режим временно недоступен. Попробуйте чуть позже или продолжите текстом."
             )
             logger.warning(
-                "live_audio_ws: resource exhausted user=%d mode=%s model=%s retry_after=%ds: %s",
+                "live_audio_ws: resource exhausted user=%d mode=%s model=%s retry_after=%ds",
                 user_id,
                 transport_mode,
                 model_name,
                 retry_after_seconds,
-                err_str,
             )
             await _send_live_fatal(
                 websocket,
@@ -3270,7 +3448,12 @@ async def _handle_live_session(
                 retry_after_seconds=retry_after_seconds,
             )
         else:
-            logger.error("live_audio_ws: session fatal error user=%d mode=%s: %s", user_id, transport_mode, err_str)
+            logger.error(
+                "live_audio_ws: session fatal error user=%d mode=%s error_type=%s",
+                user_id,
+                transport_mode,
+                type(exc).__name__,
+            )
             try:
                 await websocket.send_json(
                     {

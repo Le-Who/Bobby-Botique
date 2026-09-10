@@ -190,11 +190,26 @@ async def _generate_with_resilience(
 
         client = get_cached_genai_client(current_api_key)
 
-        async def _call(_c=client) -> str | None:
-            response = await _c.aio.models.generate_content(
+        async def _call(
+            _c=client,
+            _api_key=current_api_key,
+            _key_hash=current_key_hash,
+        ) -> str | None:
+            from app.observability.workload_events import observe_workload_call
+
+            response = await observe_workload_call(
+                _c.aio.models.generate_content(
+                    model=model,
+                    contents=parts,
+                    config=config,
+                ),
+                workload="multimodal_generation",
+                provider="gemini",
                 model=model,
-                contents=parts,
-                config=config,
+                api_key=_api_key,
+                key_hash=_key_hash,
+                origin="multimodal_processor",
+                input_parts=len(parts),
             )
             if response and response.text:
                 return response.text.strip()

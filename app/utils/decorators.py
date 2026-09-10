@@ -4,8 +4,10 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from app.observability.events import emit, record_exception
 from app.repos.users import is_admin, is_authorized
-from app.request_context import set_request_id, set_user_context
+from app.request_context import ensure_request_id as set_request_id
+from app.request_context import set_user_context
 
 
 def authorized_only(func):
@@ -127,20 +129,33 @@ def safe_handler(error_message: str = "❌ Произошла ошибка. По
                 return await func(update, context, *args, **kwargs)
             except Exception as e:
                 user_id = getattr(update.effective_user, "id", "?")
-                logging.error(
-                    "Unhandled error in %s for user %s: %s",
-                    func.__name__,
-                    user_id,
+                error_id = record_exception(
+                    "telegram.handler_failed",
                     e,
-                    exc_info=True,
+                    operation=func.__name__,
+                    fields={"handler": func.__name__, "handler_user_id": str(user_id)},
                 )
                 try:
                     if update.message:
                         await update.message.reply_text(error_message)
                     elif update.callback_query:
                         await update.callback_query.answer(error_message, show_alert=True)
-                except Exception:
-                    pass  # Best-effort error notification
+                except Exception as notification_error:
+                    record_exception(
+                        "delivery.error_notification_failed",
+                        notification_error,
+                        operation="telegram.error_notification",
+                        level="warning",
+                        fields={"original_error_id": error_id, "handler": func.__name__},
+                    )
+                emit(
+                    "telegram.handler_finished",
+                    level="error",
+                    operation=func.__name__,
+                    handler=func.__name__,
+                    outcome="failed_handled",
+                    error_id=error_id,
+                )
 
         return wrapper
 
@@ -160,18 +175,31 @@ def safe_callback(error_message: str = "❌ Ошибка. Попробуйте �
                 return await func(update, context, *args, **kwargs)
             except Exception as e:
                 user_id = getattr(update.effective_user, "id", "?")
-                logging.error(
-                    "Unhandled error in %s for user %s: %s",
-                    func.__name__,
-                    user_id,
+                error_id = record_exception(
+                    "telegram.handler_failed",
                     e,
-                    exc_info=True,
+                    operation=func.__name__,
+                    fields={"handler": func.__name__, "handler_user_id": str(user_id)},
                 )
                 try:
                     if update.callback_query:
                         await update.callback_query.answer(error_message, show_alert=True)
-                except Exception:
-                    pass
+                except Exception as notification_error:
+                    record_exception(
+                        "delivery.error_notification_failed",
+                        notification_error,
+                        operation="telegram.error_notification",
+                        level="warning",
+                        fields={"original_error_id": error_id, "handler": func.__name__},
+                    )
+                emit(
+                    "telegram.handler_finished",
+                    level="error",
+                    operation=func.__name__,
+                    handler=func.__name__,
+                    outcome="failed_handled",
+                    error_id=error_id,
+                )
 
         return wrapper
 

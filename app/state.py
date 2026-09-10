@@ -14,6 +14,8 @@ import asyncio
 import logging
 import time
 
+from app.observability.events import emit, record_exception
+
 
 class UserState:
     """In-process user state backed by database persistence.
@@ -173,6 +175,7 @@ async def _ensure_loaded(state: UserState) -> UserState:
         if state._loaded_from_db:
             return state  # type: ignore[unreachable]  # double-check lock pattern
 
+        started_ns = time.monotonic_ns()
         try:
             from app.repos.users import load_user_state
 
@@ -192,8 +195,25 @@ async def _ensure_loaded(state: UserState) -> UserState:
                 state.role_diaries = data.get("role_diaries") or {}
                 state.tarot_mode = data.get("tarot_mode", False)
                 state.tarot_session = data.get("tarot_session")
+            emit(
+                "state.hydration_finished",
+                operation="state.hydrate",
+                outcome="succeeded",
+                actor_user_id=state._user_id,
+                persisted_state_found=bool(data),
+                duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+            )
         except Exception as e:
-            logging.warning("Could not load state for %s: %s", state._user_id, e)
+            record_exception(
+                "state.hydration_failed",
+                e,
+                operation="state.hydrate",
+                level="warning",
+                fields={
+                    "actor_user_id": state._user_id,
+                    "duration_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+                },
+            )
 
         state._loaded_from_db = True
     return state
@@ -204,6 +224,7 @@ async def _persist(state: UserState) -> None:
     if state._user_id == 0:
         return
 
+    started_ns = time.monotonic_ns()
     try:
         from app.repos.users import save_user_state
 
@@ -224,8 +245,25 @@ async def _persist(state: UserState) -> None:
             tarot_mode=state.tarot_mode,
             tarot_session=state.tarot_session,
         )
+        emit(
+            "state.persistence_finished",
+            level="debug",
+            operation="state.persist",
+            outcome="succeeded",
+            actor_user_id=state._user_id,
+            duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+        )
     except Exception as e:
-        logging.warning("Could not persist state for %s: %s", state._user_id, e)
+        record_exception(
+            "state.persistence_failed",
+            e,
+            operation="state.persist",
+            level="warning",
+            fields={
+                "actor_user_id": state._user_id,
+                "duration_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+            },
+        )
 
 
 _PERSIST_DEBOUNCE_SEC = 0.3  # 300ms debounce window
@@ -261,6 +299,13 @@ def _schedule_persist(state: UserState) -> None:
     old_handle = _pending_persists.pop(state._user_id, None)
     if old_handle is not None:
         old_handle.cancel()
+        emit(
+            "state.persistence_coalesced",
+            level="debug",
+            operation="state.persist",
+            actor_user_id=state._user_id,
+            debounce_ms=round(_PERSIST_DEBOUNCE_SEC * 1000, 2),
+        )
 
     # Schedule new debounced persist
     handle = loop.call_later(_PERSIST_DEBOUNCE_SEC, _fire)
@@ -280,6 +325,11 @@ def get_user_state(user_id: int) -> UserState:
 def get_user_lock(user_id: int) -> asyncio.Lock:
     """Get the lock for a user."""
     return get_user_state(user_id).lock
+
+
+def get_active_user_lock_count() -> int:
+    """Return the number of currently-held process-local user locks."""
+    return sum(1 for user_state in USER_STATES._states.values() if user_state.lock.locked())
 
 
 # --- Async load API (call once per handler, early) ---

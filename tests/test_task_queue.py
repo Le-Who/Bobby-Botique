@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.observability.context import current_context, request_scope
 from app.queue import TaskPriority, TaskQueue, TaskStatus
 
 
@@ -22,12 +23,13 @@ async def test_init(task_queue):
 
 @pytest.mark.asyncio
 async def test_add_task(task_queue):
-    task_id = await task_queue.add_task(
-        user_id=1,
-        task_type="test_task",
-        data={"key": "value"},
-        priority=TaskPriority.HIGH,
-    )
+    with request_scope(request_id="a" * 32, user_id=1, chat_id=2):
+        task_id = await task_queue.add_task(
+            user_id=1,
+            task_type="test_task",
+            data={"key": "value"},
+            priority=TaskPriority.HIGH,
+        )
     assert task_id
     assert task_id in task_queue.tasks
     task = task_queue.tasks[task_id]
@@ -36,6 +38,7 @@ async def test_add_task(task_queue):
 
     # Check task is in tasks dict (queued to fallback since no Redis)
     assert task.user_id == 1
+    assert task.observability_context["trace_id"] == "a" * 32
 
 
 @pytest.mark.asyncio
@@ -55,8 +58,12 @@ async def test_start_stop(task_queue):
 async def test_worker_success(task_queue):
     # Mock _execute_task to return a result
     task_queue._execute_task = AsyncMock(return_value={"success": True})
+    captured: list[tuple[str, dict[str, object]]] = []
 
-    with patch("app.queue._get_redis", return_value=None):
+    with (
+        patch("app.queue._get_redis", return_value=None),
+        patch("app.queue.emit", side_effect=lambda event, **fields: captured.append((event, fields))),
+    ):
         await task_queue.start()
 
         task_id = await task_queue.add_task(user_id=1, task_type="test_task", data={"key": "value"})
@@ -73,14 +80,48 @@ async def test_worker_success(task_queue):
     assert task.status == TaskStatus.COMPLETED
     assert task.result == {"success": True}
     task_queue._execute_task.assert_called_once()
+    terminal = [fields for event, fields in captured if event == "job.finished"]
+    assert len(terminal) == 1
+    assert terminal[0]["outcome"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_worker_restores_origin_and_sets_execution_context(task_queue):
+    seen = None
+
+    async def execute(_task):
+        nonlocal seen
+        seen = current_context()
+        return {"status": "completed"}
+
+    task_queue._execute_task = AsyncMock(side_effect=execute)
+    with patch("app.queue._get_redis", return_value=None):
+        await task_queue.start()
+        with request_scope(request_id="b" * 32, user_id=7, chat_id=8):
+            task_id = await task_queue.add_task(user_id=7, task_type="test_task", data={})
+        for _ in range(20):
+            if task_queue.tasks[task_id].status == TaskStatus.COMPLETED:
+                break
+            await asyncio.sleep(0.1)
+        await task_queue.stop()
+
+    assert seen is not None
+    assert seen.trace_id == "b" * 32
+    assert seen.task_id == task_id
+    assert len(seen.execution_id or "") == 32
+    assert seen.operation == "job.execute"
 
 
 @pytest.mark.asyncio
 async def test_worker_failure_retry(task_queue):
     # Mock _execute_task to raise exception
     task_queue._execute_task = AsyncMock(side_effect=Exception("Test Error"))
+    captured: list[tuple[str, dict[str, object]]] = []
 
-    with patch("app.queue._get_redis", return_value=None):
+    with (
+        patch("app.queue._get_redis", return_value=None),
+        patch("app.queue.emit", side_effect=lambda event, **fields: captured.append((event, fields))),
+    ):
         await task_queue.start()
 
         task_id = await task_queue.add_task(user_id=1, task_type="test_task", data={"key": "value"})
@@ -95,8 +136,12 @@ async def test_worker_failure_retry(task_queue):
         await task_queue.stop()
 
     assert task.status == TaskStatus.FAILED
-    assert task.error == "Test Error"
+    assert task.error.startswith("Exception:")
+    assert len(task.error.partition(":")[2]) == 32
     assert task.retry_count == task.max_retries
+    terminal = [fields for event, fields in captured if event == "job.finished"]
+    assert terminal
+    assert all(fields["outcome"] == "failed" for fields in terminal)
 
 
 @pytest.mark.asyncio

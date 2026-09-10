@@ -41,8 +41,10 @@ from app.handlers.msg_roles import (
 from app.handlers.msg_voice import handle_voice_inline
 from app.i18n import detect_language, t
 from app.metrics import metrics_collector
+from app.observability.content import content_fields
 from app.repos.users import is_authorized
-from app.request_context import set_request_id, set_user_context
+from app.request_context import ensure_request_id as set_request_id
+from app.request_context import set_user_context
 from app.security import check_user_rate_limit
 from app.tracing import bind_request_span
 from app.utils.api_logger import api_logger
@@ -195,9 +197,26 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await effective_msg.reply_text(t("error.message_too_long"))
             return
 
-        logging.info("Received message from user %s: %s", user_id, message_text[:100])
-
         is_rate_ok, is_auth_ok = await asyncio.gather(check_user_rate_limit(user_id), is_authorized(user_id))
+
+        logging.info(
+            "Received Telegram message",
+            extra={
+                "_event_name": "telegram.message_received",
+                "message_type": message_type,
+                **content_fields(
+                    "user_message",
+                    message_text,
+                    sensitive=(
+                        not is_auth_ok
+                        or effective_msg.chat.type != "private"
+                        or message_type != "text"
+                        or message_text.startswith(("/addkey", "/keys"))
+                    ),
+                    subsystem="telegram_message",
+                ),
+            },
+        )
 
         if not is_rate_ok:
             logging.warning("Rate limit exceeded for user %s", user_id)
@@ -287,8 +306,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         stop_heartbeat(placeholder_message.message_id)
                         logging.info("Completed voice processing for user %s", user_id)
 
-                        elapsed = time.time() - start_time
-                        api_logger.log_response(
+                        elapsed = api_logger.log_response(
                             "telegram",
                             start_time,
                             method="handle_message",
@@ -313,8 +331,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     except (BadRequest, NetworkError) as edit_error:
                         logging.error("Could not edit placeholder message: %s", edit_error)
 
-                    elapsed = time.time() - start_time
-                    api_logger.log_response(
+                    elapsed = api_logger.log_response(
                         "telegram",
                         start_time,
                         method="handle_message",
@@ -614,8 +631,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
                     logging.info("Completed task processing for user %s", user_id)
 
-                    elapsed = time.time() - start_time
-                    api_logger.log_response(
+                    elapsed = api_logger.log_response(
                         "telegram",
                         start_time,
                         method="handle_message",
@@ -639,8 +655,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 except (BadRequest, NetworkError) as edit_error:
                     logging.error("Could not edit placeholder message: %s", edit_error)
 
-                elapsed = time.time() - start_time
-                api_logger.log_response(
+                elapsed = api_logger.log_response(
                     "telegram",
                     start_time,
                     method="handle_message",
@@ -756,8 +771,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
                 state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
                 logging.info("edit: completed for user %s", user_id)
 
-                elapsed = time.time() - start_time
-                api_logger.log_response("telegram", start_time, method="handle_edited_message")
+                elapsed = api_logger.log_response("telegram", start_time, method="handle_edited_message")
                 await metrics_collector.record_request("handle_edited_message", elapsed, success=True, user_id=user_id)
 
         except asyncio.CancelledError:
@@ -774,8 +788,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
             except Exception:
                 pass
 
-            elapsed = time.time() - start_time
-            api_logger.log_response(
+            elapsed = api_logger.log_response(
                 "telegram",
                 start_time,
                 method="handle_edited_message",

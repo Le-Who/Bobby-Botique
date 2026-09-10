@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass
 from typing import Any
 
 from app.errors import ErrorCode, user_message_for_error_code
+from app.observability.delivery_events import delivery_outcome_fields
+from app.observability.events import emit, record_exception
 from app.providers.stream_types import GenerationRequest, StreamCompleted
 from app.response_delivery.coordinator import AIStreamCoordinator
 from app.response_delivery.outcomes import (
@@ -79,6 +83,18 @@ class TelegramResponseDelivery:
         *,
         presentation: TelegramPresentation,
     ) -> TelegramResponseOutcome:
+        return await self._observe(
+            "stream",
+            self._stream_impl(target, generation, presentation=presentation),
+        )
+
+    async def _stream_impl(
+        self,
+        target: TelegramTarget,
+        generation: GenerationRequest,
+        *,
+        presentation: TelegramPresentation,
+    ) -> TelegramResponseOutcome:
         router = self._router
         if router is None:
             from app.providers import get_provider_router
@@ -101,6 +117,18 @@ class TelegramResponseDelivery:
         return await coordinator.run(generation, presentation)
 
     async def deliver(
+        self,
+        target: TelegramTarget,
+        completed: CompletedResponse | GenerationFailure | DeferredGeneration,
+        *,
+        presentation: TelegramPresentation,
+    ) -> TelegramResponseOutcome:
+        return await self._observe(
+            "completed",
+            self._deliver_impl(target, completed, presentation=presentation),
+        )
+
+    async def _deliver_impl(
         self,
         target: TelegramTarget,
         completed: CompletedResponse | GenerationFailure | DeferredGeneration,
@@ -165,6 +193,54 @@ class TelegramResponseDelivery:
             displayed_text=displayed,
             receipt=receipt,
         )
+
+    async def _observe(self, mode: str, operation) -> TelegramResponseOutcome:
+        started_ns = time.monotonic_ns()
+        emit(
+            "delivery.started",
+            operation="telegram.delivery",
+            delivery_mode=mode,
+        )
+        try:
+            outcome = await operation
+        except asyncio.CancelledError:
+            emit(
+                "delivery.finished",
+                level="warning",
+                operation="telegram.delivery",
+                delivery_mode=mode,
+                delivery_status="cancelled",
+                duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+            )
+            raise
+        except Exception as error:
+            error_id = record_exception(
+                "delivery.transport_failed",
+                error,
+                operation="telegram.delivery",
+                fields={"delivery_mode": mode},
+            )
+            emit(
+                "delivery.finished",
+                level="error",
+                operation="telegram.delivery",
+                delivery_mode=mode,
+                delivery_status="transport_failed",
+                error_id=error_id,
+                duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+            )
+            raise
+
+        fields = delivery_outcome_fields(outcome)
+        emit(
+            "delivery.finished",
+            level="warning" if fields["delivery_status"] in {"partial", "failure_notice_sent"} else "info",
+            operation="telegram.delivery",
+            delivery_mode=mode,
+            duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+            **fields,
+        )
+        return outcome
 
 
 _delivery: TelegramResponseDelivery | None = None

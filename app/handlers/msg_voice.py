@@ -25,6 +25,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
 
 from app.i18n import detect_language, t
+from app.observability.content import content_fields
 from app.repos.chats import get_user_chat, update_user_chat
 from app.repos.memory_autosave import submit_memory_task
 from app.repos.memory_consent import capture_epoch
@@ -159,7 +160,19 @@ async def _process_voice_pipeline_leased_impl(
         _draw_prompt = _check_draw(transcript)
 
     if _draw_prompt:
-        logging.info("Voice draw intent detected for user %s: %r", user_id, _draw_prompt[:60])
+        logging.info(
+            "Voice draw intent detected",
+            extra={
+                "_event_name": "voice.draw_intent_detected",
+                "actor_user_id": user_id,
+                **content_fields(
+                    "voice_derived_image_prompt",
+                    _draw_prompt,
+                    sensitive=True,
+                    subsystem="voice",
+                ),
+            },
+        )
         await _auto_route_to_image(
             placeholder,
             transcript,

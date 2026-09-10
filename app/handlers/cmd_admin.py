@@ -20,6 +20,7 @@ from app.config import KYIV_TZ, settings
 from app.group_chat import group_chat_manager
 from app.handlers import menus
 from app.metrics import role_conv_metrics
+from app.observability.workload_events import start_workload_attempt
 from app.prompt_registry import DEFAULT_ROLES
 from app.queue import task_queue
 from app.repos import crocodile_daily as daily_croc_repo
@@ -371,11 +372,25 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         from google import genai  # deferred — avoids heavy google-genai startup cost
 
         client = genai.Client(api_key=key_data["api_key"])
+        attempt = start_workload_attempt(
+            workload="provider_model_list",
+            provider="gemini",
+            model=None,
+            api_key=key_data["api_key"],
+            key_hash=key_data["key_hash"],
+            origin="admin_list_models",
+        )
+        try:
+            remote_models = await asyncio.to_thread(lambda: list(client.models.list()))
+        except Exception as error:
+            attempt.fail(error)
+            raise
+        attempt.finish(outcome="succeeded", model_count=len(remote_models))
 
         # google-genai SDK: Model has .name and .supported_actions (list of str)
         api_models = set()
         models_list = []
-        for m in client.models.list():
+        for m in remote_models:
             # Filter to models that support generateContent
             actions = getattr(m, "supported_actions", None) or []
             if actions and "generateContent" not in actions:
@@ -955,8 +970,21 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def _check_single_gemini_key(client: httpx.AsyncClient, key_hash: str, api_key: str) -> str:
     # A fast, lightweight check bypassing the SDK to avoid retry-loops.
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash?key={api_key}"
+    attempt = start_workload_attempt(
+        workload="provider_health_check",
+        provider="gemini",
+        model="gemini-3.5-flash",
+        api_key=api_key,
+        key_hash=key_hash,
+        origin="admin_check_gemini_keys",
+    )
     try:
         resp = await client.get(url)
+        attempt.finish(
+            outcome="succeeded" if resp.status_code == 200 else "remote_error",
+            level="info" if resp.status_code == 200 else "warning",
+            status_code=resp.status_code,
+        )
         if resp.status_code == 200:
             return f"✅ `{key_hash[:8]}...` — ОК"
         elif resp.status_code == 400:
@@ -966,6 +994,7 @@ async def _check_single_gemini_key(client: httpx.AsyncClient, key_hash: str, api
         else:
             return f"⚠️ `{key_hash[:8]}...` — ОШИБКА {resp.status_code}"
     except Exception as e:
+        attempt.fail(e)
         return f"💥 `{key_hash[:8]}...` — СЕТЕВАЯ ОШИБКА ({type(e).__name__})"
 
 

@@ -24,6 +24,8 @@ from typing import Final
 
 import httpx
 
+from app.observability.workload_events import start_workload_attempt
+
 # ─── Public exceptions ────────────────────────────────────────────────────────
 
 
@@ -149,6 +151,18 @@ async def generate_speech_elevenlabs(
     if not text or not text.strip():
         return None
 
+    attempt = start_workload_attempt(
+        workload="tts",
+        provider="elevenlabs",
+        model=model_id,
+        api_key=api_key,
+        origin="elevenlabs_tts",
+        voice_id=voice_id,
+        input_chars=len(text),
+        has_previous_context=previous_text is not None,
+        has_next_context=next_text is not None,
+    )
+
     endpoint = _TTS_ENDPOINT.format(voice_id=voice_id)
     payload: dict[str, object] = {
         "text": text,
@@ -177,8 +191,12 @@ async def generate_speech_elevenlabs(
             ),
             timeout=timeout,
         )
-    except TimeoutError:
+    except TimeoutError as exc:
         logging.warning("ElevenLabs TTS request timed out after %.0fs", timeout)
+        attempt.fail(exc, reason_code="timeout")
+        raise
+    except Exception as exc:
+        attempt.fail(exc, reason_code="transport_error")
         raise
 
     if response.status_code in (401, 403):
@@ -187,23 +205,35 @@ async def generate_speech_elevenlabs(
             "ElevenLabs key rejected (HTTP %d): quota/auth failure",
             response.status_code,
         )
-        raise ElevenLabsQuotaError(f"Key rejected: HTTP {response.status_code}")
+        quota_error = ElevenLabsQuotaError(f"Key rejected: HTTP {response.status_code}")
+        attempt.fail(quota_error, reason_code="auth_error", status_code=response.status_code)
+        raise quota_error
 
     if response.status_code == 429:
         # Rate-limited or character quota exhausted.
         logging.warning("ElevenLabs rate/quota limit hit (HTTP 429)")
-        raise ElevenLabsQuotaError("ElevenLabs quota or rate limit exceeded")
+        quota_error = ElevenLabsQuotaError("ElevenLabs quota or rate limit exceeded")
+        attempt.fail(quota_error, reason_code="rate_limited", status_code=429)
+        raise quota_error
 
     if response.status_code != 200:
         # Non-recoverable server error — don't rotate key, just fail.
         logging.error("ElevenLabs unexpected HTTP %d", response.status_code)
-        raise ElevenLabsAPIError(f"HTTP {response.status_code}")
+        api_error = ElevenLabsAPIError(f"HTTP {response.status_code}")
+        attempt.fail(api_error, reason_code="http_error", status_code=response.status_code)
+        raise api_error
 
     audio_bytes = response.content
     if not audio_bytes or len(audio_bytes) < 100:
         logging.warning(
             "ElevenLabs returned suspiciously small audio (%d bytes)",
             len(audio_bytes) if audio_bytes else 0,
+        )
+        attempt.finish(
+            outcome="failed",
+            level="warning",
+            reason_code="empty_audio",
+            output_bytes=len(audio_bytes) if audio_bytes else 0,
         )
         return None
 
@@ -213,6 +243,7 @@ async def generate_speech_elevenlabs(
         len(text),
         len(audio_bytes),
     )
+    attempt.finish(outcome="succeeded", output_bytes=len(audio_bytes))
     return audio_bytes
 
 
@@ -342,6 +373,13 @@ async def fetch_voices(api_key: str, *, timeout: float = 10.0) -> list[dict]:
     if not api_key:
         return []
 
+    attempt = start_workload_attempt(
+        workload="voice_catalog",
+        provider="elevenlabs",
+        model="voices",
+        api_key=api_key,
+        origin="elevenlabs_voice_catalog",
+    )
     client = _get_client()
     try:
         response = await asyncio.wait_for(
@@ -353,21 +391,35 @@ async def fetch_voices(api_key: str, *, timeout: float = 10.0) -> list[dict]:
         )
     except Exception as exc:
         logging.warning("Failed to fetch ElevenLabs voices (%s)", type(exc).__name__)
+        attempt.fail(exc, reason_code="request_failed")
         return []
 
     if response.status_code != 200:
         logging.warning("ElevenLabs voices API returned HTTP %d", response.status_code)
+        attempt.finish(
+            outcome="failed",
+            level="warning",
+            reason_code="http_error",
+            status_code=response.status_code,
+        )
         return []
 
     try:
         data = response.json()
+        if not isinstance(data, dict):
+            raise TypeError("ElevenLabs voices response must be an object")
+        voices_list = data.get("voices", [])
+        if not isinstance(voices_list, list):
+            raise TypeError("ElevenLabs voices field must be a list")
     except Exception as exc:
         logging.warning("Failed to parse ElevenLabs voices JSON (%s)", type(exc).__name__)
+        attempt.fail(exc, reason_code="invalid_response")
         return []
 
-    voices_list = data.get("voices", [])
     result = []
     for v in voices_list:
+        if not isinstance(v, dict):
+            continue
         voice_id = v.get("voice_id")
         name = v.get("name")
         category = v.get("category")
@@ -383,4 +435,5 @@ async def fetch_voices(api_key: str, *, timeout: float = 10.0) -> list[dict]:
                 "labels": v.get("labels", {}),
             }
         )
+    attempt.finish(outcome="succeeded", result_count=len(result))
     return result

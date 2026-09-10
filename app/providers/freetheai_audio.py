@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from app.config import get_freetheai_keys
+from app.observability.workload_events import start_workload_attempt
 from app.utils.media_download import (
     AUDIO_MIME_TYPES,
     MAX_AUDIO_DOWNLOAD_BYTES,
@@ -182,6 +183,24 @@ class FreeTheAIAudioProvider:
 
         api_key, key_hash = key_pair
         key_id = key_hash[:8]
+        attempt = start_workload_attempt(
+            workload="audio_generation",
+            provider="freetheai",
+            model=model,
+            api_key=api_key,
+            key_hash=key_hash,
+            origin="freetheai_audio",
+            prompt_chars=len(prompt),
+        )
+
+        def finish(result: AudioGenResult) -> AudioGenResult:
+            attempt.finish(
+                outcome="succeeded" if result.success else "failed",
+                level="info" if result.success else "warning",
+                reason_code=result.error_message or None,
+                output_bytes=len(result.audio_bytes or b""),
+            )
+            return result
 
         payload = {
             "model": model,
@@ -220,11 +239,13 @@ class FreeTheAIAudioProvider:
                 )
                 if response.status_code == 429:
                     _suspend_lyria_key(key_hash, timedelta(seconds=120))
-                    return AudioGenResult(success=False, error_message="rate_limited", model_used=model)
+                    return finish(AudioGenResult(success=False, error_message="rate_limited", model_used=model))
                 if response.status_code in (401, 403):
                     _suspend_lyria_key(key_hash, timedelta(minutes=30))
-                    return AudioGenResult(success=False, error_message="auth_error", model_used=model)
-                return AudioGenResult(success=False, error_message=f"http_{response.status_code}", model_used=model)
+                    return finish(AudioGenResult(success=False, error_message="auth_error", model_used=model))
+                return finish(
+                    AudioGenResult(success=False, error_message=f"http_{response.status_code}", model_used=model)
+                )
 
             data = response.json()
 
@@ -232,14 +253,14 @@ class FreeTheAIAudioProvider:
             choices = data.get("choices", [])
             if not choices:
                 logger.warning("Lyria: empty choices in response")
-                return AudioGenResult(success=False, error_message="empty_response", model_used=model)
+                return finish(AudioGenResult(success=False, error_message="empty_response", model_used=model))
 
             message = choices[0].get("message", {})
             content = message.get("content", "")
 
             if not content:
                 logger.warning("Lyria: empty content in response")
-                return AudioGenResult(success=False, error_message="empty_content", model_used=model)
+                return finish(AudioGenResult(success=False, error_message="empty_content", model_used=model))
 
             # Try to extract inline audio data
             audio_data, mime_type, remaining_text = _extract_audio_from_response(content)
@@ -252,13 +273,15 @@ class FreeTheAIAudioProvider:
                     model,
                     key_id,
                 )
-                return AudioGenResult(
-                    success=True,
-                    audio_bytes=audio_data,
-                    mime_type=mime_type,
-                    text_content=remaining_text,
-                    model_used=model,
-                    duration_s=elapsed,
+                return finish(
+                    AudioGenResult(
+                        success=True,
+                        audio_bytes=audio_data,
+                        mime_type=mime_type,
+                        text_content=remaining_text,
+                        model_used=model,
+                        duration_s=elapsed,
+                    )
                 )
 
             # Try to find and download audio URL from the text
@@ -289,39 +312,47 @@ class FreeTheAIAudioProvider:
                         elapsed,
                         model,
                     )
-                    return AudioGenResult(
-                        success=True,
-                        audio_bytes=audio_data,
-                        mime_type=mime_type,
-                        text_content=remaining.strip(),
-                        model_used=model,
-                        duration_s=elapsed,
+                    return finish(
+                        AudioGenResult(
+                            success=True,
+                            audio_bytes=audio_data,
+                            mime_type=mime_type,
+                            text_content=remaining.strip(),
+                            model_used=model,
+                            duration_s=elapsed,
+                        )
                     )
                 except MediaDownloadError as dl_exc:
                     logger.error("Lyria: media download failed (%s)", dl_exc.code)
-                    return AudioGenResult(
-                        success=False,
-                        error_message="download_failed",
-                        text_content=remaining.strip(),
-                        model_used=model,
+                    return finish(
+                        AudioGenResult(
+                            success=False,
+                            error_message="download_failed",
+                            text_content=remaining.strip(),
+                            model_used=model,
+                        )
                     )
 
             # No audio found — return the text content as-is
             # This might happen if the model returned lyrics or a description
             logger.warning("Lyria: response contained text but no audio data (model=%s)", model)
-            return AudioGenResult(
-                success=False,
-                error_message="no_audio_in_response",
-                text_content=content,
-                model_used=model,
+            return finish(
+                AudioGenResult(
+                    success=False,
+                    error_message="no_audio_in_response",
+                    text_content=content,
+                    model_used=model,
+                )
             )
 
-        except TimeoutError:
+        except TimeoutError as exc:
             logger.error("Lyria: timeout after %.0fs (model=%s)", _AUDIO_TIMEOUT, model)
+            attempt.fail(exc, reason_code="timeout")
             return AudioGenResult(success=False, error_message="timeout", model_used=model)
         except Exception as exc:
             error_type = type(exc).__name__
             logger.error("Lyria: unexpected error (error_type=%s)", error_type)
+            attempt.fail(exc, reason_code="unexpected")
             return AudioGenResult(success=False, error_message=f"unexpected:{error_type}", model_used=model)
 
 

@@ -20,6 +20,7 @@ import httpx
 from PIL import Image
 
 from app.errors import ErrorCode, tag_error
+from app.observability.provider_events import record_provider_exception
 from app.providers import openrouter as openrouter_provider
 from app.providers.base import AIResponse
 from app.providers.openrouter import OpenRouterProvider
@@ -209,7 +210,22 @@ class OpencodeGoProvider(OpenRouterProvider):
         except asyncio.CancelledError:
             raise
         except httpx.HTTPStatusError as exc:
-            await exc.response.aread()
+            error_id = record_provider_exception(
+                exc,
+                provider=self.provider_name,
+                model=model_name,
+                api_key=self.api_key,
+                failure_phase=(FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT).value,
+            )
+            body_error_type: str | None
+            try:
+                await exc.response.aread()
+                response_chars = len(exc.response.text)
+            except Exception as body_error:
+                response_chars = None
+                body_error_type = type(body_error).__name__
+            else:
+                body_error_type = None
             status = exc.response.status_code
             code = (
                 ErrorCode.RATE_LIMIT
@@ -234,11 +250,22 @@ class OpencodeGoProvider(OpenRouterProvider):
                 phase=FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT,
                 retry=(RetryDisposition.DO_NOT_RETRY if text_emitted else RetryDisposition.TRY_NEXT_KEY),
                 key=KeyDisposition.UNCHANGED if text_emitted else key,
-                diagnostic=f"Opencode HTTP {status}: {exc.response.text[:400]}",
+                diagnostic=(
+                    f"Opencode HTTP {status}; response_chars={response_chars}; "
+                    f"body_error_type={body_error_type or 'none'}"
+                ),
                 route=route,
+                error_id=error_id,
             )
             return
         except Exception as exc:
+            error_id = record_provider_exception(
+                exc,
+                provider=self.provider_name,
+                model=model_name,
+                api_key=self.api_key,
+                failure_phase=(FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT).value,
+            )
             yield StreamFailed(
                 code=ErrorCode.NETWORK if isinstance(exc, httpx.HTTPError) else ErrorCode.GENERIC,
                 phase=FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT,
@@ -246,6 +273,7 @@ class OpencodeGoProvider(OpenRouterProvider):
                 key=(KeyDisposition.UNCHANGED if text_emitted else KeyDisposition.TRANSIENT_FAILURE),
                 diagnostic=f"{type(exc).__name__}: {exc}"[:500].replace(self.api_key, "[redacted]"),
                 route=route,
+                error_id=error_id,
             )
             return
 
@@ -435,20 +463,21 @@ class OpencodeGoProvider(OpenRouterProvider):
                 return tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ. Проверьте настройки.")
             if any(marker in body for marker in model_access_markers):
                 logging.warning(
-                    "Opencode rejected model access without invalidating key: model=%s status=%s body=%s",
+                    "Opencode rejected model access without invalidating key: model=%s status=%s response_chars=%d",
                     model_name,
                     status,
-                    (response_text or "")[:200],
+                    len(response_text or ""),
                 )
                 return tag_error(
                     ErrorCode.INVALID_REQUEST,
                     "❌ Opencode отклонил доступ к этой модели для текущего ключа.",
                 )
             logging.warning(
-                "Opencode returned ambiguous auth error; treating as model/request access: model=%s status=%s body=%s",
+                "Opencode returned ambiguous auth error; treating as model/request access: "
+                "model=%s status=%s response_chars=%d",
                 model_name,
                 status,
-                (response_text or "")[:200],
+                len(response_text or ""),
             )
             return tag_error(
                 ErrorCode.INVALID_REQUEST,
@@ -490,7 +519,12 @@ class OpencodeGoProvider(OpenRouterProvider):
         start_time = None
         try:
             await openrouter_provider.metrics_collector.record_api_call("opencode", model_name)
-            start_time = time.time()
+            start_time = openrouter_provider.api_logger.log_request(
+                "opencode",
+                model=model_name,
+                api_key=self.api_key,
+                transport="messages",
+            )
 
             payload = await self._build_messages_payload(history, model_name, system_instruction)
             if not payload["messages"]:
@@ -521,7 +555,8 @@ class OpencodeGoProvider(OpenRouterProvider):
                 response_data = response.json()
             except httpx.HTTPStatusError as e:
                 return await self._handle_http_error(e, model_name, start_time, user_id, chat_id)
-            except TimeoutError:
+            except TimeoutError as error:
+                self._record_legacy_error(error, model_name)
                 msg = f"Opencode Messages API request timed out for model {model_name}"
                 logging.error(msg)
                 await openrouter_provider.metrics_collector.record_error("opencode_timeout", msg)
@@ -538,6 +573,7 @@ class OpencodeGoProvider(OpenRouterProvider):
                     model=model_name,
                 )
             except httpx.HTTPError as e:
+                self._record_legacy_error(e, model_name)
                 msg = f"Opencode Messages API error: {e!r}"
                 logging.error(msg)
                 await openrouter_provider.metrics_collector.record_error("opencode_api", msg)
@@ -554,7 +590,16 @@ class OpencodeGoProvider(OpenRouterProvider):
             response_text = self._extract_messages_text(response_data)
             if not response_text:
                 msg = "Opencode Messages API returned empty response"
-                logging.error("%s body=%s", msg, response_data)
+                logging.error(
+                    msg,
+                    extra={
+                        "_event_name": "provider.response_invalid",
+                        "provider": "opencode",
+                        "model": model_name,
+                        "response_type": type(response_data).__name__,
+                        "response_fields": sorted(response_data)[:16] if isinstance(response_data, dict) else [],
+                    },
+                )
                 await openrouter_provider.metrics_collector.record_error("opencode_empty_response", msg)
                 self._log_failure(start_time, model_name, msg, user_id, chat_id)
                 return AIResponse(
@@ -596,6 +641,7 @@ class OpencodeGoProvider(OpenRouterProvider):
                 model=model_name,
             )
         except Exception as e:
+            self._record_legacy_error(e, model_name)
             logging.error("Opencode Messages API generic error: %s", e, exc_info=True)
             await openrouter_provider.metrics_collector.record_error("opencode_api", str(e))
             self._log_failure(start_time, model_name, str(e), user_id, chat_id)

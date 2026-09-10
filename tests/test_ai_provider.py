@@ -219,8 +219,9 @@ class TestProviders:
             assert response.token_count == 15
             assert response.success is True
             assert response.provider == "gemini"
-            assert mock_api_logger.log_request.call_args.kwargs["key_prefix"] == "AIza1234"
-            assert mock_api_logger.log_response.call_args.kwargs["key_prefix"] == "AIza1234"
+            assert mock_api_logger.log_request.call_args.kwargs["api_key"] == "AIza123456789"
+            assert "key_prefix" not in mock_api_logger.log_request.call_args.kwargs
+            assert "key_prefix" not in mock_api_logger.log_response.call_args.kwargs
 
     @pytest.mark.asyncio
     async def test_gemini_wrapper_error(self):

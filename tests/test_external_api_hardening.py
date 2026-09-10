@@ -289,6 +289,26 @@ async def test_exchange_error_log_does_not_expose_api_key(monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
+async def test_exchange_invalid_shape_finishes_attempt(monkeypatch):
+    from app import intent_router
+
+    response = MagicMock(status_code=200)
+    response.raise_for_status.return_value = None
+    response.json.return_value = ["unexpected"]
+    client = AsyncMock()
+    client.get.return_value = response
+    attempt = MagicMock()
+    monkeypatch.setattr(intent_router, "_get_http", lambda: client)
+    monkeypatch.setattr(intent_router, "start_workload_attempt", lambda **_kwargs: attempt)
+
+    result = await intent_router._fetch_exchangerate_api("fake-key-5678", "USD", "EUR")
+
+    assert result is None
+    attempt.fail.assert_called_once()
+    assert attempt.fail.call_args.kwargs["reason_code"] == "invalid_response"
+
+
+@pytest.mark.asyncio
 async def test_fta_image_log_does_not_include_prompt_or_base64(monkeypatch, caplog):
     from app.providers import freetheai_image
 

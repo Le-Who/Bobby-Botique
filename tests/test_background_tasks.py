@@ -153,6 +153,28 @@ async def test_taskmanager_submit_fire_and_forget():
 
 
 @pytest.mark.asyncio
+async def test_taskmanager_adds_named_execution_context():
+    from app.observability.context import current_context, request_scope
+
+    tm = TaskManager()
+    seen = None
+
+    async def work():
+        nonlocal seen
+        seen = current_context()
+
+    with request_scope(request_id="c" * 32, user_id=42):
+        tm.submit(work(), operation="memory.consolidate", metadata={"source": "test"})
+    await tm.drain(timeout=2.0)
+
+    assert seen is not None
+    assert seen.trace_id == "c" * 32
+    assert seen.operation == "memory.consolidate"
+    assert seen.task_id is not None
+    assert seen.execution_id is not None
+
+
+@pytest.mark.asyncio
 async def test_taskmanager_drain_awaits_cancelled_task_cleanup():
     tm = TaskManager()
     running = asyncio.Event()

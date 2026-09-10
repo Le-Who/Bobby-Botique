@@ -18,7 +18,7 @@ class TestGetTraceContext:
             ctx = get_trace_context()
             assert ctx["trace_id"] == "req-123"
             assert ctx["span_id"] is not None
-            assert ctx["span_id"].startswith("test-")
+            assert len(ctx["span_id"]) == 16
 
     def test_context_reset_after_span(self):
         with bind_request_span(request_id="req-456"):
@@ -35,7 +35,7 @@ class TestBindRequestSpan:
         with bind_request_span(request_id="abc", span_name="op") as ctx:
             assert ctx["request_id"] == "abc"
             assert ctx["trace_id"] == "abc"
-            assert ctx["span_id"].startswith("op-")
+            assert len(ctx["span_id"]) == 16
 
     def test_generates_trace_id_when_no_request_id(self):
         with patch("app.tracing.get_request_id", return_value=None):
@@ -47,14 +47,15 @@ class TestBindRequestSpan:
         with bind_request_span(request_id="outer", span_name="a") as _outer_ctx:
             with bind_request_span(request_id="inner", span_name="b") as inner_ctx:
                 assert inner_ctx["trace_id"] == "inner"
-                assert inner_ctx["span_id"].startswith("b-")
+                assert len(inner_ctx["span_id"]) == 16
             # After inner exits, outer should be restored
             restored = get_trace_context()
             assert restored["trace_id"] == "outer"
 
-    def test_span_id_contains_name(self):
+    def test_span_id_is_otel_compatible_hex(self):
         with bind_request_span(span_name="my_operation") as ctx:
-            assert "my_operation-" in ctx["span_id"]
+            assert len(ctx["span_id"]) == 16
+            assert all(char in "0123456789abcdef" for char in ctx["span_id"])
 
     def test_span_id_unique_per_call(self):
         span_ids = set()

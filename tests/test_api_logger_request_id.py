@@ -1,79 +1,96 @@
-import json
-import os
-import sys
-import unittest
+from __future__ import annotations
 
-sys.path.append(os.getcwd())
-from unittest.mock import MagicMock, patch
+import time
+from unittest.mock import MagicMock
 
-from app.utils.api_logger import APILogger
+from app.utils.api_logger import APICallTiming, APILogger
 
 
-class TestAPILoggerRequestId(unittest.TestCase):
-    def setUp(self):
-        self.logger = APILogger()
-        self.logger.logger = MagicMock()
-
-    @patch("app.utils.api_logger.get_request_id", return_value="rid-123")
-    @patch("app.utils.api_logger.get_user_id", return_value=42)
-    @patch("app.utils.api_logger.get_chat_id", return_value=100)
-    def test_log_request_includes_context_fields(self, _chat, _user, _rid):
-        self.logger.log_request("telegram", endpoint="/send", method="POST")
-
-        # logger.info("%s %s REQUEST STARTED: %s", emoji, api, json)
-        message = self.logger.logger.info.call_args[0][3]
-        payload = json.loads(message)
-        self.assertEqual(payload["request_id"], "rid-123")
-        self.assertEqual(payload["user_id"], 42)
-        self.assertEqual(payload["chat_id"], 100)
-        self.assertEqual(payload["api"], "telegram")
-
-    @patch("app.utils.api_logger.get_request_id", return_value="rid-err")
-    @patch("app.utils.api_logger.get_user_id", return_value=None)
-    @patch("app.utils.api_logger.get_chat_id", return_value=None)
-    def test_log_error_includes_request_id(self, _chat, _user, _rid):
-        self.logger.log_error("gemini", ValueError("bad request"))
-
-        # logger.error("%s API ERROR: %s", emoji, json)
-        message = self.logger.logger.error.call_args[0][2]
-        payload = json.loads(message)
-        self.assertEqual(payload["request_id"], "rid-err")
-        self.assertEqual(payload["api"], "gemini")
-        self.assertEqual(payload["error_type"], "ValueError")
-
-    @patch("app.utils.api_logger.get_request_id", return_value="rid-resp")
-    @patch("app.utils.api_logger.get_user_id", return_value=7)
-    @patch("app.utils.api_logger.get_chat_id", return_value=77)
-    def test_log_response_success(self, _chat, _user, _rid):
-        import time
-
-        start = time.time() - 0.5  # simulate 500ms elapsed
-        self.logger.log_response("gemini", start, model="gemini-2.5-flash", response_length=100)
-
-        # logger.info("%s %s RESPONSE COMPLETED: %s", emoji, api, json)
-        message = self.logger.logger.info.call_args[0][3]
-        payload = json.loads(message)
-        self.assertEqual(payload["request_id"], "rid-resp")
-        self.assertEqual(payload["user_id"], 7)
-        self.assertTrue(payload["success"])
-        self.assertIn("duration_ms", payload)
-        self.assertEqual(payload["model"], "gemini-2.5-flash")
-
-    @patch("app.utils.api_logger.get_request_id", return_value="rid-fail")
-    @patch("app.utils.api_logger.get_user_id", return_value=None)
-    @patch("app.utils.api_logger.get_chat_id", return_value=None)
-    def test_log_response_failure(self, _chat, _user, _rid):
-        import time
-
-        start = time.time()
-        self.logger.log_response("tavily", start, success=False, error_message="timeout")
-
-        # logger.error("%s %s RESPONSE FAILED: %s", emoji, api, json)
-        message = self.logger.logger.error.call_args[0][3]
-        payload = json.loads(message)
-        self.assertFalse(payload["success"])
-        self.assertEqual(payload["error_message"], "timeout")
+def _extra(mock_method: MagicMock) -> dict:
+    return mock_method.call_args.kwargs["extra"]
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_log_request_uses_typed_fields_instead_of_json_in_message():
+    api_logger = APILogger()
+    api_logger.logger = MagicMock()
+
+    timing = api_logger.log_request("telegram", endpoint="/send", method="POST")
+
+    assert isinstance(timing, APICallTiming)
+    assert api_logger.logger.info.call_args.args == ("API request started",)
+    event = _extra(api_logger.logger.info)
+    assert event["_event_name"] == "api.request_started"
+    assert event["api"] == "telegram"
+    assert event["endpoint"] == "/send"
+    assert event["attempt_id"] == timing.attempt_id
+
+
+def test_request_with_selected_key_includes_suffix_and_never_raw_key():
+    api_logger = APILogger()
+    api_logger.logger = MagicMock()
+    secret = "provider-secret-ABCD"
+
+    api_logger.log_request("gemini", api_key=secret, key_hash="f" * 64)
+
+    event = _extra(api_logger.logger.info)
+    assert event["key_suffix"] == "ABCD"
+    assert event["key_fingerprint"] == "f" * 16
+    assert event["key_present"] is True
+    assert secret not in repr(event)
+
+
+def test_log_response_reuses_attempt_and_monotonic_timing():
+    api_logger = APILogger()
+    api_logger.logger = MagicMock()
+    timing = APICallTiming(started_ns=time.monotonic_ns() - 500_000_000, attempt_id="a" * 32)
+
+    duration = api_logger.log_response(
+        "gemini",
+        timing,
+        model="gemini-3.5-flash",
+        response_length=100,
+    )
+
+    event = _extra(api_logger.logger.info)
+    assert event["_event_name"] == "api.request_finished"
+    assert event["outcome"] == "succeeded"
+    assert event["attempt_id"] == "a" * 32
+    assert event["duration_ms"] >= 490
+    assert event["model"] == "gemini-3.5-flash"
+    assert duration >= 0.49
+
+
+def test_legacy_epoch_float_is_explicitly_marked():
+    api_logger = APILogger()
+    api_logger.logger = MagicMock()
+
+    api_logger.log_response("tavily", time.time() - 0.1, success=False, error_message="timeout")
+
+    event = _extra(api_logger.logger.error)
+    assert event["legacy_timing"] is True
+    assert event["outcome"] == "failed"
+    assert event["error_message"] == "timeout"
+
+
+def test_log_error_keeps_traceback_and_key_identity_without_raw_key():
+    api_logger = APILogger()
+    api_logger.logger = MagicMock()
+    error = ValueError("bad request")
+    secret = "provider-secret-WXYZ"
+
+    error_id = api_logger.log_error(
+        "gemini",
+        error,
+        context={"model": "gemini-3.5-flash", "api_key": secret},
+    )
+
+    call = api_logger.logger.error.call_args
+    event = call.kwargs["extra"]
+    assert call.args == ("API request failed",)
+    assert "exc_info" not in call.kwargs
+    assert event["_exception_snapshot"]["type"] == "ValueError"
+    assert event["_exception_snapshot"]["message"] == "[redacted]"
+    assert event["_event_name"] == "api.request_failed"
+    assert event["error_id"] == error_id
+    assert event["key_suffix"] == "WXYZ"
+    assert secret not in repr(event)

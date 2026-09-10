@@ -5,8 +5,12 @@ import time
 import uuid
 
 from app.config import settings
+from app.observability.events import emit
 
 _semaphore_token: contextvars.ContextVar[str | None] = contextvars.ContextVar("semaphore_token", default=None)
+_semaphore_acquired_ns: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "semaphore_acquired_ns", default=None
+)
 
 
 class GlobalLLMSemaphore:
@@ -23,15 +27,20 @@ class GlobalLLMSemaphore:
         self._waiting_count = 0
 
     async def __aenter__(self):
+        wait_started_ns = time.monotonic_ns()
         # Fail fast: bounded wait queue. Max waiters = 3x concurrency limit before rejecting.
         # This prevents 1-hour delays and hanging placeholders when system is swamped.
         waiter_limit = self._limit * 3
         if self._waiting_count >= waiter_limit:
-            logging.warning(
-                "LLM semaphore at capacity: %d waiters (limit=%d, key=%s). System overloaded.",
-                self._waiting_count,
-                waiter_limit,
-                self._key,
+            emit(
+                "concurrency.acquire_finished",
+                level="warning",
+                operation="concurrency.acquire",
+                outcome="rejected",
+                reason_code="waiter_capacity",
+                semaphore=self._key,
+                waiting_count=self._waiting_count,
+                waiter_limit=waiter_limit,
             )
             from app.errors import UserLimitExceededError
 
@@ -46,6 +55,15 @@ class GlobalLLMSemaphore:
         except TimeoutError:
             from app.errors import UserLimitExceededError
 
+            emit(
+                "concurrency.acquire_finished",
+                level="warning",
+                operation="concurrency.acquire",
+                outcome="rejected",
+                reason_code="local_timeout",
+                semaphore=self._key,
+                wait_ms=round((time.monotonic_ns() - wait_started_ns) / 1_000_000, 2),
+            )
             raise UserLimitExceededError(
                 "Слишком много одновременных запросов. Попробуйте еще раз через несколько секунд."
             ) from None
@@ -54,11 +72,21 @@ class GlobalLLMSemaphore:
 
         token = str(uuid.uuid4())
         _semaphore_token.set(token)
+        _semaphore_acquired_ns.set(time.monotonic_ns())
 
         try:
             from app.cache import redis_client
 
             if not redis_client:
+                emit(
+                    "concurrency.acquire_finished",
+                    operation="concurrency.acquire",
+                    outcome="acquired",
+                    mode="local_fallback",
+                    reason_code="redis_unavailable",
+                    semaphore=self._key,
+                    wait_ms=round((time.monotonic_ns() - wait_started_ns) / 1_000_000, 2),
+                )
                 return self
 
             started_waiting = time.monotonic()
@@ -75,6 +103,14 @@ class GlobalLLMSemaphore:
                     # Verify our rank to avoid race conditions
                     rank = await redis_client.zrank(self._key, token)
                     if rank is not None and rank < self._limit:
+                        emit(
+                            "concurrency.acquire_finished",
+                            operation="concurrency.acquire",
+                            outcome="acquired",
+                            mode="distributed",
+                            semaphore=self._key,
+                            wait_ms=round((time.monotonic_ns() - wait_started_ns) / 1_000_000, 2),
+                        )
                         return self
 
                     # Lost the race, remove and wait
@@ -86,7 +122,17 @@ class GlobalLLMSemaphore:
                     raise UserLimitExceededError("Система перегружена. Пожалуйста, повторите запрос немного позже.")
                 await asyncio.sleep(0.5)
         except Exception as e:
-            logging.warning("Redis distributed semaphore failed, using local fallback: %s", e)
+            emit(
+                "concurrency.acquire_finished",
+                level="warning",
+                operation="concurrency.acquire",
+                outcome="acquired",
+                mode="local_fallback",
+                reason_code="redis_error",
+                semaphore=self._key,
+                error_type=type(e).__name__,
+                wait_ms=round((time.monotonic_ns() - wait_started_ns) / 1_000_000, 2),
+            )
             return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -100,6 +146,18 @@ class GlobalLLMSemaphore:
             logging.warning("Error releasing Redis distributed semaphore: %s", e)
         finally:
             await self._local_semaphore.__aexit__(exc_type, exc_val, exc_tb)
+            acquired_ns = _semaphore_acquired_ns.get()
+            emit(
+                "concurrency.released",
+                level="warning" if exc_type is not None else "debug",
+                operation="concurrency.release",
+                semaphore=self._key,
+                outcome="released",
+                hold_ms=(round((time.monotonic_ns() - acquired_ns) / 1_000_000, 2) if acquired_ns else None),
+                scope_error_type=exc_type.__name__ if exc_type is not None else None,
+            )
+            _semaphore_token.set(None)
+            _semaphore_acquired_ns.set(None)
 
 
 class _LazyGlobalLLMSemaphore:

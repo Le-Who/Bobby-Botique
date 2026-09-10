@@ -14,6 +14,7 @@ from typing import Any, Protocol
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
+from app.observability.events import emit, record_exception
 from app.response_delivery.normalization import strip_hallucinated_tool_trace
 from app.utils.background_tasks import submit_task
 from app.utils.formatting import TelegramFormatter
@@ -294,7 +295,22 @@ class TelegramRenderer:
         except asyncio.CancelledError:
             raise
         except Exception as edit_error:
-            logging.warning("Telegram final edit failed; trying send-new recovery: %s", edit_error)
+            edit_error_id = record_exception(
+                "delivery.edit_failed",
+                edit_error,
+                operation="telegram.delivery",
+                level="warning",
+                fields={"recovery_target": "send_new"},
+            )
+            emit(
+                "delivery.recovery_decision",
+                level="warning",
+                operation="telegram.delivery",
+                from_kind="edit",
+                to_kind="send_new",
+                reason_code="edit_failed",
+                error_id=edit_error_id,
+            )
             try:
                 ref = await self._transport.send(
                     text,
@@ -481,6 +497,14 @@ class TelegramRenderer:
             )
 
         if self._webapp_base_url and not self._private_content:
+            emit(
+                "delivery.recovery_decision",
+                operation="telegram.delivery",
+                from_kind="message",
+                to_kind="reader",
+                reason_code="message_limit_exceeded",
+                displayed_chars=len(displayed_text),
+            )
             reader = await self._reader(
                 uid=str(uuid.uuid4()),
                 displayed_text=displayed_text,
@@ -491,6 +515,14 @@ class TelegramRenderer:
                 return reader
 
         if not self._private_content:
+            emit(
+                "delivery.recovery_decision",
+                operation="telegram.delivery",
+                from_kind="reader",
+                to_kind="telegraph",
+                reason_code="reader_unavailable",
+                publication_enabled=self._telegraph_publication_enabled,
+            )
             telegraph = await self._telegraph(
                 displayed_text=displayed_text,
                 actions=actions,
@@ -498,6 +530,14 @@ class TelegramRenderer:
             )
             if telegraph is not None:
                 return telegraph
+        emit(
+            "delivery.recovery_decision",
+            operation="telegram.delivery",
+            from_kind="long_read",
+            to_kind="split",
+            reason_code="private_or_publication_unavailable",
+            private_content=self._private_content,
+        )
         return await self._split(displayed_text, actions)
 
 

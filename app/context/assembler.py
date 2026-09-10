@@ -10,6 +10,7 @@ import hashlib
 import logging
 from typing import Any
 
+from app.observability.events import emit
 from app.prompt_registry import estimate_tokens_cyrillic
 
 from .summarizer import (
@@ -122,7 +123,7 @@ class ContextAssembler:
         # 6. Generate audit hash
         audit_hash = self._compute_audit_hash(final_history, system_instruction)
 
-        return AssembledContext(
+        result = AssembledContext(
             history=final_history,
             system_instruction=system_instruction,
             retained_history=[{**message, "parts": list(message.get("parts", []))} for message in trimmed_history],
@@ -134,6 +135,25 @@ class ContextAssembler:
             audit_hash=audit_hash,
             llm_summarization_scheduled=llm_scheduled,
         )
+        emit(
+            "context.assembly_finished",
+            operation="context.assemble",
+            outcome="succeeded",
+            input_turns=len(history),
+            retained_turns=len(trimmed_history),
+            dropped_turns=dropped_count,
+            was_truncated=was_truncated,
+            summary_present=new_summary is not None,
+            llm_summary_scheduled=llm_scheduled,
+            token_budget=budget.total,
+            token_used=budget.used,
+            system_tokens=budget.system_prompt,
+            history_tokens=budget.history,
+            summary_tokens=budget.summary,
+            user_message_tokens=budget.user_message,
+            audit_hash=audit_hash,
+        )
+        return result
 
     def _fit_history(
         self,

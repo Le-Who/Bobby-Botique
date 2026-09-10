@@ -6,9 +6,12 @@ and performs only deterministic node, edge, and provenance mutations.  It does
 not acquire the global pool and does not call external services.
 """
 
+import time
 from dataclasses import dataclass
 from math import isfinite
 from typing import Any
+
+from app.observability.events import emit, record_exception
 
 SEMANTIC_NODE_DISTANCE = 0.12
 
@@ -445,14 +448,60 @@ async def write_graph(conn: Any, user_id: int, plan: GraphMutationPlan) -> Graph
     if type(user_id) is not int or user_id <= 0:
         raise ValueError("user_id must be positive")
 
-    node_ids, affected_node_ids = await _resolve_and_upsert_nodes(conn, user_id, plan.nodes)
-    affected_edge_ids, edges_written = await _upsert_edges(conn, user_id, plan.edges, node_ids)
-    return GraphMutationResult(
-        node_ids=node_ids,
-        affected_node_ids=affected_node_ids,
-        affected_edge_ids=affected_edge_ids,
-        edges_written=edges_written,
+    started_ns = time.monotonic_ns()
+    source_count = len(
+        {source_id for node in plan.nodes for source_id in node.source_memory_ids}
+        | {source_id for edge in plan.edges for source_id in edge.source_memory_ids}
     )
+    emit(
+        "memory.graph_write_started",
+        operation="memory.graph_write",
+        source_count=source_count,
+        node_count=len(plan.nodes),
+        edge_count=len(plan.edges),
+    )
+    try:
+        node_ids, affected_node_ids = await _resolve_and_upsert_nodes(conn, user_id, plan.nodes)
+        affected_edge_ids, edges_written = await _upsert_edges(conn, user_id, plan.edges, node_ids)
+        result = GraphMutationResult(
+            node_ids=node_ids,
+            affected_node_ids=affected_node_ids,
+            affected_edge_ids=affected_edge_ids,
+            edges_written=edges_written,
+        )
+    except Exception as error:
+        error_id = record_exception(
+            "memory.graph_write_failed",
+            error,
+            operation="memory.graph_write",
+            fields={
+                "source_count": source_count,
+                "node_count": len(plan.nodes),
+                "edge_count": len(plan.edges),
+            },
+        )
+        emit(
+            "memory.graph_write_finished",
+            level="error",
+            operation="memory.graph_write",
+            outcome="failed",
+            error_id=error_id,
+            source_count=source_count,
+            node_count=len(plan.nodes),
+            edge_count=len(plan.edges),
+            duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+        )
+        raise
+    emit(
+        "memory.graph_write_finished",
+        operation="memory.graph_write",
+        outcome="applied",
+        source_count=source_count,
+        node_count=len(result.node_ids),
+        edge_count=result.edges_written,
+        duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+    )
+    return result
 
 
 __all__ = [

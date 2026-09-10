@@ -33,6 +33,7 @@ class FailedDelivery:
     displayed_text: str
     receipt: DeliveryReceipt
     content_text: str = ""
+    upstream_error_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

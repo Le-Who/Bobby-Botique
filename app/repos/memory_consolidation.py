@@ -14,6 +14,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.database import db_manager
+from app.observability.events import emit, record_exception
+from app.observability.workload_events import start_workload_attempt
 from app.repos.db_helpers import db_query, set_user_context
 from app.repos.memory_config import (
     CHARS_PER_TOKEN as _CHARS_PER_TOKEN,
@@ -340,6 +342,14 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
         max_facts=MAX_PERSONA_FACTS,
     )
 
+    request_attempt = start_workload_attempt(
+        workload="memory_consolidation",
+        provider="gemini",
+        model=_CONSOLIDATION_MODEL,
+        api_key=api_key,
+        origin="memory_consolidation_primary",
+        input_chars=len(memories_text),
+    )
     try:
         client = get_cached_genai_client(api_key)
         response = await client.aio.models.generate_content(
@@ -354,12 +364,14 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
         response_text = response.text or ""
         if not response_text.strip():
             logging.warning("Graph extraction returned empty response")
+            request_attempt.finish(outcome="failed", level="warning", reason_code="empty_response")
             return {"facts": [], "entities": [], "relations": []}
         result = json.loads(response_text)
 
         # Validate structure
         if not isinstance(result, dict):
             logging.warning("Graph extraction returned non-dict: %s", type(result))
+            request_attempt.finish(outcome="failed", level="warning", reason_code="invalid_response")
             return {"facts": [], "entities": [], "relations": []}
 
         result.setdefault("facts", [])
@@ -379,11 +391,25 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
             len(result["relations"]),
             n_core,
         )
+        request_attempt.finish(
+            outcome="succeeded",
+            fact_count=len(result["facts"]),
+            entity_count=len(result["entities"]),
+            relation_count=len(result["relations"]),
+        )
         return result
 
     except Exception as e:
-        logging.error("Graph extraction failed: %s", e, exc_info=True)
+        request_attempt.fail(e, reason_code="provider_or_parse_error")
         # Fallback: try legacy plain-text extraction
+        fallback_attempt = start_workload_attempt(
+            workload="memory_consolidation",
+            provider="gemini",
+            model=_CONSOLIDATION_MODEL,
+            api_key=api_key,
+            origin="memory_consolidation_fallback",
+            input_chars=len(memories_text),
+        )
         try:
             client = get_cached_genai_client(api_key)
             fallback_prompt = f"""Extract {MIN_PERSONA_FACTS}-{MAX_PERSONA_FACTS} atomic persona facts from these memories.
@@ -409,9 +435,10 @@ Extracted persona facts:"""
                     facts.append(line[2:].strip())
             if not facts:
                 facts = [ln.strip() for ln in text.split("\n") if ln.strip()]
+            fallback_attempt.finish(outcome="succeeded", fact_count=min(len(facts), MAX_PERSONA_FACTS))
             return {"facts": facts[:MAX_PERSONA_FACTS], "entities": [], "relations": []}
         except Exception as fallback_err:
-            logging.error("Fallback fact extraction also failed: %s", fallback_err)
+            fallback_attempt.fail(fallback_err, reason_code="provider_or_parse_error")
             return {"facts": [], "entities": [], "relations": []}
 
 
@@ -693,6 +720,7 @@ async def _consolidate_memories_impl(
             for rel, emb in zip(valid_relations, relation_embeddings, strict=False)
         }
 
+        transaction_started = time.monotonic()
         async with db_manager.pool.acquire() as conn, conn.transaction():
             await set_user_context(user_id, False, conn=conn)
             await conn.execute("SELECT pg_advisory_xact_lock($1)", user_id)
@@ -720,9 +748,15 @@ async def _consolidate_memories_impl(
             )
 
             if not _snapshot_matches(raw_memories, locked_sources):
-                logging.info(
-                    "Skipping stale/concurrent consolidation snapshot for user %d",
-                    user_id,
+                emit(
+                    "memory.consolidation_finished",
+                    level="warning",
+                    operation="memory.consolidation",
+                    outcome="skipped",
+                    reason_code="stale_snapshot",
+                    actor_user_id=user_id,
+                    consent_epoch=snapshot_epoch,
+                    source_count=len(raw_ids),
                 )
                 return 0
 
@@ -835,15 +869,28 @@ async def _consolidate_memories_impl(
             if marked_ids != set(raw_ids):
                 raise RuntimeError("consolidation source snapshot changed before completion")
 
-            logging.info(
-                "Consolidation complete for user %d: marked %d raw, inserted %d facts, %d nodes, %d edges",
-                user_id,
-                len(raw_ids),
-                len(inserted_fact_ids),
-                len(graph_result.node_ids),
-                graph_result.edges_written,
-            )
-            return len(inserted_fact_ids)
+        emit(
+            "memory.consolidation_finished",
+            operation="memory.consolidation",
+            outcome="committed",
+            actor_user_id=user_id,
+            consent_epoch=snapshot_epoch,
+            source_count=len(raw_ids),
+            fact_count=len(inserted_fact_ids),
+            node_count=len(graph_result.node_ids),
+            edge_count=graph_result.edges_written,
+            duration_ms=round((time.monotonic() - transaction_started) * 1000, 2),
+        )
+        return len(inserted_fact_ids)
     except Exception as e:
-        logging.error("Consolidation transaction failed for user %d: %s", user_id, e, exc_info=True)
+        record_exception(
+            "memory.consolidation_failed",
+            e,
+            operation="memory.consolidation",
+            fields={
+                "actor_user_id": user_id,
+                "consent_epoch": snapshot_epoch,
+                "source_count": len(raw_ids),
+            },
+        )
         return 0

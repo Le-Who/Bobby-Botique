@@ -213,24 +213,34 @@ async def _extract_draw_prompt_ai(text: str) -> str | None:
             " Draw me the same', respond with 'a dog in a hat'.\n"
             "If NO (they are just chatting), respond with 'NONE'."
         )
-        response = await asyncio.wait_for(
-            client.aio.models.generate_content(
-                model=_TRANSLATE_MODEL,
-                contents=text,
-                config=_types.GenerateContentConfig(
-                    system_instruction=system,
-                    temperature=0.0,
-                    max_output_tokens=300,
+        from app.observability.workload_events import observe_workload_call
+
+        response = await observe_workload_call(
+            asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=_TRANSLATE_MODEL,
+                    contents=text,
+                    config=_types.GenerateContentConfig(
+                        system_instruction=system,
+                        temperature=0.0,
+                        max_output_tokens=300,
+                    ),
                 ),
+                timeout=3.0,
             ),
-            timeout=3.0,
+            workload="image_intent",
+            provider="gemini",
+            model=_TRANSLATE_MODEL,
+            api_key=api_keys[0],
+            origin="draw_intent",
+            input_chars=len(text),
         )
         if response and response.text:
             res = response.text.strip().lstrip(":—–-").strip()
             if res and res.upper() != "NONE":
                 return res
     except Exception as e:
-        logger.warning(f"AI draw intent extraction failed: {e}")
+        logger.warning("AI draw intent extraction failed (error_type=%s)", type(e).__name__)
     return None
 
 
@@ -368,29 +378,34 @@ async def _translate_to_english(
             "Keep the meaning intact. Respond ONLY with the translated prompt and "
             "nothing else — no explanations, no quotes."
         )
-        response = await asyncio.wait_for(
-            client.aio.models.generate_content(
-                model=_TRANSLATE_MODEL,
-                contents=prompt,  # plain str — SDK accepts str directly
-                config=_types.GenerateContentConfig(
-                    system_instruction=system,
-                    temperature=0.2,
-                    max_output_tokens=300,
+        from app.observability.workload_events import observe_workload_call
+
+        response = await observe_workload_call(
+            asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=_TRANSLATE_MODEL,
+                    contents=prompt,  # plain str — SDK accepts str directly
+                    config=_types.GenerateContentConfig(
+                        system_instruction=system,
+                        temperature=0.2,
+                        max_output_tokens=300,
+                    ),
                 ),
+                timeout=10.0,
             ),
-            timeout=10.0,
+            workload="image_prompt_translation",
+            provider="gemini",
+            model=_TRANSLATE_MODEL,
+            api_key=api_key,
+            origin="image_handler",
+            input_chars=len(prompt),
         )
         translated = (response.text or "").strip()
         if translated:
-            logger.info(
-                "Prompt translated for img gen: %r → %r (user=%s)",
-                prompt[:60],
-                translated[:60],
-                user_id,
-            )
+            logger.info("Prompt translated for image generation (user=%s, chars=%d)", user_id, len(translated))
             return translated
     except Exception as exc:
-        logger.warning("Prompt translation failed (%s), using original", exc)
+        logger.warning("Prompt translation failed (%s), using original", type(exc).__name__)
     return prompt
 
 

@@ -1,19 +1,21 @@
-import contextvars
-import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+from app.observability.context import current_context, span_scope
 from app.request_context import get_request_id
 
-_trace_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("trace_id", default=None)
-_span_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("span_id", default=None)
 
-
-def get_trace_context() -> dict[str, str | None]:
+def get_trace_context() -> dict[str, str | int | None]:
+    context = current_context()
     return {
         "request_id": get_request_id(),
-        "trace_id": _trace_id_var.get(),
-        "span_id": _span_id_var.get(),
+        "trace_id": context.trace_id,
+        "span_id": context.span_id,
+        "parent_span_id": context.parent_span_id,
+        "task_id": context.task_id,
+        "execution_id": context.execution_id,
+        "operation": context.operation,
+        "client_request_id": context.client_request_id,
     }
 
 
@@ -27,17 +29,10 @@ def bind_request_span(request_id: str | None = None, span_name: str = "request")
     - span_id: per-scope random short id
     """
     rid = request_id or get_request_id()
-    trace_id = rid or uuid.uuid4().hex
-    span_id = f"{span_name}-{uuid.uuid4().hex[:8]}"
-
-    trace_token = _trace_id_var.set(trace_id)
-    span_token = _span_id_var.set(span_id)
-    try:
+    with span_scope(span_name, request_id=rid) as context:
         yield {
-            "request_id": rid,
-            "trace_id": trace_id,
-            "span_id": span_id,
+            "request_id": context.request_id,
+            "trace_id": context.trace_id,
+            "span_id": context.span_id,
+            "parent_span_id": context.parent_span_id,
         }
-    finally:
-        _trace_id_var.reset(trace_token)
-        _span_id_var.reset(span_token)

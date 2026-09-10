@@ -91,7 +91,11 @@ def test_deploy_fails_closed_when_runtime_health_checks_expire() -> None:
     assert "Existing Local Bot API container is unhealthy; recreating" in workflow
     assert "Telegram Bot API health check failed" in workflow
     assert 'curl -fsS "http://localhost:${PORT:-10000}/health"' in workflow
-    assert "docker logs --tail 300 tg-bot" in workflow
+    assert "docker logs --tail" not in workflow
+    assert (
+        "status={{.State.Status}} restarting={{.State.Restarting}} "
+        "exit={{.State.ExitCode}} restart_count={{.RestartCount}} image={{.Config.Image}}"
+    ) in workflow
     assert "Bot health check failed" in workflow
 
 

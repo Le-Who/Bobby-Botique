@@ -453,12 +453,20 @@ class TestProviderRouter:
         assert "hash1" in fake_status.successful_keys
         assert fake_use_case.usages_reserved == [("hash1", "gemini-3.1")]
         assert fake_use_case.usages_incremented == []
-        assert "KEY_EVENT key_request key=AIzaTEST" in caplog.text
-        assert "KEY_EVENT key_answered key=AIzaTEST" in caplog.text
-        assert "model=gemini-3.1" in caplog.text
-        assert "provider=gemini" in caplog.text
-        assert "tokens=10" in caplog.text
-        assert caplog.text.index("KEY_EVENT key_request") < caplog.text.index("KEY_EVENT key_answered")
+        key_records = [
+            record
+            for record in caplog.records
+            if getattr(record, "_event_name", None) in {"provider.key_selected", "provider.key_answered"}
+        ]
+        assert [record._event_name for record in key_records] == [  # type: ignore[attr-defined]
+            "provider.key_selected",
+            "provider.key_answered",
+        ]
+        assert [record.key_suffix for record in key_records] == ["ey-1", "ey-1"]  # type: ignore[attr-defined]
+        assert all(record.provider == "gemini" for record in key_records)  # type: ignore[attr-defined]
+        assert key_records[0].requested_model == "gemini-3.1"  # type: ignore[attr-defined]
+        assert key_records[1].actual_model == "gemini-3.1"  # type: ignore[attr-defined]
+        assert key_records[1].token_count == 10  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_all_keys_exhausted(self):

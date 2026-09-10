@@ -21,6 +21,7 @@ from app.config import (
     LEGACY_IMAGEN_MODELS,
     settings,
 )
+from app.observability.workload_events import start_workload_attempt
 from app.providers.gemini import get_cached_genai_client
 
 if TYPE_CHECKING:
@@ -277,7 +278,7 @@ class ImagenProvider:
         max_retries: int = min(settings.IMAGE_GEN_MAX_RETRIES, len(keys))
 
         last_error = ""
-        for attempt in range(max_retries):
+        for attempt_number in range(max_retries):
             # --- Key selection: pick key with budget remaining ---
             selected_key: str | None = None
             for key in keys:
@@ -299,9 +300,21 @@ class ImagenProvider:
 
             key_suffix = selected_key[-4:] if len(selected_key) >= 4 else "????"
             key_id = _day_bucket_key(selected_key)
+            workload_attempt = start_workload_attempt(
+                workload="image_generation",
+                provider="gemini",
+                model=model,
+                api_key=selected_key,
+                key_hash=key_id,
+                origin="imagen_provider",
+                attempt_number=attempt_number + 1,
+                max_attempts=max_retries,
+                aspect_ratio=aspect_ratio,
+                prompt_chars=len(prompt),
+            )
             logger.info(
                 "Imagen: attempt=%d/%d model=%s ratio=%s key_id=%s",
-                attempt + 1,
+                attempt_number + 1,
                 max_retries,
                 model,
                 aspect_ratio,
@@ -340,6 +353,7 @@ class ImagenProvider:
                     # Rotate key in case this is a silent API refusal
                     keys = [k for k in keys if k != selected_key]
                     last_error = "empty_response"
+                    workload_attempt.finish(outcome="failed", level="warning", reason_code=last_error)
                     continue
 
                 await _increment_key_usage(selected_key)
@@ -349,6 +363,11 @@ class ImagenProvider:
                     model,
                     key_id,
                 )
+                workload_attempt.finish(
+                    outcome="succeeded",
+                    result_count=len(images_bytes),
+                    output_bytes=sum(len(image) for image in images_bytes),
+                )
                 return ImageGenResult(
                     success=True,
                     images=images_bytes,
@@ -356,13 +375,14 @@ class ImagenProvider:
                     key_suffix=key_suffix,
                 )
 
-            except TimeoutError:
+            except TimeoutError as exc:
                 logger.error(
                     "Imagen: timeout after %.0fs (model=%s key_id=%s)",
                     settings.IMAGE_GEN_TIMEOUT,
                     model,
                     key_id,
                 )
+                workload_attempt.fail(exc, reason_code="timeout")
                 last_error = "timeout"
                 keys = [k for k in keys if k != selected_key]
 
@@ -376,6 +396,22 @@ class ImagenProvider:
                     key_id,
                     status_code,
                     type(exc).__name__,
+                )
+
+                if "paid plan" in err_lower or "limit: 0" in err_lower:
+                    reason_code = "paid_tier_required"
+                elif status_code == 429 or "quota" in err_lower or "resource_exhausted" in err_lower:
+                    reason_code = "quota"
+                elif status_code == 400 or "safety" in err_lower or "block" in err_lower:
+                    reason_code = "safety_blocked"
+                elif status_code in {500, 502, 503, 504} or "unavailable" in err_lower or "overloaded" in err_lower:
+                    reason_code = "overloaded"
+                else:
+                    reason_code = "unexpected"
+                workload_attempt.fail(
+                    exc,
+                    reason_code=reason_code,
+                    status_code=status_code if isinstance(status_code, int) else None,
                 )
 
                 if "paid plan" in err_lower or "limit: 0" in err_lower:

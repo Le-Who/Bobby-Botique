@@ -47,6 +47,7 @@ async def generate_daily_text(prompt: str, model: str, timeout: float = 30.0) ->
 
     from app.config import is_gemini_chat_model_id, settings
     from app.errors import classify_key_error
+    from app.observability.workload_events import observe_workload_call
     from app.providers.gemini import get_cached_genai_client
     from app.repos.keys import get_available_gemini_key, get_key_status_manager, reserve_gemini_key_usage
 
@@ -62,10 +63,19 @@ async def generate_daily_text(prompt: str, model: str, timeout: float = 30.0) ->
             raise RuntimeError("Gemini quota exhausted for daily text generation")
         client = get_cached_genai_client(key_data["api_key"])
         try:
-            response = await client.aio.models.generate_content(
+            response = await observe_workload_call(
+                client.aio.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(response_mime_type="application/json", max_output_tokens=2048),
+                ),
+                workload="daily_game_generation",
+                provider="gemini",
                 model=model,
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json", max_output_tokens=2048),
+                api_key=key_data["api_key"],
+                key_hash=key_data["key_hash"],
+                origin="crocodile_daily_ai",
+                input_chars=len(prompt),
             )
         except Exception as exc:
             # Reuse the existing cooldown/cache invalidation so the next request

@@ -149,6 +149,25 @@ async def test_fetch_voices_transport_error_is_sanitized(caplog):
 
 
 @pytest.mark.asyncio
+async def test_fetch_voices_invalid_shape_finishes_attempt():
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = ["unexpected"]
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+    attempt = MagicMock()
+
+    with (
+        patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client),
+        patch("app.providers.elevenlabs_tts.start_workload_attempt", return_value=attempt),
+    ):
+        result = await elevenlabs_tts.fetch_voices("fake-key-1234")
+
+    assert result == []
+    attempt.fail.assert_called_once()
+    assert attempt.fail.call_args.kwargs["reason_code"] == "invalid_response"
+
+
+@pytest.mark.asyncio
 async def test_generate_speech_elevenlabs_previous_text():
     mock_resp = MagicMock()
     mock_resp.status_code = 200

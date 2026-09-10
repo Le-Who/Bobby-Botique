@@ -38,7 +38,7 @@ Telegram update → bot.py / handlers → context + provider routing
 | Daily products | `app/games/`: Crocodile, 2048, trivia and shared daily AI authoring; matching handlers/repositories own Telegram delivery and storage |
 | Astrology | `app/astro.py`, horoscope handlers, `app/tarot*.py`, `app/natal/`: horoscopes, tarot, natal calculation/reporting |
 | Web surfaces | `app/web.py`: dashboard/admin; `app/web_miniapp.py`: Mini App APIs and live/game flows; `app/web_reader.py`, `app/web_natal.py`: long reads/reports |
-| Observability | `app/request_context.py`, `app/metrics.py`, `app/prometheus.py`, `app/utils/logging_config.py`; `app/memory_manager.py` monitors process memory, not LTM |
+| Observability | `app/observability/`: envelope, context, redaction, writer, lifecycle mappings, operational metrics and incident export; `app/utils/logging_config.py`: bootstrap/compatibility; `app/request_context.py`: adapter; `app/metrics.py`: product metrics; `app/prometheus.py`: runtime exporter |
 
 Avoid static file-size/module-count maps: they drift without helping identify owners.
 
@@ -85,8 +85,10 @@ must be evaluated per subsystem.
 
 Detached work uses tracked submission/retry helpers. Direct request-owned tasks
 are valid when all completion/cancellation paths await cleanup. Synchronous pure
-transformations need not become async. Existing logging uses both stdlib logging
-and structlog bridging, not an unconditional structlog-only rule.
+transformations need not become async. Stdlib logging, structlog, warnings and
+uncaught exceptions converge on one bounded NDJSON pipeline. Stable owner events
+link ingress, provider attempts, immutable delivery outcomes, jobs and storage;
+legacy strings retain the same envelope. See [logging operations](logging.md).
 
 ## Long-term memory
 

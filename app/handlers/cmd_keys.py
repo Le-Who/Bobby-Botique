@@ -26,6 +26,7 @@ from telegram.ext import (
 )
 
 from app.handlers.conversation import suppress_hybrid_conversation_handler_warning
+from app.observability.workload_events import start_workload_attempt
 from app.repos.provider_keys import (
     clear_provider_key,
     get_provider_key,
@@ -269,12 +270,26 @@ async def check_single_provider_health(provider: str) -> bool | None:
     if not key:
         return False
 
+    attempt = start_workload_attempt(
+        workload="provider_health_check",
+        provider=provider,
+        model=None,
+        api_key=key,
+        origin="keys_wizard",
+    )
     try:
         async with httpx.AsyncClient(timeout=6.0) as client:
             url = template.format(key=key)
             resp = await client.get(url)
-            return resp.status_code == 200
-    except Exception:
+            healthy = resp.status_code == 200
+            attempt.finish(
+                outcome="succeeded" if healthy else "remote_error",
+                level="info" if healthy else "warning",
+                status_code=resp.status_code,
+            )
+            return healthy
+    except Exception as error:
+        attempt.fail(error)
         return False
 
 

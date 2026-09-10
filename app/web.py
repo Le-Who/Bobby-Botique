@@ -19,6 +19,7 @@ import hmac
 import logging
 import os
 import secrets
+import time
 from functools import wraps
 
 from quart import (
@@ -35,6 +36,9 @@ from quart import (
 from app import database
 from app.config import settings
 from app.games import daily_2048 as daily_2048_game
+from app.observability.context import current_context, request_scope
+from app.observability.events import emit, record_exception
+from app.observability.ingress import sanitize_client_request_id
 from app.repos import daily_2048 as daily_2048_repo
 from app.repos.metrics_repo import (
     get_active_key_info,
@@ -91,6 +95,27 @@ quart_app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(days=7)
 
 
 @quart_app.before_request
+async def start_observability_request():
+    """Create a server-owned HTTP correlation scope before endpoint work."""
+    client_request_id = sanitize_client_request_id(request.headers.get("X-Request-ID"))
+    scope = request_scope(
+        operation="http.request",
+        client_request_id=client_request_id,
+    )
+    scope.__enter__()
+    g.observability_scope = scope
+    g.observability_started_ns = time.monotonic_ns()
+    g.observability_finished = False
+    emit(
+        "http.request_started",
+        operation="http.request",
+        method=request.method,
+        endpoint=request.endpoint,
+        client_request_id_present=client_request_id is not None,
+    )
+
+
+@quart_app.before_request
 async def generate_csp_nonce():
     """Generate a per-request CSP nonce for inline scripts/styles."""
     g.csp_nonce = secrets.token_urlsafe(16)
@@ -102,6 +127,20 @@ async def add_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["X-Request-ID"] = current_context().request_id or ""
+
+    started_ns = getattr(g, "observability_started_ns", time.monotonic_ns())
+    emit(
+        "http.request_finished",
+        level="warning" if response.status_code >= 500 else "info",
+        operation="http.request",
+        outcome="failed" if response.status_code >= 500 else "succeeded",
+        method=request.method,
+        endpoint=request.endpoint,
+        status_code=response.status_code,
+        duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+    )
+    g.observability_finished = True
 
     nonce = getattr(g, "csp_nonce", "")
     is_natal_report = request.path.startswith("/reports/natal/")
@@ -160,6 +199,37 @@ async def add_security_headers(response):
 
     response.headers["Content-Security-Policy"] = csp
     return response
+
+
+@quart_app.teardown_request
+async def finish_observability_request(error: BaseException | None) -> None:
+    """Record exceptional exits and always reset the HTTP ContextVar token."""
+    scope = getattr(g, "observability_scope", None)
+    try:
+        if error is not None and not getattr(g, "observability_finished", False):
+            started_ns = getattr(g, "observability_started_ns", time.monotonic_ns())
+            error_id = record_exception(
+                "http.request_failed",
+                error,
+                operation="http.request",
+                fields={
+                    "method": request.method,
+                    "endpoint": request.endpoint,
+                },
+            )
+            emit(
+                "http.request_finished",
+                level="error",
+                operation="http.request",
+                outcome="failed",
+                method=request.method,
+                endpoint=request.endpoint,
+                duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+                error_id=error_id,
+            )
+    finally:
+        if scope is not None:
+            scope.__exit__(None, None, None)
 
 
 # =============================================================================

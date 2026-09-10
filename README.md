@@ -410,12 +410,17 @@ deployed Secret.
 
 ### Logging & Observability
 
-`bot.py:main()` selects structured output from `STRUCTURED_LOGGING`,
-`LOG_FORMAT` and environment detection, then calls
-`app/utils/logging_config.py`. Use `STRUCTURED_LOGGING=1` or `LOG_FORMAT=json`
-for explicit structured output. `LOG_PRETTY` requests pretty local output but is
-disabled in structured mode. `LOG_JSON` in legacy Compose is not the runtime
-selector. Do not infer a fixed log-size or performance saving from these options.
+The default is one correlated UTF-8 NDJSON stream with structured exceptions,
+request/trace/job IDs, release metadata and bounded non-blocking output. Every
+actually selected provider key is represented by its last four characters plus
+a fingerprint on both request and terminal/error events; full credentials are
+always scrubbed. Content defaults to metadata and a bounded scrubbed preview is
+an explicit `LOG_CONTENT_MODE=preview` incident setting, not a side effect of
+`DEBUG`.
+
+Use canonical `LOG_FORMAT=json|text`; `STRUCTURED_LOGGING` and `LOG_PRETTY` are
+compatibility aliases. See the [operator/agent runbook](docs/logging.md),
+[event catalog](docs/log-events.md), and [dated audit](docs/logging-audit-2026-09-10.md).
 
 ### 🧪 Testing Only
 

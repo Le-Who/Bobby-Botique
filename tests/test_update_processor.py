@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pytest
 from telegram.ext import BaseUpdateProcessor
 
+from app.observability.context import current_context
 from app.update_processor import UserScopedUpdateProcessor
 
 
@@ -144,6 +145,43 @@ async def test_update_without_effective_user_is_processed_without_a_user_lock():
 
     assert processed is True
     assert processor._user_locks == {}
+
+
+@pytest.mark.asyncio
+async def test_update_context_exists_before_user_lock_and_is_reset_afterward():
+    processor = UserScopedUpdateProcessor(50)
+    seen = None
+
+    async def handler() -> None:
+        nonlocal seen
+        seen = current_context()
+
+    update = _Update(7, chat_id=99)
+    update.update_id = 123
+    await processor.process_update(update, handler())
+
+    assert seen is not None
+    assert seen.user_id == 7
+    assert seen.chat_id == 99
+    assert len(seen.request_id or "") == 32
+    assert seen.operation == "telegram.update"
+    assert current_context().request_id is None
+
+
+@pytest.mark.asyncio
+async def test_successful_update_emits_canonical_terminal_outcome(monkeypatch):
+    processor = UserScopedUpdateProcessor(50)
+    captured: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "app.update_processor.emit",
+        lambda event, **fields: captured.append((event, fields)),
+    )
+
+    await processor.process_update(_Update(7), asyncio.sleep(0))
+
+    terminal = [fields for event, fields in captured if event == "telegram.update_finished"]
+    assert len(terminal) == 1
+    assert terminal[0]["outcome"] == "succeeded"
 
 
 @pytest.mark.asyncio

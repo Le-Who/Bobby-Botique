@@ -18,6 +18,8 @@ from PIL import Image
 from app.config import settings
 from app.errors import ErrorCode, extract_retry_after_seconds, tag_error
 from app.metrics import metrics_collector
+from app.observability.provider_events import record_provider_exception
+from app.observability.workload_events import observe_workload_call
 from app.providers.base import (
     AIResponse,
     BaseAIProvider,
@@ -55,12 +57,6 @@ class GeminiModelValidationStatus(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
-def _api_key_prefix(api_key: str) -> str:
-    if api_key == "vertex":
-        return "vertex"
-    return api_key[:8]
-
-
 def _optional_int_attribute(source: Any, name: str) -> int | None:
     value = getattr(source, name, None)
     return value if isinstance(value, int) and not isinstance(value, bool) else None
@@ -96,7 +92,14 @@ async def validate_gemini_chat_model_capability(
     saw_not_found = False
     for api_key in keys:
         try:
-            model = await make_client(api_key).aio.models.get(model=model_name)
+            model = await observe_workload_call(
+                make_client(api_key).aio.models.get(model=model_name),
+                workload="model_capability_check",
+                provider="gemini",
+                model=model_name,
+                api_key=api_key,
+                origin="provider_validation",
+            )
             actions = (
                 getattr(model, "supported_actions", None) or getattr(model, "supported_generation_methods", None) or []
             )
@@ -109,10 +112,14 @@ async def validate_gemini_chat_model_capability(
             if code == 404 or ("404" in error_text and "not found" in error_text):
                 saw_not_found = True
                 continue
-            logging.getLogger(__name__).warning(
-                "Gemini model capability check failed for key %s: %s",
-                _api_key_prefix(api_key),
-                type(exc).__name__,
+            api_logger.log_error(
+                "gemini",
+                exc,
+                context={
+                    "operation": "provider.model_capability_check",
+                    "model": model_name,
+                    "api_key": api_key,
+                },
             )
 
     if saw_not_found:
@@ -387,6 +394,13 @@ class GeminiProvider(BaseAIProvider):
             raise
         except Exception as exc:
             phase = FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT
+            error_id = record_provider_exception(
+                exc,
+                provider=self.provider_name,
+                model=model_name,
+                api_key=self.api_key,
+                failure_phase=phase.value,
+            )
             message = str(exc)
             lowered = message.lower()
             retry = RetryDisposition.DO_NOT_RETRY if text_emitted else RetryDisposition.TRY_NEXT_KEY
@@ -423,6 +437,7 @@ class GeminiProvider(BaseAIProvider):
                 key=key,
                 diagnostic=diagnostic,
                 route=route,
+                error_id=error_id,
             )
             return
 
@@ -460,8 +475,6 @@ class GeminiProvider(BaseAIProvider):
 
         try:
             await metrics_collector.record_api_call("gemini", model_name)
-            key_prefix = _api_key_prefix(self._client_api_key)
-
             # Compute metrics
             try:
                 prompt_length = sum(
@@ -481,7 +494,7 @@ class GeminiProvider(BaseAIProvider):
             start_time = api_logger.log_request(
                 "gemini",
                 model=model_name,
-                key_prefix=key_prefix,
+                api_key=self._client_api_key,
                 prompt_length=prompt_length,
                 has_images=has_images,
             )
@@ -561,7 +574,6 @@ class GeminiProvider(BaseAIProvider):
                     "gemini",
                     start_time,
                     model=model_name,
-                    key_prefix=key_prefix,
                     response_length=len(response_text),
                     token_count=token_count,
                 )
@@ -574,7 +586,12 @@ class GeminiProvider(BaseAIProvider):
                 model=model_name,
             )
 
-        except TimeoutError:
+        except TimeoutError as error:
+            api_logger.log_error(
+                "gemini",
+                error,
+                context={"api_key": self._client_api_key, "model": model_name, "failure_phase": "request"},
+            )
             msg = f"Gemini API request timed out for model {model_name}"
             logging.error(msg)
             await metrics_collector.record_error("gemini_timeout", msg)
@@ -592,6 +609,11 @@ class GeminiProvider(BaseAIProvider):
             )
 
         except APIError as e:
+            api_logger.log_error(
+                "gemini",
+                e,
+                context={"api_key": self._client_api_key, "model": model_name, "failure_phase": "request"},
+            )
             self._log_failure(start_time, model_name, str(e), user_id, chat_id)
             logging.error("Gemini API Error: %s", e)
             err_lower = str(e).lower()
@@ -649,6 +671,11 @@ class GeminiProvider(BaseAIProvider):
             )
 
         except httpx.HTTPError as e:
+            api_logger.log_error(
+                "gemini",
+                e,
+                context={"api_key": self._client_api_key, "model": model_name, "failure_phase": "request"},
+            )
             self._log_failure(start_time, model_name, str(e), user_id, chat_id)
             logging.error("Gemini HTTP error: %s", e, exc_info=True)
             await metrics_collector.record_error("gemini_http", str(e))
@@ -828,7 +855,6 @@ class GeminiProvider(BaseAIProvider):
                 "gemini",
                 start_time,
                 model=model,
-                key_prefix=_api_key_prefix(self._client_api_key),
                 response_length=0,
                 success=False,
                 error_message=msg,

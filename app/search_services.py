@@ -86,6 +86,8 @@ async def tavily_search_agent(
     # Detailed Tavily API request logging
     start_time = api_logger.log_request(
         "tavily",
+        api_key=api_key,
+        key_hash=available_key["key_hash"],
         search_type=search_type,
         query_length=len(query),
     )

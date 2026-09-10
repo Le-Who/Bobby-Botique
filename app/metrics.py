@@ -421,7 +421,11 @@ class MetricsCollector:
                         ),
                     )
                 except Exception as e:
-                    logging.warning("Failed to process daily metrics row: %s, row: %s", e, row)
+                    logging.warning(
+                        "Failed to process daily metrics row (error_type=%s field_count=%d)",
+                        type(e).__name__,
+                        len(row) if hasattr(row, "__len__") else 0,
+                    )
                     continue
 
             # Load afterдние ошибки

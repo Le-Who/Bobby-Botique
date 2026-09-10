@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from app.config import POLLINATIONS_BASE_URL, settings
+from app.observability.workload_events import start_workload_attempt
 from app.utils.media_download import (
     IMAGE_MIME_TYPES,
     MAX_IMAGE_DOWNLOAD_BYTES,
@@ -185,6 +186,14 @@ class PollinationsProvider:
         api_key = await get_provider_key("pollinations")
         if not api_key:
             return None
+        attempt = start_workload_attempt(
+            workload="stt",
+            provider="pollinations",
+            model=model,
+            api_key=api_key,
+            origin="pollinations_transcription",
+            input_bytes=len(audio_bytes),
+        )
         headers = {"Authorization": f"Bearer {api_key}"}
 
         # httpx expects files in format: {'file': ('filename', b'content', 'mime_type')}
@@ -202,25 +211,44 @@ class PollinationsProvider:
                         js = resp.json()
                         if "choices" in js and isinstance(js["choices"], list):
                             logger.error("Pollinations whisper hallucinated a chat response.")
+                            attempt.finish(outcome="failed", level="warning", reason_code="unexpected_chat_payload")
                             return None
-                        return js.get("text", "").strip() or None
+                        result = js.get("text", "").strip() or None
+                        attempt.finish(
+                            outcome="succeeded" if result else "failed",
+                            level="info" if result else "warning",
+                            reason_code=None if result else "empty_transcript",
+                            output_chars=len(result or ""),
+                        )
+                        return result
                     except Exception as exc:
                         logger.warning("Pollinations whisper JSON parse error (%s)", type(exc).__name__)
+                        attempt.fail(exc, reason_code="invalid_response")
                         return None
                 else:
                     text_res = resp.text.strip()
                     if not text_res or text_res.startswith(('{"id":', '{"choices":')):
                         logger.error("Pollinations whisper returned stringified JSON payload instead of text.")
+                        attempt.finish(outcome="failed", level="warning", reason_code="invalid_response")
                         return None
+                    attempt.finish(outcome="succeeded", output_chars=len(text_res))
                     return text_res
             else:
                 logger.warning("Pollinations whisper HTTP error: %d", resp.status_code)
+                attempt.finish(
+                    outcome="failed",
+                    level="warning",
+                    reason_code="http_error",
+                    status_code=resp.status_code,
+                )
                 return None
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as exc:
             logger.warning("Pollinations whisper request timed out after %s s", timeout)
+            attempt.fail(exc, reason_code="timeout")
             return None
         except Exception as exc:
             logger.error("Pollinations whisper request failed (error_type=%s)", type(exc).__name__)
+            attempt.fail(exc, reason_code="request_failed")
             return None
 
     # ------------------------------------------------------------------
@@ -245,6 +273,26 @@ class PollinationsProvider:
         api_key = await get_provider_key("pollinations")
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        attempt = start_workload_attempt(
+            workload="image_generation",
+            provider="pollinations",
+            model=model,
+            api_key=api_key,
+            origin="pollinations_post",
+            prompt_chars=len(prompt),
+            width=width,
+            height=height,
+        )
+
+        def finish(result: PollinationsResult) -> PollinationsResult:
+            attempt.finish(
+                outcome="succeeded" if result.success else "failed",
+                level="info" if result.success else "warning",
+                reason_code=result.error_message or None,
+                result_count=len(result.images),
+                output_bytes=sum(len(image) for image in result.images),
+            )
+            return result
 
         payload: dict = {
             "prompt": prompt,
@@ -265,29 +313,33 @@ class PollinationsProvider:
                 resp = await client.post(url, json=payload, headers=headers)
 
             if resp.status_code == 402:
-                return PollinationsResult(success=False, error_message="paid_tier_required", model_used=model)
+                return finish(PollinationsResult(success=False, error_message="paid_tier_required", model_used=model))
             if resp.status_code in (401, 403):
-                return PollinationsResult(success=False, error_message="unauthorized", model_used=model)
+                return finish(PollinationsResult(success=False, error_message="unauthorized", model_used=model))
             if not (200 <= resp.status_code < 300):
-                return PollinationsResult(
-                    success=False,
-                    error_message=f"http_{resp.status_code}",
-                    model_used=model,
+                return finish(
+                    PollinationsResult(
+                        success=False,
+                        error_message=f"http_{resp.status_code}",
+                        model_used=model,
+                    )
                 )
 
             data = resp.json()
             images_bytes = await _extract_b64_or_url_bytes(data, timeout=timeout)
 
             if not images_bytes:
-                return PollinationsResult(success=False, error_message="empty_response", model_used=model)
+                return finish(PollinationsResult(success=False, error_message="empty_response", model_used=model))
 
             logger.info("Pollinations POST: success — model=%s size=%dx%d", model, width, height)
-            return PollinationsResult(success=True, images=images_bytes, model_used=model)
+            return finish(PollinationsResult(success=True, images=images_bytes, model_used=model))
 
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as exc:
+            attempt.fail(exc, reason_code="timeout")
             return PollinationsResult(success=False, error_message="timeout", model_used=model)
         except Exception as exc:
             logger.debug("Pollinations POST error (error_type=%s)", type(exc).__name__)
+            attempt.fail(exc, reason_code="post_error")
             return PollinationsResult(
                 success=False,
                 error_message=f"post_error:{type(exc).__name__}",
@@ -327,6 +379,16 @@ class PollinationsProvider:
         api_key = await get_provider_key("pollinations")
         if not api_key:
             return PollinationsResult(success=False, error_message="unauthorized", model_used=model)
+        attempt = start_workload_attempt(
+            workload="image_generation",
+            provider="pollinations",
+            model=model,
+            api_key=api_key,
+            origin="pollinations_get",
+            prompt_chars=len(prompt),
+            width=width,
+            height=height,
+        )
 
         url = f"{POLLINATIONS_BASE_URL}/image/{encoded_prompt}"
 
@@ -350,10 +412,12 @@ class PollinationsProvider:
                 height,
                 len(image_bytes),
             )
+            attempt.finish(outcome="succeeded", result_count=1, output_bytes=len(image_bytes))
             return PollinationsResult(success=True, images=[image_bytes], model_used=model)
 
         except MediaDownloadError as exc:
             logger.warning("Pollinations GET download failed (%s)", exc.code)
+            attempt.fail(exc, reason_code=exc.code)
             return PollinationsResult(
                 success=False,
                 error_message=f"get_error:{exc.code}",

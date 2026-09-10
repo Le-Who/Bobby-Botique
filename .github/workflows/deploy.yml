@@ -13,6 +13,9 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
+  APP_ENV: vps_testai
+  LOG_FORMAT: json
+  LOG_CONTENT_MODE: metadata
 
 jobs:
   classify-dependency-scope:
@@ -247,14 +250,15 @@ jobs:
           # --- THINKING ---
           INLINE_THINKING_LEVEL: ${{ secrets.INLINE_THINKING_LEVEL }}
           # --- LOGGING ---
-          STRUCTURED_LOGGING: ${{ secrets.STRUCTURED_LOGGING }}
-          LOG_PRETTY: ${{ secrets.LOG_PRETTY }}
+          APP_ENV: ${{ env.APP_ENV }}
+          LOG_FORMAT: ${{ env.LOG_FORMAT }}
+          LOG_CONTENT_MODE: ${{ env.LOG_CONTENT_MODE }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           # All env vars forwarded to SSH session
-          envs: GITHUB_TOKEN, REPO, REGISTRY, IMAGE_TAG, DEPENDENCY_ROLLBACK_ALLOWED, DEPENDENCY_BASE_SHA, ADMIN_ID, ADMIN_SECRET_B64, TELEGRAM_BOT_TOKEN, DATABASE_URL, REDIS_URL, WEBHOOK_URL, WEBHOOK_SECRET_TOKEN, WEBAPP_BASE_URL, TELEGRAPH_PUBLICATION_ENABLED, MINIAPP_SHORT_NAME, GAME_HUB_URL, GAME_HUB_DIRECT_LINK, GAME_HUB_MINIAPP_SHORT_NAME, PORT, ENABLE_WEB_SERVER, NATAL_REPORTS_ENABLED, NATAL_REPORT_TTL_DAYS, NATAL_GEOCODER_PROVIDER, NATAL_CITY_OVERRIDES_PATH, NATAL_SEND_RAW_BIRTH_DATA_TO_LLM, TELEGRAM_API_ID, TELEGRAM_API_HASH, GEMINI_API_KEYS, GEMINI_AVAILABLE_MODELS, DEFAULT_MODEL, QNA_MODEL, RESEARCH_MODEL, URL_SELECTION_MODEL, TAXONOMY_MODEL, VERTEX_AI_KEY, VERTEX_AI_PROJECT, VERTEX_AI_LOCATION, VERTEX_LIVE_SERVICE_ACCOUNT_JSON, OPENCODE_API_KEYS, PRIMARY_PROVIDER, OPENCODE_AVAILABLE_MODELS, OPENCODE_DEFAULT_MODEL, OPENCODE_QNA_MODEL, OPENCODE_RESEARCH_MODEL, OPENCODE_VISION_MODEL, OPENCODE_INLINE_MODEL, OPENROUTER_API_KEYS, USE_OPENROUTER, OPENROUTER_AVAILABLE_MODELS, OPENROUTER_DEFAULT_MODEL, OPENROUTER_QNA_MODEL, OPENROUTER_RESEARCH_MODEL, OPENROUTER_URL_SELECTION_MODEL, FREETHEAI_API_KEYS, FREETHEAI_AVAILABLE_MODELS, FREETHEAI_DEFAULT_MODEL, TAVILY_API_KEYS, JINA_API_KEY, WEATHER_API_KEY, EXCHANGE_RATE_API_KEY, DAILY_LIMITS, MAX_CONCURRENT_HEAVY_REQUESTS, MAX_CONCURRENT_HEAVY_CALLBACKS, MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS, LRU_STATE_CACHE_SIZE, DB_POOL_MIN_SIZE, DB_POOL_MAX_SIZE, AGENTIC_MODEL, AGENTIC_MAX_TOKENS, AGENTIC_TIMEOUT_SECONDS, AGENTIC_MAX_ITERATIONS, AGENTIC_MAX_PAGES, AGENTIC_PAGE_CONTENT_LIMIT, ADAPTIVE_THINKING_ENABLED, INLINE_THINKING_LEVEL, IMAGE_MODELS, DEFAULT_IMAGE_MODEL, POLLINATIONS_API_KEY, IMAGE_GEN_DAILY_LIMIT, IMAGE_GEN_RPD_PER_KEY, IMAGE_GEN_TIMEOUT, IMAGE_GEN_MAX_RETRIES, ELEVENLABS_API_KEYS, ELEVENLABS_VOICE_ID, STRUCTURED_LOGGING, LOG_PRETTY
+          envs: GITHUB_TOKEN, REPO, REGISTRY, IMAGE_TAG, APP_ENV, LOG_FORMAT, LOG_CONTENT_MODE, DEPENDENCY_ROLLBACK_ALLOWED, DEPENDENCY_BASE_SHA, ADMIN_ID, ADMIN_SECRET_B64, TELEGRAM_BOT_TOKEN, DATABASE_URL, REDIS_URL, WEBHOOK_URL, WEBHOOK_SECRET_TOKEN, WEBAPP_BASE_URL, TELEGRAPH_PUBLICATION_ENABLED, MINIAPP_SHORT_NAME, GAME_HUB_URL, GAME_HUB_DIRECT_LINK, GAME_HUB_MINIAPP_SHORT_NAME, PORT, ENABLE_WEB_SERVER, NATAL_REPORTS_ENABLED, NATAL_REPORT_TTL_DAYS, NATAL_GEOCODER_PROVIDER, NATAL_CITY_OVERRIDES_PATH, NATAL_SEND_RAW_BIRTH_DATA_TO_LLM, TELEGRAM_API_ID, TELEGRAM_API_HASH, GEMINI_API_KEYS, GEMINI_AVAILABLE_MODELS, DEFAULT_MODEL, QNA_MODEL, RESEARCH_MODEL, URL_SELECTION_MODEL, TAXONOMY_MODEL, VERTEX_AI_KEY, VERTEX_AI_PROJECT, VERTEX_AI_LOCATION, VERTEX_LIVE_SERVICE_ACCOUNT_JSON, OPENCODE_API_KEYS, PRIMARY_PROVIDER, OPENCODE_AVAILABLE_MODELS, OPENCODE_DEFAULT_MODEL, OPENCODE_QNA_MODEL, OPENCODE_RESEARCH_MODEL, OPENCODE_VISION_MODEL, OPENCODE_INLINE_MODEL, OPENROUTER_API_KEYS, USE_OPENROUTER, OPENROUTER_AVAILABLE_MODELS, OPENROUTER_DEFAULT_MODEL, OPENROUTER_QNA_MODEL, OPENROUTER_RESEARCH_MODEL, OPENROUTER_URL_SELECTION_MODEL, FREETHEAI_API_KEYS, FREETHEAI_AVAILABLE_MODELS, FREETHEAI_DEFAULT_MODEL, TAVILY_API_KEYS, JINA_API_KEY, WEATHER_API_KEY, EXCHANGE_RATE_API_KEY, DAILY_LIMITS, MAX_CONCURRENT_HEAVY_REQUESTS, MAX_CONCURRENT_HEAVY_CALLBACKS, MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS, LRU_STATE_CACHE_SIZE, DB_POOL_MIN_SIZE, DB_POOL_MAX_SIZE, AGENTIC_MODEL, AGENTIC_MAX_TOKENS, AGENTIC_TIMEOUT_SECONDS, AGENTIC_MAX_ITERATIONS, AGENTIC_MAX_PAGES, AGENTIC_PAGE_CONTENT_LIMIT, ADAPTIVE_THINKING_ENABLED, INLINE_THINKING_LEVEL, IMAGE_MODELS, DEFAULT_IMAGE_MODEL, POLLINATIONS_API_KEY, IMAGE_GEN_DAILY_LIMIT, IMAGE_GEN_RPD_PER_KEY, IMAGE_GEN_TIMEOUT, IMAGE_GEN_MAX_RETRIES, ELEVENLABS_API_KEYS, ELEVENLABS_VOICE_ID
           script: |
             set -e
 
@@ -275,6 +279,11 @@ jobs:
             # cloud Bot API side so both backends cannot deliver the same update.
             echo ">>> Releasing official Telegram cloud Bot API state..."
             docker run --rm \
+              --log-driver local --log-opt max-size=20m --log-opt max-file=5 \
+              -e APP_RELEASE="$IMAGE_TAG" \
+              -e APP_ENV="$APP_ENV" \
+              -e LOG_FORMAT="$LOG_FORMAT" \
+              -e LOG_CONTENT_MODE="$LOG_CONTENT_MODE" \
               -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
               $REGISTRY/$REPO:$IMAGE_TAG \
               python /app/scripts/release_cloud_bot_api.py
@@ -284,6 +293,7 @@ jobs:
             # Bot API image does not guarantee that wget/curl is installed.
             tg_api_is_ready() {
               docker run --rm \
+                --log-driver local --log-opt max-size=20m --log-opt max-file=5 \
                 --network tg-net \
                 -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
                 "$REGISTRY/$REPO:$IMAGE_TAG" \
@@ -311,7 +321,6 @@ jobs:
               if ! tg_api_is_ready; then
                 echo ">>> Existing Local Bot API container is unhealthy; recreating."
                 docker inspect -f 'status={{.State.Status}} restarting={{.State.Restarting}} exit={{.State.ExitCode}} restart_count={{.RestartCount}}' tg-api || true
-                docker logs --tail 200 tg-api || true
                 TG_API_RECREATE=true
               fi
             else
@@ -325,6 +334,7 @@ jobs:
 
               docker run -d \
                 --name tg-api \
+                --log-driver local --log-opt max-size=20m --log-opt max-file=5 \
                 --restart unless-stopped \
                 --network tg-net \
                 -e TELEGRAM_API_ID="$TELEGRAM_API_ID" \
@@ -349,7 +359,7 @@ jobs:
             done
             if [ "$TG_API_READY" != "true" ]; then
               echo ">>> Telegram Bot API health check failed after 60s"
-              docker logs --tail 200 tg-api || true
+              docker inspect -f 'status={{.State.Status}} restarting={{.State.Restarting}} exit={{.State.ExitCode}} restart_count={{.RestartCount}}' tg-api || true
               exit 1
             fi
 
@@ -392,8 +402,13 @@ jobs:
             echo ">>> Running database migrations..."
             docker run --rm \
               --name tg-migrate \
+              --log-driver local --log-opt max-size=20m --log-opt max-file=5 \
               --network tg-net \
               -e DATABASE_URL="$DATABASE_URL" \
+              -e APP_RELEASE="$IMAGE_TAG" \
+              -e APP_ENV="$APP_ENV" \
+              -e LOG_FORMAT="$LOG_FORMAT" \
+              -e LOG_CONTENT_MODE="$LOG_CONTENT_MODE" \
               $REGISTRY/$REPO:$IMAGE_TAG \
               python /app/scripts/migrate.py
             echo ">>> Migrations complete."
@@ -425,7 +440,7 @@ jobs:
             handle_candidate_failure() {
               FAILURE_REASON="$1"
               echo ">>> Candidate failed: $FAILURE_REASON"
-              docker logs --tail 300 tg-bot 2>/dev/null || true
+              docker inspect -f 'status={{.State.Status}} restarting={{.State.Restarting}} exit={{.State.ExitCode}} restart_count={{.RestartCount}} image={{.Config.Image}}' tg-bot 2>/dev/null || true
               docker stop tg-bot 2>/dev/null || true
               docker rm tg-bot 2>/dev/null || true
 
@@ -446,7 +461,7 @@ jobs:
                   echo ">>> Previous bot container restored and healthy."
                 else
                   echo ">>> Previous bot container was restored but its health check failed."
-                  docker logs --tail 300 tg-bot || true
+                  docker inspect -f 'status={{.State.Status}} restarting={{.State.Restarting}} exit={{.State.ExitCode}} restart_count={{.RestartCount}} image={{.Config.Image}}' tg-bot || true
                 fi
               elif [ "$PREVIOUS_PRESERVED" = "true" ]; then
                 echo ">>> Previous container remains stopped as tg-bot-previous; automatic restore was unsafe."
@@ -456,12 +471,17 @@ jobs:
 
             if ! docker run -d \
               --name tg-bot \
+              --log-driver local --log-opt max-size=20m --log-opt max-file=5 \
               --restart unless-stopped \
               --network tg-net \
               -p 127.0.0.1:$PORT:$PORT \
               -v tg-api-data:/var/lib/telegram-bot-api \
               ${VERTEX_LIVE_DOCKER_MOUNT:+$VERTEX_LIVE_DOCKER_MOUNT} \
               -e TZ=Europe/Kyiv \
+              -e APP_RELEASE="$IMAGE_TAG" \
+              -e APP_ENV="$APP_ENV" \
+              -e LOG_FORMAT="$LOG_FORMAT" \
+              -e LOG_CONTENT_MODE="$LOG_CONTENT_MODE" \
               ${VERTEX_LIVE_DOCKER_ENV:+$VERTEX_LIVE_DOCKER_ENV} \
               -e ADMIN_ID="$ADMIN_ID" \
               -e ADMIN_SECRET="$ADMIN_SECRET" \
@@ -540,8 +560,6 @@ jobs:
               -e ELEVENLABS_VOICE_ID="$ELEVENLABS_VOICE_ID" \
               -e WEBHOOK_SECRET_TOKEN="$WEBHOOK_SECRET_TOKEN" \
               -e INLINE_THINKING_LEVEL="$INLINE_THINKING_LEVEL" \
-              -e STRUCTURED_LOGGING="$STRUCTURED_LOGGING" \
-              -e LOG_PRETTY="$LOG_PRETTY" \
               $REGISTRY/$REPO:$IMAGE_TAG; then
               handle_candidate_failure "container start failed"
             fi
@@ -579,6 +597,7 @@ jobs:
 
             docker run -d \
               --name tg-media-cleanup \
+              --log-driver local --log-opt max-size=20m --log-opt max-file=5 \
               --restart unless-stopped \
               --network tg-net \
               -v tg-api-data:/var/lib/telegram-bot-api \

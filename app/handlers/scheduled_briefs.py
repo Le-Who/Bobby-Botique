@@ -323,6 +323,7 @@ async def _generate_brief_summary(
     try:
         from google.genai import types
 
+        from app.observability.workload_events import observe_workload_call
         from app.providers.gemini import get_cached_genai_client
         from app.repos.keys import get_available_gemini_key
 
@@ -354,10 +355,19 @@ async def _generate_brief_summary(
             return {}
 
         if user_id is None:
-            response = await client.aio.models.generate_content(
+            response = await observe_workload_call(
+                client.aio.models.generate_content(
+                    model="gemini-3.1-flash-lite",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
+                ),
+                workload="scheduled_brief",
+                provider="gemini",
                 model="gemini-3.1-flash-lite",
-                contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
+                api_key=key_data["api_key"],
+                key_hash=key_data["key_hash"],
+                origin="scheduled_brief",
+                input_chars=len(prompt),
             )
         else:
             from app.repos.memory_consent import private_data_lease
@@ -371,10 +381,19 @@ async def _generate_brief_summary(
                 if not lease_acquired:
                     logger.info("Skipped stale/revoked brief summary for user %s", user_id)
                     return {}
-                response = await client.aio.models.generate_content(
+                response = await observe_workload_call(
+                    client.aio.models.generate_content(
+                        model="gemini-3.1-flash-lite",
+                        contents=prompt,
+                        config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
+                    ),
+                    workload="scheduled_brief",
+                    provider="gemini",
                     model="gemini-3.1-flash-lite",
-                    contents=prompt,
-                    config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
+                    api_key=key_data["api_key"],
+                    key_hash=key_data["key_hash"],
+                    origin="scheduled_brief",
+                    input_chars=len(prompt),
                 )
         raw = (response.text or "").strip()
         # Strip any accidental markdown fences

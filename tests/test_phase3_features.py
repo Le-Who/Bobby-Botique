@@ -103,35 +103,31 @@ class TestPrometheus:
     """Tests for Prometheus metric exporter."""
 
     def test_generates_valid_text(self):
-        with patch("app.prometheus.metrics_collector") as mock_mc:
-            mock_mc._start_time = time.time() - 3600
-            mock_mc._api_calls = {("gemini", "2.5-pro"): 42}
-            mock_mc._errors = {"timeout": 3}
+        from app.observability.metrics import operational_metrics
+        from app.prometheus import generate_metrics_text
 
-            from app.prometheus import generate_metrics_text
-
-            text = generate_metrics_text()
-            assert "gembot_uptime_seconds" in text
-            assert "gembot_api_calls_total" in text
-            assert "42" in text
-            assert "# TYPE" in text
-            assert "# HELP" in text
+        before = sum(operational_metrics.snapshot()["provider_attempts"].values())
+        operational_metrics.observe(
+            "provider.attempt_finished",
+            {"provider": "gemini", "actual_model": "2.5-pro", "outcome": "succeeded"},
+        )
+        text = generate_metrics_text()
+        assert "gembot_uptime_seconds" in text
+        assert "gembot_provider_attempts_total" in text
+        assert sum(operational_metrics.snapshot()["provider_attempts"].values()) == before + 1
+        assert "# TYPE" in text
+        assert "# HELP" in text
 
     def test_valid_prometheus_format(self):
-        with patch("app.prometheus.metrics_collector") as mock_mc:
-            mock_mc._start_time = time.time()
-            mock_mc._api_calls = {}
-            mock_mc._errors = {}
+        from app.prometheus import generate_metrics_text
 
-            from app.prometheus import generate_metrics_text
-
-            text = generate_metrics_text()
-            lines = text.strip().split("\n")
-            # Every non-empty line should be either a comment (#) or a metric
-            for line in lines:
-                if not line.strip():
-                    continue
-                assert line.startswith("#") or " " in line, f"Bad line: {line}"
+        text = generate_metrics_text()
+        lines = text.strip().split("\n")
+        # Every non-empty line should be either a comment (#) or a metric
+        for line in lines:
+            if not line.strip():
+                continue
+            assert line.startswith("#") or " " in line, f"Bad line: {line}"
 
 
 # ============================================================================

@@ -804,7 +804,14 @@ class ConfigManager:
         """Updates a setting value (for testing/debugging)."""
         if hasattr(self.settings, key):
             setattr(self.settings, key, value)
-            logging.info("Setting updated: %s = %s", key, value)
+            logging.info(
+                "Setting updated",
+                extra={
+                    "_event_name": "configuration.setting_updated",
+                    "setting_name": key,
+                    "value_type": type(value).__name__,
+                },
+            )
         else:
             logging.warning("Unknown setting: %s", key)
 

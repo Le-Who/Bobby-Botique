@@ -57,6 +57,7 @@ from app.config import GEMINI_GROUNDING_FALLBACK_MODEL, GEMINI_GROUNDING_MODEL, 
 from app.errors import classify_key_error, is_error_message, is_key_related_error, is_retryable_error
 from app.i18n import t
 from app.metrics import metrics_collector
+from app.observability.content import content_fields
 from app.repos.settings_repo import get_global_setting
 from app.tarot import SpreadType
 from app.utils.api_logger import api_logger
@@ -516,7 +517,14 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not query:
         return
 
-    logging.info("Inline query from user=%s: %r", query.from_user.id, query.query[:80])
+    logging.info(
+        "Inline query received",
+        extra={
+            "_event_name": "telegram.inline_query_received",
+            "inline_user_id": query.from_user.id,
+            **content_fields("inline_query", query.query, sensitive=True, subsystem="inline"),
+        },
+    )
 
     user_query = query.query.strip()
     lang = _get_lang(query)
@@ -1099,10 +1107,14 @@ async def _generate_and_swap_media(
                 reply_markup=InlineKeyboardMarkup([]),
             )
             logging.info(
-                "Inline image: swapped via file_id in %.1fs for prompt %r (model=%s)",
-                elapsed,
-                prompt[:60],
-                model,
+                "Inline image swapped via file_id",
+                extra={
+                    "_event_name": "image.delivery_finished",
+                    "duration_ms": round(elapsed * 1000, 2),
+                    "model": model,
+                    "outcome": "succeeded",
+                    **content_fields("image_prompt", prompt, sensitive=True, subsystem="inline"),
+                },
             )
         except Exception as edit_err:
             logging.error("Inline image: edit_message_media failed: %s", edit_err)
@@ -1113,7 +1125,15 @@ async def _generate_and_swap_media(
                 )
     else:
         err_msg = getattr(result, "error_message", "unknown") if result else "provider_exception"
-        logging.warning("Inline image: generation failed (%s) for prompt %r", err_msg, prompt[:60])
+        logging.warning(
+            "Inline image generation failed",
+            extra={
+                "_event_name": "image.generation_finished",
+                "outcome": "failed",
+                "error_summary": err_msg,
+                **content_fields("image_prompt", prompt, sensitive=True, subsystem="inline"),
+            },
+        )
         with contextlib.suppress(Exception):
             await bot.edit_message_caption(
                 inline_message_id=inline_message_id,

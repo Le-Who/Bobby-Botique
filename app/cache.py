@@ -9,6 +9,7 @@ from redis.exceptions import ConnectionError, RedisError, TimeoutError
 
 from app.errors import RedisConnectionError
 from app.metrics import metrics_collector
+from app.observability.events import emit, record_exception
 from app.utils.json_compat import json
 
 
@@ -120,27 +121,61 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
         raise RedisConnectionError("Redis client not configured")
 
     last_error = None
+    operation_name = getattr(operation, "__name__", "redis_operation")
+    started = asyncio.get_running_loop().time()
     for attempt in range(max_retries):
         try:
             # Execute async Redis operation directly
             result = await operation(*args, **kwargs)
+            emit(
+                "cache.backend_operation_finished",
+                level="debug",
+                operation="cache.redis",
+                backend="redis",
+                backend_operation=operation_name,
+                outcome="succeeded",
+                attempts=attempt + 1,
+                duration_ms=round((asyncio.get_running_loop().time() - started) * 1000, 2),
+            )
             return result
 
         except (ConnectionError, TimeoutError) as e:
             last_error = e
             if attempt < max_retries - 1:
                 wait_time = (2**attempt) * 0.1  # Exponential backoff: 0.1s, 0.2s, 0.4s
-                logging.warning(
-                    f"Redis operation failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {wait_time}s..."
+                emit(
+                    "cache.backend_retry_scheduled",
+                    level="warning",
+                    operation="cache.redis",
+                    backend="redis",
+                    backend_operation=operation_name,
+                    attempt_number=attempt + 1,
+                    max_attempts=max_retries,
+                    retry_delay_ms=round(wait_time * 1000, 2),
+                    error_type=type(e).__name__,
                 )
                 await asyncio.sleep(wait_time)
             else:
-                logging.error("Redis operation failed after %d attempts: %s", max_retries, e)
+                record_exception(
+                    "cache.backend_operation_failed",
+                    e,
+                    operation="cache.redis",
+                    fields={
+                        "backend": "redis",
+                        "backend_operation": operation_name,
+                        "attempts": max_retries,
+                    },
+                )
                 raise RedisConnectionError(f"Redis operation failed: {e}") from e
 
         except RedisError as e:
             # Other Redis errors don't require retry
-            logging.error("Redis operation error: %s", e, exc_info=True)
+            record_exception(
+                "cache.backend_operation_failed",
+                e,
+                operation="cache.redis",
+                fields={"backend": "redis", "backend_operation": operation_name, "attempts": attempt + 1},
+            )
             raise RedisConnectionError(f"Redis operation error: {e}") from e
 
     raise RedisConnectionError(f"Redis operation failed after {max_retries} attempts: {last_error}")
@@ -151,7 +186,16 @@ async def get_cached_search_result(query: str, search_type: str) -> dict[str, An
     try:
         return await get_cached_search_result_ml(query, search_type)
     except Exception as e:
-        logging.warning("Cache get error for query %s...: %s", query[:50], e)
+        logging.warning(
+            "Search cache read failed",
+            extra={
+                "_event_name": "cache.operation_failed",
+                "operation": "cache.search_read",
+                "search_type": search_type,
+                "query_chars": len(query),
+                "error_type": type(e).__name__,
+            },
+        )
         await metrics_collector.record_cache_miss()
         return None
 
@@ -161,7 +205,16 @@ async def cache_search_result(query: str, search_type: str, result: dict[str, An
     try:
         await cache_search_result_ml(query, search_type, result)
     except Exception as e:
-        logging.warning("Cache set error for query %s...: %s", query[:50], e)
+        logging.warning(
+            "Search cache write failed",
+            extra={
+                "_event_name": "cache.operation_failed",
+                "operation": "cache.search_write",
+                "search_type": search_type,
+                "query_chars": len(query),
+                "error_type": type(e).__name__,
+            },
+        )
 
 
 async def get_cache_stats() -> dict[str, Any]:
@@ -238,7 +291,15 @@ class MultiLayerCache:
         cache_dict = self._get_cache(search_type)
         # Try memory cache first — direct access, no lock needed (see __init__).
         if key in cache_dict:
-            logging.info("Memory cache hit for key: %s", key)
+            emit(
+                "cache.lookup_finished",
+                level="debug",
+                operation="cache.search",
+                cache_namespace=search_type,
+                cache_layer="memory",
+                outcome="hit",
+                cache_key_fingerprint=key[:16],
+            )
             return cache_dict[key]
 
         # Try Redis cache
@@ -257,10 +318,27 @@ class MultiLayerCache:
                         cache_dict[key] = result
 
                         await metrics_collector.record_cache_hit()
-                        logging.info("Redis cache hit for key: %s", key)
+                        emit(
+                            "cache.lookup_finished",
+                            level="debug",
+                            operation="cache.search",
+                            cache_namespace=search_type,
+                            cache_layer="redis",
+                            outcome="hit",
+                            cache_key_fingerprint=key[:16],
+                        )
                         return result
                     else:
-                        logging.warning("Failed to decode Redis data for key: %s", key)
+                        emit(
+                            "cache.lookup_finished",
+                            level="warning",
+                            operation="cache.search",
+                            cache_namespace=search_type,
+                            cache_layer="redis",
+                            outcome="failed",
+                            reason_code="decode_failed",
+                            cache_key_fingerprint=key[:16],
+                        )
 
             except RedisConnectionError as e:
                 logging.warning("Redis cache unavailable: %s", e)
@@ -268,6 +346,15 @@ class MultiLayerCache:
                 logging.warning("Redis cache error: %s", e)
 
         await metrics_collector.record_cache_miss()
+        emit(
+            "cache.lookup_finished",
+            level="debug",
+            operation="cache.search",
+            cache_namespace=search_type,
+            cache_layer="all",
+            outcome="miss",
+            cache_key_fingerprint=key[:16],
+        )
         return None
 
     async def set(self, key: str, search_type: str, value: dict[str, Any]):
@@ -286,7 +373,16 @@ class MultiLayerCache:
 
                 # Use retry logic for Redis operations
                 await _redis_operation_with_retry(redis_client.setex, redis_key, ttl, json_data)
-                logging.info("Stored in Redis cache: %s", key)
+                emit(
+                    "cache.write_finished",
+                    level="debug",
+                    operation="cache.search",
+                    cache_namespace=search_type,
+                    cache_layer="memory_and_redis",
+                    outcome="succeeded",
+                    cache_key_fingerprint=key[:16],
+                    ttl_seconds=ttl,
+                )
 
             except RedisConnectionError as e:
                 logging.warning("Failed to store in Redis cache (connection issue): %s", e)
@@ -381,7 +477,14 @@ async def store_telegraph_url(uid: str, url: str) -> bool:
     try:
         key = f"{_LONG_MSG_PREFIX}{uid}:tg_url"
         await redis_client.set(key, url.encode("utf-8"))  # No TTL — persist forever
-        logging.debug("Stored telegraph fallback url uid=%s → %s", uid, url)
+        logging.debug(
+            "Stored Telegraph fallback reference",
+            extra={
+                "_event_name": "cache.telegraph_reference_stored",
+                "reader_uid": uid,
+                "url_host": "telegra.ph" if "telegra.ph" in url else "other",
+            },
+        )
         return True
     except Exception as e:
         logging.warning("Failed to store telegraph URL uid=%s: %s", uid, e)
@@ -455,10 +558,25 @@ async def store_inline_context(token: str, payload: dict, user_id: int | None = 
                             del_pipe.zrem(zset_key, *oldest_tokens)
                             await del_pipe.execute()
 
-        logging.debug("Stored inline ctx token=%s for user=%s", token, user_id)
+        logging.debug(
+            "Stored inline continuation context",
+            extra={
+                "_event_name": "cache.inline_context_stored",
+                "token_fingerprint": hashlib.sha256(token.encode()).hexdigest()[:16],
+                "owner_user_id": user_id,
+            },
+        )
         return True
     except Exception as e:
-        logging.warning("Failed to store inline ctx token=%s: %s", token, e)
+        logging.warning(
+            "Failed to store inline continuation context",
+            extra={
+                "_event_name": "cache.operation_failed",
+                "operation": "cache.inline_context_write",
+                "token_fingerprint": hashlib.sha256(token.encode()).hexdigest()[:16],
+                "error_type": type(e).__name__,
+            },
+        )
         return False
 
 
@@ -474,5 +592,13 @@ async def get_inline_context(token: str) -> dict | None:
         raw = data.decode("utf-8") if isinstance(data, bytes) else data
         return json.loads(raw)
     except Exception as e:
-        logging.warning("Failed to get inline ctx token=%s: %s", token, e)
+        logging.warning(
+            "Failed to get inline continuation context",
+            extra={
+                "_event_name": "cache.operation_failed",
+                "operation": "cache.inline_context_read",
+                "token_fingerprint": hashlib.sha256(token.encode()).hexdigest()[:16],
+                "error_type": type(e).__name__,
+            },
+        )
         return None

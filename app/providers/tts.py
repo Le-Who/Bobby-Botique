@@ -18,6 +18,7 @@ import re
 
 from google.genai import types
 
+from app.observability.workload_events import start_workload_attempt
 from app.providers.gemini import get_cached_genai_client
 
 TTS_MODEL = "gemini-3.1-flash-tts-preview"
@@ -258,6 +259,16 @@ async def generate_speech(
     # where temp < 0.5 causes "hangs, timeouts, or empty silent buffers". We must clamp the API temp to 0.5
     # while leaving the prompt strictly constrained by `user_temp`.
     api_temp = max(user_temp, 0.5)
+    attempt = start_workload_attempt(
+        workload="tts",
+        provider="gemini",
+        model=model_name,
+        api_key=api_key,
+        origin="gemini_tts",
+        voice_id=voice,
+        input_chars=len(tts_text),
+        language_code=language_code,
+    )
 
     config = types.GenerateContentConfig(
         temperature=api_temp,
@@ -294,13 +305,19 @@ async def generate_speech(
                         len(tts_text),
                         len(audio_bytes),
                     )
+                    attempt.finish(outcome="succeeded", output_bytes=len(audio_bytes))
                     return audio_bytes
 
         logging.warning("TTS response contained no audio data")
+        attempt.finish(outcome="failed", level="warning", reason_code="empty_audio")
         return None
 
-    except TimeoutError:
+    except asyncio.CancelledError:
+        attempt.finish(outcome="cancelled", level="warning", reason_code="cancelled")
+        raise
+    except TimeoutError as exc:
         logging.error("TTS generation timed out after %.0fs — will rotate key", timeout)
+        attempt.fail(exc, reason_code="timeout")
         raise  # Must re-raise so voice_engine can catch it and rotate the API key
     except Exception as e:
         err_str = str(e)
@@ -319,6 +336,8 @@ async def generate_speech(
             )
         ):
             logging.warning("TTS retryable error (will rotate key): %s", e)
+            attempt.fail(e, reason_code="retryable_provider_error")
             raise
         logging.error("TTS generation failed: %s", e)
+        attempt.fail(e, reason_code="provider_error")
         return None

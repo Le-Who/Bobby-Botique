@@ -19,6 +19,9 @@ historical plans, journals and test/deploy reports are not current instructions.
 | [Natal dependency decision](natal-chart-dependency-decision.md) | PyEphem/local math, city data, scope and dependency rationale |
 | [Natal readiness](natal-chart-product-readiness.md) | Implemented checks and rollout checklist; old results explicitly historical |
 | [Audit report](documentation-audit-2026-09-08.md) | Evidence, corrections, rationale and remaining limits |
+| [Logging runbook](logging.md) | Runtime configuration, privacy policy and incident investigation for operators/agents |
+| [Log event catalog](log-events.md) | Stable schema-v1 event ownership, required fields and terminal semantics |
+| [Logging audit](logging-audit-2026-09-10.md) | Dated source audit, findings and target design rationale |
 
 ## Accepted architecture decisions
 

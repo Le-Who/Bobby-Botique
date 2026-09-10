@@ -24,6 +24,7 @@ import logging
 import os
 import pathlib
 import sys
+import time
 
 # Allow running from repo root without installing the package
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -35,13 +36,10 @@ from app.db.migration_manifest import (
     discover_migration_files,
     migration_version,
 )
+from app.observability.events import emit, record_exception
+from app.utils.logging_config import setup_detailed_logging, shutdown_detailed_logging
 
 MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parent / "migrations"
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 log = logging.getLogger("migrate")
 
 
@@ -84,6 +82,13 @@ async def _pending(conn: asyncpg.Connection) -> list[pathlib.Path]:
 async def run_check(conn: asyncpg.Connection) -> bool:
     """Dry-run: print drift, return True if no drift."""
     pending = await _pending(conn)
+    emit(
+        "migration.check_finished",
+        level="info" if not pending else "warning",
+        operation="migration.check",
+        outcome="succeeded" if not pending else "drift_detected",
+        pending_count=len(pending),
+    )
     if not pending:
         log.info("✓ No pending migrations — schema is up to date.")
         return True
@@ -123,7 +128,13 @@ async def run_apply(conn: asyncpg.Connection) -> bool:
 
     for sql_file in pending:
         v = _version(sql_file)
-        log.info("→ Applying %s ...", sql_file.name)
+        started_ns = time.monotonic_ns()
+        emit(
+            "migration.apply_started",
+            operation="migration.apply",
+            migration_version=v,
+            migration_filename=sql_file.name,
+        )
         try:
             sql_content = sql_file.read_text(encoding="utf-8")
             async with conn.transaction():
@@ -134,9 +145,31 @@ async def run_apply(conn: asyncpg.Connection) -> bool:
                     v,
                     sql_file.name,
                 )
-            log.info("  ✓ %s applied", v)
+            emit(
+                "migration.apply_finished",
+                operation="migration.apply",
+                outcome="succeeded",
+                migration_version=v,
+                migration_filename=sql_file.name,
+                duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+            )
         except Exception as exc:
-            log.error("  ✗ %s FAILED: %s", sql_file.name, exc)
+            error_id = record_exception(
+                "migration.apply_failed",
+                exc,
+                operation="migration.apply",
+                fields={"migration_version": v, "migration_filename": sql_file.name},
+            )
+            emit(
+                "migration.apply_finished",
+                level="error",
+                operation="migration.apply",
+                outcome="failed",
+                migration_version=v,
+                migration_filename=sql_file.name,
+                error_id=error_id,
+                duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+            )
             all_ok = False
             # Hard stop — don't apply dependant migrations on a broken predecessor
             break
@@ -148,6 +181,7 @@ async def run_apply(conn: asyncpg.Connection) -> bool:
 
 
 async def main(args: argparse.Namespace) -> int:
+    emit("migration.run_started", operation="migration.run", mode=args.mode)
     database_url = os.environ.get("DATABASE_URL", "").strip()
     if not database_url:
         log.error("DATABASE_URL environment variable is not set.")
@@ -156,14 +190,14 @@ async def main(args: argparse.Namespace) -> int:
     try:
         _discover_files()
     except MigrationManifestError as exc:
-        log.error("Invalid migration manifest: %s", exc)
+        record_exception("migration.manifest_failed", exc, operation="migration.manifest")
         return 1
 
     log.info("Connecting to database...")
     try:
         conn = await asyncpg.connect(database_url, statement_cache_size=0)
     except Exception as exc:
-        log.error("Cannot connect to database: %s", exc)
+        record_exception("migration.connection_failed", exc, operation="migration.connect")
         return 1
 
     try:
@@ -212,4 +246,8 @@ def _parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main(_parse_args())))
+    setup_detailed_logging(log_to_file=False)
+    try:
+        sys.exit(asyncio.run(main(_parse_args())))
+    finally:
+        shutdown_detailed_logging()

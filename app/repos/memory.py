@@ -20,6 +20,8 @@ from app.database import (
     db_query,
     set_user_context,
 )
+from app.observability.events import emit
+from app.observability.workload_events import start_workload_attempt
 from app.providers.gemini import get_cached_genai_client
 
 # ── Constants (re-exported from memory_config for backward compatibility) ─────
@@ -102,6 +104,14 @@ async def expand_query_with_llm(query: str, api_key: str) -> str:
     Returns:
         Expanded search phrase (usually shorter / more keyword-dense).
     """
+    attempt = start_workload_attempt(
+        workload="memory_query_expansion",
+        provider="gemini",
+        model=QUERY_EXPANSION_MODEL,
+        api_key=api_key,
+        origin="memory_search",
+        input_chars=len(query),
+    )
     try:
         from google.genai import types as _types
 
@@ -120,10 +130,11 @@ async def expand_query_with_llm(query: str, api_key: str) -> str:
         )
         expanded = (resp.text or "").strip().strip('"')
         if expanded and len(expanded) > 3:
-            logging.debug("Query expansion: %r -> %r", query[:80], expanded)
+            attempt.finish(outcome="succeeded", output_chars=len(expanded))
             return expanded
+        attempt.finish(outcome="failed", level="warning", reason_code="empty_response")
     except Exception as exc:
-        logging.debug("Query expansion failed (non-critical): %s", exc)
+        attempt.fail(exc, reason_code="provider_error")
     return query
 
 
@@ -169,6 +180,18 @@ async def _get_embedding(
 
         if not current_key:
             return None
+        request_attempt = start_workload_attempt(
+            workload="embedding",
+            provider="gemini",
+            model=EMBEDDING_MODEL,
+            api_key=current_key,
+            origin="memory",
+            attempt_number=_attempt + 1,
+            max_attempts=2,
+            task_type=task_type,
+            input_chars=len(payload) if isinstance(payload, str) else None,
+            input_parts=len(payload) if isinstance(payload, list) else None,
+        )
         try:
             client = get_cached_genai_client(current_key)  # Reuse cached client (HTTP/2 multiplexing)
             result = await client.aio.models.embed_content(
@@ -180,11 +203,17 @@ async def _get_embedding(
                 ),
             )
             if result and result.embeddings:
-                return result.embeddings[0].values
+                values = result.embeddings[0].values
+                request_attempt.finish(
+                    outcome="succeeded",
+                    vector_dimensions=len(values) if values is not None else None,
+                )
+                return values
+            request_attempt.finish(outcome="failed", level="warning", reason_code="empty_embedding")
         except Exception as e:
             error_str = str(e)
             is_invalid_key = "400" in error_str and ("invalid" in error_str.lower() or "api_key" in error_str.lower())
-            logging.warning("Embedding generation failed (attempt %d): %s", _attempt + 1, e)
+            request_attempt.fail(e, reason_code="invalid_key" if is_invalid_key else "provider_error")
 
             if is_invalid_key and _attempt == 0:
                 # Key is revoked/invalid — track hash and rotate to a fresh one
@@ -202,7 +231,14 @@ async def _get_embedding(
                         current_key = key_data["api_key"]
                         continue  # Retry with the fresh key
                 except Exception as resolve_exc:
-                    logging.debug("Embedding key rotation failed (non-critical): %s", resolve_exc)
+                    emit(
+                        "provider.key_rotation_failed",
+                        level="warning",
+                        operation="embedding.key_rotation",
+                        provider="gemini",
+                        model=EMBEDDING_MODEL,
+                        error_type=type(resolve_exc).__name__,
+                    )
 
             # Emit metric for observability
             try:
@@ -1221,14 +1257,24 @@ async def _search_memories_with_llm_judge_impl(
 
     try:
         client = get_cached_genai_client(api_key)
-        resp = await client.aio.models.generate_content(
-            model=QUERY_EXPANSION_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.0,
-                max_output_tokens=256,
-                response_mime_type="application/json",
+        from app.observability.workload_events import observe_workload_call
+
+        resp = await observe_workload_call(
+            client.aio.models.generate_content(
+                model=QUERY_EXPANSION_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    max_output_tokens=256,
+                    response_mime_type="application/json",
+                ),
             ),
+            workload="memory_relevance_judge",
+            provider="gemini",
+            model=QUERY_EXPANSION_MODEL,
+            api_key=api_key,
+            origin="memory_retrieval",
+            candidate_count=len(candidates),
         )
         judgements: list[dict[str, Any]] = json.loads(resp.text or "[]")
         relevant_indices = {int(j["index"]) for j in judgements if j.get("relevant")}
@@ -1236,11 +1282,10 @@ async def _search_memories_with_llm_judge_impl(
         result = [{**c, "llm_judged": True} for i, c in enumerate(candidates) if i in relevant_indices][:limit]
 
         logging.info(
-            "LLM judge fallback: %d/%d candidates relevant for user %d (query=%r)",
+            "LLM judge fallback: %d/%d candidates relevant for user %d",
             len(result),
             len(candidates),
             user_id,
-            query[:60],
         )
         return result
 

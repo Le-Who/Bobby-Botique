@@ -9,6 +9,7 @@ Also provides the module-level convenience functions:
 import asyncio
 import inspect
 import logging
+import uuid
 from collections.abc import Callable, Iterable
 from typing import Any, TypeVar
 
@@ -33,6 +34,7 @@ from app.errors import (
     tag_error,
     user_friendly_error,
 )
+from app.observability.provider_events import observe_provider_stream
 from app.providers.base import is_freetheai_model, is_opencode_model
 from app.providers.openrouter import _has_multimodal_content
 from app.providers.stream_types import (
@@ -170,10 +172,6 @@ def _provider_label(model_name: str | None, use_openrouter: bool | None) -> str:
     return "gemini"
 
 
-def _key_prefix(api_key: str) -> str:
-    return api_key[:8]
-
-
 def _log_key_request(
     api_key: str,
     model_name: str | None,
@@ -182,13 +180,18 @@ def _log_key_request(
     attempt: int | None = None,
     max_attempts: int | None = None,
 ) -> None:
-    attempt_text = f" attempt={attempt}/{max_attempts}" if attempt is not None and max_attempts is not None else ""
-    logging.info(
-        "KEY_EVENT key_request key=%s… model=%s provider=%s%s",
-        _key_prefix(api_key),
-        model_name,
-        _provider_label(model_name, use_openrouter),
-        attempt_text,
+    from app.observability.events import emit
+    from app.observability.redaction import provider_key_fields
+
+    provider = _provider_label(model_name, use_openrouter)
+    emit(
+        "provider.key_selected",
+        operation="provider.request",
+        provider=provider,
+        requested_model=model_name,
+        attempt_number=attempt,
+        max_attempts=max_attempts,
+        **provider_key_fields(provider, api_key),
     )
 
 
@@ -198,12 +201,17 @@ def _log_key_answered(
     use_openrouter: bool | None,
     token_count: int | None,
 ) -> None:
-    logging.info(
-        "KEY_EVENT key_answered key=%s… model=%s provider=%s tokens=%s",
-        _key_prefix(api_key),
-        model_name,
-        _provider_label(model_name, use_openrouter),
-        token_count if token_count is not None else "unknown",
+    from app.observability.events import emit
+    from app.observability.redaction import provider_key_fields
+
+    provider = _provider_label(model_name, use_openrouter)
+    emit(
+        "provider.key_answered",
+        operation="provider.request",
+        provider=provider,
+        actual_model=model_name,
+        token_count=token_count,
+        **provider_key_fields(provider, api_key),
     )
 
 
@@ -836,7 +844,18 @@ class ProviderRouter:
                     failure: StreamFailed | None = None
                     terminal_result: GenerationEvent | None = None
 
-                    async for event in provider.stream(request, model_name=model_used):
+                    observed_events = observe_provider_stream(
+                        provider.stream(request, model_name=model_used),
+                        provider=getattr(provider, "provider_name", _provider_label(model_used, None)),
+                        requested_model=preferred_model,
+                        actual_model=model_used,
+                        api_key=key_data["api_key"],
+                        key_hash=key_data["key_hash"],
+                        attempt_number=attempt + 1,
+                        max_attempts=request.key_attempt_rounds,
+                        key_source=key_data.get("source"),
+                    )
+                    async for event in observed_events:
                         if terminal_seen:
                             raise ProviderStreamProtocolError(
                                 f"{provider.provider_name} emitted an event after terminal"
@@ -895,12 +914,27 @@ class ProviderRouter:
                     key_data: dict,
                     *,
                     race_model: str,
+                    requested_model: str,
+                    attempt_number: int,
+                    provider_race_id: str,
                     race_queue: asyncio.Queue[tuple[int, GenerationEvent | None, BaseException | None, bool]],
                 ) -> None:
                     terminal: GenerationEvent | None = None
                     provider = get_provider_for_model(race_model, key_data["api_key"])
                     try:
-                        async for event in provider.stream(request, model_name=race_model):
+                        observed_events = observe_provider_stream(
+                            provider.stream(request, model_name=race_model),
+                            provider=getattr(provider, "provider_name", _provider_label(race_model, None)),
+                            requested_model=requested_model,
+                            actual_model=race_model,
+                            api_key=key_data["api_key"],
+                            key_hash=key_data["key_hash"],
+                            attempt_number=attempt_number,
+                            max_attempts=request.key_attempt_rounds,
+                            race_id=provider_race_id,
+                            key_source=key_data.get("source"),
+                        )
+                        async for event in observed_events:
                             if terminal is not None:
                                 raise ProviderStreamProtocolError(
                                     f"{provider.provider_name} emitted an event after terminal"
@@ -921,12 +955,16 @@ class ProviderRouter:
                     finally:
                         race_queue.put_nowait((idx, None, None, True))
 
+                race_id = uuid.uuid4().hex
                 tasks = [
                     asyncio.create_task(
                         _race_provider(
                             index,
                             key_data,
                             race_model=model_used,
+                            requested_model=preferred_model,
+                            attempt_number=attempt + 1,
+                            provider_race_id=race_id,
                             race_queue=queue,
                         )
                     )

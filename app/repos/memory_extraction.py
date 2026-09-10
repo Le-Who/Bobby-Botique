@@ -25,6 +25,8 @@ from typing import Any
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from app.observability.events import emit, record_exception
+from app.observability.workload_events import start_workload_attempt
 from app.repos.memory_config import (
     GRAPH_EXTRACTION_MODEL,
     GRAPH_EXTRACTION_THINKING_LEVEL,
@@ -149,6 +151,17 @@ async def extract_graph_structured(
             current_api_key = key_data["api_key"]
 
         current_key_hash = hashlib.sha256(current_api_key.encode()).hexdigest()[:8]
+        request_attempt = start_workload_attempt(
+            workload="memory_extraction",
+            provider="gemini",
+            model=GRAPH_EXTRACTION_MODEL,
+            api_key=current_api_key,
+            key_hash=current_key_hash,
+            origin="memory_realtime",
+            attempt_number=attempt + 1,
+            max_attempts=3,
+            input_chars=len(text),
+        )
 
         try:
             client = get_cached_genai_client(current_api_key)
@@ -176,6 +189,7 @@ async def extract_graph_structured(
             response_text = (response.text or "").strip()
             if not response_text:
                 logging.warning("Graph extraction returned empty response (attempt %d)", attempt + 1)
+                request_attempt.finish(outcome="failed", level="warning", reason_code="empty_response")
                 return empty
 
             result = GraphExtractionResult.model_validate_json(response_text)
@@ -191,9 +205,15 @@ async def extract_graph_structured(
                 len(result.entities),
                 len(result.relations),
             )
+            request_attempt.finish(
+                outcome="succeeded",
+                entity_count=len(result.entities),
+                relation_count=len(result.relations),
+            )
             return result
 
         except Exception as e:
+            request_attempt.fail(e, reason_code="provider_or_parse_error")
             failed_keys.add(current_key_hash)
             error_str = str(e).lower()
             error_category = classify_key_error(error_str)
@@ -218,24 +238,39 @@ async def extract_graph_structured(
                 if is_truncation:
                     # Token budget expands on next attempt logic explicitly (config max_tokens)
                     wait = 0.0
-                    logging.warning(
-                        "Graph extraction JSON truncated (key %s…, attempt %d) — retrying with 4096 tokens",
-                        current_key_hash,
-                        attempt + 1,
+                    emit(
+                        "memory.extraction_retry_scheduled",
+                        level="warning",
+                        operation="memory.extraction",
+                        attempt_number=attempt + 1,
+                        next_attempt=attempt + 2,
+                        reason_code="json_truncated",
+                        key_fingerprint=current_key_hash,
                     )
                 else:
                     wait = (attempt + 1) * 2.0
-                    logging.warning(
-                        "Graph extraction transient error (key %s…, attempt %d, retrying in %.0fs): %s",
-                        current_key_hash,
-                        attempt + 1,
-                        wait,
-                        e,
+                    emit(
+                        "memory.extraction_retry_scheduled",
+                        level="warning",
+                        operation="memory.extraction",
+                        attempt_number=attempt + 1,
+                        next_attempt=attempt + 2,
+                        reason_code="transient_provider_error",
+                        retry_delay_ms=round(wait * 1000, 2),
+                        key_fingerprint=current_key_hash,
                     )
                 if wait > 0:
                     await asyncio.sleep(wait)
                 continue
-            logging.error("Graph extraction failed permanently with key %s…: %s", current_key_hash, e)
+            emit(
+                "memory.extraction_retry_scheduled",
+                level="warning",
+                operation="memory.extraction",
+                attempt_number=attempt + 1,
+                next_attempt=attempt + 2 if attempt < 2 else None,
+                reason_code="permanent_provider_error",
+                key_fingerprint=current_key_hash,
+            )
             continue  # Try next key for permanent failures as well
 
     return empty
@@ -636,16 +671,36 @@ async def _upsert_graph(
             edges=tuple(edge_candidates),
         )
 
+        write_started_ns = asyncio.get_running_loop().time()
         async with db_manager.pool.acquire() as write_conn, write_conn.transaction():
             await set_user_context(user_id, False, conn=write_conn)
             await write_conn.execute("SELECT pg_advisory_xact_lock($1)", user_id)
             if not await consent_and_source_are_current(write_conn):
+                emit(
+                    "memory.graph_write_finished",
+                    level="warning",
+                    operation="memory.graph_write",
+                    outcome="skipped",
+                    reason_code="consent_or_source_stale",
+                    source_count=1,
+                    consent_epoch=expected_epoch,
+                )
                 return 0
             mutation_result = await write_graph(write_conn, user_id, mutation_plan)
             if not mutation_result.affected_edge_ids:
                 raise RuntimeError("graph mutation produced no provenance-backed edges")
 
         edges_upserted = mutation_result.edges_written
+        emit(
+            "memory.graph_write_committed",
+            operation="memory.graph_write",
+            outcome="committed",
+            source_count=1,
+            node_count=len(mutation_result.node_ids),
+            edge_count=mutation_result.edges_written,
+            consent_epoch=expected_epoch,
+            duration_ms=round((asyncio.get_running_loop().time() - write_started_ns) * 1000, 2),
+        )
 
         logging.info(
             "Real-time graph upsert for user %d: %d relation endpoints, %d edges",
@@ -655,7 +710,12 @@ async def _upsert_graph(
         )
         return edges_upserted
     except Exception as error:
-        logging.error("Graph upsert failed for user %d: %s", user_id, error, exc_info=True)
+        record_exception(
+            "memory.graph_pipeline_failed",
+            error,
+            operation="memory.graph_pipeline",
+            fields={"actor_user_id": user_id, "consent_epoch": expected_epoch},
+        )
         return 0
 
 
@@ -690,6 +750,13 @@ async def _resolve_ambiguous_conflict(
         "Output ONLY the word: update, parallel, or refinement."
     )
 
+    request_attempt = start_workload_attempt(
+        workload="memory_conflict_resolution",
+        provider="gemini",
+        model=get_taxonomy_model(),
+        api_key=api_key,
+        origin="memory_realtime",
+    )
     try:
         client = get_cached_genai_client(api_key)
         response = await client.aio.models.generate_content(
@@ -702,9 +769,11 @@ async def _resolve_ambiguous_conflict(
         )
         answer = (response.text or "").strip().lower()
         if answer in ("update", "parallel", "refinement"):
+            request_attempt.finish(outcome="succeeded", verdict=answer)
             return answer
         logging.debug("LLM judge returned unexpected: %r, defaulting to 'parallel'", answer)
+        request_attempt.finish(outcome="failed", level="warning", reason_code="invalid_response")
         return "parallel"
     except Exception as exc:
-        logging.debug("LLM judge failed (non-critical): %s", exc)
+        request_attempt.fail(exc, reason_code="provider_error")
         return "parallel"  # safe default: keep both edges

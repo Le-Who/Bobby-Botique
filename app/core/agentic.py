@@ -6,6 +6,7 @@ import gc
 import hashlib
 import logging
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -13,6 +14,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from google.genai import types
 
 from app.config import settings
+from app.observability.events import emit, record_exception
+from app.observability.workload_events import start_workload_attempt
 from app.prompt_registry import get_registry
 from app.providers.base import _build_thinking_config
 from app.providers.gemini import get_cached_genai_client
@@ -383,14 +386,45 @@ class AgenticSearch:
         """
         name = call.name
         args = call.args
+        tool_call_id = uuid.uuid4().hex
+        emit(
+            "research.tool_started",
+            operation="research.tool",
+            tool_call_id=tool_call_id,
+            tool_name=str(name or "unknown"),
+        )
+
+        def complete(result: dict) -> dict:
+            is_error = "error" in result
+            result_count = len(result.get("results", [])) if isinstance(result.get("results"), list) else None
+            content = result.get("content")
+            emit(
+                "research.tool_finished",
+                level="warning" if is_error else "info",
+                operation="research.tool",
+                tool_call_id=tool_call_id,
+                tool_name=str(name or "unknown"),
+                outcome="failed" if is_error else "succeeded",
+                reason_code="tool_error" if is_error else None,
+                result_count=result_count,
+                output_chars=len(content) if isinstance(content, str) else None,
+            )
+            return result
 
         try:
             if name == "search_web":
                 safe_args = args if isinstance(args, dict) else {}
                 queries = safe_args.get("queries", [])
                 if not queries:
-                    return {"error": "No queries provided."}
-                logger.info("Agent requested search: %s", queries)
+                    return complete({"error": "No queries provided."})
+                emit(
+                    "research.tool_input",
+                    operation="research.tool",
+                    tool_call_id=tool_call_id,
+                    tool_name="search_web",
+                    query_count=len(queries) if isinstance(queries, list) else None,
+                    input_chars=sum(len(query) for query in queries if isinstance(query, str)),
+                )
                 results = await parallel_search(queries, user_id=user_id, chat_id=chat_id, max_results=10)
                 # Improvement 3: Enrich search results with quality metadata
                 results = _enrich_search_results(results)
@@ -407,31 +441,57 @@ class AgenticSearch:
                             seen_urls.add(norm)
                             unique_results.append(r)
                         else:
-                            logger.debug("Dedup: skipping %s (normalized: %s)", url[:80], norm[:80])
+                            emit(
+                                "research.url_deduplicated",
+                                level="debug",
+                                operation="research.tool",
+                                tool_call_id=tool_call_id,
+                                source_host=urlparse(url).hostname or "unknown",
+                                url_fingerprint=hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16],
+                            )
                     dedup_count = len(results) - len(unique_results)
                     if dedup_count:
                         logger.info("Deduplicated %d/%d search results", dedup_count, len(results))
                     results = unique_results
-                return {"results": results, "_dedup_count": dedup_count if seen_urls else 0}
+                return complete({"results": results, "_dedup_count": dedup_count if seen_urls else 0})
 
             elif name == "read_page":
                 safe_args = args if isinstance(args, dict) else {}
                 url = safe_args.get("url")
                 if not url:
-                    return {"error": "No URL provided."}
-                logger.info("Agent requested read_page: %s", url)
+                    return complete({"error": "No URL provided."})
+                source_host = urlparse(url).hostname or "unknown"
+                emit(
+                    "research.tool_input",
+                    operation="research.tool",
+                    tool_call_id=tool_call_id,
+                    tool_name="read_page",
+                    source_host=source_host,
+                )
 
                 # Improvement 2: Check session-level cache first, then global cache
                 if session_page_cache is not None and url in session_page_cache:
-                    logger.info("Session cache hit for URL: %s", url)
-                    return {"content": session_page_cache[url]}
+                    emit(
+                        "cache.lookup_finished",
+                        operation="research.page_cache",
+                        cache_namespace="agentic_session_page",
+                        outcome="hit",
+                        source_host=source_host,
+                    )
+                    return complete({"content": session_page_cache[url]})
 
                 cached = _get_cached_page(url)
                 if cached is not None:
-                    logger.info("Global cache hit for URL: %s", url)
+                    emit(
+                        "cache.lookup_finished",
+                        operation="research.page_cache",
+                        cache_namespace="agentic_global_page",
+                        outcome="hit",
+                        source_host=source_host,
+                    )
                     if session_page_cache is not None:
                         session_page_cache[url] = cached
-                    return {"content": cached}
+                    return complete({"content": cached})
 
                 content = await read_url(url, timeout=12.0)
 
@@ -439,41 +499,71 @@ class AgenticSearch:
                 limit = int(settings.AGENTIC_PAGE_CONTENT_LIMIT)
                 if len(content) > limit:
                     content = content[:limit] + f"\n\n[...truncated at {limit} chars. Full content at {url}]"
-                    logger.debug("Truncated page content from %s to %d chars", url[:60], limit)
+                    emit(
+                        "research.page_truncated",
+                        level="debug",
+                        operation="research.tool",
+                        tool_call_id=tool_call_id,
+                        source_host=source_host,
+                        output_chars=limit,
+                    )
 
                 # Cache the result at both levels
                 _set_cached_page(url, content)
                 if session_page_cache is not None:
                     session_page_cache[url] = content
 
-                return {"content": content}
+                return complete({"content": content})
 
             elif name == "conclude_research":
                 # We handle conclude differently in the main loop, but just in case
-                return {"status": "concluded"}
+                return complete({"status": "concluded"})
 
             elif name == "recall_memory":
                 # Agentic RAG: search user's long-term memory
                 safe_args = args if isinstance(args, dict) else {}
                 query = safe_args.get("query", "")
                 if not query:
-                    return {"error": "No query provided for recall_memory."}
+                    return complete({"error": "No query provided for recall_memory."})
                 if not user_id or not self._ltm_api_key:
-                    return {"error": "Memory not available (no user context or API key)."}
-                logger.info("Agent requested recall_memory: %s", query[:60])
+                    return complete({"error": "Memory not available (no user context or API key)."})
+                emit(
+                    "research.tool_input",
+                    operation="research.tool",
+                    tool_call_id=tool_call_id,
+                    tool_name="recall_memory",
+                    input_chars=len(query),
+                )
                 from app.repos.memory_tools import execute_memory_tool
 
-                return await execute_memory_tool(
-                    user_id,
-                    query,
-                    self._ltm_api_key,
-                    expected_epoch=self._ltm_expected_epoch,
+                return complete(
+                    await execute_memory_tool(
+                        user_id,
+                        query,
+                        self._ltm_api_key,
+                        expected_epoch=self._ltm_expected_epoch,
+                    )
                 )
             else:
-                return {"error": f"Unknown tool: {name}"}
+                return complete({"error": f"Unknown tool: {name}"})
 
         except Exception as e:
-            logger.error(f"Error executing tool {name}: {e}", exc_info=True)
+            error_id = record_exception(
+                "research.tool_failed",
+                e,
+                operation="research.tool",
+                fields={"tool_call_id": tool_call_id, "tool_name": str(name or "unknown")},
+            )
+            emit(
+                "research.tool_finished",
+                level="error",
+                operation="research.tool",
+                tool_call_id=tool_call_id,
+                tool_name=str(name or "unknown"),
+                outcome="failed",
+                reason_code="exception",
+                error_id=error_id,
+            )
             return {"error": f"Execution failed: {str(e)}"}
 
     async def _notify_key_used(self) -> None:
@@ -591,15 +681,25 @@ class AgenticSearch:
                     )
                     break
 
-                logger.info(
-                    "Agent loop iteration %d/%d for query '%s' (tokens=%d, elapsed=%.1fs)",
-                    iterations,
-                    self.max_iterations,
-                    query[:30],
-                    total_tokens,
-                    elapsed,
+                emit(
+                    "research.iteration_started",
+                    operation="research.run",
+                    iteration=iterations,
+                    max_iterations=self.max_iterations,
+                    query_chars=len(query),
+                    token_count=total_tokens,
+                    elapsed_ms=round(elapsed * 1000, 2),
                 )
 
+                llm_attempt = start_workload_attempt(
+                    workload="research_llm",
+                    provider="gemini",
+                    model=self.model_name,
+                    api_key=self.api_key,
+                    origin="agentic_loop",
+                    iteration=iterations,
+                    max_iterations=self.max_iterations,
+                )
                 try:
                     # Model thinks and decides (requires tools)
                     response = await self.client.aio.models.generate_content(
@@ -609,10 +709,12 @@ class AgenticSearch:
                     )
                     # Track usage: +1 API call, accumulate tokens
                     llm_calls += 1
-                    total_tokens += self._extract_token_count(response)
+                    response_tokens = self._extract_token_count(response)
+                    total_tokens += response_tokens
                     await self._notify_key_used()
+                    llm_attempt.finish(outcome="succeeded", token_count=response_tokens)
                 except Exception as e:
-                    logger.error("GenAI call failed in loop: %s", e)
+                    llm_attempt.fail(e, reason_code="provider_error")
                     return AgenticResult(
                         answer="❌ Возникла ошибка при обращении к языковой модели.",
                         total_tokens=total_tokens,
@@ -713,9 +815,12 @@ class AgenticSearch:
                             dupes = _find_duplicate_queries(queries, previous_queries)
                             if dupes and len(dupes) == len(queries):
                                 # ALL queries are duplicates — send advisory
-                                logger.info(
-                                    "All search queries are duplicates of previous: %s",
-                                    [d[0] for d in dupes],
+                                emit(
+                                    "research.tool_denied",
+                                    operation="research.tool",
+                                    tool_name="search_web",
+                                    reason_code="duplicate_queries",
+                                    duplicate_count=len(dupes),
                                 )
                                 denied_responses.append(
                                     types.Part.from_function_response(
@@ -859,15 +964,30 @@ class AgenticSearch:
                         ],
                     )
                 )
-                response = await self.client.aio.models.generate_content(
+                synthesis_attempt = start_workload_attempt(
+                    workload="research_llm",
+                    provider="gemini",
                     model=self.model_name,
-                    contents=contents,
-                    config=synthesis_config,
+                    api_key=self.api_key,
+                    origin="agentic_synthesis",
                 )
+                try:
+                    response = await self.client.aio.models.generate_content(
+                        model=self.model_name,
+                        contents=contents,
+                        config=synthesis_config,
+                    )
+                except Exception as error:
+                    synthesis_attempt.fail(error, reason_code="provider_error")
+                    raise
                 # Track usage for the forced synthesis call
                 llm_calls += 1
                 total_tokens += self._extract_token_count(response)
                 await self._notify_key_used()
+                synthesis_attempt.finish(
+                    outcome="succeeded",
+                    token_count=self._extract_token_count(response),
+                )
                 if response.text:
                     return AgenticResult(
                         answer=response.text,

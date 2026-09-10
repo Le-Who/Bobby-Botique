@@ -64,7 +64,9 @@ def test_structlog_processor_formatter_contract() -> None:
             exc_info=None,
         )
 
-        assert json.loads(formatter.format(record))["event"] == "hello world"
+        event = json.loads(formatter.format(record))
+        assert event["event"] == "legacy.log"
+        assert event["message"] == "hello world"
     finally:
         structlog.reset_defaults()
 

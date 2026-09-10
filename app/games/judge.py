@@ -35,6 +35,7 @@ from app.games.ai_budget import (
     acquire_foreground_slot,
     record_result,
 )
+from app.observability.workload_events import observe_workload_call
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
 
@@ -346,13 +347,21 @@ async def _race_generate(
         try:
             async with lease:
                 client = get_cached_genai_client(api_key)
-                response = await asyncio.wait_for(
-                    client.aio.models.generate_content(
-                        model=model,
-                        contents=prompt,
-                        config=config,
+                response = await observe_workload_call(
+                    asyncio.wait_for(
+                        client.aio.models.generate_content(
+                            model=model,
+                            contents=prompt,
+                            config=config,
+                        ),
+                        timeout=timeout,
                     ),
-                    timeout=timeout,
+                    workload="game_judgement",
+                    provider="gemini",
+                    model=model,
+                    api_key=api_key,
+                    key_hash=key_hash,
+                    origin="crocodile_judge",
                 )
                 text = getattr(response, "text", None) or ""
                 if not text:
@@ -418,6 +427,7 @@ async def _race_generate(
 
     # ── Primary model race (Gemini API keys + optional Vertex AI) ───────────────
     if not _circuit_open:
+        from app.config import settings as app_settings
         from app.providers.gemini import get_vertex_client
 
         async def _one_vertex_call() -> GuessJudgement | None:
@@ -435,13 +445,20 @@ async def _race_generate(
                 return None
             try:
                 async with lease:
-                    resp = await asyncio.wait_for(
-                        vertex_client.aio.models.generate_content(
-                            model=_PRIMARY_MODEL,
-                            contents=prompt,
-                            config=config,
+                    resp = await observe_workload_call(
+                        asyncio.wait_for(
+                            vertex_client.aio.models.generate_content(
+                                model=_PRIMARY_MODEL,
+                                contents=prompt,
+                                config=config,
+                            ),
+                            timeout=_LLM_TIMEOUT_S,
                         ),
-                        timeout=_LLM_TIMEOUT_S,
+                        workload="game_judgement",
+                        provider="vertex",
+                        model=_PRIMARY_MODEL,
+                        api_key=app_settings.VERTEX_AI_KEY or None,
+                        origin="crocodile_judge_vertex",
                     )
                     resp_text = getattr(resp, "text", None) or ""
                     if not resp_text:
@@ -864,18 +881,27 @@ async def generate_hints(
                 return None
             try:
                 async with lease:
-                    response = await asyncio.wait_for(
-                        vertex_client.aio.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config=_gtypes.GenerateContentConfig(
-                                response_mime_type="application/json",
-                                response_schema=HintsOutput.model_json_schema(),
-                                temperature=0.6,
-                                max_output_tokens=220,
+                    from app.config import settings as app_settings
+
+                    response = await observe_workload_call(
+                        asyncio.wait_for(
+                            vertex_client.aio.models.generate_content(
+                                model=model_name,
+                                contents=prompt,
+                                config=_gtypes.GenerateContentConfig(
+                                    response_mime_type="application/json",
+                                    response_schema=HintsOutput.model_json_schema(),
+                                    temperature=0.6,
+                                    max_output_tokens=220,
+                                ),
                             ),
+                            timeout=_HINTS_TIMEOUT_S,
                         ),
-                        timeout=_HINTS_TIMEOUT_S,
+                        workload="game_hint_generation",
+                        provider="vertex",
+                        model=model_name,
+                        api_key=app_settings.VERTEX_AI_KEY or None,
+                        origin="crocodile_hint_vertex",
                     )
             except asyncio.CancelledError:
                 raise

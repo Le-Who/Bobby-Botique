@@ -17,8 +17,11 @@ import logging
 import re
 from typing import NamedTuple
 from urllib.parse import quote as url_quote
+from urllib.parse import urlsplit
 
 import httpx
+
+from app.observability.workload_events import start_workload_attempt
 
 _JINA_SEARCH_BASE = "https://s.jina.ai/"
 _JINA_READER_BASE = "https://r.jina.ai/"
@@ -66,6 +69,14 @@ async def search_jina(query: str, timeout: float = _DEFAULT_TIMEOUT) -> JinaSear
     from app.repos.provider_keys import get_provider_key
 
     api_key = await get_provider_key("jina")
+    attempt = start_workload_attempt(
+        workload="research_tool",
+        provider="jina",
+        model="search",
+        api_key=api_key,
+        origin="jina_search",
+        input_chars=len(query),
+    )
 
     encoded_query = _JINA_SEARCH_BASE + url_quote(query, safe="")
     url = encoded_query
@@ -77,17 +88,25 @@ async def search_jina(query: str, timeout: float = _DEFAULT_TIMEOUT) -> JinaSear
             resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             content = resp.text[:_MAX_RESULT_CHARS]
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as exc:
         logging.warning("JINA Search timed out (query_length=%d)", len(query))
+        attempt.fail(exc, reason_code="timeout")
         return JinaSearchResult(query=query, content="", source_urls=[])
     except httpx.HTTPStatusError as e:
         logging.warning("JINA Search HTTP error %d (query_length=%d)", e.response.status_code, len(query))
+        attempt.fail(e, reason_code="http_error", status_code=e.response.status_code)
         return JinaSearchResult(query=query, content="", source_urls=[])
     except Exception as e:
         logging.error("JINA Search unexpected error (error_type=%s, query_length=%d)", type(e).__name__, len(query))
+        attempt.fail(e, reason_code="unexpected")
         return JinaSearchResult(query=query, content="", source_urls=[])
 
     source_urls = _extract_source_urls(content)
+    attempt.finish(
+        outcome="succeeded",
+        output_chars=len(content),
+        result_count=len(source_urls),
+    )
     return JinaSearchResult(query=query, content=content, source_urls=source_urls)
 
 
@@ -107,6 +126,15 @@ async def read_jina_page(url: str, timeout: float = _DEFAULT_TIMEOUT) -> str:
     from app.repos.provider_keys import get_provider_key
 
     api_key = await get_provider_key("jina")
+    host = urlsplit(url).hostname or "unknown"
+    attempt = start_workload_attempt(
+        workload="research_tool",
+        provider="jina",
+        model="reader",
+        api_key=api_key,
+        origin="jina_reader",
+        source_host=host,
+    )
 
     reader_url = _JINA_READER_BASE + url
     headers = _build_jina_headers(api_key or None)
@@ -115,15 +143,20 @@ async def read_jina_page(url: str, timeout: float = _DEFAULT_TIMEOUT) -> str:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             resp = await client.get(reader_url, headers=headers)
             resp.raise_for_status()
-            return resp.text[:_MAX_RESULT_CHARS]
-    except httpx.TimeoutException:
+            content = resp.text[:_MAX_RESULT_CHARS]
+            attempt.finish(outcome="succeeded", output_chars=len(content), source_host=host)
+            return content
+    except httpx.TimeoutException as exc:
         logging.warning("JINA Reader timed out")
+        attempt.fail(exc, reason_code="timeout", source_host=host)
         return ""
     except httpx.HTTPStatusError as e:
         logging.warning("JINA Reader HTTP error %d", e.response.status_code)
+        attempt.fail(e, reason_code="http_error", status_code=e.response.status_code, source_host=host)
         return ""
     except Exception as e:
         logging.error("JINA Reader unexpected error (error_type=%s)", type(e).__name__)
+        attempt.fail(e, reason_code="unexpected", source_host=host)
         return ""
 
 
