@@ -229,3 +229,11 @@ jobs:
             -v "$PWD/ops/observability/docker-api-proxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro" \
             haproxy:3.2.6-alpine@sha256:3a819392f5a6af2a9203d1c63ff0feba74f0c940623a558511be06d7d85e361c \
             haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
+
+          trap 'docker compose -f ops/observability/compose.yml down -v --remove-orphans' EXIT
+          docker compose -f ops/observability/compose.yml up -d --wait --wait-timeout 90
+          curl -fsS http://127.0.0.1:3000/api/health >/dev/null
+          docker compose -f ops/observability/compose.yml exec -T grafana \
+            curl -fsS http://alloy:12345/-/ready >/dev/null
+          docker compose -f ops/observability/compose.yml exec -T grafana \
+            curl -fsS http://loki:3100/ready >/dev/null

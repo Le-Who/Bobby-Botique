@@ -55,3 +55,12 @@ def test_deploy_installs_observability_stack_before_replacing_the_bot():
     assert 'openssl rand -base64 32 > "$GRAFANA_PASSWORD_FILE"' in workflow
     assert "secrets.GRAFANA_ADMIN_PASSWORD" not in workflow
     assert 'docker compose -f "$OBSERVABILITY_ROOT/compose.yml" config --quiet' in workflow
+
+
+def test_deploy_waits_for_real_log_viewer_readiness():
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+
+    assert "up -d --remove-orphans --wait --wait-timeout 90" in workflow
+    assert "http://127.0.0.1:3000/api/health" in workflow
+    assert "http://alloy:12345/-/ready" in workflow
+    assert "http://loki:3100/ready" in workflow

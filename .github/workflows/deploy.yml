@@ -300,15 +300,21 @@ jobs:
             docker compose -f "$OBSERVABILITY_STAGE/compose.yml" pull
             cp -a "$OBSERVABILITY_STAGE/." "$OBSERVABILITY_ROOT/"
             docker compose -f "$OBSERVABILITY_ROOT/compose.yml" config --quiet
-            docker compose -f "$OBSERVABILITY_ROOT/compose.yml" up -d --remove-orphans
+            docker compose -f "$OBSERVABILITY_ROOT/compose.yml" up -d --remove-orphans --wait --wait-timeout 90
 
             for OBSERVABILITY_SERVICE in docker-proxy loki alloy grafana; do
-              if ! docker compose -f "$OBSERVABILITY_ROOT/compose.yml" ps --status running --services | grep -qx "$OBSERVABILITY_SERVICE"; then
+              OBSERVABILITY_CONTAINER="$(docker compose -f "$OBSERVABILITY_ROOT/compose.yml" ps -q "$OBSERVABILITY_SERVICE")"
+              if [ -z "$OBSERVABILITY_CONTAINER" ] || [ "$(docker inspect -f '{{.State.Status}}:{{.State.Restarting}}' "$OBSERVABILITY_CONTAINER")" != "running:false" ]; then
                 echo ">>> Observability service is not running: $OBSERVABILITY_SERVICE"
                 docker compose -f "$OBSERVABILITY_ROOT/compose.yml" ps
                 exit 1
               fi
             done
+            curl -fsS --max-time 10 http://127.0.0.1:3000/api/health >/dev/null
+            docker compose -f "$OBSERVABILITY_ROOT/compose.yml" exec -T grafana \
+              curl -fsS --max-time 10 http://alloy:12345/-/ready >/dev/null
+            docker compose -f "$OBSERVABILITY_ROOT/compose.yml" exec -T grafana \
+              curl -fsS --max-time 10 http://loki:3100/ready >/dev/null
             echo ">>> Private log search is running on 127.0.0.1:3000."
 
             # ── Ensure shared infrastructure (idempotent) ────────────────

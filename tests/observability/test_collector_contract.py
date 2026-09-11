@@ -39,6 +39,25 @@ def test_observability_compose_is_private_pinned_and_resource_bounded():
     assert compose["networks"]["query"]["internal"] is True
 
 
+def test_grafana_loopback_port_has_a_host_connected_network():
+    """Catch attaching Grafana only to an internal network, which drops host publishing."""
+    compose = _load_yaml("compose.yml")
+
+    assert compose["services"]["grafana"]["networks"] == ["query", "access"]
+    assert compose["networks"]["query"]["internal"] is True
+    assert compose["networks"]["access"].get("internal") is not True
+    assert "http://127.0.0.1:3000/api/health" in " ".join(compose["services"]["grafana"]["healthcheck"]["test"])
+
+
+def test_alloy_runs_as_the_owner_of_its_persistent_data_directory():
+    """Catch root-without-DAC access to the image's UID-473 data directory."""
+    compose = _load_yaml("compose.yml")
+
+    assert compose["services"]["alloy"]["user"] == "473:473"
+    assert "alloy-data:/var/lib/alloy/data" in compose["services"]["alloy"]["volumes"]
+    assert "/bin/alloy validate" in " ".join(compose["services"]["alloy"]["healthcheck"]["test"])
+
+
 def test_loki_retention_and_query_limits_are_bounded():
     config = _load_yaml("loki.yaml")
 
@@ -121,5 +140,9 @@ def test_ci_validates_vendor_configs_with_the_same_pinned_images():
     assert "validate --stability.level=experimental" in workflow
     assert "-verify-config" in workflow
     assert "haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg" in workflow
+    assert "docker compose -f ops/observability/compose.yml up -d --wait --wait-timeout" in workflow
+    assert "http://127.0.0.1:3000/api/health" in workflow
+    assert "http://alloy:12345/-/ready" in workflow
+    assert "http://loki:3100/ready" in workflow
     for service_name in ("alloy", "docker-proxy", "loki"):
         assert compose["services"][service_name]["image"] in workflow

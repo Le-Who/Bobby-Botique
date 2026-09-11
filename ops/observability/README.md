@@ -30,11 +30,13 @@ session on the VPS:
 cat /opt/gemaibot-observability/secrets/grafana_admin_password
 ```
 
-Create an SSH tunnel and open `http://localhost:3000`; the initial username is
-`admin`:
+Create the tunnel **from a terminal on your PC** and keep that terminal open.
+The command intentionally shows no shell or success message while the tunnel is
+active; `ExitOnForwardFailure` makes it stop immediately if local port 3000 cannot
+be bound. Then open `http://127.0.0.1:3000`; the initial username is `admin`:
 
 ```bash
-ssh -L 3000:127.0.0.1:3000 VPS_USER@VPS_HOST
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:3000:127.0.0.1:3000 VPS_USER@VPS_HOST
 ```
 
 The tunnel is encrypted even though the browser URL is HTTP. Grafana is bound to

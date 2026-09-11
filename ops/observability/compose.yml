@@ -42,6 +42,7 @@ services:
   alloy:
     <<: *service-defaults
     image: grafana/alloy:v1.18.0@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
+    user: "473:473"
     command:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
@@ -60,9 +61,15 @@ services:
       docker-proxy:
         condition: service_healthy
       loki:
-        condition: service_started
+        condition: service_healthy
     mem_limit: 256m
     cpus: 0.25
+    healthcheck:
+      test: ["CMD", "/bin/alloy", "validate", "--stability.level=experimental", "/etc/alloy/config.alloy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   loki:
     <<: *service-defaults
@@ -95,6 +102,7 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_LOG_MODE: console
       GF_PATHS_LOGS: /tmp/grafana-logs
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_USERS_ALLOW_ORG_CREATE: "false"
       GF_SECURITY_DISABLE_GRAVATAR: "true"
@@ -111,13 +119,21 @@ services:
       - /tmp:size=64m,mode=1777
     networks:
       - query
+      - access
     depends_on:
       loki:
-        condition: service_started
+        condition: service_healthy
     mem_limit: 512m
     cpus: 0.50
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 networks:
+  access: {}
   collector:
     internal: true
   query:
