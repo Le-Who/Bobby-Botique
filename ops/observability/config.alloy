@@ -1,0 +1,94 @@
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+discovery.docker "bot" {
+  host             = "http://docker-proxy:2375"
+  refresh_interval = "15s"
+
+  filter {
+    name   = "label"
+    values = ["com.gemaibot.logs=true"]
+  }
+}
+
+discovery.relabel "bot" {
+  targets = discovery.docker.bot.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_gemaibot_logs"]
+    action        = "keep"
+    regex         = "true"
+  }
+}
+
+loki.source.docker "bot" {
+  host             = "http://docker-proxy:2375"
+  targets          = discovery.relabel.bot.output
+  refresh_interval = "15s"
+  labels = {
+    environment  = "unknown",
+    level        = "unknown",
+    parse_status = "invalid",
+    service_name = "gemaibotv2",
+  }
+  forward_to = [loki.process.bot.receiver]
+}
+
+loki.process "bot" {
+  stage.json {
+    expressions = {
+      environment  = "environment",
+      level        = "level",
+      schema_version = "schema_version",
+      service_name = "service",
+      timestamp    = "timestamp",
+    }
+    drop_malformed = false
+  }
+
+  stage.template {
+    source   = "parse_status"
+    template = "{{ if .schema_version }}valid{{ else }}invalid{{ end }}"
+  }
+
+  stage.labels {
+    values = {
+      environment  = "",
+      level        = "",
+      parse_status = "",
+      service_name = "",
+    }
+  }
+
+  stage.timestamp {
+    source                        = "timestamp"
+    format                        = "RFC3339Nano"
+    fallback_formats              = ["RFC3339"]
+    action_on_failure             = "skip"
+    action_on_duplicate_timestamp = "keep"
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    name                = "local-loki"
+    url                 = "http://loki:3100/loki/api/v1/push"
+    remote_timeout      = "10s"
+    min_backoff_period  = "500ms"
+    max_backoff_period  = "30s"
+    max_backoff_retries = 20
+    retry_on_http_429   = true
+  }
+
+  wal {
+    enabled            = true
+    min_read_frequency = "250ms"
+    max_read_frequency = "2s"
+    max_segment_age    = "6h"
+    drain_timeout      = "30s"
+  }
+}

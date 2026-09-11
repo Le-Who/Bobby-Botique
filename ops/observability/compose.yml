@@ -1,0 +1,133 @@
+name: gemaibot-observability
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  init: true
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: local
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  docker-proxy:
+    <<: *service-defaults
+    image: haproxy:3.2.6-alpine@sha256:3a819392f5a6af2a9203d1c63ff0feba74f0c940623a558511be06d7d85e361c
+    command:
+      - haproxy
+      - -W
+      - -db
+      - -f
+      - /usr/local/etc/haproxy/haproxy.cfg
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./docker-api-proxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    networks:
+      - collector
+    mem_limit: 64m
+    cpus: 0.10
+    healthcheck:
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  alloy:
+    <<: *service-defaults
+    image: grafana/alloy:v1.18.0@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - --stability.level=experimental
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    networks:
+      - collector
+      - query
+    depends_on:
+      docker-proxy:
+        condition: service_healthy
+      loki:
+        condition: service_started
+    mem_limit: 256m
+    cpus: 0.25
+
+  loki:
+    <<: *service-defaults
+    image: grafana/loki:3.7.4@sha256:87f0a067673756a3cede1bcbf0c74875f7df9b09fddb53e399d0c576f756cfcc
+    command:
+      - -config.file=/etc/loki/loki.yaml
+    volumes:
+      - ./loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks:
+      - query
+    mem_limit: 1024m
+    cpus: 0.75
+    healthcheck:
+      test: ["CMD", "/usr/bin/loki", "-version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  grafana:
+    <<: *service-defaults
+    image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
+    ports:
+      - 127.0.0.1:3000:3000
+    environment:
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_LOG_MODE: console
+      GF_PATHS_LOGS: /tmp/grafana-logs
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_ALLOW_ORG_CREATE: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SERVER_DOMAIN: localhost
+      GF_SERVER_ROOT_URL: http://localhost:3000
+    secrets:
+      - grafana_admin_password
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks:
+      - query
+    depends_on:
+      loki:
+        condition: service_started
+    mem_limit: 512m
+    cpus: 0.50
+
+networks:
+  collector:
+    internal: true
+  query:
+    internal: true
+
+volumes:
+  alloy-data:
+  grafana-data:
+  loki-data:
+
+secrets:
+  grafana_admin_password:
+    file: ${GRAFANA_ADMIN_PASSWORD_FILE:-./secrets/grafana_admin_password}

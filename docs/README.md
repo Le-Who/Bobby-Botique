@@ -20,6 +20,8 @@ historical plans, journals and test/deploy reports are not current instructions.
 | [Natal readiness](natal-chart-product-readiness.md) | Implemented checks and rollout checklist; old results explicitly historical |
 | [Audit report](documentation-audit-2026-09-08.md) | Evidence, corrections, rationale and remaining limits |
 | [Logging runbook](logging.md) | Runtime configuration, privacy policy and incident investigation for operators/agents |
+| [Private log search](../ops/observability/README.md) | Grafana/Loki/Alloy deployment, access, search limits and recovery |
+| [Log viewer capacity baseline](operations/log-viewer-baseline.md) | Safe capacity facts and live-measurement boundary |
 | [Log event catalog](log-events.md) | Stable schema-v1 event ownership, required fields and terminal semantics |
 | [Logging audit](logging-audit-2026-09-10.md) | Dated source audit, findings and target design rationale |
 

@@ -74,14 +74,18 @@ last four characters of an actually selected provider key are already present
 by contract.
 
 The VPS workflow uses Docker's `local` driver with `max-size=20m` and
-`max-file=5` per container. This is rotation, not durable archival. A redeploy,
-host loss or explicit container removal can remove evidence, so long-term
-retention needs a separately approved collector/store with access control,
-capacity, backup and retention tests.
+`max-file=5` per container. It also deploys the independent private
+Grafana/Loki/Alloy stack documented in
+[`ops/observability/README.md`](../ops/observability/README.md). Only `tg-bot`
+opts into collection. Grafana is bound to VPS loopback, defaults to 100 rows over
+15 minutes without auto-refresh, and Loki enforces a 500-row/10-second server
+limit with 168-hour retention. Docker rotation remains the bounded recovery
+source; neither it nor single-host Loki is a backup against host loss.
 
 ## Investigating an incident
 
-1. Start with a server `request_id`, `error_id`, actor ID plus a bounded time
+1. Open the **GemAI Bot Logs** dashboard through the documented SSH tunnel and
+   start with a server `request_id`, `error_id`, actor ID plus a bounded time
    window, or deployment `release`.
 2. Save only the relevant protected NDJSON time slice. Do not paste `.env`, a
    full `docker inspect`, database dumps or unrestricted log history into a task.

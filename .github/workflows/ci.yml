@@ -202,3 +202,30 @@ jobs:
             .pytest_tmp/licenses.json
           if-no-files-found: error
           retention-days: 30
+
+  observability-config:
+    name: Validate Log Viewer Configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose, Alloy, Loki, and Docker API proxy
+        run: |
+          mkdir -p ops/observability/secrets
+          printf '%s\n' 'ci-only-not-a-production-secret' > ops/observability/secrets/grafana_admin_password
+          docker compose -f ops/observability/compose.yml config --quiet
+
+          docker run --rm \
+            -v "$PWD/ops/observability/config.alloy:/etc/alloy/config.alloy:ro" \
+            grafana/alloy:v1.18.0@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308 \
+            validate --stability.level=experimental /etc/alloy/config.alloy
+
+          docker run --rm \
+            -v "$PWD/ops/observability/loki.yaml:/etc/loki/loki.yaml:ro" \
+            grafana/loki:3.7.4@sha256:87f0a067673756a3cede1bcbf0c74875f7df9b09fddb53e399d0c576f756cfcc \
+            -config.file=/etc/loki/loki.yaml -verify-config
+
+          docker run --rm \
+            -v "$PWD/ops/observability/docker-api-proxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro" \
+            haproxy:3.2.6-alpine@sha256:3a819392f5a6af2a9203d1c63ff0feba74f0c940623a558511be06d7d85e361c \
+            haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg

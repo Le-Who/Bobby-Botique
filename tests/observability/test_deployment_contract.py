@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,3 +26,32 @@ def test_compose_uses_canonical_logging_configuration():
     assert "LOG_JSON" not in compose
     assert 'max-size: "20m"' in compose
     assert 'max-file: "5"' in compose
+
+
+def test_only_primary_bot_opts_into_observability_collection():
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+
+    candidate = re.search(
+        r"if ! docker run -d \\\n\s+--name tg-bot \\\n(?P<arguments>.*?)"
+        r"\s+\$REGISTRY/\$REPO:\$IMAGE_TAG; then",
+        workflow,
+        flags=re.DOTALL,
+    )
+
+    assert candidate is not None
+    assert "--label com.gemaibot.logs=true" in candidate.group("arguments")
+    assert workflow.count("--label com.gemaibot.logs=true") == 1
+
+
+def test_deploy_installs_observability_stack_before_replacing_the_bot():
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+
+    bundle = workflow.index("OBSERVABILITY_BUNDLE_B64")
+    stack_start = workflow.index('docker compose -f "$OBSERVABILITY_ROOT/compose.yml" up -d --remove-orphans')
+    bot_start = workflow.index("if ! docker run -d")
+
+    assert bundle < stack_start < bot_start
+    assert "/opt/gemaibot-observability" in workflow
+    assert 'openssl rand -base64 32 > "$GRAFANA_PASSWORD_FILE"' in workflow
+    assert "secrets.GRAFANA_ADMIN_PASSWORD" not in workflow
+    assert 'docker compose -f "$OBSERVABILITY_ROOT/compose.yml" config --quiet' in workflow

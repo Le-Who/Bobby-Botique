@@ -421,8 +421,11 @@ a selector-scoped diagnostic mode. Message-bearing rows are restricted evidence,
 not CI/public/alert payloads; `DEBUG` never relaxes credential rules.
 
 Use canonical `LOG_FORMAT=json|text`; `STRUCTURED_LOGGING` and `LOG_PRETTY` are
-compatibility aliases. See the [operator/agent runbook](docs/logging.md),
-[event catalog](docs/log-events.md), and [dated audit](docs/logging-audit-2026-09-10.md).
+compatibility aliases. Production deploys private Grafana/Loki/Alloy search with
+100-row/15-minute browser defaults and a 500-row server ceiling; access is through
+an SSH tunnel. See the [operator/agent runbook](docs/logging.md),
+[log viewer runbook](ops/observability/README.md), [event catalog](docs/log-events.md),
+and [dated audit](docs/logging-audit-2026-09-10.md).
 
 ### 🧪 Testing Only
 
@@ -444,7 +447,7 @@ uv run --locked --env-file .env python bot.py
 docker compose -f docker-compose.yml up -d
 ```
 
-**Production VPS (3-container stack via GitHub Actions CI/CD):**
+**Production VPS (application containers plus private log-search stack via GitHub Actions CI/CD):**
 
 The canonical deployment is automated by `.github/workflows/deploy.yml`. It starts only after a successful completed `CI` run for `vps_testai`, checks out `workflow_run.head_sha`, builds that exact SHA-tagged image in GHCR, and then SSH-deploys 3 containers:
 
@@ -452,7 +455,10 @@ The canonical deployment is automated by `.github/workflows/deploy.yml`. It star
 2. **`tg-bot`** — The Python bot container. Connected to `tg-api` via `TELEGRAM_LOCAL_SERVER_URL=http://tg-api:8081/bot`. Mounts the shared volume `tg-api-data` at `/var/lib/telegram-bot-api` for zero-copy file access.
 3. **`tg-media-cleanup`** — Alpine cron sidecar. Runs `chmod -R g+rX` every 60s (fixes UID 101 permission conflicts) and `find -mtime +7 -delete` every 24h (prevents disk exhaustion from cached media).
 
-All containers share the `tg-net` Docker bridge network and `TZ=Europe/Kyiv`.
+The application containers share the `tg-net` Docker bridge network and
+`TZ=Europe/Kyiv`. The same successful deployment starts an independent,
+resource-bounded Grafana/Loki/Alloy/Docker-proxy project before replacing
+`tg-bot`; Grafana listens only on VPS `127.0.0.1:3000`.
 
 If `VERTEX_LIVE_SERVICE_ACCOUNT_JSON` is configured in GitHub Actions secrets, the deploy script also writes that service-account JSON to the VPS, mounts it into `tg-bot` as `/run/secrets/vertex-live-sa.json`, and exports `GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/vertex-live-sa.json`. The mounted file must remain readable by the non-root bot process; the workflow now prepares it with read permissions suitable for the container user instead of root-only mode.
 
