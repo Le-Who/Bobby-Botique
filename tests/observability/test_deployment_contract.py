@@ -64,3 +64,5 @@ def test_deploy_waits_for_real_log_viewer_readiness():
     assert "http://127.0.0.1:3000/api/health" in workflow
     assert "http://alloy:12345/-/ready" in workflow
     assert "http://loki:3100/ready" in workflow
+    assert "DOCKER_SOCKET_GID=\"$(stat -c '%g' /var/run/docker.sock)\"" in workflow
+    assert "export DOCKER_SOCKET_GID" in workflow

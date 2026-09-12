@@ -27,6 +27,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./docker-api-proxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    group_add:
+      - "${DOCKER_SOCKET_GID:-0}"
     tmpfs:
       - /tmp:size=16m,mode=1777
     networks:
@@ -34,10 +36,11 @@ services:
     mem_limit: 64m
     cpus: 0.10
     healthcheck:
-      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
-      interval: 30s
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2375/_ping"]
+      interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 5s
 
   alloy:
     <<: *service-defaults
@@ -86,10 +89,11 @@ services:
     mem_limit: 1024m
     cpus: 0.75
     healthcheck:
-      test: ["CMD", "/usr/bin/loki", "-version"]
-      interval: 30s
+      test: ["CMD", "/usr/bin/loki", "-health"]
+      interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
+      start_period: 30s
 
   grafana:
     <<: *service-defaults

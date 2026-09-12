@@ -296,6 +296,8 @@ jobs:
             chmod 0600 "$GRAFANA_PASSWORD_FILE"
 
             export GRAFANA_ADMIN_PASSWORD_FILE="$GRAFANA_PASSWORD_FILE"
+            DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock)"
+            export DOCKER_SOCKET_GID
             docker compose -f "$OBSERVABILITY_STAGE/compose.yml" config --quiet
             docker compose -f "$OBSERVABILITY_STAGE/compose.yml" pull
             cp -a "$OBSERVABILITY_STAGE/." "$OBSERVABILITY_ROOT/"

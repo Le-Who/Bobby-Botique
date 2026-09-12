@@ -34,6 +34,8 @@ def test_observability_compose_is_private_pinned_and_resource_bounded():
     assert [mount for mount in proxy_mounts if "docker.sock" in mount] == [
         "/var/run/docker.sock:/var/run/docker.sock:ro"
     ]
+    assert services["docker-proxy"]["group_add"] == ["${DOCKER_SOCKET_GID:-0}"]
+    assert "http://127.0.0.1:2375/_ping" in " ".join(services["docker-proxy"]["healthcheck"]["test"])
     assert all("docker.sock" not in str(services[name].get("volumes", [])) for name in ("alloy", "grafana", "loki"))
     assert compose["networks"]["collector"]["internal"] is True
     assert compose["networks"]["query"]["internal"] is True
@@ -56,6 +58,15 @@ def test_alloy_runs_as_the_owner_of_its_persistent_data_directory():
     assert compose["services"]["alloy"]["user"] == "473:473"
     assert "alloy-data:/var/lib/alloy/data" in compose["services"]["alloy"]["volumes"]
     assert "/bin/alloy validate" in " ".join(compose["services"]["alloy"]["healthcheck"]["test"])
+
+
+def test_loki_healthcheck_waits_for_request_readiness():
+    """Catch reporting healthy before Loki can accept push and query requests."""
+    compose = _load_yaml("compose.yml")
+
+    healthcheck = compose["services"]["loki"]["healthcheck"]
+    assert healthcheck["test"] == ["CMD", "/usr/bin/loki", "-health"]
+    assert healthcheck["start_period"] == "30s"
 
 
 def test_loki_retention_and_query_limits_are_bounded():
@@ -141,6 +152,8 @@ def test_ci_validates_vendor_configs_with_the_same_pinned_images():
     assert "-verify-config" in workflow
     assert "haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg" in workflow
     assert "docker compose -f ops/observability/compose.yml up -d --wait --wait-timeout" in workflow
+    assert "DOCKER_SOCKET_GID=\"$(stat -c '%g' /var/run/docker.sock)\"" in workflow
+    assert "export DOCKER_SOCKET_GID" in workflow
     assert "http://127.0.0.1:3000/api/health" in workflow
     assert "http://alloy:12345/-/ready" in workflow
     assert "http://loki:3100/ready" in workflow

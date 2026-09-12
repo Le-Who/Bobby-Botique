@@ -213,6 +213,8 @@ jobs:
         run: |
           mkdir -p ops/observability/secrets
           printf '%s\n' 'ci-only-not-a-production-secret' > ops/observability/secrets/grafana_admin_password
+          DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock)"
+          export DOCKER_SOCKET_GID
           docker compose -f ops/observability/compose.yml config --quiet
 
           docker run --rm \
