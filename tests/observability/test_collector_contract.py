@@ -115,6 +115,7 @@ def test_docker_proxy_has_a_deny_by_default_read_only_allowlist():
     assert "/containers/json" in config
     assert "/containers/[0-9a-f]{12,64}/json" in config
     assert "/containers/[0-9a-f]{12,64}/logs" in config
+    assert "^(/v[0-9.]+)?/networks$" in config
     assert "/containers/.*/" not in config
     assert "/events" in config
     assert "/exec" not in config
@@ -154,6 +155,7 @@ def test_ci_validates_vendor_configs_with_the_same_pinned_images():
     assert "-verify-config" in workflow
     assert "haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg" in workflow
     assert "docker compose -f ops/observability/compose.yml up -d --wait --wait-timeout" in workflow
+    assert "sudo chown root:root ops/observability/secrets/grafana_admin_password" in workflow
     assert "chmod 0640 ops/observability/secrets/grafana_admin_password" in workflow
     assert "http://127.0.0.1:3000/api/user" in workflow
     assert "DOCKER_SOCKET_GID=\"$(stat -c '%g' /var/run/docker.sock)\"" in workflow
