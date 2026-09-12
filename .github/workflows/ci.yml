@@ -230,10 +230,24 @@ jobs:
             haproxy:3.2.6-alpine@sha256:3a819392f5a6af2a9203d1c63ff0feba74f0c940623a558511be06d7d85e361c \
             haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
 
-          trap 'docker compose -f ops/observability/compose.yml down -v --remove-orphans' EXIT
+          cleanup_observability() {
+            result=$?
+            trap - EXIT
+            if [ "$result" -ne 0 ]; then
+              docker compose -f ops/observability/compose.yml ps || true
+              docker compose -f ops/observability/compose.yml logs \
+                --tail=100 --no-color docker-proxy alloy loki grafana || true
+            fi
+            docker compose -f ops/observability/compose.yml down -v --remove-orphans
+            exit "$result"
+          }
+          trap cleanup_observability EXIT
           docker compose -f ops/observability/compose.yml up -d --wait --wait-timeout 90
+          echo "Checking Grafana host endpoint"
           curl -fsS http://127.0.0.1:3000/api/health >/dev/null
+          echo "Checking Alloy internal endpoint"
           docker compose -f ops/observability/compose.yml exec -T grafana \
             curl -fsS http://alloy:12345/-/ready >/dev/null
+          echo "Checking Loki internal endpoint"
           docker compose -f ops/observability/compose.yml exec -T grafana \
             curl -fsS http://loki:3100/ready >/dev/null
