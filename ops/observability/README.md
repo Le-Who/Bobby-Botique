@@ -111,7 +111,7 @@ export GRAFANA_ADMIN_PASSWORD_FILE=/opt/gemaibot-observability/secrets/grafana_a
 chmod 0640 "$GRAFANA_ADMIN_PASSWORD_FILE"
 export DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock)"
 docker compose -f /opt/gemaibot-observability/compose.yml config --quiet
-docker compose -f /opt/gemaibot-observability/compose.yml up -d --remove-orphans --wait --wait-timeout 90
+docker compose -f /opt/gemaibot-observability/compose.yml up -d --remove-orphans --force-recreate --wait --wait-timeout 90
 docker compose -f /opt/gemaibot-observability/compose.yml ps
 ```
 

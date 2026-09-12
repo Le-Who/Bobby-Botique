@@ -60,7 +60,7 @@ def test_deploy_installs_observability_stack_before_replacing_the_bot():
 def test_deploy_waits_for_real_log_viewer_readiness():
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
 
-    assert "up -d --remove-orphans --wait --wait-timeout 90" in workflow
+    assert "up -d --remove-orphans --force-recreate --wait --wait-timeout 90" in workflow
     assert "http://127.0.0.1:3000/api/health" in workflow
     assert "http://alloy:12345/-/ready" in workflow
     assert "http://loki:3100/ready" in workflow
