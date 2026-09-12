@@ -293,7 +293,9 @@ jobs:
               umask 077
               openssl rand -base64 32 > "$GRAFANA_PASSWORD_FILE"
             fi
-            chmod 0600 "$GRAFANA_PASSWORD_FILE"
+            # The pinned Grafana image runs as 472:0. The parent directory stays
+            # root-only; group-read lets the bind-mounted Docker secret be read.
+            chmod 0640 "$GRAFANA_PASSWORD_FILE"
 
             export GRAFANA_ADMIN_PASSWORD_FILE="$GRAFANA_PASSWORD_FILE"
             DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock)"
@@ -317,6 +319,12 @@ jobs:
               curl -fsS --max-time 10 http://alloy:12345/-/ready >/dev/null
             docker compose -f "$OBSERVABILITY_ROOT/compose.yml" exec -T grafana \
               curl -fsS --max-time 10 http://loki:3100/ready >/dev/null
+            docker compose -f "$OBSERVABILITY_ROOT/compose.yml" exec -T grafana sh -eu -c '
+              GRAFANA_ADMIN_PASSWORD="$(cat /run/secrets/grafana_admin_password)"
+              grafana cli --homepath /usr/share/grafana admin reset-admin-password "$GRAFANA_ADMIN_PASSWORD" >/dev/null
+              curl -fsS --max-time 10 --user "admin:$GRAFANA_ADMIN_PASSWORD" \
+                http://127.0.0.1:3000/api/user >/dev/null
+            '
             echo ">>> Private log search is running on 127.0.0.1:3000."
 
             # ── Ensure shared infrastructure (idempotent) ────────────────

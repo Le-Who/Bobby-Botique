@@ -66,3 +66,17 @@ def test_deploy_waits_for_real_log_viewer_readiness():
     assert "http://loki:3100/ready" in workflow
     assert "DOCKER_SOCKET_GID=\"$(stat -c '%g' /var/run/docker.sock)\"" in workflow
     assert "export DOCKER_SOCKET_GID" in workflow
+
+
+def test_deploy_reconciles_and_verifies_the_persisted_grafana_admin_password():
+    """Catch a healthy Grafana database retaining credentials that disagree with its secret."""
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+
+    stack_ready = workflow.index("http://127.0.0.1:3000/api/health")
+    password_sync = workflow.index('admin reset-admin-password "$GRAFANA_ADMIN_PASSWORD"')
+    credential_check = workflow.index("http://127.0.0.1:3000/api/user")
+    success_message = workflow.index(">>> Private log search is running")
+
+    assert 'GRAFANA_ADMIN_PASSWORD="$(cat /run/secrets/grafana_admin_password)"' in workflow
+    assert 'chmod 0640 "$GRAFANA_PASSWORD_FILE"' in workflow
+    assert stack_ready < password_sync < credential_check < success_message
