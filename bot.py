@@ -105,6 +105,7 @@ from app.update_processor import UserScopedUpdateProcessor
 
 # Import extracted modules
 from app.web import quart_app
+from app.webhook_security import webhook_secret_matches as _webhook_secret_matches
 
 # Global shutdown event
 shutdown_event = asyncio.Event()
@@ -495,7 +496,7 @@ async def run_bot_with_retry():
 
                 if webhook_secret:
                     inbound_secret = quart_request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-                    if inbound_secret != webhook_secret:
+                    if not _webhook_secret_matches(webhook_secret, inbound_secret):
                         logging.warning("Webhook rejected: invalid secret token")
                         return "Forbidden", 403
 

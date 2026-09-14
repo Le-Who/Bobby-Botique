@@ -128,6 +128,25 @@ def test_webhook_path_is_stable_and_does_not_contain_bot_token():
     assert "super-secret" not in first
 
 
+@pytest.mark.parametrize(
+    ("provided", "expected"),
+    [
+        ("valid_secret-123", True),
+        ("valid_secret-124", False),
+        ("short", False),
+        ("токен", False),
+        (b"valid_secret-123", False),
+        (None, False),
+    ],
+)
+def test_webhook_secret_matcher_rejects_malformed_values(provided, expected):
+    import bot
+
+    matcher = getattr(bot, "_webhook_secret_matches", None)
+    assert matcher is not None, "production webhook validation needs a testable matcher"
+    assert matcher("valid_secret-123", provided) is expected
+
+
 def test_bot_does_not_schedule_quota_consuming_provider_probes():
     import inspect
 
