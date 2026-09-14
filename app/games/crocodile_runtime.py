@@ -89,7 +89,7 @@ async def set_runtime_hints(game_id: str, hints: list[str]) -> None:
     if not redis_client:
         return
     try:
-        await redis_client.set(_hints_key(game_id), json.dumps(clean, ensure_ascii=False), ex=_RUNTIME_TTL_S)  # type: ignore[misc]
+        await redis_client.set(_hints_key(game_id), json.dumps_bytes(clean), ex=_RUNTIME_TTL_S)  # type: ignore[misc]
     except Exception as exc:
         logger.debug("Runtime hints write failed game=%s: %s", game_id, exc)
 
@@ -168,7 +168,7 @@ async def append_runtime_history(game_id: str, item: dict) -> dict:
         return stamped
     try:
         pipe = redis_client.pipeline()
-        pipe.rpush(_history_key(game_id), json.dumps(stamped, ensure_ascii=False))
+        pipe.rpush(_history_key(game_id), json.dumps_bytes(stamped))
         pipe.ltrim(_history_key(game_id), -_HISTORY_LIMIT, -1)
         pipe.expire(_history_key(game_id), _RUNTIME_TTL_S)
         await pipe.execute()
@@ -216,7 +216,7 @@ async def cache_pending_action_result(game_id: str, pending_id: str, payload: di
         return
     try:
         pipe = redis_client.pipeline()
-        pipe.hset(_pending_key(game_id), pending_id, json.dumps(stamped, ensure_ascii=False))
+        pipe.hset(_pending_key(game_id), pending_id, json.dumps_bytes(stamped))
         pipe.expire(_pending_key(game_id), _RUNTIME_TTL_S)
         await pipe.execute()
     except Exception as exc:
@@ -323,7 +323,7 @@ async def publish_runtime_event(game_id: str, payload: dict, *, exclude_subscrib
     if redis_client:
         try:
             envelope = {"sender_id": exclude_subscriber_id or "", "payload": stamped}
-            await redis_client.publish(_events_channel(game_id), json.dumps(envelope, ensure_ascii=False))  # type: ignore[misc]
+            await redis_client.publish(_events_channel(game_id), json.dumps_bytes(envelope))  # type: ignore[misc]
             return stamped
         except Exception as exc:
             logger.warning("Runtime pubsub publish failed game=%s: %s", game_id, exc)

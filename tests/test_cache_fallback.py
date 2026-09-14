@@ -109,3 +109,13 @@ class TestCacheMultiLayer:
 
         assert qna_result["type"] == "qna"
         assert search_result["type"] == "search"
+
+    @pytest.mark.asyncio
+    async def test_redis_write_uses_bytes_payload(self, cache):
+        with patch("app.cache.redis_client") as mock_redis:
+            mock_redis.setex = AsyncMock()
+
+            await cache.set("bytes-key", "qna", {"answer": "сорок два"})
+
+        mock_redis.setex.assert_awaited_once()
+        assert isinstance(mock_redis.setex.await_args.args[2], bytes)

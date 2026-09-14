@@ -609,6 +609,36 @@ class TestCrocodileGameSerialisation:
         assert game.target_word == "кот"
         assert not hasattr(game, "_injected_evil_field")
 
+    def test_bytes_serialiser_preserves_text_api(self):
+        game = CrocodileGame(
+            game_id="bytes-serializer",
+            target_word="ёж",
+            category="Животные",
+            lang="ru",
+            inline_message_id="inl-bytes",
+            creator_id=7,
+            guesser_id=None,
+        )
+
+        serializer = getattr(game, "to_json_bytes", None)
+        assert serializer is not None
+        assert isinstance(game.to_json(), str)
+
+        raw = serializer()
+        assert isinstance(raw, bytes)
+        assert CrocodileGame.from_json(raw) == game
+
+    @pytest.mark.asyncio
+    async def test_runtime_hints_are_written_to_redis_as_bytes(self):
+        from app.games import crocodile_runtime
+
+        redis = AsyncMock()
+        with patch.object(crocodile_runtime, "redis_client", redis):
+            await crocodile_runtime.set_runtime_hints("bytes-runtime", ["русская подсказка"])
+
+        redis.set.assert_awaited_once()
+        assert isinstance(redis.set.await_args.args[1], bytes)
+
 
 @pytest.mark.asyncio
 class TestCrocodileGameInMemory:
