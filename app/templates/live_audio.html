@@ -510,6 +510,23 @@ let liveSessionEstablished = false;
 let pendingRecordingStart = false;
 let activeTranscriptDraft = null;
 
+const MIC_BUTTON_PRESENTATION = {
+  idle: { icon: '🎙️', label: 'Начать запись' },
+  connecting: { icon: '✕', label: 'Отменить подключение микрофона' },
+  recording: { icon: '⏸️', label: 'Остановить запись' }
+};
+
+function setMicState({ isRecording = recording, isConnecting = pendingRecordingStart } = {}) {
+  recording = isRecording;
+  pendingRecordingStart = isConnecting;
+  const state = recording ? 'recording' : pendingRecordingStart ? 'connecting' : 'idle';
+  const presentation = MIC_BUTTON_PRESENTATION[state];
+  micBtn.textContent = presentation.icon;
+  micBtn.title = presentation.label;
+  micBtn.setAttribute('aria-label', presentation.label);
+  micBtn.classList.toggle('recording', state === 'recording');
+}
+
 /* ── Reconnect: exponential backoff ────────────────────────────────── */
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS  = 8000;
@@ -913,7 +930,7 @@ function connectWS(options = {}) {
         liveSessionEstablished = true;
         pendingModeFallback = null;
         if (pendingRecordingStart && !recording) {
-          pendingRecordingStart = false;
+          setMicState({ isConnecting: false });
           setStatus('Микрофон готовится…', '');
           void startMicCapture();
         } else if (controlledReconnectState?.restoreRecording && !recording) {
@@ -1167,9 +1184,7 @@ async function startMicCapture() {
     ws.send(JSON.stringify({ type: 'activity_start' }));
   }
 
-  recording = true;
-  micBtn.classList.add('recording');
-  micBtn.textContent = '⏸️';
+  setMicState({ isRecording: true, isConnecting: false });
   vizWrap.classList.add('recording');
   startViz(analyser);
   setStatus('Слушаю…', 'active');
@@ -1180,14 +1195,14 @@ async function startMicCapture() {
 function startRecording() {
   sessionEndedIntentionally = false;
   liveFatalState = null;
-  pendingRecordingStart = false;
+  setMicState({ isConnecting: false });
 
   if (liveSessionEstablished && ws && ws.readyState === WebSocket.OPEN) {
     void startMicCapture();
     return;
   }
 
-  pendingRecordingStart = true;
+  setMicState({ isConnecting: true });
   connectWS();
   setStatus('Подключаю микрофон…', '');
   vizWrap.classList.add('connecting');
@@ -1195,13 +1210,10 @@ function startRecording() {
 
 function stopRecording({ preserveStatus = false } = {}) {
   const cancelPendingStart = pendingRecordingStart && !recording;
-  pendingRecordingStart = false;
   if (!recording && !cancelPendingStart) {
     return;
   }
-  recording = false;
-  micBtn.classList.remove('recording');
-  micBtn.textContent = '🎙️';
+  setMicState({ isRecording: false, isConnecting: false });
   vizWrap.classList.remove('recording');
   vizWrap.classList.remove('connecting');
   stopViz();
@@ -1237,7 +1249,7 @@ function endSession() {
   pendingModeFallbackMessage = '';
   modeFallbackUsed = false;
   liveSessionEstablished = false;
-  pendingRecordingStart = false;
+  setMicState({ isConnecting: false });
   activeConnectionMode = liveSettings.live_connection_mode || 'standard';
   resumptionToken = '';
   sessionStorage.removeItem('liveResumptionToken');

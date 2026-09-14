@@ -49,6 +49,17 @@ def test_live_audio_icon_controls_have_unique_ids_and_labels():
         assert attrs.get("aria-label") == label
 
 
+def test_live_audio_microphone_name_tracks_its_click_action():
+    source = (_TEMPLATES / "live_audio.html").read_text(encoding="utf-8")
+
+    assert "function setMicState(" in source
+    assert "Отменить подключение микрофона" in source
+    assert "Остановить запись" in source
+    assert "setMicState({ isConnecting: true });" in source
+    assert "setMicState({ isRecording: true, isConnecting: false });" in source
+    assert "setMicState({ isRecording: false, isConnecting: false });" in source
+
+
 def test_crocodile_icon_controls_have_contextual_labels():
     _, tags = _parse_template("crocodile.html")
 
