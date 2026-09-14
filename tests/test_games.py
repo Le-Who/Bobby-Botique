@@ -11,7 +11,7 @@ All tests run fully offline:
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -638,6 +638,25 @@ class TestCrocodileGameSerialisation:
 
         redis.set.assert_awaited_once()
         assert isinstance(redis.set.await_args.args[1], bytes)
+
+    @pytest.mark.asyncio
+    async def test_pending_runtime_result_uses_binary_hash_mapping(self):
+        from app.games import crocodile_runtime
+
+        pipeline = MagicMock()
+        pipeline.execute = AsyncMock()
+        redis = MagicMock()
+        redis.pipeline.return_value = pipeline
+        with patch.object(crocodile_runtime, "redis_client", redis):
+            await crocodile_runtime.cache_pending_action_result(
+                "bytes-pending",
+                "pending",
+                {"message": "готово"},
+            )
+
+        pipeline.hset.assert_called_once()
+        assert pipeline.hset.call_args.args == ("croc:runtime:pending:bytes-pending",)
+        assert isinstance(pipeline.hset.call_args.kwargs["mapping"]["pending"], bytes)
 
 
 @pytest.mark.asyncio

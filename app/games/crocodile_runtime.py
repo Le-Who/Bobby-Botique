@@ -216,7 +216,7 @@ async def cache_pending_action_result(game_id: str, pending_id: str, payload: di
         return
     try:
         pipe = redis_client.pipeline()
-        pipe.hset(_pending_key(game_id), pending_id, json.dumps_bytes(stamped))
+        pipe.hset(_pending_key(game_id), mapping={pending_id: json.dumps_bytes(stamped)})
         pipe.expire(_pending_key(game_id), _RUNTIME_TTL_S)
         await pipe.execute()
     except Exception as exc:
