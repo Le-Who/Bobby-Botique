@@ -212,26 +212,41 @@ def _damerau_levenshtein(s: str, t: str) -> int:
     """Restricted Damerau-Levenshtein distance (optimal string alignment).
 
     Counts insertions, deletions, substitutions and adjacent transpositions.
-    O(m*n) — adequate for words up to ~60 chars.
+    O(m*n) time, O(n) space — adequate for words up to ~60 chars.
     """
     m, n = len(s), len(t)
-    d = [[0] * (n + 1) for _ in range(m + 1)]
-    for i in range(m + 1):
-        d[i][0] = i
-    for j in range(n + 1):
-        d[0][j] = j
+    if n == 0:
+        return m
+    if m == 0:
+        return n
+
+    d_prev2 = [0] * (n + 1)
+    d_prev1 = list(range(n + 1))
+    d_curr = [0] * (n + 1)
+
     for i in range(1, m + 1):
+        d_curr[0] = i
+        s_char = s[i - 1]
+        s_prev_char = s[i - 2] if i > 1 else None
+
         for j in range(1, n + 1):
-            cost = 0 if s[i - 1] == t[j - 1] else 1
-            d[i][j] = min(
-                d[i - 1][j] + 1,  # deletion
-                d[i][j - 1] + 1,  # insertion
-                d[i - 1][j - 1] + cost,  # substitution
+            t_char = t[j - 1]
+            cost = 0 if s_char == t_char else 1
+
+            d_curr[j] = min(
+                d_prev1[j] + 1,  # deletion
+                d_curr[j - 1] + 1,  # insertion
+                d_prev1[j - 1] + cost,  # substitution
             )
+
             # Adjacent transposition (Damerau extension)
-            if i > 1 and j > 1 and s[i - 1] == t[j - 2] and s[i - 2] == t[j - 1]:
-                d[i][j] = min(d[i][j], d[i - 2][j - 2] + cost)
-    return d[m][n]
+            if i > 1 and j > 1 and s_char == t[j - 2] and s_prev_char == t_char:
+                d_curr[j] = min(d_curr[j], d_prev2[j - 2] + cost)
+
+        # Rotate references
+        d_prev2, d_prev1, d_curr = d_prev1, d_curr, d_prev2
+
+    return d_prev1[n]
 
 
 def _allowed_edits(length: int) -> int:

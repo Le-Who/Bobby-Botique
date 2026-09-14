@@ -60,25 +60,39 @@ def _text_similarity(left: str, right: str) -> float:
 def _damerau_levenshtein(left: str, right: str) -> int:
     """Restricted Damerau-Levenshtein copied from the Crocodile judge."""
     rows, columns = len(left), len(right)
-    distances = [[0] * (columns + 1) for _ in range(rows + 1)]
-    for row in range(rows + 1):
-        distances[row][0] = row
-    for column in range(columns + 1):
-        distances[0][column] = column
+    if columns == 0:
+        return rows
+    if rows == 0:
+        return columns
+
+    d_prev2 = [0] * (columns + 1)
+    d_prev1 = list(range(columns + 1))
+    d_curr = [0] * (columns + 1)
+
     for row in range(1, rows + 1):
+        d_curr[0] = row
+        left_char = left[row - 1]
+        left_prev_char = left[row - 2] if row > 1 else None
+
         for column in range(1, columns + 1):
-            cost = 0 if left[row - 1] == right[column - 1] else 1
-            distances[row][column] = min(
-                distances[row - 1][column] + 1,
-                distances[row][column - 1] + 1,
-                distances[row - 1][column - 1] + cost,
+            right_char = right[column - 1]
+            cost = 0 if left_char == right_char else 1
+
+            d_curr[column] = min(
+                d_prev1[column] + 1,
+                d_curr[column - 1] + 1,
+                d_prev1[column - 1] + cost,
             )
-            if row > 1 and column > 1 and left[row - 1] == right[column - 2] and left[row - 2] == right[column - 1]:
-                distances[row][column] = min(
-                    distances[row][column],
-                    distances[row - 2][column - 2] + cost,
+
+            if row > 1 and column > 1 and left_char == right[column - 2] and left_prev_char == right_char:
+                d_curr[column] = min(
+                    d_curr[column],
+                    d_prev2[column - 2] + cost,
                 )
-    return distances[rows][columns]
+
+        d_prev2, d_prev1, d_curr = d_prev1, d_curr, d_prev2
+
+    return d_prev1[columns]
 
 
 def _allowed_edits(length: int) -> int:
