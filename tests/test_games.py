@@ -461,6 +461,32 @@ class TestDamerauLevenshtein:
         assert _damerau_levenshtein("", "кот") == 3
 
 
+@pytest.mark.parametrize(
+    "distance",
+    [
+        _damerau_levenshtein,
+        pytest.param(
+            __import__("app.games.trivia_similarity", fromlist=["_damerau_levenshtein"])._damerau_levenshtein,
+            id="trivia",
+        ),
+    ],
+    ids=["crocodile", "trivia"],
+)
+def test_damerau_levenshtein_uses_linear_working_memory(distance):
+    import tracemalloc
+
+    left = "a" * 600
+    right = "a" * 599 + "b"
+    tracemalloc.start()
+    try:
+        assert distance(left, right) == 1
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert peak < 1_000_000
+
+
 class TestAllowedEdits:
     """Verify tolerance thresholds by word length."""
 

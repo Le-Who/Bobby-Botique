@@ -60,25 +60,36 @@ def _text_similarity(left: str, right: str) -> float:
 def _damerau_levenshtein(left: str, right: str) -> int:
     """Restricted Damerau-Levenshtein copied from the Crocodile judge."""
     rows, columns = len(left), len(right)
-    distances = [[0] * (columns + 1) for _ in range(rows + 1)]
-    for row in range(rows + 1):
-        distances[row][0] = row
-    for column in range(columns + 1):
-        distances[0][column] = column
+    if columns == 0:
+        return rows
+    if rows == 0:
+        return columns
+
+    previous_previous = [0] * (columns + 1)
+    previous = list(range(columns + 1))
+    current = [0] * (columns + 1)
+
     for row in range(1, rows + 1):
+        current[0] = row
+        left_char = left[row - 1]
+        left_previous_char = left[row - 2] if row > 1 else None
         for column in range(1, columns + 1):
-            cost = 0 if left[row - 1] == right[column - 1] else 1
-            distances[row][column] = min(
-                distances[row - 1][column] + 1,
-                distances[row][column - 1] + 1,
-                distances[row - 1][column - 1] + cost,
+            right_char = right[column - 1]
+            cost = 0 if left_char == right_char else 1
+            current[column] = min(
+                previous[column] + 1,
+                current[column - 1] + 1,
+                previous[column - 1] + cost,
             )
-            if row > 1 and column > 1 and left[row - 1] == right[column - 2] and left[row - 2] == right[column - 1]:
-                distances[row][column] = min(
-                    distances[row][column],
-                    distances[row - 2][column - 2] + cost,
+            if row > 1 and column > 1 and left_char == right[column - 2] and left_previous_char == right_char:
+                current[column] = min(
+                    current[column],
+                    previous_previous[column - 2] + cost,
                 )
-    return distances[rows][columns]
+
+        previous_previous, previous, current = previous, current, previous_previous
+
+    return previous[columns]
 
 
 def _allowed_edits(length: int) -> int:
