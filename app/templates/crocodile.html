@@ -547,8 +547,8 @@
 <div id="app">
   <header>
     <h1 id="header-title">🐊 Крокодил</h1>
-    <button id="live-audio-btn" title="Live Звонок" onclick="window.location.href='/webapp/live' + location.search">🎙️</button>
-    <button id="hint-btn" disabled title="Подсказка">💡</button>
+    <button id="live-audio-btn" title="Live Звонок" aria-label="Открыть Live Audio" onclick="window.location.href='/webapp/live' + location.search">🎙️</button>
+    <button id="hint-btn" disabled title="Подсказка" aria-label="Получить подсказку">💡</button>
     <span id="attempts-badge">0 / 10</span>
   </header>
   <div id="daily-modes" class="hidden"></div>
@@ -592,11 +592,11 @@
 
   <!-- God Mode: reaction strip (creator only) -->
   <div id="reaction-bar">
-    <button class="react-btn" data-emoji="🔥" title="Горячо!">🔥</button>
-    <button class="react-btn" data-emoji="❄️" title="Холодно!">❄️</button>
-    <button class="react-btn" data-emoji="😂" title="Смешно!">😂</button>
-    <button class="react-btn" data-emoji="👏" title="Молодец!">👏</button>
-    <button class="react-btn" data-emoji="🤔" title="Пораскинь мозгами">🤔</button>
+    <button class="react-btn" data-emoji="🔥" title="Горячо!" aria-label="Реакция: Горячо!">🔥</button>
+    <button class="react-btn" data-emoji="❄️" title="Холодно!" aria-label="Реакция: Холодно!">❄️</button>
+    <button class="react-btn" data-emoji="😂" title="Смешно!" aria-label="Реакция: Смешно!">😂</button>
+    <button class="react-btn" data-emoji="👏" title="Молодец!" aria-label="Реакция: Молодец!">👏</button>
+    <button class="react-btn" data-emoji="🤔" title="Пораскинь мозгами" aria-label="Реакция: Пораскинь мозгами">🤔</button>
     <span id="reaction-feedback"></span>
   </div>
 </div>

@@ -369,7 +369,7 @@ class MultiLayerCache:
         if redis_client:
             try:
                 redis_key = f"{search_type}:{key}"
-                json_data = json.dumps(value)
+                json_data = json.dumps_bytes(value)
 
                 # Use retry logic for Redis operations
                 await _redis_operation_with_retry(redis_client.setex, redis_key, ttl, json_data)
@@ -523,10 +523,10 @@ async def store_inline_context(token: str, payload: dict, user_id: int | None = 
 
         now = time.time()
         key = f"{_INLINE_CTX_PREFIX}{token}"
-        data = json.dumps(payload, ensure_ascii=False)
+        data = json.dumps_bytes(payload)
 
         async with redis_client.pipeline(transaction=True) as pipe:
-            pipe.setex(key, _INLINE_CTX_TTL, data.encode("utf-8"))
+            pipe.setex(key, _INLINE_CTX_TTL, data)
 
             if user_id:
                 zset_key = f"{_INLINE_CTX_ZSET_PREFIX}{user_id}"

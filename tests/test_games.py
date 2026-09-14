@@ -11,7 +11,7 @@ All tests run fully offline:
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -461,6 +461,32 @@ class TestDamerauLevenshtein:
         assert _damerau_levenshtein("", "кот") == 3
 
 
+@pytest.mark.parametrize(
+    "distance",
+    [
+        _damerau_levenshtein,
+        pytest.param(
+            __import__("app.games.trivia_similarity", fromlist=["_damerau_levenshtein"])._damerau_levenshtein,
+            id="trivia",
+        ),
+    ],
+    ids=["crocodile", "trivia"],
+)
+def test_damerau_levenshtein_uses_linear_working_memory(distance):
+    import tracemalloc
+
+    left = "a" * 600
+    right = "a" * 599 + "b"
+    tracemalloc.start()
+    try:
+        assert distance(left, right) == 1
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert peak < 1_000_000
+
+
 class TestAllowedEdits:
     """Verify tolerance thresholds by word length."""
 
@@ -582,6 +608,55 @@ class TestCrocodileGameSerialisation:
         game = CrocodileGame.from_json(json.dumps(data))
         assert game.target_word == "кот"
         assert not hasattr(game, "_injected_evil_field")
+
+    def test_bytes_serialiser_preserves_text_api(self):
+        game = CrocodileGame(
+            game_id="bytes-serializer",
+            target_word="ёж",
+            category="Животные",
+            lang="ru",
+            inline_message_id="inl-bytes",
+            creator_id=7,
+            guesser_id=None,
+        )
+
+        serializer = getattr(game, "to_json_bytes", None)
+        assert serializer is not None
+        assert isinstance(game.to_json(), str)
+
+        raw = serializer()
+        assert isinstance(raw, bytes)
+        assert CrocodileGame.from_json(raw) == game
+
+    @pytest.mark.asyncio
+    async def test_runtime_hints_are_written_to_redis_as_bytes(self):
+        from app.games import crocodile_runtime
+
+        redis = AsyncMock()
+        with patch.object(crocodile_runtime, "redis_client", redis):
+            await crocodile_runtime.set_runtime_hints("bytes-runtime", ["русская подсказка"])
+
+        redis.set.assert_awaited_once()
+        assert isinstance(redis.set.await_args.args[1], bytes)
+
+    @pytest.mark.asyncio
+    async def test_pending_runtime_result_uses_binary_hash_mapping(self):
+        from app.games import crocodile_runtime
+
+        pipeline = MagicMock()
+        pipeline.execute = AsyncMock()
+        redis = MagicMock()
+        redis.pipeline.return_value = pipeline
+        with patch.object(crocodile_runtime, "redis_client", redis):
+            await crocodile_runtime.cache_pending_action_result(
+                "bytes-pending",
+                "pending",
+                {"message": "готово"},
+            )
+
+        pipeline.hset.assert_called_once()
+        assert pipeline.hset.call_args.args == ("croc:runtime:pending:bytes-pending",)
+        assert isinstance(pipeline.hset.call_args.kwargs["mapping"]["pending"], bytes)
 
 
 @pytest.mark.asyncio

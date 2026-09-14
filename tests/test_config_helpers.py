@@ -143,6 +143,22 @@ def test_load_settings_reads_webhook_backpressure_envs(monkeypatch):
     assert settings.UPDATE_QUEUE_MAXSIZE == 2500
 
 
+@pytest.mark.parametrize(
+    "invalid_secret",
+    ["contains spaces", "токен", "x" * 257],
+)
+def test_load_settings_rejects_invalid_webhook_secret(monkeypatch, invalid_secret):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    monkeypatch.setenv("WEBHOOK_SECRET_TOKEN", invalid_secret)
+
+    with pytest.raises(ValueError, match="WEBHOOK_SECRET_TOKEN"):
+        load_settings()
+
+
 def test_load_settings_reads_external_publication_and_image_quota_envs(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")

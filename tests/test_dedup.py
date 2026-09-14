@@ -31,6 +31,9 @@ class TestHashRequest:
     def test_length(self):
         assert len(_hash_request("test")) == 12
 
+    def test_uses_sha256_prefix(self):
+        assert _hash_request("hello") == "2cf24dba5fb0"
+
 
 class TestIsDuplicateRequest:
     @pytest.mark.asyncio

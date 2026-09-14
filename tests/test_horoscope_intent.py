@@ -12,9 +12,27 @@ from app.intent_router import (
     _ZODIAC_MAPPING,
     _build_horoscope_system_instruction,
     _format_horoscope_response,
+    _is_complex_query,
     _missing_horoscope_sign_guide,
     try_direct_intent,
 )
+
+
+def test_complex_query_accepts_precomputed_word_count():
+    assert _is_complex_query("короткий запрос", 21) is True
+    assert _is_complex_query("короткий запрос", 20) is False
+
+
+def test_reusable_intent_patterns_cover_current_inputs():
+    from app import intent_router
+
+    next_days_pattern = getattr(intent_router, "_NEXT_THREE_DAYS_RE", None)
+    amount_pattern = getattr(intent_router, "_CURRENCY_AMOUNT_RE", None)
+
+    assert next_days_pattern is not None
+    assert next_days_pattern.search("гороскоп на следующие 3 дня") is not None
+    assert amount_pattern is not None
+    assert amount_pattern.search("обменять 12 345,67 евро").group(1) == "12 345,67"
 
 
 def test_horoscope_intent_matching():

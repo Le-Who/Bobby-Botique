@@ -65,8 +65,9 @@ body {
 .search-header { position: sticky; top: 0; z-index: 10; background: var(--bg); padding: 12px 16px; border-bottom: 1px solid var(--secondary-bg); display: flex; gap: 12px; align-items: center; }
 .search-input { flex: 1; padding: 10px 14px; border: none; background: var(--secondary-bg); border-radius: 10px; font-size: 16px; color: var(--text); outline: none; }
 .search-input::placeholder { color: var(--hint); }
-.settings-btn { flex-shrink: 0; width: 40px; height: 40px; border-radius: 50%; background: var(--secondary-bg); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 20px; transition: transform .1s; }
+.settings-btn { flex-shrink: 0; width: 40px; height: 40px; padding: 0; border: none; border-radius: 50%; background: var(--secondary-bg); color: var(--text); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 20px; transition: transform .1s; }
 .settings-btn:active { transform: scale(0.92); }
+.settings-btn:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
 
 .memory-list { padding: 0; }
 .timeline-date { padding: 16px 16px 4px; font-size: 12px; font-weight: 600; color: var(--hint); text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 65px; background: rgba(var(--secondary-bg), 0.95); backdrop-filter: blur(4px); z-index: 5; }
@@ -376,6 +377,7 @@ body {
 }
 .graph-btn:hover { background: var(--secondary-bg); }
 .graph-btn:active { transform: scale(0.92); }
+.graph-btn:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
 .graph-node { cursor: pointer; }
 .graph-node circle { stroke-width: 2; transition: r .1s; }
 .graph-node:hover circle { filter: brightness(1.15); }
@@ -416,8 +418,8 @@ body {
 <!-- Page: Memories (Root) -->
 <div id="page-memories" class="page">
 <div class="search-header">
-    <div class="settings-btn" onclick="switchTab('graph')" title="Граф знаний">🕸️</div>
-    <input class="search-input" type="text" placeholder="Поиск по памяти…" id="search-input">
+    <button id="graph-open-btn" class="settings-btn" type="button" onclick="switchTab('graph')" title="Граф знаний" aria-label="Открыть граф знаний">🕸️</button>
+    <input class="search-input" type="text" placeholder="Поиск по памяти…" id="search-input" aria-label="Поиск по памяти">
   </div>
   
   <div class="section-full" style="margin-top:0; border-top:none;">
@@ -466,8 +468,8 @@ body {
       <div class="segment" data-val="custom" onclick="setTempSeg(this)">Свой</div>
     </div>
     <div class="slider-wrap" id="slider-temp-wrap">
-      <input type="range" class="range-slider" id="s-temp-slider" min="0" max="2" step="0.05" value="1.0" oninput="onSliderInput()">
-      <input type="number" class="slider-val-input" id="s-temp-num" min="0" max="2" step="0.05" value="1.0" onchange="onSliderNumChange()">
+      <input type="range" class="range-slider" id="s-temp-slider" min="0" max="2" step="0.05" value="1.0" aria-label="Температура" oninput="onSliderInput()">
+      <input type="number" class="slider-val-input" id="s-temp-num" min="0" max="2" step="0.05" value="1.0" aria-label="Значение температуры" onchange="onSliderNumChange()">
     </div>
   </div>
 
@@ -480,8 +482,8 @@ body {
       <div class="segment" data-val="custom" onclick="setTtsTempSeg(this)">Свой</div>
     </div>
     <div class="slider-wrap" id="slider-tts-temp-wrap">
-      <input type="range" class="range-slider" id="s-tts-temp-slider" min="0" max="2" step="0.05" value="1.0" oninput="onTtsSliderInput()">
-      <input type="number" class="slider-val-input" id="s-tts-temp-num" min="0" max="2" step="0.05" value="1.0" onchange="onTtsSliderNumChange()">
+      <input type="range" class="range-slider" id="s-tts-temp-slider" min="0" max="2" step="0.05" value="1.0" aria-label="Температура аудио" oninput="onTtsSliderInput()">
+      <input type="number" class="slider-val-input" id="s-tts-temp-num" min="0" max="2" step="0.05" value="1.0" aria-label="Значение температуры аудио" onchange="onTtsSliderNumChange()">
     </div>
   </div>
 
@@ -516,12 +518,12 @@ body {
 
     <div class="setting-row">
       <div><div class="setting-label">Долгосрочная память</div></div>
-      <label class="toggle"><input type="checkbox" id="s-ltm" onchange="markDirty()"><span class="toggle-track"></span></label>
+      <label class="toggle"><input type="checkbox" id="s-ltm" aria-label="Долгосрочная память" onchange="markDirty()"><span class="toggle-track"></span></label>
     </div>
 
     <div class="setting-row">
       <div><div class="setting-label">Веб-поиск</div></div>
-      <label class="toggle"><input type="checkbox" id="s-search" onchange="markDirty()"><span class="toggle-track"></span></label>
+      <label class="toggle"><input type="checkbox" id="s-search" aria-label="Веб-поиск" onchange="markDirty()"><span class="toggle-track"></span></label>
     </div>
   </div>
 
@@ -542,9 +544,9 @@ body {
   <div id="graph-canvas">
     <div class="graph-tooltip" id="graph-tooltip"></div>
     <div class="graph-controls">
-      <button class="graph-btn" onclick="zoomGraph(1.3)" title="Zoom In">➕</button>
-      <button class="graph-btn" onclick="zoomGraph(0.7)" title="Zoom Out">➖</button>
-      <button class="graph-btn" onclick="resetGraphZoom()" title="Reset">⟳</button>
+      <button class="graph-btn" onclick="zoomGraph(1.3)" title="Увеличить" aria-label="Увеличить масштаб графа">➕</button>
+      <button class="graph-btn" onclick="zoomGraph(0.7)" title="Уменьшить" aria-label="Уменьшить масштаб графа">➖</button>
+      <button class="graph-btn" onclick="resetGraphZoom()" title="Сбросить" aria-label="Сбросить масштаб графа">⟳</button>
     </div>
     <div class="graph-stats" id="graph-stats"></div>
     <svg id="graph-svg" width="100%" height="100%"></svg>
@@ -1462,7 +1464,7 @@ document.getElementById('s-prompt-area').addEventListener('input', e => {
 });
 
 // Helper
-function esc(s) { const d = document.createElement('div'); d.textContent = s||''; return d.innerHTML; }
+function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
 
 // Init
 // Init

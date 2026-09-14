@@ -11,9 +11,10 @@ from datetime import UTC
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
 
 from app.utils.json_compat import json
+from app.webhook_security import validate_webhook_secret_token
 
 # Single source of truth for default Gemini models.
 # Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().
@@ -491,6 +492,11 @@ class Settings(BaseModel):
         {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
     ]
+
+    @field_validator("WEBHOOK_SECRET_TOKEN")
+    @classmethod
+    def _validate_webhook_secret_token(cls, value: str) -> str:
+        return validate_webhook_secret_token(value)
 
     # System prompts are managed by app.prompts.compose_system_instruction()
     # and app.prompt_registry — not duplicated here.

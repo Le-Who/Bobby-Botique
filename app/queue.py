@@ -60,27 +60,34 @@ def _queue_key(priority: TaskPriority) -> str:
     return f"{_QUEUE_PREFIX}:{priority.value}"
 
 
+def _task_payload(task: Task) -> dict[str, Any]:
+    return {
+        "id": task.id,
+        "user_id": task.user_id,
+        "task_type": task.task_type,
+        "data": task.data,
+        "priority": task.priority.value,
+        "status": task.status.value,
+        "created_at": task.created_at.isoformat(),
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        "result": task.result,
+        "error": task.error,
+        "retry_count": task.retry_count,
+        "max_retries": task.max_retries,
+        "observability_schema_version": task.observability_schema_version,
+        "observability_context": task.observability_context,
+    }
+
+
 def _task_to_json(task: Task) -> str:
-    """Serialize a Task to JSON for Redis storage."""
-    return json.dumps(
-        {
-            "id": task.id,
-            "user_id": task.user_id,
-            "task_type": task.task_type,
-            "data": task.data,
-            "priority": task.priority.value,
-            "status": task.status.value,
-            "created_at": task.created_at.isoformat(),
-            "started_at": task.started_at.isoformat() if task.started_at else None,
-            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-            "result": task.result,
-            "error": task.error,
-            "retry_count": task.retry_count,
-            "max_retries": task.max_retries,
-            "observability_schema_version": task.observability_schema_version,
-            "observability_context": task.observability_context,
-        }
-    )
+    """Serialize a Task to text JSON for compatibility with existing callers."""
+    return json.dumps(_task_payload(task))
+
+
+def _task_to_json_bytes(task: Task) -> bytes:
+    """Serialize a Task directly to UTF-8 bytes for Redis writes."""
+    return json.dumps_bytes(_task_payload(task))
 
 
 def _task_from_json(raw: str | bytes) -> Task:
@@ -198,7 +205,7 @@ class TaskQueue:
                     task.status = TaskStatus.PENDING
                     task.retry_count += 1
                     # Re-enqueue
-                    await redis.lpush(_queue_key(task.priority), _task_to_json(task).encode())
+                    await redis.lpush(_queue_key(task.priority), _task_to_json_bytes(task))
                     # Update in-memory cache
                     self.tasks[task.id] = task
                     emit(
@@ -286,7 +293,7 @@ class TaskQueue:
             try:
                 redis = _get_redis()
                 if redis:
-                    await redis.lpush(_queue_key(priority), _task_to_json(task).encode())
+                    await redis.lpush(_queue_key(priority), _task_to_json_bytes(task))
                     self._work_available.set()  # Wake idle workers
                     emit(
                         "job.enqueued",
@@ -411,7 +418,7 @@ class TaskQueue:
                         await redis.lrem(_PROCESSING_KEY, 1, original_json)
                     # Re-enqueue with updated state
                     task.status = TaskStatus.PENDING
-                    await redis.lpush(_queue_key(task.priority), _task_to_json(task).encode())
+                    await redis.lpush(_queue_key(task.priority), _task_to_json_bytes(task))
                     self._work_available.set()  # Wake workers for retry
                 except Exception as e:
                     logging.error("Redis nack failed: %s", e, exc_info=True)

@@ -16,6 +16,7 @@ __all__ = [
 import asyncio
 import contextlib
 import logging
+import re
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -31,6 +32,12 @@ from app.i18n import t
 from app.repos.chats import get_user_chat
 from app.request_context import ensure_request_id as set_request_id
 from app.request_context import set_user_context
+
+_CODE_BLOCK_STRIP_RE = re.compile(r"```.*?```", flags=re.DOTALL)
+
+
+def _strip_tts_code_blocks(text: str) -> str:
+    return _CODE_BLOCK_STRIP_RE.sub("", text)
 
 
 async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -275,10 +282,8 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not response_text or len(response_text.strip()) < 5:
         return
 
-    # Strip code blocks (triple backticks) for TTS so we don't synthesize raw code visually represented by the code block
-    import re
-
-    response_text = re.sub(r"```.*?```", "", response_text, flags=re.DOTALL)
+    # Strip code blocks so TTS does not synthesize visually represented source code.
+    response_text = _strip_tts_code_blocks(response_text)
 
     chat_id = query.message.chat_id
     message_id = query.message.message_id

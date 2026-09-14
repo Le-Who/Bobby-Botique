@@ -59,6 +59,17 @@ class TestTaskSerialization:
         restored = _task_from_json(json_bytes)
         assert restored.id == sample_task.id
 
+    def test_bytes_serialiser_preserves_text_api(self, sample_task):
+        from app import queue as queue_module
+
+        serializer = getattr(queue_module, "_task_to_json_bytes", None)
+        assert serializer is not None
+        assert isinstance(_task_to_json(sample_task), str)
+
+        raw = serializer(sample_task)
+        assert isinstance(raw, bytes)
+        assert _task_from_json(raw) == sample_task
+
     def test_optional_fields_none(self, sample_task):
         """Tasks with None optional fields serialize correctly."""
         assert sample_task.started_at is None

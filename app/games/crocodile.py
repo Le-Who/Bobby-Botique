@@ -51,7 +51,7 @@ class CrocodileGameRepository:
             from app.cache import redis_client
 
             if redis_client:
-                await redis_client.set(game._redis_key(), game.to_json().encode(), **ttl_kwargs)  # type: ignore[misc, arg-type]
+                await redis_client.set(game._redis_key(), game.to_json_bytes(), **ttl_kwargs)  # type: ignore[misc, arg-type]
                 return True
         except Exception as exc:
             logger.warning("CrocodileGame.save failed game=%s: %s", game.game_id, exc)
@@ -107,27 +107,32 @@ class CrocodileGame:
     def _redis_key(self) -> str:
         return f"{_GAME_KEY_PREFIX}{self.game_id}"
 
+    def _json_payload(self) -> dict[str, object]:
+        return {
+            "game_id": self.game_id,
+            "target_word": self.target_word,
+            "category": self.category,
+            "lang": self.lang,
+            "inline_message_id": self.inline_message_id,
+            "creator_id": self.creator_id,
+            "guesser_id": self.guesser_id,
+            "topic_id": self.topic_id,
+            "sense_context": self.sense_context,
+            "attempts": self.attempts,
+            "has_activity": self.has_activity,
+            "max_attempts": self.max_attempts,
+            "status": str(self.status),
+            "created_at": self.created_at,
+            "best_score": self.best_score,
+        }
+
     def to_json(self) -> str:
-        return json.dumps(
-            {
-                "game_id": self.game_id,
-                "target_word": self.target_word,
-                "category": self.category,
-                "lang": self.lang,
-                "inline_message_id": self.inline_message_id,
-                "creator_id": self.creator_id,
-                "guesser_id": self.guesser_id,
-                "topic_id": self.topic_id,
-                "sense_context": self.sense_context,
-                "attempts": self.attempts,
-                "has_activity": self.has_activity,
-                "max_attempts": self.max_attempts,
-                "status": str(self.status),
-                "created_at": self.created_at,
-                "best_score": self.best_score,
-            },
-            ensure_ascii=False,
-        )
+        """Serialize for callers that require text JSON."""
+        return json.dumps(self._json_payload(), ensure_ascii=False)
+
+    def to_json_bytes(self) -> bytes:
+        """Serialize directly to UTF-8 bytes for Redis writes."""
+        return json.dumps_bytes(self._json_payload())
 
     @classmethod
     def from_json(cls, data: str | bytes) -> CrocodileGame:
