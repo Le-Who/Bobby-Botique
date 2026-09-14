@@ -86,7 +86,7 @@ def extract_suggestions(text: str) -> tuple[str, list[dict[str, str]]]:
             s = s[: MAX_SUGGESTION_LABEL_LEN - 3] + "..."
 
         # Create a short 10-char hash for callback_data
-        s_id = hashlib.md5(full_text.encode("utf-8")).hexdigest()[:10]
+        s_id = hashlib.sha256(full_text.encode("utf-8")).hexdigest()[:10]
         SUGGESTION_CACHE[s_id] = full_text
 
         suggestions.append({"id": s_id, "label": s})

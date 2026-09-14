@@ -1,6 +1,8 @@
 """Tests for degradation matrix — graceful degradation and recovery scenarios."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from app.degradation import ServiceStatus, SystemHealth, can_process_message, check_system_health
 
@@ -109,19 +111,26 @@ class TestSystemHealthRecovery:
 class TestCheckSystemHealthExceptions:
     """Test exception handling within system health checks."""
 
-    def test_database_health_exception_fallback(self):
+    @pytest.mark.asyncio
+    async def test_database_health_exception_fallback(self):
         """Test fallback when database health check raises an exception."""
-        import asyncio
-        import sys
-        from unittest.mock import MagicMock
+        check = AsyncMock(side_effect=Exception("DB connection timeout"))
+        with patch("app.database.check_database_health", new=check):
+            health = await check_system_health()
 
-        # The correct robust way to patch inside a function that lazily imports a module
-        # is to mock sys.modules for the lazy imported module
-        with patch.dict(sys.modules, {"app.database": MagicMock()}):
-            with patch("app.database.check_database_health", side_effect=Exception("DB connection timeout")):
-                health = asyncio.run(check_system_health())
-                assert health.database == ServiceStatus.UNAVAILABLE
-                assert health.details.get("database_error") == "DB connection timeout"
+        check.assert_awaited_once()
+        assert health.database == ServiceStatus.UNAVAILABLE
+        assert health.details.get("database_error") == "DB connection timeout"
+
+    @pytest.mark.asyncio
+    async def test_database_health_false_result_is_unavailable(self):
+        check = AsyncMock(return_value=False)
+        with patch("app.database.check_database_health", new=check):
+            health = await check_system_health()
+
+        check.assert_awaited_once()
+        assert health.database == ServiceStatus.UNAVAILABLE
+        assert "database_error" not in health.details
 
 
 class TestToDict:
