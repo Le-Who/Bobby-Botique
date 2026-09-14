@@ -250,3 +250,11 @@ class TestExports:
         assert "complex_search_callback" in __all__
         assert "fallback_callback" in __all__
         assert "retry_last_callback" in __all__
+
+
+def test_tts_code_block_stripping_preserves_surrounding_text():
+    from app.handlers import cb_ai_actions
+
+    strip_code_blocks = getattr(cb_ai_actions, "_strip_tts_code_blocks", None)
+    assert strip_code_blocks is not None
+    assert strip_code_blocks("До\n```python\nprint('x')\n```\nПосле") == "До\n\nПосле"

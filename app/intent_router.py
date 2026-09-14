@@ -74,6 +74,7 @@ _DATE_SEGODNYA_RE = re.compile(r"\b(?:сегодня|today|сейчас)\b", re.
 _DATE_ZAVTRA_RE = re.compile(r"\b(?:завтра|tomorrow)\b", re.IGNORECASE)
 _DATE_POSLEZAVTRA_RE = re.compile(r"\b(?:послезавтра)\b", re.IGNORECASE)
 _DATE_VCHERA_RE = re.compile(r"\b(?:вчера|yesterday)\b", re.IGNORECASE)
+_NEXT_THREE_DAYS_RE = re.compile(r"следующ.*(три|3)\s*дн", re.IGNORECASE)
 
 # Colloquial/implicit weather queries — ONLY used when message is ≤12 words.
 # City extraction in _handle_weather acts as a second guard (no city → None → LLM).
@@ -221,6 +222,7 @@ _SORTED_CURRENCY_ALIASES: list[tuple[str, str]] = sorted(
 _CURRENCY_ALIAS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(rf"(?<!\w){re.escape(alias)}(?!\w)", re.IGNORECASE), code) for alias, code in _SORTED_CURRENCY_ALIASES
 ]
+_CURRENCY_AMOUNT_RE = re.compile(r"(?<!\w)(\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?)(?!\w)")
 
 # Performance: pre-compiled at module level — _handle_weather is called on every
 # weather intent match (per-message). Inline re.search() inside the function body
@@ -321,14 +323,14 @@ class IntentResult:
         self.context_data = context_data
 
 
-def _is_complex_query(text: str) -> bool:
+def _is_complex_query(text: str, word_count: int) -> bool:
     """Determine if a query is complex and should NOT short-circuit to API cards."""
     # 1. Length heuristic (long text or article)
-    if len(text.split()) > 20:
+    if word_count > 20:
         return True
 
     # 2. Multiple sentences/questions
-    sentence_enders = sum(text.count(c) for c in "?!.")
+    sentence_enders = text.count("?") + text.count("!") + text.count(".")
     if sentence_enders > 1:
         return True
 
@@ -347,7 +349,7 @@ async def try_direct_intent(message_text: str) -> IntentResult | None:
     """
     text = message_text.strip()
     word_count = len(text.split())
-    is_complex = _is_complex_query(text)
+    is_complex = _is_complex_query(text, word_count)
 
     def _prepare_result(res: IntentResult | None) -> IntentResult | None:
         if res and is_complex:
@@ -618,16 +620,12 @@ async def _handle_currency(text: str) -> IntentResult | None:
 
 async def _handle_crypto(coingecko_id: str, text: str) -> IntentResult | None:
     """Fetch crypto price (USD + RUB) from CoinGecko Demo API (keyless, 30rpm)."""
-    # Determine which fiat to pair with (default USD + RUB if Russian text)
-    lower = text.lower()
-    vs_currencies = "usd,rub" if re.search(r"рубл|rub", lower, re.IGNORECASE) else "usd,rub"  # always show both
-
     try:
         resp = await _get_http().get(
             "https://api.coingecko.com/api/v3/simple/price",
             params={
                 "ids": coingecko_id,
-                "vs_currencies": vs_currencies,
+                "vs_currencies": "usd,rub",
                 "include_24hr_change": "true",
             },
             headers={"Accept": "application/json", "User-Agent": "GemaibotV2/2.0"},
@@ -791,7 +789,7 @@ async def _fetch_frankfurter(base: str, target: str, amount: float = 1.0) -> Int
 
 def _extract_currency_amount(text: str) -> float:
     """Return the first positive numeric amount, defaulting to one unit."""
-    match = re.search(r"(?<!\w)(\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?)(?!\w)", text)
+    match = _CURRENCY_AMOUNT_RE.search(text)
     if match is None:
         return 1.0
     try:
@@ -913,7 +911,7 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
             detected_signs.append(sign)
 
     # 2. Parse target day
-    if re.search(r"следующ.*(три|3)\s*дн", lower_text):
+    if _NEXT_THREE_DAYS_RE.search(lower_text):
         day_ru = "на следующие три дня"
     elif _DATE_POSLEZAVTRA_RE.search(lower_text):
         day_ru = "послезавтра"
