@@ -94,6 +94,9 @@ Local hook installation is not shared by cloning.
 
 CI also builds/smokes the production image and produces dependency audit,
 SBOM and license inventory evidence. These are distinct from local unit checks.
+The observability job validates pinned Compose/Alloy/Loki/HAProxy configuration
+and starts the private stack to check readiness and Grafana authentication.
+It does not currently assert end-to-end ingestion of a synthetic bot event.
 Live canary/deployment actions need dedicated credentials and explicit operational
 scope; see [dependency maintenance](README.md#dependency-maintenance).
 
@@ -107,6 +110,9 @@ scope; see [dependency maintenance](README.md#dependency-maintenance).
   warrants them. Report pre-existing failures separately without masking them.
 - Update current reference docs with changed behavior; keep old plans and release
   evidence explicitly historical.
+- For environment changes, verify the effective reader/default, deployment
+  forwarding and reload/restart behavior separately. Settings fields, workflow
+  variables and documented names alone do not prove that a switch takes effect.
 - A review summary should state the change, exact checks/results, and remaining
   gaps. Do not equate local tests with deployed/provider verification.
 - Do not publish sensitive findings in PR text; follow [SECURITY.md](SECURITY.md).

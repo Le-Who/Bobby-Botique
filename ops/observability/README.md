@@ -20,8 +20,16 @@ containers are intentionally outside the first version.
 
 After CI succeeds on `vps_testai`, `.github/workflows/deploy.yml` packages this
 directory, installs it at `/opt/gemaibot-observability`, creates a Grafana admin
-password once, starts the four services, verifies that they are running, and then
-replaces the bot container. There is no soak-period or calendar wait.
+password file if missing, recreates the four services with `--wait` (90-second
+timeout), and verifies their running/non-restarting state. It then checks Grafana
+health, Alloy/Loki readiness, resets Grafana's persisted admin password to the
+secret-file value and verifies authenticated `/api/user` access before replacing
+the bot container. A password changed only in Grafana is therefore overwritten
+on the next deployment. There is no soak-period or calendar wait.
+
+These gates verify service readiness and login, not end-to-end ingestion of a
+new bot event. Synthetic generation/query/export helpers exist below; the current
+CI/deploy workflow does not automatically assert that a generated event is searchable.
 
 The generated password is never printed by CI. Retrieve it in a private SSH
 session on the VPS:
@@ -108,12 +116,19 @@ On a Docker host, set the secret-file path and validate before a manual start:
 
 ```bash
 export GRAFANA_ADMIN_PASSWORD_FILE=/opt/gemaibot-observability/secrets/grafana_admin_password
+chown root:root "$GRAFANA_ADMIN_PASSWORD_FILE"
 chmod 0640 "$GRAFANA_ADMIN_PASSWORD_FILE"
 export DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock)"
 docker compose -f /opt/gemaibot-observability/compose.yml config --quiet
 docker compose -f /opt/gemaibot-observability/compose.yml up -d --remove-orphans --force-recreate --wait --wait-timeout 90
 docker compose -f /opt/gemaibot-observability/compose.yml ps
 ```
+
+The pinned Grafana container runs as `472:0`; the secret must be readable by its
+group while the host secrets directory remains restricted (root-owned `0700`).
+Run these host setup commands with the required host privileges. A manual Compose
+start alone does not synchronize an existing Grafana database password; the
+deployment workflow contains that additional reset and authenticated check.
 
 To return immediately to Docker/Portainer log viewing, stop only this independent
 project. Keep the volumes so the collected history remains recoverable:
@@ -135,4 +150,5 @@ Checked against upstream registries on 2026-09-11:
 - HAProxy `3.2.6-alpine` — `sha256:3a819392f5a6af2a9203d1c63ff0feba74f0c940623a558511be06d7d85e361c`
 
 CI validates Compose plus the Alloy, Loki, and HAProxy configurations using these
-same immutable image references before the deployment workflow can run.
+same immutable image references, then starts the stack and checks health,
+readiness and Grafana authentication before the deployment workflow can run.

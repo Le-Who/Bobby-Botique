@@ -17,12 +17,12 @@ This is a production-oriented Telegram bot codebase with VPS deployment automati
 
 ## Documentation status
 
-Reviewed against checkout `8fc19516` on 2026-09-08. This is a maintained
+Reviewed against checkout `f44541a7` on 2026-09-20. This is a maintained
 application with deployment automation; a checkout alone does not establish
 current production health, traffic, provider availability or an open-PR count.
 
 Start with the [documentation index](docs/README.md), [agent agreements](AGENTS.md),
-[architecture](docs/ARCHITECTURE.md) and [audit findings](docs/documentation-audit-2026-09-08.md).
+[architecture](docs/ARCHITECTURE.md) and [audit findings](docs/documentation-audit-2026-09-20.md).
 The [changelog](CHANGELOG.md) records history, not a current runtime specification.
 
 ## Feature Overview
@@ -117,6 +117,8 @@ graph TD;
 | `app/documents/`      | Document processing: chunking strategies, parsers, document repository.        |
 | `app/middleware/`     | Request pipeline middleware (debounce aggregation, dedup prevention).           |
 | `app/adapters/`       | Distributed/local concurrency primitives.                                |
+| `app/observability/` | Bounded log pipeline, correlation, redaction, operational events and incident export. |
+| `ops/observability/` | Independent private Grafana/Loki/Alloy/Docker-proxy deployment and runbook. |
 | `app/db/`             | Database bootstrap: schema validation, migrations runner, RLS, seed.           |
 | `app/utils/`          | Shared utilities (formatting, keyboards, background tasks, image utils, reader SSR, etc.). |
 | `app/templates/`      | HTML Jinja2 templates for admin dashboard and Telegram Mini App.               |
@@ -229,6 +231,9 @@ Configuration is explicitly read from environment variables in `app/config.py` a
 | `PORT` | ⚙️ | `10000` | `10000` | Port the Quart web server and admin dashboard binds to. On VPS, expose via Caddy/Nginx reverse proxy — do **not** bind directly to `0.0.0.0` in production. |
 | `ENABLE_WEB_SERVER` | ⚙️ | `true` / `false` | `true` | Disabling this skips starting the Quart server entirely. Set `false` only for local dev without the dashboard. |
 | `WEBHOOK_URL` | ⚙️ | `https://bot.example.com` | — | If set, the bot registers itself as a Telegram Webhook at this URL and stops long-polling. **Must be HTTPS.** Required for production webhook deployments. If absent, the bot uses long-polling (simpler for single-server setups). |
+| `WEBHOOK_SECRET_TOKEN` | ⚙️ | 1–256 ASCII letters, digits, `_` or `-` | `""` | Optional Telegram secret header. Invalid configured tokens fail validation; when enabled, missing/malformed/mismatched inbound headers are rejected with constant-time comparison for valid strings. |
+| `WEBHOOK_MAX_CONNECTIONS` | ⚙️ | Integer | `40` | Telegram webhook registration clamps the value to 1–100. |
+| `UPDATE_QUEUE_MAXSIZE` | ⚙️ | Integer | `1000` | In-process update queue capacity; construction enforces a minimum of 100. |
 | `WEBAPP_BASE_URL` | ⚙️ | `https://bot.example.com` | `""` | Public URL from which the Telegram Mini App settings panel and reader are served. Must equal `WEBHOOK_URL` in most deployments. If empty, oversized responses use the optional Telegraph fallback or safe Telegram splitting. |
 | `TELEGRAPH_PUBLICATION_ENABLED` | ⚙️ | `true` / `false` | `false` | Explicit privacy opt-in for publishing long responses and natal mirrors as public `telegra.ph` pages. Keep disabled unless users are informed that anyone with the link can read the page. |
 | `MINIAPP_SHORT_NAME` | No | `gemaibotv2` | `""` | Short name for the Telegram Mini App deep links (`t.me/<bot>/<short_name>`). Configure the matching Mini App short name in BotFather; do not confuse it with a menu button URL. |
@@ -275,6 +280,7 @@ When configured, the bot communicates with a self-hosted Local Bot API Server in
 | `GEMINI_AVAILABLE_MODELS` | ⚙️ | `gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash-lite` | `gemini-3.6-flash,gemini-3.5-flash-lite` | Exact, ordered Gemini list shown in `/model`. Future syntactically valid `gemini-*` IDs are accepted without a code release. Role models such as `DEFAULT_MODEL` are not added to this selector automatically. Use the single token `none` for an intentionally empty list. |
 | `DEFAULT_MODEL` | ⚙️ | `gemini-3.6-flash` | `gemini-3.6-flash` | Internal model used for standard conversational messages. It may be intentionally hidden from the user-selectable list. |
 | `QNA_MODEL` | ⚙️ | `gemini-3.5-flash-lite` | `gemini-3.5-flash-lite` | Internal model used for quick Q&A web search queries (`?` prefix). |
+| `INLINE_MODEL` | ⚙️ | `gemini-3.5-flash-lite` | `gemini-3.5-flash-lite` | Gemini inline role, loaded separately from the selectable chat catalog. |
 | `RESEARCH_MODEL` | ⚙️ | `gemini-3.6-flash` | `gemini-3.6-flash` | Internal model used for synthesizing Tavily search results into a final research answer. |
 | `URL_SELECTION_MODEL` | ⚙️ | `gemini-3.5-flash-lite` | `gemini-3.5-flash-lite` | Lightweight internal model that scores and filters candidate URLs during agentic web research before full content extraction. |
 | `TAXONOMY_MODEL` | ⚙️ | `gemini-3.5-flash-lite` | `gemini-3.5-flash-lite` | Internal model used by MemPalace to classify memories into the Wing/Room taxonomy and to judge temporal contradictions (LLM-as-Judge). |
@@ -305,7 +311,8 @@ For that experimental live route, `VERTEX_AI_PROJECT` and `VERTEX_AI_LOCATION` a
 | `PRIMARY_PROVIDER` | ⚙️ | `opencode` / `gemini` / `openrouter` / `freetheai` | `opencode` | Default provider selection; persisted `/set_provider` overrides take precedence. Availability and per-path fallback still depend on keys and model capabilities. |
 | `OPENCODE_DEFAULT_MODEL` | ⚙️ | `opencode-go/qwen3.5-plus` | `opencode-go/qwen3.5-plus` | Default Opencode chat role. |
 | `OPENCODE_QNA_MODEL` | ⚙️ | `opencode-go/qwen3.6-plus` | `opencode-go/qwen3.6-plus` | Model for quick Q&A search synthesis (`?` prefix). |
-| `OPENCODE_RESEARCH_MODEL` | ⚙️ | `opencode-go/glm-5.1` | `opencode-go/glm-5.1` | Model for deep research synthesis (`??`). |
+| `OPENCODE_RESEARCH_MODEL` | ⚙️ | `opencode-go/glm-5.1` | `opencode-go/glm-5.1` | Configured research-role model included in Opencode selector defaults. It does not switch the specialized `??` Gemini agent loop to Opencode. |
+| `OPENCODE_URL_SELECTION_MODEL` | ⚙️ | `opencode-go/big-pickle` | `opencode-go/big-pickle` | Internal URL-selection role; not automatically added to the selectable model defaults. |
 | `OPENCODE_VISION_MODEL` | ⚙️ | `opencode-go/mimo-v2-omni` | `opencode-go/mimo-v2-omni` | Vision-capable model — supports `image_url` natively. Exempt from Gemini vision redirect. |
 | `OPENCODE_INLINE_MODEL` | ⚙️ | `opencode-go/minimax-m2.5` | `opencode-go/minimax-m2.5` | Lighter model for inline mode generation. |
 | `JINA_API_KEY` | ⚙️ | `jina_xxx...` | `""` | API key for [JINA AI Search](https://jina.ai). Used as grounding backend for `?` quick search when Opencode is active. Also used by agentic research engine for page reading via `r.jina.ai`. Without this key, Opencode search queries run without web context. |
@@ -321,7 +328,7 @@ Model IDs are configurable; this table is not a provider-side availability catal
 | `OPENROUTER_AVAILABLE_MODELS` | ⚙️ | `stepfun/step-3.5-flash:free,qwen/qwen3-4b:free` | `OPENROUTER_DEFAULT_MODEL` | Exact, ordered OpenRouter list shown in `/model` when at least one OpenRouter key is configured. Use `none` for an intentionally empty list. |
 | `OPENROUTER_DEFAULT_MODEL` | ⚙️ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | Default model for standard chat on OpenRouter. |
 | `OPENROUTER_QNA_MODEL` | ⚙️ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | OpenRouter model for quick Q&A search synthesis. |
-| `OPENROUTER_RESEARCH_MODEL` | ⚙️ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | OpenRouter model for agentic research synthesis. |
+| `OPENROUTER_RESEARCH_MODEL` | ⚙️ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | Research-role mapping in provider-routed use cases (`app/agent_use_cases.py`); not a replacement for the specialized Gemini agent loop. |
 | `OPENROUTER_URL_SELECTION_MODEL` | ⚙️ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | OpenRouter model for URL scoring during agentic research. |
 
 ---
@@ -362,13 +369,21 @@ deployed Secret.
 
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
-| `AGENTIC_MODEL` | ⚙️ | `gemini-2.5-flash` | `""` (uses `RESEARCH_MODEL`) | Overrides the LLM used inside the agentic research loop. Set to a more capable model (e.g. `gemini-2.5-flash`) for better research quality at higher cost. If empty, falls back to `RESEARCH_MODEL`. |
+| `AGENTIC_MODEL` | ⚙️ | Gemini model ID | `""` (falls back to `RESEARCH_MODEL`) | Used when neither a handler model override nor the current chat model is set. It does not override an explicit chat selection. |
 | `AGENTIC_MAX_ITERATIONS` | ⚙️ | `5`—`15` | `5` | Maximum research loop cycles before the agent is forced to synthesize an answer. Each iteration = one round of query → search → read → reflect. Higher = deeper research, higher API cost. |
-| `AGENTIC_MAX_PAGES` | ⚙️ | `3`—`10` | `3` | Maximum web pages the agent reads per iteration. Each page consumes Jina/Tavily credits and LLM tokens. |
-| `AGENTIC_MAX_TOKENS` | ⚙️ | `100000`—`500000` | `100000` | Hard token budget cap for the entire agentic session. The loop terminates if accumulated prompt + completion tokens exceed this value. Prevents runaway sessions on complex queries. |
-| `AGENTIC_TIMEOUT_SECONDS` | ⚙️ | `90`—`300` | `90` | Wall-clock time limit for the entire agentic session. If the loop doesn't finish within this window, a partial result is returned. Increase to `180`+ on powerful VPS for deeper research. |
+| `AGENTIC_MAX_PAGES` | ⚙️ | `3`—`10` | `3` | Limit on admitted `read_page` calls across one agent run, not per iteration. Slots are reserved before a batch executes. |
+| `AGENTIC_MAX_TOKENS` | ⚙️ | `100000`—`500000` | `100000` | Accumulated reported usage is checked before the next reasoning iteration. A completed call can overshoot, and final synthesis can add usage; this is not a hard billing ceiling. |
+| `AGENTIC_TIMEOUT_SECONDS` | ⚙️ | `90`—`300` | `90` | Elapsed-time cutoff checked before each reasoning iteration. It does not cancel an in-flight call or bound final synthesis; actual wall time can exceed it. |
 | `AGENTIC_PAGE_CONTENT_LIMIT` | ⚙️ | `4096`—`16384` | `8192` | Maximum characters extracted from each web page before truncation. Higher = more context per page, more LLM tokens consumed. |
-| `ADAPTIVE_THINKING_ENABLED` | ⚙️ | `true` / `false` | `true` | Enables the automatic `thinking_level` selector (14-rule heuristic). When `true`, simple greetings get `low` depth and complex code/research queries get `high`. User's manual `/thinking` setting always overrides this. |
+| `ADAPTIVE_THINKING_ENABLED` | ⚙️ | `true` / `false` | `true` | Enables the chat thinking resolver: explicit user level/off, then model-specific defaults, then the heuristic classifier in `app/thinking_classifier.py`. |
+
+The agentic loop in `app/core/agentic.py` uses the Gemini SDK directly. Its handler
+chooses `model_override` → `chat_state.model` → `AGENTIC_MODEL` → `RESEARCH_MODEL`;
+selection alone does not guarantee that a model has a usable Gemini key/capability.
+The handler
+can start a new agent run for a fallback model, with fresh per-run counters; these
+settings are therefore not a shared budget across every fallback attempt. Ordinary
+provider-routed chat/search and specialized research execution have distinct paths.
 
 ---
 
@@ -403,8 +418,19 @@ deployed Secret.
 
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
-| `ELEVENLABS_API_KEYS` | ⚙️ | `sk_abc,sk_xyz` | `[]` | Comma-separated ElevenLabs API keys used for outbound voice synthesis. Load-balanced with round-robin rotation. If empty, the system falls back exclusively to Gemini REST TTS (`gemini-2.5-flash-preview-tts`). Free ElevenLabs tier gives ~10k chars/month per key. |
+| `ELEVENLABS_API_KEYS` | ⚙️ | `sk_abc,sk_xyz` | `[]` | Comma-separated outbound TTS keys, tried in order; failed/exhausted keys are skipped for remaining chunks of that synthesis. If the pipeline cannot finish, the voice engine can fall back to Gemini TTS for the entire response. Provider-side quotas are not defined by this repository. |
 | `ELEVENLABS_VOICE_ID` | ⚙️ | `XB0fDUnXU5powFXDhCwa` | `XB0fDUnXU5powFXDhCwa` | ElevenLabs Voice ID to use for synthesis. Default is Charlotte (conversational, English/Russian). Browse voices at [elevenlabs.io/voice-library](https://elevenlabs.io/voice-library). |
+| `ELEVENLABS_MODEL` | ⚙️ | `eleven_multilingual_v2` | `eleven_multilingual_v2` | Model passed to the ElevenLabs synthesis path. |
+
+These tables cover supported operator settings, not every environment read in the
+repository. A runtime setting is not automatically forwarded by the VPS workflow:
+for example, `INLINE_MODEL`, `OPENCODE_URL_SELECTION_MODEL`, `ELEVENLABS_MODEL`,
+`WEBHOOK_MAX_CONNECTIONS` and `UPDATE_QUEUE_MAXSIZE` are loaded by code but are not
+currently passed through that workflow. Adding a GitHub Secret alone does not
+activate them. Conversely, legacy `USE_OPENROUTER` and
+`MAX_CONCURRENT_HEAVY_CALLBACKS` are forwarded but not loaded by `load_settings()`;
+the latter currently uses the handler's fallback of 4. Provider selection uses
+`PRIMARY_PROVIDER` and its persisted override. See the [audit](docs/documentation-audit-2026-09-20.md).
 
 ---
 
@@ -614,12 +640,12 @@ Administrative and developer commands are deliberately excluded from `app/bot_co
 **Web Dashboard (Quart HTTP Routes):**
 
 - `GET /`, `GET /login`, `POST /login`, `GET /logout` — UI interface (requires `ADMIN_SECRET` authentication and uses Cookie Sessions).
-- `GET /health` — Robust unauthenticated API health check.
-- `GET /metrics` — Exposes Prometheus telemetry text (uptime, errors, usage).
+- `GET /health` — Unauthenticated process/database status: 200 when the database connection flag is healthy, 503 when it is not, 500 on an internal check error. Redis status is reported but does not determine the overall status. This does not probe Telegram or AI providers.
+- `GET /metrics` — Unauthenticated, rate-limited Prometheus telemetry text. Restrict exposure at the reverse proxy when required by the deployment.
 - `GET /api/dashboard` — Aggregated batch endpoint (replaces 8 individual fetches with 1 RTT). Auth required.
 - `GET /api/overview`, `/api/keys`, `/api/errors`, `/api/cache`, `/api/queue`, `/api/database`, `/api/circuit-breakers`, `/api/memory` — Individual JSON data endpoints for dashboard charts (requires auth cookie or `X-Auth-Token` header).
 - `GET /api/key-health` — Per-key health diagnostics: status, failure count, suspension info. Auth required.
-- `GET /api/events` — Server-Sent Events stream (5s interval) for real-time CPU, memory, DB, queue, and request metrics.
+- `GET /api/events` — Authenticated Server-Sent Events stream (5s interval) for real-time CPU, memory, DB, queue, and request metrics.
 
 ## Main User Flows
 
@@ -631,7 +657,11 @@ Administrative and developer commands are deliberately excluded from `app/bot_co
 - `/horoscope_settings` supports subscriptions and on-demand readings;
   `/horoscope_stop` stops scheduled delivery.
 - The admin web dashboard requires configured authentication; `/admin_daily#croc`
-  manages daily Crocodile and its shared ordinary/daily text-model setting.
+  manages shared/per-process Crocodile text models, per-puzzle images, the hourly
+  automatic image quota and background preparation of both difficulties for an
+  arbitrary day. Readiness checks do not invoke providers; explicit preparation
+  can invoke paid providers and bypasses the automatic image quota. See the
+  [Daily Croc runbook](docs/pollinations-daily-croc.md).
 
 ## Troubleshooting
 

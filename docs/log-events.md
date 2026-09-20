@@ -52,5 +52,8 @@ Synthetic provider example:
 ```
 
 Retention class for all events is restricted operational. Docker rotation is
-bounded but not archival; a future collector must define and verify retention,
-ACL, backup and deletion separately.
+bounded but not archival. The implemented private Alloy/Loki/Grafana collector
+uses 168-hour Loki retention with asynchronous deletion and a two-hour safety
+delay; Grafana datasource access grants access to the protected stream. Neither
+Docker rotation nor single-host Loki is a host-loss backup. See the
+[collector runbook](../ops/observability/README.md) for access and recovery.

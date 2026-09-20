@@ -14,7 +14,7 @@ Preferred reporting path:
 2. Include the affected commit or release, reproduction steps, expected impact, and any relevant logs with secrets redacted.
 3. If private advisories are not available to you, open a minimal public issue that says you have a security report and avoid sensitive details until a private contact path is established.
 
-## Implementation Boundaries (reviewed 2026-09-08)
+## Implementation Boundaries (reviewed 2026-09-20, checkout `f44541a7`)
 
 - API keys are encrypted using Fernet derived from `ADMIN_SECRET`; preserve that
   secret when moving encrypted data. It is not an AES-GCM implementation.
@@ -26,6 +26,13 @@ Preferred reporting path:
   mirrors. Local erasure cannot retract previously exported or third-party copies.
 - Integration tests and migration tools can mutate schema/data. Use disposable
   targets as described in [CONTRIBUTING.md](CONTRIBUTING.md).
+- Protected logs default to bounded, scrubbed message text on authorized paths;
+  `LOG_CONTENT_MODE=metadata` disables text. Private-memory bodies, birth data and
+  full credentials remain forbidden. Grafana datasource access exposes the stream;
+  local rotation/Loki retention are not host-loss backups. See [logging](docs/logging.md).
+- Webhook secrets are optional, validated by `app/webhook_security.py` and
+  compared in constant time. `/metrics` is unauthenticated in application code;
+  deployments can restrict scraping at the reverse proxy.
 
 ## High-Risk Areas
 

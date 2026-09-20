@@ -1,5 +1,10 @@
 # Logging Overhaul Implementation Plan
 
+> Historical plan, reviewed 2026-09-20 against `f44541a7`. The logging pipeline
+> and a separate private collector stack are implemented. Use [the current runbook](../../logging.md)
+> and [collector operations](../../../ops/observability/README.md); unchecked steps
+> below are historical, not a new execution request or evidence that a feature is absent.
+
 > **For agentic workers:** использовать `executing-plans` для последовательной реализации с checkpoints. `subagent-driven-development` допустим только при отдельном разрешении пользователя на делегирование. Шаги отмечать checkbox. Этот документ сам по себе не разрешает внедрение, commit, push, deploy или работу с production данными.
 
 **Goal:** сделать историю каждого запроса/фонового задания связной, структурированной, безопасно подробной и пригодной для расследования человеком и агентом.

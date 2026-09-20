@@ -1,6 +1,6 @@
 # Architecture — GemAI Bot v2
 
-Reviewed against checkout `8fc19516` on 2026-09-08. This describes implementation,
+Reviewed against checkout `f44541a7` on 2026-09-20. This describes implementation,
 not a claim that a particular VPS or provider has been tested today.
 
 ## Runtime and request ownership
@@ -9,7 +9,9 @@ Python 3.14 runs PTB and Quart/Hypercorn in one async application lifecycle.
 `bot.py` registers handlers, public command menus and scheduled jobs, initializes
 storage, and drains owned work on shutdown. Without `WEBHOOK_URL` it polls.
 With it, the webhook path contains a derived hash rather than the bot token;
-configured `WEBHOOK_SECRET_TOKEN` is checked before accepting updates.
+configured `WEBHOOK_SECRET_TOKEN` is validated by `app/webhook_security.py`
+(1–256 ASCII letters/digits/underscore/hyphen) and checked with constant-time
+comparison before accepting updates. Empty configuration disables that header guard.
 `UserScopedUpdateProcessor` bounds concurrency and serializes user-scoped work.
 `app/webhook_dedupe.py` is distinct from message double-tap deduplication in
 `app/middleware/dedup.py`.
@@ -36,6 +38,7 @@ Telegram update → bot.py / handlers → context + provider routing
 | Persistence | `app/database.py`: pool/lifecycle; `app/repos/`: domain queries; `app/db/`: migrations, validation, RLS and seed |
 | State/concurrency | `app/state.py`: local state and DB persistence; `app/adapters/concurrency.py`: Redis/local semaphores; `app/utils/background_tasks.py`: tracked detached work |
 | Daily products | `app/games/`: Crocodile, 2048, trivia and shared daily AI authoring; matching handlers/repositories own Telegram delivery and storage |
+| Daily preparation | `app/games/daily_preparation.py`: read-only readiness, managed Easy/Hard preparation, Redis lease/status and local fallback; `crocodile_daily.py`: automatic image quota and explicit admin bypass |
 | Astrology | `app/astro.py`, horoscope handlers, `app/tarot*.py`, `app/natal/`: horoscopes, tarot, natal calculation/reporting |
 | Web surfaces | `app/web.py`: dashboard/admin; `app/web_miniapp.py`: Mini App APIs and live/game flows; `app/web_reader.py`, `app/web_natal.py`: long reads/reports |
 | Observability | `app/observability/`: envelope, context, redaction, writer, lifecycle mappings, operational metrics and incident export; `app/utils/logging_config.py`: bootstrap/compatibility; `app/request_context.py`: adapter; `app/metrics.py`: product metrics; `app/prometheus.py`: runtime exporter |
@@ -50,6 +53,12 @@ Image providers, Gemini embeddings, TTS and Live Audio have specialized interfac
 An explicit Crocodile text-model selection uses `google-genai` inside the game
 boundary for both ordinary and daily games; auto mode retains its existing lanes.
 See [Crocodile operations](pollinations-daily-croc.md).
+
+Agentic research is another specialized SDK boundary: `app/core/agentic.py`
+executes Gemini tool iterations and final synthesis directly; `ai_search.py`
+owns its model/key fallback. Page admission is bounded per agent run. Time and
+reported-token cutoffs are checked between iterations, not hard cancellation or
+billing ceilings; synthesis and a fresh fallback run can add time/usage.
 
 `app/config.py` defines role defaults and ordered selectable lists. Unset/blank
 `*_AVAILABLE_MODELS` uses defaults; `none` makes a selector intentionally empty.
@@ -142,9 +151,18 @@ evidence. CI cancels superseded runs. Deployment serializes transitions with
 health gates. Dependency-only rollback has a restricted eligibility check; it is
 not a general code/schema rollback or proof of functional provider correctness.
 
+CI also validates the pinned private log-search stack and starts it to check
+Grafana health/authentication and Alloy/Loki readiness. Deployment recreates that
+independent stack on configuration changes, waits for health, verifies the same
+endpoints and synchronizes Grafana's admin password with the persisted secret
+before replacing the bot. These checks do not assert that a synthetic bot event
+has travelled through Docker → Alloy → Loki → Grafana search.
+
 The VPS workflow defines `tg-api`, `tg-bot` and `tg-media-cleanup`; database/Redis
 are supplied separately. The root Compose file is a legacy single-bot local
-alternative, not this production stack. See [README operations](../README.md#run)
+alternative, not this production stack. The separate log-search project and its
+privacy/retention boundaries are in [the runbook](../ops/observability/README.md).
+See [README operations](../README.md#run)
 and [dependency maintenance](../README.md#dependency-maintenance).
 
 For exact commands, test-service safety and local hook installation, use

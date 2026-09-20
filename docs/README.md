@@ -1,6 +1,6 @@
 # Documentation index
 
-Reviewed 2026-09-08 against checkout `8fc19516`. Read current references first;
+Reviewed 2026-09-20 against checkout `f44541a7`. Read current references first;
 historical plans, journals and test/deploy reports are not current instructions.
 
 ## Current references
@@ -14,16 +14,15 @@ historical plans, journals and test/deploy reports are not current instructions.
 | [CONTEXT.md](../CONTEXT.md) | Domain vocabulary: delivery, state, consent, provenance and model roles |
 | [Architecture](ARCHITECTURE.md) | Source-backed ownership boundaries and rationale |
 | [Security policy](../SECURITY.md) | Reporting route and implementation limits |
-| [Roadmap](../ROADMAP.md) | Future directions, explicitly not implemented behavior |
-| [Pollinations / Crocodile](pollinations-daily-croc.md) | Authentication, shared text-model selection, image overrides |
+| [Roadmap](../ROADMAP.md) | Categorized initiatives, priorities, dependencies, effort and acceptance criteria; proposed work |
+| [Pollinations / Crocodile](pollinations-daily-croc.md) | Authentication, shared/per-process models, image overrides/quota and day preparation |
 | [Natal dependency decision](natal-chart-dependency-decision.md) | PyEphem/local math, city data, scope and dependency rationale |
 | [Natal readiness](natal-chart-product-readiness.md) | Implemented checks and rollout checklist; old results explicitly historical |
-| [Audit report](documentation-audit-2026-09-08.md) | Evidence, corrections, rationale and remaining limits |
+| [Latest audit report](documentation-audit-2026-09-20.md) | Source evidence, corrections, verification and remaining limits |
 | [Logging runbook](logging.md) | Runtime configuration, privacy policy and incident investigation for operators/agents |
 | [Private log search](../ops/observability/README.md) | Grafana/Loki/Alloy deployment, access, search limits and recovery |
 | [Log viewer capacity baseline](operations/log-viewer-baseline.md) | Safe capacity facts and live-measurement boundary |
 | [Log event catalog](log-events.md) | Stable schema-v1 event ownership, required fields and terminal semantics |
-| [Logging audit](logging-audit-2026-09-10.md) | Dated source audit, findings and target design rationale |
 
 ## Accepted architecture decisions
 
@@ -56,6 +55,9 @@ neither authorizes execution now nor proves a feature is missing.
 | 2026-08-29 migration invariants | `app/db/migration_manifest.py`, `app/db/schema.py`, CI migration gates |
 | 2026-08-29 trivia / admin observability | Daily trivia authoring, horoscope handlers, dashboard and focused tests |
 | 2026-08-29 dependency frontier | `pyproject.toml`, `uv.lock`, dependency scripts and workflows |
+| 2026-09-08 documentation audit | [Dated report](documentation-audit-2026-09-08.md); later implementation changes need the latest audit |
+| 2026-09-10 logging audit/overhaul | [Original audit](logging-audit-2026-09-10.md); implemented contracts are in `app/observability/`, `logging.md` and `log-events.md` |
+| 2026-09-11 log viewer replacement | `ops/observability/`, CI/deploy health/auth gates; the plan is not an unimplemented backlog |
 
 [CHANGELOG.md](../CHANGELOG.md), [maintainer queue](MAINTAINER_QUEUE.md) and
 `.jules/` journals are historical evidence. Old performance figures and broad

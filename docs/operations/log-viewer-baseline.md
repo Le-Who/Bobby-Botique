@@ -15,11 +15,12 @@ inspection is stored in the repository.
 - Production VPS memory, filesystem headroom, event rate, and Portainer browser
   heap were not available in the repository and are not claimed as measured.
 
-The user requested an immediate transition, so missing historical Portainer
-measurements do not introduce a calendar soak gate. The deployment fails in the
-same run if the new services do not reach the running state; operational capacity
-is checked immediately with content-free `docker stats`, `docker system df`, and
-the Grafana health/search checks from the runbook.
+The checked-in deployment has no calendar soak gate. It fails if the services do
+not pass startup/health, internal readiness or Grafana authentication checks.
+These gates are not capacity measurements or proof of end-to-end event ingestion.
+Operators can collect capacity evidence with content-free `docker stats`,
+`docker system df` and bounded synthetic searches from the runbook; this audit
+did not run those commands against a live host.
 
 When recording a live baseline, retain only these aggregate fields outside the
 VPS: timestamp, service memory/CPU, filesystem used/free, events/second, and
