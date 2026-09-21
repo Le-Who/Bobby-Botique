@@ -77,6 +77,12 @@ filtering those fields.
   two-hour safety delay; 168 hours is not an exact physical-erasure timestamp.
 - Docker continues to rotate its own local source window. If Loki or Alloy is
   unavailable longer than that window, old entries can be lost.
+- Container discovery remains on a 15-second interval. The separate
+  `loki.source.docker` refresh interval is 24 hours because Alloy v1.18 also
+  applies that value as the total HTTP client timeout when it reads through the
+  restricted Docker API proxy. A short value repeatedly terminates the
+  long-lived `/logs?follow=1` response; it does not make discovery faster.
+  Re-evaluate this workaround when upgrading Alloy.
 - Alloy persists source positions and uses its experimental bounded WAL. It can
   reduce gaps but does not provide exactly-once delivery; correlate duplicates
   by `event_id`.
@@ -122,6 +128,30 @@ export DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock)"
 docker compose -f /opt/gemaibot-observability/compose.yml config --quiet
 docker compose -f /opt/gemaibot-observability/compose.yml up -d --remove-orphans --force-recreate --wait --wait-timeout 90
 docker compose -f /opt/gemaibot-observability/compose.yml ps
+```
+
+After an Alloy-only configuration change, validate the file first and recreate
+only Alloy. The `--no-deps` flag prevents Compose from restarting Loki, Grafana,
+the Docker proxy, or either bot:
+
+```bash
+docker run --rm \
+  -v /opt/gemaibot-observability/config.alloy:/etc/alloy/config.alloy:ro \
+  grafana/alloy:v1.18.0@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308 \
+  validate --stability.level=experimental /etc/alloy/config.alloy
+docker compose -f /opt/gemaibot-observability/compose.yml \
+  up -d --no-deps --force-recreate alloy
+```
+
+Confirm readiness and inspect only the recent collector diagnostics. With two
+stable targets, repeated `could not transfer logs` warnings over a 90-second
+window indicate that the long-lived Docker streams are still being interrupted:
+
+```bash
+docker compose -f /opt/gemaibot-observability/compose.yml exec -T grafana \
+  curl -fsS --max-time 10 http://alloy:12345/-/ready
+docker compose -f /opt/gemaibot-observability/compose.yml logs --since 90s alloy \
+  | grep -F "could not transfer logs"
 ```
 
 The pinned Grafana container runs as `472:0`; the secret must be readable by its

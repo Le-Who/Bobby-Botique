@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -105,6 +106,22 @@ def test_alloy_collects_only_opted_in_bot_and_avoids_high_cardinality_labels():
         assert allowed in labels_block
     for forbidden in ("event_id", "instance_id", "request_id", "trace_id", "user_id"):
         assert forbidden not in labels_block
+
+
+def test_alloy_http_log_streams_are_not_restarted_on_the_discovery_interval():
+    """Keep fast discovery without applying its timeout to long-lived log streams."""
+    alloy = (OBSERVABILITY / "config.alloy").read_text(encoding="utf-8")
+
+    assert re.search(
+        r'discovery\.docker "bot" \{.*?refresh_interval\s*=\s*"15s"',
+        alloy,
+        re.DOTALL,
+    )
+    assert re.search(
+        r'loki\.source\.docker "bot" \{.*?refresh_interval\s*=\s*"24h"',
+        alloy,
+        re.DOTALL,
+    )
 
 
 def test_docker_proxy_has_a_deny_by_default_read_only_allowlist():

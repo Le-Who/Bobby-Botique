@@ -26,7 +26,10 @@ discovery.relabel "bot" {
 loki.source.docker "bot" {
   host             = "http://docker-proxy:2375"
   targets          = discovery.relabel.bot.output
-  refresh_interval = "15s"
+  // With an HTTP Docker endpoint Alloy v1.18 also uses this value as the
+  // total client timeout. Keep it long for /logs?follow=1; discovery above
+  // remains at 15s, so new and replaced containers are still found quickly.
+  refresh_interval = "24h"
   labels = {
     environment  = "unknown",
     level        = "unknown",
