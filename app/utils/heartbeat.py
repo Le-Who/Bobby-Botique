@@ -46,6 +46,12 @@ def unregister_heartbeat(message_id: int) -> None:
         task.cancel()
 
 
+def is_heartbeat_active(message_id: int) -> bool:
+    """Whether a placeholder is still waiting for its first answer text."""
+    event = _HEARTBEAT_EVENTS.get(message_id)
+    return event is not None and not event.is_set()
+
+
 def stop_heartbeat(message_id: int) -> None:
     """
     Stops the heartbeat associated with the given message_id.

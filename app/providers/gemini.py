@@ -159,53 +159,32 @@ _VERTEX_CONFIG_ERROR_PATTERNS = (
 
 
 def get_vertex_client() -> genai.Client | None:
-    """Return a cached Vertex AI client, or None if not configured.
+    """Return the Express Mode client for non-Live Vertex requests.
 
-    Vertex AI Express Mode uses the same google-genai SDK but routes requests
-    through GCP infrastructure.
-
-    If VERTEX_AI_KEY is provided, it uses Express Mode (API key auth).
-    Otherwise, it attempts to use ADC / service-account credentials.
+    The Live route has its own ADC client. Its mounted service account must not
+    silently enroll every chat request in a Vertex race when Express is off.
     """
     global _vertex_client, _vertex_client_initialized
     if _vertex_client_initialized:
         return _vertex_client
     _vertex_client_initialized = True
 
-    project = settings.VERTEX_AI_PROJECT
-    location = settings.VERTEX_AI_LOCATION or "us-central1"
     api_key = settings.VERTEX_AI_KEY
 
-    if not api_key and not project:
-        return None  # Not configured — degrade gracefully
+    if not api_key:
+        return None
 
     log = logging.getLogger(__name__)
     try:
         http_opts: dict[str, Any] = {"timeout": 90_000}
-        if api_key:
-            # Express Mode: the API key already carries project/location metadata.
-            # Passing project= or location= alongside api_key= causes the SDK to
-            # switch to ADC mode and then fail with "credentials not found".
-            _vertex_client = genai.Client(
-                vertexai=True,
-                api_key=api_key,
-                http_options=types.HttpOptions(**http_opts),  # type: ignore[arg-type]
-            )
-            log.info("Vertex AI client initialized (Express Mode / API key)")
-        else:
-            # ADC / Service Account mode: relies on ambient credentials
-            # (GOOGLE_APPLICATION_CREDENTIALS or GCP metadata server).
-            _vertex_client = genai.Client(
-                vertexai=True,
-                project=project,
-                location=location,
-                http_options=types.HttpOptions(**http_opts),  # type: ignore[arg-type]
-            )
-            log.info(
-                "Vertex AI client initialized (ADC mode, project=%s location=%s)",
-                project,
-                location,
-            )
+        # Express key carries its own project and location. Passing those
+        # settings alongside the key switches the SDK back to ADC mode.
+        _vertex_client = genai.Client(
+            vertexai=True,
+            api_key=api_key,
+            http_options=types.HttpOptions(**http_opts),  # type: ignore[arg-type]
+        )
+        log.info("Vertex AI client initialized (Express Mode / API key)")
     except Exception as exc:
         log.warning("Vertex AI client init failed — Vertex AI pathway disabled: %s", exc)
         _vertex_client = None

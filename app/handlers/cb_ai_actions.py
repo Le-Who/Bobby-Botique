@@ -6,6 +6,7 @@ These are semaphore-guarded and run in background tasks.
 """
 
 __all__ = [
+    "cancel_long_wait_callback",
     "complex_search_callback",
     "continue_stream_callback",
     "fallback_callback",
@@ -184,6 +185,48 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     _task = asyncio.create_task(task_wrapper())
     _background_tasks.add(_task)
     _task.add_done_callback(_background_tasks.discard)
+
+
+async def cancel_long_wait_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cancel only the matching, still-pending reply before enabling retry."""
+    del context
+    query = update.callback_query
+    if not query or not update.effective_user or not query.message or not query.data:
+        return
+    user_id = update.effective_user.id
+    language_code = getattr(getattr(query, "from_user", None), "language_code", "") or ""
+    lang = "en" if language_code.lower().startswith("en") else "ru"
+    chat_id = getattr(getattr(query.message, "chat", None), "id", None)
+    message_id = getattr(query.message, "message_id", None)
+    expected = f"retry_wait:{message_id}"
+    from app.utils.heartbeat import is_heartbeat_active
+
+    if (
+        query.data != expected
+        or state.get_last_bot_message(user_id) != (message_id, chat_id)
+        or not is_heartbeat_active(message_id)
+    ):
+        await query.answer(t("processing.long_wait_finished", lang))
+        return
+    if not state.cancel_active_task(user_id):
+        await query.answer(t("processing.long_wait_finished", lang))
+        return
+
+    try:
+        async with asyncio.timeout(5.0):
+            async with state.get_user_lock(user_id):
+                pass
+    except TimeoutError:
+        await query.answer(t("processing.long_wait_stopping", lang))
+        return
+
+    from app.errors import build_retry_and_roles_keyboard
+
+    await query.answer(t("processing.long_wait_stopped", lang))
+    await query.edit_message_text(
+        t("processing.long_wait_retry_prompt", lang),
+        reply_markup=build_retry_and_roles_keyboard(include_roles=False),
+    )
 
 
 async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

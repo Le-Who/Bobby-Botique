@@ -5,6 +5,7 @@ Uses pgvector for embedding storage and HNSW-indexed cosine similarity search.
 Embeddings are generated via Gemini's embedding API (gemini-embedding-2-preview, 768-dim halfvec).
 """
 
+import asyncio
 import logging
 import re
 from collections.abc import Iterable
@@ -71,6 +72,7 @@ _TRIVIAL_QUERY_RE = re.compile(
 # Minimum query length that justifies an LLM expansion call.
 # Anything shorter is either a greeting or too terse to meaningfully expand.
 _MIN_EXPANSION_LENGTH = 12
+QUERY_EXPANSION_TIMEOUT_SECONDS = 8.0
 
 
 def _should_expand_query(query: str) -> bool:
@@ -91,7 +93,7 @@ def _should_expand_query(query: str) -> bool:
 async def expand_query_with_llm(query: str, api_key: str) -> str:
     """Expand a vague / ambiguous user query into a concise keyword-rich search phrase.
 
-    Uses a cheap Flash-Lite call (~200ms) to re-phrase questions like
+    Uses a bounded Flash-Lite call to re-phrase questions like
     "That framework I mentioned yesterday?" into a phrase like
     "Python web framework project FastAPI" that embeds near actual memories.
 
@@ -123,16 +125,21 @@ async def expand_query_with_llm(query: str, api_key: str) -> str:
             "Output ONLY the search phrase, nothing else.\n\n"
             f"User query: {query[:500]}"
         )
-        resp = await client.aio.models.generate_content(
-            model=QUERY_EXPANSION_MODEL,
-            contents=prompt,
-            config=_types.GenerateContentConfig(temperature=0.0, max_output_tokens=60),
+        resp = await asyncio.wait_for(
+            client.aio.models.generate_content(
+                model=QUERY_EXPANSION_MODEL,
+                contents=prompt,
+                config=_types.GenerateContentConfig(temperature=0.0, max_output_tokens=60),
+            ),
+            timeout=QUERY_EXPANSION_TIMEOUT_SECONDS,
         )
         expanded = (resp.text or "").strip().strip('"')
         if expanded and len(expanded) > 3:
             attempt.finish(outcome="succeeded", output_chars=len(expanded))
             return expanded
         attempt.finish(outcome="failed", level="warning", reason_code="empty_response")
+    except TimeoutError:
+        attempt.finish(outcome="skipped", level="warning", reason_code="timeout")
     except Exception as exc:
         attempt.fail(exc, reason_code="provider_error")
     return query

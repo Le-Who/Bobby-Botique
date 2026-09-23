@@ -13,6 +13,7 @@ Horoscope text is generated exactly as the inline handler does, reusing
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 
@@ -128,6 +129,7 @@ async def check_and_send_horoscopes(context: ContextTypes.DEFAULT_TYPE) -> None:
     utc_hour = now.hour
     utc_minute = now.minute
 
+    delivery_slots = asyncio.Semaphore(4)
     for kind in ("today", "tomorrow"):
         try:
             due = await get_due_horoscope_subscriptions(utc_hour, utc_minute, kind)
@@ -146,18 +148,24 @@ async def check_and_send_horoscopes(context: ContextTypes.DEFAULT_TYPE) -> None:
             utc_minute,
         )
 
-        for sub in due:
-            user_id: int = sub["user_id"]
-            sign: str = sub.get("sign", "aries")
+        async def deliver_one(sub: dict, delivery_kind: str = kind) -> None:
+            async with delivery_slots:
+                user_id: int = sub["user_id"]
+                sign: str = sub.get("sign", "aries")
 
-            success = await _deliver_horoscope(context.bot, user_id, sign, kind)
-            if success:
-                await mark_horoscope_sent(user_id, kind)
-                logger.info("Horoscope '%s' delivered to user=%s sign=%s", kind, user_id, sign)
-            else:
-                logger.warning(
-                    "Horoscope '%s' delivery failed for user=%s sign=%s — will retry next minute",
-                    kind,
-                    user_id,
-                    sign,
-                )
+                success = await _deliver_horoscope(context.bot, user_id, sign, delivery_kind)
+                if success:
+                    await mark_horoscope_sent(user_id, delivery_kind)
+                    logger.info("Horoscope '%s' delivered to user=%s sign=%s", delivery_kind, user_id, sign)
+                else:
+                    logger.warning(
+                        "Horoscope '%s' delivery failed for user=%s sign=%s — will retry next minute",
+                        delivery_kind,
+                        user_id,
+                        sign,
+                    )
+
+        outcomes = await asyncio.gather(*(deliver_one(sub) for sub in due), return_exceptions=True)
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                logger.error("Horoscope delivery task failed: %s", type(outcome).__name__)

@@ -1,0 +1,40 @@
+<section class="daily-choice" data-page-game="{{ current_daily_game }}" aria-label="Выбор игры дня">
+  <span class="daily-choice__eyebrow">Игра дня</span>
+  <button class="daily-choice__trigger" id="daily-choice-trigger" type="button"
+          aria-haspopup="dialog" aria-controls="daily-choice-dialog">
+    <span id="daily-choice-current">Загрузка выбора…</span>
+    <span class="daily-choice__chevron" aria-hidden="true">⌄</span>
+  </button>
+</section>
+
+<dialog class="daily-choice-dialog" id="daily-choice-dialog" aria-labelledby="daily-choice-title"
+        aria-describedby="daily-choice-description">
+  <div class="daily-choice-dialog__head">
+    <div>
+      <p class="daily-choice-dialog__kicker">Каждый день — ваша игра</p>
+      <h2 id="daily-choice-title">Выберите daily-игру</h2>
+    </div>
+    <button id="daily-choice-close" class="daily-choice-dialog__close" type="button" aria-label="Закрыть выбор игры">×</button>
+  </div>
+  <p id="daily-choice-description" class="daily-choice-dialog__description">
+    Выбор сохранится для команды /dailycroc и ежедневной рассылки, если она включена.
+  </p>
+  <div class="daily-choice-dialog__games" role="group" aria-label="Доступные игры">
+    <button class="daily-choice-dialog__game" type="button" data-daily-game="crocodile" aria-pressed="false">
+      <span class="daily-choice-dialog__icon" aria-hidden="true">🐊</span>
+      <span><strong>Крокодил</strong><small>Угадывайте слово по подсказкам</small></span>
+      <span class="daily-choice-dialog__check" aria-hidden="true">✓</span>
+    </button>
+    <button class="daily-choice-dialog__game" type="button" data-daily-game="2048" aria-pressed="false">
+      <span class="daily-choice-dialog__icon" aria-hidden="true">◈</span>
+      <span><strong>2048 Sprint</strong><small>Соберите цель за меньшее число ходов</small></span>
+      <span class="daily-choice-dialog__check" aria-hidden="true">✓</span>
+    </button>
+    <button class="daily-choice-dialog__game" type="button" data-daily-game="trivia" aria-pressed="false">
+      <span class="daily-choice-dialog__icon" aria-hidden="true">✦</span>
+      <span><strong>Викторина</strong><small>Пять вопросов и суперигра</small></span>
+      <span class="daily-choice-dialog__check" aria-hidden="true">✓</span>
+    </button>
+  </div>
+  <p id="daily-choice-status" class="daily-choice-dialog__status" role="status" aria-live="polite"></p>
+</dialog>

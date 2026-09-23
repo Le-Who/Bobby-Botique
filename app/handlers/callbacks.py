@@ -56,6 +56,7 @@ def _add_fast_callback(application: Application, callback, pattern: str):
 def register(application: Application) -> None:
     # --- Lazy imports to avoid circular dependencies ---
     from app.handlers.cb_ai_actions import (
+        cancel_long_wait_callback,
         complex_search_callback,
         continue_stream_callback,
         fallback_callback,
@@ -161,6 +162,7 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(deep_dive_callback, pattern="^deepdive:"))
     application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic"))
     application.add_handler(CallbackQueryHandler(retry_last_callback, pattern="^retry_last$"))
+    _add_fast_callback(application, cancel_long_wait_callback, r"^retry_wait:\d+$")
     application.add_handler(CallbackQueryHandler(continue_stream_callback, pattern="^continue_stream$"))
     _add_fast_callback(application, tts_reply_callback, "^tts_reply$")
 
@@ -258,13 +260,17 @@ def register(application: Application) -> None:
 
     # Daily Crocodile opt-in / snooze callbacks
     from app.handlers.daily_crocodile import (
+        daily_game_choice_callback,
+        daily_game_choose_callback,
         daily_snooze_callback,
         daily_subscribe_callback,
         daily_time_callback,
         daily_unsubscribe_callback,
     )
 
-    _add_fast_callback(application, daily_subscribe_callback, "^dailycroc:subscribe$")
+    _add_fast_callback(application, daily_subscribe_callback, "^dailycroc:subscribe(?::(?:crocodile|2048|trivia))?$")
+    _add_fast_callback(application, daily_game_choose_callback, "^dailycroc:choose$")
+    _add_fast_callback(application, daily_game_choice_callback, "^dailycroc:game:(?:crocodile|2048|trivia)$")
     _add_fast_callback(application, daily_time_callback, "^dailycroc:time:")
     _add_fast_callback(application, daily_snooze_callback, "^dailycroc:snooze$")
     _add_fast_callback(application, daily_unsubscribe_callback, "^dailycroc:unsubscribe$")

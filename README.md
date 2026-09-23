@@ -28,7 +28,9 @@ The [changelog](CHANGELOG.md) records history, not a current runtime specificati
 ## Feature Overview
 
 - Chat with Gemini, Opencode, OpenRouter and FreeTheAI routing, model selection,
-  key rotation, provider fallback and recovery from partial responses.
+  key rotation and recovery from partial responses. Interactive Gemini chat
+  can start a second model after eight seconds without text; at most two model
+  routes run at once, and the first to produce text wins.
 - Quick search (`?`), bounded agentic research (`??`), URL/document/photo
   understanding and deterministic weather/currency/crypto shortcuts.
 - Typed streamed/completed response delivery, preserving final actions; long
@@ -41,11 +43,20 @@ The [changelog](CHANGELOG.md) records history, not a current runtime specificati
   requires a server-side key and Pollen budget; FreeTheAI has a separate image path.
 - Voice transcription, intent-aware chat/search routing, queued TTS and Mini App
   Live Audio. Confirmation depends on the voice flow; it is not universal.
+- If a chat response has no first text after a minute, its placeholder offers
+  a safe stop-and-retry action. Optional memory query expansion is limited to
+  eight seconds so slow recall cannot hold up the main response indefinitely.
 - Consent-gated private long-term memory, hybrid vector/text recall, provenance-aware
   graph writes and account-data controls. Group messages are not implicitly saved
   into private LTM.
-- Daily Crocodile, 2048 and trivia; scheduled briefings, reminders, tarot and
-  horoscopes. Horoscope settings provide on-demand today/tomorrow readings.
+- Daily Crocodile, 2048 and trivia. Players can change their daily game from
+  any of the three Mini App screens or the bot's daily messages; the choice
+  controls `/dailycroc` and their daily subscription. Reopening a completed
+  game in chat shows the player's current result and leaderboard. The admin
+  choice remains the default and is prepared seven days ahead, while the other
+  games are prepared for today and tomorrow.
+- Scheduled briefings, reminders, tarot and horoscopes. Horoscope settings
+  provide on-demand today/tomorrow readings.
 - Feature-gated natal reports with local city lookup, PyEphem planet calculations,
   local equal-house/angle math and optional LLM interpretation.
 - Admin dashboard and daily-content controls, metrics, dependency validation and
@@ -292,15 +303,22 @@ When configured, the bot communicates with a self-hosted Local Bot API Server in
 
 ### Vertex AI (Primary Inline Driver + Optional Live Internet Route)
 
-When `VERTEX_AI_KEY` and `VERTEX_AI_PROJECT` are set, Vertex AI Express is used by specialized inline/game paths; explicit Crocodile text-model selection follows the shared Gemini setting described in the operations notes. **Live Audio remains separate by default**: the default Mini App voice path in the code runs through the Gemini GenAI Live API path (`gemini-3.1-flash-live-preview`). For testing, the Live Mini App now also exposes an **opt-in Vertex Live route** on `gemini-live-2.5-flash-native-audio` with Google Search grounding, selectable as `Vertex Live · с доступом в интернет`.
+When `VERTEX_AI_KEY` is set, Vertex AI Express is used by specialized inline/game paths and eligible chat races; the key carries its own project metadata. Without that key, ordinary chat does not use the service-account credentials mounted for Vertex Live. Explicit Crocodile text-model selection follows the shared Gemini setting described in the operations notes. **Live Audio remains separate by default**: the default Mini App voice path in the code runs through the Gemini GenAI Live API path (`gemini-3.1-flash-live-preview`). The experimental Vertex Live route on `gemini-live-2.5-flash-native-audio` with Google Search grounding is available only when `VERTEX_LIVE_ENABLED=true`; otherwise it is hidden from settings and its WebSocket rejects connections.
 
 For that experimental live route, `VERTEX_AI_PROJECT` and `VERTEX_AI_LOCATION` are not enough by themselves. The bot container must also receive readable ADC credentials, typically by mounting a service-account JSON and exporting `GOOGLE_APPLICATION_CREDENTIALS` to that in-container path. The included GitHub Actions deploy flow supports this via the `VERTEX_LIVE_SERVICE_ACCOUNT_JSON` secret and mounts it read-only into the bot container.
+
+A readable service-account file can still refer to an account that no longer
+exists. If token refresh reports `invalid_grant` / `account not found`, replace
+`VERTEX_LIVE_SERVICE_ACCOUNT_JSON` with a valid account before using the opt-in
+Vertex Live route. Ordinary chat uses only `VERTEX_AI_KEY` for Vertex Express
+and does not consume this ADC file.
 
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
 | `VERTEX_AI_KEY` | No | GCP API key string | `""` | Used by configured Vertex Express paths; selection order depends on the caller. This API key is distinct from ADC service-account credentials for the optional Live route. |
-| `VERTEX_AI_PROJECT` | No | `my-gcp-project-123` | `""` | GCP project ID where Vertex AI API is enabled. Required together with `VERTEX_AI_KEY`. |
+| `VERTEX_AI_PROJECT` | No | `my-gcp-project-123` | `""` | GCP project ID for the regional Vertex Live route; not required by the Express client. |
 | `VERTEX_AI_LOCATION` | No | `us-central1` | `us-central1` | Vertex AI region. Must match where your models are available. |
+| `VERTEX_LIVE_ENABLED` | No | `true` or `false` | `false` | Enables the experimental Vertex Live route only after its service-account credentials work. Forwarded from the GitHub Actions repository variable. |
 
 ### Opencode Go Models
 

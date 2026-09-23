@@ -38,6 +38,8 @@ from app.observability.context import current_context, request_scope
 from app.observability.events import emit, record_exception
 from app.observability.schema import JsonValue
 from app.observability.workload_events import start_workload_attempt
+from app.repos import crocodile_daily as daily_delivery_repo
+from app.repos import daily_2048 as daily_2048_repo
 from app.request_context import set_user_context
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
@@ -140,25 +142,32 @@ def _get_live_thinking_presets(lang: str) -> list[dict[str, str]]:
 
 
 _LIVE_VOICE_IDS = {"Aoede", "Kore", "Leda", "Zephyr", "Charon", "Orus"}
-_LIVE_CONNECTION_MODE_IDS = {"standard", "vertex_internet"}
 _LIVE_DEFAULT_CONNECTION_MODE = "standard"
 _LIVE_VERTEX_CONNECTION_MODE = "vertex_internet"
 _VERTEX_LIVE_MODEL = "gemini-live-2.5-flash-native-audio"
 
 
+def _vertex_live_enabled() -> bool:
+    return bool(getattr(settings, "VERTEX_LIVE_ENABLED", False))
+
+
 def _get_live_connection_modes(lang: str) -> list[dict[str, str]]:
-    return [
+    modes = [
         {
             "id": _LIVE_DEFAULT_CONNECTION_MODE,
             "label": t("miniapp.conn.standard_label", lang),
             "summary": t("miniapp.conn.standard_summary", lang),
         },
-        {
-            "id": _LIVE_VERTEX_CONNECTION_MODE,
-            "label": t("miniapp.conn.vertex_label", lang),
-            "summary": t("miniapp.conn.vertex_summary", lang),
-        },
     ]
+    if _vertex_live_enabled():
+        modes.append(
+            {
+                "id": _LIVE_VERTEX_CONNECTION_MODE,
+                "label": t("miniapp.conn.vertex_label", lang),
+                "summary": t("miniapp.conn.vertex_summary", lang),
+            }
+        )
+    return modes
 
 
 # Backward-compatible test hooks for the classic game lock fallback registry.
@@ -282,7 +291,7 @@ def _resolve_live_thinking_level(chat_state) -> str:
 
 def _resolve_live_connection_mode(chat_state) -> str:
     mode = getattr(chat_state, "live_connection_mode", None) if chat_state else None
-    valid_mode_ids = _LIVE_CONNECTION_MODE_IDS
+    valid_mode_ids = {item["id"] for item in _get_live_connection_modes("ru")}
     if isinstance(mode, str) and mode in valid_mode_ids:
         return mode
     return _LIVE_DEFAULT_CONNECTION_MODE
@@ -1279,7 +1288,7 @@ async def api_update_live_settings(user_id: int):
 
         if "live_connection_mode" in body:
             connection_mode = body["live_connection_mode"]
-            valid_mode_ids = _LIVE_CONNECTION_MODE_IDS
+            valid_mode_ids = {item["id"] for item in _get_live_connection_modes("ru")}
             if connection_mode in valid_mode_ids:
                 chat_state.live_connection_mode = connection_mode
                 changed = True
@@ -1662,16 +1671,16 @@ async def game_page():
     from quart import request as _req
 
     game_id = _req.args.get("game_id") or _req.args.get("tgWebAppStartParam") or _req.args.get("id") or ""
-    mode = _req.args.get("mode") or ("daily" if game_id == "daily" else "classic")
+    mode = _req.args.get("mode") or ("daily" if game_id.startswith("daily") else "classic")
     if game_id in {"daily2048", "2048"} or mode in {"daily2048", "2048"}:
-        return await render_template("daily_2048.html")
+        return await render_template("daily_2048.html", current_daily_game="2048")
     if game_id in {"dailytrivia", "trivia"} or mode in {"dailytrivia", "trivia"}:
         from app.bot_instance import get_bot as _get_bot
 
         _bot = _get_bot()
         _bot_username = getattr(_bot, "username", "") if _bot else ""
-        return await render_template("daily_trivia.html", bot_username=_bot_username)
-    return await render_template("crocodile.html", game_id=game_id, mode=mode)
+        return await render_template("daily_trivia.html", bot_username=_bot_username, current_daily_game="trivia")
+    return await render_template("crocodile.html", game_id=game_id, mode=mode, current_daily_game="crocodile")
 
 
 @miniapp_blueprint.route("/daily2048")
@@ -1679,7 +1688,7 @@ async def daily2048_page():
     """Serve the Daily 2048 Sprint Mini App HTML shell."""
     from quart import render_template
 
-    return await render_template("daily_2048.html")
+    return await render_template("daily_2048.html", current_daily_game="2048")
 
 
 @miniapp_blueprint.route("/dailytrivia")
@@ -1691,7 +1700,35 @@ async def dailytrivia_page():
 
     bot = get_bot()
     bot_username = getattr(bot, "username", "") if bot else ""
-    return await render_template("daily_trivia.html", bot_username=bot_username)
+    return await render_template("daily_trivia.html", bot_username=bot_username, current_daily_game="trivia")
+
+
+@miniapp_blueprint.route("/api/daily-game", methods=["GET", "PATCH"])
+async def api_daily_game_choice():
+    """Read or change the signed player's preferred daily game."""
+    user_id, auth_error = await _resolve_authorized_legacy_miniapp_user(request.headers.get("X-TG-INIT-DATA", ""))
+    if auth_error is not None:
+        return auth_error
+    if not user_id:
+        return jsonify({"error": "Open this page in Telegram to choose a game"}), 401
+
+    if request.method == "PATCH":
+        payload = await request.get_json(silent=True) or {}
+        game = payload.get("game") if isinstance(payload, dict) else None
+        if not isinstance(game, str) or game not in daily_2048_repo.DAILY_GAME_MODES:
+            return jsonify({"error": "Choose Crocodile, 2048 or Trivia"}), 400
+        preference = await daily_delivery_repo.upsert_preference(user_id, daily_game=game)
+    else:
+        preference = await daily_delivery_repo.get_preference(user_id)
+
+    admin_mode = await daily_2048_repo.get_active_daily_game_mode()
+    return jsonify(
+        {
+            "game": daily_2048_repo.resolve_daily_game_mode(preference, admin_mode),
+            "explicit": bool(preference and preference.get("daily_game") in daily_2048_repo.DAILY_GAME_MODES),
+            "subscribed": bool(preference and preference.get("is_subscribed")),
+        }
+    )
 
 
 @miniapp_blueprint.route("/api/miniapp/trivia/today", methods=["GET"])
@@ -2870,6 +2907,10 @@ async def _open_authenticated_live_socket(route_mode: str) -> None:
         await websocket.close(4003, "No user in initData")
         return
     if not await _require_authorized_websocket_user(user_id):
+        return
+
+    if route_mode == _LIVE_VERTEX_CONNECTION_MODE and not _vertex_live_enabled():
+        await websocket.close(4403, "Vertex Live is temporarily disabled")
         return
 
     from app.cache import redis_client

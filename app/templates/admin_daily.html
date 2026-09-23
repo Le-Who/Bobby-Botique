@@ -729,8 +729,9 @@ input:checked + .slider:before { transform: translateX(16px); }
 
     <div class="card" style="margin-bottom:18px;padding:18px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
       <div>
-        <div style="font-size:0.82rem;font-weight:600;color:var(--text-muted);letter-spacing:.05em;text-transform:uppercase;">🎯 Активная Daily-игра (Daily Driver)</div>
+        <div style="font-size:0.82rem;font-weight:600;color:var(--text-muted);letter-spacing:.05em;text-transform:uppercase;">🎯 Daily-игра по умолчанию</div>
         <div style="font-size:1.1rem;font-weight:700;color:var(--text);margin-top:4px;" id="daily-driver-label">—</div>
+        <div style="font-size:.8rem;color:var(--text-muted);margin-top:6px;max-width:440px;">Для игроков без личного выбора. Эту игру готовим на 8 дат, остальные — на сегодня и завтра.</div>
       </div>
       <div style="display:flex;gap:8px;" id="daily-mode-buttons">
         <button class="btn btn-refresh" data-daily-mode="crocodile">🐊 Croc</button>
@@ -1367,7 +1368,7 @@ const BroadcastModule = (() => {
         return;
       }
       updateDailyDriverUI(mode);
-      showToast(`Активная daily-игра переключена на: ${mode}`, 'success');
+      showToast(`Daily-игра по умолчанию: ${mode}`, 'success');
     } catch (err) {
       showToast(err.message, 'error');
     }

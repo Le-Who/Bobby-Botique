@@ -11,6 +11,7 @@ import inspect
 import logging
 import uuid
 from collections.abc import Callable, Iterable
+from contextlib import aclosing
 from typing import Any, TypeVar
 
 from app.config import (
@@ -41,6 +42,7 @@ from app.providers.stream_types import (
     FailurePhase,
     GenerationEvent,
     GenerationRequest,
+    GroundingMode,
     KeyDisposition,
     ProviderStreamProtocolError,
     RetryDisposition,
@@ -53,6 +55,8 @@ from app.providers.stream_types import (
 )
 
 _ParsedResponse = TypeVar("_ParsedResponse")
+MODEL_HEDGE_DELAY_SECONDS = 8.0
+KEY_RACE_FIRST_TEXT_TIMEOUT_SECONDS = 30.0
 
 
 def _setting(name: str, fallback: str) -> str:
@@ -688,12 +692,31 @@ class ProviderRouter:
         raise RuntimeError("No Gemini keys available for the requested model plan")
 
     async def stream(self, request: GenerationRequest):
-        """Route a typed generation stream and emit exactly one terminal event."""
-        from app.agent_use_cases import AgentRequestUseCase
-        from app.providers.base import get_provider_for_model
-        from app.providers.request_factory import deferred_history_from_request
-        from app.repos.keys import get_key_status_manager
+        """Race two model lanes for interactive chat; retain serial paths elsewhere."""
+        hedge_models = self._interactive_hedge_models(request)
+        if hedge_models:
+            async with aclosing(self._stream_hedged(request, hedge_models)) as events:
+                async for event in events:
+                    yield event
+            return
+        async with aclosing(self._stream_serial(request)) as events:
+            async for event in events:
+                yield event
 
+    @staticmethod
+    def _interactive_hedge_models(request: GenerationRequest) -> list[str]:
+        if (
+            request.workload is not Workload.INTERACTIVE
+            or request.allow_deferred
+            or request.grounding is not GroundingMode.NONE
+            or not all(is_gemini_chat_model_id(model) for model in request.models)
+        ):
+            return []
+        models = _dedupe_models([*request.models, *_ordered_gemini_fallback_models(request.models[0])])
+        return models if len(models) > 1 else []
+
+    async def _stream_hedged(self, request: GenerationRequest, models: list[str]):
+        """Start a backup after a short delay, and keep at most two model lanes."""
         scope = request.scope
         if scope.user_id and not await self._rate_limiter.check_rate_limit(scope.user_id):
             yield StreamFailed(
@@ -705,9 +728,153 @@ class ProviderRouter:
             )
             return
 
+        queue: asyncio.Queue[tuple[str, GenerationEvent | None, BaseException | None, bool]] = asyncio.Queue()
+        active: dict[str, asyncio.Task[None]] = {}
+        all_tasks: list[asyncio.Task[None]] = []
+        failures: list[StreamFailed] = []
+        next_index = 0
+        winner: str | None = None
+
+        async def run_model(model: str) -> None:
+            try:
+                async with aclosing(
+                    self._stream_serial(
+                        request,
+                        model_plan=(model,),
+                        check_rate_limit=False,
+                        enable_model_fallback=False,
+                    )
+                ) as events:
+                    async for event in events:
+                        queue.put_nowait((model, event, None, False))
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                queue.put_nowait((model, None, exc, False))
+            finally:
+                queue.put_nowait((model, None, None, True))
+
+        def start_next() -> None:
+            nonlocal next_index
+            model = models[next_index]
+            next_index += 1
+            task = asyncio.create_task(run_model(model))
+            active[model] = task
+            all_tasks.append(task)
+
+        start_next()
+        hedge_deadline = asyncio.get_running_loop().time() + MODEL_HEDGE_DELAY_SECONDS
+        try:
+            while True:
+                if winner is None and not active and next_index >= len(models):
+                    if failures:
+                        yield failures[-1]
+                    else:
+                        yield StreamFailed(
+                            code=ErrorCode.KEYS_EXHAUSTED,
+                            phase=FailurePhase.BEFORE_TEXT,
+                            retry=RetryDisposition.RETRY_LATER,
+                            key=KeyDisposition.EXHAUSTED,
+                            diagnostic="No provider model produced a response",
+                        )
+                    return
+
+                timeout: float | None = None
+                if winner is None and len(active) == 1 and next_index < len(models):
+                    if next_index == 1:
+                        timeout = max(0.0, hedge_deadline - asyncio.get_running_loop().time())
+                    else:
+                        start_next()
+                        continue
+                try:
+                    lane, event, error, done = (
+                        await asyncio.wait_for(queue.get(), timeout=timeout)
+                        if timeout is not None
+                        else await queue.get()
+                    )
+                except TimeoutError:
+                    if winner is None and len(active) < 2 and next_index < len(models):
+                        start_next()
+                    continue
+
+                if winner is not None:
+                    if lane != winner:
+                        continue
+                    if error is not None:
+                        raise error
+                    if done:
+                        raise ProviderStreamProtocolError("Winning model ended without terminal delivery")
+                    assert event is not None
+                    yield event
+                    if is_terminal_event(event):
+                        return
+                    continue
+
+                if error is not None:
+                    raise error
+                if done:
+                    active.pop(lane, None)
+                    if next_index < len(models) and len(active) < 2:
+                        start_next()
+                    continue
+                if isinstance(event, TextDelta):
+                    winner = lane
+                    for other_lane, task in active.items():
+                        if other_lane != winner:
+                            task.cancel()
+                    yield event
+                    continue
+                if isinstance(event, StreamFailed):
+                    failures.append(event)
+                    continue
+                if isinstance(event, StreamDeferred):
+                    yield event
+                    return
+                if isinstance(event, StreamCompleted):
+                    failures.append(
+                        StreamFailed(
+                            code=ErrorCode.EMPTY_RESPONSE,
+                            phase=FailurePhase.BEFORE_TEXT,
+                            retry=RetryDisposition.TRY_NEXT_KEY,
+                            key=KeyDisposition.TRANSIENT_FAILURE,
+                            diagnostic="Model completed before visible text",
+                            route=event.route,
+                        )
+                    )
+        finally:
+            for task in all_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*all_tasks, return_exceptions=True)
+
+    async def _stream_serial(
+        self,
+        request: GenerationRequest,
+        *,
+        model_plan: tuple[str, ...] | None = None,
+        check_rate_limit: bool = True,
+        enable_model_fallback: bool = True,
+    ):
+        """Route one typed stream with existing key races and optional model fallback."""
+        from app.agent_use_cases import AgentRequestUseCase
+        from app.providers.base import get_provider_for_model
+        from app.providers.request_factory import deferred_history_from_request
+        from app.repos.keys import get_key_status_manager
+
+        scope = request.scope
+        if check_rate_limit and scope.user_id and not await self._rate_limiter.check_rate_limit(scope.user_id):
+            yield StreamFailed(
+                code=ErrorCode.RATE_LIMIT,
+                phase=FailurePhase.BEFORE_TEXT,
+                retry=RetryDisposition.RETRY_LATER,
+                key=KeyDisposition.UNCHANGED,
+                diagnostic="Per-user provider rate limit rejected request",
+            )
+            return
+
         use_case = AgentRequestUseCase()
         status_mgr = get_key_status_manager()
-        model_queue = list(request.models)
+        model_queue = list(model_plan or request.models)
         attempted_models: set[str] = set()
         overall_had_transient = False
         last_failure: StreamFailed | None = None
@@ -855,42 +1022,43 @@ class ProviderRouter:
                         max_attempts=request.key_attempt_rounds,
                         key_source=key_data.get("source"),
                     )
-                    async for event in observed_events:
-                        if terminal_seen:
-                            raise ProviderStreamProtocolError(
-                                f"{provider.provider_name} emitted an event after terminal"
-                            )
-                        if isinstance(event, TextDelta):
-                            if not saw_text:
-                                saw_text = True
-                                await _record_success(key_data, model_used)
-                            yield event
-                            continue
-                        if not is_terminal_event(event):
-                            raise ProviderStreamProtocolError(f"Unsupported provider event: {type(event).__name__}")
-                        terminal_seen = True
-                        if isinstance(event, StreamCompleted):
-                            if not saw_text:
-                                failure = StreamFailed(
-                                    code=ErrorCode.EMPTY_RESPONSE,
-                                    phase=FailurePhase.BEFORE_TEXT,
-                                    retry=RetryDisposition.TRY_NEXT_KEY,
-                                    key=KeyDisposition.TRANSIENT_FAILURE,
-                                    diagnostic="Provider completed before emitting visible text",
-                                    route=event.route,
+                    async with aclosing(observed_events):
+                        async for event in observed_events:
+                            if terminal_seen:
+                                raise ProviderStreamProtocolError(
+                                    f"{provider.provider_name} emitted an event after terminal"
                                 )
-                            else:
+                            if isinstance(event, TextDelta):
+                                if not saw_text:
+                                    saw_text = True
+                                    await _record_success(key_data, model_used)
+                                yield event
+                                continue
+                            if not is_terminal_event(event):
+                                raise ProviderStreamProtocolError(f"Unsupported provider event: {type(event).__name__}")
+                            terminal_seen = True
+                            if isinstance(event, StreamCompleted):
+                                if not saw_text:
+                                    failure = StreamFailed(
+                                        code=ErrorCode.EMPTY_RESPONSE,
+                                        phase=FailurePhase.BEFORE_TEXT,
+                                        retry=RetryDisposition.TRY_NEXT_KEY,
+                                        key=KeyDisposition.TRANSIENT_FAILURE,
+                                        diagnostic="Provider completed before emitting visible text",
+                                        route=event.route,
+                                    )
+                                else:
+                                    terminal_result = event
+                            elif isinstance(event, StreamDeferred):
+                                if saw_text:
+                                    raise ProviderStreamProtocolError("Provider deferred after emitting visible text")
                                 terminal_result = event
-                        elif isinstance(event, StreamDeferred):
-                            if saw_text:
-                                raise ProviderStreamProtocolError("Provider deferred after emitting visible text")
-                            terminal_result = event
-                        elif isinstance(event, StreamFailed):
-                            if saw_text:
-                                if event.phase is not FailurePhase.AFTER_TEXT:
-                                    raise ProviderStreamProtocolError("Provider reported BEFORE_TEXT after text")
-                                terminal_result = event
-                            failure = event
+                            elif isinstance(event, StreamFailed):
+                                if saw_text:
+                                    if event.phase is not FailurePhase.AFTER_TEXT:
+                                        raise ProviderStreamProtocolError("Provider reported BEFORE_TEXT after text")
+                                    terminal_result = event
+                                failure = event
 
                     if not terminal_seen:
                         raise ProviderStreamProtocolError(
@@ -973,12 +1141,13 @@ class ProviderRouter:
                 winner_idx: int | None = None
                 pre_text_terminals: dict[int, GenerationEvent] = {}
                 done: set[int] = set()
+                first_text_deadline = asyncio.get_running_loop().time() + KEY_RACE_FIRST_TEXT_TIMEOUT_SECONDS
 
                 try:
                     while winner_idx is None and len(done) < len(tasks):
                         try:
                             race_idx, race_event, race_error, race_done = await asyncio.wait_for(
-                                queue.get(), timeout=30.0
+                                queue.get(), timeout=max(0.0, first_text_deadline - asyncio.get_running_loop().time())
                             )
                         except TimeoutError:
                             timeout_failure = StreamFailed(
@@ -1082,7 +1251,7 @@ class ProviderRouter:
 
             overall_had_transient |= model_had_transient
 
-            if is_opencode_model(preferred_model):
+            if enable_model_fallback and is_opencode_model(preferred_model):
                 gemini_fallback = _get_opencode_gemini_fallback().get(
                     preferred_model,
                     _setting("DEFAULT_MODEL", GEMINI_PRIMARY_MODEL),
@@ -1090,7 +1259,7 @@ class ProviderRouter:
                 if gemini_fallback not in attempted_models and gemini_fallback not in model_queue:
                     model_queue.append(gemini_fallback)
 
-            if model_had_transient:
+            if enable_model_fallback and model_had_transient:
                 transient_fallback = self._pick_transient_fallback_model(
                     preferred_model,
                     None,
@@ -1102,7 +1271,7 @@ class ProviderRouter:
                 ):
                     model_queue.append(transient_fallback)
 
-            if model_all_permanent and last_failure is not None:
+            if enable_model_fallback and model_all_permanent and last_failure is not None:
                 for fallback in _ordered_gemini_fallback_models(preferred_model):
                     if fallback not in attempted_models and fallback not in model_queue:
                         model_queue.append(fallback)

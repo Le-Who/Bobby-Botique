@@ -351,6 +351,7 @@ class Settings(BaseModel):
     VERTEX_AI_KEY: str = ""  # GCP API key bound to a service account
     VERTEX_AI_PROJECT: str = ""  # GCP project ID where Vertex AI API is enabled
     VERTEX_AI_LOCATION: str = "us-central1"  # Vertex AI region
+    VERTEX_LIVE_ENABLED: bool = False  # Opt-in only after ADC credentials are healthy
 
     # --- Weather & Currency Direct APIs ---
     # WeatherAPI.com free tier: 1M req/month. https://www.weatherapi.com/
@@ -602,6 +603,7 @@ def load_settings() -> Settings:
             "VERTEX_AI_KEY": os.getenv("VERTEX_AI_KEY", "").strip(),
             "VERTEX_AI_PROJECT": os.getenv("VERTEX_AI_PROJECT", "").strip(),
             "VERTEX_AI_LOCATION": os.getenv("VERTEX_AI_LOCATION", "us-central1").strip(),
+            "VERTEX_LIVE_ENABLED": os.getenv("VERTEX_LIVE_ENABLED", "false").strip().lower() == "true",
             "WEATHER_API_KEY": os.getenv("WEATHER_API_KEY", "").strip(),
             "EXCHANGE_RATE_API_KEY": os.getenv("EXCHANGE_RATE_API_KEY", "").strip(),
             # Load models from env or use значения by default

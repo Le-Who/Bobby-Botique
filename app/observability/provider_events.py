@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 
 from app.errors import ErrorCode
@@ -191,7 +191,7 @@ async def observe_provider_stream(
     max_attempts: int | None = None,
     race_id: str | None = None,
     key_source: str | None = None,
-) -> AsyncIterator[GenerationEvent]:
+) -> AsyncGenerator[GenerationEvent]:
     """Yield unchanged provider events while recording one attempt lifecycle."""
     attempt = start_provider_attempt(
         provider=provider,
@@ -285,3 +285,7 @@ async def observe_provider_stream(
             **attempt.fields(),
         )
         raise
+    finally:
+        close = getattr(events, "aclose", None)
+        if callable(close):
+            await close()

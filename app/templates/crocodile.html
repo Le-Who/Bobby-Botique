@@ -2,9 +2,11 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>🐊 Крокодил</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="/static/css/daily-switcher.css" />
+  <script defer src="/static/js/daily-switcher.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
@@ -79,6 +81,10 @@
       flex-direction: column;
       height: 100dvh;
     }
+
+    #app > .daily-choice { flex: none; margin: 8px 14px 0; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    button:focus-visible, input:focus-visible { outline: 3px solid #ffe18b; outline-offset: 2px; }
 
     /* ── Header ──────────────────────────────────────────────────────────── */
     header {
@@ -551,7 +557,10 @@
     <button id="hint-btn" disabled title="Подсказка" aria-label="Получить подсказку">💡</button>
     <span id="attempts-badge">0 / 10</span>
   </header>
-  <div id="daily-modes" class="hidden"></div>
+  {% if mode == 'daily' %}
+  {% include '_daily_game_switcher.html' %}
+  {% endif %}
+  <div id="daily-modes" class="hidden" role="group" aria-label="Сложность игры дня"></div>
 
   <!-- God Mode: target word banner (creator only) -->
   <div id="word-banner">
@@ -562,7 +571,7 @@
 
   <div id="category-pill"></div>
 
-  <div id="chat-area"></div>
+  <div id="chat-area" role="log" aria-live="polite" aria-relevant="additions"></div>
 
   <!-- Guesser-side typing indicator (default — judge evaluating) -->
   <div id="typing-row" class="hidden">
@@ -577,6 +586,7 @@
   </div>
 
   <div id="input-zone">
+    <label class="sr-only" for="guess-input">Ваша догадка</label>
     <input
       id="guess-input"
       type="text"
@@ -611,7 +621,7 @@
   <button id="overlay-action" class="hidden" type="button">Продолжить</button>
 </div>
 
-<div id="error-bar"></div>
+<div id="error-bar" role="status" aria-live="assertive"></div>
 
 <script>
 /* ── Telegram WebApp ────────────────────────────────────────────────────── */

@@ -12,7 +12,9 @@ With it, the webhook path contains a derived hash rather than the bot token;
 configured `WEBHOOK_SECRET_TOKEN` is validated by `app/webhook_security.py`
 (1–256 ASCII letters/digits/underscore/hyphen) and checked with constant-time
 comparison before accepting updates. Empty configuration disables that header guard.
-`UserScopedUpdateProcessor` bounds concurrency and serializes user-scoped work.
+`UserScopedUpdateProcessor` bounds concurrency and serializes stateful
+user-scoped work. Stateless inline preview queries bypass the per-user lock so
+long callbacks cannot make their Telegram query IDs expire before answering.
 `app/webhook_dedupe.py` is distinct from message double-tap deduplication in
 `app/middleware/dedup.py`.
 
@@ -30,14 +32,14 @@ Telegram update → bot.py / handlers → context + provider routing
 | --- | --- |
 | Configuration | `app/config.py`: Pydantic BaseModel, explicit environment loading, model roles and hot reload; `app/repos/models_repo.py`: explicit catalog overrides |
 | Commands and intent | `app/bot_commands.py`: public menu/help; `app/handlers/`: behavior; `app/intent_router.py`: deterministic weather/currency/crypto dispatch |
-| Providers | `app/providers/router.py`: chat routing, keys and fallback; `stream_types.py`, `request_factory.py`, `typed_payloads.py`: typed contract and payload translation |
+| Providers | `app/providers/router.py`: chat routing, keys and fallback. Interactive Gemini chat hedges up to two model lanes after a short delay; each lane retains its key race, and the first visible text wins. `stream_types.py`, `request_factory.py`, `typed_payloads.py`: typed contract and payload translation |
 | Delivery | `app/response_delivery/`: coordination, presentation, progressive rendering, final outcome and action ownership |
 | Research | `app/core/agentic.py`, `app/search_services.py`, `app/search_jina.py`: bounded research/tool execution |
 | Context | `app/context/`, `app/prompt_registry.py`: history, budgets, summaries and prompt templates |
 | Documents | `app/documents/`, `app/document_processor.py`: extraction, chunking, persistence and Q&A |
 | Persistence | `app/database.py`: pool/lifecycle; `app/repos/`: domain queries; `app/db/`: migrations, validation, RLS and seed |
 | State/concurrency | `app/state.py`: local state and DB persistence; `app/adapters/concurrency.py`: Redis/local semaphores; `app/utils/background_tasks.py`: tracked detached work |
-| Daily products | `app/games/`: Crocodile, 2048, trivia and shared daily AI authoring; matching handlers/repositories own Telegram delivery and storage |
+| Daily products | `app/games/`: Crocodile, 2048, trivia and shared daily AI authoring; matching handlers/repositories own Telegram delivery and storage. `crocodile_daily_preferences.daily_game` stores a player's optional choice; the admin mode is the fallback. The scheduler prepares all three games, with a seven-day lookahead for the admin default and tomorrow for the others. |
 | Daily preparation | `app/games/daily_preparation.py`: read-only readiness, managed Easy/Hard preparation, Redis lease/status and local fallback; `crocodile_daily.py`: automatic image quota and explicit admin bypass |
 | Astrology | `app/astro.py`, horoscope handlers, `app/tarot*.py`, `app/natal/`: horoscopes, tarot, natal calculation/reporting |
 | Web surfaces | `app/web.py`: dashboard/admin; `app/web_miniapp.py`: Mini App APIs and live/game flows; `app/web_reader.py`, `app/web_natal.py`: long reads/reports |

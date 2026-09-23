@@ -227,10 +227,11 @@ async def render_daily_result_body(
 
     keyboard: InlineKeyboardMarkup | None
     rows = [[_play_button("Открыть daily")]]
+    rows.append([InlineKeyboardButton("Выбрать другую игру", callback_data="dailycroc:choose")])
     if is_subscribed:
         rows.append([InlineKeyboardButton("Передумали? Отписаться", callback_data="dailycroc:unsubscribe")])
     else:
-        rows.append([InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe")])
+        rows.append([InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe:crocodile")])
     keyboard = InlineKeyboardMarkup(rows)
     return "\n".join(lines), keyboard
 
@@ -415,6 +416,15 @@ async def send_daily_completion_bundle(
                     rendered_hash_value=repo.render_hash(rendered),
                     message_type="album",
                 )
+                if keyboard:
+                    try:
+                        await bot.send_message(
+                            chat_id=user_id,
+                            text="Другая игра дня или повторный просмотр результатов:",
+                            reply_markup=keyboard,
+                        )
+                    except (OSError, TelegramError) as exc:
+                        logger.warning("daily: album actions failed user=%s: %s", user_id, exc)
                 return
         except Exception as exc:
             logger.warning("daily: send_media_group failed user=%s: %s", user_id, exc)

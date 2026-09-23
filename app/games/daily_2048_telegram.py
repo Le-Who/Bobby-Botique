@@ -40,7 +40,12 @@ async def render_result_body(user_id: int, puzzle_date: date) -> tuple[str, Inli
     result = await repo.get_result(user_id, puzzle_date)
     if not result:
         text = "🎲 <b>Daily 2048 Sprint</b>\n\nРезультат пока не найден."
-        keyboard = InlineKeyboardMarkup([[daily2048_play_button("Открыть 2048")]])
+        keyboard = InlineKeyboardMarkup(
+            [
+                [daily2048_play_button("Открыть 2048")],
+                [InlineKeyboardButton("Выбрать другую игру", callback_data="dailycroc:choose")],
+            ]
+        )
         return text, keyboard
 
     rank = await repo.get_rank(user_id, puzzle_date) if result.status == "won" else None
@@ -76,6 +81,7 @@ async def render_result_body(user_id: int, puzzle_date: date) -> tuple[str, Inli
     keyboard = InlineKeyboardMarkup(
         [
             [daily2048_play_button("Открыть 2048")],
+            [InlineKeyboardButton("Выбрать другую игру", callback_data="dailycroc:choose")],
             [
                 InlineKeyboardButton(
                     "Лучшие за месяц",

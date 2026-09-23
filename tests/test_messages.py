@@ -296,9 +296,13 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
             coro = call_args[0][0]
             coro.close()
 
-        # Execute the captured task_wrapper coroutine to test the AI pipeline
+        # Execute the request worker; the delayed long-wait notice is tested
+        # separately and must not hold this test for its production delay.
         for coro in captured_coros:
-            await coro
+            if coro.cr_code.co_name == "task_wrapper":
+                await coro
+            else:
+                coro.close()
 
         mock_agent_process.assert_awaited_once()
         # Verify arguments passed to process_long_request
@@ -464,7 +468,10 @@ async def test_handle_request_exception_handling():
         await messages.handle_request(update, context)
 
         for coro in captured_coros:
-            await coro
+            if coro.cr_code.co_name == "task_wrapper":
+                await coro
+            else:
+                coro.close()
 
         # Close heartbeat coroutines to avoid warnings
         for coro in heartbeat_coros:

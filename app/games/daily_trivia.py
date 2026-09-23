@@ -329,11 +329,13 @@ def _get_fallback_super_questions() -> list[repo.TriviaQuestion]:
     return shuffle_options_and_update_correct_index(fallbacks)
 
 
-async def ensure_prepared_puzzles(*, now: datetime | None = None) -> list[repo.DailyTriviaPuzzle]:
+async def ensure_prepared_puzzles(
+    *, now: datetime | None = None, days_ahead: int = repo.DAILY_TRIVIA_PREP_DAYS_AHEAD
+) -> list[repo.DailyTriviaPuzzle]:
     from app.repos.crocodile_daily import today_puzzle_date
 
     start_date = today_puzzle_date(now)
-    dates = [start_date + timedelta(days=offset) for offset in range(repo.DAILY_TRIVIA_PREP_DAYS_AHEAD + 1)]
+    dates = [start_date + timedelta(days=offset) for offset in range(max(0, days_ahead) + 1)]
     puzzles: list[repo.DailyTriviaPuzzle] = []
     for puzzle_date in dates:
         if puzzle_date != start_date and await _is_preparation_cooling_down(puzzle_date):

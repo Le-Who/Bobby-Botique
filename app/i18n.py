@@ -420,6 +420,30 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "🔁 Повторяю предыдущий запрос…",
         "en": "🔁 Retrying previous request…",
     },
+    "processing.long_wait": {
+        "ru": "⏳ Ответ задерживается. Можно подождать или остановить запрос и повторить его.",
+        "en": "⏳ The answer is taking longer than usual. You can wait, or stop and retry the request.",
+    },
+    "btn.stop_and_retry": {
+        "ru": "Остановить и повторить",
+        "en": "Stop and retry",
+    },
+    "processing.long_wait_finished": {
+        "ru": "Ожидание уже завершилось",
+        "en": "The request has already finished",
+    },
+    "processing.long_wait_stopping": {
+        "ru": "Останавливаю запрос. Попробуйте ещё раз через несколько секунд",
+        "en": "Stopping the request. Please retry in a few seconds",
+    },
+    "processing.long_wait_stopped": {
+        "ru": "Запрос остановлен",
+        "en": "Request stopped",
+    },
+    "processing.long_wait_retry_prompt": {
+        "ru": "Запрос остановлен. Нажмите «Повторить», чтобы запустить его заново.",
+        "en": "Request stopped. Select Retry to start it again.",
+    },
     "processing.describing_image": {
         "ru": "🖼️ Описываю изображение...",
         "en": "🖼️ Describing image...",

@@ -13,6 +13,7 @@ from telegram.ext import ContextTypes
 
 from app.config import settings
 from app.games.daily_2048_telegram import _get_cover_photo, _remember_cover_file_id
+from app.games.daily_telegram_delivery import is_unreachable_chat_error, retire_unreachable_daily_recipient
 from app.repos import crocodile_daily as daily_delivery_repo
 from app.repos import daily_2048 as repo
 from app.utils.decorators import safe_handler
@@ -48,8 +49,9 @@ def daily2048_play_button(label: str = "Открыть 2048") -> InlineKeyboardB
 
 def daily2048_entry_keyboard(*, include_subscribe: bool = True) -> InlineKeyboardMarkup:
     rows = [[daily2048_play_button("Открыть 2048")]]
+    rows.append([InlineKeyboardButton("Выбрать другую игру", callback_data="dailycroc:choose")])
     if include_subscribe:
-        rows.append([InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe")])
+        rows.append([InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe:2048")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -91,6 +93,8 @@ async def send_daily2048_entry(
             message_id=message.message_id,
         )
     except (OSError, TelegramError) as exc:
+        if is_unreachable_chat_error(exc):
+            raise
         logger.warning("daily 2048 cover prompt failed user=%s: %s", user_id, exc)
         fallback_kwargs = {
             "chat_id": user_id,
@@ -133,6 +137,8 @@ async def send_discovery_intro(bot, user_id: int) -> bool:
         )
         await _remember_cover_file_id(message)
     except (OSError, TelegramError) as exc:
+        if is_unreachable_chat_error(exc):
+            raise
         logger.warning("daily 2048 discovery cover failed user=%s: %s", user_id, exc)
         await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
     await daily_delivery_repo.mark_discovery_sent(user_id)
@@ -143,28 +149,22 @@ async def send_discovery_intro(bot, user_id: int) -> bool:
 async def daily2048_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.message:
         return
-    user_id = update.effective_user.id
-    today = repo.today_puzzle_date(datetime.now(tz=UTC))
-    await repo.ensure_puzzle(today)
-    pref = await daily_delivery_repo.get_preference(user_id)
-    is_subscribed = bool(pref and pref.get("is_subscribed"))
-    await send_daily2048_entry(
-        context.bot,
-        user_id,
-        today,
-        include_subscribe=not is_subscribed,
-        reply_to_message_id=update.message.message_id,
-        mark_delivered=False,
-    )
+    from app.handlers.daily_crocodile import send_daily_menu_for_user
+
+    await send_daily_menu_for_user(update, context, game_mode="2048")
 
 
-async def check_daily_2048_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
+async def check_daily_2048_jobs(context: ContextTypes.DEFAULT_TYPE, *, admin_mode: str | None = None) -> None:
     from app.games.daily_2048 import ensure_prepared_puzzles
     from app.handlers.daily_crocodile import is_daily_delivery_enabled
 
     now = datetime.now(tz=UTC)
+    if admin_mode is None:
+        admin_mode = await repo.get_active_daily_game_mode()
     try:
-        await ensure_prepared_puzzles(now=now)
+        await ensure_prepared_puzzles(
+            now=now, days_ahead=repo.DAILY_2048_PREP_DAYS_AHEAD if admin_mode == "2048" else 1
+        )
     except Exception as exc:
         logger.error("daily 2048: ensure_prepared_puzzles failed: %s", exc, exc_info=True)
         return
@@ -174,7 +174,9 @@ async def check_daily_2048_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info("daily 2048 delivery disabled by daily delivery switch")
         return
 
-    due_delivery = await daily_delivery_repo.get_due_deliveries(puzzle_date=today, now=now)
+    due_delivery = await daily_delivery_repo.get_due_deliveries(
+        puzzle_date=today, now=now, game_mode="2048", default_game_mode=admin_mode
+    )
     if due_delivery:
         sem = asyncio.Semaphore(10)
 
@@ -183,11 +185,14 @@ async def check_daily_2048_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
                 try:
                     await send_daily2048_entry(context.bot, int(item["user_id"]), today)
                 except Exception as exc:
+                    if await retire_unreachable_daily_recipient(int(item["user_id"]), exc, discovery=False):
+                        logger.info("daily 2048 delivery stopped for unreachable chat")
+                        return
                     logger.warning("daily 2048 delivery failed user=%s: %s", item.get("user_id"), exc)
 
         await asyncio.gather(*[_bounded_send(item) for item in due_delivery])
 
-    discovery = await daily_delivery_repo.get_discovery_candidates(now=now)
+    discovery = await daily_delivery_repo.get_discovery_candidates(now=now) if admin_mode == "2048" else []
     if discovery:
         sem_disc = asyncio.Semaphore(10)
 
@@ -196,6 +201,9 @@ async def check_daily_2048_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
                 try:
                     await send_discovery_intro(context.bot, int(item["user_id"]))
                 except Exception as exc:
+                    if await retire_unreachable_daily_recipient(int(item["user_id"]), exc, discovery=True):
+                        logger.info("daily 2048 discovery snoozed for unreachable chat")
+                        return
                     logger.warning("daily 2048 discovery failed user=%s: %s", item.get("user_id"), exc)
 
         await asyncio.gather(*[_bounded_discovery(item) for item in discovery])

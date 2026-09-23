@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import json
 import urllib.parse
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,6 +22,19 @@ import pytest
 from app.database import ChatState
 from app.web import quart_app
 from tests.factories import make_valid_init_data
+
+
+def test_vertex_live_flag_defaults_off_and_is_forwarded_to_runtime(monkeypatch):
+    from app.config import load_settings
+
+    monkeypatch.delenv("VERTEX_LIVE_ENABLED", raising=False)
+    assert load_settings().VERTEX_LIVE_ENABLED is False
+    monkeypatch.setenv("VERTEX_LIVE_ENABLED", "true")
+    assert load_settings().VERTEX_LIVE_ENABLED is True
+
+    workflow = Path(".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    assert "VERTEX_LIVE_ENABLED: ${{ vars.VERTEX_LIVE_ENABLED || 'false' }}" in workflow
+    assert '-e VERTEX_LIVE_ENABLED="$VERTEX_LIVE_ENABLED"' in workflow
 
 
 @pytest.fixture
@@ -53,6 +67,7 @@ def live_settings(monkeypatch) -> SimpleNamespace:
         VERTEX_AI_KEY="vertex-key",
         VERTEX_AI_PROJECT=None,
         VERTEX_AI_LOCATION="us-central1",
+        VERTEX_LIVE_ENABLED=True,
         DEFAULT_MODEL="gemini-3.1-flash-lite",
     )
     monkeypatch.setattr("app.config.settings", settings, raising=False)
@@ -193,7 +208,51 @@ class TestLiveAudioPage:
 
 
 @pytest.mark.asyncio
+async def test_disabled_vertex_socket_rejects_before_touching_credentials(live_settings):
+    from app.web_miniapp import _open_authenticated_live_socket
+
+    live_settings.VERTEX_LIVE_ENABLED = False
+    init_data = make_valid_init_data(live_settings.TELEGRAM_BOT_TOKEN, user_id=777)
+    socket = SimpleNamespace(args={"initData": init_data}, close=AsyncMock())
+    with (
+        patch("quart.websocket", socket),
+        patch("app.web_miniapp._require_authorized_websocket_user", new=AsyncMock(return_value=True)),
+    ):
+        await _open_authenticated_live_socket("vertex_internet")
+    socket.close.assert_awaited_once_with(4403, "Vertex Live is temporarily disabled")
+
+
+@pytest.mark.asyncio
 class TestLiveAudioSettingsApi:
+    async def test_disabled_vertex_mode_is_hidden_and_saved_choice_falls_back_to_standard(
+        self, test_client, auth_headers, live_settings
+    ):
+        live_settings.VERTEX_LIVE_ENABLED = False
+        chat_state = ChatState(
+            history=[],
+            model="gemini-3.1-flash-lite",
+            token_count=0,
+            search_enabled=False,
+            system_prompt=None,
+            live_connection_mode="vertex_internet",
+        )
+        update_chat = AsyncMock()
+        with (
+            patch("app.repos.chats.get_user_chat", new=AsyncMock(return_value=chat_state)),
+            patch("app.repos.chats.update_user_chat", update_chat),
+        ):
+            response = await test_client.get("/webapp/api/live-settings", headers=auth_headers)
+            patch_response = await test_client.patch(
+                "/webapp/api/live-settings",
+                headers=auth_headers,
+                json={"live_connection_mode": "vertex_internet"},
+            )
+        payload = await response.get_json()
+        assert [item["id"] for item in payload["connection_modes"]] == ["standard"]
+        assert payload["live_settings"]["live_connection_mode"] == "standard"
+        assert (await patch_response.get_json())["live_settings"]["live_connection_mode"] == "standard"
+        update_chat.assert_not_awaited()
+
     async def test_get_live_settings_returns_defaults(self, test_client, auth_headers):
         with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None):
             resp = await test_client.get("/webapp/api/live-settings", headers=auth_headers)

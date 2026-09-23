@@ -382,6 +382,20 @@ def test_vertex_billing_disabled_error_temporarily_disables_vertex(monkeypatch):
     assert gemini.is_vertex_client_available() is True
 
 
+def test_chat_vertex_does_not_use_live_service_account_when_express_key_is_missing(monkeypatch):
+    from app.providers import gemini
+
+    monkeypatch.setattr(gemini, "_vertex_client", None)
+    monkeypatch.setattr(gemini, "_vertex_client_initialized", False)
+    monkeypatch.setattr(gemini.settings, "VERTEX_AI_PROJECT", "configured-project")
+    monkeypatch.setattr(gemini.settings, "VERTEX_AI_KEY", "")
+    client = MagicMock()
+    monkeypatch.setattr(gemini.genai, "Client", client)
+
+    assert gemini.get_vertex_client() is None
+    client.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_model_capability_validator_accepts_generate_content_model():
     from types import SimpleNamespace

@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes
 
 from app.config import settings
 from app.repos import crocodile_daily as repo
-from app.repos.daily_2048 import get_active_daily_game_mode
+from app.repos.daily_2048 import get_active_daily_game_mode, resolve_daily_game_mode
 from app.repos.settings_repo import get_global_setting
 from app.utils.decorators import safe_handler
 
@@ -93,7 +93,8 @@ def daily_intro_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [_play_button("Открыть daily")],
-            [InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe")],
+            [InlineKeyboardButton("Выбрать другую игру", callback_data="dailycroc:choose")],
+            [InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe:crocodile")],
             [InlineKeyboardButton("Не напоминать 2 недели", callback_data="dailycroc:snooze")],
         ]
     )
@@ -101,9 +102,22 @@ def daily_intro_keyboard() -> InlineKeyboardMarkup:
 
 def daily_play_keyboard(*, include_subscribe: bool = True) -> InlineKeyboardMarkup:
     rows = [[_play_button("Открыть daily")]]
+    rows.append([InlineKeyboardButton("Выбрать другую игру", callback_data="dailycroc:choose")])
     if include_subscribe:
-        rows.append([InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe")])
+        rows.append([InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe:crocodile")])
     return InlineKeyboardMarkup(rows)
+
+
+def daily_keyboard_for_game(game_mode: str, *, include_subscribe: bool = False) -> InlineKeyboardMarkup:
+    if game_mode == "2048":
+        from app.handlers.daily_2048 import daily2048_entry_keyboard
+
+        return daily2048_entry_keyboard(include_subscribe=include_subscribe)
+    if game_mode == "trivia":
+        from app.handlers.daily_trivia import daily_trivia_keyboard
+
+        return daily_trivia_keyboard(include_subscribe=include_subscribe)
+    return daily_play_keyboard(include_subscribe=include_subscribe)
 
 
 def subscribe_time_keyboard() -> InlineKeyboardMarkup:
@@ -188,6 +202,10 @@ async def _send_daily_entry_message(
                 )
             return True
         except Exception as exc:
+            from app.games.daily_telegram_delivery import is_unreachable_chat_error
+
+            if is_unreachable_chat_error(exc):
+                raise
             logger.warning("daily prompt photo failed user=%s: %s — falling back to text", user_id, exc)
     await bot.send_message(
         text=caption,
@@ -233,20 +251,49 @@ async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not update.effective_user or not update.message:
         return
     user_id = update.effective_user.id
-    game_mode = await get_active_daily_game_mode()
+    pref = await repo.get_preference(user_id)
+    game_mode = resolve_daily_game_mode(pref, await get_active_daily_game_mode())
+    await send_daily_menu_for_user(update, context, game_mode=game_mode, preference=pref)
+
+
+async def send_daily_menu_for_user(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    game_mode: str,
+    preference: dict | None = None,
+) -> None:
+    """Open a daily game or show the player's current result and leaderboard."""
+    if not update.effective_user:
+        return
+    message = getattr(update, "effective_message", None) or getattr(update, "message", None)
+    user_id = update.effective_user.id
+    reply_to_message_id = getattr(message, "message_id", None)
+    pref = preference if preference is not None else await repo.get_preference(user_id)
     if game_mode == "2048":
+        from app.games.daily_2048_telegram import render_result_body
         from app.handlers.daily_2048 import send_daily2048_entry
         from app.repos import daily_2048 as daily2048_repo
 
         today_2048 = daily2048_repo.today_puzzle_date(datetime.now(tz=UTC))
         await daily2048_repo.ensure_puzzle(today_2048)
-        pref_2048 = await repo.get_preference(user_id)
+        result = await daily2048_repo.get_result(user_id, today_2048)
+        if result and result.status in {"won", "lost"}:
+            text, keyboard = await render_result_body(user_id, today_2048)
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+                reply_to_message_id=reply_to_message_id,
+            )
+            return
         await send_daily2048_entry(
             context.bot,
             user_id,
             today_2048,
-            include_subscribe=not bool(pref_2048 and pref_2048.get("is_subscribed")),
-            reply_to_message_id=update.message.message_id,
+            include_subscribe=not bool(pref and pref.get("is_subscribed")),
+            reply_to_message_id=reply_to_message_id,
             mark_delivered=False,
         )
         return
@@ -256,7 +303,6 @@ async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await daily_trivia_command(update, context)
         return
     await repo.record_player_activity(user_id, event="daily_played")
-    pref = await repo.get_preference(user_id)
     is_subscribed = bool(pref and pref.get("is_subscribed"))
     now = datetime.now(tz=UTC)
     today = repo.today_puzzle_date(now)
@@ -268,6 +314,20 @@ async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             now=now,
             timezone=(pref or {}).get("timezone"),
         )
+    results = await repo.get_results_for_user(user_id, today)
+    completed = next((mode for mode, result in results.items() if result.status in {"won", "lost"}), None)
+    if completed:
+        from app.games.crocodile_daily_telegram import render_daily_result_body
+
+        text, croc_keyboard = await render_daily_result_body(user_id, today, focus_difficulty=completed)
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=croc_keyboard,
+            reply_to_message_id=reply_to_message_id,
+        )
+        return
     await _send_daily_entry_message(
         context.bot,
         chat_id=update.effective_chat.id,
@@ -275,8 +335,46 @@ async def dailycroc_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         puzzle_date=today,
         caption=_manual_daily_prompt_caption(),
         include_subscribe=not is_subscribed,
-        reply_to_message_id=update.message.message_id,
+        reply_to_message_id=reply_to_message_id,
     )
+
+
+async def daily_game_choose_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    if getattr(update.effective_chat, "type", "private") != "private":
+        await query.answer("Выберите игру в личном чате с ботом", show_alert=True)
+        return
+    await query.answer()
+    pref = await repo.get_preference(update.effective_user.id)
+    selected = resolve_daily_game_mode(pref, await get_active_daily_game_mode())
+    labels = {"crocodile": "🐊 Крокодил", "2048": "🎲 2048 Sprint", "trivia": "🧠 Викторина"}
+    buttons = [
+        [InlineKeyboardButton(f"{'✓ ' if mode == selected else ''}{label}", callback_data=f"dailycroc:game:{mode}")]
+        for mode, label in labels.items()
+    ]
+    await context.bot.send_message(
+        chat_id=update.effective_user.id,
+        text="Выберите игру дня. Выбор можно изменить в любое время; он действует и для ежедневной рассылки.",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def daily_game_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not update.effective_user or not query.data:
+        return
+    if getattr(update.effective_chat, "type", "private") != "private":
+        await query.answer("Выберите игру в личном чате с ботом", show_alert=True)
+        return
+    game_mode = query.data.removeprefix("dailycroc:game:")
+    if game_mode not in {"crocodile", "2048", "trivia"}:
+        await query.answer("Неизвестная игра", show_alert=True)
+        return
+    await repo.upsert_preference(update.effective_user.id, daily_game=game_mode)
+    await query.answer("Игра выбрана")
+    await send_daily_menu_for_user(update, context, game_mode=game_mode)
 
 
 async def daily_subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -284,10 +382,14 @@ async def daily_subscribe_callback(update: Update, context: ContextTypes.DEFAULT
     if not query or not update.effective_user:
         return
     await query.answer()
-    await repo.upsert_preference(update.effective_user.id)
+    game_mode = (query.data or "").removeprefix("dailycroc:subscribe:")
+    if game_mode in {"crocodile", "2048", "trivia"}:
+        await repo.upsert_preference(update.effective_user.id, daily_game=game_mode)
+    else:
+        await repo.upsert_preference(update.effective_user.id)
     await _edit_callback_text(
         query,
-        "Когда присылать ежедневного Крокодила?\n\nВыбери удобное местное время:",
+        "Когда присылать ежедневную игру?\n\nВыбери удобное местное время:",
         reply_markup=subscribe_time_keyboard(),
     )
 
@@ -308,11 +410,13 @@ async def daily_time_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await query.answer("Подписка включена")
     tz = pref.get("timezone") or repo.DEFAULT_TIMEZONE
+    game_mode = resolve_daily_game_mode(pref, await get_active_daily_game_mode())
+    game_label = {"crocodile": "Крокодила", "2048": "2048 Sprint", "trivia": "Викторину"}[game_mode]
     await _edit_callback_text(
         query,
-        f"✅ Готово. Буду присылать Крокодила дня примерно в {hour:02d}:00.\n"
+        f"✅ Готово. Буду присылать {game_label} примерно в {hour:02d}:00.\n"
         f"Часовой пояс определю автоматически; сейчас используется {tz}.",
-        reply_markup=daily_play_keyboard(include_subscribe=False),
+        reply_markup=daily_keyboard_for_game(game_mode),
     )
 
 
@@ -336,31 +440,44 @@ async def daily_unsubscribe_callback(update: Update, context: ContextTypes.DEFAU
         return
     await repo.unsubscribe(update.effective_user.id)
     await query.answer("Подписка отменена")
+    pref = await repo.get_preference(update.effective_user.id)
+    game_mode = resolve_daily_game_mode(pref, await get_active_daily_game_mode())
     try:
-        await query.edit_message_reply_markup(reply_markup=daily_play_keyboard(include_subscribe=True))
+        await query.edit_message_reply_markup(reply_markup=daily_keyboard_for_game(game_mode, include_subscribe=True))
     except Exception:
         pass
 
 
 async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
+    game_mode = await get_active_daily_game_mode()
+    from app.handlers.daily_2048 import check_daily_2048_jobs
+    from app.handlers.daily_trivia import check_daily_trivia_jobs
+
+    # Every game is available to player-selected daily subscriptions. Each
+    # handler sends only to its own recipients; the admin choice keeps its
+    # longer preparation window and discovery invitation.
+    outcomes = await asyncio.gather(
+        check_daily_2048_jobs(context, admin_mode=game_mode),
+        check_daily_trivia_jobs(context, admin_mode=game_mode),
+        _check_daily_crocodile_only(context, game_mode),
+        return_exceptions=True,
+    )
+    for game, outcome in zip(("2048", "trivia", "crocodile"), outcomes, strict=True):
+        if isinstance(outcome, BaseException):
+            logger.error("daily %s scheduler failed: %s", game, type(outcome).__name__)
+
+
+async def _check_daily_crocodile_only(context: ContextTypes.DEFAULT_TYPE, game_mode: str) -> None:
     from app.admin_alerts import AlertSeverity, alert_admin
     from app.games.crocodile_daily import active_daily_difficulties, ensure_prepared_puzzles
 
-    game_mode = await get_active_daily_game_mode()
-    if game_mode == "2048":
-        from app.handlers.daily_2048 import check_daily_2048_jobs
-
-        await check_daily_2048_jobs(context)
-        return
-    elif game_mode == "trivia":
-        from app.handlers.daily_trivia import check_daily_trivia_jobs
-
-        await check_daily_trivia_jobs(context)
-        return
-
     now = datetime.now(tz=UTC)
     try:
-        prepared = await ensure_prepared_puzzles(context.bot, now=now)
+        prepared = await ensure_prepared_puzzles(
+            context.bot,
+            now=now,
+            days_ahead=repo.DAILY_PREP_DAYS_AHEAD if game_mode == "crocodile" else 1,
+        )
     except Exception as exc:
         logger.error("daily Crocodile: ensure_prepared_puzzles failed: %s", exc, exc_info=True)
         await alert_admin(
@@ -397,7 +514,9 @@ async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None
         logger.info("daily Crocodile delivery disabled by admin switch; pre-generation kept running")
         return
 
-    due_delivery = await repo.get_due_deliveries(puzzle_date=today, now=now)
+    due_delivery = await repo.get_due_deliveries(
+        puzzle_date=today, now=now, game_mode="crocodile", default_game_mode=game_mode
+    )
     if due_delivery:
         # ⚡ Bolt Optimization: Send daily prompts concurrently with a safe concurrency limit (10)
         # to avoid blocking the job scheduler for O(N) seconds.
@@ -408,11 +527,16 @@ async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None
                 try:
                     await send_daily_prompt(context.bot, int(item["user_id"]), today)
                 except Exception as exc:
+                    from app.games.daily_telegram_delivery import retire_unreachable_daily_recipient
+
+                    if await retire_unreachable_daily_recipient(int(item["user_id"]), exc, discovery=False):
+                        logger.info("daily Crocodile delivery stopped for unreachable chat")
+                        return
                     logger.warning("daily Crocodile delivery failed user=%s: %s", item.get("user_id"), exc)
 
         await asyncio.gather(*[_bounded_send(item) for item in due_delivery])
 
-    discovery = await repo.get_discovery_candidates(now=now)
+    discovery = await repo.get_discovery_candidates(now=now) if game_mode == "crocodile" else []
     if discovery:
         sem_disc = asyncio.Semaphore(10)
 
@@ -421,6 +545,11 @@ async def check_daily_crocodile_jobs(context: ContextTypes.DEFAULT_TYPE) -> None
                 try:
                     await send_discovery_intro(context.bot, int(item["user_id"]))
                 except Exception as exc:
+                    from app.games.daily_telegram_delivery import retire_unreachable_daily_recipient
+
+                    if await retire_unreachable_daily_recipient(int(item["user_id"]), exc, discovery=True):
+                        logger.info("daily Crocodile discovery snoozed for unreachable chat")
+                        return
                     logger.warning("daily Crocodile discovery failed user=%s: %s", item.get("user_id"), exc)
 
         await asyncio.gather(*[_bounded_discovery(item) for item in discovery])

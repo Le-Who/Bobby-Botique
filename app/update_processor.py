@@ -27,7 +27,7 @@ def _close_unstarted_coroutine(coroutine: Awaitable[Any]) -> None:
 
 
 class UserScopedUpdateProcessor(BaseUpdateProcessor):
-    """Run different users concurrently while serializing each user's updates."""
+    """Serialize stateful updates per user; admit time-sensitive inline queries directly."""
 
     __slots__ = ("_user_locks",)
 
@@ -77,7 +77,10 @@ class UserScopedUpdateProcessor(BaseUpdateProcessor):
                 transport_origin="webhook" if origin else "polling_or_unlinked",
             )
             try:
-                if user_id is None:
+                # Inline queries only construct preview cards. They must not
+                # queue behind a long callback for the same user: Telegram
+                # expires their answerInlineQuery IDs after a short window.
+                if user_id is None or update_kind == "inline_query":
                     await super().process_update(update, coroutine)
                 else:
                     entry = self._user_locks.get(user_id)

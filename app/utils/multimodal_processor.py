@@ -184,7 +184,7 @@ async def _generate_with_resilience(
             break
 
         if not current_key_hash:
-            current_key_hash = hashlib.sha256(current_api_key.encode()).hexdigest()[:8]
+            current_key_hash = hashlib.sha256(current_api_key.encode()).hexdigest()
 
         tried_key_hashes.add(current_key_hash)
 

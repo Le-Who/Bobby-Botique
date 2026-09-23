@@ -665,11 +665,13 @@ async def prepare_daily_puzzle(
                     logger.debug("daily prep: Redis lock release failed date=%s/%s: %s", puzzle_date, difficulty, exc)
 
 
-async def ensure_prepared_puzzles(bot=None, *, now: datetime | None = None) -> list[repo.DailyPuzzle]:
+async def ensure_prepared_puzzles(
+    bot=None, *, now: datetime | None = None, days_ahead: int = repo.DAILY_PREP_DAYS_AHEAD
+) -> list[repo.DailyPuzzle]:
     start_date = repo.today_puzzle_date(now)
     puzzles: list[repo.DailyPuzzle] = []
     difficulties = await active_daily_difficulties()
-    for offset in range(repo.DAILY_PREP_DAYS_AHEAD + 1):
+    for offset in range(max(0, days_ahead) + 1):
         puzzle_date = start_date + timedelta(days=offset)
         for difficulty in difficulties:
             try:

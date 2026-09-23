@@ -130,7 +130,7 @@ def test_intro_keyboard_labels() -> None:
     markup = daily_crocodile.daily_intro_keyboard()
     labels = [button.text for row in markup.inline_keyboard for button in row]
 
-    assert labels == ["Открыть daily", "Получать каждый день", "Не напоминать 2 недели"]
+    assert labels == ["Открыть daily", "Выбрать другую игру", "Получать каждый день", "Не напоминать 2 недели"]
 
 
 @pytest.mark.asyncio
@@ -219,6 +219,7 @@ async def test_dailycroc_command_reuses_placeholder_sender_for_manual_entry() ->
             return_value={"is_subscribed": False},
         ),
         patch("app.handlers.daily_crocodile.repo.today_puzzle_date", return_value=date(2026, 4, 23)),
+        patch("app.handlers.daily_crocodile.repo.get_results_for_user", new_callable=AsyncMock, return_value={}),
         patch("app.handlers.daily_crocodile._send_daily_entry_message", new_callable=AsyncMock) as sender_mock,
         patch("app.handlers.daily_crocodile.repo.mark_daily_sent", new_callable=AsyncMock) as mark_mock,
     ):
@@ -583,6 +584,8 @@ async def test_daily_scheduler_skips_sends_when_delivery_disabled() -> None:
         ) as prep_mock,
         patch("app.games.crocodile_daily.active_daily_difficulties", new_callable=AsyncMock, return_value=["easy"]),
         patch("app.handlers.daily_crocodile.is_daily_delivery_enabled", new_callable=AsyncMock, return_value=False),
+        patch("app.handlers.daily_2048.check_daily_2048_jobs", new_callable=AsyncMock),
+        patch("app.handlers.daily_trivia.check_daily_trivia_jobs", new_callable=AsyncMock),
         patch("app.handlers.daily_crocodile.send_daily_prompt", new_callable=AsyncMock) as prompt_mock,
         patch("app.handlers.daily_crocodile.send_discovery_intro", new_callable=AsyncMock) as intro_mock,
         patch("app.repos.crocodile_daily.get_due_deliveries", new_callable=AsyncMock) as due_mock,
@@ -621,6 +624,8 @@ async def test_daily_scheduler_waits_until_puzzle_is_fully_prepared() -> None:
         ),
         patch("app.games.crocodile_daily.active_daily_difficulties", new_callable=AsyncMock, return_value=["easy"]),
         patch("app.handlers.daily_crocodile.is_daily_delivery_enabled", new_callable=AsyncMock, return_value=True),
+        patch("app.handlers.daily_2048.check_daily_2048_jobs", new_callable=AsyncMock),
+        patch("app.handlers.daily_trivia.check_daily_trivia_jobs", new_callable=AsyncMock),
         patch("app.handlers.daily_crocodile.send_daily_prompt", new_callable=AsyncMock) as prompt_mock,
         patch("app.handlers.daily_crocodile.send_discovery_intro", new_callable=AsyncMock) as intro_mock,
         patch("app.repos.crocodile_daily.get_due_deliveries", new_callable=AsyncMock) as due_mock,

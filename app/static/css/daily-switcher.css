@@ -1,0 +1,109 @@
+.daily-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid #527b78;
+  border-radius: 12px;
+  background: #132b33;
+  color: #f4fbf8;
+  font: 600 13px/1.25 "Segoe UI", system-ui, sans-serif;
+  user-select: none;
+}
+
+.daily-choice__eyebrow {
+  flex: none;
+  color: #a5d9d0;
+  font-size: 11px;
+  letter-spacing: .04em;
+}
+
+.daily-choice__trigger {
+  display: inline-flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.daily-choice__trigger:hover { background: #254950; }
+.daily-choice__chevron { color: #83ecd7; font-size: 21px; line-height: 1; }
+
+.daily-choice-dialog {
+  position: fixed;
+  inset: auto 12px max(12px, env(safe-area-inset-bottom)) 12px;
+  width: min(440px, calc(100% - 24px));
+  max-height: min(620px, calc(100dvh - 24px));
+  margin: auto auto 0;
+  padding: 20px;
+  overflow-y: auto;
+  border: 1px solid #547b77;
+  border-radius: 20px;
+  background: #13252d;
+  color: #f4fbf8;
+  box-shadow: 0 22px 70px #030b11a8;
+  font: 400 14px/1.45 "Segoe UI", system-ui, sans-serif;
+  user-select: text;
+  touch-action: pan-y;
+  z-index: 100;
+}
+
+.daily-choice-dialog::backdrop { background: #07151dd9; }
+.daily-choice-dialog__head { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+.daily-choice-dialog__kicker { margin: 0 0 4px; color: #9fe4d5; font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.daily-choice-dialog h2 { margin: 0; color: #fff; font: 750 25px/1.12 "Segoe UI", system-ui, sans-serif; letter-spacing: -.03em; }
+.daily-choice-dialog__close { flex: none; width: 40px; height: 40px; border: 1px solid #6b8989; border-radius: 12px; background: #203c42; color: #fff; font: 30px/1 "Segoe UI", sans-serif; cursor: pointer; }
+.daily-choice-dialog__description { margin: 14px 0 18px; color: #c4d9d8; line-height: 1.5; }
+.daily-choice-dialog__games { display: grid; gap: 9px; }
+.daily-choice-dialog__game {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 73px;
+  padding: 10px 12px;
+  border: 1px solid #4c6c6b;
+  border-radius: 14px;
+  background: #1c353b;
+  color: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.daily-choice-dialog__game:hover { border-color: #9fe4d5; background: #27474a; }
+.daily-choice-dialog__game[aria-pressed="true"] { border-color: #86e6cf; background: #25564f; }
+.daily-choice-dialog__game:disabled { cursor: wait; opacity: .68; }
+.daily-choice-dialog__icon { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 10px; background: #31545b; color: #a6f3df; font-size: 24px; }
+.daily-choice-dialog__game strong { display: block; font-size: 16px; line-height: 1.25; }
+.daily-choice-dialog__game small { display: block; margin-top: 3px; color: #c3d7d4; font-size: 12px; line-height: 1.3; }
+.daily-choice-dialog__check { visibility: hidden; color: #a7f3df; font-size: 21px; font-weight: 800; }
+.daily-choice-dialog__game[aria-pressed="true"] .daily-choice-dialog__check { visibility: visible; }
+.daily-choice-dialog__status { min-height: 20px; margin: 12px 0 0; color: #ffd7a2; font-size: 12px; }
+
+.daily-choice__trigger:focus-visible,
+.daily-choice-dialog button:focus-visible {
+  outline: 3px solid #ffda79;
+  outline-offset: 2px;
+}
+
+@media (min-width: 600px) {
+  .daily-choice-dialog { inset: 0; margin: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .daily-choice *, .daily-choice-dialog * { scroll-behavior: auto !important; transition: none !important; }
+}

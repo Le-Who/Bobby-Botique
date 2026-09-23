@@ -82,10 +82,17 @@ def make_context():
 @pytest.fixture
 def run_background_sync():
     """Fixture to capture background tasks submitted by messages.py."""
+    submitted = []
     with patch("app.handlers.messages.submit_task", new_callable=MagicMock) as mock_submit:
         # Instead of scheduling it randomly, we just capture it in the mock
-        mock_submit.side_effect = lambda coro, retry=0: None
+        def capture(coro, retry=0):
+            submitted.append(coro)
+            return None
+
+        mock_submit.side_effect = capture
         yield mock_submit
+    for coro in submitted:
+        coro.close()
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────

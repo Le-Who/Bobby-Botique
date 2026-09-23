@@ -86,6 +86,7 @@ EXPECTED_TABLES = frozenset(
 # Critical column-level contract for tables whose runtime shape cannot be
 # inferred safely from table existence alone.
 EXPECTED_COLUMNS = {
+    "crocodile_daily_preferences": frozenset({"user_id", "daily_game"}),
     "chats": frozenset(
         {
             "user_id",
@@ -106,7 +107,7 @@ EXPECTED_COLUMNS = {
             "live_thinking_level",
             "live_connection_mode",
         }
-    )
+    ),
 }
 
 

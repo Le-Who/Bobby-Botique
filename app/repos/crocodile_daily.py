@@ -763,23 +763,30 @@ async def upsert_preference(
     is_subscribed: bool | None = None,
     timezone: str | None = None,
     preferred_local_hour: int | None = None,
+    daily_game: str | None = None,
 ) -> dict[str, Any]:
+    if daily_game is not None:
+        from app.repos.daily_2048 import DAILY_GAME_MODES
+
+        if daily_game not in DAILY_GAME_MODES:
+            raise ValueError("Invalid daily game")
     await ensure_user(user_id)
     tz = normalize_timezone(timezone)
     hour = 13 if preferred_local_hour is None else max(0, min(23, int(preferred_local_hour)))
     rows = await db.db_query(
         """
         INSERT INTO public.crocodile_daily_preferences (
-            user_id, is_subscribed, timezone, preferred_local_hour, discovery_snoozed_until
+            user_id, is_subscribed, timezone, preferred_local_hour, daily_game, discovery_snoozed_until
         )
-        VALUES ($1, COALESCE($2, FALSE), $3, $4, NULL)
+        VALUES ($1, COALESCE($2, FALSE), $3, $4, $7, NULL)
         ON CONFLICT (user_id) DO UPDATE SET
             is_subscribed = COALESCE($2, public.crocodile_daily_preferences.is_subscribed),
             timezone = CASE WHEN $5 THEN EXCLUDED.timezone ELSE public.crocodile_daily_preferences.timezone END,
             preferred_local_hour = CASE WHEN $6 THEN EXCLUDED.preferred_local_hour ELSE public.crocodile_daily_preferences.preferred_local_hour END,
+            daily_game = COALESCE($7, public.crocodile_daily_preferences.daily_game),
             discovery_snoozed_until = CASE WHEN COALESCE($2, FALSE) THEN NULL ELSE public.crocodile_daily_preferences.discovery_snoozed_until END,
             updated_at = NOW()
-        RETURNING user_id, is_subscribed, timezone, preferred_local_hour, last_sent_puzzle_date,
+        RETURNING user_id, is_subscribed, timezone, preferred_local_hour, daily_game, last_sent_puzzle_date,
                   last_sent_local_date, discovery_last_sent_at, discovery_snoozed_until
         """,
         (
@@ -789,6 +796,7 @@ async def upsert_preference(
             hour,
             timezone is not None,
             preferred_local_hour is not None,
+            daily_game,
         ),
     )
     return rows[0]
@@ -804,7 +812,7 @@ async def update_timezone_if_known(user_id: int, timezone: str | None) -> None:
 async def get_preference(user_id: int) -> dict[str, Any] | None:
     rows = await db.db_query(
         """
-        SELECT user_id, is_subscribed, timezone, preferred_local_hour, last_sent_puzzle_date,
+        SELECT user_id, is_subscribed, timezone, preferred_local_hour, daily_game, last_sent_puzzle_date,
                last_sent_local_date,
                discovery_last_sent_at, discovery_snoozed_until
         FROM public.crocodile_daily_preferences
@@ -879,7 +887,12 @@ async def get_discovery_candidates(*, now: datetime | None = None, limit: int = 
 
 
 async def get_due_deliveries(
-    *, puzzle_date: date, now: datetime | None = None, limit: int = 500
+    *,
+    puzzle_date: date,
+    now: datetime | None = None,
+    limit: int = 500,
+    game_mode: str | None = None,
+    default_game_mode: str | None = None,
 ) -> list[dict[str, Any]]:
     current = now or datetime.now(tz=UTC)
     rows = await db.db_query(
@@ -888,10 +901,11 @@ async def get_due_deliveries(
         FROM public.crocodile_daily_preferences
         WHERE is_subscribed = TRUE
           AND (last_sent_puzzle_date IS NULL OR last_sent_puzzle_date < $1)
+          AND ($3::text IS NULL OR COALESCE(daily_game, $4::text) = $3)
         ORDER BY user_id
         LIMIT $2
         """,
-        (puzzle_date, limit),
+        (puzzle_date, limit, game_mode, default_game_mode),
     )
     due: list[dict[str, Any]] = []
     for row in rows:

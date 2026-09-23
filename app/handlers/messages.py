@@ -18,7 +18,7 @@ import asyncio
 import logging
 import time
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest, NetworkError
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
@@ -50,6 +50,39 @@ from app.tracing import bind_request_span
 from app.utils.api_logger import api_logger
 from app.utils.background_tasks import submit_task
 from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
+
+
+async def show_long_wait_retry(
+    placeholder_message,
+    done_event: asyncio.Event,
+    *,
+    delay_seconds: float = 60.0,
+    lang: str = "ru",
+) -> None:
+    """Offer a safe cancel-and-retry path if no response text arrives soon."""
+    try:
+        await asyncio.wait_for(done_event.wait(), timeout=delay_seconds)
+        return
+    except TimeoutError:
+        pass
+    if done_event.is_set():
+        return
+    try:
+        await placeholder_message.edit_text(
+            t("processing.long_wait", lang),
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            t("btn.stop_and_retry", lang),
+                            callback_data=f"retry_wait:{placeholder_message.message_id}",
+                        )
+                    ]
+                ]
+            ),
+        )
+    except (BadRequest, NetworkError) as exc:
+        logging.debug("Long-wait notice skipped: %s", type(exc).__name__)
 
 
 def chunk_message(text: str, max_length: int = 4096) -> list[str]:
@@ -598,6 +631,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         done_event = asyncio.Event()
         register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
+        if not is_photo:
+            submit_task(show_long_wait_retry(placeholder_message, done_event, lang=detect_language(message_text)))
 
         async def task_wrapper() -> None:
             try:

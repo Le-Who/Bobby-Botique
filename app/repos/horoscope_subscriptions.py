@@ -132,14 +132,14 @@ async def get_due_horoscope_subscriptions(
     utc_minute: int,
     kind: str,  # 'today' or 'tomorrow'
 ) -> list[dict[str, Any]]:
-    """Return active subscriptions due for delivery right now.
+    """Return subscriptions due now or earlier on the user's current local day.
 
     A subscription is 'due' when:
       - is_active = TRUE
       - time_{kind} is set (not NULL)
-      - The user's local hour+minute matches their stored time_{kind}
-        (we convert UTC → local via utc_offset, wrapping mod 24)
-      - We haven't already sent this kind today (last_{kind}_sent < today UTC)
+      - The user's local clock has reached time_{kind}; a slow or skipped
+        scheduler tick can still catch up later that day.
+      - We haven't sent this kind on the user's current local date.
     """
     if kind not in ("today", "tomorrow"):
         raise ValueError(f"kind must be 'today' or 'tomorrow', got {kind!r}")
@@ -155,11 +155,14 @@ async def get_due_horoscope_subscriptions(
             FROM horoscope_subscriptions
             WHERE is_active = TRUE
               AND {time_col} IS NOT NULL
-              AND EXTRACT(HOUR  FROM ({time_col}::time))::int = MOD(($1::int + utc_offset + 48), 24)
-              AND EXTRACT(MINUTE FROM ({time_col}::time))::int = $2::int
+              AND (
+                  EXTRACT(HOUR FROM ({time_col}::time))::int * 60
+                  + EXTRACT(MINUTE FROM ({time_col}::time))::int
+              ) <= (MOD(($1::int + utc_offset + 48), 24) * 60 + $2::int)
               AND (
                   {last_sent_col} IS NULL
-                  OR {last_sent_col}::date < CURRENT_DATE
+                  OR (({last_sent_col} AT TIME ZONE 'UTC') + make_interval(hours => utc_offset))::date
+                     < ((NOW() AT TIME ZONE 'UTC') + make_interval(hours => utc_offset))::date
               )
             """,
             (utc_hour, utc_minute),

@@ -880,6 +880,7 @@ async def test_dailycroc_command_opens_2048_when_admin_switch_is_active() -> Non
     with (
         patch("app.handlers.daily_crocodile.get_active_daily_game_mode", new_callable=AsyncMock, return_value="2048"),
         patch("app.repos.daily_2048.ensure_puzzle", new_callable=AsyncMock),
+        patch("app.repos.daily_2048.get_result", new_callable=AsyncMock, return_value=None),
         patch("app.handlers.daily_crocodile.repo.get_preference", new_callable=AsyncMock, return_value=None),
         patch("app.handlers.daily_2048.send_daily2048_entry", new_callable=AsyncMock) as send_mock,
     ):
@@ -1045,13 +1046,16 @@ def test_daily2048_template_locks_swipe_direction_and_pauses_timer_without_focus
     assert "addEventListener('lostpointercapture'" in template
 
 
-def test_daily2048_template_disables_telegram_vertical_swipes() -> None:
+def test_daily2048_template_keeps_board_swipes_without_blocking_page_scroll() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
 
     assert "overscroll-behavior: none" in template
     assert "function disableTelegramVerticalSwipes()" in template
     assert "tg?.disableVerticalSwipes?.()" in template
-    assert "document.addEventListener('touchmove'" in template
+    assert "document.addEventListener('touchmove'" not in template
+    assert ".board-wrap { touch-action: none; }" in template
+    assert "touch-action: pan-y" in template
+    assert "boardInput.addEventListener('pointermove'" in template
     assert "ev.preventDefault()" in template
     assert "passive: false" in template
     assert "disableTelegramVerticalSwipes();" in template

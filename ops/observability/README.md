@@ -12,9 +12,10 @@ tg-bot stdout (NDJSON)
   -> Grafana on VPS 127.0.0.1:3000
 ```
 
-Only containers labeled `com.gemaibot.logs=true` are discovered. The deploy
-workflow applies that label only to `tg-bot`; short-lived migration and release
-containers are intentionally outside the first version.
+The collector requires both `com.gemaibot.logs=true` and Docker container name
+`tg-bot`. This prevents another labeled project on the same VPS from appearing
+in the bot's protected log stream. The deploy workflow applies the label to
+`tg-bot`; short-lived migration and release containers remain outside it.
 
 ## Immediate production transition
 

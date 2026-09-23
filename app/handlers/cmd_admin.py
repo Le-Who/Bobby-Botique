@@ -1173,7 +1173,7 @@ async def set_provider_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 @admin_only
 async def set_daily_game_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Switch which daily game is opened and delivered to subscribers."""
+    """Set the default daily game for players without a personal choice."""
 
     args = context.args or []
 
@@ -1183,18 +1183,19 @@ async def set_daily_game_command(update: Update, context: ContextTypes.DEFAULT_T
             daily_2048_repo.DAILY_GAME_MODE_CROCODILE,
         )
         await update.message.reply_text(
-            f"🎛 <b>Активная daily-игра:</b> <code>{html.escape(current)}</code>\n\n"
+            f"🎛 <b>Daily-игра по умолчанию:</b> <code>{html.escape(current)}</code>\n\n"
             "Использование: <code>/set_daily_game &lt;crocodile|2048|trivia&gt;</code>\n\n"
-            "• <code>crocodile</code> — вернуть Daily Crocodile\n"
-            "• <code>2048</code> — заменить daily-слот на Daily 2048 Sprint\n"
-            "• <code>trivia</code> — заменить daily-слот на Daily Trivia\n",
+            "• <code>crocodile</code> — Крокодил дня\n"
+            "• <code>2048</code> — Daily 2048 Sprint\n"
+            "• <code>trivia</code> — Daily Trivia\n"
+            "Личный выбор игрока сохраняется при смене значения по умолчанию.",
             parse_mode="HTML",
         )
         return
 
     value = args[0].lower()
     await set_global_setting(daily_2048_repo.DAILY_GAME_MODE_SETTING_KEY, value)
-    logging.info("Admin %s set active daily game → %s", update.effective_user.id, value)
+    logging.info("Admin %s set default daily game → %s", update.effective_user.id, value)
     if value == daily_2048_repo.DAILY_GAME_MODE_2048:
         label = "Daily 2048 Sprint"
     elif value == daily_2048_repo.DAILY_GAME_MODE_TRIVIA:
@@ -1202,8 +1203,9 @@ async def set_daily_game_command(update: Update, context: ContextTypes.DEFAULT_T
     else:
         label = "Daily Crocodile"
     await update.message.reply_text(
-        f"✅ Активная daily-игра: <b>{label}</b>\n"
-        "Команда /dailycroc и hourly scheduler теперь используют выбранный режим.",
+        f"✅ Daily-игра по умолчанию: <b>{label}</b>\n"
+        "Для игроков без личного выбора изменятся /dailycroc и ежедневная рассылка. "
+        "Все три игры готовятся ежедневно; выбранная здесь — на неделю вперёд.",
         parse_mode="HTML",
     )
 

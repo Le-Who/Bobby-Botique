@@ -10,6 +10,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from app.config import settings
+from app.games.daily_telegram_delivery import is_unreachable_chat_error, retire_unreachable_daily_recipient
 from app.games.daily_trivia import ensure_prepared_puzzles, prepare_daily_puzzle
 from app.repos import crocodile_daily as daily_delivery_repo
 from app.repos import daily_trivia as trivia_repo
@@ -47,8 +48,9 @@ def daily_trivia_play_button(label: str = "🧠 Начать Викторину"
 
 def daily_trivia_keyboard(*, include_subscribe: bool = False) -> InlineKeyboardMarkup:
     rows = [[daily_trivia_play_button()]]
+    rows.append([InlineKeyboardButton("Выбрать другую игру", callback_data="dailycroc:choose")])
     if include_subscribe:
-        rows.append([InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe")])
+        rows.append([InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe:trivia")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -88,14 +90,13 @@ async def send_daily_trivia_entry(
             sent_message = await bot.send_photo(photo=cover, caption=caption, **send_kwargs)
             await cover_photo.remember_cover_file_id("dailytrivia", sent_message)
         except Exception as exc:
+            if is_unreachable_chat_error(exc):
+                raise
             logger.warning("daily trivia cover prompt failed user=%s: %s — falling back to text", user_id, exc)
             sent_message = None
 
     if sent_message is None:
-        try:
-            sent_message = await bot.send_message(text=caption, **send_kwargs)
-        except Exception as exc:
-            logger.warning("daily trivia prompt failed user=%s: %s", user_id, exc)
+        sent_message = await bot.send_message(text=caption, **send_kwargs)
 
     if sent_message is not None:
         try:
@@ -134,16 +135,12 @@ async def send_discovery_intro(bot, user_id: int) -> bool:
             )
             await cover_photo.remember_cover_file_id("dailytrivia", message)
         except Exception as exc:
+            if is_unreachable_chat_error(exc):
+                raise
             logger.warning("daily trivia photo discovery failed user=%s: %s", user_id, exc)
-            try:
-                await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
-            except Exception as exc2:
-                logger.warning("daily trivia discovery failed user=%s: %s", user_id, exc2)
-    else:
-        try:
             await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
-        except Exception as exc:
-            logger.warning("daily trivia discovery failed user=%s: %s", user_id, exc)
+    else:
+        await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
     await daily_delivery_repo.mark_discovery_sent(user_id)
     return True
 
@@ -216,12 +213,18 @@ async def daily_trivia_command(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 
-async def check_daily_trivia_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
+async def check_daily_trivia_jobs(context: ContextTypes.DEFAULT_TYPE, *, admin_mode: str | None = None) -> None:
     from app.handlers.daily_crocodile import is_daily_delivery_enabled
 
     now = datetime.now(tz=UTC)
+    if admin_mode is None:
+        from app.repos.daily_2048 import get_active_daily_game_mode
+
+        admin_mode = await get_active_daily_game_mode()
     try:
-        await ensure_prepared_puzzles(now=now)
+        await ensure_prepared_puzzles(
+            now=now, days_ahead=trivia_repo.DAILY_TRIVIA_PREP_DAYS_AHEAD if admin_mode == "trivia" else 1
+        )
     except Exception as exc:
         logger.error("daily trivia: ensure_prepared_puzzles failed: %s", exc, exc_info=True)
         return
@@ -238,7 +241,9 @@ async def check_daily_trivia_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info("daily trivia delivery disabled by daily delivery switch")
         return
 
-    due_delivery = await daily_delivery_repo.get_due_deliveries(puzzle_date=today, now=now)
+    due_delivery = await daily_delivery_repo.get_due_deliveries(
+        puzzle_date=today, now=now, game_mode="trivia", default_game_mode=admin_mode
+    )
     if due_delivery:
         sem = asyncio.Semaphore(10)
 
@@ -247,11 +252,14 @@ async def check_daily_trivia_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
                 try:
                     await send_daily_trivia_entry(context.bot, int(item["user_id"]), today)
                 except Exception as exc:
+                    if await retire_unreachable_daily_recipient(int(item["user_id"]), exc, discovery=False):
+                        logger.info("daily trivia delivery stopped for unreachable chat")
+                        return
                     logger.warning("daily trivia delivery failed user=%s: %s", item.get("user_id"), exc)
 
         await asyncio.gather(*[_bounded_send(item) for item in due_delivery])
 
-    discovery = await daily_delivery_repo.get_discovery_candidates(now=now)
+    discovery = await daily_delivery_repo.get_discovery_candidates(now=now) if admin_mode == "trivia" else []
     if discovery:
         sem_disc = asyncio.Semaphore(10)
 
@@ -260,6 +268,9 @@ async def check_daily_trivia_jobs(context: ContextTypes.DEFAULT_TYPE) -> None:
                 try:
                     await send_discovery_intro(context.bot, int(item["user_id"]))
                 except Exception as exc:
+                    if await retire_unreachable_daily_recipient(int(item["user_id"]), exc, discovery=True):
+                        logger.info("daily trivia discovery snoozed for unreachable chat")
+                        return
                     logger.warning("daily trivia discovery failed user=%s: %s", item.get("user_id"), exc)
 
         await asyncio.gather(*[_bounded_discovery(item) for item in discovery])

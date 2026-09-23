@@ -178,12 +178,14 @@ def compute_final_score(
     return int(base + speed_bonus + move_bonus + merge_bonus)
 
 
-async def ensure_prepared_puzzles(*, now: datetime | None = None) -> list[repo.Daily2048Puzzle]:
+async def ensure_prepared_puzzles(
+    *, now: datetime | None = None, days_ahead: int = repo.DAILY_2048_PREP_DAYS_AHEAD
+) -> list[repo.Daily2048Puzzle]:
     start_date = repo.today_puzzle_date(now)
     # ⚡ Perf: was a sequential for-loop calling ensure_puzzle() one-by-one.
     # asyncio.gather() issues all DB queries concurrently — total latency drops
     # from sum(RTTs) to max(RTT), saving ~7× round-trips for the default 7-day window.
-    dates = [start_date + timedelta(days=offset) for offset in range(repo.DAILY_2048_PREP_DAYS_AHEAD + 1)]
+    dates = [start_date + timedelta(days=offset) for offset in range(max(0, days_ahead) + 1)]
     return list(await asyncio.gather(*[repo.ensure_puzzle(d) for d in dates]))
 
 

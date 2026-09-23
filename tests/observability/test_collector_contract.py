@@ -96,6 +96,9 @@ def test_alloy_collects_only_opted_in_bot_and_avoids_high_cardinality_labels():
     assert '"http://docker-proxy:2375"' in alloy
     assert 'name   = "label"' in alloy
     assert 'values = ["com.gemaibot.logs=true"]' in alloy
+    relabel = alloy.split('discovery.relabel "bot"', maxsplit=1)[1].split('loki.source.docker "bot"', maxsplit=1)[0]
+    assert 'source_labels = ["__meta_docker_container_name"]' in relabel
+    assert 'regex         = "/tg-bot"' in relabel
     assert "forward_to = [loki.process.bot.receiver]" in alloy
     assert '"http://loki:3100/loki/api/v1/push"' in alloy
     assert "wal {" in alloy

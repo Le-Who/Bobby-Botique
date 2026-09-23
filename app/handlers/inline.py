@@ -50,6 +50,7 @@ from telegram import (
     InputTextMessageContent,
     Update,
 )
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from app.cache import get_inline_context, store_inline_context
@@ -506,6 +507,18 @@ def parse_inline_query(query: str) -> dict:
 
 
 async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Ignore expired Telegram query IDs while preserving other API errors."""
+    try:
+        await _handle_inline_query_impl(update, context)
+    except BadRequest as exc:
+        reason = str(exc).lower()
+        if any(marker in reason for marker in ("query is too old", "response timeout expired", "query id is invalid")):
+            logging.info("Expired inline query discarded after Telegram rejected answer")
+            return
+        raise
+
+
+async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Return instant placeholder results for any non-empty query.
 
     Intent routing:

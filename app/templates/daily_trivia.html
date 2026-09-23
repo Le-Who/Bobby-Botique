@@ -4,9 +4,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport"
-    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Daily Trivia</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="/static/css/daily-switcher.css">
+  <script defer src="/static/js/daily-switcher.js"></script>
   <!-- bot_username injected by Jinja2 for deep links -->
   <script>const BOT_USERNAME = "{{ bot_username }}";</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -60,6 +62,13 @@
       display: flex;
       flex-direction: column;
     }
+
+    .container > .daily-choice { margin-bottom: 16px; }
+    .trivia-heading { margin-bottom: 16px; }
+    .trivia-heading h1 { font: 800 clamp(1.55rem, 5vw, 2rem)/1.1 'Outfit', sans-serif; letter-spacing: -.025em; }
+    .trivia-heading p { margin-top: 4px; color: #b7c7d9; font-size: .9rem; }
+    button:focus-visible { outline: 3px solid #fbbf24; outline-offset: 3px; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
 
     /* Header */
     .top-bar {
@@ -595,12 +604,17 @@
 <body>
 
   <div class="container">
+    {% include '_daily_game_switcher.html' %}
+    <header class="trivia-heading">
+      <h1>Викторина дня</h1>
+      <p>Пять вопросов, затем суперигра</p>
+    </header>
     <div class="top-bar">
       <div class="q-counter" id="qCounter">Вопрос 1/5</div>
       <div class="score-badge" id="scoreBadge">⭐ 0</div>
     </div>
 
-    <div class="progress-container">
+    <div class="progress-container" id="quizProgress" role="progressbar" aria-label="Прогресс викторины" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0">
       <div class="progress-fill" id="progressFill"></div>
     </div>
 
@@ -608,12 +622,13 @@
     <div id="gameView">
       <div class="question-card">
         <div class="topic-badge" id="topicBadge">Загрузка...</div>
-        <div class="question-text" id="questionText">Пожалуйста, подождите...</div>
+        <h2 class="question-text" id="questionText">Пожалуйста, подождите...</h2>
       </div>
 
       <div class="options-grid" id="optionsGrid"></div>
+      <button class="btn-secondary" id="retryBtn" type="button" style="display: none;">Повторить загрузку</button>
 
-      <div class="explanation-card" id="explanationCard" style="display: none;">
+      <div class="explanation-card" id="explanationCard" role="status" aria-live="polite" style="display: none;">
         <div class="explanation-title">💡 Знаете ли вы?</div>
         <div class="explanation-body" id="explanationText"></div>
       </div>
@@ -628,12 +643,12 @@
           <div class="topic-badge super-title" id="superTopicBadge">⚡ СУПЕРИГРА</div>
           <div class="super-badge-header">⚡ Ставки ×2</div>
         </div>
-        <div class="question-text" id="superQuestionText">...</div>
+        <h2 class="question-text" id="superQuestionText">...</h2>
       </div>
 
       <div class="options-grid" id="superOptionsGrid"></div>
 
-      <div class="explanation-card" id="superExplanationCard" style="display: none; border-color: rgba(255, 0, 128, 0.3); background: rgba(255, 0, 128, 0.06);">
+      <div class="explanation-card" id="superExplanationCard" role="status" aria-live="polite" style="display: none; border-color: rgba(255, 0, 128, 0.3); background: rgba(255, 0, 128, 0.06);">
         <div class="explanation-title" style="color: #ff80bf;">💡 Знаете ли вы?</div>
         <div class="explanation-body" id="superExplanationText"></div>
       </div>
@@ -674,6 +689,7 @@
 
   <script>
     const tg = window.Telegram ? window.Telegram.WebApp : null;
+    const scrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
     if (tg) {
       tg.expand();
       tg.ready();
@@ -699,6 +715,7 @@
 
     // Wire up static buttons via addEventListener (CSP-safe)
     document.getElementById('nextBtn').addEventListener('click', nextQuestion);
+    document.getElementById('retryBtn').addEventListener('click', defInit);
     document.getElementById('superNextBtn').addEventListener('click', nextSuperQuestion);
     document.getElementById('superStartBtn').addEventListener('click', startSuperGame);
     document.getElementById('closeBtn').addEventListener('click', function () {
@@ -719,14 +736,18 @@
     });
 
     async function defInit() {
+      document.getElementById('retryBtn').style.display = 'none';
+      document.getElementById('questionText').innerText = 'Загружаем вопросы дня…';
       try {
         const response = await fetch('/webapp/api/miniapp/trivia/today', {
           headers: { 'X-TG-INIT-DATA': tg ? tg.initData : '' }
         });
+        if (!response.ok) throw new Error('Question request failed');
         const data = await response.json();
 
         if (!data.questions || data.questions.length === 0) {
-          document.getElementById('questionText').innerText = 'Не удалось загрузить вопросы на сегодня.';
+          document.getElementById('questionText').innerText = 'Вопросы дня пока готовятся. Попробуйте чуть позже.';
+          document.getElementById('retryBtn').style.display = 'block';
           return;
         }
 
@@ -777,7 +798,8 @@
 
         renderQuestion();
       } catch (e) {
-        document.getElementById('questionText').innerText = 'Ошибка соединения.';
+        document.getElementById('questionText').innerText = 'Не удалось загрузить вопросы. Проверьте соединение и попробуйте снова.';
+        document.getElementById('retryBtn').style.display = 'block';
       }
     }
 
@@ -791,6 +813,8 @@
       const q = questions[currentIdx];
 
       document.getElementById('qCounter').innerText = `Вопрос ${currentIdx + 1}/${questions.length}`;
+      document.getElementById('quizProgress').setAttribute('aria-valuemax', String(questions.length));
+      document.getElementById('quizProgress').setAttribute('aria-valuenow', String(currentIdx));
       document.getElementById('progressFill').style.width = `${(currentIdx / questions.length) * 100}%`;
       document.getElementById('topicBadge').innerText = q.topic || 'Тривиа';
       document.getElementById('questionText').innerText = q.question;
@@ -826,6 +850,7 @@
 
       for (let i = 0; i < buttons.length; i++) {
         buttons[i].classList.add('disabled');
+        buttons[i].disabled = true;
         if (i === q.correct_index) buttons[i].classList.add('reveal-correct');
       }
 
@@ -845,9 +870,10 @@
       document.getElementById('explanationText').innerText = q.explanation || 'Отличный факт!';
       document.getElementById('explanationCard').style.display = 'block';
       document.getElementById('nextBtn').style.display = 'block';
+      document.getElementById('nextBtn').focus();
 
       setTimeout(function () {
-        document.getElementById('nextBtn').scrollIntoView({ behavior: 'smooth', block: 'end' });
+        document.getElementById('nextBtn').scrollIntoView({ behavior: scrollBehavior, block: 'end' });
       }, 120);
 
       fetch('/webapp/api/miniapp/trivia/submit_answer', {
@@ -870,7 +896,7 @@
     function nextQuestion() {
       currentIdx++;
       renderQuestion();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: scrollBehavior });
     }
 
     function showFinishScreen(alreadyDone) {
@@ -909,7 +935,7 @@
       superCorrectCount = 0;
       updateSuperScoreBadge();
       renderSuperQuestion();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: scrollBehavior });
     }
 
     function updateSuperScoreBadge() {
@@ -939,6 +965,8 @@
       const q = superQuestions[currentSuperIdx];
 
       document.getElementById('qCounter').innerText = `Супервопрос ${currentSuperIdx + 1}/${superQuestions.length}`;
+      document.getElementById('quizProgress').setAttribute('aria-valuemax', String(superQuestions.length));
+      document.getElementById('quizProgress').setAttribute('aria-valuenow', String(currentSuperIdx));
       document.getElementById('progressFill').style.width = `${((currentSuperIdx) / superQuestions.length) * 100}%`;
       document.getElementById('superTopicBadge').innerText = `⚡ ${q.topic || 'Суперигра'}`;
       document.getElementById('superQuestionText').innerText = q.question;
@@ -974,6 +1002,7 @@
 
       for (let i = 0; i < buttons.length; i++) {
         buttons[i].classList.add('disabled');
+        buttons[i].disabled = true;
         if (i === q.correct_index) buttons[i].classList.add('reveal-correct');
       }
 
@@ -997,9 +1026,10 @@
       document.getElementById('superExplanationText').innerText = q.explanation || 'Отличный факт!';
       document.getElementById('superExplanationCard').style.display = 'block';
       document.getElementById('superNextBtn').style.display = 'block';
+      document.getElementById('superNextBtn').focus();
 
       setTimeout(function () {
-        document.getElementById('superNextBtn').scrollIntoView({ behavior: 'smooth', block: 'end' });
+        document.getElementById('superNextBtn').scrollIntoView({ behavior: scrollBehavior, block: 'end' });
       }, 120);
 
       fetch('/webapp/api/miniapp/trivia/submit_super_answer', {
@@ -1022,7 +1052,7 @@
     function nextSuperQuestion() {
       currentSuperIdx++;
       renderSuperQuestion();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: scrollBehavior });
     }
 
     function finishSuperGame() {
@@ -1046,7 +1076,7 @@
         `Итоговый результат дня: ${totalScore} очков (${superCorrectCount}/3 в Суперигре)`;
 
       document.getElementById('superFinishView').style.display = 'block';
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: scrollBehavior });
     }
 
     // --- Review Screen Logic ---
@@ -1056,7 +1086,7 @@
       document.getElementById('superFinishView').style.display = 'none';
       buildAccordion();
       document.getElementById('reviewView').style.display = 'block';
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: scrollBehavior });
     }
 
     function buildAccordion() {

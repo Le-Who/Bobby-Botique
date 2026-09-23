@@ -15,6 +15,7 @@ DAILY_GAME_MODE_SETTING_KEY = "daily_game_mode"
 DAILY_GAME_MODE_CROCODILE = "crocodile"
 DAILY_GAME_MODE_2048 = "2048"
 DAILY_GAME_MODE_TRIVIA = "trivia"
+DAILY_GAME_MODES = frozenset({DAILY_GAME_MODE_CROCODILE, DAILY_GAME_MODE_2048, DAILY_GAME_MODE_TRIVIA})
 
 DAILY_2048_PREP_DAYS_AHEAD = 7
 DEFAULT_BOARD_SIZE = 4
@@ -203,6 +204,12 @@ async def get_active_daily_game_mode() -> str:
     if value in {"trivia", "dailytrivia", "daily_trivia"}:
         return DAILY_GAME_MODE_TRIVIA
     return DAILY_GAME_MODE_CROCODILE
+
+
+def resolve_daily_game_mode(preference: dict[str, Any] | None, admin_mode: str) -> str:
+    """Use a player's explicit choice or the current admin default."""
+    chosen = (preference or {}).get("daily_game")
+    return chosen if chosen in DAILY_GAME_MODES else admin_mode
 
 
 def _default_spawn_sequence(puzzle_date: date, *, attempt: int = 0, count: int = 220) -> list[dict[str, int]]:

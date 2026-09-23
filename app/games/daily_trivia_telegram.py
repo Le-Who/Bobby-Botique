@@ -56,7 +56,12 @@ async def render_result_body(
             f"📊 <b>Прогресс:</b> {answered}/5 вопросов\n"
             f"⭐ <b>Очки:</b> {result.final_score}"
         )
-        keyboard = InlineKeyboardMarkup([[_play_button("🧠 Продолжить")]])
+        keyboard = InlineKeyboardMarkup(
+            [
+                [_play_button("🧠 Продолжить")],
+                [InlineKeyboardButton("Выбрать другую игру", callback_data="dailycroc:choose")],
+            ]
+        )
         return text, keyboard
 
     # Game finished
@@ -106,6 +111,7 @@ async def render_result_body(
     keyboard = InlineKeyboardMarkup(
         [
             [_play_button("🧠 Открыть Trivia")],
+            [InlineKeyboardButton("Выбрать другую игру", callback_data="dailycroc:choose")],
             [
                 InlineKeyboardButton(
                     "Лучшие за месяц",

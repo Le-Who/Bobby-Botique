@@ -21,6 +21,14 @@ discovery.relabel "bot" {
     action        = "keep"
     regex         = "true"
   }
+
+  // Another local project also uses the opt-in label. Keep this bot's stable
+  // container name so its unrelated stdout never enters the protected stream.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    action        = "keep"
+    regex         = "/tg-bot"
+  }
 }
 
 loki.source.docker "bot" {

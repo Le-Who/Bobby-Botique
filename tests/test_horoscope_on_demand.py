@@ -21,6 +21,50 @@ def request(data="horo_settings:now:today"):
     return update, SimpleNamespace(user_data={}, bot=SimpleNamespace(send_message=AsyncMock()))
 
 
+@pytest.fixture
+def background_jobs(monkeypatch):
+    jobs = []
+
+    def schedule(coro):
+        task = asyncio.create_task(coro)
+        jobs.append(task)
+        return task
+
+    monkeypatch.setattr(horoscope, "submit_task", schedule)
+    return jobs
+
+
+@pytest.mark.asyncio
+async def test_on_demand_generation_does_not_hold_telegram_update_lane(monkeypatch):
+    monkeypatch.setattr(horoscope, "get_horoscope_subscription", AsyncMock(return_value={"sign": "leo"}))
+    started = asyncio.Event()
+    release = asyncio.Event()
+    jobs = []
+
+    async def slow_delivery(*args):
+        started.set()
+        await release.wait()
+        return True
+
+    def schedule(coro):
+        task = asyncio.create_task(coro)
+        jobs.append(task)
+        return task
+
+    monkeypatch.setattr("app.handlers.scheduled_horoscopes._deliver_horoscope", slow_delivery)
+    monkeypatch.setattr(horoscope, "submit_task", schedule, raising=False)
+    update, context = request()
+    callback = asyncio.create_task(horoscope.horoscope_settings_callback(update, context))
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        await asyncio.wait_for(callback, 0.2)
+        assert context.user_data["horo_now_busy"] is True
+    finally:
+        release.set()
+        await asyncio.gather(callback, *jobs, return_exceptions=True)
+    assert context.user_data.get("horo_now_busy") is None
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("sub", [None, {"sign": "leo", "is_active": False}])
 async def test_horoscope_commands_and_text_aliases_offer_immediate_reading(monkeypatch, sub):
@@ -39,7 +83,7 @@ async def test_horoscope_commands_and_text_aliases_offer_immediate_reading(monke
 @pytest.mark.asyncio
 @pytest.mark.parametrize("active", [True, False])
 @pytest.mark.parametrize("kind", ["today", "tomorrow"])
-async def test_manual_reading_uses_subscription_without_changing_delivery(monkeypatch, active, kind):
+async def test_manual_reading_uses_subscription_without_changing_delivery(monkeypatch, background_jobs, active, kind):
     monkeypatch.setattr(
         horoscope, "get_horoscope_subscription", AsyncMock(return_value={"sign": "leo", "is_active": active})
     )
@@ -52,6 +96,7 @@ async def test_manual_reading_uses_subscription_without_changing_delivery(monkey
     update, context = request(f"horo_settings:now:{kind}")
     context.user_data["horo_sign"] = "aries"  # An unrelated unfinished setup draft.
     await horoscope.horoscope_settings_callback(update, context)
+    await asyncio.gather(*background_jobs)
     sent = context.bot.send_message.await_args
     assert sent is not None
     assert sent.kwargs["chat_id"] == 42
@@ -62,7 +107,7 @@ async def test_manual_reading_uses_subscription_without_changing_delivery(monkey
 
 
 @pytest.mark.asyncio
-async def test_without_subscription_choose_sign_for_one_off_without_wizard(monkeypatch):
+async def test_without_subscription_choose_sign_for_one_off_without_wizard(monkeypatch, background_jobs):
     monkeypatch.setattr(horoscope, "get_horoscope_subscription", AsyncMock(return_value=None))
     deliver = AsyncMock(return_value=True)
     monkeypatch.setattr("app.handlers.scheduled_horoscopes._deliver_horoscope", deliver)
@@ -75,12 +120,13 @@ async def test_without_subscription_choose_sign_for_one_off_without_wizard(monke
     assert context.user_data == {}
     update.callback_query.data = "horo_settings:now:tomorrow:taurus"
     await horoscope.horoscope_settings_callback(update, context)
+    await asyncio.gather(*background_jobs)
     deliver.assert_awaited_once_with(context.bot, 42, "taurus", "tomorrow")
     assert "horo_sign" not in context.user_data
 
 
 @pytest.mark.asyncio
-async def test_duplicate_clicks_are_coalesced_and_failure_can_be_retried(monkeypatch):
+async def test_duplicate_clicks_are_coalesced_and_failure_can_be_retried(monkeypatch, background_jobs):
     monkeypatch.setattr(horoscope, "get_horoscope_subscription", AsyncMock(return_value={"sign": "leo"}))
     entered, release = asyncio.Event(), asyncio.Event()
 
@@ -92,15 +138,16 @@ async def test_duplicate_clicks_are_coalesced_and_failure_can_be_retried(monkeyp
     deliver = AsyncMock(side_effect=slow)
     monkeypatch.setattr("app.handlers.scheduled_horoscopes._deliver_horoscope", deliver)
     update, context = request()
-    first = asyncio.create_task(horoscope.horoscope_settings_callback(update, context))
+    await horoscope.horoscope_settings_callback(update, context)
     try:
         await asyncio.wait_for(entered.wait(), 1)
         await horoscope.horoscope_settings_callback(update, context)
         assert deliver.await_count == 1
     finally:
         release.set()
-        await first
+        await background_jobs[0]
     await horoscope.horoscope_settings_callback(update, context)
+    await background_jobs[1]
     assert deliver.await_count == 2
     assert not context.user_data.get("horo_now_busy")
 
@@ -120,7 +167,7 @@ async def test_invalid_manual_callback_never_generates(monkeypatch, data):
 
 
 @pytest.mark.asyncio
-async def test_success_has_short_cooldown(monkeypatch):
+async def test_success_has_short_cooldown(monkeypatch, background_jobs):
     monkeypatch.setattr(horoscope, "get_horoscope_subscription", AsyncMock(return_value={"sign": "leo"}))
     now = [100.0]
     monkeypatch.setattr(horoscope.time, "monotonic", lambda: now[0])
@@ -128,21 +175,24 @@ async def test_success_has_short_cooldown(monkeypatch):
     monkeypatch.setattr("app.handlers.scheduled_horoscopes._deliver_horoscope", deliver)
     update, context = request()
     await horoscope.horoscope_settings_callback(update, context)
+    await background_jobs[0]
     await horoscope.horoscope_settings_callback(update, context)
     assert deliver.await_count == 1
     now[0] += 11
     await horoscope.horoscope_settings_callback(update, context)
+    await background_jobs[1]
     assert deliver.await_count == 2
 
 
 @pytest.mark.asyncio
-async def test_cancelled_generation_allows_retry(monkeypatch):
+async def test_cancelled_generation_allows_retry(monkeypatch, background_jobs):
     monkeypatch.setattr(horoscope, "get_horoscope_subscription", AsyncMock(return_value={"sign": "leo"}))
     deliver = AsyncMock(side_effect=asyncio.CancelledError)
     monkeypatch.setattr("app.handlers.scheduled_horoscopes._deliver_horoscope", deliver)
     update, context = request()
+    await horoscope.horoscope_settings_callback(update, context)
     with pytest.raises(asyncio.CancelledError):
-        await horoscope.horoscope_settings_callback(update, context)
+        await background_jobs[0]
     assert not context.user_data.get("horo_now_busy")
     assert "horo_now_last_success" not in context.user_data
 

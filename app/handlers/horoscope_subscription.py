@@ -52,6 +52,7 @@ from app.repos.horoscope_subscriptions import (
     get_horoscope_subscription,
     upsert_horoscope_subscription,
 )
+from app.utils.background_tasks import submit_task
 
 logger = logging.getLogger(__name__)
 
@@ -615,24 +616,35 @@ async def horoscope_now_callback(update: Update, context: ContextTypes.DEFAULT_T
         await message.reply_text("Прогноз уже отправлен. Новый запрос будет доступен через несколько секунд.")
         return ConversationHandler.END
 
-    # Set before awaiting generation so concurrent callbacks for this user coalesce.
+    # Keep the PTB user lane free while the provider works. Inline queries from
+    # this user must be answered before Telegram expires their query IDs.
     context.user_data["horo_now_busy"] = True
-    try:
-        from app.handlers.scheduled_horoscopes import _deliver_horoscope
 
-        async with asyncio.timeout(60):
-            delivered = await _deliver_horoscope(context.bot, update.effective_user.id, sign, kind)
-        if delivered:
-            context.user_data["horo_now_last_success"] = time.monotonic()
-        else:
-            await message.reply_text(
-                "Не удалось получить гороскоп. Попробуйте ещё раз; расписание подписки не изменено."
-            )
-    except Exception as exc:
-        logger.warning("On-demand horoscope failed: %s", type(exc).__name__)
-        await message.reply_text("Не удалось получить гороскоп. Попробуйте ещё раз чуть позже.")
-    finally:
+    async def deliver_in_background() -> None:
+        try:
+            from app.handlers.scheduled_horoscopes import _deliver_horoscope
+
+            async with asyncio.timeout(60):
+                delivered = await _deliver_horoscope(context.bot, update.effective_user.id, sign, kind)
+            if delivered:
+                context.user_data["horo_now_last_success"] = time.monotonic()
+            else:
+                await message.reply_text(
+                    "Не удалось получить гороскоп. Попробуйте ещё раз; расписание подписки не изменено."
+                )
+        except Exception as exc:
+            logger.warning("On-demand horoscope failed: %s", type(exc).__name__)
+            await message.reply_text("Не удалось получить гороскоп. Попробуйте ещё раз чуть позже.")
+        finally:
+            context.user_data.pop("horo_now_busy", None)
+
+    job = deliver_in_background()
+    try:
+        submit_task(job)
+    except Exception:
+        job.close()
         context.user_data.pop("horo_now_busy", None)
+        await message.reply_text("Не удалось начать генерацию гороскопа. Попробуйте ещё раз.")
     return ConversationHandler.END
 
 

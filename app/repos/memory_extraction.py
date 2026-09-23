@@ -140,6 +140,7 @@ async def extract_graph_structured(
     for attempt in range(3):
         # Allow initial explicitly passed key to be used on attempt 0
         current_api_key = api_key if attempt == 0 else None
+        current_key_hash = hashlib.sha256(api_key.encode()).hexdigest() if attempt == 0 else None
 
         if not current_api_key:
             key_data, _, _ = await _resolve_ai_request(
@@ -149,8 +150,9 @@ async def extract_graph_structured(
                 logging.warning("Graph extraction exhausted available keys on attempt %d", attempt + 1)
                 break
             current_api_key = key_data["api_key"]
+            current_key_hash = key_data["key_hash"]
 
-        current_key_hash = hashlib.sha256(current_api_key.encode()).hexdigest()[:8]
+        assert current_key_hash is not None
         request_attempt = start_workload_attempt(
             workload="memory_extraction",
             provider="gemini",

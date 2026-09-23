@@ -71,6 +71,32 @@ async def test_same_user_updates_are_serialized_across_chats():
 
 
 @pytest.mark.asyncio
+async def test_inline_query_bypasses_busy_user_lane_so_it_can_answer_before_expiry():
+    processor = UserScopedUpdateProcessor(50)
+    callback_started = asyncio.Event()
+    release_callback = asyncio.Event()
+    inline_started = asyncio.Event()
+
+    async def slow_callback() -> None:
+        callback_started.set()
+        await release_callback.wait()
+
+    async def inline_handler() -> None:
+        inline_started.set()
+
+    callback_task = asyncio.create_task(processor.process_update(_Update(7), slow_callback()))
+    await asyncio.wait_for(callback_started.wait(), 1)
+    inline_update = _Update(7)
+    inline_update.inline_query = object()
+    inline_task = asyncio.create_task(processor.process_update(inline_update, inline_handler()))
+    try:
+        await asyncio.wait_for(inline_started.wait(), 0.2)
+    finally:
+        release_callback.set()
+        await asyncio.gather(callback_task, inline_task)
+
+
+@pytest.mark.asyncio
 async def test_fifty_different_users_can_run_concurrently():
     processor = UserScopedUpdateProcessor(50)
     all_started = asyncio.Event()
