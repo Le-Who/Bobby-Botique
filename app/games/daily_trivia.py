@@ -145,7 +145,7 @@ SYSTEM_PROMPT_SUPER_TRIVIA = """Ты — эксперт по составлен�
 def _bank_context(facts: list[repo.StoredTriviaFact]) -> str:
     if not facts:
         return ""
-    claims = "\n".join(f"- {fact.identity.canonical_claim}" for fact in facts[:400])
+    claims = "\n".join(f"- {fact.identity.canonical_claim}" for fact in facts)
     return f"\n\nФАКТЫ ИЗ БАНКА, КОТОРЫЕ НЕЛЬЗЯ ПОВТОРЯТЬ ИЛИ ПЕРЕФРАЗИРОВАТЬ:\n{claims}"
 
 
@@ -155,6 +155,7 @@ async def generate_question_lane(
     lane: str,
     model_name: str,
     router=None,
+    rejected_facts: list[FactIdentity] | None = None,
 ) -> list[repo.TriviaQuestion]:
     """Generate one lane; publication and cross-lane checks happen separately."""
     if lane not in {"main", "super"}:
@@ -163,7 +164,13 @@ async def generate_question_lane(
     system_prompt = SYSTEM_PROMPT_TRIVIA if lane == "main" else SYSTEM_PROMPT_SUPER_TRIVIA
     label = "обычных вопросов" if lane == "main" else "СУПЕР-вопросов"
     bank = await repo.get_recent_bank_facts(reference_date=puzzle_date, days=90)
-    prompt = f"Сгенерируй ровно {count} {label} на дату {puzzle_date.isoformat()}.{_bank_context(bank)}"
+    rejected_context = ""
+    if rejected_facts:
+        claims = "\n".join(f"- {fact.canonical_claim}" for fact in rejected_facts)
+        rejected_context = f"\n\nПРЕДЫДУЩАЯ ПОПЫТКА БЫЛА ОТКЛОНЕНА. Особенно избегай этих фактов:\n{claims}"
+    prompt = (
+        f"Сгенерируй ровно {count} {label} на дату {puzzle_date.isoformat()}.{_bank_context(bank)}{rejected_context}"
+    )
     provider_router = router or get_provider_router()
     primary_model = normalize_gemini_runtime_model(model_name)
     model_plan = list(
@@ -219,15 +226,18 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False, mode: 
     preserved_main = list(existing.questions) if existing else []
     preserved_super = list(existing.super_questions) if existing else []
     last_conflict: authoring.DuplicateQuestionError | None = None
+    rejected_facts: list[FactIdentity] = []
 
     for attempt in range(1, GENERATION_ATTEMPTS + 1):
         questions = (
-            await generate_question_lane(puzzle_date, lane="main", model_name=model_name)
+            await generate_question_lane(puzzle_date, lane="main", model_name=model_name, rejected_facts=rejected_facts)
             if regenerate_main
             else preserved_main
         )
         super_questions = (
-            await generate_question_lane(puzzle_date, lane="super", model_name=model_name)
+            await generate_question_lane(
+                puzzle_date, lane="super", model_name=model_name, rejected_facts=rejected_facts
+            )
             if regenerate_super
             else preserved_super
         )
@@ -242,6 +252,9 @@ async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False, mode: 
             )
         except authoring.DuplicateQuestionError as exc:
             last_conflict = exc
+            for identity in (exc.conflict.candidate.identity, exc.conflict.existing.identity):
+                if identity is not None and identity not in rejected_facts:
+                    rejected_facts.append(identity)
             logger.warning(
                 "trivia: duplicate candidate on authoring attempt %d/%d for %s: %s",
                 attempt,

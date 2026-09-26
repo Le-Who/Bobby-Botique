@@ -173,19 +173,23 @@ async def test_generate_question_lane_uses_approved_model_plan(monkeypatch) -> N
     class PlanRouter:
         def __init__(self) -> None:
             self.model_plan: list[str] = []
+            self.history: list = []
 
         async def execute_gemini_model_plan(self, model_plan, history, *, parse_response, **kwargs):
             self.model_plan = list(model_plan)
+            self.history = history
             return parse_response(__import__("json").dumps(valid_questions, ensure_ascii=False))
 
     router = PlanRouter()
     monkeypatch.setattr(repo, "get_recent_bank_facts", AsyncMock(return_value=[]))
+    rejected = _identified_question(1, "Старый объект", "свойство", "Старый ответ").identity
 
     questions = await game.generate_question_lane(
         date(2026, 8, 22),
         lane="main",
         model_name="gemini-3.7-flash",
         router=router,
+        rejected_facts=[rejected],
     )
 
     assert len(questions) == 5
@@ -195,6 +199,61 @@ async def test_generate_question_lane_uses_approved_model_plan(monkeypatch) -> N
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
     ]
+    assert rejected.canonical_claim in router.history[0]["parts"][0]["text"]
+
+
+def test_trivia_bank_context_includes_oldest_recent_fact() -> None:
+    from app.games.trivia_similarity import FactIdentity
+
+    facts = [
+        repo.StoredTriviaFact(
+            identity=FactIdentity.create(subject=f"Объект {index}", relation="свойство", answer=f"Ответ {index}"),
+            question=f"Вопрос {index}?",
+            puzzle_date=date(2026, 7, 25),
+            lane="main",
+            position=index,
+        )
+        for index in range(425)
+    ]
+
+    assert facts[-1].identity.canonical_claim in game._bank_context(facts)
+
+
+async def test_duplicate_retry_highlights_rejected_facts_to_generator(monkeypatch) -> None:
+    authoring_module = importlib.import_module("app.games.daily_trivia_authoring")
+    main = [_identified_question(index, f"Объект {index}", "свойство", f"Ответ {index}") for index in range(1, 6)]
+    super_questions = [
+        _identified_question(index, f"Супер объект {index}", "свойство", f"Супер ответ {index}")
+        for index in range(1, 4)
+    ]
+    prior = authoring_module.BankFact(
+        identity=_identified_question(1, "Старый объект", "свойство", "Старый ответ").identity,
+        question="Старый вопрос?",
+        puzzle_date=date(2026, 7, 25),
+    )
+    conflict = authoring_module.DuplicateConflict(
+        candidate=main[0],
+        existing=prior,
+        match=__import__("app.games.trivia_similarity", fromlist=["SimilarityMatch"]).SimilarityMatch(
+            True, 0.99, "semantic_bank_audit", "same fact"
+        ),
+    )
+    generated = AsyncMock(side_effect=[main, super_questions, main, super_questions])
+    published = object()
+    with (
+        patch("app.repos.daily_trivia.get_puzzle", new=AsyncMock(return_value=None)),
+        patch("app.repos.settings_repo.get_global_setting", new=AsyncMock(return_value="gemini-3.8-flash")),
+        patch("app.games.daily_trivia.generate_question_lane", new=generated),
+        patch(
+            "app.games.daily_trivia_authoring.publish_authored_day",
+            new=AsyncMock(side_effect=[authoring_module.DuplicateQuestionError(conflict), published]),
+        ),
+    ):
+        result = await game.prepare_daily_puzzle(date(2026, 9, 26))
+
+    assert result is published
+    assert generated.await_args_list[2].kwargs["rejected_facts"] == [main[0].identity, prior.identity]
+    assert generated.await_args_list[3].kwargs["rejected_facts"] == [main[0].identity, prior.identity]
 
 
 async def test_generate_question_lane_preserves_tagged_provider_error(monkeypatch) -> None:
