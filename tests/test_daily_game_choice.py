@@ -191,7 +191,12 @@ async def test_completed_crocodile_player_sees_result_and_leaderboard_from_daily
 
 @pytest.mark.asyncio
 async def test_bot_choice_callback_saves_selection_and_opens_chosen_game() -> None:
-    query = SimpleNamespace(data="dailycroc:game:trivia", answer=AsyncMock(), message=SimpleNamespace(message_id=9))
+    query = SimpleNamespace(
+        data="dailycroc:game:trivia",
+        answer=AsyncMock(),
+        edit_message_reply_markup=AsyncMock(),
+        message=SimpleNamespace(message_id=9),
+    )
     update = SimpleNamespace(
         callback_query=query, effective_user=SimpleNamespace(id=7), effective_chat=SimpleNamespace(id=7)
     )
@@ -204,6 +209,13 @@ async def test_bot_choice_callback_saves_selection_and_opens_chosen_game() -> No
     ):
         await daily_crocodile.daily_game_choice_callback(update, context)
     save.assert_awaited_once_with(7, daily_game="trivia")
+    query.edit_message_reply_markup.assert_awaited_once()
+    keyboard = query.edit_message_reply_markup.await_args.kwargs["reply_markup"]
+    assert [row[0].text for row in keyboard.inline_keyboard] == [
+        "🐊 Крокодил",
+        "🎲 2048 Sprint",
+        "✓ 🧠 Викторина",
+    ]
     send.assert_awaited_once()
     assert send.await_args.kwargs["game_mode"] == "trivia"
 

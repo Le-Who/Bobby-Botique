@@ -1826,6 +1826,9 @@ async def api_admin_dailytrivia_regenerate():
         ), 409
     except authoring.DuplicateQuestionError as exc:
         return jsonify({"error": str(exc), "conflict": _serialize_trivia_conflict(exc)}), 409
+    except (RuntimeError, ValueError) as exc:
+        logging.warning("Daily Trivia regeneration unavailable: %s", type(exc).__name__, exc_info=True)
+        return jsonify({"error": "Генерация сейчас недоступна. Повторите запрос через несколько минут."}), 503
     return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
 
 

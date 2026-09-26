@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.constants import ParseMode
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from app.config import settings
@@ -339,6 +340,15 @@ async def send_daily_menu_for_user(
     )
 
 
+def daily_game_choice_keyboard(selected: str) -> InlineKeyboardMarkup:
+    labels = {"crocodile": "🐊 Крокодил", "2048": "🎲 2048 Sprint", "trivia": "🧠 Викторина"}
+    buttons = [
+        [InlineKeyboardButton(f"{'✓ ' if mode == selected else ''}{label}", callback_data=f"dailycroc:game:{mode}")]
+        for mode, label in labels.items()
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+
 async def daily_game_choose_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if not query or not update.effective_user:
@@ -349,15 +359,10 @@ async def daily_game_choose_callback(update: Update, context: ContextTypes.DEFAU
     await query.answer()
     pref = await repo.get_preference(update.effective_user.id)
     selected = resolve_daily_game_mode(pref, await get_active_daily_game_mode())
-    labels = {"crocodile": "🐊 Крокодил", "2048": "🎲 2048 Sprint", "trivia": "🧠 Викторина"}
-    buttons = [
-        [InlineKeyboardButton(f"{'✓ ' if mode == selected else ''}{label}", callback_data=f"dailycroc:game:{mode}")]
-        for mode, label in labels.items()
-    ]
     await context.bot.send_message(
         chat_id=update.effective_user.id,
         text="Выберите игру дня. Выбор можно изменить в любое время; он действует и для ежедневной рассылки.",
-        reply_markup=InlineKeyboardMarkup(buttons),
+        reply_markup=daily_game_choice_keyboard(selected),
     )
 
 
@@ -374,6 +379,10 @@ async def daily_game_choice_callback(update: Update, context: ContextTypes.DEFAU
         return
     await repo.upsert_preference(update.effective_user.id, daily_game=game_mode)
     await query.answer("Игра выбрана")
+    try:
+        await query.edit_message_reply_markup(reply_markup=daily_game_choice_keyboard(game_mode))
+    except TelegramError as exc:
+        logger.warning("daily game choice keyboard refresh failed: %s", type(exc).__name__)
     await send_daily_menu_for_user(update, context, game_mode=game_mode)
 
 

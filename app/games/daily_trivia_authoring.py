@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 
 from pydantic import BaseModel, Field
 
+from app.errors import is_error_message
 from app.games.trivia_similarity import FactIdentity, SemanticJudge, SimilarityMatch, compare_facts
 from app.providers.router import get_provider_router
 from app.repos.daily_trivia import TriviaQuestion
 from app.utils.json_compat import json
 
+logger = logging.getLogger(__name__)
+
 
 class InvalidQuestionSetError(ValueError):
     pass
+
+
+class SemanticAuditUnavailableError(RuntimeError):
+    """The optional semantic check could not produce a usable verdict."""
 
 
 class DuplicateQuestionError(ValueError):
@@ -57,17 +65,24 @@ def build_semantic_judge(*, router=None, model_name: str) -> SemanticJudge:
 
     async def judge(first_claim: str, second_claim: str) -> tuple[bool, float, str]:
         prompt = f"Факт A: {first_claim}\nФакт B: {second_claim}"
-        response_text, _ = await provider_router.get_response(
-            preferred_model=model_name,
-            history=[{"role": "user", "parts": [{"text": prompt}]}],
-            system_instruction=SEMANTIC_DUPLICATE_PROMPT,
-            timeout=30.0,
-        )
-        start = response_text.find("{")
-        end = response_text.rfind("}")
-        if start < 0 or end <= start:
-            raise ValueError("Semantic duplicate judge returned no JSON object")
-        parsed = SemanticDuplicateJudgement.model_validate(json.loads(response_text[start : end + 1]))
+        try:
+            response_text, _ = await provider_router.get_response(
+                preferred_model=model_name,
+                history=[{"role": "user", "parts": [{"text": prompt}]}],
+                system_instruction=SEMANTIC_DUPLICATE_PROMPT,
+                timeout=30.0,
+            )
+            if is_error_message(response_text):
+                raise SemanticAuditUnavailableError("Semantic duplicate judge provider unavailable")
+            start = response_text.find("{")
+            end = response_text.rfind("}")
+            if start < 0 or end <= start:
+                raise SemanticAuditUnavailableError("Semantic duplicate judge returned no JSON object")
+            parsed = SemanticDuplicateJudgement.model_validate(json.loads(response_text[start : end + 1]))
+        except SemanticAuditUnavailableError:
+            raise
+        except Exception as exc:
+            raise SemanticAuditUnavailableError("Semantic duplicate judge request or response failed") from exc
         return parsed.is_duplicate, parsed.confidence, parsed.reason
 
     return judge
@@ -150,23 +165,30 @@ async def audit_semantic_bank(
         ],
     }
     provider_router = router or get_provider_router()
-    response_text, _ = await provider_router.get_response(
-        preferred_model=model_name,
-        history=[{"role": "user", "parts": [{"text": json.dumps(payload)}]}],
-        system_instruction=SEMANTIC_BANK_AUDIT_PROMPT,
-        timeout=45.0,
-    )
-    start = response_text.find("{")
-    end = response_text.rfind("}")
-    if start < 0 or end <= start:
-        raise ValueError("Semantic bank audit returned no JSON object")
-    parsed = SemanticBankAudit.model_validate(json.loads(response_text[start : end + 1]))
+    try:
+        response_text, _ = await provider_router.get_response(
+            preferred_model=model_name,
+            history=[{"role": "user", "parts": [{"text": json.dumps(payload)}]}],
+            system_instruction=SEMANTIC_BANK_AUDIT_PROMPT,
+            timeout=45.0,
+        )
+        if is_error_message(response_text):
+            raise SemanticAuditUnavailableError("Semantic bank audit provider unavailable")
+        start = response_text.find("{")
+        end = response_text.rfind("}")
+        if start < 0 or end <= start:
+            raise SemanticAuditUnavailableError("Semantic bank audit returned no JSON object")
+        parsed = SemanticBankAudit.model_validate(json.loads(response_text[start : end + 1]))
+    except SemanticAuditUnavailableError:
+        raise
+    except Exception as exc:
+        raise SemanticAuditUnavailableError("Semantic bank audit request or response failed") from exc
     conflicts: list[BankAuditConflict] = []
     for row in parsed.conflicts:
         if row.confidence < 0.85:
             continue
         if row.candidate_index >= len(candidate_list) or row.bank_index >= len(bank_list):
-            raise ValueError("Semantic bank audit returned an invalid conflict index")
+            raise SemanticAuditUnavailableError("Semantic bank audit returned an invalid conflict index")
         conflicts.append(
             BankAuditConflict(
                 candidate=candidate_list[row.candidate_index],
@@ -258,6 +280,7 @@ async def publish_authored_day(
         )
         for item in stored
     ]
+    semantic_checks_available = True
     if semantic_judge is None:
         candidate_facts = [
             BankFact(
@@ -270,22 +293,43 @@ async def publish_authored_day(
             for position, question in enumerate(questions, start=1)
             if question.identity is not None
         ]
-        audit_conflicts = await audit_semantic_bank(
-            candidate_facts,
-            bank,
-            model_name=model_name,
-        )
+        try:
+            audit_conflicts = await audit_semantic_bank(
+                candidate_facts,
+                bank,
+                model_name=model_name,
+            )
+        except SemanticAuditUnavailableError as exc:
+            logger.warning(
+                "trivia: semantic bank audit unavailable (%s); using deterministic duplicate checks", type(exc).__name__
+            )
+            audit_conflicts = []
+            semantic_checks_available = False
         if audit_conflicts:
             conflict = audit_conflicts[0]
             source_questions = main_tuple if conflict.candidate.lane == "main" else super_tuple
             candidate_question = source_questions[conflict.candidate.position - 1]
             raise DuplicateQuestionError(DuplicateConflict(candidate_question, conflict.existing, conflict.match))
-    validated = await validate_authored_day(
-        main_tuple,
-        super_tuple,
-        historical_facts=bank,
-        semantic_judge=semantic_judge or build_semantic_judge(model_name=model_name),
-    )
+    try:
+        validated = await validate_authored_day(
+            main_tuple,
+            super_tuple,
+            historical_facts=bank,
+            semantic_judge=(semantic_judge or build_semantic_judge(model_name=model_name))
+            if semantic_checks_available
+            else None,
+        )
+    except SemanticAuditUnavailableError as exc:
+        logger.warning(
+            "trivia: semantic duplicate judge unavailable (%s); using deterministic duplicate checks",
+            type(exc).__name__,
+        )
+        validated = await validate_authored_day(
+            main_tuple,
+            super_tuple,
+            historical_facts=bank,
+            semantic_judge=None,
+        )
     return await trivia_repo.publish_revision(
         puzzle_date,
         list(validated.main),

@@ -192,8 +192,8 @@ async def test_generate_question_lane_uses_approved_model_plan(monkeypatch) -> N
     assert router.model_plan == [
         "gemini-3.7-flash",
         "gemini-3.6-flash",
-        "gemini-3.7-flash",
-        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
     ]
 
 
@@ -651,6 +651,26 @@ async def test_admin_regenerate_returns_latest_puzzle_on_revision_conflict() -> 
     assert body["puzzle"]["readiness"]["publishable"] is True
 
 
+async def test_admin_regenerate_reports_provider_outage_as_retryable() -> None:
+    web_module = __import__("app.web", fromlist=["quart_app"])
+    with (
+        patch("app.web._is_authenticated", return_value=True),
+        patch(
+            "app.games.daily_trivia.prepare_daily_puzzle",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError(tag_error(ErrorCode.OVERLOADED, "Попробуйте позже")),
+        ),
+    ):
+        response = await web_module.quart_app.test_client().post(
+            "/api/admin/dailytrivia/regenerate",
+            json={"date": "2026-09-26", "mode": "all"},
+        )
+
+    body = await response.get_json()
+    assert response.status_code == 503
+    assert "повтор" in body["error"].lower()
+
+
 def test_admin_trivia_ui_recovers_from_revision_conflict_without_reload() -> None:
     template = (Path(__file__).parents[1] / "app" / "templates" / "admin_daily.html").read_text(encoding="utf-8")
 
@@ -914,6 +934,77 @@ async def test_semantic_bank_audit_catches_nonlexical_paraphrase() -> None:
     assert len(conflicts) == 1
     assert conflicts[0].existing == historical
     assert conflicts[0].match.method == "semantic_bank_audit"
+
+
+@pytest.mark.parametrize("response", [tag_error(ErrorCode.OVERLOADED, "Попробуйте позже"), "non-JSON output"])
+async def test_semantic_bank_audit_identifies_provider_error(response: str) -> None:
+    authoring_module = importlib.import_module("app.games.daily_trivia_authoring")
+    candidate = authoring_module.BankFact(
+        identity=_identified_question(1, "Новый объект", "свойство", "Новый ответ").identity,
+        question="Новый вопрос?",
+    )
+    historical = authoring_module.BankFact(
+        identity=_identified_question(1, "Старый объект", "свойство", "Старый ответ").identity,
+        question="Старый вопрос?",
+    )
+    router = AsyncMock()
+    router.get_response.return_value = (response, None)
+
+    with pytest.raises(authoring_module.SemanticAuditUnavailableError):
+        await authoring_module.audit_semantic_bank([candidate], [historical], router=router, model_name="test-model")
+
+
+async def test_publication_uses_deterministic_checks_when_semantic_audit_unavailable() -> None:
+    authoring_module = importlib.import_module("app.games.daily_trivia_authoring")
+    main = [_identified_question(index, f"Объект {index}", "свойство", f"Ответ {index}") for index in range(1, 6)]
+    super_questions = [
+        _identified_question(index, f"Супер объект {index}", "свойство", f"Супер ответ {index}")
+        for index in range(1, 4)
+    ]
+    published = object()
+    with (
+        patch("app.repos.daily_trivia.get_recent_bank_facts", new=AsyncMock(return_value=[])),
+        patch(
+            "app.games.daily_trivia_authoring.audit_semantic_bank",
+            new=AsyncMock(side_effect=authoring_module.SemanticAuditUnavailableError("provider unavailable")),
+        ),
+        patch("app.repos.daily_trivia.publish_revision", new=AsyncMock(return_value=published)) as save,
+    ):
+        result = await authoring_module.publish_authored_day(
+            date(2026, 9, 26), main=main, super_questions=super_questions, model_name="gemini-3.8-flash"
+        )
+
+    assert result is published
+    save.assert_awaited_once()
+
+
+async def test_publication_recovers_when_pairwise_semantic_judge_is_unavailable() -> None:
+    authoring_module = importlib.import_module("app.games.daily_trivia_authoring")
+    main = [_identified_question(index, f"Объект {index}", "свойство", f"Ответ {index}") for index in range(1, 6)]
+    super_questions = [
+        _identified_question(index, f"Супер объект {index}", "свойство", f"Супер ответ {index}")
+        for index in range(1, 4)
+    ]
+    prior = SimpleNamespace(
+        identity=_identified_question(1, "Объект 1", "свойство", "Исторический ответ").identity,
+        question="Каково свойство объекта 1?",
+        puzzle_date=date(2026, 9, 1),
+        lane="main",
+        position=1,
+    )
+    judge = AsyncMock(side_effect=authoring_module.SemanticAuditUnavailableError("provider unavailable"))
+    with (
+        patch("app.repos.daily_trivia.get_recent_bank_facts", new=AsyncMock(return_value=[prior])),
+        patch("app.games.daily_trivia_authoring.audit_semantic_bank", new=AsyncMock(return_value=[])),
+        patch("app.games.daily_trivia_authoring.build_semantic_judge", return_value=judge),
+        patch("app.repos.daily_trivia.publish_revision", new=AsyncMock(return_value=object())) as save,
+    ):
+        await authoring_module.publish_authored_day(
+            date(2026, 9, 26), main=main, super_questions=super_questions, model_name="gemini-3.8-flash"
+        )
+
+    judge.assert_awaited()
+    save.assert_awaited_once()
 
 
 def test_cutover_migration_preserves_every_result_before_today() -> None:

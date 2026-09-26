@@ -6,7 +6,7 @@ import time
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from app.config import GEMINI_ECONOMY_MODEL, normalize_gemini_runtime_model
+from app.config import GEMINI_ECONOMY_MODEL, GEMINI_PRIMARY_FALLBACK_MODEL, normalize_gemini_runtime_model
 from app.errors import is_error_message, strip_error_tag
 from app.games.trivia_similarity import FactIdentity
 from app.providers.router import get_provider_router
@@ -166,7 +166,9 @@ async def generate_question_lane(
     prompt = f"Сгенерируй ровно {count} {label} на дату {puzzle_date.isoformat()}.{_bank_context(bank)}"
     provider_router = router or get_provider_router()
     primary_model = normalize_gemini_runtime_model(model_name)
-    model_plan = [primary_model, TRIVIA_RETRY_MODEL, primary_model, TRIVIA_RETRY_MODEL]
+    model_plan = list(
+        dict.fromkeys((primary_model, TRIVIA_RETRY_MODEL, GEMINI_PRIMARY_FALLBACK_MODEL, GEMINI_ECONOMY_MODEL))
+    )
 
     def parse_response(response_text: str) -> list[repo.TriviaQuestion]:
         if is_error_message(response_text):
