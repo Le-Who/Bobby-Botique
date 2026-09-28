@@ -1,10 +1,10 @@
 # Private log search
 
-This stack replaces the Portainer **Logs** tab with bounded search in Grafana.
+This stack provides bounded Grafana search for GemAI and YT-DLP bot logs.
 It does not replace Portainer container actions or shell access.
 
 ```text
-tg-bot stdout (NDJSON)
+tg-bot and ytdlbot-bot-1 stdout (NDJSON)
   -> Docker local driver (20 MiB x 5)
   -> restricted Docker API proxy
   -> Grafana Alloy
@@ -12,10 +12,12 @@ tg-bot stdout (NDJSON)
   -> Grafana on VPS 127.0.0.1:3000
 ```
 
-The collector requires both `com.gemaibot.logs=true` and Docker container name
-`tg-bot`. This prevents another labeled project on the same VPS from appearing
-in the bot's protected log stream. The deploy workflow applies the label to
-`tg-bot`; short-lived migration and release containers remain outside it.
+The collector requires both `com.gemaibot.logs=true` and one of the exact Docker
+container names `tg-bot` or `ytdlbot-bot-1`. Each container has its own Alloy
+source and Loki `service_name` label, including for malformed JSON lines. This
+prevents other labeled projects on the same VPS from entering either protected
+stream. Each bot's deploy workflow applies the label to its primary container;
+short-lived migration and release containers remain outside collection.
 
 ## Immediate production transition
 
@@ -53,10 +55,12 @@ loopback and Loki, Alloy, and the Docker proxy publish no host ports.
 
 ## Search workflow
 
-The provisioned **GemAI Bot Logs** dashboard opens the last 15 minutes, loads at
-most 100 newest rows, and does not auto-refresh or live-tail. Use its environment,
-level, event, release, and request-ID filters. Expand a row only when the full
-protected JSON record is needed.
+The **Bot Logs** folder contains separate **GemAI Bot Logs** and **YT-DLP Bot
+Logs** dashboards. Each opens the last 15 minutes, loads at most 100 newest
+rows from its own service, and does not auto-refresh or live-tail. Use the
+environment, level, event, release, and request-ID filters. Expand a row only
+when the full protected JSON record is needed. The two Grafana datasources point
+to the same Loki store but keep request/trace links scoped to the correct bot.
 
 Useful Explore queries:
 
@@ -65,6 +69,8 @@ Useful Explore queries:
 {service_name="gemaibotv2"} | json | request_id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 {service_name="gemaibotv2"} | json | actual_model="gemini-example"
 {service_name="gemaibotv2"} | json | event=~"logging[.](loss_summary|sink_failed|format_failed)"
+{service_name="ytdlbot", environment="production"} | json | event="media-pipeline-failed"
+{service_name="ytdlbot", environment="production"} | json | request_id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 ```
 
 Loki indexes only the low-cardinality `service_name`, `environment`, `level`,

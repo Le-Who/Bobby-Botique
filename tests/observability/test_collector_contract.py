@@ -89,7 +89,7 @@ def test_loki_retention_and_query_limits_are_bounded():
     assert config["querier"]["max_concurrent"] <= 2
 
 
-def test_alloy_collects_only_opted_in_bot_and_avoids_high_cardinality_labels():
+def test_alloy_collects_only_the_two_opted_in_bots_and_avoids_high_cardinality_labels():
     alloy = (OBSERVABILITY / "config.alloy").read_text(encoding="utf-8")
     compact = " ".join(alloy.split())
 
@@ -99,6 +99,17 @@ def test_alloy_collects_only_opted_in_bot_and_avoids_high_cardinality_labels():
     relabel = alloy.split('discovery.relabel "bot"', maxsplit=1)[1].split('loki.source.docker "bot"', maxsplit=1)[0]
     assert 'source_labels = ["__meta_docker_container_name"]' in relabel
     assert 'regex         = "/tg-bot"' in relabel
+    ytdlbot_relabel = re.search(r'discovery\.relabel "ytdlbot" \{(.*?)^\}', alloy, re.DOTALL | re.MULTILINE)
+    assert ytdlbot_relabel is not None
+    assert "targets = discovery.docker.bot.targets" in ytdlbot_relabel.group(1)
+    assert 'source_labels = ["__meta_docker_container_label_com_gemaibot_logs"]' in ytdlbot_relabel.group(1)
+    assert 'source_labels = ["__meta_docker_container_name"]' in ytdlbot_relabel.group(1)
+    assert 'regex         = "/ytdlbot-bot-1"' in ytdlbot_relabel.group(1)
+    ytdlbot_source = re.search(r'loki\.source\.docker "ytdlbot" \{(.*?)^\}', alloy, re.DOTALL | re.MULTILINE)
+    assert ytdlbot_source is not None
+    assert "targets          = discovery.relabel.ytdlbot.output" in ytdlbot_source.group(1)
+    assert 'service_name = "ytdlbot"' in ytdlbot_source.group(1)
+    assert "forward_to = [loki.process.bot.receiver]" in ytdlbot_source.group(1)
     assert "forward_to = [loki.process.bot.receiver]" in alloy
     assert '"http://loki:3100/loki/api/v1/push"' in alloy
     assert "wal {" in alloy
@@ -122,6 +133,11 @@ def test_alloy_http_log_streams_are_not_restarted_on_the_discovery_interval():
     )
     assert re.search(
         r'loki\.source\.docker "bot" \{.*?refresh_interval\s*=\s*"24h"',
+        alloy,
+        re.DOTALL,
+    )
+    assert re.search(
+        r'loki\.source\.docker "ytdlbot" \{.*?refresh_interval\s*=\s*"24h"',
         alloy,
         re.DOTALL,
     )
@@ -159,11 +175,34 @@ def test_grafana_is_locked_down_and_dashboard_queries_are_bounded():
     assert datasource["jsonData"]["maxLines"] == 100
     assert datasource["jsonData"]["timeout"] == 10
 
-    dashboard = json.loads((OBSERVABILITY / "grafana/dashboards/bot-logs.json").read_text(encoding="utf-8"))
-    assert dashboard["time"] == {"from": "now-15m", "to": "now"}
-    assert dashboard["refresh"] is False
-    assert dashboard["liveNow"] is False
-    assert all(target["maxLines"] <= 100 for panel in dashboard["panels"] for target in panel["targets"])
+    provider = _load_yaml("grafana/provisioning/dashboards/default.yaml")["providers"][0]
+    assert provider["folder"] == "Bot Logs"
+
+    for filename, uid, service, datasource_uid in (
+        ("bot-logs.json", "gemaibot-logs", "gemaibotv2", "gemaibot-loki"),
+        ("ytdlbot-logs.json", "ytdlbot-logs", "ytdlbot", "ytdlbot-loki"),
+    ):
+        dashboard = json.loads((OBSERVABILITY / "grafana/dashboards" / filename).read_text(encoding="utf-8"))
+        assert dashboard["uid"] == uid
+        assert dashboard["time"] == {"from": "now-15m", "to": "now"}
+        assert dashboard["refresh"] is False
+        assert dashboard["liveNow"] is False
+        for panel in dashboard["panels"]:
+            assert panel["datasource"]["uid"] == datasource_uid
+            for target in panel["targets"]:
+                assert target["maxLines"] <= 100
+                assert target["datasource"]["uid"] == datasource_uid
+                assert f'service_name="{service}"' in target["expr"]
+
+    ytdlbot_datasource = _load_yaml("grafana/provisioning/datasources/ytdlbot.yaml")["datasources"][0]
+    assert ytdlbot_datasource["uid"] == "ytdlbot-loki"
+    assert ytdlbot_datasource["url"] == "http://loki:3100"
+    assert ytdlbot_datasource["access"] == "proxy"
+    assert ytdlbot_datasource["jsonData"]["maxLines"] == 100
+    for field in ytdlbot_datasource["jsonData"]["derivedFields"]:
+        assert "service_name=" in field["url"]
+        assert "ytdlbot" in field["url"]
+        assert "gemaibotv2" not in field["url"]
 
 
 def test_ci_validates_vendor_configs_with_the_same_pinned_images():

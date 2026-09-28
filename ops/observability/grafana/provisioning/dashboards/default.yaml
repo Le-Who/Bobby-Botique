@@ -3,7 +3,7 @@ apiVersion: 1
 providers:
   - name: GemAI Bot
     orgId: 1
-    folder: GemAI Bot
+    folder: Bot Logs
     type: file
     disableDeletion: true
     allowUiUpdates: false

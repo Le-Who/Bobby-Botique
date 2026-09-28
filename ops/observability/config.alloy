@@ -31,6 +31,22 @@ discovery.relabel "bot" {
   }
 }
 
+discovery.relabel "ytdlbot" {
+  targets = discovery.docker.bot.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_gemaibot_logs"]
+    action        = "keep"
+    regex         = "true"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    action        = "keep"
+    regex         = "/ytdlbot-bot-1"
+  }
+}
+
 loki.source.docker "bot" {
   host             = "http://docker-proxy:2375"
   targets          = discovery.relabel.bot.output
@@ -43,6 +59,20 @@ loki.source.docker "bot" {
     level        = "unknown",
     parse_status = "invalid",
     service_name = "gemaibotv2",
+  }
+  forward_to = [loki.process.bot.receiver]
+}
+
+loki.source.docker "ytdlbot" {
+  host             = "http://docker-proxy:2375"
+  targets          = discovery.relabel.ytdlbot.output
+  // The HTTP log stream needs the same long client timeout as the GemAI bot.
+  refresh_interval = "24h"
+  labels = {
+    environment  = "unknown",
+    level        = "unknown",
+    parse_status = "invalid",
+    service_name = "ytdlbot",
   }
   forward_to = [loki.process.bot.receiver]
 }
