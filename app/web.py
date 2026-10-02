@@ -149,7 +149,7 @@ async def add_security_headers(response):
 
     if is_natal_report:
         response.headers["Referrer-Policy"] = "no-referrer"
-        csp = (
+        csp = response.headers.get("Content-Security-Policy") or (
             "default-src 'self'; "
             "script-src 'none'; "
             "style-src 'self' 'unsafe-inline'; "

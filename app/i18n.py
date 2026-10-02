@@ -59,6 +59,285 @@ def detect_language(text: str | None) -> str:
 # ── String Registry ──────────────────────────────────────────────────────────
 
 _STRINGS: dict[str, dict[str, str]] = {
+    # ── Compatibility ────────────────────────────────────────────────────
+    "compat.title": {"ru": "Совместимость по знакам", "en": "Zodiac compatibility"},
+    "compat.dates_title": {"ru": "Совместимость по датам рождения", "en": "Birth date compatibility"},
+    "compat.strength": {"ru": "Сильная сторона.", "en": "Strength."},
+    "compat.tension": {"ru": "Зона внимания.", "en": "Watch for."},
+    "compat.action": {"ru": "Что попробовать.", "en": "Try this."},
+    "compat.sign_limit": {
+        "ru": "Это краткий символический обзор по солнечным знакам. Даты рождения добавят личные акценты; процента совместимости здесь нет.",
+        "en": "A brief symbolic reading of Sun signs. Birth dates add personal detail; this is not a compatibility percentage.",
+    },
+    "compat.date_limit": {
+        "ru": "Время и место рождения неизвестны: возможные знаки перечислены через /. Дома, асцендент и точные межпланетные аспекты не определяются. Это символический разбор, а не обещание событий.",
+        "en": "Birth time and place are unknown: possible signs are separated by /. Houses, ascendants and precise inter-chart aspects are not determined. This is a symbolic reading, not a prediction of events.",
+    },
+    "compat.boundary": {
+        "ru": "Пограничная дата: Солнце может быть в соседних знаках. Для выбора одного знака нужны время и место рождения; общий вывод по Солнцу пока пропущен.",
+        "en": "Boundary date: the Sun may be in adjacent signs. Birth time and place are needed to choose one; the overall Sun reading is omitted for now.",
+    },
+    "compat.corrected_signs": {
+        "ru": "Солнечные знаки по датам отличаются от исходного запроса; в этом разборе использованы рассчитанные знаки.",
+        "en": "The calculated Sun signs differ from the original query; this reading uses the calculated signs.",
+    },
+    "compat.gender.m": {"ru": "Мужчина", "en": "Man"},
+    "compat.gender.f": {"ru": "Женщина", "en": "Woman"},
+    "compat.gender.n": {"ru": "Партнёр", "en": "Partner"},
+    "compat.partner": {"ru": "Партнёр {index}", "en": "Partner {index}"},
+    "compat.sign.0": {"ru": "Овен", "en": "Aries"},
+    "compat.sign.1": {"ru": "Телец", "en": "Taurus"},
+    "compat.sign.2": {"ru": "Близнецы", "en": "Gemini"},
+    "compat.sign.3": {"ru": "Рак", "en": "Cancer"},
+    "compat.sign.4": {"ru": "Лев", "en": "Leo"},
+    "compat.sign.5": {"ru": "Дева", "en": "Virgo"},
+    "compat.sign.6": {"ru": "Весы", "en": "Libra"},
+    "compat.sign.7": {"ru": "Скорпион", "en": "Scorpio"},
+    "compat.sign.8": {"ru": "Стрелец", "en": "Sagittarius"},
+    "compat.sign.9": {"ru": "Козерог", "en": "Capricorn"},
+    "compat.sign.10": {"ru": "Водолей", "en": "Aquarius"},
+    "compat.sign.11": {"ru": "Рыбы", "en": "Pisces"},
+    "compat.need.0": {
+        "ru": "Овну важны прямота и возможность действовать",
+        "en": "Aries values directness and room to act",
+    },
+    "compat.need.1": {
+        "ru": "Тельцу важны надёжность и спокойный ритм",
+        "en": "Taurus values reliability and a steady rhythm",
+    },
+    "compat.need.2": {"ru": "Близнецам важны разговор и новизна", "en": "Gemini values conversation and novelty"},
+    "compat.need.3": {
+        "ru": "Раку важны забота и чувство безопасности",
+        "en": "Cancer values care and emotional safety",
+    },
+    "compat.need.4": {"ru": "Льву важны тепло и признание", "en": "Leo values warmth and appreciation"},
+    "compat.need.5": {"ru": "Деве важны ясность и забота в мелочах", "en": "Virgo values clarity and practical care"},
+    "compat.need.6": {"ru": "Весам важны взаимность и диалог", "en": "Libra values reciprocity and dialogue"},
+    "compat.need.7": {"ru": "Скорпиону важны глубина и доверие", "en": "Scorpio values depth and trust"},
+    "compat.need.8": {
+        "ru": "Стрельцу важны свобода и общие горизонты",
+        "en": "Sagittarius values freedom and shared horizons",
+    },
+    "compat.need.9": {
+        "ru": "Козерогу важны ответственность и общая цель",
+        "en": "Capricorn values responsibility and shared goals",
+    },
+    "compat.need.10": {"ru": "Водолею важны свобода и дружба", "en": "Aquarius values freedom and friendship"},
+    "compat.need.11": {"ru": "Рыбам важны эмпатия и бережность", "en": "Pisces values empathy and gentleness"},
+    "compat.planet.sun": {"ru": "Солнце", "en": "Sun"},
+    "compat.planet.moon": {"ru": "Луна", "en": "Moon"},
+    "compat.planet.mercury": {"ru": "Меркурий", "en": "Mercury"},
+    "compat.planet.venus": {"ru": "Венера", "en": "Venus"},
+    "compat.planet.mars": {"ru": "Марс", "en": "Mars"},
+    "compat.channel.moon": {"ru": "Эмоции.", "en": "Emotions."},
+    "compat.channel.mercury": {"ru": "Общение.", "en": "Communication."},
+    "compat.channel.venus": {"ru": "Близость.", "en": "Affection."},
+    "compat.matrices": {"ru": "Матрицы и общий фокус.", "en": "Matrix archetypes."},
+    "compat.matrix": {
+        "ru": "Центры двух матриц: {centers}. Их можно использовать как темы для разговора о личных сильных сторонах; они не задают оценку отношений.",
+        "en": "The two matrix centres are {centers}. These archetypes can frame a conversation about personal strengths; they do not rate the relationship.",
+    },
+    "compat.mode.0": {
+        "ru": "Оба стремятся задавать направление: полезно по очереди брать инициативу.",
+        "en": "Both tend to lead: take turns setting the direction.",
+    },
+    "compat.mode.1": {
+        "ru": "Оба могут упорно держаться своей позиции: особенно важны гибкость и право на паузу.",
+        "en": "Both may hold their ground: flexibility and the right to pause matter.",
+    },
+    "compat.mode.2": {
+        "ru": "Оба легко меняют планы: договорённостям пригодятся сроки и конкретика.",
+        "en": "Both adapt easily: agreements benefit from dates and specifics.",
+    },
+    "compat.elements.0_0.strength": {
+        "ru": "Общий энтузиазм помогает быстро начинать новое и поддерживать инициативу друг друга.",
+        "en": "Shared enthusiasm helps you start things and encourage each other.",
+    },
+    "compat.elements.0_0.tension": {
+        "ru": "В споре легко соревноваться за лидерство и отвечать быстрее, чем вы успеваете услышать друг друга.",
+        "en": "Disagreements can turn into a contest for the lead before either person feels heard.",
+    },
+    "compat.elements.0_0.action": {
+        "ru": "Выберите общую задачу и разделите ответственность; сложные разговоры начинайте после паузы.",
+        "en": "Choose a shared goal, divide responsibility, and pause before difficult conversations.",
+    },
+    "compat.elements.0_1.strength": {
+        "ru": "Инициатива встречается с практичностью: один импульс можно превратить в устойчивый результат.",
+        "en": "Initiative meets practicality: an idea can become a lasting result.",
+    },
+    "compat.elements.0_1.tension": {
+        "ru": "Разный темп: желание действовать сразу может сталкиваться с потребностью сначала проверить условия.",
+        "en": "Different pacing: acting now may clash with checking the details first.",
+    },
+    "compat.elements.0_1.action": {
+        "ru": "Договоритесь о маленьком пробном шаге и моменте, когда вместе оцените результат.",
+        "en": "Agree on a small trial and a time to assess it together.",
+    },
+    "compat.elements.0_2.strength": {
+        "ru": "Идеи и энергия усиливают друг друга; общие занятия и разговоры поддерживают интерес.",
+        "en": "Ideas and energy reinforce each other; activities and conversation sustain interest.",
+    },
+    "compat.elements.0_2.tension": {
+        "ru": "Можно увлечься планами и спором, оставив бытовые договорённости и чувства без внимания.",
+        "en": "Plans and debate may crowd out everyday commitments and feelings.",
+    },
+    "compat.elements.0_2.action": {
+        "ru": "Переведите одну общую идею в конкретный план и отдельно обсудите, что каждому сейчас нужно.",
+        "en": "Turn one shared idea into a concrete plan and discuss what each person needs now.",
+    },
+    "compat.elements.0_3.strength": {
+        "ru": "Смелость и чувствительность могут дополнять друг друга: действовать легче, когда есть эмоциональная поддержка.",
+        "en": "Courage and sensitivity can complement each other: emotional support makes action easier.",
+    },
+    "compat.elements.0_3.tension": {
+        "ru": "Прямота может восприниматься как резкость, а потребность в бережности — как ограничение свободы.",
+        "en": "Directness may feel harsh, while the need for gentleness may feel restrictive.",
+    },
+    "compat.elements.0_3.action": {
+        "ru": "До решения назовите чувство и просьбу; уточните, нужна сейчас поддержка или конкретное действие.",
+        "en": "Name the feeling and request first; ask whether support or action is needed.",
+    },
+    "compat.elements.1_1.strength": {
+        "ru": "Общие привычки и надёжность помогают строить устойчивый быт и долгие планы.",
+        "en": "Shared habits and reliability help build a stable home and lasting plans.",
+    },
+    "compat.elements.1_1.tension": {
+        "ru": "Рутина и стремление всё контролировать могут вытеснить спонтанность и открытый разговор о чувствах.",
+        "en": "Routine and control can leave little space for spontaneity or discussing feelings.",
+    },
+    "compat.elements.1_1.action": {
+        "ru": "Сохраните понятные договорённости, но выделите время для нового совместного опыта без оценки результата.",
+        "en": "Keep clear agreements and make time for a new shared experience without rating its result.",
+    },
+    "compat.elements.1_2.strength": {
+        "ru": "Практическая опора дополняет свежий взгляд: идеи получают форму, а привычки — новые варианты.",
+        "en": "Practical support complements fresh perspectives: ideas gain form and habits gain options.",
+    },
+    "compat.elements.1_2.tension": {
+        "ru": "Потребность в определённости может расходиться с желанием оставлять несколько вариантов открытыми.",
+        "en": "The need for certainty may clash with keeping several possibilities open.",
+    },
+    "compat.elements.1_2.action": {
+        "ru": "Разделите обязательные договорённости и пространство для эксперимента, чтобы не проверять друг друга на прочность.",
+        "en": "Separate firm commitments from room to experiment so neither person has to test the other.",
+    },
+    "compat.elements.1_3.strength": {
+        "ru": "Забота и надёжность поддерживают чувство безопасности; внимание проявляется и в делах, и в эмоциональном отклике.",
+        "en": "Care and reliability support safety through both practical help and emotional responsiveness.",
+    },
+    "compat.elements.1_3.tension": {
+        "ru": "Практический совет может заменить сочувствие, а невысказанные ожидания — превратиться в обиду.",
+        "en": "Practical advice may replace empathy, while unspoken expectations can become resentment.",
+    },
+    "compat.elements.1_3.action": {
+        "ru": "Прямо уточняйте, какая забота нужна: выслушать, помочь с делом или просто побыть рядом.",
+        "en": "Ask what kind of care is needed: listening, practical help, or simply being there.",
+    },
+    "compat.elements.2_2.strength": {
+        "ru": "Дружба, любопытство и разговоры создают общий язык и оставляют место личной свободе.",
+        "en": "Friendship, curiosity and conversation create a shared language with room for independence.",
+    },
+    "compat.elements.2_2.tension": {
+        "ru": "Чувства можно слишком долго обсуждать вместо того, чтобы проживать; обещаниям иногда не хватает действий.",
+        "en": "Feelings can be discussed instead of experienced, and promises may lack follow-through.",
+    },
+    "compat.elements.2_2.action": {
+        "ru": "После разговора выберите одно действие заботы и проверьте, как оно воспринимается партнёром.",
+        "en": "After talking, choose one caring action and check how your partner receives it.",
+    },
+    "compat.elements.2_3.strength": {
+        "ru": "Разные способы смотреть на ситуацию расширяют диалог: чувства получают слова, а идеи — эмоциональную глубину.",
+        "en": "Different perspectives broaden the dialogue: feelings gain words and ideas gain emotional depth.",
+    },
+    "compat.elements.2_3.tension": {
+        "ru": "Потребность в глубоком доверии может сталкиваться с потребностью в свободе. Дистанция не всегда означает холодность, а близость — контроль.",
+        "en": "Deep trust and independence may pull in different directions. Distance need not mean coldness, and closeness need not mean control.",
+    },
+    "compat.elements.2_3.action": {
+        "ru": "Обсудите границы личного пространства и конкретные знаки внимания, которые помогают обоим чувствовать связь.",
+        "en": "Discuss personal space and concrete signs of care that help both of you feel connected.",
+    },
+    "compat.elements.3_3.strength": {
+        "ru": "Эмоциональный отклик и эмпатия помогают чувствовать настроение друг друга и создавать близость.",
+        "en": "Emotional responsiveness and empathy help you notice each other's moods and build closeness.",
+    },
+    "compat.elements.3_3.tension": {
+        "ru": "Легко подхватить тревогу друг друга или ждать, что партнёр догадается о просьбе без слов.",
+        "en": "It can be easy to absorb each other's anxiety or expect a request to be understood without words.",
+    },
+    "compat.elements.3_3.action": {
+        "ru": "Отделяйте чувство от предположения и формулируйте просьбу прямо, оставляя время на самостоятельное восстановление.",
+        "en": "Separate feelings from assumptions, state requests clearly, and allow time to recharge individually.",
+    },
+    "compat.dates_button": {"ru": "📅 По датам рождения", "en": "📅 Use birth dates"},
+    "compat.tarot_button": {"ru": "🔮 Таро для пары", "en": "🔮 Tarot for this pair"},
+    "compat.inline_description": {
+        "ru": "Краткий разбор · даты рождения и таро в личном чате",
+        "en": "Brief reading · birth dates and tarot in private chat",
+    },
+    "compat.guide_title": {"ru": "💞 Укажите два знака зодиака", "en": "💞 Enter two zodiac signs"},
+    "compat.guide": {
+        "ru": "Например: <code>совместимость мужчина скорпион женщина водолей</code> или <code>совм скорпион водолей</code>.\n\nПол можно не указывать. Даты рождения вводятся в личном диалоге через кнопку под готовым разбором.",
+        "en": "Example: <code>compatibility man scorpio woman aquarius</code> or <code>compat scorpio aquarius</code>.\n\nGender is optional. Enter birth dates in private chat using the button below a completed reading.",
+    },
+    "compat.private_only": {
+        "ru": "Для дат рождения и таро откройте эту ссылку в личном чате с ботом.",
+        "en": "Open this link in the bot's private chat to use birth dates or tarot.",
+    },
+    "compat.invalid_link": {
+        "ru": "Ссылка совместимости некорректна. Отправьте новый инлайн-запрос с двумя знаками.",
+        "en": "Invalid compatibility link. Send a new inline query with two signs.",
+    },
+    "compat.first_date": {
+        "ru": "📅 <b>Совместимость по датам рождения</b>\n{pair}\n\nШаг 1 из 2. Введите дату рождения первого партнёра ({partner}) в формате <code>ДД.ММ.ГГГГ</code> или <code>YYYY-MM-DD</code>.\n\nРасчёт будет без домов и асцендента. /cancel — отменить; новая команда также завершит ввод.",
+        "en": "📅 <b>Birth date compatibility</b>\n{pair}\n\nStep 1 of 2. Enter the first partner's birth date ({partner}) as <code>DD.MM.YYYY</code> or <code>YYYY-MM-DD</code>.\n\nHouses and ascendants are omitted. /cancel cancels; another command also ends the input flow.",
+    },
+    "compat.second_date": {
+        "ru": "Шаг 2 из 2. Теперь дата рождения второго партнёра ({partner}), в том же формате. /cancel — отменить.",
+        "en": "Step 2 of 2. Enter the second partner's birth date ({partner}) in the same format. /cancel cancels.",
+    },
+    "compat.bad_date": {
+        "ru": "Дата не распознана. Нужна существующая дата с 1900 года до сегодняшнего дня, например <code>09.11.1997</code>. Попробуйте ещё раз; /cancel — отменить.",
+        "en": "Date not recognized. Use a valid date from 1900 through today, for example <code>09.11.1997</code>. Try again; /cancel cancels.",
+    },
+    "compat.cancelled": {"ru": "Ввод дат отменён.", "en": "Birth date input cancelled."},
+    "compat.edited_restart": {
+        "ru": "Это сообщение относится к завершённому вводу дат. Для исправленного разбора откройте кнопку «По датам рождения» и введите обе даты заново.",
+        "en": "This message belongs to an ended date flow. Open the birth dates button and enter both dates again for a revised reading.",
+    },
+    "compat.expired": {
+        "ru": "Ввод дат завершён по времени. Откройте кнопку «По датам рождения» ещё раз.",
+        "en": "Birth date input timed out. Open the birth dates button again.",
+    },
+    "compat.orphan_date": {
+        "ru": "Сейчас форма ввода даты не открыта. Для совместимости нажмите «По датам рождения» под инлайн-разбором; для натальной карты или матрицы судьбы отправьте /natal. Затем введите дату в открывшейся форме.",
+        "en": "No date input form is open. For compatibility, use the birth dates button below the inline reading; for a natal chart or destiny matrix, send /natal. Then enter the date in the opened form.",
+    },
+    "compat.tarot_expired": {
+        "ru": "Контекст этого разбора для Таро больше не доступен. Кнопка действует 30 минут и может устареть после перезапуска бота. Подготовьте разбор совместимости заново и нажмите кнопку Таро под новым результатом.",
+        "en": "This reading's tarot context is no longer available. The button lasts 30 minutes and can expire after the bot restarts. Prepare a new compatibility reading and use its tarot button.",
+    },
+    "compat.failed": {
+        "ru": "Не удалось подготовить разбор. Откройте кнопку «По датам рождения» и попробуйте ещё раз.",
+        "en": "Could not prepare the reading. Open the birth dates button and try again.",
+    },
+    "compat.access_required": {
+        "ru": "Для этого разбора нужен доступ к боту. Ввод дат завершён; после восстановления доступа откройте ссылку ещё раз.",
+        "en": "Bot access is required for this reading. Date input has ended; open the link again once access is restored.",
+    },
+    "compat.draw_button": {"ru": "🔮 Сделать расклад на совместимость", "en": "🔮 Read tarot for this pair"},
+    "compat.tarot_welcome": {
+        "ru": "🔮 **Таро для пары**\n\nКонтекст совместимости сохранён. Нажмите **Сделать расклад на совместимость** или задайте свой вопрос об этих отношениях.\nЯ вытяну карты после вашего сообщения.",
+        "en": "🔮 **Tarot for this pair**\n\nThe compatibility context is ready. Press **Read tarot for this pair** or ask your own relationship question.\nI will draw the cards after your message.",
+    },
+    "compat.tarot_question": {
+        "ru": "Сделай расклад таро об отношениях пары: {pair}. Что помогает сближению, где возникает напряжение и какой следующий шаг стоит обсудить?",
+        "en": "Read tarot for this pair: {pair}. What supports closeness, where does tension arise, and what next step is worth discussing?",
+    },
+    "compat.tarot_from_dates": {
+        "ru": "Сделай расклад таро для этой пары: ресурс отношений, напряжение и следующий шаг. Учитывай эти символические ориентиры, не приписывая им гарантированных событий:",
+        "en": "Read tarot for this pair: strengths, tensions and the next step. Use these symbolic reference points without treating them as guaranteed events:",
+    },
     # ── Mini App ─────────────────────────────────────────────────────────
     "miniapp.voice.aoede": {"ru": "Нейтральный и естественный", "en": "Neutral and natural"},
     "miniapp.voice.kore": {"ru": "Более энергичный и уверенный", "en": "More energetic and confident"},

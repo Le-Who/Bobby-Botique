@@ -3,7 +3,10 @@ Local astrological engine based on ephem.
 Calculates basic planetary positions and moon phases for Gemini prompts.
 """
 
+from __future__ import annotations
+
 import math
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 import ephem
@@ -32,28 +35,48 @@ def get_zodiac_sign(lon_radians: float) -> str:
     return ZODIAC_SIGNS[sign_index]
 
 
+def ecliptic_longitude(body_factory: Callable[[ephem.Date], ephem.Body], dt: datetime | ephem.Date) -> float:
+    """Return apparent geocentric tropical longitude of date in degrees [0, 360).
+
+    Aware datetimes are converted to UTC; naive datetimes are treated as UTC.
+    PyEphem's Ecliptic(body) uses astrometric J2000 coordinates by default,
+    so apparent geocentric RA/Dec must be expressed at the requested epoch.
+    """
+    date = _ephem_date(dt)
+    return _computed_ecliptic_longitude(body_factory(date), date)
+
+
+def _ephem_date(dt: datetime | ephem.Date) -> ephem.Date:
+    if isinstance(dt, datetime) and dt.tzinfo is not None:
+        dt = dt.astimezone(UTC).replace(tzinfo=None)
+    return ephem.Date(dt)
+
+
+def _computed_ecliptic_longitude(body: ephem.Body, date: ephem.Date) -> float:
+    equatorial = ephem.Equatorial(body.g_ra, body.g_dec, epoch=date)
+    return math.degrees(float(ephem.Ecliptic(equatorial).lon)) % 360.0
+
+
 def is_retrograde(body, observer: ephem.Observer, dt: datetime) -> bool:
     """
     Check if a planetary body is in retrograde motion.
     Retrograde means the ecliptic longitude is decreasing.
+    Calculate on a copy to preserve the caller's body and observer state.
     """
+    sample = body.copy()
+
     # Position at dt
-    observer.date = dt
-    body.compute(observer)
-    lon1 = ephem.Ecliptic(body).lon
+    date = _ephem_date(dt)
+    sample.compute(date)
+    lon1 = _computed_ecliptic_longitude(sample, date)
 
     # Position at dt + 1 day
-    observer.date = dt + timedelta(days=1)
-    body.compute(observer)
-    lon2 = ephem.Ecliptic(body).lon
+    next_date = _ephem_date(dt + timedelta(days=1))
+    sample.compute(next_date)
+    lon2 = _computed_ecliptic_longitude(sample, next_date)
 
-    # Handle wrap-around at 360 degrees (0 radians)
-    diff = lon2 - lon1
-    if diff < -math.pi:
-        diff += 2 * math.pi
-    elif diff > math.pi:
-        diff -= 2 * math.pi
-
+    # Handle wrap-around at 360 degrees.
+    diff = (lon2 - lon1 + 180.0) % 360.0 - 180.0
     return diff < 0
 
 
@@ -65,8 +88,9 @@ def get_astro_context(dt: datetime | None = None) -> str:
     if dt is None:
         dt = datetime.now(UTC)
 
+    date = _ephem_date(dt)
     observer = ephem.Observer()
-    observer.date = dt
+    observer.date = date
 
     sun = ephem.Sun()
     moon = ephem.Moon()
@@ -80,11 +104,11 @@ def get_astro_context(dt: datetime | None = None) -> str:
     for b in bodies:
         b.compute(observer)
 
-    sun_lon = ephem.Ecliptic(sun).lon
-    moon_lon = ephem.Ecliptic(moon).lon
-    merc_lon = ephem.Ecliptic(mercury).lon
-    ven_lon = ephem.Ecliptic(venus).lon
-    mars_lon = ephem.Ecliptic(mars).lon
+    sun_lon = math.radians(_computed_ecliptic_longitude(sun, date))
+    moon_lon = math.radians(_computed_ecliptic_longitude(moon, date))
+    merc_lon = math.radians(_computed_ecliptic_longitude(mercury, date))
+    ven_lon = math.radians(_computed_ecliptic_longitude(venus, date))
+    mars_lon = math.radians(_computed_ecliptic_longitude(mars, date))
 
     moon_phase = moon.phase  # percentage illumination 0-100
     merc_retro = is_retrograde(mercury, observer, dt)

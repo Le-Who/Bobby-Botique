@@ -620,6 +620,41 @@ async def _handle_inline_query_impl(update: Update, context: ContextTypes.DEFAUL
         )
         return
 
+    # Compatibility is final at query time and does not need chosen feedback.
+    from app.natal.compatibility import (
+        CompatibilityQueryError,
+        build_sign_compatibility_html,
+        is_compatibility_query,
+        parse_compatibility_query,
+    )
+
+    if is_compatibility_query(user_query):
+        from app.handlers.compatibility import compatibility_keyboard
+        from app.i18n import detect_language
+
+        compatibility_lang = detect_language(user_query)
+        try:
+            pair = parse_compatibility_query(user_query)
+        except CompatibilityQueryError:
+            result = InlineQueryResultArticle(
+                id="compatibility_hint",
+                title=t("compat.guide_title", compatibility_lang),
+                description=t("compat.inline_description", compatibility_lang),
+                input_message_content=InputTextMessageContent(t("compat.guide", compatibility_lang), parse_mode="HTML"),
+            )
+        else:
+            result = InlineQueryResultArticle(
+                id="compatibility",
+                title=t("compat.title", compatibility_lang),
+                description=t("compat.inline_description", compatibility_lang),
+                input_message_content=InputTextMessageContent(
+                    build_sign_compatibility_html(pair, lang=compatibility_lang), parse_mode="HTML"
+                ),
+                reply_markup=compatibility_keyboard(pair, bot_username=context.bot.username, lang=compatibility_lang),
+            )
+        await query.answer([result], cache_time=0, is_personal=True)
+        return
+
     # ── Image intent ──────────────────────────────────────────────────────────
     parsed = parse_inline_query(user_query)
 
@@ -878,6 +913,9 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
     """
     chosen = update.chosen_inline_result
     if not chosen:
+        return
+
+    if chosen.result_id in {"compatibility", "compatibility_hint"}:
         return
 
     inline_message_id = chosen.inline_message_id

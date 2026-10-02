@@ -640,6 +640,19 @@ jobs:
             fi
 
             if [ "$(printf '%s' "$NATAL_REPORTS_ENABLED" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
+              echo ">>> Running natal chart release readiness..."
+              if ! docker exec tg-bot python /app/scripts/natal_readiness.py \
+                --check-config \
+                --check-storage \
+                --require-external \
+                --reference-fixtures /app/docs/natal-reference-fixture.moira-jpl.json \
+                --smoke \
+                --webhook-url "$WEBHOOK_URL" \
+                --min-city-count 30000 \
+                --max-city-warmup-ms 3000 \
+                --max-city-search-ms 300; then
+                handle_candidate_failure "natal chart readiness failed"
+              fi
               echo ">>> Running natal chart report maintenance..."
               if ! docker exec tg-bot python /app/scripts/natal_maintenance.py; then
                 handle_candidate_failure "natal chart maintenance failed"

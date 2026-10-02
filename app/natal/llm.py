@@ -484,7 +484,10 @@ def _chart_for_prompt(chart: ChartData) -> ChartData:
 
 def _chart_prompt_json(chart: ChartData) -> str:
     return _chart_for_prompt(chart).model_dump_json(
-        exclude={"input_quality": {"calculation_engine", "reference_validated", "warnings"}}
+        exclude={
+            "input_quality": {"calculation_engine", "reference_validated", "warnings"},
+            "destiny_matrix": {"birth_date"},
+        }
     )
 
 

@@ -9,9 +9,9 @@ from app.natal.text_safety import strip_user_facing_blocked_notes
 from app.utils.text_format import markdown_to_html
 
 _GEONAMES_ATTRIBUTION_HTML = (
-    'City data: <a href="https://www.geonames.org/" rel="noopener noreferrer">GeoNames</a>, CC BY 4.0.'
+    'Данные городов: <a href="https://www.geonames.org/" rel="noopener noreferrer">GeoNames</a>, CC BY 4.0.'
 )
-_GEONAMES_ATTRIBUTION_MARKDOWN = "City data: GeoNames (https://www.geonames.org/), CC BY 4.0."
+_GEONAMES_ATTRIBUTION_MARKDOWN = "Данные городов: GeoNames (https://www.geonames.org/), CC BY 4.0."
 
 _POINT_MEANINGS = {
     "sun": "Ядро личности",
@@ -59,7 +59,7 @@ _PERIOD_FIELD_KEYS = {
 }
 
 
-def build_hosted_report_html(report: NatalReport) -> str:
+def build_hosted_report_html(report: NatalReport, *, script_nonce: str = "") -> str:
     display_sections = _merge_related_sections(report.sections)
     display_section_ids = {section.id for section in display_sections}
     full_sections: list[tuple[ReportSection, str]] = []
@@ -73,7 +73,9 @@ def build_hosted_report_html(report: NatalReport) -> str:
         body = _sanitize_hosted_body(_hosted_section_body_html(section, body_markdown))
         category = html.escape(category_raw)
         default_open = ' open data-default-open="true"' if index == 0 else ""
-        aliases = "".join(_section_anchor(alias) for alias in _section_aliases(section.id, display_section_ids))
+        aliases = "".join(
+            _section_anchor(alias, section.id) for alias in _section_aliases(section.id, display_section_ids)
+        )
         full_sections.append(
             (
                 section,
@@ -98,6 +100,15 @@ def build_hosted_report_html(report: NatalReport) -> str:
     result_shell = _result_shell(report, title, lead, visual_layers, display_sections)
     reading_html = _full_reading_html(full_sections)
     positions_html = _positions_reference_html(positions)
+    has_natal = bool(report.chart.planets)
+    if has_natal:
+        privacy = "Конфиденциальность: интерпретация строится по расчетным данным натальной карты."
+    elif report.chart.destiny_matrix is not None:
+        privacy = "Конфиденциальность: матрица рассчитана локально, без передачи данных языковой модели."
+    else:
+        privacy = "Конфиденциальность: в отчете показаны только доступные расчетные данные."
+    attribution_html = f'<p class="attribution">{_GEONAMES_ATTRIBUTION_HTML}</p>' if has_natal else ""
+    nonce_attr = f' nonce="{html.escape(script_nonce, quote=True)}"' if script_nonce else ""
 
     return (
         '<!doctype html><html lang="ru"><head>'
@@ -118,24 +129,25 @@ def build_hosted_report_html(report: NatalReport) -> str:
         ".lead{max-width:720px;margin:0;color:var(--muted);font-size:clamp(16px,2vw,20px)}"
         ".reading-path{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.path-card{padding:12px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:inherit;background:var(--soft)}.path-card span{display:block;color:var(--teal);font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.path-card strong{display:block;margin-top:4px;font-size:15px}.path-card em{display:block;margin-top:4px;color:var(--muted);font-size:13px;font-style:normal}"
         ".visual-stack{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:14px;align-items:start}"
-        ".chart-stage,.matrix-stage{position:relative;width:100%;padding:clamp(12px,3vw,22px);overflow:hidden}"
+        ".chart-stage,.matrix-stage{position:relative;width:100%;min-width:0;padding:clamp(12px,3vw,22px);overflow:hidden}.chart-stage{--diagram-width:800px}.matrix-stage{--diagram-width:920px}"
+        ".visual-tools{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;font-size:14px;font-weight:700}.visual-zoom-toggle{min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--soft);color:var(--teal);font:inherit;cursor:pointer}.visual-scroll{max-width:100%;overflow:auto;overscroll-behavior-x:contain}.visual-scroll.is-zoomed svg{max-width:none;width:var(--diagram-width);min-width:var(--diagram-width)}"
         "svg{position:relative;z-index:1;max-width:100%;height:auto;display:block;margin:0 auto}"
+        ".result-shell>*,.full-reading,.reading-group,.reading-card{min-width:0}.reading-body,.summary-title,.lead{overflow-wrap:anywhere}.reading-card{scroll-margin-top:16px}a:focus-visible,summary:focus-visible,button:focus-visible,.visual-scroll:focus-visible{outline:3px solid var(--teal);outline-offset:4px}"
         ".section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:64px 0 18px}.section-head h2{margin:0;font-family:Georgia,serif;font-size:clamp(28px,4vw,44px);font-weight:500}.section-head p{max-width:480px;margin:0;color:var(--muted)}"
         ".position-card:hover{transform:translateY(-2px);box-shadow:0 18px 52px rgba(33,45,42,.12)}.summary-kicker,.position-card span{display:block;margin-bottom:0;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}.reading-card summary{list-style:none;cursor:pointer;padding:clamp(18px,3vw,26px);display:grid;grid-template-columns:minmax(112px,156px) minmax(0,1fr) 36px;gap:16px;align-items:center;min-height:116px}.reading-card summary::-webkit-details-marker{display:none}.reading-card summary:after{content:'+';width:36px;height:36px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);font-size:24px;line-height:1;color:var(--teal);background:var(--soft);justify-self:end}.reading-card[open] summary:after{content:'−'}.summary-kicker{min-height:44px;display:flex;align-items:center;overflow-wrap:anywhere}.summary-title{display:block;min-width:0}.summary-title strong{font-family:Georgia,serif;font-size:clamp(23px,3vw,31px);line-height:1.18;font-weight:500;color:var(--ink)}"
         ".positions-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.position-card{display:block;min-height:132px;padding:16px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.position-card strong{display:block;margin-bottom:6px;font-family:Georgia,serif;font-size:21px;font-weight:500}.position-card p{margin:0;color:var(--muted)}"
         ".full-reading{display:grid;gap:28px}.reading-group{display:grid;gap:14px;padding-left:16px;border-left:4px solid var(--teal)}.reading-group-destiny{border-left-color:var(--violet)}.reading-group-head{display:grid;gap:4px;margin:0 0 2px}.reading-group-head span{color:var(--teal);font-size:12px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}.reading-group-destiny .reading-group-head span{color:var(--violet)}.reading-group-head h3{margin:0;font-family:Georgia,serif;font-size:clamp(24px,3vw,34px);font-weight:500;color:var(--ink)}.reading-group-head p{max-width:620px;margin:0;color:var(--muted)}.reading-body{max-width:78ch;padding:0 clamp(18px,3vw,26px) clamp(18px,3vw,26px)}.reference-disclosure{margin-top:64px}.reference-body{max-width:none}.reading-card p{margin:0 0 12px}.reading-card ul{padding-left:22px}"
         ".period-list{display:grid;gap:12px;margin-top:16px}.period-card{border:1px solid var(--line);border-radius:8px;background:var(--soft);padding:14px}.period-card header{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:baseline;margin:0 0 10px}.period-card header span{color:var(--teal);font-size:13px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.period-card header strong{font-family:Georgia,serif;font-size:22px;font-weight:500;color:var(--ink)}.period-card dl{display:grid;gap:9px;margin:0}.period-card dl div{display:grid;gap:2px}.period-card dt{color:var(--violet);font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}.period-card dd{margin:0;color:var(--ink)}.section-anchor{position:relative;top:-12px;display:block;height:0;overflow:hidden}"
         ".footer{display:flex;flex-wrap:wrap;gap:14px;margin:44px 0 0;color:var(--muted);font-size:14px}.mirror-link{color:var(--blue);font-weight:700}.privacy,.attribution{margin:0}.report-note{flex-basis:100%;margin:6px 0 0;padding-top:14px;border-top:1px solid var(--line)}.report-note strong{color:var(--ink)}"
-        "a{color:var(--blue)}@media(max-width:900px){.reading-path,.positions-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}}@media(max-width:640px){main{padding:14px}.reading-card summary{grid-template-columns:minmax(96px,124px) minmax(0,1fr) 34px;gap:10px;min-height:104px}.summary-kicker{font-size:11px;letter-spacing:.13em;min-height:40px}.summary-title strong{font-size:clamp(21px,5vw,27px)}.reading-card summary:after{width:34px;height:34px;font-size:22px}}"
+        "a{color:var(--blue)}@media(max-width:900px){.reading-path,.positions-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}}@media(max-width:640px){main{padding:14px}.reading-card summary{grid-template-columns:minmax(0,1fr) 34px;gap:6px 10px;min-height:104px}.summary-kicker{grid-column:1;grid-row:1;font-size:11px;letter-spacing:.13em;min-height:0}.summary-title{grid-column:1;grid-row:2}.summary-title strong{font-size:clamp(21px,5vw,27px)}.reading-card summary:after{grid-column:2;grid-row:1 / span 2;width:34px;height:34px;font-size:22px}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.position-card{transition:none}}"
         "</style></head><body><main>"
         f"{result_shell}"
         '<section id="full-reading"><div class="section-head"><h2>Полный разбор</h2><p>Подробные интерпретации сгруппированы по смысловым категориям.</p></div>'
         f"{reading_html}</section>"
         f"{positions_html}"
         f'<footer class="footer">{telegraph}'
-        '<p class="privacy">Privacy: LLM receives only derived chart data, not raw birth date or place.</p>'
-        f'<p class="attribution">{_GEONAMES_ATTRIBUTION_HTML}</p>{notes_html}</footer>'
-        "</main></body></html>"
+        f'<p class="privacy">{privacy}</p>{attribution_html}{notes_html}</footer>'
+        f'</main><script defer src="/static/js/natal-report.js"{nonce_attr}></script></body></html>'
     )
 
 
@@ -413,8 +425,11 @@ def _section_aliases(section_id: str, display_section_ids: set[str]) -> list[str
     return aliases
 
 
-def _section_anchor(section_id: str) -> str:
-    return f'<span id="{html.escape(section_id, quote=True)}" class="section-anchor"></span>'
+def _section_anchor(section_id: str, target_id: str) -> str:
+    return (
+        f'<span id="{html.escape(section_id, quote=True)}" class="section-anchor" '
+        f'data-section-target="{html.escape(target_id, quote=True)}"></span>'
+    )
 
 
 def _footer_note_html(note: str) -> str:
@@ -528,7 +543,10 @@ def _position_cards(report: NatalReport, sections: list[ReportSection]) -> list[
     if not cards:
         cards.append(
             _position_card(
-                "section-summary", "Расчетные данные", "Карта", "Расчетные точки будут доступны в полном разборе."
+                _target_section("section-summary", section_ids),
+                "Расчетные данные",
+                "Карта",
+                "Расчетные точки будут доступны в полном разборе.",
             )
         )
     return cards
@@ -539,7 +557,7 @@ def _target_section(section_id: str, section_ids: set[str]) -> str:
         return section_id
     if "section-summary" in section_ids:
         return "section-summary"
-    return next(iter(section_ids), section_id)
+    return min(section_ids, default="full-reading")
 
 
 def _position_card(section_id: str, category: str, title: str, detail: str) -> str:
@@ -633,7 +651,8 @@ def build_telegraph_markdown(report: NatalReport) -> str:
             lines.append(f"| {position.label} | {position.arcana}. {position.arcana_label} | {position.theme} |")
     for section in display_sections:
         lines.extend(["", f"## {section.title}", "", strip_user_facing_blocked_notes(section.body_markdown)])
-    lines.extend(["", _GEONAMES_ATTRIBUTION_MARKDOWN])
+    if report.chart.planets:
+        lines.extend(["", _GEONAMES_ATTRIBUTION_MARKDOWN])
     markdown = "\n".join(lines)
     markdown = re.sub(r"<\s*/?\s*svg\b.*?>", "", markdown, flags=re.IGNORECASE | re.DOTALL)
     markdown = re.sub(r"<\s*/?\s*script\b.*?>", "", markdown, flags=re.IGNORECASE | re.DOTALL)
@@ -684,13 +703,25 @@ def _report_lead(report: NatalReport) -> str:
 def _visual_layers(report: NatalReport) -> str:
     layers: list[str] = []
     if report.svg.strip() and report.chart.planets:
-        layers.append(f'<div class="chart-stage">{_sanitize_hosted_svg(report.svg)}</div>')
+        layers.append(_visual_stage_html("chart", "Натальная карта", report.svg))
     if report.chart.destiny_matrix is not None:
         matrix_svg = render_destiny_matrix_svg(report.chart.destiny_matrix)
-        layers.append(f'<div class="matrix-stage">{_sanitize_hosted_svg(matrix_svg)}</div>')
+        layers.append(_visual_stage_html("matrix", "Матрица судьбы", matrix_svg))
     if not layers and report.svg.strip():
-        layers.append(f'<div class="chart-stage">{_sanitize_hosted_svg(report.svg)}</div>')
+        layers.append(_visual_stage_html("chart", "Натальная карта", report.svg))
     return "".join(layers)
+
+
+def _visual_stage_html(kind: str, title: str, svg: str) -> str:
+    diagram_id = f"{kind}-diagram"
+    return (
+        f'<div class="{kind}-stage"><div class="visual-tools"><span>{html.escape(title)}</span>'
+        f'<button type="button" class="visual-zoom-toggle" aria-controls="{diagram_id}" '
+        'aria-pressed="false" hidden>Увеличить схему</button></div>'
+        f'<div id="{diagram_id}" class="visual-scroll" tabindex="0" '
+        f'role="region" aria-label="{html.escape(title)}: схема с прокруткой">'
+        f"{_sanitize_hosted_svg(svg)}</div></div>"
+    )
 
 
 def _destiny_target_section(position_key: str, section_ids: set[str]) -> str:

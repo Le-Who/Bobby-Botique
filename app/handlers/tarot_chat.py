@@ -13,6 +13,7 @@ from telegram.ext import ContextTypes
 from telegram.ext.filters import MessageFilter
 
 from app.handlers.inline import _build_tarot_system_prompt
+from app.i18n import t
 from app.providers.router import get_provider_router
 from app.state import clear_tarot_session, get_tarot_session, is_in_tarot_mode, set_tarot_session
 from app.tarot import SpreadType, draw_cards
@@ -20,6 +21,7 @@ from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
 
 TAROT_END_SESSION_TEXT = "🛑 Завершить сеанс Таро"
+TAROT_COMPATIBILITY_QUESTION_TEXT = "🔮 Сделать расклад на совместимость"
 DEFAULT_TAROT_IDLE_CONFIRM_AFTER_SECONDS = 24 * 60 * 60
 _TAROT_END_SESSION_RE = re.compile(
     r"^\s*(?:🛑\s*)?завершить\s+сеанс\s+таро\s*$",
@@ -161,7 +163,13 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
         status_msg = await update.message.reply_text(f_text, parse_mode=p_mode)
     else:
         is_first_question = session.get("waiting_for_question", False)
-        history.append({"role": "user", "parts": [text]})
+        question_context = session.get("question_context") if is_first_question else None
+        if question_context:
+            shortcut = text in {TAROT_COMPATIBILITY_QUESTION_TEXT, t("compat.draw_button", "en")}
+            question = question_context if shortcut else f"{question_context}\n\n{text}"
+        else:
+            question = text
+        history.append({"role": "user", "parts": [question]})
 
         if is_first_question:
             cards = draw_cards(3)

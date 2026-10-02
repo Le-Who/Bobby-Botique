@@ -753,9 +753,15 @@ def _validate_iso_date(value: str) -> None:
     from datetime import date
 
     try:
-        date.fromisoformat(value)
+        birth_date = date.fromisoformat(value)
     except ValueError as exc:
         raise ValueError("Дата рождения должна быть в формате YYYY-MM-DD.") from exc
+    if birth_date.isoformat() != value:
+        raise ValueError("Дата рождения должна быть в формате YYYY-MM-DD.")
+    if birth_date < date(1900, 1, 1):
+        raise ValueError("Укажите дату рождения не раньше 1900 года.")
+    if birth_date > date.today():
+        raise ValueError("Дата рождения не может быть в будущем.")
 
 
 def _parse_time_precision(value: str) -> TimePrecision:

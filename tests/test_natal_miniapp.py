@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -82,9 +83,11 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert "Дата рождения" in body
     assert 'data-group="report_type"' in body
     assert "Натал + матрица" in body
-    assert "Только матрица" in body
-    assert "Рекомендуем" in body
-    assert "Лучший выбор для первого разбора" in body
+    options = json.loads(body.split("const OPTIONS = ", 1)[1].split(";", 1)[0])
+    report_types = {item["id"]: item for item in options["report_types"]}
+    assert report_types["destiny_matrix"]["label"] == "Только матрица"
+    assert report_types["combined"]["badge"] == "Рекомендуем"
+    assert report_types["combined"]["summary"] == "Лучший выбор для первого разбора"
     assert 'id="report-type-panel"' in body
     assert 'id="cancel-button"' in body
     assert 'id="progress-meter"' in body
@@ -97,7 +100,7 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert "Окно можно закрывать." in body
     assert "Ответ будет отправлен новым сообщением" in body
     assert ".layout[hidden]" in body
-    assert "scrollIntoView({ behavior: 'smooth'" in body
+    assert "scrollIntoView" in body
     assert "advanceToNextItem" in body
     assert 'class="slide-track"' in body
     assert 'class="form-slide"' in body
@@ -121,10 +124,9 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert "Сначала дата" in body
     assert "Место и часовой пояс" in body
     assert "Проверка перед отправкой" in body
-    assert "Начните с даты рождения" in body
-    assert "Начните с типа разбора" not in body
+    assert "Начните с типа разбора" in body
     assert body.index("Дата рождения") < body.index("Место рождения")
-    assert body.index("Место рождения") < body.index("Фокус разбора")
+    assert body.index("Что построить") < body.index("Дата рождения")
     assert body.index("Фокус разбора") < body.index("Что построить")
     assert body.index("Что построить") < body.index('data-group="report_type"')
     assert body.index("const response = await fetch") < body.index("showAcceptedState();")
@@ -139,10 +141,10 @@ async def test_natal_form_uses_slide_order_without_single_long_questionnaire():
     assert response.status_code == 200
     body = await response.get_data(as_text=True)
     slide_order = [
+        'data-slide="report"',
         'data-slide="date"',
         'data-slide="time"',
         'data-slide="place"',
-        'data-slide="report"',
         'data-slide="review"',
     ]
     assert [body.index(marker) for marker in slide_order] == sorted(body.index(marker) for marker in slide_order)
@@ -162,10 +164,9 @@ async def test_natal_form_keeps_questionnaire_lightweight():
     body = await response.get_data(as_text=True)
     assert "Что будет в отчёте" not in body
     assert "Расчёт строится локально" not in body
-    assert "Выберите формат и дату рождения" not in body
-    assert "Введите дату, время и место" in body
-    assert "Тип разбора" not in body
-    assert body.index("Дата рождения") < body.index("Что построить")
+    assert "Выберите формат и дату рождения" in body
+    assert "Для матрицы достаточно даты" in body
+    assert body.index("Что построить") < body.index("Дата рождения")
 
 
 @pytest.mark.asyncio
@@ -197,6 +198,39 @@ async def test_natal_submit_requires_webapp_auth():
     response = await client.post("/webapp/api/natal/submit", json={})
 
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("birth_date", "detail"),
+    [
+        ("2999-01-01", "Дата рождения не может быть в будущем."),
+        ("1899-12-31", "Укажите дату рождения не раньше 1900 года."),
+        ("20030630", "Дата рождения должна быть в формате YYYY-MM-DD."),
+        ("2003-W27-1", "Дата рождения должна быть в формате YYYY-MM-DD."),
+    ],
+)
+async def test_natal_submit_rejects_birth_dates_outside_supported_range(monkeypatch, birth_date, detail):
+    monkeypatch.setattr("app.web_miniapp.get_bot", lambda: SimpleNamespace())
+    monkeypatch.setattr("app.web_miniapp.submit_task", lambda task: task.close())
+
+    response = await quart_app.test_client().post(
+        "/webapp/api/natal/submit",
+        headers=_auth_headers(),
+        json={"birth_date": birth_date, "report_type": "destiny_matrix", "focus": "general"},
+    )
+
+    assert response.status_code == 400
+    assert await response.get_json() == {"error": "invalid_birth_input", "detail": detail}
+
+
+def test_natal_payload_accepts_first_supported_birth_date():
+    from app.web_miniapp import _birth_input_from_natal_payload
+
+    birth_input = _birth_input_from_natal_payload({"birth_date": "1900-01-01", "report_type": "destiny_matrix"})
+
+    assert birth_input.birth_date == "1900-01-01"
+    assert birth_input.report_type == ReportType.DESTINY_MATRIX
 
 
 @pytest.mark.asyncio

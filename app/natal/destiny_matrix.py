@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import math
 from datetime import date
+from itertools import pairwise
 
 from app.natal.models import (
     DestinyMatrixData,
@@ -149,11 +150,18 @@ _POSITION_LAYOUT: tuple[tuple[str, str, str, float, float, str], ...] = (
     ),
     ("soul_task", "Задача души", "социальная задача, зрелый выбор и направление усилий", 790, 460, "year"),
     ("money_channel", "Денежный канал", "вход в материальный результат, обмен и ценность", 693, 693, "derived"),
-    ("comfort", "Характер и земная опора", "личная сила, привычный стиль восстановления и опоры", 460, 790, "derived"),
+    (
+        "comfort",
+        "Характер, зона комфорта и земная опора",
+        "личная сила, привычный стиль восстановления и опоры",
+        460,
+        790,
+        "derived",
+    ),
     ("karmic_tail", "Кармический хвост", "главный урок, повторяющийся сценарий и слабая зона", 227, 693, "derived"),
     ("portrait", "Портрет и ресурс", "визитная карточка, как считывают люди и мир", 130, 460, "day"),
     ("male_talent", "Таланты мужского рода", "воля, действие, стратегия и родовая линия отца", 227, 227, "derived"),
-    ("center", "Центр и зона комфорта", "главная сборка матрицы и зона личной силы", 460, 460, "derived"),
+    ("center", "Центр личности", "главная сборка матрицы и зона личной силы", 460, 460, "derived"),
 )
 
 _PERIOD_KEYS: tuple[tuple[int, int, str, str], ...] = (
@@ -236,14 +244,18 @@ def render_destiny_matrix_svg(matrix: DestinyMatrixData) -> str:
         [
             _svg_line(by_key["portrait"], by_key["soul_task"], "#1f332c", 2.2, ".72"),
             _svg_line(by_key["higher_self"], by_key["comfort"], "#1f332c", 2.2, ".72"),
-            _svg_line(by_key["male_talent"], by_key["money_channel"], "#2f69c9", 2.2, ".65"),
-            _svg_line(by_key["female_talent"], by_key["karmic_tail"], "#d94d6a", 2.2, ".65"),
-            _svg_line(by_key["karmic_tail"], by_key["center"], "#d94d6a", 2.6, ".64"),
-            _svg_line(by_key["center"], by_key["female_talent"], "#d94d6a", 2.6, ".64"),
-            _svg_line(by_key["comfort"], by_key["money_channel"], "#0f8a55", 2.6, ".70"),
-            _svg_line(by_key["money_channel"], by_key["soul_task"], "#0f8a55", 2.6, ".70"),
         ]
     )
+    lines_by_key = {line.key: line for line in matrix.lines or _build_lines(by_key)}
+    for key, color, width, opacity in (
+        ("male_line", "#2f69c9", 2.2, ".65"),
+        ("female_line", "#d94d6a", 2.2, ".65"),
+        ("love_line", "#d94d6a", 2.6, ".64"),
+        ("money_line", "#0f8a55", 2.6, ".70"),
+        ("karmic_tail", "#7c3aed", 2.2, ".65"),
+    ):
+        if line := lines_by_key.get(key):
+            parts.append(_matrix_line(line, by_key, color, width, opacity))
     parts.extend(
         [
             _line_label(314, 316, "мужской род", "#2f69c9"),
@@ -322,7 +334,7 @@ def build_destiny_matrix_sections(matrix: DestinyMatrixData) -> list[ReportSecti
                 f"Линия отношений соединяет **{_arcana(karmic)}**, **{_arcana(center)}** и **{_arcana(female)}**. "
                 f"В вашем случае близость раскрывается через честное признание повторяющегося урока "
                 f"(**{karmic.arcana_label}**) и зрелую позицию центра (**{center.arcana_label}**). "
-                f"Женская линия добавляет качество **{female.arcana_label}**: {female.interpretation}.\n\n"
+                f"Таланты женского рода добавляют качество **{female.arcana_label}**: {female.interpretation}.\n\n"
                 f"Практически это значит: отношения становятся сильнее, когда в фокусе задача — {center.shadow}, "
                 "и меньше включается автоматическая защита или молчаливое ожидание. Например, вместо проверки "
                 "партнера холодом проще прямо назвать, что именно задело и какой реакции хочется."
@@ -348,23 +360,32 @@ def build_destiny_matrix_sections(matrix: DestinyMatrixData) -> list[ReportSecti
             id="section-destiny-lineage",
             title="Родовые линии и кармический хвост",
             body_markdown=(
-                f"Мужская линия — **{_arcana(male)}**: она показывает, как включаются воля, действие и отношение "
-                f"к авторитетам; в вашем случае ресурс линии — {male.interpretation}. "
-                f"Женская линия — **{_arcana(female)}**: здесь важны поддержка, принятие и умение создавать среду; "
-                f"ее ресурс — {female.interpretation}.\n\n"
+                f"Мужская линия соединяет **{_arcana(male)}**, **{_arcana(center)}** и **{_arcana(money)}**. "
+                f"Таланты мужского рода показывают, как включаются воля, действие и отношение к авторитетам; "
+                f"в вашем случае их ресурс — {male.interpretation}. Через центр этот ресурс связан с материальной "
+                f"реализацией. Женская линия соединяет **{_arcana(female)}**, **{_arcana(center)}** и "
+                f"**{_arcana(karmic)}**. Таланты женского рода связаны с поддержкой, принятием и умением создавать "
+                f"среду; их ресурс — {female.interpretation}. Через центр эта линия связана с повторяющимся уроком "
+                f"матрицы.\n\n"
                 f"Кармический хвост — **{_arcana(karmic)}**. Это повторяющийся урок матрицы: {karmic.theme}. "
                 f"В вашем случае он просит {karmic.shadow}. Когда этот сценарий замечен, он становится источником "
                 "зрелости, а не фоновым повтором. Тень родовой темы часто проявляется не драматично, а бытово: "
                 "например, как привычка спорить с авторитетом даже там, где выгоднее спокойно договориться."
             ),
-            chart_refs=["destiny:male_talent", "destiny:female_talent", "destiny:karmic_tail"],
+            chart_refs=[
+                "destiny:male_talent",
+                "destiny:center",
+                "destiny:money_channel",
+                "destiny:female_talent",
+                "destiny:karmic_tail",
+            ],
         ),
         ReportSection(
             id="section-destiny-self-search",
             title="Поиск себя: способности, навыки и внутренний союз",
             body_markdown=(
-                f"Поиск себя в этой матрице собирается через портрет **{_arcana(portrait)}**, мужскую линию "
-                f"**{_arcana(male)}**, женскую линию **{_arcana(female)}** и центр **{_arcana(center)}**. "
+                f"Поиск себя в этой матрице собирается через портрет **{_arcana(portrait)}**, таланты мужского рода "
+                f"**{_arcana(male)}**, таланты женского рода **{_arcana(female)}** и центр **{_arcana(center)}**. "
                 "Это блок про соединение действия и принятия: где вы умеете проявляться, чему учитесь и как собираете "
                 "внутренний союз вместо постоянного спора с собой.\n\n"
                 f"Например, у вас может быть сильный навык {portrait.interpretation}, но его легко обесценить, если "
@@ -424,9 +445,12 @@ def build_destiny_matrix_sections(matrix: DestinyMatrixData) -> list[ReportSecti
 
 def _parse_birth_date(value: str) -> date:
     try:
-        return date.fromisoformat(value)
+        parsed = date.fromisoformat(value)
     except ValueError as exc:
         raise ValueError("Дата рождения должна быть в формате YYYY-MM-DD.") from exc
+    if parsed.isoformat() != value:
+        raise ValueError("Дата рождения должна быть в формате YYYY-MM-DD.")
+    return parsed
 
 
 def _reduce_arcana(value: int) -> int:
@@ -526,14 +550,14 @@ def _build_lines(by_key: dict[str, DestinyMatrixPosition]) -> list[DestinyMatrix
         DestinyMatrixLine(
             key="male_line",
             label="Мужская родовая линия",
-            position_keys=["portrait", "male_talent", "higher_self"],
-            summary=_line_summary("portrait", "male_talent", "higher_self", by_key),
+            position_keys=["male_talent", "center", "money_channel"],
+            summary=_line_summary("male_talent", "center", "money_channel", by_key),
         ),
         DestinyMatrixLine(
             key="female_line",
             label="Женская родовая линия",
-            position_keys=["higher_self", "female_talent", "soul_task"],
-            summary=_line_summary("higher_self", "female_talent", "soul_task", by_key),
+            position_keys=["female_talent", "center", "karmic_tail"],
+            summary=_line_summary("female_talent", "center", "karmic_tail", by_key),
         ),
         DestinyMatrixLine(
             key="karmic_tail",
@@ -604,6 +628,24 @@ def _svg_line(
     return (
         f'<line x1="{first.x:.1f}" y1="{first.y:.1f}" x2="{second.x:.1f}" y2="{second.y:.1f}" '
         f'stroke="{color}" stroke-width="{width:.1f}" stroke-linecap="round" opacity="{opacity}"/>'
+    )
+
+
+def _matrix_line(
+    line: DestinyMatrixLine,
+    by_key: dict[str, DestinyMatrixPosition],
+    color: str,
+    width: float,
+    opacity: str,
+) -> str:
+    segments = [
+        _svg_line(by_key[first], by_key[second], color, width, opacity)
+        for first, second in pairwise(line.position_keys)
+    ]
+    return (
+        f'<g data-line="{html.escape(line.key, quote=True)}">'
+        f"<title>{html.escape(f'{line.label}: {line.summary}')}</title>"
+        f"{''.join(segments)}</g>"
     )
 
 

@@ -157,6 +157,9 @@ async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     query = getattr(update, "callback_query", None)
     if query:
         await query.answer()
+    from app.handlers.compatibility import clear_compatibility_input
+
+    clear_compatibility_input(context.user_data)
     clear_natal_user_data(context.user_data)
     if not _natal_reports_enabled_for_handler():
         await message.reply_text("Натальные карты временно недоступны.")
@@ -761,6 +764,34 @@ def _draft_lines(user_data: dict) -> list[str]:
     ]
 
 
+async def on_start_during_natal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """End natal input before a start link opens another private flow."""
+    from app.handlers.commands import start_command
+
+    clear_natal_user_data(context.user_data)
+    await start_command(update, context)
+    return ConversationHandler.END
+
+
+async def on_compatibility_tarot_during_natal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
+    """Keep natal input until a valid compatibility result successfully opens tarot."""
+    from app.handlers.compatibility import compatibility_tarot_callback
+
+    if await compatibility_tarot_callback(update, context):
+        clear_natal_user_data(context.user_data)
+        return ConversationHandler.END
+    return None
+
+
+async def on_tarot_during_natal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
+    from app.handlers.cmd_tarot import tarot_command
+
+    if await tarot_command(update, context):
+        clear_natal_user_data(context.user_data)
+        return ConversationHandler.END
+    return None
+
+
 def build_natal_chart_handler() -> ConversationHandler:
     with suppress_hybrid_conversation_handler_warning():
         return ConversationHandler(
@@ -803,7 +834,14 @@ def build_natal_chart_handler() -> ConversationHandler:
                 ],
                 NATAL_CONFIRM: [CallbackQueryHandler(on_confirm, pattern=r"^natal_confirm:")],
             },
-            fallbacks=[CommandHandler("cancel", cancel)],
+            fallbacks=[
+                CommandHandler("cancel", cancel),
+                CommandHandler("start", on_start_during_natal),
+                CallbackQueryHandler(on_compatibility_tarot_during_natal, pattern=r"^compat_tarot:[0-9a-f]{16}$"),
+                CommandHandler("tarot", on_tarot_during_natal),
+                MessageHandler(filters.TEXT & filters.Regex(r"(?i)^/(?:таро|расклад)(?:\s+|$)"), on_tarot_during_natal),
+                CallbackQueryHandler(on_tarot_during_natal, pattern=r"^start_tarot$"),
+            ],
             allow_reentry=True,
             per_user=True,
             per_chat=True,

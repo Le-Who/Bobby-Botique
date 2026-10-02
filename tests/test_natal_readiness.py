@@ -559,3 +559,94 @@ async def test_readiness_cli_does_not_run_smoke_when_config_check_fails(monkeypa
     assert calls == [("config", "https://bot.example.com")]
     assert "FAIL natal-config: not-ready" in output
     assert "smoke_report_id" not in output
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_gate", ["city", "accuracy", "external", "empty-accuracy", "horizons"])
+async def test_readiness_cli_stops_before_storage_and_smoke_after_failed_gate(
+    monkeypatch, tmp_path, capsys, failed_gate
+):
+    loaded_cases = (object(),)
+    effects = []
+
+    def fake_check_city_catalog_readiness(**kwargs):
+        return CityReadinessResult(passed=failed_gate != "city", city_count=10, warmup_ms=1.0, checked_cases=1)
+
+    async def fake_validate_golden_cases(cases):
+        assert cases == loaded_cases
+        if failed_gate == "empty-accuracy":
+            return []
+        return [
+            NatalAccuracyResult(
+                case_id="case-1",
+                passed=failed_gate != "accuracy",
+                checked_points=34,
+                externally_verified=failed_gate != "external",
+            )
+        ]
+
+    async def fake_validate_planets_against_horizons(*, cases):
+        assert cases == loaded_cases
+        return [
+            HorizonsAccuracyResult(
+                case_id="case-1",
+                passed=failed_gate != "horizons",
+                checked_points=20,
+                max_delta_degrees=0.1,
+            )
+        ]
+
+    async def fake_create_pool():
+        effects.append("pool")
+
+    async def fake_check_storage_ready():
+        effects.append("storage")
+
+    async def fake_run_natal_smoke(webhook_url, user_id, chat_id):
+        effects.append("smoke")
+        return NatalSmokeResult(
+            report_id="report-1",
+            hosted_url=f"{webhook_url}/reports/natal/report-1",
+            telegraph_url=None,
+            planet_count=10,
+            section_count=4,
+            hosted_html_contains_svg=True,
+            hosted_html_contains_sections=True,
+        )
+
+    # Preserve real-check pool initialization semantics without opening any service.
+    fake_check_storage_ready.__module__ = "app.natal.storage"
+    fake_run_natal_smoke.__module__ = "app.natal.smoke"
+    monkeypatch.setattr(natal_readiness, "load_golden_cases_from_json", lambda path: loaded_cases)
+    monkeypatch.setattr(natal_readiness, "check_city_catalog_readiness", fake_check_city_catalog_readiness)
+    monkeypatch.setattr(natal_readiness, "validate_golden_cases", fake_validate_golden_cases)
+    monkeypatch.setattr(natal_readiness, "validate_planets_against_horizons", fake_validate_planets_against_horizons)
+    monkeypatch.setattr(
+        natal_readiness,
+        "check_natal_config_readiness",
+        lambda settings, *, webhook_url: NatalConfigReadinessResult(passed=True, status="ready"),
+    )
+    monkeypatch.setattr(natal_readiness.db_manager, "create_pool", fake_create_pool)
+    monkeypatch.setattr(natal_readiness, "check_storage_ready", fake_check_storage_ready)
+    monkeypatch.setattr(natal_readiness, "run_natal_smoke", fake_run_natal_smoke)
+
+    exit_code = await natal_readiness._main(
+        require_external=True,
+        check_storage=True,
+        webhook_url="https://bot.example.com",
+        user_id=11,
+        chat_id=22,
+        max_city_warmup_ms=None,
+        max_city_search_ms=None,
+        min_city_count=30000,
+        check_horizons=failed_gate == "horizons",
+        check_config=True,
+        run_smoke=True,
+        fixture_path=tmp_path / "references.json",
+    )
+
+    assert exit_code == 1
+    assert effects == []
+    output = capsys.readouterr().out
+    assert "storage=ready" not in output
+    assert "smoke_report_id=" not in output

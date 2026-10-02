@@ -255,7 +255,7 @@ Configuration is explicitly read from environment variables in `app/config.py` a
 
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
-| `NATAL_REPORTS_ENABLED` | ⚙️ | `true` / `false` | `false` | Enables `/natal` and hosted natal report generation. Keep disabled until live VPS smoke tests pass, then enable explicitly. |
+| `NATAL_REPORTS_ENABLED` | ⚙️ | `true` / `false` | `false` | Enables natal input and hosted report generation. Enable explicitly for a controlled candidate rollout; the deploy readiness and maintenance gates must pass before public release. |
 | `NATAL_REPORT_TTL_DAYS` | ⚙️ | `365` | `365` | Retention window for hosted natal reports. PostgreSQL storage keeps shared links stable by default. |
 | `NATAL_GEOCODER_PROVIDER` | ⚙️ | `local` / `nominatim` | `local` | Birth-place resolution uses the local GeoNames-backed city catalog. Set `nominatim` explicitly to allow network fallback for unresolved free text. |
 | `NATAL_CITY_OVERRIDES_PATH` | ⚙️ | `/srv/bot/natal-city-overrides.json` | `""` | Optional UTF-8 JSON file for admin-reviewed city records missing from GeoNames. Records are loaded into the local autocomplete/geocoding path; see `docs/natal-city-overrides.example.json`. |
@@ -263,11 +263,26 @@ Configuration is explicitly read from environment variables in `app/config.py` a
 
 Natal city autocomplete uses GeoNames data via the `geonamescache` Python package. GeoNames data is licensed under CC BY 4.0 and should be credited in public product materials.
 
-Before enabling natal reports publicly, run the live smoke check on the host with real environment variables:
+When `NATAL_REPORTS_ENABLED=true`, the VPS deploy workflow runs configuration,
+local city catalog, external offline fixture accuracy, storage and report smoke
+checks before maintenance and removal of the preserved previous container. The
+same readiness command, from the candidate image with its environment, is:
 
 ```bash
-python scripts/natal_smoke.py --webhook-url "$WEBHOOK_URL"
+python scripts/natal_readiness.py \
+  --check-config --check-storage --require-external \
+  --reference-fixtures docs/natal-reference-fixture.moira-jpl.json \
+  --smoke --webhook-url "$WEBHOOK_URL" \
+  --min-city-count 30000 --max-city-warmup-ms 3000 --max-city-search-ms 300
 ```
+
+Smoke uses an existing registered `ADMIN_ID` (or explicit `--user-id`), invokes
+report generation and writes a synthetic report; run it only in an authorized
+rollout window. It checks retrieval and hosted HTML rendering from storage. A
+manual Telegram/mobile/desktop check must still verify the public HTTPS link.
+Live NASA/JPL comparisons use the separate `--check-horizons` option and are not
+a dependency of every deploy. See the [natal release contract](docs/natal-chart-product-readiness.md#current-release-gate-contract)
+for privacy settings, failure recovery and checks the smoke does not cover.
 
 ---
 
@@ -609,7 +624,7 @@ The dedicated canary is optional infrastructure, not a substitute for production
 2. proves that the successful CI commit belongs to exactly one merged same-repository PR;
 3. allows automatic rollback only when both dependency manifests and an explicit set of non-runtime review files changed;
 4. preserves the current `tg-bot` container and independently verifies that its image SHA equals the PR base SHA;
-5. starts the candidate, checks `/health`, runs enabled natal maintenance, and only then deletes the preserved container;
+5. starts the candidate, checks `/health`, runs enabled natal configuration/city/external-fixture/storage/report-smoke gates and maintenance, and only then deletes the preserved container;
 6. restores and health-checks the previous container after an eligible candidate failure while leaving the deployment failed for investigation.
 
 This rollback protects startup and health-gated failures. It cannot detect a semantically wrong provider response after `/health` succeeds, and it deliberately refuses automatic rollback when code or migrations changed. After deploying a frontier trial, exercise the real bot during a controlled low-traffic window:
@@ -670,8 +685,32 @@ Administrative and developer commands are deliberately excluded from `app/bot_co
 - Start with `/help` for the current categorized RU/EN public catalog.
 - Standard chat combines selected model, history and consent-gated memory.
 - `?` requests quick search; `??` requests bounded agentic research.
-- Inline mode requires BotFather inline mode and chosen-result feedback; use the
-  deployed bot's username, not a hard-coded example bot identity.
+- Enable inline mode in BotFather and use the deployed bot's username. Deferred
+  AI answers also require chosen-result feedback; immediate compatibility results
+  work without it.
+- Inline compatibility accepts `@<bot_username> совместимость мужчина скорпион женщина водолей`,
+  `совм скорпион водолей` and `compatibility man scorpio woman aquarius`. The result
+  has adjacent buttons for birth date input and a tarot session for the same pair.
+  Birth dates are collected only in private chat, from 1900 through today. Raw dates
+  are cleared on completion, cancellation, mode changes or after 30 minutes;
+  contextual tarot receives derived positions only. Missing time/place and sign
+  boundary uncertainty are stated explicitly; readings are symbolic.
+  Standalone private date messages in `DD.MM.YYYY` or `YYYY-MM-DD` form, including
+  invalid calendar dates and edited messages after a restart or eviction of the
+  bounded tracking markers, are intercepted before ordinary AI processing and
+  message logging. The reply directs the user to «По датам рождения» or `/natal`;
+  active compatibility and natal forms keep their own input handlers. This guard
+  covers date-only messages, with no general scrubbing promise for dates embedded
+  in arbitrary prose.
+  Contextual tarot loads the saved `UserState` before applying the pair context.
+  A button expired after 30 minutes explains the expiry and preserves active natal
+  input. The tarot handler applies its new session and input cleanup only after
+  successful welcome delivery. A failed contextual callback keeps the previous
+  session, input and compatibility context available for a retry. A new command
+  still cancels compatibility date input independently, as described above.
+- The natal Mini App offers natal, destiny matrix and combined reports. Matrix-only
+  input asks for a date; natal and combined input retain the time-precision and
+  birthplace steps, including the option to omit an unknown birth time.
 - `/horoscope_settings` supports subscriptions and on-demand readings;
   `/horoscope_stop` stops scheduled delivery.
 - The admin web dashboard requires configured authentication; `/admin_daily#croc`

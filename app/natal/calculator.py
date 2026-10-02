@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import math
 from datetime import UTC, datetime, timedelta
 
 import ephem
 
+from app.astro import ecliptic_longitude
 from app.natal.astronomy import (
     angular_distance,
     calculate_ascendant,
@@ -62,6 +62,7 @@ async def calculate_chart(resolved: ResolvedBirthData) -> ChartData:
     precision = resolved.birth_input.time_precision
     houses_available = precision != TimePrecision.UNKNOWN
     utc_dt = datetime.fromisoformat(resolved.utc_datetime.replace("Z", "+00:00"))
+    utc_dt = utc_dt.replace(tzinfo=UTC) if utc_dt.tzinfo is None else utc_dt.astimezone(UTC)
     ephem_date = ephem.Date(utc_dt.replace(tzinfo=None))
     planets = [_planet_position(key, label, body_factory, ephem_date) for key, label, body_factory in _PLANETS]
     aspects = _calculate_aspects(planets)
@@ -112,9 +113,7 @@ def _planet_position(
     *,
     include_retrograde: bool = True,
 ) -> PlanetPosition:
-    body = body_factory(ephem_date)
-    ecliptic = ephem.Ecliptic(body)
-    longitude = normalize_longitude(math.degrees(float(ecliptic.lon)))
+    longitude = _body_longitude(body_factory, ephem_date)
     return PlanetPosition(
         key=key,
         label=label,
@@ -133,8 +132,7 @@ def _is_retrograde(body_factory, ephem_date: ephem.Date) -> bool:
 
 
 def _body_longitude(body_factory, ephem_date: ephem.Date) -> float:
-    body = body_factory(ephem_date)
-    return normalize_longitude(math.degrees(float(ephem.Ecliptic(body).lon)))
+    return ecliptic_longitude(body_factory, ephem_date)
 
 
 def _moon_uncertain_for_unknown_time(resolved: ResolvedBirthData) -> bool:

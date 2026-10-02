@@ -181,3 +181,49 @@ async def test_odesa_november_1997_keeps_sun_in_scorpio_not_virgo():
     assert by_key["sun"].sign == "Скорпион"
     assert by_key["sun"].degree_in_sign == pytest.approx(16.7, abs=0.1)
     assert by_key["moon"].sign == "Рыбы"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("utc_datetime", "expected_sign"),
+    [
+        ("2023-03-20T20:24:00+00:00", "Рыбы"),
+        ("2023-03-20T22:24:00+00:00", "Овен"),
+    ],
+)
+async def test_chart_sun_sign_crosses_published_march_equinox(utc_datetime, expected_sign):
+    # NWS/USNO equinox at 2023-03-20 21:24Z, https://www.weather.gov/fwd/astrodata.
+    resolved = ResolvedBirthData(
+        birth_input=BirthInput(
+            birth_date="2023-03-20",
+            time_precision=TimePrecision.EXACT,
+            birth_time=utc_datetime[11:16],
+            birth_place="Greenwich, United Kingdom",
+        ),
+        latitude=51.4769,
+        longitude=0.0,
+        timezone="UTC",
+        local_datetime=utc_datetime,
+        utc_datetime=utc_datetime,
+        display_place="Greenwich, United Kingdom",
+    )
+
+    chart = await calculate_chart(resolved)
+    sun = next(planet for planet in chart.planets if planet.key == "sun")
+
+    assert sun.sign == expected_sign
+    assert sun.degree_in_sign == pytest.approx(29.96 if expected_sign == "Рыбы" else 0.04, abs=0.01)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("equivalent_datetime", ["1995-02-14T12:00:00+02:00", "1995-02-14T10:00:00"])
+async def test_chart_normalizes_utc_datetime_before_ephemeris_calculation(equivalent_datetime):
+    resolved = resolved_unknown_time()
+    same_instant = resolved.model_copy(update={"utc_datetime": equivalent_datetime})
+
+    canonical_chart = await calculate_chart(resolved)
+    offset_chart = await calculate_chart(same_instant)
+
+    assert [planet.longitude for planet in offset_chart.planets] == pytest.approx(
+        [planet.longitude for planet in canonical_chart.planets], abs=1e-10
+    )

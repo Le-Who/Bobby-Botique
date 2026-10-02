@@ -47,6 +47,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # ── Deep link routing ────────────────────────────────────────────────────
     payload = (context.args[0] if context.args else "").strip()
 
+    if payload.startswith("compat_"):
+        from app.handlers.compatibility import start_compatibility
+
+        await start_compatibility(update, context, payload)
+        return
+
     if payload.startswith("ctx_"):
         import html as _html
 
@@ -798,8 +804,15 @@ def register(application: Application) -> None:
         group=-100,
     )
 
+    from app.handlers.compatibility import (
+        compatibility_tarot_callback,
+        register_birth_date_privacy_guard,
+        register_compatibility_handlers,
+    )
+
+    register_compatibility_handlers(application)
+
     # Core user commands
-    application.add_handler(CommandHandler("start", start_command))
     from app.handlers.natal_chart import build_natal_chart_handler
     from app.natal.city_catalog import warm_city_catalog
 
@@ -808,6 +821,9 @@ def register(application: Application) -> None:
     except Exception as exc:
         logging.warning("Failed to warm natal city catalog: %s", exc)
     application.add_handler(build_natal_chart_handler())
+    register_birth_date_privacy_guard(application)
+    application.add_handler(CallbackQueryHandler(compatibility_tarot_callback, pattern=r"^compat_tarot:[0-9a-f]{16}$"))
+    application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("live", live_command))
     application.add_handler(CommandHandler("games", games_command))
     from app.handlers.daily_2048 import daily2048_command

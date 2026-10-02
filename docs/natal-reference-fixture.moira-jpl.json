@@ -27,16 +27,16 @@
         "display_place": "Kyiv, Ukraine"
       },
       "expected_planet_longitudes": {
-        "sun": 325.0797,
-        "moon": 129.1136,
-        "mercury": 305.9419,
-        "venus": 280.6519,
-        "mars": 142.1335,
-        "jupiter": 252.2866,
-        "saturn": 342.6651,
-        "uranus": 298.0993,
-        "neptune": 294.2672,
-        "pluto": 240.5742
+        "sun": 325.0092727,
+        "moon": 129.0490232,
+        "mercury": 305.871774,
+        "venus": 280.5831141,
+        "mars": 142.0745479,
+        "jupiter": 252.2200968,
+        "saturn": 342.5949651,
+        "uranus": 298.0294199,
+        "neptune": 294.1973569,
+        "pluto": 240.5096364
       },
       "expected_retrogrades": {
         "sun": false,
@@ -68,8 +68,41 @@
         "11": 244.6123,
         "12": 274.6123
       },
-      "reference_source": "Angles and equal-house cusps independently checked against moira-astro 3.2.3 HouseSystem.EQUAL on Python 3.14 for UTC datetime and coordinates in this fixture. Planet longitudes and retrograde flags are additionally checked by scripts/natal_accuracy.py --check-horizons against NASA/JPL Horizons.",
-      "externally_verified": true
+      "reference_source": "Angles and equal-house cusps retain the prior independent moira-astro 3.2.3 HouseSystem.EQUAL check on Python 3.14 for UTC datetime and coordinates in this fixture. Planet longitudes and retrograde flags were independently refreshed from NASA/JPL Horizons on 2026-10-02: geocentric observer CENTER=500@399, QUANTITIES=31 ObsEcLon, APPARENT=AIRLESS, apparent IAU76/80 ecliptic of date. Retrograde flags are derived from the signed longitude movement between the independently returned samples at UTC datetime minus/plus 12 hours.",
+      "externally_verified": true,
+      "planet_reference": {
+        "service": "NASA/JPL Horizons",
+        "api_url": "https://ssd.jpl.nasa.gov/api/horizons.api",
+        "manual_url": "https://ssd.jpl.nasa.gov/horizons/manual.html",
+        "retrieved_at_utc": "2026-10-02T11:51:20.088632+00:00",
+        "ephemeris_type": "OBSERVER",
+        "center": "500@399",
+        "quantities": "31",
+        "apparent": "AIRLESS",
+        "coordinate_system": "apparent geocentric IAU76/80 ecliptic of date (ObsEcLon)",
+        "motion_sample_offset_hours": 12,
+        "ephemerides": [
+          "DE441",
+          "jup365_merged",
+          "mar099",
+          "nep098_merged",
+          "plu060_merged",
+          "sat441l",
+          "ura184_merged"
+        ],
+        "response_sha256_by_planet": {
+          "sun": "7a82d4716308bc91150e238afe528816303c615a50a74d0fa9298cedaf556af6",
+          "moon": "ef83f95f25daff7135110f6ee70bd9202b42c715c160226de8d694a90c44d80e",
+          "mercury": "21b67a259f1131ec69d5220923324289c2c9c3e55e4753099de1938f94533c8b",
+          "venus": "765695bf34f2e2ee48ae2278fe51ffdb4badd0aaa51edff4d823a68eb228db61",
+          "mars": "3192f9de3c1df50e1093182ccc86cdf2c70fdd33530a77c0967d102119d44f1a",
+          "jupiter": "8f44ce52167aceab737e5b6b3c87524ec191eaa6536b348f05d4266cd781f9bb",
+          "saturn": "06af19d1a35a7e28234f1aa458d68c371e2bddde5809c738b486f3118fe97de9",
+          "uranus": "d91680dce25b0b0b6f4777b87033683d6d7f8433ca4657fea392e69b4be8dc7f",
+          "neptune": "641d0844eb27fa9c8e16f6ab627dfb6535681b7eef3208280b90b9a09dbc3bbd",
+          "pluto": "5ec14138d2363a0866a8d98ebf6089841fa8667dfe14ad9487b3cb82dae1895b"
+        }
+      }
     },
     {
       "case_id": "reading-1989-exact",
@@ -98,16 +131,16 @@
         "display_place": "Reading, Pennsylvania, United States"
       },
       "expected_planet_longitudes": {
-        "sun": 261.5416,
-        "moon": 91.7661,
-        "mercury": 278.7933,
-        "venus": 301.9893,
-        "mars": 236.8347,
-        "jupiter": 97.8204,
-        "saturn": 283.5875,
-        "uranus": 274.7872,
-        "neptune": 281.471,
-        "pluto": 226.6386
+        "sun": 261.3983373,
+        "moon": 91.6285456,
+        "mercury": 278.6502537,
+        "venus": 301.8474817,
+        "mars": 236.6919537,
+        "jupiter": 97.6884895,
+        "saturn": 283.4446498,
+        "uranus": 274.6440391,
+        "neptune": 281.3279827,
+        "pluto": 226.4965565
       },
       "expected_retrogrades": {
         "sun": false,
@@ -139,8 +172,41 @@
         "11": 178.16089999999997,
         "12": 208.16089999999997
       },
-      "reference_source": "Angles and equal-house cusps independently checked against moira-astro 3.2.3 HouseSystem.EQUAL on Python 3.14 for UTC datetime and coordinates in this fixture. Planet longitudes and retrograde flags are additionally checked by scripts/natal_accuracy.py --check-horizons against NASA/JPL Horizons.",
-      "externally_verified": true
+      "reference_source": "Angles and equal-house cusps retain the prior independent moira-astro 3.2.3 HouseSystem.EQUAL check on Python 3.14 for UTC datetime and coordinates in this fixture. Planet longitudes and retrograde flags were independently refreshed from NASA/JPL Horizons on 2026-10-02: geocentric observer CENTER=500@399, QUANTITIES=31 ObsEcLon, APPARENT=AIRLESS, apparent IAU76/80 ecliptic of date. Retrograde flags are derived from the signed longitude movement between the independently returned samples at UTC datetime minus/plus 12 hours.",
+      "externally_verified": true,
+      "planet_reference": {
+        "service": "NASA/JPL Horizons",
+        "api_url": "https://ssd.jpl.nasa.gov/api/horizons.api",
+        "manual_url": "https://ssd.jpl.nasa.gov/horizons/manual.html",
+        "retrieved_at_utc": "2026-10-02T11:51:20.088632+00:00",
+        "ephemeris_type": "OBSERVER",
+        "center": "500@399",
+        "quantities": "31",
+        "apparent": "AIRLESS",
+        "coordinate_system": "apparent geocentric IAU76/80 ecliptic of date (ObsEcLon)",
+        "motion_sample_offset_hours": 12,
+        "ephemerides": [
+          "DE441",
+          "jup365_merged",
+          "mar099",
+          "nep098_merged",
+          "plu060_merged",
+          "sat441l",
+          "ura184_merged"
+        ],
+        "response_sha256_by_planet": {
+          "sun": "be130704603beaf9ce6541dc4d6155f33be0b730a694360ac1f4dcb14477a88b",
+          "moon": "2f23be2b436a50a90546b4e1fbae4928663ef2c533494b459426be293fd355f5",
+          "mercury": "a4df46960d46575f1c1595b804efab01b58e011e91c7b2ce1582f4478cc45ad1",
+          "venus": "47827fa2c6214195517031c0b669fe4ccf8ce333cdf313e88d36accb86f47131",
+          "mars": "2063b9c57b2f4adf9f9b64943a27085b52a6ad4a34927e49f337bf5cfb07abf0",
+          "jupiter": "3ad67c90ea0d8e42a823a72705a08cf8c505095adbd53e3840771918c5318d0b",
+          "saturn": "f26d50419847056dd47b6b27ec8856b279d4881ed83bbf573128c6d0b50ad613",
+          "uranus": "de63f43d7c5b0f36a76b4c368464b157d56d697f2cd14caeabaa85bb1623a802",
+          "neptune": "2c9aa74c10fc062bca16f75adeaa595acd56e741941cc6127ae84a7fe112c2f3",
+          "pluto": "5376b5ec4ea3d816f80ecfe8fd0801bf4a1f05f11c53b8ba3e3bacca30d91151"
+        }
+      }
     }
   ]
 }

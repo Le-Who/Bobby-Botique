@@ -1,9 +1,16 @@
+import json
 from types import SimpleNamespace
 
 import pytest
 
 from app.config import GEMINI_PRIMARY_MODEL
-from app.natal.llm import _fallback_sections, build_interpretation_prompt, generate_interpretation
+from app.natal.destiny_matrix import calculate_destiny_matrix
+from app.natal.llm import (
+    _build_interpretation_repair_prompt,
+    _fallback_sections,
+    build_interpretation_prompt,
+    generate_interpretation,
+)
 from app.natal.models import ChartData, InputQuality, PlanetPosition, TimePrecision
 
 
@@ -330,6 +337,38 @@ def test_prompt_redacts_raw_birth_details_from_quality_warnings():
     assert "Ukraine" not in prompt
     assert "Одесса" not in prompt
     assert "[redacted birth data]" in prompt
+
+
+@pytest.mark.parametrize("prompt_stage", ["initial", "repair"])
+def test_combined_prompt_omits_matrix_birth_date_but_keeps_calculated_positions_and_lines(prompt_stage):
+    matrix = calculate_destiny_matrix("2003-06-30")
+    chart = ChartData(
+        input_quality=InputQuality(
+            time_precision=TimePrecision.UNKNOWN,
+            houses_available=False,
+            angles_available=False,
+        ),
+        planets=[],
+        aspects=[],
+        destiny_matrix=matrix,
+    )
+    if prompt_stage == "initial":
+        prompt = build_interpretation_prompt(chart=chart, language="ru", focus="general")
+    else:
+        prompt = _build_interpretation_repair_prompt(chart, "ru", "general", "## section-summary | Резюме\nПример.")
+    payload, _ = json.JSONDecoder().raw_decode(prompt.split("ChartData JSON:\n", 1)[1])
+    matrix_payload = payload["destiny_matrix"]
+
+    assert "birth_date" not in matrix_payload
+    assert "2003-06-30" not in prompt
+    assert matrix_payload["system"] == "destiny-matrix-22"
+    center = next(position for position in matrix_payload["positions"] if position["key"] == "center")
+    assert center["arcana"] == 10
+    assert center["arcana_label"] == "Колесо Фортуны"
+    male_line = next(line for line in matrix_payload["lines"] if line["key"] == "male_line")
+    assert male_line["position_keys"] == ["male_talent", "center", "money_channel"]
+    assert male_line["summary"] == "9. Отшельник → 10. Колесо Фортуны → 19. Солнце"
+    assert matrix.birth_date == "2003-06-30"
 
 
 def test_fallback_sections_hide_technical_quality_warnings():

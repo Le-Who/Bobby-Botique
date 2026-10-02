@@ -68,16 +68,16 @@ GOLDEN_CASES: tuple[NatalGoldenCase, ...] = (
             display_place="Kyiv, Ukraine",
         ),
         expected_planet_longitudes={
-            "sun": 325.0797,
-            "moon": 129.1136,
-            "mercury": 305.9419,
-            "venus": 280.6519,
-            "mars": 142.1335,
-            "jupiter": 252.2866,
-            "saturn": 342.6651,
-            "uranus": 298.0993,
-            "neptune": 294.2672,
-            "pluto": 240.5742,
+            "sun": 325.0093,
+            "moon": 129.0491,
+            "mercury": 305.8719,
+            "venus": 280.5831,
+            "mars": 142.0744,
+            "jupiter": 252.2201,
+            "saturn": 342.5950,
+            "uranus": 298.0296,
+            "neptune": 294.1976,
+            "pluto": 240.5086,
         },
         expected_retrogrades={
             "sun": False,
@@ -93,7 +93,10 @@ GOLDEN_CASES: tuple[NatalGoldenCase, ...] = (
         },
         expected_angles={"ascendant": 304.6123, "mc": 243.7638},
         expected_house_cusps={1: 304.6123, 2: 334.6123, 3: 4.6123, 4: 34.6123},
-        reference_source="internal-regression; replace or mark externally_verified after independent Swiss/Astro-Seek check",
+        reference_source=(
+            "internal-regression; apparent geocentric tropical longitudes of date; "
+            "replace or mark externally_verified after independent Swiss/Astro-Seek check"
+        ),
     ),
     NatalGoldenCase(
         case_id="reading-1989-exact",
@@ -112,16 +115,16 @@ GOLDEN_CASES: tuple[NatalGoldenCase, ...] = (
             display_place="Reading, Pennsylvania, United States",
         ),
         expected_planet_longitudes={
-            "sun": 261.5416,
-            "moon": 91.7661,
-            "mercury": 278.7933,
-            "venus": 301.9893,
-            "mars": 236.8347,
-            "jupiter": 97.8204,
-            "saturn": 283.5875,
-            "uranus": 274.7872,
-            "neptune": 281.471,
-            "pluto": 226.6386,
+            "sun": 261.3984,
+            "moon": 91.6287,
+            "mercury": 278.6504,
+            "venus": 301.8475,
+            "mars": 236.6921,
+            "jupiter": 97.6885,
+            "saturn": 283.4448,
+            "uranus": 274.6442,
+            "neptune": 281.3282,
+            "pluto": 226.4965,
         },
         expected_retrogrades={
             "sun": False,
@@ -137,7 +140,10 @@ GOLDEN_CASES: tuple[NatalGoldenCase, ...] = (
         },
         expected_angles={"ascendant": 238.1609, "mc": 162.2794},
         expected_house_cusps={1: 238.1609, 2: 268.1609, 3: 298.1609, 4: 328.1609},
-        reference_source="internal-regression; replace or mark externally_verified after independent Swiss/Astro-Seek check",
+        reference_source=(
+            "internal-regression; apparent geocentric tropical longitudes of date; "
+            "replace or mark externally_verified after independent Swiss/Astro-Seek check"
+        ),
     ),
 )
 

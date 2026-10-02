@@ -198,6 +198,16 @@ def test_moira_jpl_reference_fixture_satisfies_release_contract():
     assert all(set(range(1, 13)) <= case.expected_house_cusps.keys() for case in cases)
 
 
+@pytest.mark.asyncio
+async def test_moira_jpl_reference_fixture_matches_calculated_chart():
+    cases = load_golden_cases_from_json(PROJECT_ROOT / "docs" / "natal-reference-fixture.moira-jpl.json")
+
+    results = await validate_golden_cases(cases)
+
+    assert len(results) == 2
+    assert all(result.passed for result in results), [result.failures for result in results]
+
+
 def test_export_golden_cases_template_writes_current_fixture_shape(tmp_path):
     fixture_path = tmp_path / "exported-angle-references.json"
 

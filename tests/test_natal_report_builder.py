@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from app.natal.destiny_matrix import build_destiny_matrix_sections, calculate_destiny_matrix
@@ -130,7 +132,7 @@ def test_hosted_report_merges_planet_sections_into_matching_life_topics(sample_n
 
     assert '<details id="section-thinking"' in html
     assert '<details id="section-mercury"' not in html
-    assert '<span id="section-mercury" class="section-anchor"></span>' in html
+    assert '<span id="section-mercury" class="section-anchor" data-section-target="section-thinking"></span>' in html
     assert "Расчетная опора: Меркурий — мышление и речь" in html
     assert "Эмпатичный интеллект" not in html.split("<summary>", 1)[1].split("</summary>", 1)[0]
     assert html.count('class="reading-card reading-disclosure"') == 1
@@ -260,6 +262,33 @@ def test_hosted_report_credits_geonames_city_data(sample_natal_report: NatalRepo
     assert "https://www.geonames.org/" in html
 
 
+def test_matrix_only_report_does_not_claim_city_lookup_or_llm_processing(sample_natal_report: NatalReport):
+    sample_natal_report.chart.planets = []
+    sample_natal_report.svg = ""
+    sample_natal_report.chart.destiny_matrix = calculate_destiny_matrix("1997-11-09")
+    sample_natal_report.sections = build_destiny_matrix_sections(sample_natal_report.chart.destiny_matrix)
+
+    html = build_hosted_report_html(sample_natal_report)
+    markdown = build_telegraph_markdown(sample_natal_report)
+
+    assert "GeoNames" not in html
+    assert "GeoNames" not in markdown
+    assert "LLM receives" not in html
+    assert "без передачи данных языковой модели" in html
+
+
+def test_empty_report_navigation_targets_exist(sample_natal_report: NatalReport):
+    sample_natal_report.chart.planets = []
+    sample_natal_report.svg = ""
+    sample_natal_report.sections = []
+
+    html = build_hosted_report_html(sample_natal_report)
+    ids = set(re.findall(r'\bid="([^"]+)"', html))
+    targets = set(re.findall(r'href="#([^"]+)"', html))
+
+    assert targets <= ids
+
+
 def test_hosted_report_places_full_interpretation_before_reference_positions(sample_natal_report: NatalReport):
     sample_natal_report.sections.extend(
         [
@@ -355,7 +384,8 @@ def test_hosted_report_sanitizes_stored_svg_payload(sample_natal_report: NatalRe
     html = build_hosted_report_html(sample_natal_report)
 
     assert "<svg" in html
-    assert "<script" not in html.lower()
+    svg = html.split("<svg", 1)[1].split("</svg>", 1)[0]
+    assert "<script" not in svg.lower()
     assert "javascript:" not in html.lower()
 
 
