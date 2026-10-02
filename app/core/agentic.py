@@ -14,11 +14,13 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from google.genai import types
 
 from app.config import settings
+from app.core.research_budget import BudgetExhausted, ResearchBudget
 from app.observability.events import emit, record_exception
 from app.observability.workload_events import start_workload_attempt
-from app.prompt_registry import get_registry
+from app.prompt_registry import get_registry, render_prompt_text
 from app.providers.base import _build_thinking_config
 from app.providers.gemini import get_cached_genai_client
+from app.runtime_settings import interactive_prompts as _interactive_prompts  # noqa: F401
 from app.search_services import parallel_search
 from app.utils.stage_indicators import STAGES_AGENTIC_RESEARCH
 from app.web_reader import read_url
@@ -271,6 +273,8 @@ class AgenticResult:
     total_tokens: int = 0
     llm_calls: int = 0
     pages_deduplicated: int = 0
+    budget_reason: str | None = None
+    usage_uncertain: bool = False
 
 
 class AgenticSearch:
@@ -283,6 +287,7 @@ class AgenticSearch:
         ltm_enabled: bool = False,
         ltm_api_key: str | None = None,
         ltm_expected_epoch: int | None = None,
+        budget: ResearchBudget | None = None,
     ):
         self.model_name = model_name
         self.api_key = api_key
@@ -299,6 +304,7 @@ class AgenticSearch:
         self._ltm_enabled = ltm_enabled
         self._ltm_api_key = ltm_api_key
         self._ltm_expected_epoch = ltm_expected_epoch
+        self._budget = budget
 
     def _get_system_instruction(self) -> str:
         """Compose the RESEARCH_AGENT_SYSTEM prompt with configuration injected."""
@@ -595,6 +601,72 @@ class AgenticSearch:
         history: list[dict[str, Any]] | None = None,
         thinking_level: str | None = None,
     ) -> AgenticResult:
+        budget = self._budget or ResearchBudget(
+            timeout_seconds=self.timeout_seconds,
+            max_tokens=self.max_tokens,
+            max_pages=self.max_pages,
+        )
+        tokens_before = budget.tokens_known
+        try:
+            budget.begin_attempt()
+            async with asyncio.timeout(budget.remaining_seconds()):
+                result = await self._run(query, on_status, user_id, chat_id, history, thinking_level, budget=budget)
+        except (TimeoutError, BudgetExhausted) as error:
+            if isinstance(error, TimeoutError):
+                budget.reason = "deadline"
+            result = AgenticResult(
+                answer="❌ Лимит исследования исчерпан. Попробуйте уточнить запрос.",
+                total_tokens=budget.tokens_known - tokens_before,
+            )
+        result.budget_reason = budget.reason
+        result.usage_uncertain = budget.usage_uncertain
+        return result
+
+    async def _generate_budgeted(self, *, contents, config, budget: ResearchBudget, synthesis: bool = False):
+        remaining = budget.remaining_seconds(synthesis=synthesis)
+        if remaining <= 0:
+            budget.reason = "deadline"
+            raise BudgetExhausted("deadline")
+        attempt = start_workload_attempt(
+            workload="research_llm",
+            provider="gemini",
+            model=self.model_name,
+            api_key=self.api_key,
+            origin="agentic_synthesis" if synthesis else "agentic_loop",
+        )
+        try:
+            async with asyncio.timeout(remaining):
+                response = await self.client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=config,
+                )
+        except asyncio.CancelledError:
+            budget.record_usage(None)
+            attempt.finish(outcome="cancelled", reason_code="cancelled", usage_uncertain=True)
+            raise
+        except Exception as error:
+            budget.record_usage(None)
+            attempt.fail(error, reason_code="deadline" if isinstance(error, TimeoutError) else "provider_error")
+            raise
+        raw = getattr(getattr(response, "usage_metadata", None), "total_token_count", None)
+        usage = raw if type(raw) is int and raw >= 0 else None
+        budget.record_usage(usage)
+        attempt.finish(outcome="succeeded", token_count=usage, usage_uncertain=usage is None)
+        await self._notify_key_used()
+        return response
+
+    async def _run(
+        self,
+        query: str,
+        on_status: Callable[..., Awaitable[None]],
+        user_id: int | None = None,
+        chat_id: int | None = None,
+        history: list[dict[str, Any]] | None = None,
+        thinking_level: str | None = None,
+        *,
+        budget: ResearchBudget,
+    ) -> AgenticResult:
         """
         Execute the agentic research loop.
 
@@ -624,7 +696,7 @@ class AgenticSearch:
         # Improvement 4: Track all previous search queries (for dedup)
         previous_queries: list[str] = []
         # Improvement 4: Wall-clock start time
-        start_time = time.monotonic()
+        start_time = budget.started_at
         # Track deduplicated pages across the session
         pages_deduplicated = 0
 
@@ -664,21 +736,9 @@ class AgenticSearch:
 
                 # Improvement 4: Time cutoff — check BEFORE starting the LLM call
                 elapsed = time.monotonic() - start_time
-                if elapsed > self.timeout_seconds:
-                    logger.warning(
-                        "Agentic loop time cutoff reached (%.1fs > %ds). Forcing synthesis.",
-                        elapsed,
-                        self.timeout_seconds,
-                    )
-                    break
-
-                # Improvement 4: Token budget — check BEFORE starting the LLM call
-                if total_tokens > self.max_tokens:
-                    logger.warning(
-                        "Agentic loop token budget exhausted (%d > %d). Forcing synthesis.",
-                        total_tokens,
-                        self.max_tokens,
-                    )
+                try:
+                    budget.check_iteration()
+                except BudgetExhausted:
                     break
 
                 emit(
@@ -691,30 +751,21 @@ class AgenticSearch:
                     elapsed_ms=round(elapsed * 1000, 2),
                 )
 
-                llm_attempt = start_workload_attempt(
-                    workload="research_llm",
-                    provider="gemini",
-                    model=self.model_name,
-                    api_key=self.api_key,
-                    origin="agentic_loop",
-                    iteration=iterations,
-                    max_iterations=self.max_iterations,
-                )
                 try:
                     # Model thinks and decides (requires tools)
-                    response = await self.client.aio.models.generate_content(
-                        model=self.model_name,
+                    response = await self._generate_budgeted(
                         contents=contents,
                         config=config,
+                        budget=budget,
                     )
                     # Track usage: +1 API call, accumulate tokens
                     llm_calls += 1
                     response_tokens = self._extract_token_count(response)
                     total_tokens += response_tokens
-                    await self._notify_key_used()
-                    llm_attempt.finish(outcome="succeeded", token_count=response_tokens)
-                except Exception as e:
-                    llm_attempt.fail(e, reason_code="provider_error")
+                except TimeoutError, BudgetExhausted:
+                    budget.reason = "deadline"
+                    break
+                except Exception:
                     return AgenticResult(
                         answer="❌ Возникла ошибка при обращении к языковой модели.",
                         total_tokens=total_tokens,
@@ -792,7 +843,7 @@ class AgenticSearch:
 
                     for call_name, call_args, call_obj in parsed_calls:
                         if call_name == "read_page":
-                            if pages_read >= self.max_pages:
+                            if not budget.admit_page():
                                 logger.info(
                                     "Agent hit max pages limit (%d). Denying read_page.",
                                     self.max_pages,
@@ -880,11 +931,22 @@ class AgenticSearch:
                                 seen_urls=seen_urls,
                             )
 
+                    batch_timed_out = False
                     if executable_calls:
-                        tool_results = await asyncio.gather(
-                            *[_run_tool(call_obj) for _, _, call_obj in executable_calls],
-                            return_exceptions=True,
-                        )
+                        tasks = [asyncio.create_task(_run_tool(call_obj)) for _, _, call_obj in executable_calls]
+                        try:
+                            _, pending = await asyncio.wait(
+                                tasks,
+                                timeout=budget.remaining_seconds(synthesis=False),
+                            )
+                            batch_timed_out = bool(pending)
+                            if batch_timed_out:
+                                budget.reason = "deadline"
+                        finally:
+                            for task in tasks:
+                                if not task.done():
+                                    task.cancel()
+                            tool_results = await asyncio.gather(*tasks, return_exceptions=True)
                     else:
                         tool_results = []
 
@@ -892,8 +954,10 @@ class AgenticSearch:
                     function_responses: list[types.Part] = list(denied_responses)
                     for i, (call_name, _call_args, _call_obj) in enumerate(executable_calls):
                         result = tool_results[i]
-                        if isinstance(result, Exception):
-                            result_dict: dict[str, Any] = {"error": f"Execution failed: {result}"}
+                        if isinstance(result, asyncio.CancelledError):
+                            result_dict: dict[str, Any] = {"error": "Research deadline reached; tool cancelled."}
+                        elif isinstance(result, BaseException):
+                            result_dict = {"error": f"Execution failed: {result}"}
                         else:
                             result_dict = dict(result)  # type: ignore[arg-type]  # _execute_tool returns dict
                         # Accumulate dedup metrics and strip metadata before sending to model
@@ -910,6 +974,9 @@ class AgenticSearch:
                                 parts=function_responses,
                             )
                         )
+
+                    if batch_timed_out:
+                        break
 
                     # Update status indicating we are processing/refining
                     if iterations < self.max_iterations:
@@ -947,7 +1014,11 @@ class AgenticSearch:
             try:
                 # Build a fresh config for synthesis — do NOT mutate the loop's config
                 synthesis_config = types.GenerateContentConfig(
-                    system_instruction="Synthesize all the gathered information so far into a coherent final answer to the user's original query. Do not ask for tools. Format in Markdown.",
+                    system_instruction=render_prompt_text(
+                        get_registry().get_prompt_text("research.synthesis.system"),
+                        query=query,
+                        max_pages=self.max_pages,
+                    ),
                     temperature=0.2,
                     tools=None,
                 )
@@ -959,35 +1030,22 @@ class AgenticSearch:
                         role="user",
                         parts=[
                             types.Part.from_text(
-                                text="Force conclusion: Provide your final answer based on the acquired context."
+                                text=render_prompt_text(
+                                    get_registry().get_prompt_text("research.synthesis.request"), query=query
+                                )
                             )
                         ],
                     )
                 )
-                synthesis_attempt = start_workload_attempt(
-                    workload="research_llm",
-                    provider="gemini",
-                    model=self.model_name,
-                    api_key=self.api_key,
-                    origin="agentic_synthesis",
+                response = await self._generate_budgeted(
+                    contents=contents,
+                    config=synthesis_config,
+                    budget=budget,
+                    synthesis=True,
                 )
-                try:
-                    response = await self.client.aio.models.generate_content(
-                        model=self.model_name,
-                        contents=contents,
-                        config=synthesis_config,
-                    )
-                except Exception as error:
-                    synthesis_attempt.fail(error, reason_code="provider_error")
-                    raise
                 # Track usage for the forced synthesis call
                 llm_calls += 1
                 total_tokens += self._extract_token_count(response)
-                await self._notify_key_used()
-                synthesis_attempt.finish(
-                    outcome="succeeded",
-                    token_count=self._extract_token_count(response),
-                )
                 if response.text:
                     return AgenticResult(
                         answer=response.text,

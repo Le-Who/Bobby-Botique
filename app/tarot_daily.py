@@ -9,9 +9,12 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
 from app import database as db
-from app.errors import ErrorCode, extract_error_code, is_error_message
+from app.errors import ErrorCode, extract_error_code, is_error_message, tag_error
+from app.process_policies import resolve_process
+from app.prompt_registry import get_prompt_text, register_controlled_text
 from app.providers import get_provider_router
 from app.repos.keys import count_gemini_keys
+from app.runtime_settings.lifecycle import runtime_settings_scope
 from app.tarot import iter_daily_card_variants
 from app.utils.time import get_pacific_tz
 
@@ -22,6 +25,17 @@ TAROT_DAILY_RPM = 15
 TAROT_DAILY_REQUEST_INTERVAL_SECONDS = 60.0 / TAROT_DAILY_RPM
 TAROT_DAILY_MAX_KEY_RETRIES = 4
 TAROT_DAILY_LANGUAGE = "ru"
+TAROT_DAILY_SYSTEM_PROMPT = (
+    "Ты — мистический таролог. Ты заранее готовишь универсальный текст для карты дня.\n"
+    "Не упоминай, что текст сгенерирован заранее. Не обращайся к пользователю по имени.\n"
+    "Используй значение карты ниже и дай:\n"
+    "1. Краткое описание энергии дня (2-3 предложения)\n"
+    "2. Практический совет на сегодня (1-2 предложения)\n"
+    "3. От чего стоит остеречься (1 предложение)\n\n"
+    "Ответ короткий, 6-8 предложений, Markdown, русский язык.\n"
+    "---\nКАРТА ДНЯ:\n{tarot_context}\n---"
+)
+register_controlled_text("tarot.daily", TAROT_DAILY_SYSTEM_PROMPT, "Таро: карта дня")
 _PREPARATION_WINDOW_HOURS_PT = {22, 23}
 _LABEL_RE = re.compile(r"^(?P<card>.+?)\s+\((?P<orientation>Прямая|Перевернутая)\)$")
 _STOP_BATCH_ERROR_CODES = frozenset(
@@ -141,6 +155,7 @@ async def count_prepared_daily_readings(
     return int(rows[0]["cnt"]) if rows else 0
 
 
+@runtime_settings_scope()
 async def prepare_daily_readings(
     *,
     target_date: date | None = None,
@@ -197,25 +212,55 @@ async def prepare_daily_readings(
                         continue
 
                 requested_generation = True
-                result, _tokens = await router.get_response(
-                    preferred_model=model or TAROT_DAILY_MODEL,
-                    history=[
-                        {
-                            "role": "user",
-                            "parts": [
-                                (
-                                    "Подготовь универсальную карту дня без обращения к конкретному пользователю. "
-                                    f"Дата: {target.isoformat()}. Карта: {variant['label']}."
-                                )
-                            ],
-                        }
-                    ],
-                    system_instruction=_build_daily_system_instruction(str(variant["context"])),
-                    use_openrouter=False,
-                    max_key_retries=max_key_retries,
-                    thinking_level="low",
-                    timeout=45,
-                )
+                history = [
+                    {
+                        "role": "user",
+                        "parts": [
+                            (
+                                "Подготовь универсальную карту дня без обращения к конкретному пользователю. "
+                                f"Дата: {target.isoformat()}. Карта: {variant['label']}."
+                            )
+                        ],
+                    }
+                ]
+                instruction = _build_daily_system_instruction(str(variant["context"]))
+                baseline_model = model or TAROT_DAILY_MODEL
+                policy = await resolve_process("tarot.daily", (baseline_model,))
+                successful_model = baseline_model
+                if policy.explicit:
+                    try:
+
+                        def _record_model(model_name: str) -> None:
+                            nonlocal successful_model
+                            successful_model = model_name
+
+                        result = await router.execute_gemini_model_plan(
+                            policy.models,
+                            history,
+                            parse_response=lambda text: text,
+                            system_instruction=instruction,
+                            max_keys=max_key_retries,
+                            thinking_level="low",
+                            timeout=45,
+                            on_model_used=_record_model,
+                        )
+                    except Exception as exc:
+                        code = (
+                            ErrorCode.KEYS_EXHAUSTED
+                            if "No Gemini keys available" in str(exc)
+                            else extract_error_code(str(exc)) or ErrorCode.GENERIC
+                        )
+                        result = tag_error(code, "Prepared tarot daily provider unavailable")
+                else:
+                    result, _tokens = await router.get_response(
+                        preferred_model=baseline_model,
+                        history=history,
+                        system_instruction=instruction,
+                        use_openrouter=False,
+                        max_key_retries=max_key_retries,
+                        thinking_level="low",
+                        timeout=45,
+                    )
                 if not result or not result.strip() or is_error_message(result):
                     failed += 1
                     _consecutive_failures += 1
@@ -246,7 +291,7 @@ async def prepare_daily_readings(
                         orientation=orientation,
                         language=language,
                         body_markdown=result.strip(),
-                        model_name=TAROT_DAILY_MODEL,
+                        model_name=successful_model,
                     )
                     generated += 1
 
@@ -269,16 +314,7 @@ def _should_stop_batch_after_error(text: str | None) -> bool:
 
 
 def _build_daily_system_instruction(tarot_context: str) -> str:
-    return (
-        "Ты — мистический таролог. Ты заранее готовишь универсальный текст для карты дня.\n"
-        "Не упоминай, что текст сгенерирован заранее. Не обращайся к пользователю по имени.\n"
-        "Используй значение карты ниже и дай:\n"
-        "1. Краткое описание энергии дня (2-3 предложения)\n"
-        "2. Практический совет на сегодня (1-2 предложения)\n"
-        "3. От чего стоит остеречься (1 предложение)\n\n"
-        "Ответ короткий, 6-8 предложений, Markdown, русский язык.\n"
-        f"---\nКАРТА ДНЯ:\n{tarot_context}\n---"
-    )
+    return get_prompt_text("tarot.daily").replace("{tarot_context}", tarot_context)
 
 
 def _reading_from_row(row) -> TarotDailyReading:

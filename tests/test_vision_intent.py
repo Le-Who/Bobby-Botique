@@ -88,3 +88,19 @@ async def test_classify_vision_intent_error_fallback():
     ):
         res = await classify_vision_intent(ambiguous)
         assert res == "describe"
+
+
+@pytest.mark.asyncio
+async def test_new_control_revision_does_not_reuse_old_intent_cache():
+    from types import SimpleNamespace
+
+    snapshot = SimpleNamespace(revision=1)
+    with (
+        patch("app.runtime_settings.lifecycle.operation_snapshot", new=AsyncMock(side_effect=lambda: snapshot)),
+        patch("app.utils.vision_intent._call_llm_for_intent", new=AsyncMock(side_effect=["ocr", "describe"])) as llm,
+    ):
+        assert await classify_vision_intent("символы?") == "ocr"
+        assert await classify_vision_intent("символы?") == "ocr"
+        snapshot.revision = 2
+        assert await classify_vision_intent("символы?") == "describe"
+    assert llm.await_count == 2

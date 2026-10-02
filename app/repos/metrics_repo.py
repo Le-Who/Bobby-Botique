@@ -5,6 +5,7 @@ Extracted from app/database.py to isolate observability queries.
 """
 
 import time
+from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Any
 
@@ -104,6 +105,18 @@ async def get_tavily_key_usage_stats() -> list[dict[str, Any]]:
 async def get_gemini_key_usage_stats(
     model_name: str | None = None,
 ) -> list[dict[str, Any]]:
+    from app.runtime_settings import store
+    from app.runtime_settings.models import validate_limit
+
+    snapshot = await store.get_snapshot()
+
+    def shared_counter(model: str) -> bool:
+        try:
+            validate_limit(model, None)
+        except ValueError:
+            return False
+        return True
+
     today_pacific: date = datetime.now(get_pacific_tz()).date()
     if model_name:
         query = """
@@ -114,7 +127,7 @@ async def get_gemini_key_usage_stats(
                 mc.daily_limit,
                 CASE
                     WHEN mc.daily_limit IS NULL THEN 0
-                    ELSE (COALESCE(ku.request_count, 0)::float / mc.daily_limit * 100)
+                    ELSE (COALESCE(ku.request_count, 0)::float / NULLIF(mc.daily_limit, 0) * 100)
                 END as usage_percent,
                 CASE
                     WHEN mc.daily_limit IS NULL THEN true
@@ -138,17 +151,33 @@ async def get_gemini_key_usage_stats(
         configured_models = list(
             dict.fromkeys(
                 [
-                    *getattr(settings, "AVAILABLE_MODELS", []),
+                    *snapshot.values.get("catalog:gemini", getattr(settings, "AVAILABLE_MODELS", [])),
                     *getattr(settings, "DAILY_LIMITS", {}).keys(),
                 ]
             )
         )
+        candidates = set(snapshot.values.get("catalog:gemini", ()))
+        candidates.update(key.removeprefix("model_limit:") for key in snapshot.values if key.startswith("model_limit:"))
+        for key, value in snapshot.values.items():
+            if key.startswith("process:") and isinstance(value, Mapping):
+                candidates.update(value.get("models", ()))
+        configured_models = [model for model in configured_models if shared_counter(model)]
+        configured_models.extend(
+            model for model in sorted(candidates) if shared_counter(model) and model not in configured_models
+        )
         configured_limits = [getattr(settings, "DAILY_LIMITS", {}).get(model) for model in configured_models]
         query = """
             WITH configured_models AS (
-                SELECT model_name, configured_limit
-                FROM UNNEST($3::text[], $4::integer[])
-                    AS configured(model_name, configured_limit)
+                SELECT model_name, MAX(configured_limit) AS configured_limit
+                FROM (
+                    SELECT model_name, configured_limit
+                    FROM UNNEST($3::text[], $4::integer[])
+                        AS configured(model_name, configured_limit)
+                    UNION ALL
+                    SELECT DISTINCT model_name, NULL::integer
+                    FROM public.key_usage WHERE usage_date = $2
+                ) AS candidates
+                GROUP BY model_name
             )
             SELECT
                 ak.key_hash,
@@ -160,7 +189,7 @@ async def get_gemini_key_usage_stats(
                     WHEN COALESCE(mc.daily_limit, cm.configured_limit) IS NULL THEN 0
                     ELSE (
                         COALESCE(ku.request_count, 0)::float
-                        / COALESCE(mc.daily_limit, cm.configured_limit) * 100
+                        / NULLIF(COALESCE(mc.daily_limit, cm.configured_limit), 0) * 100
                     )
                 END as usage_percent,
                 CASE
@@ -185,7 +214,36 @@ async def get_gemini_key_usage_stats(
                 configured_limits,
             ),
         )
-    return results
+    # Compute the displayed admission state from the same precedence and
+    # integer threshold used by keys.py; SQL's historical model_configuration
+    # value cannot represent a runtime null override (unlimited).
+    rows = []
+    for result in results:
+        row = dict(result)
+        actual_model = row.get("model_name") or model_name
+        if not actual_model or not shared_counter(actual_model):
+            continue
+        override_key = f"model_limit:{actual_model}"
+        if override_key in snapshot.values:
+            limit = validate_limit(actual_model, snapshot.values[override_key])
+            source = "admin"
+        else:
+            limit = db_manager._model_config_cache.get(actual_model, row.get("daily_limit"))
+            if limit is None:
+                limit = getattr(settings, "DAILY_LIMITS", {}).get(actual_model)
+            source = "database/env"
+        limit = limit or None
+        used = row.get("request_count") or 0
+        row.update(
+            model_name=actual_model,
+            daily_limit=limit,
+            usage_percent=used / limit * 100 if limit else 0,
+            is_available=limit is None or used < max(1, int(limit * settings.LIMIT_THRESHOLD_PERCENT)),
+            limit_source=source,
+            availability_scope="local_rpd",
+        )
+        rows.append(row)
+    return rows
 
 
 async def get_active_key_info(model_name: str) -> dict[str, Any] | None:

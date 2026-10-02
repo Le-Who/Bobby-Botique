@@ -9,7 +9,18 @@ import asyncio
 import logging
 from typing import Any
 
-from app.prompt_registry import estimate_tokens_cyrillic
+from app.process_policies import execute_text_process
+from app.prompt_registry import (
+    SUMMARIZATION_CHUNK,
+    SUMMARIZATION_REFINE_FIRST,
+    SUMMARIZATION_REFINE_SUBSEQUENT,
+    SUMMARIZATION_SYSTEM,
+    estimate_tokens_cyrillic,
+    get_prompt_text,
+    register_controlled_text,
+    render_prompt_text,
+)
+from app.runtime_settings.lifecycle import runtime_settings_scope
 
 from .token_budget import (
     CHUNK_SIZE,
@@ -20,6 +31,11 @@ from .token_budget import (
 )
 
 logger = logging.getLogger(__name__)
+
+register_controlled_text("summary.system", SUMMARIZATION_SYSTEM.text, "Сжатие контекста: системный промпт")
+register_controlled_text("summary.chunk", SUMMARIZATION_CHUNK.text, "Сжатие контекста: фрагмент")
+register_controlled_text("summary.first", SUMMARIZATION_REFINE_FIRST, "Сжатие контекста: первый проход")
+register_controlled_text("summary.refine", SUMMARIZATION_REFINE_SUBSEQUENT, "Сжатие контекста: уточнение")
 
 # Keep strong references until every user-scoped task reaches a terminal state.
 # A set (rather than a single task) is intentional: a superseded task remains
@@ -113,6 +129,17 @@ async def _run_llm_summarization(
     existing_summary: str | None,
     callback,
 ) -> None:
+    async with runtime_settings_scope():
+        await _run_llm_summarization_in_scope(user_id, expected_epoch, dropped_messages, existing_summary, callback)
+
+
+async def _run_llm_summarization_in_scope(
+    user_id: int,
+    expected_epoch: int | None,
+    dropped_messages: list[dict[str, Any]],
+    existing_summary: str | None,
+    callback,
+) -> None:
     """Run refine-chain LLM summarization in background.
 
     Strategy:
@@ -142,14 +169,6 @@ async def _run_llm_summarization(
 
         logger.info("Starting refine-chain summarization: %d chunks", len(chunks))
 
-        # Import here to avoid circular imports
-        from app.prompt_registry import (
-            SUMMARIZATION_CHUNK,
-            SUMMARIZATION_REFINE_FIRST,
-            SUMMARIZATION_REFINE_SUBSEQUENT,
-            SUMMARIZATION_SYSTEM,
-        )
-
         # Calculate per-chunk summary token target
         max_tokens_per_chunk = max(500, SUMMARY_BUDGET // max(len(chunks), 1))
 
@@ -158,18 +177,19 @@ async def _run_llm_summarization(
         for i, chunk_text in enumerate(chunks):
             # Build refine instruction
             if i == 0 and not summary:
-                refine_instruction = SUMMARIZATION_REFINE_FIRST
+                refine_instruction = get_prompt_text("summary.first")
             else:
-                refine_instruction = SUMMARIZATION_REFINE_SUBSEQUENT.replace("{previous_summary}", summary)
+                refine_instruction = render_prompt_text(get_prompt_text("summary.refine"), previous_summary=summary)
 
             # Build the prompt from template
-            prompt_text = SUMMARIZATION_CHUNK.text
-            prompt_text = prompt_text.replace("{refine_instruction}", refine_instruction)
-            prompt_text = prompt_text.replace("{max_tokens}", str(max_tokens_per_chunk))
-            prompt_text = prompt_text.replace("{conversation_chunk}", chunk_text)
+            prompt_text = render_prompt_text(
+                get_prompt_text("summary.chunk"),
+                refine_instruction=refine_instruction,
+                max_tokens=max_tokens_per_chunk,
+                conversation_chunk=chunk_text,
+            )
 
             # Call LLM
-            from app.handlers.ai_core import _get_ai_response_with_routing
             from app.repos.memory_consent import private_data_lease
 
             async with private_data_lease(
@@ -181,10 +201,11 @@ async def _run_llm_summarization(
                 if not lease_acquired:
                     logger.info("Skipped stale account summary for user %d", user_id)
                     return
-                summary = await _get_ai_response_with_routing(
-                    preferred_model=SUMMARIZATION_MODEL,
-                    history=[{"role": "user", "parts": [prompt_text]}],
-                    system_instruction=SUMMARIZATION_SYSTEM.text,
+                summary, _tokens = await execute_text_process(
+                    "summary",
+                    (SUMMARIZATION_MODEL,),
+                    [{"role": "user", "parts": [prompt_text]}],
+                    system_instruction=get_prompt_text("summary.system"),
                 )
 
             logger.info(

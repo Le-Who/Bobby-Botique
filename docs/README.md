@@ -13,8 +13,10 @@ historical plans, journals and test/deploy reports are not current instructions.
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | Locked tooling, checks, test safety and hook installation |
 | [CONTEXT.md](../CONTEXT.md) | Domain vocabulary: delivery, state, consent, provenance and model roles |
 | [Architecture](ARCHITECTURE.md) | Source-backed ownership boundaries and rationale |
+| [Runtime controls](runtime-controls.md) | Model/prompt editor, revision semantics, quota boundaries, queue cutover and embedding migration procedure |
 | [Security policy](../SECURITY.md) | Reporting route and implementation limits |
-| [Roadmap](../ROADMAP.md) | Categorized initiatives, priorities, dependencies, effort and acceptance criteria; proposed work |
+| [Roadmap](../ROADMAP.md) | Functional bot deliveries, user scenarios, priorities, code boundaries and acceptance criteria; proposed work |
+| [Revisions review](revisions-review-2026-09-29.md) | Decisions on supplied consoles/patches, actual bot changes and verification boundaries |
 | [Pollinations / Crocodile](pollinations-daily-croc.md) | Authentication, shared/per-process models, image overrides/quota and day preparation |
 | [Natal dependency decision](natal-chart-dependency-decision.md) | PyEphem/local math, city data, scope and dependency rationale |
 | [Natal readiness](natal-chart-product-readiness.md) | Implemented checks and rollout checklist; old results explicitly historical |
@@ -58,6 +60,7 @@ neither authorizes execution now nor proves a feature is missing.
 | 2026-09-08 documentation audit | [Dated report](documentation-audit-2026-09-08.md); later implementation changes need the latest audit |
 | 2026-09-10 logging audit/overhaul | [Original audit](logging-audit-2026-09-10.md); implemented contracts are in `app/observability/`, `logging.md` and `log-events.md` |
 | 2026-09-11 log viewer replacement | `ops/observability/`, CI/deploy health/auth gates; the plan is not an unimplemented backlog |
+| 2026-10-02 prompt quality | [Dated audit](prompt-quality-audit-2026-10-02.md); 90 IDs, actual consumers, fixes and offline evidence; current operation is described in [runtime controls](runtime-controls.md) |
 
 [CHANGELOG.md](../CHANGELOG.md), [maintainer queue](MAINTAINER_QUEUE.md) and
 `.jules/` journals are historical evidence. Old performance figures and broad
@@ -72,6 +75,16 @@ release entries merely to make their versions match today.
 fixtures intact during prose audits; they are consumed by code/deployment checks.
 
 ## Maintenance rule
+
+The [roadmap](../ROADMAP.md) now specifies functional deliveries in the existing
+bot. A standalone console, seed status, simulation or report does not complete a
+product task. Prioritize selected-document Q&A, chat recovery and editable memory;
+research is a secondary direction.
+
+Run `python scripts/check_docs_links.py` for current-guide relative links and
+anchors; use `--include-historical` for a separate archival audit. Run
+`python scripts/check_env_registry.py` for the literal source/forwarding snapshot.
+Neither script imports the application, reads a live `.env` or calls the network.
 
 Change each fact at its owner: dependencies in manifest/lock, behavior in code,
 commands in the public catalog, schema in migrations, deployment in workflows.

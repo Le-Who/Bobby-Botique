@@ -38,9 +38,13 @@ from app.observability.context import current_context, request_scope
 from app.observability.events import emit, record_exception
 from app.observability.schema import JsonValue
 from app.observability.workload_events import start_workload_attempt
+from app.process_policies import resolve_process
+from app.prompt_registry import get_prompt_text
 from app.repos import crocodile_daily as daily_delivery_repo
 from app.repos import daily_2048 as daily_2048_repo
 from app.request_context import set_user_context
+from app.runtime_settings import media_prompts as _media_prompts  # noqa: F401 — registers Live prompts
+from app.runtime_settings.lifecycle import runtime_settings_scope
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
 
@@ -2977,14 +2981,7 @@ def _build_live_system_instruction(
     if chat_state and chat_state.system_prompt:
         sys_parts.append(chat_state.system_prompt)
     else:
-        sys_parts.extend(
-            [
-                "Ты — дружелюбный AI-ассистент в Telegram боте.",
-                "Отвечай кратко и по делу. Если не уверен — скажи об этом.",
-                "По умолчанию отвечай по-русски, если пользователь явно не просит другой язык.",
-                "Если пользователь пишет или говорит на другом языке, либо прямо просит сменить язык, сразу переключайся на этот язык.",
-            ]
-        )
+        sys_parts.append(get_prompt_text("live.default"))
 
     if user_first_name:
         sys_parts.append(f"Имя пользователя: {user_first_name}.")
@@ -2994,15 +2991,7 @@ def _build_live_system_instruction(
             "Используй это только как вспомогательный сигнал; язык ответа определяй по последней реплике пользователя, а по умолчанию используй русский."
         )
     if transport_mode == _LIVE_VERTEX_CONNECTION_MODE:
-        sys_parts.extend(
-            [
-                "В этой live-сессии у тебя есть доступ к Google Search.",
-                "Для погоды, новостей, курсов, времени, расписаний, текущих событий и любых других меняющихся данных обязательно сначала используй поиск.",
-                "Не говори, что у тебя нет доступа к интернету или к свежим данным, пока инструмент поиска доступен.",
-                "Если свежие данные найти не удалось, честно скажи, что не удалось получить результат поиска, а не что у тебя нет доступа к интернету.",
-                "Если географическое название неоднозначно, коротко уточни страну или регион, прежде чем давать ответ по текущим данным.",
-            ]
-        )
+        sys_parts.append(get_prompt_text("live.vertex.search"))
     return " ".join(sys_parts)
 
 
@@ -3018,18 +3007,20 @@ async def _resolve_live_transport(
     from app.providers.gemini import get_live_api_client, get_vertex_live_client
 
     if transport_mode == _LIVE_VERTEX_CONNECTION_MODE:
+        policy = await resolve_process("live.vertex", (_VERTEX_LIVE_MODEL,))
+        vertex_model = policy.models[0] if policy.explicit else _VERTEX_LIVE_MODEL
         client = get_vertex_live_client()
         if client is None:
             return (
                 None,
-                _VERTEX_LIVE_MODEL,
+                vertex_model,
                 None,
                 "misconfigured",
                 "Голосовой режим временно недоступен. Попробуйте позже или продолжите текстом.",
             )
         return (
             client,
-            _VERTEX_LIVE_MODEL,
+            vertex_model,
             _build_vertex_live_connect_config(
                 system_instruction=system_instruction,
                 resumption_handle=resumption_handle,
@@ -3039,11 +3030,13 @@ async def _resolve_live_transport(
             None,
         )
 
+    policy = await resolve_process("live", (GEMINI_LIVE_MODEL,))
+    model_name = policy.models[0] if policy.explicit else GEMINI_LIVE_MODEL
     client = get_live_api_client()
     if client is None:
         return (
             None,
-            GEMINI_LIVE_MODEL,
+            model_name,
             None,
             "misconfigured",
             "Голосовой режим временно недоступен. Попробуйте позже или продолжите текстом.",
@@ -3051,11 +3044,11 @@ async def _resolve_live_transport(
 
     cooldown_seconds = await _get_live_model_cooldown_seconds()
     if cooldown_seconds > 0:
-        return None, GEMINI_LIVE_MODEL, None, "server_capacity", str(cooldown_seconds)
+        return None, model_name, None, "server_capacity", str(cooldown_seconds)
 
     return (
         client,
-        GEMINI_LIVE_MODEL,
+        model_name,
         _build_live_connect_config(
             system_instruction=system_instruction,
             resumption_handle=resumption_handle,
@@ -3067,6 +3060,7 @@ async def _resolve_live_transport(
     )
 
 
+@runtime_settings_scope()
 async def _handle_live_session(
     websocket,
     user_id: int,

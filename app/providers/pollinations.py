@@ -129,6 +129,31 @@ class PollinationsProvider:
         enhance: bool = False,
         negative_prompt: str = "",
     ) -> PollinationsResult:
+        from app.runtime_settings.result_execution import run_result_process
+
+        async def execute(candidate: str, explicit: bool) -> PollinationsResult:
+            return await self._generate_one_model(prompt, candidate, width, height, seed, enhance, negative_prompt)
+
+        return await run_result_process(
+            "image.pollinations",
+            model,
+            execute,
+            success=lambda result: result.success,
+            terminal=lambda result: result.error_message in {"unauthorized", "empty_prompt", "safety_blocked"},
+            timeout=settings.IMAGE_GEN_TIMEOUT,
+            on_timeout=lambda: PollinationsResult(False, error_message="timeout"),
+        )
+
+    async def _generate_one_model(
+        self,
+        prompt: str,
+        model: str = "flux",
+        width: int = 1024,
+        height: int = 1024,
+        seed: int = 0,
+        enhance: bool = False,
+        negative_prompt: str = "",
+    ) -> PollinationsResult:
         """
         Generate a single image.
 
@@ -163,7 +188,17 @@ class PollinationsProvider:
             timeout=settings.IMAGE_GEN_TIMEOUT,
         )
 
-    async def transcribe_audio(
+    async def transcribe_audio(self, audio_bytes: bytes, model: str = "whisper", timeout: float = 60.0) -> str | None:
+        from app.runtime_settings.result_execution import run_result_process
+
+        async def execute(candidate: str, explicit: bool) -> str | None:
+            return await self._transcribe_one_model(audio_bytes, candidate, timeout)
+
+        return await run_result_process(
+            "asr.pollinations", model, execute, success=bool, timeout=timeout, on_timeout=lambda: None
+        )
+
+    async def _transcribe_one_model(
         self,
         audio_bytes: bytes,
         model: str = "whisper",

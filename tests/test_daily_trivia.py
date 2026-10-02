@@ -16,6 +16,14 @@ from app.providers.gemini import GeminiModelValidationStatus
 from app.repos import daily_trivia as repo
 
 
+@pytest.fixture(autouse=True)
+def _offline_runtime_settings(monkeypatch):
+    from app.runtime_settings import lifecycle, store
+
+    monkeypatch.setattr(lifecycle, "refresh_runtime_settings", AsyncMock())
+    monkeypatch.setattr(store, "get_snapshot", AsyncMock(return_value=store.SettingsSnapshot(0, {})))
+
+
 def _question(question_id: int, text: str) -> repo.TriviaQuestion:
     return repo.TriviaQuestion(
         id=question_id,
@@ -753,7 +761,7 @@ async def test_admin_trivia_settings_accepts_role_alias_without_remote_validatio
 
     with (
         patch("app.web._is_authenticated", return_value=True),
-        patch("app.repos.settings_repo.set_global_setting", save_setting),
+        patch("app.runtime_settings.processes.save_primary_model", save_setting),
         patch("app.providers.gemini.validate_gemini_chat_model_capability", validate),
     ):
         response = await web_module.quart_app.test_client().post(
@@ -763,8 +771,8 @@ async def test_admin_trivia_settings_accepts_role_alias_without_remote_validatio
 
     body = await response.get_json()
     assert response.status_code == 200
-    assert body == {"success": True, "llm_model": "gemini-economy"}
-    save_setting.assert_awaited_once_with("daily_trivia_llm_model", "gemini-economy")
+    assert body == {"success": True, "llm_model": "gemini-3.5-flash-lite"}
+    save_setting.assert_awaited_once_with("daily.trivia", "gemini-3.5-flash-lite", actor="admin")
     validate.assert_not_awaited()
 
 
@@ -800,7 +808,7 @@ async def test_admin_trivia_settings_validates_and_saves_direct_gemini_model() -
 
     with (
         patch("app.web._is_authenticated", return_value=True),
-        patch("app.repos.settings_repo.set_global_setting", save_setting),
+        patch("app.runtime_settings.processes.save_primary_model", save_setting),
         patch(
             "app.providers.gemini.validate_gemini_chat_model_capability",
             new_callable=AsyncMock,
@@ -816,7 +824,7 @@ async def test_admin_trivia_settings_validates_and_saves_direct_gemini_model() -
     assert response.status_code == 200
     assert body == {"success": True, "llm_model": "gemini-3.7-flash"}
     validate.assert_awaited_once_with("gemini-3.7-flash")
-    save_setting.assert_awaited_once_with("daily_trivia_llm_model", "gemini-3.7-flash")
+    save_setting.assert_awaited_once_with("daily.trivia", "gemini-3.7-flash", actor="admin")
 
 
 async def test_admin_trivia_settings_rejects_invalid_model_id_without_remote_validation() -> None:

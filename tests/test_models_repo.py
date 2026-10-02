@@ -1,4 +1,4 @@
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -27,17 +27,51 @@ def _settings(**overrides):
 def _patch_repo(monkeypatch, fake_settings, *, db_values=None):
     import app.config as config
     from app.repos import models_repo
+    from app.runtime_settings import models, store
 
     values = db_values or {}
     monkeypatch.setattr(config, "settings", fake_settings)
+    models._applied.clear()
+    revision = [0]
+    catalog_values = {}
+
+    async def snapshot(*, force=False):
+        return store.SettingsSnapshot(revision[0], MappingProxyType(dict(catalog_values)))
+
+    async def write(key, value, *, expected_revision, actor):
+        if expected_revision != revision[0]:
+            raise store.RevisionConflict("stale")
+        catalog_values[key] = value
+        revision[0] += 1
+        return await snapshot()
+
+    async def reset(key, *, expected_revision, actor):
+        if expected_revision != revision[0]:
+            raise store.RevisionConflict("stale")
+        catalog_values.pop(key, None)
+        revision[0] += 1
+        return await snapshot()
+
+    async def update(updates, *, removals=(), expected_revision, actor):
+        if expected_revision != revision[0]:
+            raise store.RevisionConflict("stale")
+        catalog_values.update(updates)
+        for key in removals:
+            catalog_values.pop(key, None)
+        revision[0] += 1
+        return await snapshot()
+
+    monkeypatch.setattr(models, "get_snapshot", AsyncMock(side_effect=snapshot))
+    set_mock = AsyncMock(side_effect=write)
+    monkeypatch.setattr(models, "set_value", set_mock)
+    monkeypatch.setattr(models, "reset_value", AsyncMock(side_effect=reset))
+    monkeypatch.setattr(models, "update_values", AsyncMock(side_effect=update))
     monkeypatch.setattr(
         models_repo,
         "get_global_setting",
         AsyncMock(side_effect=lambda key, default="": values.get(key, default)),
     )
-    set_mock = AsyncMock()
     delete_mock = AsyncMock()
-    monkeypatch.setattr(models_repo, "set_global_setting", set_mock)
     monkeypatch.setattr(models_repo, "delete_global_setting", delete_mock, raising=False)
     return models_repo, set_mock, delete_mock
 
@@ -120,7 +154,7 @@ async def test_reset_deletes_override_and_restores_exact_current_env(monkeypatch
 
     assert restored == ["gemini-3.7-flash", "gemini-3.5-flash-lite"]
     assert fake_settings.AVAILABLE_MODELS == restored
-    delete_mock.assert_awaited_once_with("provider_models:gemini")
+    delete_mock.assert_not_awaited()
     set_mock.assert_not_awaited()
     catalog = await models_repo.get_model_catalog("gemini")
     assert catalog.source.value == "env"
@@ -138,7 +172,7 @@ async def test_unknown_provider_is_rejected_instead_of_mutating_opencode(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_add_model_returns_added_and_persists_v2_override(monkeypatch):
+async def test_add_model_returns_added_and_persists_runtime_override(monkeypatch):
     fake_settings = _settings(AVAILABLE_MODELS=["gemini-3.5-flash-lite"])
     models_repo, set_mock, _ = _patch_repo(monkeypatch, fake_settings)
     validator = AsyncMock(return_value="supported")
@@ -149,13 +183,9 @@ async def test_add_model_returns_added_and_persists_v2_override(monkeypatch):
     assert result.code is models_repo.ModelMutationCode.ADDED
     assert fake_settings.AVAILABLE_MODELS == ["gemini-3.5-flash-lite", "gemini-3.7-flash"]
     validator.assert_awaited_once_with("gemini-3.7-flash")
-    key, raw = set_mock.await_args.args
-    assert key == "provider_models:gemini"
-    assert json.loads(raw) == {
-        "version": 2,
-        "source": "admin",
-        "models": ["gemini-3.5-flash-lite", "gemini-3.7-flash"],
-    }
+    key, stored = set_mock.await_args.args
+    assert key == "catalog:gemini"
+    assert stored == ["gemini-3.5-flash-lite", "gemini-3.7-flash"]
 
 
 @pytest.mark.asyncio
@@ -207,7 +237,7 @@ async def test_remove_model_returns_typed_results_and_can_persist_empty_override
     assert missing.code is models_repo.ModelMutationCode.NOT_FOUND
     assert removed.code is models_repo.ModelMutationCode.REMOVED
     assert fake_settings.AVAILABLE_MODELS == []
-    assert json.loads(set_mock.await_args.args[1])["models"] == []
+    assert set_mock.await_args.args[1] == []
 
 
 @pytest.mark.asyncio

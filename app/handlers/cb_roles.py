@@ -279,10 +279,14 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
         _increment_key_usage,
         _resolve_ai_request,
     )
+    from app.process_policies import execute_text_process, resolve_process
 
     model_for_role = chat_state.model or settings.DEFAULT_MODEL
-    key_data, model_used, _ = await _resolve_ai_request(model_for_role)
-    if not key_data:
+    policy = await resolve_process("roles.generate", (model_for_role,))
+    key_data, model_used, _ = (
+        (None, model_for_role, None) if policy.explicit else await _resolve_ai_request(model_for_role)
+    )
+    if not key_data and not policy.explicit:
         from app.utils.keyboards import error_with_back_keyboard
 
         await query.edit_message_text(
@@ -294,61 +298,78 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
     set_generating_custom_role(user_id, True)
     history = [{"role": "user", "parts": [last_prompt]}]
 
-    # Используем универсальную функцию for получения responseа (поддерживает и Gemini, и OpenRouter)
-    response_text, _ = await _get_ai_response(
-        key_data["api_key"],
-        history,
-        model_used,
-        system_instruction=get_registry().get("prompt_engineer").text,
-        user_id=user_id,
-        chat_id=user_id,
-    )
-
-    # Инкрементируем использование keyа
-    await _increment_key_usage(key_data["key_hash"], model_used)
-
-    # Log response models for отладки
-    logging.info(
-        "Role retry response received",
-        extra={
-            "_event_name": "role.generation_response_received",
-            "retry": True,
-            **content_fields("provider_response", response_text, subsystem="roles"),
-        },
-    )
-
-    role_obj = extract_json_object(response_text)
-    if not role_obj:
-        # Processing явной 503 ошибки from textа
-        if "503" in (response_text or "") or "unavailable" in (response_text or "").lower():
-            await progress_msg.edit_text("🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.")
-        else:
-            logging.error(
-                "Failed to parse role JSON on retry",
-                extra={
-                    "_event_name": "role.response_parse_failed",
-                    "retry": True,
-                    **content_fields("provider_response", response_text, subsystem="roles"),
-                },
+    try:
+        if policy.explicit:
+            response_text, _ = await execute_text_process(
+                "roles.generate",
+                (model_for_role,),
+                history,
+                system_instruction=get_registry().get("prompt_engineer").text,
+                user_id=user_id,
+                chat_id=user_id,
             )
-            await progress_msg.edit_text("❌ Снова не удалось сгенерировать роль. Попробуйте изменить описание.")
-        set_generating_custom_role(user_id, False)
-        return
-    set_last_custom_role_prompt(user_id, last_prompt)
+        else:
+            assert key_data is not None
+            response_text, _ = await _get_ai_response(
+                key_data["api_key"],
+                history,
+                model_used,
+                system_instruction=get_registry().get("prompt_engineer").text,
+                user_id=user_id,
+                chat_id=user_id,
+            )
+            await _increment_key_usage(key_data["key_hash"], model_used)
 
-    set_generated_role(user_id, role_obj)
-    title = role_obj.get("title", "Кастомная роль")
-    purpose = role_obj.get("purpose", "")
-    style = ", ".join(role_obj.get("style", [])[:3])
-    preview = f"🆕 *Новая роль:* {title}\n\n🎯 Цель: {purpose}\n🧭 Стиль: {style}\n\nПрименить сейчас или сохранить?"
-    kb = [
-        [InlineKeyboardButton("✅ Применить", callback_data="role_custom_apply")],
-        [InlineKeyboardButton("💾 Сохранить", callback_data="role_custom_save")],
-        [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")],
-    ]
-    formatted_text, parse_mode = TelegramFormatter.format_text(preview)
-    await progress_msg.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb))
-    set_generating_custom_role(user_id, False)
+        logging.info(
+            "Role retry response received",
+            extra={
+                "_event_name": "role.generation_response_received",
+                "retry": True,
+                **content_fields("provider_response", response_text, subsystem="roles"),
+            },
+        )
+
+        role_obj = extract_json_object(response_text)
+        if not role_obj:
+            if "503" in (response_text or "") or "unavailable" in (response_text or "").lower():
+                await progress_msg.edit_text("🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.")
+            else:
+                logging.error(
+                    "Failed to parse role JSON on retry",
+                    extra={
+                        "_event_name": "role.response_parse_failed",
+                        "retry": True,
+                        **content_fields("provider_response", response_text, subsystem="roles"),
+                    },
+                )
+                await progress_msg.edit_text("❌ Снова не удалось сгенерировать роль. Попробуйте изменить описание.")
+            return
+        set_last_custom_role_prompt(user_id, last_prompt)
+
+        set_generated_role(user_id, role_obj)
+        title = role_obj.get("title", "Кастомная роль")
+        purpose = role_obj.get("purpose", "")
+        style = ", ".join(role_obj.get("style", [])[:3])
+        preview = (
+            f"🆕 *Новая роль:* {title}\n\n🎯 Цель: {purpose}\n🧭 Стиль: {style}\n\nПрименить сейчас или сохранить?"
+        )
+        kb = [
+            [InlineKeyboardButton("✅ Применить", callback_data="role_custom_apply")],
+            [InlineKeyboardButton("💾 Сохранить", callback_data="role_custom_save")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")],
+        ]
+        formatted_text, parse_mode = TelegramFormatter.format_text(preview)
+        await progress_msg.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb))
+    except Exception as error:
+        logging.error("Error retrying custom role generation: %s", error, exc_info=True)
+        from app.utils.keyboards import error_with_back_keyboard
+
+        await progress_msg.edit_text(
+            "❌ Ошибка генерации роли. Попробуйте позже.",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
+        )
+    finally:
+        set_generating_custom_role(user_id, False)
 
 
 async def role_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

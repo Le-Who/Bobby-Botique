@@ -11,6 +11,25 @@ from app.circuit_breaker import (
 )
 
 
+@pytest.mark.asyncio
+async def test_local_admission_failure_preserves_provider_failure_count():
+    class AdmissionRejected(RuntimeError):
+        pass
+
+    breaker = CircuitBreaker(
+        "admission-test", CircuitBreakerConfig(failure_threshold=2, ignored_exceptions=(AdmissionRejected,))
+    )
+    try:
+        with pytest.raises(ValueError):
+            await breaker.call(AsyncMock(side_effect=ValueError("provider failure")))
+        with pytest.raises(AdmissionRejected):
+            await breaker.call(AsyncMock(side_effect=AdmissionRejected()))
+        assert breaker.get_stats()["failure_count"] == 1
+        assert breaker.get_stats()["state"] == "closed"
+    finally:
+        await breaker.shutdown()
+
+
 @pytest.fixture
 def config():
     return CircuitBreakerConfig(

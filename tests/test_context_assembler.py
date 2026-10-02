@@ -480,8 +480,8 @@ class TestLLMSummarizationScheduling:
         provider_calls: list[str] = []
         callback = AsyncMock()
 
-        async def blocking_provider(*_args, **kwargs):
-            provider_calls.append(kwargs["history"][0]["parts"][0])
+        async def blocking_provider(_process_id, _baseline, history, **kwargs):
+            provider_calls.append(history[0]["parts"][0])
             provider_started.set()
             await asyncio.Event().wait()
 
@@ -491,7 +491,7 @@ class TestLLMSummarizationScheduling:
                 return_value=["private chunk one", "private chunk two"],
             ),
             patch(
-                "app.handlers.ai_core._get_ai_response_with_routing",
+                "app.context.summarizer.execute_text_process",
                 side_effect=blocking_provider,
             ),
         ):
@@ -502,7 +502,7 @@ class TestLLMSummarizationScheduling:
                 callback,
                 expected_epoch=7,
             )
-            await provider_started.wait()
+            await asyncio.wait_for(provider_started.wait(), timeout=2)
             await cancel_user_summarization_tasks(9_003)
             await asyncio.sleep(0)
 
@@ -526,9 +526,9 @@ class TestLLMSummarizationScheduling:
                 return_value=["user: What is Python?\nmodel: Python is a language."],
             ),
             patch(
-                "app.handlers.ai_core._get_ai_response_with_routing",
+                "app.context.summarizer.execute_text_process",
                 new_callable=AsyncMock,
-                return_value="## Факты\n- Python — это язык программирования",
+                return_value=("## Факты\n- Python — это язык программирования", None),
             ) as mock_llm,
         ):
             await _run_llm_summarization(42, 7, dropped, None, callback)
@@ -551,7 +551,7 @@ class TestLLMSummarizationScheduling:
             nonlocal call_count
             idx = min(call_count, len(responses) - 1)
             call_count += 1
-            return responses[idx]
+            return responses[idx], None
 
         with (
             patch(
@@ -559,7 +559,7 @@ class TestLLMSummarizationScheduling:
                 return_value=["chunk1_text", "chunk2_text"],
             ),
             patch(
-                "app.handlers.ai_core._get_ai_response_with_routing",
+                "app.context.summarizer.execute_text_process",
                 side_effect=mock_llm,
             ),
         ):
@@ -579,7 +579,7 @@ class TestLLMSummarizationScheduling:
                 return_value=["test chunk"],
             ),
             patch(
-                "app.handlers.ai_core._get_ai_response_with_routing",
+                "app.context.summarizer.execute_text_process",
                 new_callable=AsyncMock,
                 side_effect=Exception("API Error"),
             ),

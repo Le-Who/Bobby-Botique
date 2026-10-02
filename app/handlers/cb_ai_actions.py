@@ -33,6 +33,7 @@ from app.i18n import t
 from app.repos.chats import get_user_chat
 from app.request_context import ensure_request_id as set_request_id
 from app.request_context import set_user_context
+from app.runtime_settings.additional_prompts import render_additional_prompt
 
 _CODE_BLOCK_STRIP_RE = re.compile(r"```.*?```", flags=re.DOTALL)
 
@@ -404,9 +405,7 @@ async def continue_stream_callback(update: Update, context: ContextTypes.DEFAULT
 
     # Captured here so the inner closure can reference them without closure mutation risk
     _clean_partial = clean_partial
-    _continuation_prompt = (
-        "Пожалуйста, продолжи прерванную мысль с того места, где ты остановился, с учётом контекста уже написанного."
-    )
+    _continuation_prompt = render_additional_prompt("chat.continue")
 
     async def _continue_wrapper() -> None:
         try:

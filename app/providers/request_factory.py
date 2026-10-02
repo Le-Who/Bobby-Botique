@@ -91,6 +91,7 @@ async def generation_request_from_history(
     grounding: GroundingMode = GroundingMode.NONE,
     workload: Workload = Workload.INTERACTIVE,
     allow_deferred: bool = True,
+    process_id: str | None = None,
 ) -> GenerationRequest:
     """Perform the only JSON/handler-history conversion before provider routing."""
     turns: list[PromptTurn] = []
@@ -113,6 +114,16 @@ async def generation_request_from_history(
     else:
         typed_thinking = ThinkingLevel(thinking_level.lower())
 
+    route_strategy = "legacy"
+    explicit = False
+    revision = 0
+    if process_id is not None:
+        from app.process_policies import resolve_process
+
+        policy = await resolve_process(process_id, tuple(models))
+        models = policy.models
+        route_strategy, explicit, revision = policy.strategy, policy.explicit, policy.revision
+
     return GenerationRequest(
         models=tuple(models),
         turns=tuple(turns),
@@ -122,6 +133,9 @@ async def generation_request_from_history(
         grounding=grounding,
         workload=workload,
         allow_deferred=allow_deferred,
+        route_strategy=route_strategy,
+        allow_model_fallback=not explicit,
+        policy_revision=revision,
     )
 
 

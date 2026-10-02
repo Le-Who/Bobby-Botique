@@ -114,6 +114,77 @@ def make_chat_state():
     )
 
 
+@pytest.mark.parametrize("available", [True, False])
+async def test_explicit_document_selection_never_answers_from_newest_file(available):
+    placeholder = make_placeholder()
+    delivery = MagicMock(
+        stream=AsyncMock(
+            return_value=FailedDelivery(error_code=ErrorCode.EMPTY_RESPONSE, displayed_text="", receipt=_receipt())
+        )
+    )
+    with (
+        patch(
+            "app.document_processor.get_user_documents",
+            new_callable=AsyncMock,
+            return_value=[{"id": 9, "filename": "newest.txt"}],
+        ),
+        patch(
+            "app.document_processor.get_document_by_id",
+            new_callable=AsyncMock,
+            return_value={"id": 7, "filename": "selected.txt"} if available else None,
+        ),
+        patch(
+            "app.document_processor.get_document_content",
+            new_callable=AsyncMock,
+            side_effect=lambda doc_id, user_id: "Selected content" if doc_id == 7 and user_id == 123 else "WRONG FILE",
+        ) as content,
+        patch("app.handlers.ai_document.update_stage", new_callable=AsyncMock),
+        patch("app.response_delivery.delivery.get_telegram_response_delivery", return_value=delivery),
+    ):
+        from app.handlers.ai_document import _handle_document_question
+
+        await _handle_document_question(placeholder, 123, "Question", make_chat_state(), document_id=7)
+    if available:
+        content.assert_awaited_once_with(7, 123)
+        assert delivery.stream.await_args.kwargs["presentation"].long_read_title == "selected.txt"
+    else:
+        content.assert_not_awaited()
+        delivery.stream.assert_not_awaited()
+        assert placeholder.edit_text.await_args.kwargs["reply_markup"] is not None
+
+
+async def test_message_document_handler_keeps_selected_file_through_generation():
+    from app.handlers.msg_document import handle_document_question
+
+    message = make_placeholder()
+    message.text = "Summarize the selected file"
+    update = SimpleNamespace(effective_user=SimpleNamespace(id=123), message=message)
+    delivery = MagicMock(
+        stream=AsyncMock(
+            return_value=FailedDelivery(error_code=ErrorCode.EMPTY_RESPONSE, displayed_text="", receipt=_receipt())
+        )
+    )
+    selected = {"id": 7, "filename": "selected.txt"}
+    with (
+        patch("app.document_processor.get_document_by_id", new_callable=AsyncMock, return_value=selected),
+        patch(
+            "app.document_processor.get_document_content",
+            new_callable=AsyncMock,
+            side_effect=lambda doc_id, uid: "SELECTED FACT" if (doc_id, uid) == (7, 123) else "WRONG",
+        ),
+        patch(
+            "app.document_processor.get_user_documents",
+            new_callable=AsyncMock,
+            return_value=[{"id": 9, "filename": "newest.txt"}],
+        ),
+        patch("app.handlers.msg_document.get_user_chat", new_callable=AsyncMock, return_value=make_chat_state()),
+        patch("app.handlers.ai_document.update_stage", new_callable=AsyncMock),
+        patch("app.response_delivery.delivery.get_telegram_response_delivery", return_value=delivery),
+    ):
+        await handle_document_question(update, SimpleNamespace(), 7)
+    assert delivery.stream.await_args.kwargs["presentation"].long_read_title == "selected.txt"
+
+
 # ── Happy path — AI answers question ─────────────────────────────────────────
 
 

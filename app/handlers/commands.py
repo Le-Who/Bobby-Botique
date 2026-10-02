@@ -26,11 +26,18 @@ from app.bot_commands import (
 )
 from app.handlers import menus
 from app.i18n import t
+from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
 from app.repos.chats import get_user_chat, update_user_chat
 from app.repos.conversations import get_conversation_count
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
 from app.utils.json_compat import json
+
+register_controlled_text(
+    "trivia.explain",
+    "Вопрос викторины: «{question}»\nПравильный ответ: «{correct_answer}»\nКраткий факт: «{explanation}»\n\nРасскажи об этом подробнее — интересно, живо, с реальными деталями. Около 150–200 слов, без лишних вступлений.",
+    "Викторина: объяснение ответа",
+)
 
 
 async def ignore_edited_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -127,12 +134,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
         correct_answer = q.options[q.correct_index] if 0 <= q.correct_index < len(q.options) else ""
-        ai_prompt = (
-            f"Вопрос викторины: «{q.question}»\n"
-            f"Правильный ответ: «{correct_answer}»\n"
-            f"Краткий факт: «{q.explanation}»\n\n"
-            "Расскажи об этом подробнее — интересно, живо, с реальными деталями. "
-            "Около 150–200 слов, без лишних вступлений."
+        ai_prompt = render_prompt_text(
+            get_prompt_text("trivia.explain"),
+            question=q.question,
+            correct_answer=correct_answer,
+            explanation=q.explanation,
         )
 
         thinking_msg = await update.message.reply_text("🔍 Узнаю подробности…")
@@ -143,9 +149,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
             router = get_provider_router()
             ai_history = [{"role": "user", "parts": [ai_prompt]}]
-            ai_response, _ = await router.get_response(
-                _settings.DEFAULT_MODEL,
+            from app.process_policies import execute_text_process
+
+            ai_response, _ = await execute_text_process(
+                "trivia.explain",
+                (_settings.DEFAULT_MODEL,),
                 ai_history,
+                router=router,
                 user_id=user_id,
             )
         except Exception as exc:

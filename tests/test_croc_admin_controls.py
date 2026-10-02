@@ -8,6 +8,7 @@ from app import web
 from app.games import crocodile_daily as daily
 from app.providers import pollinations
 from app.repos import settings_repo
+from app.runtime_settings import legacy_models
 
 
 @pytest.fixture
@@ -21,19 +22,19 @@ def admin(monkeypatch):
 async def test_role_setting_is_saved_separately_from_shared_default(monkeypatch, admin):
     client, headers = admin
     save = AsyncMock()
-    monkeypatch.setattr(settings_repo, "set_global_setting", save)
+    monkeypatch.setattr(legacy_models, "save_croc_model", save)
     response = await client.post(
         "/api/admin/dailycroc/text-model", headers=headers, json={"process": "judge", "model": "gemini-2.5-pro"}
     )
     assert response.status_code == 200
-    save.assert_awaited_once_with("daily_croc_text_model_judge", "gemini-2.5-pro")
+    save.assert_awaited_once_with("judge", "gemini-2.5-pro", actor="admin")
 
 
 @pytest.mark.asyncio
 async def test_unknown_role_does_not_change_any_setting(monkeypatch, admin):
     client, headers = admin
     save = AsyncMock()
-    monkeypatch.setattr(settings_repo, "set_global_setting", save)
+    monkeypatch.setattr(legacy_models, "save_croc_model", save)
     response = await client.post(
         "/api/admin/dailycroc/text-model", headers=headers, json={"process": "unknown", "model": "gemini-2.5-pro"}
     )

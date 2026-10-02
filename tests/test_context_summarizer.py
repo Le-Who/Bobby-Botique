@@ -159,9 +159,9 @@ async def test_llm_summary_cap_is_utf8_token_aware():
     with (
         patch("app.context.summarizer.split_into_chunks", return_value=["small chunk"]),
         patch(
-            "app.handlers.ai_core._get_ai_response_with_routing",
+            "app.context.summarizer.execute_text_process",
             new_callable=AsyncMock,
-            return_value=oversized,
+            return_value=(oversized, None),
         ),
     ):
         await _run_llm_summarization(
@@ -181,3 +181,21 @@ def _estimated_tokens(text: str) -> int:
     from app.prompt_registry import estimate_tokens_cyrillic
 
     return estimate_tokens_cyrillic(text)
+
+
+@pytest.mark.asyncio
+async def test_summary_refine_keeps_literal_template_names_in_conversation_data():
+    previous = 'Discussed {max_tokens}, {conversation_chunk} and {refine_instruction}; JSON: {"x": 1}'
+    chunk = 'user: Keep literal {previous_summary} and {max_tokens}; JSON: {"value": "{conversation_chunk}"}'
+    provider = AsyncMock(return_value=("Updated summary", None))
+    callback = AsyncMock()
+    with (
+        patch("app.context.summarizer.split_into_chunks", return_value=[chunk]),
+        patch("app.context.summarizer.execute_text_process", provider),
+    ):
+        await _run_llm_summarization(123, 7, [], previous, callback)
+
+    sent = provider.await_args.args[2][0]["parts"][0]
+    assert previous in sent
+    assert chunk in sent
+    callback.assert_awaited_once_with("Updated summary")

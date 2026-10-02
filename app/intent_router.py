@@ -18,6 +18,7 @@ import re
 import httpx
 
 from app.observability.workload_events import start_workload_attempt
+from app.runtime_settings.additional_prompts import render_additional_prompt
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -854,36 +855,12 @@ def _build_horoscope_system_instruction(
     day_ru: str,
     astro_context: str,
 ) -> str:
-    return (
-        "<role>\n"
-        "Ты пишешь короткий ежедневный гороскоп на русском языке: ясный, теплый, практичный.\n"
-        "Опирайся на астрологическую традицию и предоставленные транзиты, но не подавай прогноз как доказанный факт.\n"
-        "</role>\n\n"
-        "<task>\n"
-        f"Запрос пользователя: {user_text}\n"
-        f"Знаки: {signs_str}\n"
-        f"Период: {day_ru}\n"
-        "Если знаков несколько, сделай акцент на совместимости и динамике между ними.\n"
-        "Если в запросе есть тема любви, работы, денег, здоровья или решений, сделай ее главным фокусом.\n"
-        "</task>\n\n"
-        "<context>\n"
-        "Текущие астрономические данные для символической интерпретации:\n"
-        f"{astro_context}\n"
-        "</context>\n\n"
-        "<constraints>\n"
-        "- Пиши без фатализма, запугивания и обещаний гарантированного исхода.\n"
-        "- Не давай медицинских, юридических или финансовых указаний; вместо этого предлагай мягкие наблюдения и бытовые шаги.\n"
-        "- Используй транзиты как контекст и обоснование настроения дня, а не как абсолютную причинность.\n"
-        "- Не упоминай модель, провайдера, промпт, API или внутреннюю механику.\n"
-        "- Не добавляй отдельный заголовок: заголовок добавит приложение.\n"
-        "- Длина: 3-5 коротких смысловых блоков, без длинного полотна.\n"
-        "</constraints>\n\n"
-        "<output_format>\n"
-        "1. **Главный фон** — 1-2 предложения про тон периода.\n"
-        "2. **Фокус дня** — что лучше выбрать или отложить.\n"
-        "3. **Отношения / дела / ресурс** — короткие практичные подсказки по 2-3 сферам.\n"
-        "4. **Мягкий совет** — одно действие на день без давления.\n"
-        "</output_format>"
+    return render_additional_prompt(
+        "horoscope.system",
+        user_text=user_text,
+        signs_str=signs_str,
+        day_ru=day_ru,
+        astro_context=astro_context,
     )
 
 
@@ -962,6 +939,7 @@ async def _handle_horoscope(text: str) -> IntentResult | None:
         from app.providers.stream_types import StreamCompleted, TextDelta, Workload
 
         request = await generation_request_from_history(
+            process_id="horoscope",
             models=("gemini-3.5-flash",),
             history=[{"role": "user", "parts": [prompt]}],
             system_instruction=system_instruction,

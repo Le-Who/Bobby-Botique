@@ -110,6 +110,25 @@ def suspend_opencode_key(key_hash: str, cooldown: timedelta | None = None) -> No
 
 
 class AgentRequestUseCase:
+    async def resolve_exact_ai_request(
+        self, preferred_model: str, *, excluded_key_hashes: set[str] | None = None
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
+        """Resolve credentials without expanding an explicit process model plan."""
+        if is_opencode_model(preferred_model):
+            return await self._resolve_opencode_request(preferred_model, excluded_key_hashes)
+        if is_freetheai_model(preferred_model):
+            return await self._resolve_freetheai_request(preferred_model, excluded_key_hashes)
+        if "/" in preferred_model:
+            return await self._resolve_openrouter_request(preferred_model, excluded_key_hashes)
+        return await self._resolve_key_generic(
+            preferred_model,
+            get_available_gemini_key,
+            [],
+            excluded_key_hashes,
+            invalidate_key_cache,
+            provider_name="Gemini",
+        )
+
     async def resolve_ai_request(
         self,
         preferred_model: str,

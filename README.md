@@ -33,6 +33,8 @@ The [changelog](CHANGELOG.md) records history, not a current runtime specificati
   routes run at once, and the first to produce text wins.
 - Quick search (`?`), bounded agentic research (`??`), URL/document/photo
   understanding and deterministic weather/currency/crypto shortcuts.
+- Document Q&A preserves the file explicitly selected in `/documents`; an
+  unavailable selected file is not silently replaced with the latest upload.
 - Typed streamed/completed response delivery, preserving final actions; long
   responses use Redis Reader, optional public Telegraph, or Telegram splitting.
 - Inline answers, response tabs, collaborative boards and image generation.
@@ -49,6 +51,9 @@ The [changelog](CHANGELOG.md) records history, not a current runtime specificati
 - Consent-gated private long-term memory, hybrid vector/text recall, provenance-aware
   graph writes and account-data controls. Group messages are not implicitly saved
   into private LTM.
+- `/memory` offers full-text private reading with pagination, return to the list
+  and individual deletion. Expired/deleted facts cannot be reopened; reading does
+  not publish the fact through Reader or Telegraph.
 - Daily Crocodile, 2048 and trivia. Players can change their daily game from
   any of the three Mini App screens or the bot's daily messages; the choice
   controls `/dailycroc` and their daily subscription. Reopening a completed
@@ -171,7 +176,7 @@ graph TD;
 
 ## Configuration
 
-Configuration is explicitly read from environment variables in `app/config.py` and infrastructure modules. The following is an operator reference; `load_settings()` defines effective defaults (which may differ from bare `Settings` field defaults). Deployment Secrets and persisted admin overrides can change them.
+Configuration is explicitly read from environment variables in `app/config.py` and infrastructure modules. The following is an operator reference; `load_settings()` defines effective defaults. Deployment Secrets and persisted admin overrides can change them. The [source inventory](docs/config-registry.json) tracks literal readers and explicit Docker forwarding; `python scripts/check_env_registry.py` checks for drift without reading live values.
 
 > [!IMPORTANT]
 > Variables marked ✅ are **required** — the application will refuse to start if they are absent. Variables marked ⚙️ are optional and will use the listed defaults.
@@ -404,18 +409,19 @@ deployed Secret.
 |---|---|---|---|---|
 | `AGENTIC_MODEL` | ⚙️ | Gemini model ID | `""` (falls back to `RESEARCH_MODEL`) | Used when neither a handler model override nor the current chat model is set. It does not override an explicit chat selection. |
 | `AGENTIC_MAX_ITERATIONS` | ⚙️ | `5`—`15` | `5` | Maximum research loop cycles before the agent is forced to synthesize an answer. Each iteration = one round of query → search → read → reflect. Higher = deeper research, higher API cost. |
-| `AGENTIC_MAX_PAGES` | ⚙️ | `3`—`10` | `3` | Limit on admitted `read_page` calls across one agent run, not per iteration. Slots are reserved before a batch executes. |
-| `AGENTIC_MAX_TOKENS` | ⚙️ | `100000`—`500000` | `100000` | Accumulated reported usage is checked before the next reasoning iteration. A completed call can overshoot, and final synthesis can add usage; this is not a hard billing ceiling. |
-| `AGENTIC_TIMEOUT_SECONDS` | ⚙️ | `90`—`300` | `90` | Elapsed-time cutoff checked before each reasoning iteration. It does not cancel an in-flight call or bound final synthesis; actual wall time can exceed it. |
+| `AGENTIC_MAX_PAGES` | ⚙️ | `3`—`10` | `3` | Shared admission limit on `read_page` across the research fallback-chain. Slots are reserved before a batch executes. |
+| `AGENTIC_MAX_TOKENS` | ⚙️ | `100000`—`500000` | `100000` | Known usage plus reservations for missing usage gate the next iteration/fallback. An admitted call and final synthesis may overshoot; not a billing ceiling. |
+| `AGENTIC_TIMEOUT_SECONDS` | ⚙️ | `90`—`300` | `90` | Shared cooperative async deadline for research attempts/tools/fallback, with `min(15 seconds, timeout / 6)` reserved for synthesis. Cleanup may add time; initial key lookup and final Telegram delivery are outside the interval. |
 | `AGENTIC_PAGE_CONTENT_LIMIT` | ⚙️ | `4096`—`16384` | `8192` | Maximum characters extracted from each web page before truncation. Higher = more context per page, more LLM tokens consumed. |
 | `ADAPTIVE_THINKING_ENABLED` | ⚙️ | `true` / `false` | `true` | Enables the chat thinking resolver: explicit user level/off, then model-specific defaults, then the heuristic classifier in `app/thinking_classifier.py`. |
 
 The agentic loop in `app/core/agentic.py` uses the Gemini SDK directly. Its handler
 chooses `model_override` → `chat_state.model` → `AGENTIC_MODEL` → `RESEARCH_MODEL`;
 selection alone does not guarantee that a model has a usable Gemini key/capability.
-The handler
-can start a new agent run for a fallback model, with fresh per-run counters; these
-settings are therefore not a shared budget across every fallback attempt. Ordinary
+The handler shares one budget across at most three agent runs. Missing usage
+reserves 4,000 tokens per call for admission and is reported as uncertain, never
+as confirmed spend. A synthesized answer after a cutoff carries a visible limit
+notice. Ordinary
 provider-routed chat/search and specialized research execution have distinct paths.
 
 ---

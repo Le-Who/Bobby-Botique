@@ -116,11 +116,28 @@ async def _get_ai_response_with_routing(
     max_key_retries: int = 3,
     thinking_level: str | None = None,
     timeout: float | None = None,
+    process_id: str | None = None,
 ):
     """Health-aware key rotation via ProviderRouter (preferred over plain key rotation)."""
     from app.providers import get_provider_router
 
     router = get_provider_router()
+    if process_id is not None:
+        from app.process_policies import execute_text_process
+
+        return await execute_text_process(
+            process_id,
+            (preferred_model,),
+            history,
+            router=router,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            chat_id=chat_id,
+            use_openrouter=use_openrouter,
+            max_key_retries=max_key_retries,
+            thinking_level=thinking_level,
+            timeout=timeout,
+        )
     return await router.get_response(
         preferred_model,
         history,

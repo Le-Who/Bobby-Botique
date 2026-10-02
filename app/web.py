@@ -289,6 +289,10 @@ _api_limiter = SyncRateLimiter(max_requests=60, window_seconds=60)
 # Rate-limit decorator for API endpoints (60 req/min per IP)
 rate_limit_api = rate_limit(_api_limiter, use_json=True)
 
+from app.web_controls import register_controls  # noqa: E402
+
+register_controls(quart_app, require_auth)
+
 
 @quart_app.route("/login", methods=["GET", "POST"])
 async def login_page():
@@ -504,7 +508,7 @@ async def api_keys():
 
         # Get active keys per model (batched to avoid N+1)
         active_keys = {}
-        models = settings.AVAILABLE_MODELS or []
+        models = list(dict.fromkeys(row["model_name"] for row in key_stats if row.get("model_name")))
 
         if models:
             results = await asyncio.gather(
@@ -523,7 +527,10 @@ async def api_keys():
                 "key_usage": key_stats,
                 "tavily_usage": tavily_stats,
                 "active_keys": active_keys,
-                "daily_limits": getattr(settings, "DAILY_LIMITS", {}),
+                "daily_limits": {
+                    **getattr(settings, "DAILY_LIMITS", {}),
+                    **{row["model_name"]: row["daily_limit"] for row in key_stats if row.get("model_name")},
+                },
                 "reset_info": {
                     "gemini_resets": get_kyiv_reset_time(),
                     "tavily_credit_limit": getattr(settings, "TAVILY_MONTHLY_CREDIT_LIMIT", None),
@@ -736,6 +743,11 @@ def _assemble_dashboard_snapshot(
         "failed": queue_raw.get("failed", queue_raw.get("failed_tasks")),
         "workers": queue_raw.get("workers", queue_raw.get("active_workers")),
         "backend": queue_raw.get("backend"),
+        "queue_size": queue_raw.get("queue_size"),
+        "local_queue_size": queue_raw.get("local_queue_size"),
+        "redis_queue_size": queue_raw.get("redis_queue_size"),
+        "redis_available": queue_raw.get("redis_available"),
+        "execution_scope": queue_raw.get("execution_scope", "process"),
     }
 
     from app.utils.time import get_kyiv_reset_time
@@ -1138,9 +1150,11 @@ async def api_admin_dailycroc_update_model():
 async def api_admin_dailycroc_models():
     from app.config import is_gemini_chat_model_id
     from app.games.crocodile_daily import get_daily_image_model
-    from app.games.daily_ai import TEXT_MODEL_PROCESSES, get_daily_text_model_for
+    from app.games.daily_ai import TEXT_MODEL_PROCESSES, get_daily_text_model, get_daily_text_model_for
     from app.providers.pollinations import fetch_models
     from app.repos.settings_repo import get_global_setting
+    from app.runtime_settings.legacy_models import read_value
+    from app.runtime_settings.processes import effective_primary_model
 
     try:
         image_models = [{**model, "source": "pollinations"} for model in await fetch_models("image")]
@@ -1161,12 +1175,18 @@ async def api_admin_dailycroc_models():
         {
             "image_models": image_models,
             "text_models": text_models,
-            "text_model": await get_global_setting("daily_croc_text_model", ""),
+            "text_model": await get_daily_text_model(),
             "text_processes": [
                 {
                     "id": process,
                     "label": label,
-                    "model": await get_global_setting(f"daily_croc_text_model_{process}", ""),
+                    "model": await effective_primary_model(
+                        f"crocodile.{process}",
+                        await read_value(
+                            f"daily_croc_text_model_{process}",
+                            await get_global_setting(f"daily_croc_text_model_{process}", ""),
+                        ),
+                    ),
                     "effective_model": await get_daily_text_model_for(process),
                 }
                 for process, label in TEXT_MODEL_PROCESSES.items()
@@ -1182,7 +1202,8 @@ async def api_admin_dailycroc_models():
 async def api_admin_dailycroc_text_model():
     from app.config import is_gemini_chat_model_id
     from app.games.daily_ai import TEXT_MODEL_PROCESSES
-    from app.repos.settings_repo import set_global_setting
+    from app.runtime_settings.legacy_models import save_croc_model
+    from app.runtime_settings.store import RevisionConflict
 
     data = await request.get_json()
     model = data.get("model") if isinstance(data, dict) else None
@@ -1193,8 +1214,14 @@ async def api_admin_dailycroc_text_model():
     process = data.get("process", "")
     if not isinstance(process, str) or (process and process not in TEXT_MODEL_PROCESSES):
         return jsonify({"error": "unknown text process"}), 400
-    key = f"daily_croc_text_model_{process}" if process else "daily_croc_text_model"
-    await set_global_setting(key, model)
+    try:
+        await save_croc_model(process, model, actor="admin")
+    except RevisionConflict:
+        return jsonify({"error": "settings changed; reload before saving"}), 409
+    except ValueError:
+        return jsonify({"error": "invalid model policy"}), 400
+    except Exception:
+        return jsonify({"error": "model setting was not confirmed; reload before retrying"}), 503
     return jsonify({"success": True, "model": model, "process": process})
 
 
@@ -1680,7 +1707,11 @@ async def api_admin_dailytrivia_stats():
     stats = await daily_trivia_repo.get_admin_stats(today)
     delivery_on = await get_global_setting("daily_trivia_delivery_enabled", "on")
     stats["delivery_enabled"] = delivery_on.strip().lower() != "off"
-    stats["llm_model"] = await get_global_setting("daily_trivia_llm_model", "gemini-economy")
+    from app.runtime_settings.processes import effective_primary_model
+
+    stats["llm_model"] = await effective_primary_model(
+        "daily.trivia", await get_global_setting("daily_trivia_llm_model", "gemini-economy")
+    )
     configured_models = getattr(settings, "AVAILABLE_MODELS", []) if settings is not None else []
     stats["llm_models"] = list(
         dict.fromkeys(
@@ -1717,7 +1748,17 @@ async def api_admin_dailytrivia_settings():
                 ), 400
             if validation is not GeminiModelValidationStatus.SUPPORTED:
                 return jsonify({"success": False, "error": "Не удалось проверить модель Gemini. Повторите позже"}), 503
-        await set_global_setting("daily_trivia_llm_model", model)
+        from app.config import normalize_gemini_runtime_model
+        from app.runtime_settings.processes import save_primary_model
+        from app.runtime_settings.store import RevisionConflict
+
+        model = normalize_gemini_runtime_model(model, fallback="")
+        try:
+            await save_primary_model("daily.trivia", model, actor="admin")
+        except RevisionConflict:
+            return jsonify(success=False, error="Настройки изменились. Обновите данные перед сохранением."), 409
+        except Exception:
+            return jsonify(success=False, error="Не удалось подтвердить сохранение модели."), 503
         saved_model = model
     if "delivery_enabled" in data:
         val = "on" if bool(data["delivery_enabled"]) else "off"

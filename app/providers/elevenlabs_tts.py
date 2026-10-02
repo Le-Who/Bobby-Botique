@@ -256,6 +256,37 @@ async def generate_speech_with_key_rotation(
     timeout: float = 90.0,
     on_chunk_complete=None,
 ) -> list[bytes] | None:
+    from app.runtime_settings.result_execution import run_result_process
+
+    async def execute(candidate: str, explicit: bool) -> list[bytes] | None:
+        return await _generate_message_with_key_rotation(
+            text_chunks,
+            api_keys,
+            voice_id=voice_id,
+            model_id=candidate,
+            timeout=timeout,
+            on_chunk_complete=on_chunk_complete,
+        )
+
+    return await run_result_process(
+        "tts.elevenlabs",
+        model_id,
+        execute,
+        success=bool,
+        timeout=timeout * max(1, len(text_chunks)) * max(1, len(api_keys)),
+        on_timeout=lambda: None,
+    )
+
+
+async def _generate_message_with_key_rotation(
+    text_chunks: list[str],
+    api_keys: list[str],
+    *,
+    voice_id: str,
+    model_id: str = _DEFAULT_MODEL,
+    timeout: float = 90.0,
+    on_chunk_complete=None,
+) -> list[bytes] | None:
     """Generate PCM audio for all text chunks using key rotation on quota errors.
 
     This is the Atomic Router's ElevenLabs pipeline:

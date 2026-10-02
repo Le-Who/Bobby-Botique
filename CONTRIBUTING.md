@@ -56,6 +56,16 @@ and known mojibake signatures, and never modifies files. Explicit filenames limi
 the check to those inputs. It cannot detect every semantically damaged word.
 Do not run unrelated runtime/provider tests to validate prose.
 
+CI also runs `python scripts/check_docs_links.py` (current guides; add
+`--include-historical` for an archival audit) and `python scripts/check_env_registry.py`.
+The latter compares literal readers and explicit Docker forwarding with
+`docs/config-registry.json`; after reviewing an intentional source change, refresh
+with `python scripts/check_env_registry.py --write`. It does not validate live
+environment values, dynamic readers or deployment success. See the
+[revision review](docs/revisions-review-2026-09-29.md) for exact coverage.
+Supplied `revisions/` bundles are external review inputs, excluded from Ruff and
+the current-guide link check; integrated files remain subject to normal gates.
+
 ## Database and integration safety
 
 Integration tests appear both in `tests/integration/` and among top-level tests.

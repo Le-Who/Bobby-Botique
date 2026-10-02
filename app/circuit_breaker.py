@@ -30,6 +30,7 @@ class CircuitBreakerConfig:
     failure_threshold: int = 5  # Number of failures before opening
     recovery_timeout: float = 60.0  # Time to wait before half-open (seconds)
     expected_exception: type = Exception  # Exception type to consider as failure
+    ignored_exceptions: tuple[type[Exception], ...] = ()  # Local admission failures are not provider outages.
     monitor_interval: float = 10.0  # Interval for monitoring (seconds)
     max_failures: int = 100  # Maximum failures to track
 
@@ -117,6 +118,8 @@ class CircuitBreaker:
             # Reacquire lock to record failure
             async with self._lock:
                 self._half_open_probe_active = False
+                if isinstance(e, self.config.ignored_exceptions):
+                    raise
                 if isinstance(e, self.config.expected_exception):
                     await self._on_failure(e)
                     raise

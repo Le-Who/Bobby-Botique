@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from app.repos.settings_repo import delete_global_setting, get_global_setting, set_global_setting
+from app.repos.settings_repo import delete_global_setting, get_global_setting
+from app.runtime_settings.store import RevisionConflict
 from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
@@ -100,13 +101,6 @@ def _normalize_models(provider: str, models: list[str]) -> list[str]:
     return normalized
 
 
-def _encode_override(models: list[str]) -> str:
-    return json.dumps(
-        {"version": _OVERRIDE_VERSION, "source": ModelCatalogSource.ADMIN.value, "models": models},
-        ensure_ascii=False,
-    )
-
-
 def _decode_record(raw: str) -> tuple[str, list[str] | None]:
     """Return ``(kind, models)`` where kind is override, legacy, or invalid."""
     try:
@@ -158,13 +152,30 @@ def _env_baseline(provider: str, settings_obj: Any) -> list[str]:
 
 
 async def sync_models_from_db(settings_obj: Any | None = None) -> None:
-    """Apply explicit v2 admin overrides and discard ambiguous legacy copies."""
+    """Apply current runtime overrides before historical v2 admin overrides."""
     from app.config import settings
+    from app.runtime_settings import models as runtime_models
 
     target_settings = settings_obj if settings_obj is not None else settings
+    snapshot = await runtime_models.get_snapshot(force=True)
 
     for provider, spec in _PROVIDERS.items():
         _catalog_sources[provider] = ModelCatalogSource.ENV
+        runtime_key = f"catalog:{provider}"
+        if runtime_key in snapshot.values:
+            try:
+                catalog = runtime_models.validate_catalog(provider, snapshot.values[runtime_key])
+            except ValueError:
+                logger.warning("models_repo: ignored invalid runtime catalog for %s", provider)
+            else:
+                setattr(target_settings, spec.settings_attr, catalog)
+                _catalog_sources[provider] = ModelCatalogSource.ADMIN
+                runtime_models._applied.add(provider)
+                continue
+        if snapshot.values.get(f"catalog_baseline:{provider}") is True:
+            setattr(target_settings, spec.settings_attr, _env_baseline(provider, target_settings))
+            runtime_models._applied.add(provider)
+            continue
         key = _db_key(provider)
         raw = await get_global_setting(key, default="")
         if not raw:
@@ -192,8 +203,10 @@ async def sync_models_from_db(settings_obj: Any | None = None) -> None:
 
 async def get_model_catalog(provider: str) -> ModelCatalog:
     from app.config import settings
+    from app.runtime_settings.models import refresh_catalogs
 
     spec = _provider_spec(provider)
+    await refresh_catalogs()
     models = tuple(getattr(settings, spec.settings_attr, []) or [])
     return ModelCatalog(provider=provider, models=models, source=_catalog_sources[provider])
 
@@ -203,13 +216,12 @@ async def get_models(provider: str) -> list[str]:
     return list((await get_model_catalog(provider)).models)
 
 
-async def _persist_admin_override(provider: str, models: list[str]) -> None:
-    from app.config import settings
+async def _persist_admin_override(provider: str, models: list[str], *, expected_revision: int) -> None:
+    from app.runtime_settings.models import save_catalog
 
-    spec = _provider_spec(provider)
-    await set_global_setting(_db_key(provider), _encode_override(models))
-    setattr(settings, spec.settings_attr, models)
-    _catalog_sources[provider] = ModelCatalogSource.ADMIN
+    await save_catalog(
+        provider, models, expected_revision=expected_revision, actor="telegram:/models", allow_unverified=True
+    )
 
 
 def _is_valid_model_identifier(model_name: str) -> bool:
@@ -239,7 +251,6 @@ async def add_model(provider: str, model_name: str) -> ModelMutationResult:
     if not _is_valid_model_identifier(clean):
         return await _mutation_result(ModelMutationCode.INVALID, provider, clean)
 
-    current = await get_models(provider)
     if provider == "gemini":
         from app.config import is_gemini_chat_model_id
 
@@ -250,6 +261,17 @@ async def add_model(provider: str, model_name: str) -> ModelMutationResult:
 
         if not is_freetheai_chat_model_id(clean):
             return await _mutation_result(ModelMutationCode.INVALID, provider, clean)
+    from app.runtime_settings import models as runtime_models
+
+    try:
+        runtime_models.validate_catalog(provider, [clean])
+    except ValueError:
+        return await _mutation_result(ModelMutationCode.INVALID, provider, clean)
+
+    snapshot = await runtime_models.refresh_catalogs(force=True)
+    if snapshot.degraded:
+        raise ConnectionError("Runtime catalog state is unavailable")
+    current = await get_models(provider)
     if clean in current:
         return await _mutation_result(ModelMutationCode.DUPLICATE, provider, clean)
     if provider == "gemini":
@@ -261,8 +283,20 @@ async def add_model(provider: str, model_name: str) -> ModelMutationResult:
             logger.warning("models_repo: Gemini model validation unavailable for '%s'", clean)
             return await _mutation_result(ModelMutationCode.VALIDATION_UNAVAILABLE, provider, clean)
 
-    current.append(clean)
-    await _persist_admin_override(provider, current)
+    for _ in range(3):
+        snapshot = await runtime_models.refresh_catalogs(force=True)
+        if snapshot.degraded:
+            raise ConnectionError("Runtime catalog state is unavailable")
+        current = await get_models(provider)
+        if clean in current:
+            return await _mutation_result(ModelMutationCode.DUPLICATE, provider, clean)
+        try:
+            await _persist_admin_override(provider, [*current, clean], expected_revision=snapshot.revision)
+            break
+        except RevisionConflict:
+            continue
+    else:
+        raise RevisionConflict("Model catalog changed repeatedly; retry the command")
     logger.info("models_repo: added model '%s' to %s admin override", clean, provider)
     return await _mutation_result(ModelMutationCode.ADDED, provider, clean)
 
@@ -275,11 +309,23 @@ async def remove_model(provider: str, model_name: str) -> ModelMutationResult:
     if not _is_valid_model_identifier(clean):
         return await _mutation_result(ModelMutationCode.INVALID, provider, clean)
 
-    current = await get_models(provider)
-    if clean not in current:
-        return await _mutation_result(ModelMutationCode.NOT_FOUND, provider, clean)
-    current.remove(clean)
-    await _persist_admin_override(provider, current)
+    from app.runtime_settings import models as runtime_models
+
+    for _ in range(3):
+        snapshot = await runtime_models.refresh_catalogs(force=True)
+        if snapshot.degraded:
+            raise ConnectionError("Runtime catalog state is unavailable")
+        current = await get_models(provider)
+        if clean not in current:
+            return await _mutation_result(ModelMutationCode.NOT_FOUND, provider, clean)
+        current.remove(clean)
+        try:
+            await _persist_admin_override(provider, current, expected_revision=snapshot.revision)
+            break
+        except RevisionConflict:
+            continue
+    else:
+        raise RevisionConflict("Model catalog changed repeatedly; retry the command")
     logger.info("models_repo: removed model '%s' from %s admin override", clean, provider)
     return await _mutation_result(ModelMutationCode.REMOVED, provider, clean)
 
@@ -287,11 +333,20 @@ async def remove_model(provider: str, model_name: str) -> ModelMutationResult:
 async def reset_models_to_env(provider: str) -> list[str]:
     """Delete the admin override and restore the current env baseline."""
     from app.config import settings
+    from app.runtime_settings import models as runtime_models
 
     spec = _provider_spec(provider)
-    baseline = _env_baseline(provider, settings)
-    await delete_global_setting(_db_key(provider))
-    setattr(settings, spec.settings_attr, baseline)
-    _catalog_sources[provider] = ModelCatalogSource.ENV
+    for _ in range(3):
+        snapshot = await runtime_models.get_snapshot(force=True)
+        if snapshot.degraded:
+            raise ConnectionError("Runtime catalog state is unavailable")
+        try:
+            await runtime_models.reset_catalog(provider, expected_revision=snapshot.revision, actor="telegram:/models")
+            break
+        except RevisionConflict:
+            continue
+    else:
+        raise RevisionConflict("Model catalog changed repeatedly; retry the command")
+    baseline = list(getattr(settings, spec.settings_attr, []) or [])
     logger.info("models_repo: reset %s catalog to env (%d model(s))", provider, len(baseline))
     return baseline

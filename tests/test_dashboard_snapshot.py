@@ -96,6 +96,31 @@ def test_dashboard_snapshot_survives_uninitialized_settings(monkeypatch):
     assert snapshot["errors"]["available"] is False
 
 
+def test_dashboard_queue_retains_unknown_backlog_and_process_scope():
+    snapshot = web._assemble_dashboard_snapshot(
+        {
+            "queue": {
+                "backend": "redis_unavailable",
+                "queue_size": None,
+                "local_queue_size": 3,
+                "redis_queue_size": None,
+                "redis_available": False,
+                "execution_scope": "process",
+                "pending_tasks": 3,
+                "running_tasks": 1,
+            }
+        },
+        system={},
+        circuit_breakers={},
+    )
+    queue = snapshot["infrastructure"]["queue"]
+    assert queue["queue_size"] is None
+    assert queue["local_queue_size"] == 3
+    assert queue["redis_queue_size"] is None
+    assert queue["redis_available"] is False
+    assert queue["execution_scope"] == "process"
+
+
 def test_dashboard_template_uses_one_snapshot_request_and_escapes_dynamic_errors():
     template = Path("app/templates/dashboard.html").read_text(encoding="utf-8")
 

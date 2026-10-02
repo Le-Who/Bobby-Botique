@@ -114,6 +114,33 @@ class FreeTheAIImageProvider:
         quality: str | None = None,
         image_base64: str | None = None,
     ) -> FTAImageResult:
+        from app.runtime_settings.result_execution import run_result_process
+
+        async def execute(candidate: str, explicit: bool) -> FTAImageResult:
+            return await self._generate_one_model(
+                prompt, candidate, size=size, quality=quality, image_base64=image_base64, _honor_model=explicit
+            )
+
+        return await run_result_process(
+            "image.fta",
+            model,
+            execute,
+            success=lambda result: result.success,
+            terminal=lambda result: result.error_message in {"no_keys", "safety_blocked", "unauthorized"},
+            timeout=180,
+            on_timeout=lambda: FTAImageResult(False, error_message="timeout"),
+        )
+
+    async def _generate_one_model(
+        self,
+        prompt: str,
+        model: str = FTA_IMAGE_DEFAULT,
+        *,
+        size: str | None = None,
+        quality: str | None = None,
+        image_base64: str | None = None,
+        _honor_model: bool = False,
+    ) -> FTAImageResult:
         """Generate or edit an image from a text prompt.
 
         Args:
@@ -126,7 +153,7 @@ class FreeTheAIImageProvider:
         Returns:
             FTAImageResult with raw image bytes on success.
         """
-        if model not in FTA_IMAGE_MODELS:
+        if not _honor_model and model not in FTA_IMAGE_MODELS:
             model = FTA_IMAGE_DEFAULT
 
         key_pair = _pick_key()

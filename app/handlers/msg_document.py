@@ -66,7 +66,13 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
         from app.handlers.agent import _handle_document_question
 
         chat_state = await get_user_chat(user_id)
-        await _handle_document_question(update.message, user_id, user_message or "", chat_state)  # type: ignore[arg-type]  # message exists in this path
+        await _handle_document_question(
+            update.message,
+            user_id,
+            user_message or "",
+            chat_state,
+            document_id=document_id,
+        )  # type: ignore[arg-type]  # message exists in this path
 
     except Exception as e:
         logging.error("Error handling document question: %s", e, exc_info=True)

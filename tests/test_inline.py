@@ -234,13 +234,19 @@ async def test_chosen_inline_followup_without_question_edits_hint(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_generate_and_edit_inline_includes_inline_context_in_history(monkeypatch):
+@pytest.mark.parametrize("search_enabled", [False, True])
+async def test_generate_and_edit_inline_includes_inline_context_in_history(monkeypatch, search_enabled):
     from app.handlers import inline
+    from app.prompt_registry import prompt_scope
+    from app.runtime_settings.lifecycle import load_controlled_prompts
+
+    load_controlled_prompts()
 
     captured: dict = {}
 
     async def fake_generate_inline_answer(**kwargs):
         captured["history"] = kwargs["history"]
+        captured["system_instruction"] = kwargs["system_instruction"]
         return "новый ответ", [], "gemini-3.1-flash-lite"
 
     class FakeMetrics:
@@ -264,7 +270,8 @@ async def test_generate_and_edit_inline_includes_inline_context_in_history(monke
         async def edit_message_text(self, **kwargs):
             captured["edit_kwargs"] = kwargs
 
-    monkeypatch.setattr(inline, "get_global_setting", _async_return("off"))
+    monkeypatch.setattr(inline, "get_global_setting", _async_return("on"))
+    monkeypatch.setattr(inline, "_should_use_inline_web_search", lambda _query: search_enabled)
     monkeypatch.setattr(inline, "get_inline_model", _async_return("gemini-3.1-flash-lite"))
     monkeypatch.setattr(inline, "_generate_inline_answer", fake_generate_inline_answer)
     monkeypatch.setattr(inline, "metrics_collector", FakeMetrics())
@@ -272,19 +279,27 @@ async def test_generate_and_edit_inline_includes_inline_context_in_history(monke
     monkeypatch.setattr(inline, "store_inline_context", _async_return(True))
     monkeypatch.setattr(inline.uuid, "uuid4", lambda: SimpleNamespace(hex="fedcba98765432100000"))
 
-    await inline._generate_and_edit_inline(
-        bot=FakeBot(),
-        inline_message_id="inline-2",
-        user_query="а какие риски?",
-        tone_id="friendly",
-        user_id=42,
-        lang="ru",
-        inline_context={
-            "q": "как спроектировать систему?",
-            "a": "предыдущий ответ",
-            "tone": "friendly",
+    with prompt_scope(
+        overrides={
+            "inline.tabs": "Edited tab instructions",
+            "inline.search.enabled": "Edited search on",
+            "inline.search.disabled": "Edited search off",
         },
-    )
+        revision=100,
+    ):
+        await inline._generate_and_edit_inline(
+            bot=FakeBot(),
+            inline_message_id="inline-2",
+            user_query="а какие риски?",
+            tone_id="friendly",
+            user_id=42,
+            lang="ru",
+            inline_context={
+                "q": "как спроектировать систему?",
+                "a": "предыдущий ответ",
+                "tone": "friendly",
+            },
+        )
 
     assert captured["history"] == [
         {"role": "user", "parts": ["как спроектировать систему?"]},
@@ -292,6 +307,8 @@ async def test_generate_and_edit_inline_includes_inline_context_in_history(monke
         {"role": "user", "parts": ["а какие риски?"]},
     ]
     assert "новый ответ" in captured["edit_kwargs"]["text"]
+    assert "Edited tab instructions" in captured["system_instruction"]
+    assert ("Edited search on" if search_enabled else "Edited search off") in captured["system_instruction"]
 
 
 def test_select_inline_generation_model_uses_lite_for_simple_query():

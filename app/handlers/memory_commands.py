@@ -82,6 +82,12 @@ async def _send_memory_page(target, user_id: int, page: int = 0) -> None:
 
     # Build inline keyboard
     buttons = []
+    buttons.append(
+        [
+            InlineKeyboardButton(f"📖 #{index}", callback_data=f"mem:{user_id}:view:{memory['id']}:{page}:0")
+            for index, memory in enumerate(memories, start=offset + 1)
+        ]
+    )
     # Delete buttons row (one per memory on this page)
     delete_row = []
     for m in memories:
@@ -143,7 +149,18 @@ async def memory_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await query.answer()
         return
 
-    if action == "page":
+    if action == "view":
+        try:
+            memory_id = int(parts[3])
+            list_page = max(0, int(parts[4]))
+            text_page = max(0, int(parts[5]))
+        except IndexError, ValueError:
+            await query.answer("Кнопка устарела. Откройте /memory заново.", show_alert=True)
+            return
+        await query.answer()
+        await _send_memory_detail(query.message, user_id, memory_id, list_page, text_page)
+
+    elif action == "page":
         try:
             page = max(0, int(parts[3]))
         except IndexError, ValueError:
@@ -174,6 +191,37 @@ async def memory_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await _send_memory_page(query.message, user_id, page=page)
     else:
         await query.answer("Кнопка устарела. Откройте /memory заново.", show_alert=True)
+
+
+async def _send_memory_detail(target, user_id: int, memory_id: int, list_page: int, text_page: int) -> None:
+    """Read directly in private Telegram messages, without Reader/public copies."""
+    from app.repos.memory import get_memory
+
+    memory = await get_memory(user_id, memory_id)
+    back = [InlineKeyboardButton("⬅️ К списку", callback_data=f"mem:{user_id}:page:{list_page}")]
+    if memory is None:
+        await target.edit_text(
+            "Воспоминание недоступно: оно удалено или срок хранения истёк.", reply_markup=InlineKeyboardMarkup([back])
+        )
+        return
+    content = str(memory["content"])
+    # 1,400 Unicode codepoints occupy at most 2,800 Telegram UTF-16 units.
+    # Slice the original string so navigation never drops whitespace or emoji.
+    count = max(1, (len(content) + 1399) // 1400)
+    text_page = min(text_page, count - 1)
+    text = f"🧠 Воспоминание · {text_page + 1}/{count}\n\n" + content[text_page * 1400 : (text_page + 1) * 1400]
+    nav = []
+    for label, destination in (("⬅️ Ранее", text_page - 1), ("Далее ➡️", text_page + 1)):
+        if 0 <= destination < count:
+            nav.append(
+                InlineKeyboardButton(label, callback_data=f"mem:{user_id}:view:{memory_id}:{list_page}:{destination}")
+            )
+    rows = [nav] if nav else []
+    rows.append([InlineKeyboardButton("🗑 Удалить", callback_data=f"mem:{user_id}:del:{memory_id}:{list_page}")])
+    rows.append(back)
+    await target.edit_text(
+        text, parse_mode=None, disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(rows)
+    )
 
 
 def register(application) -> None:

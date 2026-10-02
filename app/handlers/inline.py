@@ -59,10 +59,17 @@ from app.errors import classify_key_error, is_error_message, is_key_related_erro
 from app.i18n import t
 from app.metrics import metrics_collector
 from app.observability.content import content_fields
+from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
 from app.repos.settings_repo import get_global_setting
 from app.tarot import SpreadType
 from app.utils.api_logger import api_logger
 from app.utils.text_format import markdown_to_html, strip_formatting
+
+register_controlled_text(
+    "inline.system",
+    "[system: current_utc_date={today}]\nТон ответа: {tone_sys_hint}\nТы — ассистент в инлайн-режиме Telegram. Пользователь задаёт вопрос прямо из переписки с другим человеком — отвечай КРАТКО и по существу (не более 3–4 абзацев).\n{_search_directive}{formatting_rules_compact}\n{_tabs_directive}",
+    "Inline: системная инструкция",
+)
 
 
 def _get_lang(obj) -> str:
@@ -1403,6 +1410,7 @@ async def _stream_inline_fast(
     user_id: int | None,
     max_rounds: int = 4,
     enable_web_search: bool = False,
+    on_model_used=None,
 ) -> tuple[str | None, list[tuple[str, str]]]:
     """Collect a typed inline stream; ProviderRouter owns races and key health."""
     from app.providers.request_factory import generation_request_from_history
@@ -1419,6 +1427,7 @@ async def _stream_inline_fast(
         settings.INLINE_THINKING_LEVEL,
     )
     request = await generation_request_from_history(
+        process_id="inline",
         models=(preferred_model,),
         history=history,
         system_instruction=system_instruction,
@@ -1445,6 +1454,8 @@ async def _stream_inline_fast(
 
     if not isinstance(terminal, StreamCompleted):
         return None, []
+    if on_model_used is not None:
+        on_model_used(terminal.route.actual_model)
 
     answer = "".join(chunks).strip()
     sources = [(source.url, source.title) for source in terminal.grounding.sources]
@@ -1586,6 +1597,20 @@ async def _generate_inline_answer(
     enable_web_search: bool,
 ) -> tuple[str | None, list[tuple[str, str]], str]:
     """Generate inline text, using flash-lite as a hot standby for heavier primaries."""
+    from app.process_policies import resolve_process
+
+    policy = await resolve_process("inline", (preferred_model,))
+    if policy.explicit:
+        used_models = [policy.models[0]]
+        text, sources = await _stream_inline_fast(
+            preferred_model=preferred_model,
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            enable_web_search=enable_web_search,
+            on_model_used=used_models.append,
+        )
+        return text, sources, used_models[-1]
     if enable_web_search:
         return await _generate_inline_grounded_answer(
             history=history,
@@ -1703,8 +1728,6 @@ async def _generate_and_edit_inline(
     """
     from telegram import LinkPreviewOptions
 
-    from app.prompt_registry import FORMATTING_RULES_COMPACT
-
     bot_name = bot.first_name or "Bot"
     tone_sys_hint = _tone_hint(tone_id, lang)
     tone_label = _tone_display(tone_id, lang)
@@ -1718,36 +1741,20 @@ async def _generate_and_edit_inline(
     # ── Step 1: Build system prompt ───────────────────────────────────────────
     # Search grounding is used only for fresh/current-data intents. General
     # quick inline answers stay on flash-lite without a Search tool call.
-    _tabs_directive = (
-        (
-            "\n\nВерни ответ строго в формате XML (без пояснений вне тегов):\n"
-            "<response>\n"
-            "  <tldr>Краткая выжимка в 2-3 предложения</tldr>\n"
-            "  <details>Полный развёрнутый ответ</details>\n"
-            "  <sources>Список источников, если есть (иначе оставь пустым)</sources>\n"
-            "</response>"
-        )
-        if tabs_enabled_now
-        else ""
+    from app.runtime_settings.additional_prompts import render_additional_prompt
+
+    _tabs_directive = render_additional_prompt("inline.tabs") if tabs_enabled_now else ""
+    _search_directive = render_additional_prompt(
+        "inline.search.enabled" if _enable_web_search else "inline.search.disabled"
     )
 
-    _search_directive = (
-        "Для этого запроса доступен Google Search. Используй его для актуальных фактов "
-        "(курсы валют, погода, новости, цены, расписания, результаты) и не отвечай по памяти, "
-        "если вопрос зависит от текущей даты.\n\n"
-        if _enable_web_search
-        else "Для этого запроса не нужен веб-поиск: отвечай по общей модели знаний кратко и быстро.\n\n"
-    )
-
-    system_instruction = (
-        f"[system: current_utc_date={today}]\n"
-        f"Тон ответа: {tone_sys_hint}\n"
-        "Ты — ассистент в инлайн-режиме Telegram. "
-        "Пользователь задаёт вопрос прямо из переписки с другим человеком — "
-        "отвечай КРАТКО и по существу (не более 3–4 абзацев).\n"
-        f"{_search_directive}"
-        f"{FORMATTING_RULES_COMPACT}\n"
-        f"{_tabs_directive}"
+    system_instruction = render_prompt_text(
+        get_prompt_text("inline.system"),
+        today=today,
+        tone_sys_hint=tone_sys_hint,
+        _search_directive=_search_directive,
+        formatting_rules_compact=get_prompt_text("formatting_rules_compact"),
+        _tabs_directive=_tabs_directive,
     )
 
     history = []
@@ -2344,6 +2351,20 @@ async def _generate_tarot_response(
     user_id: int | None,
 ) -> str | None:
     """Return a Tarot answer according to the inline spread model policy."""
+    from app.process_policies import execute_text_process, resolve_process
+
+    baseline = (_TAROT_PRIMARY_MODEL, _TAROT_LITE_MODEL) if spread in _TAROT_COMPLEX_SPREADS else (_TAROT_LITE_MODEL,)
+    policy = await resolve_process("tarot.inline", baseline)
+    if policy.explicit:
+        response, _ = await execute_text_process(
+            "tarot.inline",
+            baseline,
+            history,
+            router=router,
+            system_instruction=system_instruction,
+            user_id=user_id,
+        )
+        return response
 
     async def _call(model: str) -> str | None:
         response, _tokens = await router.get_response(
@@ -2613,92 +2634,8 @@ async def _generate_tarot_inline(
             )
 
 
-def _build_tarot_system_prompt(
-    spread: SpreadType,
-    tarot_ctx: str,
-    arg: str,
-) -> str:
-    """Return a spread-specific system instruction for the LLM."""
-    from app.tarot import SpreadType
+def _build_tarot_system_prompt(spread: SpreadType, tarot_ctx: str, arg: str) -> str:
+    """Render the configured spread template, keeping user values as literal data."""
+    from app.runtime_settings.interactive_prompts import build_tarot_prompt
 
-    if spread == SpreadType.CLASSIC:
-        return (
-            "Ты — мистический и мудрый таролог.\n"
-            "Твоя задача — сделать расклад Таро на 3 карты для пользователя.\n"
-            "ОБЯЗАТЕЛЬНО используй значения выпавших карт (предоставлены ниже), "
-            "чтобы дать связный, глубокий и полезный ответ на вопрос/ситуацию пользователя.\n"
-            "Не просто перечисляй значения карт, а свяжи их воедино, создав красивую историю "
-            "(Прошлое, Настоящее, Будущее).\n"
-            f"---\nВЫПАВШИЕ КАРТЫ:\n{tarot_ctx}\n---\n"
-            "Ответ должен быть в формате Markdown. Используй мистические эмодзи."
-        )
-
-    if spread == SpreadType.DAILY:
-        return (
-            "Ты — мистический таролог.\n"
-            "Пользователь вытянул ОДНУ карту дня — это совет и энергия на сегодня.\n"
-            "Используй значение карты (ниже), чтобы дать:\n"
-            "1. Краткое описание энергии дня (2–3 предложения)\n"
-            "2. Практический совет на сегодня (1–2 предложения)\n"
-            "3. От чего стоит остеречься (1 предложение)\n\n"
-            "Ответ должен быть КОРОТКИМ (6–8 предложений). "
-            "Формат: Markdown. Используй мистические эмодзи.\n"
-            f"---\nКАРТА ДНЯ:\n{tarot_ctx}\n---"
-        )
-
-    if spread == SpreadType.YES_NO:
-        # Determine upright/reversed from the single card's orientation in tarot_ctx
-        is_upright = "Прямая" in tarot_ctx
-        verdict = "ДА" if is_upright else "НЕТ"
-        verdict_context = "ПРЯМО (ответ: ДА)" if is_upright else "ПЕРЕВЁРНУТО (ответ: НЕТ)"
-        return (
-            "Ты — мистический оракул Таро.\n"
-            f"Пользователь задал вопрос формата Да/Нет. Карта выпала {verdict_context}.\n\n"
-            "Твоя задача:\n"
-            f"1. Чётко объявить вердикт: **{verdict}**\n"
-            "2. Обосновать ответ через значение карты (2–3 предложения)\n"
-            "3. Краткое напутствие (1 предложение)\n\n"
-            "Ответ КОРОТКИЙ (5–6 предложений). "
-            "Формат: Markdown. Используй мистические эмодзи.\n"
-            f"---\nВЫПАВШАЯ КАРТА:\n{tarot_ctx}\n---"
-        )
-
-    if spread == SpreadType.LOVE:
-        return (
-            "Ты — мистический таролог, специализирующийся на отношениях.\n"
-            "Выполни расклад на ОТНОШЕНИЯ из 5 карт в следующих позициях:\n"
-            "• Ты — что ты привносишь в отношения\n"
-            "• Партнёр — что привносит второй человек\n"
-            "• Что вас связывает — основа и сила вашего союза\n"
-            "• Что мешает — скрытые препятствия и конфликты\n"
-            "• Куда ведёт — вероятный путь развития\n\n"
-            "ОБЯЗАТЕЛЬНО используй значения выпавших карт.\n"
-            "Создай СВЯЗНУЮ историю об этих отношениях, не просто перечисление.\n"
-            "Ответ средней длины (10–15 предложений). "
-            "Формат: Markdown. Используй романтические и мистические эмодзи.\n"
-            f"---\nВЫПАВШИЕ КАРТЫ:\n{tarot_ctx}\n---"
-        )
-
-    if spread == SpreadType.CELTIC:
-        return (
-            "Ты — мудрый и опытный таролог.\n"
-            "Выполни расклад «Кельтский крест» (адаптированный) из 6 карт:\n"
-            "• Ситуация — центральная тема, суть вопроса\n"
-            "• Препятствие — что перекрывает путь прямо сейчас\n"
-            "• Подсознание — глубинные мотивы, скрытые от самого человека\n"
-            "• Прошлое — события и энергии, приведшие к текущей ситуации\n"
-            "• Ближайшее будущее — что развернётся в ближайшее время\n"
-            "• Итог — финальный результат, если текущий курс не изменится\n\n"
-            "ОБЯЗАТЕЛЬНО используй значения выпавших карт.\n"
-            "Построй ГЛУБОКИЙ и связный нарратив. Это самый подробный расклад.\n"
-            "Ответ развёрнутый (15–20 предложений), но ОБЯЗАТЕЛЬНО уложись в 3500 символов.\n"
-            "Формат: Markdown. Используй мистические эмодзи.\n"
-            f"---\nВЫПАВШИЕ КАРТЫ:\n{tarot_ctx}\n---"
-        )
-
-    # Fallback: CLASSIC
-    return (
-        "Ты — мистический таролог.\n"
-        f"---\nВЫПАВШИЕ КАРТЫ:\n{tarot_ctx}\n---\n"
-        "Ответь связно и глубоко. Формат: Markdown. Используй мистические эмодзи."
-    )
+    return build_tarot_prompt(spread, tarot_ctx)

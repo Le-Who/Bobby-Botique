@@ -116,6 +116,7 @@ class TestContinueStreamCallback:
     @pytest.mark.asyncio
     async def test_does_not_duplicate_already_persisted_partial_model_turn(self):
         from app.handlers.cb_ai_actions import continue_stream_callback
+        from app.prompt_registry import prompt_scope
 
         update, query = _make_update("continue_stream")
         query.message.text = "A sufficiently long partial model response"
@@ -135,6 +136,7 @@ class TestContinueStreamCallback:
             coro.close()
 
         with (
+            prompt_scope(overrides={"chat.continue": "Edited continuation request"}, revision=100),
             patch("app.handlers.cb_ai_actions.set_request_id"),
             patch("app.handlers.cb_ai_actions.set_user_context"),
             patch("app.handlers.cb_ai_actions.state.get_user_lock", return_value=asyncio.Lock()),
@@ -147,6 +149,7 @@ class TestContinueStreamCallback:
             await scheduled[0]
 
         handle_chat.assert_awaited_once()
+        assert handle_chat.await_args.args[2] == "Edited continuation request"
         assert chat_state.history == [
             {"role": "user", "parts": ["question"]},
             {"role": "model", "parts": ["A sufficiently **long** partial model response"]},

@@ -192,6 +192,10 @@ async def test_failed_automatic_fallback_consumes_only_one_attempt(quota_store, 
 
 @pytest.mark.asyncio
 async def test_player_force_image_does_not_bypass_automatic_quota(quota_store, monkeypatch):
+    from app.runtime_settings import lifecycle, store
+
+    monkeypatch.setattr(lifecycle, "refresh_runtime_settings", AsyncMock())
+    monkeypatch.setattr(store, "get_snapshot", AsyncMock(return_value=store.SettingsSnapshot(0, {})))
     quota_store["daily_croc_image_quota_per_hour"] = "0"
     puzzle = repo.DailyPuzzle(date(2026, 9, 9), "cat", "animals", "en", hints=["hint"], image_prompt="cat")
     monkeypatch.setattr(repo, "create_puzzle_if_missing", AsyncMock(return_value=puzzle))

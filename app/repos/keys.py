@@ -144,7 +144,8 @@ class DailyKeyManager:
         """
         result = await db_query(query, (key_hash, model_name, today), conn=conn)
         current_usage = result[0]["request_count"] if result else 0
-        return current_usage < daily_limit * settings.LIMIT_THRESHOLD_PERCENT
+        threshold = max(1, int(daily_limit * settings.LIMIT_THRESHOLD_PERCENT))
+        return current_usage < threshold
 
     async def get_fresh_available_key(
         self,
@@ -190,7 +191,7 @@ class DailyKeyManager:
                     continue
             return None
 
-        threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
+        threshold = max(1, int(daily_limit * settings.LIMIT_THRESHOLD_PERCENT))
         query = f"""
             SELECT ak.key_hash, ak.api_key,
                    COALESCE(ku.request_count, 0) AS request_count,
@@ -235,7 +236,14 @@ _openrouter_km = DailyKeyManager("openrouter_api_keys", "openrouter_key_usage")
 # ─── Gemini key helpers (public API — signatures unchanged) ──────────────────
 
 
-async def get_model_daily_limit(model_name: str) -> int | None:
+async def get_model_daily_limit(model_name: str, *, snapshot=None) -> int | None:
+    from app.runtime_settings import models as runtime_models
+
+    snapshot = snapshot if snapshot is not None else await runtime_models.get_snapshot()
+    override_key = f"model_limit:{model_name}"
+    if override_key in snapshot.values:
+        return runtime_models.validate_limit(model_name, snapshot.values[override_key])
+
     if model_name in db_manager._model_config_cache:
         return db_manager._model_config_cache[model_name]
 
@@ -256,6 +264,12 @@ async def get_model_daily_limit(model_name: str) -> int | None:
         logging.warning("Failed to fetch limit for %s: %s", model_name, e)
         # Fallback to config even on DB error
         return settings.DAILY_LIMITS.get(model_name)
+
+
+async def invalidate_model_limit_cache(model_name: str) -> None:
+    """Discard legacy DB and key-selection cache after a runtime RPD edit."""
+    db_manager._model_config_cache.pop(model_name, None)
+    await invalidate_key_cache(model_name)
 
 
 async def _is_key_available(key_hash: str, model_name: str, conn=None) -> bool:

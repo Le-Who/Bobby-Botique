@@ -13,8 +13,9 @@ import asyncio
 import base64
 import logging
 import time
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from app.config import (
     GEMINI_IMAGE_MODEL,
@@ -22,6 +23,7 @@ from app.config import (
     settings,
 )
 from app.observability.workload_events import start_workload_attempt
+from app.process_policies import resolve_process
 from app.providers.gemini import get_cached_genai_client
 
 if TYPE_CHECKING:
@@ -57,8 +59,8 @@ MODEL_LABELS: dict[str, str] = {
 # Per-key RPD budget tracker
 #
 # Primary:  Redis INCR + EXPIREAT(next UTC midnight) — survives bot restarts.
-# Fallback: in-memory dict   — used transparently when Redis is unavailable
-#           (dev environments, REDIS_URL not set, Redis connection errors).
+# Fallback: in-memory dict — only when Redis is not configured. A failed
+# reservation on configured Redis has an unknown outcome and fails closed.
 #
 # Redis key format:  imagen:rpd:<sha256(api_key)[:12]>
 # ---------------------------------------------------------------------------
@@ -70,6 +72,17 @@ _KEY_DAY_BUCKET: dict[str, dict] = {}
 _KEY_BUCKET_LOCK = asyncio.Lock()
 _USER_DAY_BUCKET: dict[int, dict[str, float | int]] = {}
 _USER_BUCKET_LOCK = asyncio.Lock()
+_RESERVE_QUOTA = """
+local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+if current >= tonumber(ARGV[1]) then return 0 end
+redis.call('INCR', KEYS[1])
+redis.call('EXPIREAT', KEYS[1], ARGV[2])
+return 1
+"""
+
+
+class QuotaReservationUnavailable(RuntimeError):
+    """Quota storage did not confirm admission; do not bypass it locally."""
 
 
 def _day_bucket_key(api_key: str) -> str:
@@ -144,6 +157,32 @@ async def _get_key_usage(api_key: str) -> int:
         return entry["count"]
 
 
+async def _reserve_key_usage(api_key: str) -> bool:
+    """Reserve before an SDK attempt, counting failures and concurrent callers."""
+    from app.cache import redis_client
+
+    limit = int(settings.IMAGE_GEN_RPD_PER_KEY)
+    if redis_client is not None:
+        try:
+            async with asyncio.timeout(5.0):
+                pending = redis_client.eval(_RESERVE_QUOTA, 1, _redis_imagen_key(api_key), limit, _next_midnight_ts())
+                return bool(await cast(Awaitable[object], pending))
+        except Exception as error:
+            # The write outcome is unknown. A local retry could bypass the cap.
+            logger.warning("Imagen quota reservation unavailable: %s", type(error).__name__)
+            raise QuotaReservationUnavailable from error
+    async with _KEY_BUCKET_LOCK:
+        key = _day_bucket_key(api_key)
+        entry = _KEY_DAY_BUCKET.get(key)
+        if entry is None or time.time() >= entry["reset_ts"]:
+            entry = {"count": 0, "reset_ts": float(_next_midnight_ts())}
+            _KEY_DAY_BUCKET[key] = entry
+        if entry["count"] >= limit:
+            return False
+        entry["count"] += 1
+        return True
+
+
 async def _increment_key_usage(api_key: str) -> int:
     """Increment today's counter (Redis preferred) and return the new count."""
     redis_result = await _redis_increment_usage(api_key)
@@ -170,13 +209,12 @@ async def _redis_consume_user_quota(user_id: int, limit: int) -> bool | None:
         if redis_client is None:
             return None
         key = f"imagen:user_daily:{user_id}:{_datetime.datetime.now(_datetime.UTC):%Y%m%d}"
-        new_value = int(await redis_client.incr(key))
-        if new_value == 1:
-            await redis_client.expireat(key, _next_midnight_ts())
-        return new_value <= limit
+        async with asyncio.timeout(5.0):
+            pending = redis_client.eval(_RESERVE_QUOTA, 1, key, limit, _next_midnight_ts())
+            return bool(await cast(Awaitable[object], pending))
     except Exception as exc:
-        logger.debug("Imagen user quota Redis failure (falling back to memory): %s", type(exc).__name__)
-        return None
+        logger.warning("Imagen user quota reservation unavailable: %s", type(exc).__name__)
+        raise QuotaReservationUnavailable from exc
 
 
 async def _consume_user_daily_quota(user_id: int | None) -> bool:
@@ -231,7 +269,7 @@ class ImagenProvider:
         1. Use the same GEMINI_API_KEYS pool (from settings).
         2. Skip any key that has reached IMAGE_GEN_RPD_PER_KEY today.
         3. On API error (quota / safety / overload), rotate to next key.
-        4. On success, increment the per-key RPD counter.
+        4. Reserve one per-key request before every SDK attempt, including failures.
 
     This approach ensures Imagen quota exhaustion NEVER touches the
     `key_status` table used by LLM/streaming, preventing cross-service
@@ -245,6 +283,49 @@ class ImagenProvider:
         aspect_ratio: str = "1:1",
         number_of_images: int = 1,
         user_id: int | None = None,
+    ) -> ImageGenResult:
+        """Generate with the exact configured Gemini image chain, charging user quota once."""
+        policy = await resolve_process("image.gemini", (GEMINI_IMAGE_MODEL,))
+        if not policy.explicit:
+            return await self._generate_one_model(prompt, model, aspect_ratio, number_of_images, user_id=user_id)
+        try:
+            async with asyncio.timeout(settings.IMAGE_GEN_TIMEOUT):
+                last_result: ImageGenResult | None = None
+                for index, candidate in enumerate(policy.models):
+                    result = await self._generate_one_model(
+                        prompt,
+                        candidate,
+                        aspect_ratio,
+                        number_of_images,
+                        user_id=user_id,
+                        _consume_quota=index == 0,
+                        _honor_model=True,
+                    )
+                    if result.success or result.error_message in {
+                        "no_keys",
+                        "user_daily_limit",
+                        "quota_exhausted",
+                        "quota_unavailable",
+                        "paid_tier_required",
+                        "safety_blocked",
+                    }:
+                        return result
+                    last_result = result
+                return last_result or ImageGenResult(success=False, error_message="all_models_failed")
+
+        except TimeoutError:
+            return ImageGenResult(success=False, error_message="timeout")
+
+    async def _generate_one_model(
+        self,
+        prompt: str,
+        model: str = GEMINI_IMAGE_MODEL,
+        aspect_ratio: str = "1:1",
+        number_of_images: int = 1,
+        user_id: int | None = None,
+        *,
+        _consume_quota: bool = True,
+        _honor_model: bool = False,
     ) -> ImageGenResult:
         """
         Generate images from a text prompt.
@@ -261,7 +342,7 @@ class ImagenProvider:
         """
         if aspect_ratio not in SUPPORTED_ASPECT_RATIOS:
             aspect_ratio = "1:1"
-        if model != GEMINI_IMAGE_MODEL:
+        if not _honor_model and model != GEMINI_IMAGE_MODEL:
             model = GEMINI_IMAGE_MODEL
         if number_of_images != 1:
             logger.info(
@@ -272,7 +353,11 @@ class ImagenProvider:
         keys: list[str] = list(settings.GEMINI_API_KEYS)
         if not keys:
             return ImageGenResult(success=False, error_message="no_keys")
-        if not await _consume_user_daily_quota(user_id):
+        try:
+            user_admitted = not _consume_quota or await _consume_user_daily_quota(user_id)
+        except QuotaReservationUnavailable:
+            return ImageGenResult(success=False, error_message="quota_unavailable")
+        if not user_admitted:
             logger.info("Imagen user daily limit reached: user=%s", user_id)
             return ImageGenResult(success=False, error_message="user_daily_limit")
         max_retries: int = min(settings.IMAGE_GEN_MAX_RETRIES, len(keys))
@@ -281,11 +366,13 @@ class ImagenProvider:
         for attempt_number in range(max_retries):
             # --- Key selection: pick key with budget remaining ---
             selected_key: str | None = None
-            for key in keys:
-                usage = await _get_key_usage(key)
-                if usage < settings.IMAGE_GEN_RPD_PER_KEY:
-                    selected_key = key
-                    break
+            try:
+                for key in keys:
+                    if await _reserve_key_usage(key):
+                        selected_key = key
+                        break
+            except QuotaReservationUnavailable:
+                return ImageGenResult(success=False, error_message="quota_unavailable")
 
             if selected_key is None:
                 logger.warning(
@@ -356,7 +443,6 @@ class ImagenProvider:
                     workload_attempt.finish(outcome="failed", level="warning", reason_code=last_error)
                     continue
 
-                await _increment_key_usage(selected_key)
                 logger.info(
                     "Imagen: success — %d image(s) generated (model=%s key_id=%s)",
                     len(images_bytes),
@@ -428,8 +514,7 @@ class ImagenProvider:
                     or "resource_exhausted" in err_lower
                     or "429" in err_lower
                 ):
-                    # Count this key as depleted for the day
-                    await _increment_key_usage(selected_key)
+                    # This failed SDK attempt already consumed its reservation.
                     last_error = "quota"
                     keys = [k for k in keys if k != selected_key]
 

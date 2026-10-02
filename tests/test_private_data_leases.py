@@ -172,13 +172,13 @@ async def test_summarizer_holds_account_scoped_lease_around_provider_call():
         finally:
             lease_events.append("exit")
 
-    async def provider_inside_lease(**_kwargs):
+    async def provider_inside_lease(*_args, **_kwargs):
         assert lease_events == ["enter"]
-        return await provider()
+        return await provider(), None
 
     with (
         patch("app.repos.memory_consent.private_data_lease", allowed_lease),
-        patch("app.handlers.ai_core._get_ai_response_with_routing", side_effect=provider_inside_lease),
+        patch("app.context.summarizer.execute_text_process", side_effect=provider_inside_lease),
     ):
         await summarizer._run_llm_summarization(
             42,

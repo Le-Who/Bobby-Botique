@@ -140,7 +140,10 @@ class UserScopedUpdateProcessor(BaseUpdateProcessor):
         return type(update).__name__.casefold()
 
     async def do_process_update(self, update: object, coroutine: Awaitable[Any]) -> None:  # noqa: ARG002
-        await coroutine
+        from app.runtime_settings.lifecycle import runtime_settings_scope
+
+        async with runtime_settings_scope():
+            await coroutine
 
     async def initialize(self) -> None:
         """No external resources are required."""

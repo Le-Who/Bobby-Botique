@@ -54,6 +54,7 @@ async def test_memory_buttons_are_bound_to_menu_owner():
     markup = target.reply_text.await_args.kwargs["reply_markup"]
     callback_data = [button.callback_data for row in markup.inline_keyboard for button in row]
     assert "mem:42:del:7:0" in callback_data
+    assert "mem:42:view:7:0:0" in callback_data
     assert "mem:42:noop" in callback_data
 
 
@@ -123,3 +124,45 @@ async def test_memory_page_clamps_after_last_page_shrinks():
     labels = [button.text for row in markup.inline_keyboard for button in row]
     assert "1/1" in labels
     assert "3/1" not in labels
+
+
+@pytest.mark.parametrize("user_id,chat_type", [(99, "private"), (42, "group")])
+async def test_full_memory_refuses_foreign_or_group_access(user_id, chat_type):
+    update = _update(user_id=user_id, chat_type=chat_type, data="mem:42:view:7:0:0")
+    with patch("app.repos.memory.get_memory", new_callable=AsyncMock, create=True) as read:
+        await memory_callback_handler.__wrapped__.__wrapped__(update, SimpleNamespace())
+    read.assert_not_awaited()
+    update.callback_query.message.edit_text.assert_not_awaited()
+
+
+async def test_full_memory_can_be_read_across_pages_without_public_storage():
+    text = "Приватный факт 🧠 <b>literal</b> " * 200
+    pieces = []
+    with patch(
+        "app.repos.memory.get_memory", new_callable=AsyncMock, create=True, return_value={"id": 7, "content": text}
+    ) as read:
+        page = 0
+        while True:
+            update = _update(data=f"mem:42:view:7:2:{page}")
+            await memory_callback_handler.__wrapped__.__wrapped__(update, SimpleNamespace())
+            call = update.callback_query.message.edit_text.await_args
+            assert call is not None
+            shown = call.args[0]
+            assert len(shown.encode("utf-16-le")) // 2 < 4096
+            assert call.kwargs["parse_mode"] is None
+            pieces.append(shown.split("\n\n", 1)[1])
+            buttons = [b for row in call.kwargs["reply_markup"].inline_keyboard for b in row]
+            assert any(b.callback_data == "mem:42:page:2" for b in buttons)
+            if not any(b.text == "Далее ➡️" for b in buttons):
+                break
+            page += 1
+            assert page < 20
+    assert "".join(pieces) == text
+    read.assert_awaited_with(42, 7)
+
+
+async def test_stale_full_memory_clears_display_and_offers_return():
+    update = _update(data="mem:42:view:7:0:0")
+    with patch("app.repos.memory.get_memory", new_callable=AsyncMock, create=True, return_value=None):
+        await memory_callback_handler.__wrapped__.__wrapped__(update, SimpleNamespace())
+    assert "недоступно" in update.callback_query.message.edit_text.await_args.args[0]

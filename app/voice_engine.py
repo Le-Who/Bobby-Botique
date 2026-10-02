@@ -17,6 +17,8 @@ from typing import Any
 from telegram import Bot
 
 from app.metrics import role_conv_metrics
+from app.process_policies import resolve_process
+from app.runtime_settings.lifecycle import runtime_settings_scope
 from app.utils.background_tasks import submit_task
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,7 @@ _HEARTBEAT_INTERVAL_S = 4.0
 # Maximum chunks to generate in parallel within a single TTS job.
 # Lower = fewer RPD consumed per job (2 × 2 key-racing = 4 RPD vs. old 8).
 _MAX_PARALLEL_CHUNKS = 2
+_GEMINI_PLAN_TIMEOUT_FACTOR = 2.0
 
 
 @dataclass
@@ -83,9 +86,8 @@ async def _generate_single_chunk_gemini(
 ) -> bytes | None:
     """Generate PCM audio for one chunk via Gemini TTS with key racing."""
     from app.errors import classify_key_error
-    from app.handlers.ai_core import _resolve_ai_request
-    from app.providers.tts import generate_speech
-    from app.repos.keys import get_key_status_manager
+    from app.providers.tts import TTSAdmissionRejected, generate_speech
+    from app.repos.keys import get_available_gemini_key, get_key_status_manager
 
     status_mgr = get_key_status_manager()
 
@@ -104,12 +106,12 @@ async def _generate_single_chunk_gemini(
         return pcm
 
     for pair_attempt in range(2):
-        key_a, model_a, _ = await _resolve_ai_request(model_name, excluded_key_hashes=failed_keys)
+        key_a = await get_available_gemini_key(model_name, excluded_hashes=failed_keys)
         if not key_a:
             break
 
         failed_keys.add(key_a["key_hash"])
-        key_b, _, _ = await _resolve_ai_request(model_name, excluded_key_hashes=failed_keys)
+        key_b = await get_available_gemini_key(model_name, excluded_hashes=failed_keys)
         failed_keys.discard(key_a["key_hash"])
 
         keys_to_race = [key_a] + ([key_b] if key_b else [])
@@ -126,29 +128,37 @@ async def _generate_single_chunk_gemini(
 
         winner_pcm: bytes | None = None
         pending = set(tasks)
-        while pending:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
-                key_data = tasks[task]
-                try:
-                    exc = task.exception()
-                except asyncio.CancelledError:
-                    exc = asyncio.CancelledError("TTS task was cancelled")
+        try:
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    key_data = tasks[task]
+                    try:
+                        exc = task.exception()
+                    except asyncio.CancelledError:
+                        exc = asyncio.CancelledError("TTS task was cancelled")
 
-                if exc is None and winner_pcm is None:
-                    winner_pcm = task.result()
-                    for pending_task in pending:
-                        pending_task.cancel()
+                    if exc is None and winner_pcm is None:
+                        winner_pcm = task.result()
+                        break
+
+                    if isinstance(exc, TTSAdmissionRejected):
+                        failed_keys.add(key_data["key_hash"])
+                        continue
+                    if exc is not None and not isinstance(exc, asyncio.CancelledError):
+                        with contextlib.suppress(Exception):
+                            err_cat = classify_key_error(str(exc))
+                            await status_mgr.suspend_key(key_data["key_hash"], model_name, err_cat, type(exc).__name__)
+                        failed_keys.add(key_data["key_hash"])
+
+                if winner_pcm is not None:
                     break
 
-                if exc is not None and not isinstance(exc, asyncio.CancelledError):
-                    with contextlib.suppress(Exception):
-                        err_cat = classify_key_error(str(exc))
-                        await status_mgr.suspend_key(key_data["key_hash"], model_a, err_cat, str(exc)[:200])
-                    failed_keys.add(key_data["key_hash"])
-
-            if winner_pcm is not None:
-                break
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         if winner_pcm is not None:
             return winner_pcm
@@ -167,6 +177,7 @@ async def _run_gemini_pipeline(
     model_name: str = "gemini-3.1-flash-tts-preview",
     language_code: str | None = None,
     on_chunk_complete: Callable[[int, int], Awaitable[None]] | None = None,
+    require_complete: bool = False,
 ) -> list[bytes] | None:
     """Run the full Gemini TTS pipeline across all chunks.
 
@@ -199,6 +210,9 @@ async def _run_gemini_pipeline(
         for i, result in enumerate(results):
             global_idx = batch_start + i
             if isinstance(result, BaseException) or result is None:
+                if require_complete:
+                    logger.warning("Configured Gemini TTS message incomplete; advancing the whole-message plan")
+                    return None
                 if global_idx == 0:
                     logger.warning("Gemini TTS: first chunk failed, aborting")
                 else:
@@ -436,6 +450,7 @@ class VoiceReplyManager:
                 if worker_task and worker_task.done():
                     self._worker_tasks.pop(user_id, None)
 
+    @runtime_settings_scope()
     async def _pregenerate_audio(self, job: VoiceJob) -> bytes | None:
         """Generate one job's audio inside its FIFO worker and durable lease."""
         try:
@@ -460,41 +475,55 @@ class VoiceReplyManager:
 
             pcm_parts: list[bytes] | None = None
 
-            if el_keys:
-                el_chunks = _chunk_text_by_sentences(clean_text, max_bytes=ELEVENLABS_CHUNK_MAX_BYTES)
-                el_timeout = min(90.0, max(30.0, len(clean_text) / 50.0 + 15.0))
-                async with self._elevenlabs_sem:
-                    pcm_parts = await generate_speech_with_key_rotation(
-                        el_chunks,
-                        el_keys,
-                        voice_id=el_voice_id,
-                        model_id=settings.ELEVENLABS_MODEL,
-                        timeout=el_timeout,
-                    )
-
-            if pcm_parts is None:
-                gemini_chunks = _chunk_text_by_sentences(clean_text, max_bytes=800)
-                gemini_voice = job.voice if job.voice and len(job.voice) <= 10 else "Aoede"
-                gemini_timeout = min(120.0, max(40.0, len(clean_text) / 40.0 + 40.0))
-
-                async with self._gemini_sem:
-                    pcm_parts = await _run_gemini_pipeline(
-                        gemini_chunks,
-                        gemini_voice,
-                        gemini_timeout,
-                        tts_temperature=job.tts_temperature,
-                        model_name="gemini-3.1-flash-tts-preview",
-                        language_code=language_code,
-                    )
-                    if not pcm_parts:
-                        pcm_parts = await _run_gemini_pipeline(
-                            gemini_chunks,
-                            gemini_voice,
-                            gemini_timeout,
-                            tts_temperature=job.tts_temperature,
-                            model_name="gemini-2.5-flash-preview-tts",
-                            language_code=language_code,
+            delivery = await resolve_process("tts.delivery", ("elevenlabs", "gemini"))
+            for provider in delivery.models:
+                if provider == "elevenlabs" and el_keys:
+                    el_chunks = _chunk_text_by_sentences(clean_text, max_bytes=ELEVENLABS_CHUNK_MAX_BYTES)
+                    el_timeout = min(90.0, max(30.0, len(clean_text) / 50.0 + 15.0))
+                    async with self._elevenlabs_sem:
+                        pcm_parts = await generate_speech_with_key_rotation(
+                            el_chunks,
+                            el_keys,
+                            voice_id=el_voice_id,
+                            model_id=settings.ELEVENLABS_MODEL,
+                            timeout=el_timeout,
                         )
+
+                if provider == "gemini":
+                    gemini_chunks = _chunk_text_by_sentences(clean_text, max_bytes=800)
+                    gemini_voice = job.voice if job.voice and len(job.voice) <= 10 else "Aoede"
+                    gemini_timeout = min(120.0, max(40.0, len(clean_text) / 40.0 + 40.0))
+
+                    default_models = ("gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts")
+                    policy = await resolve_process("tts", default_models)
+                    model_plan = policy.models if policy.explicit else default_models
+
+                    async with self._gemini_sem:
+                        # Two key-race rounds per parallel chunk batch is the
+                        # legacy message budget. Reserve models share it.
+                        batches = max(1, (len(gemini_chunks) + _MAX_PARALLEL_CHUNKS - 1) // _MAX_PARALLEL_CHUNKS)
+                        plan_timeout = gemini_timeout * batches * _GEMINI_PLAN_TIMEOUT_FACTOR
+                        try:
+                            async with asyncio.timeout(plan_timeout if policy.explicit or delivery.explicit else None):
+                                for model_name in model_plan:
+                                    pcm_parts = await _run_gemini_pipeline(
+                                        gemini_chunks,
+                                        gemini_voice,
+                                        gemini_timeout,
+                                        tts_temperature=job.tts_temperature,
+                                        model_name=model_name,
+                                        language_code=language_code,
+                                        require_complete=policy.explicit or delivery.explicit,
+                                    )
+                                    if pcm_parts:
+                                        break
+                        except TimeoutError:
+                            pcm_parts = None
+                            logger.warning(
+                                "Gemini TTS message plan exhausted its deadline; trying next configured provider"
+                            )
+                if pcm_parts:
+                    break
 
             if not pcm_parts:
                 return None

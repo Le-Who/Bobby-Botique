@@ -1,0 +1,786 @@
+{
+  "ADAPTIVE_THINKING_ENABLED": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "ADMIN_ID": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "ADMIN_SECRET": {
+    "readers": [
+      "app/config.py",
+      "app/web.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "AGENTIC_MAX_ITERATIONS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "AGENTIC_MAX_PAGES": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "AGENTIC_MAX_TOKENS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "AGENTIC_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "AGENTIC_PAGE_CONTENT_LIMIT": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "AGENTIC_TIMEOUT_SECONDS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "APP_ENV": {
+    "readers": [
+      "app/observability/config.py",
+      "app/observability/pipeline.py"
+    ],
+    "deploy": true,
+    "compose": true
+  },
+  "APP_RELEASE": {
+    "readers": [
+      "app/observability/config.py",
+      "app/observability/pipeline.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "DAILY_LIMITS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "DATABASE_URL": {
+    "readers": [
+      "app/config.py",
+      "app/natal/service.py",
+      "app/web.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "DB_POOL_MAX_SIZE": {
+    "readers": [
+      "app/database.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "DB_POOL_MIN_SIZE": {
+    "readers": [
+      "app/database.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "DEFAULT_IMAGE_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "DEFAULT_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "ELEVENLABS_API_KEYS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "ELEVENLABS_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "ELEVENLABS_VOICE_ID": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "ENABLE_PERSISTENT_QUEUE": {
+    "readers": [],
+    "deploy": false,
+    "compose": true
+  },
+  "ENABLE_WEB_SERVER": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "EXCHANGE_RATE_API_KEY": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "FREETHEAI_API_KEYS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "FREETHEAI_AVAILABLE_MODELS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "FREETHEAI_DEFAULT_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "GAME_HUB_DIRECT_LINK": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "GAME_HUB_MINIAPP_SHORT_NAME": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "GAME_HUB_URL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "GEMINI_API_KEYS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "GEMINI_AVAILABLE_MODELS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "GEMINI_LIVE_VOICE_NAME": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "GOOGLE_APPLICATION_CREDENTIALS": {
+    "readers": [
+      "app/providers/gemini.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "HOSTNAME": {
+    "readers": [
+      "app/observability/pipeline.py",
+      "app/utils/logging_config.py",
+      "bot.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "IMAGE_GEN_DAILY_LIMIT": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "IMAGE_GEN_MAX_RETRIES": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "IMAGE_GEN_RPD_PER_KEY": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "IMAGE_GEN_TIMEOUT": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "IMAGE_MODELS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "INLINE_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "INLINE_THINKING_LEVEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "JINA_API_KEY": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "LOG_CONTENT_MODE": {
+    "readers": [
+      "app/observability/config.py"
+    ],
+    "deploy": true,
+    "compose": true
+  },
+  "LOG_DIAGNOSTIC_INCIDENT_ID": {
+    "readers": [
+      "app/observability/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "LOG_DIAGNOSTIC_KEY_SUFFIX": {
+    "readers": [
+      "app/observability/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "LOG_DIAGNOSTIC_REQUEST_ID": {
+    "readers": [
+      "app/observability/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "LOG_DIAGNOSTIC_SUBSYSTEM": {
+    "readers": [
+      "app/observability/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "LOG_DIAGNOSTIC_UNTIL": {
+    "readers": [
+      "app/observability/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "LOG_DIAGNOSTIC_USER_ID": {
+    "readers": [
+      "app/observability/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "LOG_EVENT_MAX_BYTES": {
+    "readers": [
+      "app/observability/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "LOG_FORMAT": {
+    "readers": [
+      "app/observability/config.py"
+    ],
+    "deploy": true,
+    "compose": true
+  },
+  "LOG_LEVEL": {
+    "readers": [
+      "app/observability/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "LOG_PRETTY": {
+    "readers": [
+      "app/observability/config.py",
+      "app/utils/logging_config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "LOG_QUEUE_MAX_BYTES": {
+    "readers": [
+      "app/observability/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "LOG_QUEUE_MAX_EVENTS": {
+    "readers": [
+      "app/observability/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "LRU_STATE_CACHE_SIZE": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "MAX_CONCURRENT_HEAVY_CALLBACKS": {
+    "readers": [],
+    "deploy": true,
+    "compose": false
+  },
+  "MAX_CONCURRENT_HEAVY_REQUESTS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "MINIAPP_SHORT_NAME": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "NATAL_CITY_OVERRIDES_PATH": {
+    "readers": [
+      "app/config.py",
+      "app/natal/city_catalog.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "NATAL_GEOCODER_PROVIDER": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "NATAL_REPORTS_ENABLED": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "NATAL_REPORT_TTL_DAYS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "NATAL_SEND_RAW_BIRTH_DATA_TO_LLM": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENCODE_API_KEYS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENCODE_AVAILABLE_MODELS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENCODE_DEFAULT_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENCODE_INLINE_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENCODE_QNA_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENCODE_RESEARCH_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENCODE_URL_SELECTION_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "OPENCODE_VISION_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENROUTER_API_KEYS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENROUTER_AVAILABLE_MODELS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENROUTER_DEFAULT_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENROUTER_QNA_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENROUTER_RESEARCH_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "OPENROUTER_URL_SELECTION_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "POLLINATIONS_API_KEY": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "PORT": {
+    "readers": [
+      "app/config.py",
+      "app/utils/logging_config.py"
+    ],
+    "deploy": true,
+    "compose": true
+  },
+  "PRIMARY_PROVIDER": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "QNA_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "REDIS_MAX_CONNECTIONS": {
+    "readers": [
+      "app/cache.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "REDIS_TLS_VERIFY": {
+    "readers": [
+      "app/cache.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "REDIS_URL": {
+    "readers": [
+      "app/cache.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "RESEARCH_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "SERVICE_NAME": {
+    "readers": [
+      "app/observability/config.py",
+      "app/observability/pipeline.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "STRUCTURED_LOGGING": {
+    "readers": [
+      "app/observability/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "TAROT_IDLE_CONFIRM_AFTER_SECONDS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "TAVILY_API_KEYS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "TAXONOMY_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "TELEGRAM_API_HASH": {
+    "readers": [],
+    "deploy": true,
+    "compose": false
+  },
+  "TELEGRAM_API_ID": {
+    "readers": [],
+    "deploy": true,
+    "compose": false
+  },
+  "TELEGRAM_BOT_TOKEN": {
+    "readers": [
+      "app/config.py",
+      "app/utils/logging_config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "TELEGRAM_LOCAL": {
+    "readers": [],
+    "deploy": true,
+    "compose": false
+  },
+  "TELEGRAM_LOCAL_SERVER_URL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "TELEGRAPH_PUBLICATION_ENABLED": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "TZ": {
+    "readers": [],
+    "deploy": true,
+    "compose": false
+  },
+  "UPDATE_QUEUE_MAXSIZE": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "URL_SELECTION_MODEL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "USE_OPENROUTER": {
+    "readers": [],
+    "deploy": true,
+    "compose": false
+  },
+  "VERTEX_AI_KEY": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "VERTEX_AI_LOCATION": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "VERTEX_AI_PROJECT": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "VERTEX_LIVE_ENABLED": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "WEATHER_API_KEY": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "WEBAPP_BASE_URL": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "WEBHOOK_MAX_CONNECTIONS": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": false,
+    "compose": false
+  },
+  "WEBHOOK_SECRET_TOKEN": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
+  "WEBHOOK_URL": {
+    "readers": [
+      "app/games/crocodile_telegram.py",
+      "app/handlers/commands.py",
+      "app/handlers/daily_2048.py",
+      "app/handlers/daily_crocodile.py",
+      "app/handlers/daily_trivia.py",
+      "app/handlers/inline.py",
+      "app/handlers/menus.py",
+      "app/handlers/natal_chart.py",
+      "app/web_miniapp.py",
+      "bot.py"
+    ],
+    "deploy": true,
+    "compose": false
+  }
+}

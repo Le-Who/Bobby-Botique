@@ -286,7 +286,19 @@ async def _handle_regular_chat(
             await _handle_lyria_audio(placeholder_message, user_id, user_message, model_for_this_request)
         return
 
-    key_data, model_used, resolution = await _resolve_ai_request(model_for_this_request)
+    from app.process_policies import resolve_process
+
+    process_policy = await resolve_process("chat", (model_for_this_request,))
+    if process_policy.explicit:
+        from app.agent_use_cases import AgentRequestUseCase
+
+        # The configured plan owns fallback; the legacy preflight must not
+        # reject or ask to switch an unrelated user-selected baseline model.
+        model_used = process_policy.models[0]
+        key_data, _, _ = await AgentRequestUseCase().resolve_exact_ai_request(model_used)
+        resolution = "configured"
+    else:
+        key_data, model_used, resolution = await _resolve_ai_request(model_for_this_request)
 
     if resolution in ("all_exhausted", "decryption_failed"):
         result = classify_resolution(resolution, model_for_this_request)
@@ -586,7 +598,8 @@ async def _handle_regular_chat(
 
     try:
         request = await generation_request_from_history(
-            models=(model_used,),
+            process_id="chat",
+            models=(model_for_this_request,) if process_policy.explicit else (model_used,),
             history=provider_history,
             system_instruction=system_instruction,
             user_id=user_id,

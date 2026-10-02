@@ -479,6 +479,28 @@ async def test_exhausted_limits_shows_error_message(mock_boundaries):
 
 
 @pytest.mark.asyncio
+async def test_admin_chat_plan_bypasses_exhausted_legacy_preflight(mock_boundaries):
+    from app.process_policies import ResolvedPolicy
+
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
+    state = make_chat_state()
+    mock_boundaries["resolve"].return_value = (None, None, "all_exhausted")
+    policy = ResolvedPolicy(("gemini-configured", "gemini-backup"), "sequential", True, 9)
+    with (
+        patch("app.process_policies.resolve_process", new=AsyncMock(return_value=policy)),
+        patch(
+            "app.agent_use_cases.AgentRequestUseCase.resolve_exact_ai_request",
+            new=AsyncMock(return_value=(None, "gemini-configured", "all_exhausted")),
+        ),
+    ):
+        await _handle_regular_chat(placeholder, 123, "Hi", state)
+    mock_boundaries["resolve"].assert_not_awaited()
+    mock_boundaries["delivery"].stream.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_model_exhausted_prompts_fallback_confirmation(mock_boundaries):
     """
     Risk Covered: Silent failure when switching to fallback model instead of asking user.

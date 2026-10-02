@@ -1,12 +1,25 @@
 import asyncio
 import inspect
 from dataclasses import dataclass
+from types import MappingProxyType
+from unittest.mock import AsyncMock
 
 import pytest
 from telegram.ext import BaseUpdateProcessor
 
 from app.observability.context import current_context
 from app.update_processor import UserScopedUpdateProcessor
+
+
+@pytest.fixture(autouse=True)
+def isolated_runtime_settings(monkeypatch):
+    """These scheduling tests use a confirmed snapshot, with no external I/O."""
+    from app.runtime_settings.store import SettingsSnapshot
+
+    monkeypatch.setattr("app.runtime_settings.lifecycle.refresh_runtime_settings", AsyncMock())
+    monkeypatch.setattr(
+        "app.runtime_settings.store.get_snapshot", AsyncMock(return_value=SettingsSnapshot(0, MappingProxyType({})))
+    )
 
 
 @dataclass(frozen=True)

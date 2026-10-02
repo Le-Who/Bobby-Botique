@@ -428,12 +428,12 @@ class Settings(BaseModel):
     # Support comma-separated key list for rotation (same pattern as GEMINI_API_KEYS).
     OPENCODE_API_KEYS: list[str] = []  # sk-... keys, rotatable
     OPENCODE_AVAILABLE_MODELS: list[str] = []  # populated from env OPENCODE_AVAILABLE_MODELS
-    OPENCODE_DEFAULT_MODEL: str = "opencode-go/deepseek-v4-flash"
+    OPENCODE_DEFAULT_MODEL: str = "opencode-go/qwen3.5-plus"
     OPENCODE_QNA_MODEL: str = "opencode-go/qwen3.6-plus"  # High quality dialog
-    OPENCODE_RESEARCH_MODEL: str = "opencode-go/deepseek-v4-pro"  # Deep reasoning
+    OPENCODE_RESEARCH_MODEL: str = "opencode-go/glm-5.1"  # Deep reasoning
     OPENCODE_URL_SELECTION_MODEL: str = "opencode-go/big-pickle"
     OPENCODE_VISION_MODEL: str = "opencode-go/mimo-v2-omni"  # Multimodal
-    OPENCODE_INLINE_MODEL: str = "opencode-go/deepseek-v4-flash"  # Fast but pleasant
+    OPENCODE_INLINE_MODEL: str = "opencode-go/minimax-m2.5"  # Fast but pleasant
 
     # --- FREETHEAI MODELS ---
     # FreeTheAI router (freetheai.xyz/docs): supports chat (cat/, yng/),

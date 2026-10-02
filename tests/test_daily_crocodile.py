@@ -507,6 +507,10 @@ async def test_result_refresh_coalesces_multiple_queue_calls(monkeypatch) -> Non
 @pytest.mark.asyncio
 async def test_prepare_daily_puzzle_prefills_hints_and_image(monkeypatch) -> None:
     from app.games.crocodile_daily import prepare_daily_puzzle
+    from app.runtime_settings import lifecycle, store
+
+    monkeypatch.setattr(lifecycle, "refresh_runtime_settings", AsyncMock())
+    monkeypatch.setattr(store, "get_snapshot", AsyncMock(return_value=store.SettingsSnapshot(0, {})))
 
     puzzle_date = date(2026, 4, 21)
     puzzle = repo.DailyPuzzle(

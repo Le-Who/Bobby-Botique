@@ -5,6 +5,14 @@ from unittest.mock import AsyncMock
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _offline_runtime_settings(monkeypatch):
+    from app.runtime_settings import lifecycle, store
+
+    monkeypatch.setattr(lifecycle, "refresh_runtime_settings", AsyncMock())
+    monkeypatch.setattr(store, "get_snapshot", AsyncMock(return_value=store.SettingsSnapshot(0, {})))
+
+
 @pytest.mark.asyncio
 async def test_image_generation_honors_requested_model(monkeypatch):
     from app.games import crocodile_daily as daily
@@ -50,6 +58,7 @@ async def test_admin_text_settings_use_only_configured_gemini_models(monkeypatch
     from app import web
     from app.providers import pollinations
     from app.repos import settings_repo
+    from app.runtime_settings import store
 
     monkeypatch.setattr(web.settings, "AVAILABLE_MODELS", ["gemini-2.5-flash"])
     values = {}
@@ -57,12 +66,18 @@ async def test_admin_text_settings_use_only_configured_gemini_models(monkeypatch
     async def get(key, default=""):
         return values.get(key, default)
 
-    async def set_value(key, value):
-        values[key] = value
+    async def update_values(updates, *, removals=(), **kwargs):
+        values.update(updates)
+        for key in removals:
+            values.pop(key, None)
+        return store.SettingsSnapshot(1, values.copy())
 
     monkeypatch.setattr(web.settings, "ADMIN_SECRET", "test-token")
     monkeypatch.setattr(settings_repo, "get_global_setting", get)
-    monkeypatch.setattr(settings_repo, "set_global_setting", set_value)
+    monkeypatch.setattr(store, "update_values", update_values)
+    monkeypatch.setattr(
+        store, "get_snapshot", AsyncMock(side_effect=lambda **kwargs: store.SettingsSnapshot(0, values.copy()))
+    )
     monkeypatch.setattr(
         pollinations,
         "fetch_models",
@@ -75,7 +90,7 @@ async def test_admin_text_settings_use_only_configured_gemini_models(monkeypatch
         "/api/admin/dailycroc/text-model", headers={"X-Auth-Token": "test-token"}, json={"model": "gemini-2.5-flash"}
     )
     assert response.status_code == 200
-    assert values["daily_croc_text_model"] == "gemini-2.5-flash"
+    assert values["legacy_model:daily_croc_text_model"] == "gemini-2.5-flash"
     response = await client.get("/api/admin/dailycroc/models", headers={"X-Auth-Token": "test-token"})
     payload = await response.get_json()
     assert payload["text_model"] == "gemini-2.5-flash"

@@ -159,10 +159,28 @@ def _extract_audio_from_response(content: str) -> tuple[bytes | None, str, str]:
 class FreeTheAIAudioProvider:
     """Music generation via FreeTheAI using Lyria models."""
 
-    async def generate(
+    async def generate(self, prompt: str, model: str = LYRIA_DEFAULT) -> AudioGenResult:
+        from app.runtime_settings.result_execution import run_result_process
+
+        async def execute(candidate: str, explicit: bool) -> AudioGenResult:
+            return await self._generate_one_model(prompt, candidate, _honor_model=explicit)
+
+        return await run_result_process(
+            "music.fta",
+            model,
+            execute,
+            success=lambda result: result.success,
+            terminal=lambda result: result.error_message in {"no_keys", "unauthorized"},
+            timeout=300,
+            on_timeout=lambda: AudioGenResult(False, error_message="timeout"),
+        )
+
+    async def _generate_one_model(
         self,
         prompt: str,
         model: str = LYRIA_DEFAULT,
+        *,
+        _honor_model: bool = False,
     ) -> AudioGenResult:
         """Generate music from a text prompt.
 
@@ -173,7 +191,7 @@ class FreeTheAIAudioProvider:
         Returns:
             AudioGenResult with raw audio bytes on success.
         """
-        if model not in LYRIA_MODELS:
+        if not _honor_model and model not in LYRIA_MODELS:
             model = LYRIA_DEFAULT
 
         key_pair = _pick_key()

@@ -201,8 +201,12 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
         sys_prompt += "\nВедите диалог как таролог, отвечая на вопросы пользователя по этому раскладу."
 
         router = get_provider_router()
-        response_text, _ = await router.get_response(
-            preferred_model="gemini-3.1-flash-lite",
+        from app.process_policies import execute_text_process
+
+        response_text, _ = await execute_text_process(
+            "tarot.chat",
+            ("gemini-3.1-flash-lite",),
+            router=router,
             history=history,
             system_instruction=sys_prompt,
             user_id=user_id,

@@ -5,6 +5,13 @@ import re
 from typing import Literal
 
 from app.config import settings
+from app.prompt_registry import get_prompt_text, register_controlled_text
+
+register_controlled_text(
+    "vision.intent",
+    "Ты — классификатор интентов. Проанализируй запрос пользователя к картинке и определи его намерение (intent).\nЕсли пользователь хочет, чтобы с картинки извлекли, переписали, распознали, скопировали или перевели текст, ответь 'ocr'.\nЕсли пользователь хочет, чтобы картинку описали, объяснили, ответили на вопрос о ней, нашли что-то или проанализировали без прямого извлечения всего текста, ответь 'describe'.\nТвой ответ должен содержать ровно одно слово: либо 'ocr', либо 'describe'.",
+    "Фото: классификация намерения",
+)
 from app.handlers.ai_core import _get_ai_response_with_routing
 
 # Regex for fast-path detection
@@ -24,21 +31,13 @@ _DESCRIBE_PATTERNS = re.compile(
 )
 
 # In-memory dict cache for intent classification
-_INTENT_CACHE: dict[str, Literal["ocr", "describe"]] = {}
+_INTENT_CACHE: dict[tuple[int, str], Literal["ocr", "describe"]] = {}
 _MAX_CACHE_SIZE = 128
 
 
 async def _call_llm_for_intent(caption: str) -> Literal["ocr", "describe"]:
     """Call lightweight model to classify the caption intent."""
-    system_instruction = (
-        "Ты — классификатор интентов. Проанализируй запрос пользователя к картинке "
-        "и определи его намерение (intent).\n"
-        "Если пользователь хочет, чтобы с картинки извлекли, переписали, распознали, "
-        "скопировали или перевели текст, ответь 'ocr'.\n"
-        "Если пользователь хочет, чтобы картинку описали, объяснили, ответили на вопрос "
-        "о ней, нашли что-то или проанализировали без прямого извлечения всего текста, ответь 'describe'.\n"
-        "Твой ответ должен содержать ровно одно слово: либо 'ocr', либо 'describe'."
-    )
+    system_instruction = get_prompt_text("vision.intent")
 
     # We use settings.INLINE_MODEL (gemini-3.1-flash-lite) for low cost and high speed.
     model = getattr(settings, "INLINE_MODEL", "gemini-3.1-flash-lite")
@@ -50,6 +49,7 @@ async def _call_llm_for_intent(caption: str) -> Literal["ocr", "describe"]:
             history=history,
             system_instruction=system_instruction,
             timeout=5.0,  # Fast timeout for intent classification
+            process_id="vision.intent",
         )
         if response_text:
             cleaned = response_text.strip().lower()
@@ -74,8 +74,11 @@ async def classify_vision_intent(caption: str | None) -> Literal["ocr", "describ
         return "describe"
 
     cleaned = caption.strip()
-    if cleaned in _INTENT_CACHE:
-        return _INTENT_CACHE[cleaned]
+    from app.runtime_settings.lifecycle import operation_snapshot
+
+    cache_key = ((await operation_snapshot()).revision, cleaned)
+    if cache_key in _INTENT_CACHE:
+        return _INTENT_CACHE[cache_key]
 
     # Manage cache size
     if len(_INTENT_CACHE) >= _MAX_CACHE_SIZE:
@@ -100,5 +103,5 @@ async def classify_vision_intent(caption: str | None) -> Literal["ocr", "describ
             logging.error("Error classifying vision intent: %s", e)
             res = "describe"
 
-    _INTENT_CACHE[cleaned] = res
+    _INTENT_CACHE[cache_key] = res
     return res

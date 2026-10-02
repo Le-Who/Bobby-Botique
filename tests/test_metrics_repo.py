@@ -31,6 +31,10 @@ async def test_tavily_usage_stats_uses_utc_month_at_boundary():
 
 @pytest.mark.asyncio
 async def test_gemini_usage_stats_cross_joins_configured_models_to_include_zero_usage():
+    from types import MappingProxyType
+
+    from app.runtime_settings import store
+
     query = AsyncMock(return_value=[])
     fake_settings = type(
         "FakeSettings",
@@ -45,6 +49,7 @@ async def test_gemini_usage_stats_cross_joins_configured_models_to_include_zero_
     with (
         patch.object(metrics_repo, "db_query", query),
         patch.object(metrics_repo, "settings", fake_settings),
+        patch.object(store, "get_snapshot", AsyncMock(return_value=store.SettingsSnapshot(0, MappingProxyType({})))),
     ):
         await metrics_repo.get_gemini_key_usage_stats()
 

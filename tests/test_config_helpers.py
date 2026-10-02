@@ -20,6 +20,18 @@ from app.config import (
     normalize_gemini_runtime_model,
 )
 
+
+@pytest.mark.parametrize("name", ["OPENCODE_DEFAULT_MODEL", "OPENCODE_RESEARCH_MODEL", "OPENCODE_INLINE_MODEL"])
+def test_role_defaults_match_effective_loader_and_keep_overrides(monkeypatch, name):
+    from app.config import Settings
+
+    monkeypatch.delenv(name, raising=False)
+    baseline = load_settings()
+    assert getattr(baseline, name) == Settings.model_fields[name].default
+    monkeypatch.setenv(name, "opencode-go/explicit-choice")
+    assert getattr(load_settings(), name) == "opencode-go/explicit-choice"
+
+
 # ── get_model_hash ───────────────────────────────────────────────────────────
 
 

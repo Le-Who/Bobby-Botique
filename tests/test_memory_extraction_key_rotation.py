@@ -26,6 +26,7 @@ async def test_extraction_rotates_full_database_key_hash_after_provider_failure(
         patch("app.handlers.ai_core._resolve_ai_request", resolver),
         patch("app.providers.gemini.get_cached_genai_client", return_value=provider),
         patch("app.repos.keys.get_key_status_manager", return_value=status),
+        patch("app.repos.keys.reserve_gemini_key_usage", new=AsyncMock(return_value=True)) as reserve,
         patch("app.repos.memory_extraction.asyncio.sleep", new=AsyncMock()),
     ):
         result = await memory_extraction.extract_graph_structured("A personal fact worth remembering", "bad-key")
@@ -34,3 +35,5 @@ async def test_extraction_rotates_full_database_key_hash_after_provider_failure(
     assert resolver.await_args.kwargs["excluded_key_hashes"] == {bad_hash}
     assert status.suspend_key.await_args.args[0] == bad_hash
     assert status.record_success.await_args.args[0] == good_hash
+    assert [call.args[0] for call in reserve.await_args_list] == [bad_hash, good_hash]
+    assert all(call.args[1] == memory_extraction.GRAPH_EXTRACTION_MODEL for call in reserve.await_args_list)

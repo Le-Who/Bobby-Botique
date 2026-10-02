@@ -8,6 +8,9 @@ from dataclasses import dataclass
 
 from app.games.ai_budget import HintGenerationMode, has_any_ai_studio_cooldown, should_pause_background_prefetch
 from app.games.crocodile_flags import is_hint_prewarm_enabled
+from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
+from app.runtime_settings.cache_identity import cache_identity
+from app.runtime_settings.lifecycle import runtime_settings_scope
 from app.utils.background_tasks import start_background_task
 from app.utils.json_compat import json
 
@@ -114,6 +117,13 @@ def _extract_batched_hints(response_text: str, requested_words: tuple[str, ...])
     return accepted
 
 
+register_controlled_text(
+    "crocodile.hints.batch",
+    'Игра «Крокодил».\nНиже слова одной темы{c_str}:\n{word_lines}\n\nДля КАЖДОГО слова верни отдельные 3 подсказки на русском языке.\nОтветь ТОЛЬКО JSON в формате {{"items":[{{"word":"...","hints":["...","...","..."]}}]}}.\nПравила:\n- В items должны быть записи только для перечисленных слов.\n- Подсказки слова A не должны подходить к слову B.\n- Не смешивай слова между собой и не пропускай поле word.\n- Каждая hints содержит ровно 3 непустые подсказки.\n- Не называй само слово и не используй однокоренные слова.',
+    "Крокодил: пакет подсказок",
+)
+
+
 async def _generate_batched_hints(
     words: tuple[str, ...], category: str, *, model: str | None = None
 ) -> dict[str, list[str]]:
@@ -123,7 +133,7 @@ async def _generate_batched_hints(
     import app.config as config_module
     from app.errors import classify_key_error, extract_retry_after_seconds, is_error_message, strip_error_tag
     from app.games.ai_budget import acquire_background_slot, record_result
-    from app.games.daily_ai import generate_daily_text, get_daily_text_model_for
+    from app.games.daily_ai import generate_daily_text_for, get_daily_text_model_for
     from app.providers import get_provider_router
 
     settings_obj = getattr(config_module, "settings", None)
@@ -134,22 +144,11 @@ async def _generate_batched_hints(
 
     c_str = f" (категория: {category})" if category and "особое" not in category.lower() else ""
     word_lines = "\n".join(f"- {word}" for word in words)
-    prompt = (
-        "Игра «Крокодил».\n"
-        f"Ниже слова одной темы{c_str}:\n{word_lines}\n\n"
-        "Для КАЖДОГО слова верни отдельные 3 подсказки на русском языке.\n"
-        'Ответь ТОЛЬКО JSON в формате {"items":[{"word":"...","hints":["...","...","..."]}]}.'
-        "\nПравила:\n"
-        "- В items должны быть записи только для перечисленных слов.\n"
-        "- Подсказки слова A не должны подходить к слову B.\n"
-        "- Не смешивай слова между собой и не пропускай поле word.\n"
-        "- Каждая hints содержит ровно 3 непустые подсказки.\n"
-        "- Не называй само слово и не используй однокоренные слова."
-    )
+    prompt = render_prompt_text(get_prompt_text("crocodile.hints.batch"), c_str=c_str, word_lines=word_lines)
 
     if selected_model:
         try:
-            response_text = await generate_daily_text(prompt, selected_model, timeout=25.0)
+            response_text = await generate_daily_text_for("hints", prompt, selected_model, timeout=25.0)
             return _extract_batched_hints(response_text, words)
         except Exception as exc:
             logger.debug("Selected Gemini batch hints failed model=%s: %s", selected_model, type(exc).__name__)
@@ -191,13 +190,19 @@ async def _generate_batched_hints(
     return accepted
 
 
+@runtime_settings_scope()
 async def _prewarm_topic_hints(words: tuple[str, ...], category: str, *, topic_id: str = "") -> None:
     from app.games.daily_ai import get_daily_text_model_for
     from app.games.judge import generate_hints, model_cache_topic
     from app.games.judgement_cache import cache_hints, get_cached_hints
 
     model = await get_daily_text_model_for("hints")
-    cache_topic = model_cache_topic(topic_id, category, model)
+    cache_topic = await cache_identity(
+        "crocodile.hints",
+        model_cache_topic(topic_id, category, model),
+        "crocodile.hints.classic",
+        "crocodile.hints.batch",
+    )
     pending_words: list[str] = []
     for word in words:
         cached = await get_cached_hints(word, category, topic_id=cache_topic)
@@ -231,7 +236,12 @@ async def get_or_generate_cached_hints(
     from app.games.judgement_cache import cache_hints, get_cached_hints
 
     model = await get_daily_text_model_for("hints")
-    cache_topic = model_cache_topic(topic_id, category, model)
+    cache_topic = await cache_identity(
+        "crocodile.hints",
+        model_cache_topic(topic_id, category, model),
+        "crocodile.hints.classic",
+        "crocodile.hints.batch",
+    )
     cached = await get_cached_hints(word, category, topic_id=cache_topic)
     if cached:
         return cached

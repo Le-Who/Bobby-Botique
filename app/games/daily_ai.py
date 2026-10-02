@@ -9,6 +9,8 @@ import asyncio
 import logging
 import re
 
+from app.process_policies import resolve_process
+from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
 from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
@@ -20,25 +22,69 @@ TEXT_MODEL_PROCESSES = {
     "judge": "Проверка ответов",
     "image_prompt": "Описание для картинки",
 }
+_WORD_PROMPT = (
+    "Игра Крокодил. Придумай одно русское слово для темы {topic}, сложность {difficulty}. "
+    "Это должен быть узнаваемый предмет, существо или явление, которое можно изобразить. "
+    "Easy: общеизвестное простое слово; hard: менее очевидное, но общеупотребительное. "
+    'Ответь только JSON: {{"word":"слово"}}. Не больше трёх слов. '
+    "Не повторяй ранее использованные: {used_words}."
+)
+_HINTS_PROMPT = (
+    "Игра Крокодил. Секретное слово: {word}. Тема: {topic}. "
+    "Дай три разные подсказки на русском, от общей к конкретной. "
+    "Не называй само слово и не используй однокоренные слова. "
+    'Ответь только JSON: {{"hints":["...","...","..."]}}.'
+)
+register_controlled_text("crocodile.word", _WORD_PROMPT, "Крокодил: новое слово")
+register_controlled_text("crocodile.hints", _HINTS_PROMPT, "Крокодил: подсказки")
 
 
 async def get_daily_text_model() -> str:
     from app.config import is_gemini_chat_model_id
     from app.repos.settings_repo import get_global_setting
+    from app.runtime_settings.legacy_models import read_value
 
     model = (await get_global_setting(DAILY_TEXT_MODEL_SETTING_KEY, "") or "").strip()
-    return model if is_gemini_chat_model_id(model) else ""
+    return await read_value(DAILY_TEXT_MODEL_SETTING_KEY, model if is_gemini_chat_model_id(model) else "")
 
 
 async def get_daily_text_model_for(process: str) -> str:
     """Resolve a shared daily/classic role, inheriting the historical default."""
     from app.config import is_gemini_chat_model_id
     from app.repos.settings_repo import get_global_setting
+    from app.runtime_settings.legacy_models import read_value
 
     if process not in TEXT_MODEL_PROCESSES:
         raise ValueError(f"Unknown Crocodile text model process: {process}")
     model = (await get_global_setting(f"{DAILY_TEXT_MODEL_SETTING_KEY}_{process}", "") or "").strip()
-    return model if is_gemini_chat_model_id(model) else await get_daily_text_model()
+    model = await read_value(
+        f"{DAILY_TEXT_MODEL_SETTING_KEY}_{process}", model if is_gemini_chat_model_id(model) else ""
+    )
+    baseline = model or await get_daily_text_model()
+    policy = await resolve_process(f"crocodile.{process}", (baseline,) if baseline else ())
+    return policy.models[0] if policy.explicit else baseline
+
+
+async def generate_daily_text_for(process: str, prompt: str, model: str, timeout: float = 30.0) -> str:
+    """Execute the complete configured Gemini chain through the existing game SDK path."""
+    if process not in TEXT_MODEL_PROCESSES:
+        raise ValueError(f"Unknown Crocodile text model process: {process}")
+    policy = await resolve_process(f"crocodile.{process}", (model,) if model else ())
+    if not policy.explicit:
+        return await generate_daily_text(prompt, model, timeout=timeout)
+    async with asyncio.timeout(timeout):
+        last_error: Exception | None = None
+        for candidate in policy.models:
+            try:
+                response = await generate_daily_text(prompt, candidate, timeout=timeout)
+                json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", response.strip(), flags=re.IGNORECASE))
+                return response
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Crocodile process %s failed model=%s: %s", process, candidate, type(exc).__name__)
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Empty Crocodile model plan")
 
 
 async def generate_daily_text(prompt: str, model: str, timeout: float = 30.0) -> str:
@@ -101,15 +147,11 @@ def _json_object(text: str) -> dict:
 
 async def generate_daily_word(topic: str, difficulty: str, used_words: set[str], model: str) -> str | None:
     """Reject malformed or repeated AI words so callers can fall back to the word bank."""
-    prompt = (
-        f"Игра Крокодил. Придумай одно русское слово для темы {topic}, сложность {difficulty}. "
-        "Это должен быть узнаваемый предмет, существо или явление, которое можно изобразить. "
-        "Easy: общеизвестное простое слово; hard: менее очевидное, но общеупотребительное. "
-        'Ответь только JSON: {"word":"слово"}. Не больше трёх слов. '
-        f"Не повторяй ранее использованные: {', '.join(sorted(used_words))}."
+    prompt = render_prompt_text(
+        get_prompt_text("crocodile.word"), topic=topic, difficulty=difficulty, used_words=", ".join(sorted(used_words))
     )
     try:
-        value = _json_object(await generate_daily_text(prompt, model)).get("word")
+        value = _json_object(await generate_daily_text_for("words", prompt, model)).get("word")
         if not isinstance(value, str):
             return None
         word = " ".join(value.lower().split())
@@ -127,14 +169,9 @@ async def generate_daily_word(topic: str, difficulty: str, used_words: set[str],
 
 
 async def generate_daily_hints(word: str, topic: str, model: str) -> list[str]:
-    prompt = (
-        f"Игра Крокодил. Секретное слово: {word}. Тема: {topic}. "
-        "Дай три разные подсказки на русском, от общей к конкретной. "
-        "Не называй само слово и не используй однокоренные слова. "
-        'Ответь только JSON: {"hints":["...","...","..."]}.'
-    )
+    prompt = render_prompt_text(get_prompt_text("crocodile.hints"), word=word, topic=topic)
     try:
-        items = _json_object(await generate_daily_text(prompt, model)).get("hints")
+        items = _json_object(await generate_daily_text_for("hints", prompt, model)).get("hints")
         if not isinstance(items, list) or len(items) != 3:
             return []
         hints = [item.strip() for item in items if isinstance(item, str) and 2 <= len(item.strip()) <= 300]

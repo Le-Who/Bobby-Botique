@@ -140,8 +140,13 @@ class GenerationRequest:
     grounding: GroundingMode = GroundingMode.NONE
     workload: Workload = Workload.INTERACTIVE
     allow_deferred: bool = True
+    route_strategy: str = "legacy"
+    allow_model_fallback: bool = True
+    policy_revision: int = 0
 
     def __post_init__(self) -> None:
+        if self.route_strategy not in {"legacy", "sequential", "hedged"}:
+            raise ValueError("Unknown route strategy")
         models: list[str] = []
         seen: set[str] = set()
         for model in self.models:

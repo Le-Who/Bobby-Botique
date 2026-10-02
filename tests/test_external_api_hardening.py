@@ -559,9 +559,9 @@ async def test_imagen_uses_current_gemini_image_generation_contract(monkeypatch)
     monkeypatch.setattr(imagen_provider.settings, "GEMINI_API_KEYS", ["image-api-key"])
     monkeypatch.setattr(imagen_provider.settings, "IMAGE_GEN_MAX_RETRIES", 1)
     monkeypatch.setattr(imagen_provider, "_consume_user_daily_quota", AsyncMock(return_value=True))
-    monkeypatch.setattr(imagen_provider, "_get_key_usage", AsyncMock(return_value=0))
-    increment = AsyncMock()
-    monkeypatch.setattr(imagen_provider, "_increment_key_usage", increment)
+    monkeypatch.setattr(imagen_provider, "_reserve_key_usage", AsyncMock(return_value=True))
+    reservation = AsyncMock(return_value=True)
+    monkeypatch.setattr(imagen_provider, "_reserve_key_usage", reservation)
     monkeypatch.setattr(imagen_provider, "get_cached_genai_client", lambda _key: client)
 
     try:
@@ -595,7 +595,7 @@ async def test_imagen_uses_current_gemini_image_generation_contract(monkeypatch)
         "type": "image",
         "aspect_ratio": "16:9",
     }
-    increment.assert_awaited_once_with("image-api-key")
+    reservation.assert_awaited_once_with("image-api-key")
 
 
 @pytest.mark.asyncio
@@ -624,9 +624,9 @@ async def test_imagen_classifies_interactions_rate_limit(monkeypatch):
     monkeypatch.setattr(imagen_provider.settings, "GEMINI_API_KEYS", ["image-api-key"])
     monkeypatch.setattr(imagen_provider.settings, "IMAGE_GEN_MAX_RETRIES", 1)
     monkeypatch.setattr(imagen_provider, "_consume_user_daily_quota", AsyncMock(return_value=True))
-    monkeypatch.setattr(imagen_provider, "_get_key_usage", AsyncMock(return_value=0))
-    increment = AsyncMock()
-    monkeypatch.setattr(imagen_provider, "_increment_key_usage", increment)
+    monkeypatch.setattr(imagen_provider, "_reserve_key_usage", AsyncMock(return_value=True))
+    reservation = AsyncMock(return_value=True)
+    monkeypatch.setattr(imagen_provider, "_reserve_key_usage", reservation)
     monkeypatch.setattr(imagen_provider, "get_cached_genai_client", lambda _key: client)
 
     try:
@@ -636,7 +636,7 @@ async def test_imagen_classifies_interactions_rate_limit(monkeypatch):
 
     assert result.success is False
     assert result.error_message == "quota"
-    increment.assert_awaited_once_with("image-api-key")
+    reservation.assert_awaited_once_with("image-api-key")
 
 
 @pytest.mark.asyncio
@@ -649,7 +649,7 @@ async def test_imagen_error_is_sanitized_in_logs_and_user_result(monkeypatch, ca
     monkeypatch.setattr(imagen_provider.settings, "GEMINI_API_KEYS", ["imagen-api-key-raw"])
     monkeypatch.setattr(imagen_provider.settings, "IMAGE_GEN_MAX_RETRIES", 1)
     monkeypatch.setattr(imagen_provider, "_consume_user_daily_quota", AsyncMock(return_value=True))
-    monkeypatch.setattr(imagen_provider, "_get_key_usage", AsyncMock(return_value=0))
+    monkeypatch.setattr(imagen_provider, "_reserve_key_usage", AsyncMock(return_value=True))
     monkeypatch.setattr(imagen_provider, "get_cached_genai_client", lambda _key: client)
 
     with caplog.at_level(logging.INFO):

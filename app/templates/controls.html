@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content="{{ csrf_token }}" />
+    <meta name="color-scheme" content="dark" />
+    <title>Управление · GemAI</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/controls.css', v='controls-20261002-2') }}" />
+    <script nonce="{{ g.csp_nonce }}" src="{{ url_for('static', filename='js/controls.js', v='controls-20261002-2') }}" defer></script>
+    <script nonce="{{ g.csp_nonce }}" src="{{ url_for('static', filename='js/controls-navigation.js', v='controls-20261002-2') }}" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">К настройкам</a>
+    <header class="app-header">
+      <a class="brand" href="/">GemAI <span>операционная панель</span></a>
+      <nav aria-label="Разделы панели"><a href="/">Мониторинг</a><a href="/controls" aria-current="page">Управление</a><a href="/admin_daily">Daily Admin</a><a href="{{ url_for('logout') }}">Выйти ↗</a></nav>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar">
+        <p class="eyebrow">Конфигурация</p>
+        <nav aria-label="Настройки">
+          <a href="#processes">Маршруты моделей <span id="process-count">—</span></a>
+          <a href="#prompts">Промпты <span id="prompt-count">—</span></a>
+          <a href="#catalogs">Каталоги</a>
+          <a href="#limits">Суточные лимиты</a>
+          <a href="#history">История изменений</a>
+        </nav>
+        <div class="sidebar-note"><strong id="revision">Загрузка…</strong><p>Изменения применяются к новым запросам. Другие экземпляры проверяют их при следующем обращении; TTL кэша — 5 секунд. Момент применения указан в каждой карточке.</p></div>
+      </aside>
+      <main id="main" tabindex="-1">
+        <div class="page-heading"><p class="eyebrow">GemAI / настройки</p><h1>Управление моделями</h1><p class="intro">Маршруты, инструкции и лимиты. Изменения сохраняются отдельно в каждой карточке.</p></div>
+        <div class="view-toolbar">
+          <label class="section-picker" for="section-select">Раздел<select id="section-select"><option value="processes">Маршруты моделей</option><option value="prompts">Системные промпты</option><option value="catalogs">Каталоги моделей</option><option value="limits">Суточные лимиты</option><option value="history">История изменений</option></select></label>
+          <strong id="view-revision" class="muted">Загрузка…</strong>
+          <button id="refresh" class="button secondary" type="button">Обновить данные</button>
+        </div>
+        <p id="notice" class="notice" role="status" aria-live="polite">Получаем текущие настройки…</p>
+        <noscript><p class="notice error">Для просмотра и изменения настроек включите JavaScript.</p></noscript>
+        <section id="processes" class="control-section"><div class="section-heading"><h2>Маршруты моделей</h2><p>Приоритет сверху вниз. Проверка маршрута не вызывает модель.</p></div><div class="filters"><label class="field">Найти процесс<input id="process-search" type="search" placeholder="Название, ID, модель…" /></label><label class="field">Группа<select id="process-group"><option value="">Все группы</option></select></label><span id="process-visible" class="muted" role="status"></span></div><div id="process-list" class="cards"></div></section>
+        <section id="prompts" class="control-section" hidden><div class="section-heading"><h2>Системные промпты</h2><p>Сравните текст с базовым шаблоном перед сохранением.</p></div><div class="filters"><label class="field">Найти инструкцию<input id="prompt-search" type="search" placeholder="Название, ID, текст…" /></label><span id="prompt-visible" class="muted" role="status"></span></div><div id="prompt-list" class="cards"></div></section>
+        <section id="catalogs" class="control-section" hidden><div class="section-heading"><h2>Каталоги моделей</h2><p>Списки для выбора моделей. Наличие ID в каталоге не гарантирует доступ у провайдера.</p></div><div id="catalog-list" class="cards"></div></section>
+        <section id="limits" class="control-section" hidden><div class="section-heading"><h2>Суточные лимиты Gemini</h2><p>Локальный предел запросов Gemini на один ключ в сутки (RPD) для путей с общим учётом ключей. Изображения Gemini используют отдельный IMAGE_GEN_RPD_PER_KEY и пользовательский IMAGE_GEN_DAILY_LIMIT; эти пределы здесь не меняются. Это ограничения бота, а не официальная квота провайдера. Пустое значение снимает локальный предел. Новые запросы читают сохранённое значение; другие экземпляры проверяют изменения при следующем обращении после TTL кэша в 5 секунд.</p></div><div id="limit-list" class="cards compact"></div></section>
+        <section id="history" class="control-section" hidden><div class="section-heading"><h2>История изменений</h2><p>Восстановление создаёт новую ревизию конфигурации.</p></div><div id="history-list" class="history-list"></div></section>
+        <footer>GemAI · Изменения доступны только администраторам.</footer>
+      </main>
+    </div>
+  </body>
+</html>

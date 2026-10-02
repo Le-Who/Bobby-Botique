@@ -51,9 +51,61 @@ class Task:
 
 # ── Redis key constants ─────────────────────────────────────────────────
 _QUEUE_PREFIX = "gemaibotv2:queue"  # List per priority: gemaibotv2:queue:4, :3, :2, :1
-_PROCESSING_KEY = "gemaibotv2:processing"  # List of task JSONs currently being processed
+_PROCESSING_KEY = "gemaibotv2:processing"  # Legacy unowned processing list; preserved during rolling upgrades
+_OWNERS_KEY = "gemaibotv2:queue:owners"
+_LEASE_PREFIX = "gemaibotv2:queue:lease"
+_LEASE_SECONDS = 60
+_LEASE_RENEW_INTERVAL = 15.0
+_REDIS_TIMEOUT = 5.0
 _TASK_HASH_PREFIX = "gemaibotv2:task"  # Hash per task: gemaibotv2:task:{id}
 _IDLE_POLL_TIMEOUT = 30.0  # seconds — fallback poll when Event not fired
+
+# Claims and disposition are fenced by a unique queue-instance lease. A crashed
+# owner's processing list persists without TTL and is recovered atomically only
+# after its lease expires. Recovery never deletes a whole shared list.
+_ACQUIRE_LEASE = """
+if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2]) then
+    redis.call('SADD', KEYS[2], ARGV[1])
+    return 1
+end
+return 0
+"""
+_RENEW_LEASE = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return 0
+"""
+_RELEASE_LEASE = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+_CLAIM_TASK = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return nil end
+return redis.call('RPOPLPUSH', KEYS[2], KEYS[3])
+"""
+_FINISH_TASK = """
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+local removed = redis.call('LREM', KEYS[2], 1, ARGV[2])
+if removed == 1 and ARGV[3] ~= '' then
+    redis.call('LPUSH', KEYS[3], ARGV[3])
+end
+return removed
+"""
+_RECOVER_TASK = """
+if ARGV[3] ~= 'legacy' and redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+local removed = redis.call('LREM', KEYS[2], 1, ARGV[1])
+if removed == 1 then redis.call('LPUSH', KEYS[3], ARGV[2]) end
+return removed
+"""
+_REMOVE_OWNER = """
+if redis.call('EXISTS', KEYS[1]) == 0 and redis.call('LLEN', KEYS[2]) == 0 then
+    return redis.call('SREM', KEYS[3], ARGV[1])
+end
+return 0
+"""
 
 
 def _queue_key(priority: TaskPriority) -> str:
@@ -131,10 +183,17 @@ class TaskQueue:
         self.max_workers = max_workers
         self.tasks: dict[str, Task] = {}
         self.workers: list[asyncio.Task] = []
+        self._executions: dict[str, asyncio.Task] = {}
+        self._redis_executions: set[str] = set()
         self.running = False
         self._task_handlers: dict[str, Callable] = {}
         self._cleanup_task: asyncio.Task | None = None
         self._metrics_scheduler_task: asyncio.Task | None = None
+        self._lease_task: asyncio.Task | None = None
+        self._owner_id = uuid.uuid4().hex
+        self._lease_acquired = False
+        self._lease_lost = False
+        self._lease_lock = asyncio.Lock()
         # In-memory fallback queue (used when Redis unavailable)
         self._fallback_queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=100)
         self._use_redis = False
@@ -186,45 +245,134 @@ class TaskQueue:
             "metrics cleanup scheduler",
         )
 
-    async def _recover_processing_tasks(self):
-        """On startup, move tasks stuck in processing list back to their queues."""
+    @property
+    def _processing_key(self) -> str:
+        return f"{_PROCESSING_KEY}:{self._owner_id}"
+
+    @property
+    def _lease_key(self) -> str:
+        return f"{_LEASE_PREFIX}:{self._owner_id}"
+
+    async def _ensure_lease(self, redis) -> bool:
+        async with self._lease_lock:
+            if self._lease_lost:
+                if self._redis_executions:
+                    return False
+                # Resume admission under a new fenced identity only after every
+                # handler from the lost lease has stopped. The old list remains
+                # available for expired-owner recovery.
+                self._owner_id = uuid.uuid4().hex
+                self._lease_acquired = False
+                self._lease_lost = False
+            if not self._lease_acquired:
+                async with asyncio.timeout(_REDIS_TIMEOUT):
+                    self._lease_acquired = bool(
+                        await redis.eval(
+                            _ACQUIRE_LEASE, 2, self._lease_key, _OWNERS_KEY, self._owner_id, _LEASE_SECONDS
+                        )
+                    )
+                if self._lease_acquired and self.running:
+                    self._lease_task = self._start_background_task(
+                        self._lease_task, self._maintain_lease, "task queue ownership lease"
+                    )
+            return self._lease_acquired
+
+    async def _maintain_lease(self):
+        while self.running:
+            await asyncio.sleep(_LEASE_RENEW_INTERVAL)
+            try:
+                redis = _get_redis()
+                if redis is None:
+                    raise ConnectionError("Redis unavailable")
+                async with asyncio.timeout(_REDIS_TIMEOUT):
+                    renewed = await redis.eval(_RENEW_LEASE, 1, self._lease_key, self._owner_id, _LEASE_SECONDS)
+                if not renewed:
+                    raise ConnectionError("Queue ownership lease expired")
+            except Exception as error:
+                # Fail closed on the first renewal failure, well before the TTL.
+                # Never resurrect a lost owner while its old handlers may execute.
+                self._lease_lost = True
+                for task_id in tuple(self._redis_executions):
+                    execution = self._executions.get(task_id)
+                    if execution is not None:
+                        execution.cancel()
+                logging.warning("Queue ownership lease lost: %s", type(error).__name__)
+                return
+            await self._recover_processing_tasks()
+
+    async def _recover_processing_tasks(self, *, recover_legacy: bool = False):
+        try:
+            async with asyncio.timeout(_REDIS_TIMEOUT):
+                await self._recover_processing_tasks_inner(recover_legacy=recover_legacy)
+        except TimeoutError:
+            logging.warning("Queue recovery timed out; retained entries will be retried")
+
+    async def _recover_processing_tasks_inner(self, *, recover_legacy: bool = False):
+        """Recover expired owners, preserving live replicas and malformed entries.
+
+        ``recover_legacy=True`` is a controlled one-time migration operation:
+        callers must first stop/drain ALL workers using the old shared list.
+        Unowned legacy entries cannot prove that their old worker has stopped.
+        """
         redis = _get_redis()
         if not redis:
             return
 
         try:
-            # Get all items in processing list
-            stuck = await redis.lrange(_PROCESSING_KEY, 0, -1)
-            if not stuck:
-                return
-
-            logging.warning("Recovering %d tasks from processing list (likely crashed)", len(stuck))
-            for raw in stuck:
-                try:
-                    task = _task_from_json(raw)
-                    task.status = TaskStatus.PENDING
-                    task.retry_count += 1
-                    # Re-enqueue
-                    await redis.lpush(_queue_key(task.priority), _task_to_json_bytes(task))
-                    # Update in-memory cache
-                    self.tasks[task.id] = task
-                    emit(
-                        "job.retry_scheduled",
-                        level="warning",
-                        operation="job.recover",
-                        job_id=task.id,
-                        task_type=task.task_type,
-                        retry_count=task.retry_count,
-                        reason_code="process_recovery",
-                        backend="redis",
-                        delay_seconds=0,
-                    )
-                except Exception as e:
-                    logging.error("Failed to recover task: %s", e, exc_info=True)
-
-            # Clear processing list
-            await redis.delete(_PROCESSING_KEY)
-            logging.info("Recovery complete: %d tasks re-queued", len(stuck))
+            legacy_count = await redis.llen(_PROCESSING_KEY)
+            if legacy_count and not recover_legacy:
+                logging.warning(
+                    "Preserving %d legacy processing tasks; controlled recovery requires draining old workers",
+                    legacy_count,
+                )
+            owners = await redis.smembers(_OWNERS_KEY)
+            sources = [(owner.decode() if isinstance(owner, bytes) else owner, False) for owner in owners]
+            if recover_legacy:
+                sources.append(("", True))
+            recovered = 0
+            for owner, legacy in sources:
+                lease_key = f"{_LEASE_PREFIX}:{owner}"
+                processing_key = _PROCESSING_KEY if legacy else f"{_PROCESSING_KEY}:{owner}"
+                if not legacy and await redis.exists(lease_key):
+                    continue
+                for raw in await redis.lrange(processing_key, 0, -1):
+                    try:
+                        task = _task_from_json(raw)
+                        task.status = TaskStatus.PENDING
+                        task.started_at = None
+                        task.retry_count += 1
+                        moved = await redis.eval(
+                            _RECOVER_TASK,
+                            3,
+                            lease_key,
+                            processing_key,
+                            _queue_key(task.priority),
+                            raw,
+                            _task_to_json_bytes(task),
+                            "legacy" if legacy else "owned",
+                        )
+                        if not moved:
+                            continue
+                        recovered += 1
+                        self.tasks[task.id] = task
+                        self._work_available.set()
+                        emit(
+                            "job.retry_scheduled",
+                            level="warning",
+                            operation="job.recover",
+                            job_id=task.id,
+                            task_type=task.task_type,
+                            retry_count=task.retry_count,
+                            reason_code="process_recovery",
+                            backend="redis",
+                            delay_seconds=0,
+                        )
+                    except Exception as error:
+                        logging.warning("Processing recovery retained entry: %s", type(error).__name__)
+                if not legacy:
+                    await redis.eval(_REMOVE_OWNER, 3, lease_key, processing_key, _OWNERS_KEY, owner)
+            if recovered:
+                logging.info("Recovery complete: %d tasks re-queued", recovered)
         except Exception as e:
             logging.error("Task recovery failed: %s", e, exc_info=True)
 
@@ -242,6 +390,20 @@ class TaskQueue:
 
         await asyncio.gather(*self.workers, return_exceptions=True)
         self.workers.clear()
+
+        await self._cancel_background_task("_lease_task")
+        if self._lease_acquired:
+            redis = _get_redis()
+            if redis is not None:
+                try:
+                    async with asyncio.timeout(_REDIS_TIMEOUT):
+                        await redis.eval(_RELEASE_LEASE, 1, self._lease_key, self._owner_id)
+                        await self._recover_processing_tasks()
+                except Exception as error:
+                    logging.warning("Queue shutdown retains processing tasks: %s", type(error).__name__)
+            self._lease_acquired = False
+            self._owner_id = uuid.uuid4().hex
+            self._lease_lost = False
 
         # Cancel background tasks
         await self._cancel_background_task("_cleanup_task")
@@ -349,6 +511,9 @@ class TaskQueue:
         if task.status in [TaskStatus.PENDING, TaskStatus.RUNNING]:
             task.status = TaskStatus.CANCELLED
             task.completed_at = datetime.now(tz=UTC)
+            execution = self._executions.get(task_id)
+            if execution is not None:
+                execution.cancel()
             emit(
                 "job.cancelled",
                 level="warning",
@@ -372,19 +537,26 @@ class TaskQueue:
             redis = _get_redis()
             if redis:
                 try:
-                    # Poll priority lists from highest (4=URGENT) to lowest (1=LOW)
-                    for prio_val in (4, 3, 2, 1):
-                        raw = await redis.rpoplpush(f"{_QUEUE_PREFIX}:{prio_val}", _PROCESSING_KEY)
-                        if raw:
-                            task = _task_from_json(raw)
-                            # Preserve original bytes for ack/nack (task fields mutate later)
-                            original = raw if isinstance(raw, bytes) else raw.encode()
-                            return task, original
+                    if await self._ensure_lease(redis):
+                        for prio_val in (4, 3, 2, 1):
+                            async with asyncio.timeout(_REDIS_TIMEOUT):
+                                raw = await redis.eval(
+                                    _CLAIM_TASK,
+                                    3,
+                                    self._lease_key,
+                                    f"{_QUEUE_PREFIX}:{prio_val}",
+                                    self._processing_key,
+                                    self._owner_id,
+                                )
+                            if raw:
+                                task = _task_from_json(raw)
+                                original = raw if isinstance(raw, bytes) else raw.encode()
+                                return task, original
                 except Exception as e:
                     logging.error("Redis dequeue failed: %s", e, exc_info=True)
-                return None, None
 
-        # Fallback: in-memory queue
+        # Failed Redis writes can leave local work even while the client exists.
+        # Drain it after an empty/failed Redis read; local tasks have no Redis ACK.
         try:
             _, task_id = self._fallback_queue.get_nowait()
             return self.tasks.get(task_id), None
@@ -403,28 +575,44 @@ class TaskQueue:
             redis = _get_redis()
             if redis:
                 try:
-                    await redis.lrem(_PROCESSING_KEY, 1, original_json)
+                    async with asyncio.timeout(_REDIS_TIMEOUT):
+                        await redis.eval(
+                            _FINISH_TASK,
+                            3,
+                            self._lease_key,
+                            self._processing_key,
+                            "",
+                            self._owner_id,
+                            original_json,
+                            "",
+                        )
                 except Exception as e:
                     logging.debug("Redis ack cleanup: %s", e)
 
     async def _nack_task(self, task: Task, original_json: bytes | None):
         """Return a failed task to the queue for retry."""
-        if self._use_redis:
+        task.status = TaskStatus.PENDING
+        if original_json is not None and self._use_redis:
             redis = _get_redis()
             if redis:
                 try:
-                    # Remove from processing list using original bytes
-                    if original_json:
-                        await redis.lrem(_PROCESSING_KEY, 1, original_json)
-                    # Re-enqueue with updated state
-                    task.status = TaskStatus.PENDING
-                    await redis.lpush(_queue_key(task.priority), _task_to_json_bytes(task))
+                    async with asyncio.timeout(_REDIS_TIMEOUT):
+                        await redis.eval(
+                            _FINISH_TASK,
+                            3,
+                            self._lease_key,
+                            self._processing_key,
+                            _queue_key(task.priority),
+                            self._owner_id,
+                            original_json,
+                            _task_to_json_bytes(task),
+                        )
                     self._work_available.set()  # Wake workers for retry
                 except Exception as e:
                     logging.error("Redis nack failed: %s", e, exc_info=True)
         else:
             try:
-                await self._fallback_queue.put((-task.priority.value + 1, task.id))
+                await asyncio.wait_for(self._fallback_queue.put((-task.priority.value, task.id)), timeout=2.0)
                 self._work_available.set()  # Wake workers for retry
             except Exception:
                 pass
@@ -482,7 +670,19 @@ class TaskQueue:
                             queue_wait_ms=round((execution_started - task.created_at).total_seconds() * 1000, 2),
                         )
                         try:
-                            result = await self._execute_task(task)
+                            execution = asyncio.create_task(self._execute_task(task), name=f"queue-job-{task.id}")
+                            self._executions[task.id] = execution
+                            if original_json is not None:
+                                self._redis_executions.add(task.id)
+                            try:
+                                result = await execution
+                            finally:
+                                self._executions.pop(task.id, None)
+                                self._redis_executions.discard(task.id)
+
+                            if task.status == TaskStatus.CANCELLED:
+                                await self._ack_task(original_json)
+                                continue
 
                             task.status = TaskStatus.COMPLETED
                             task.completed_at = datetime.now(tz=UTC)
@@ -506,6 +706,26 @@ class TaskQueue:
                                 ),
                             )
 
+                        except asyncio.CancelledError:
+                            owner = asyncio.current_task()
+                            if owner is not None and owner.cancelling():
+                                raise
+                            if original_json is not None and self._lease_lost:
+                                # Another replica may recover this entry; do not ACK
+                                # or publish cancellation under an expired owner.
+                                task.status = TaskStatus.PENDING
+                                continue
+                            task.status = TaskStatus.CANCELLED
+                            task.completed_at = datetime.now(tz=UTC)
+                            await self._ack_task(original_json)
+                            emit(
+                                "job.finished",
+                                operation="job.execute",
+                                job_id=task.id,
+                                task_type=task.task_type,
+                                outcome="cancelled",
+                                execution_outcome="cancelled",
+                            )
                         except Exception as e:
                             error_id = record_exception(
                                 "job.execution_failed",
@@ -574,7 +794,10 @@ class TaskQueue:
         if not handler:
             raise ValueError(f"Unknown task type: {task.task_type}")
 
-        result = await handler(**task.data)
+        from app.runtime_settings.lifecycle import runtime_settings_scope
+
+        async with runtime_settings_scope():
+            result = await handler(**task.data)
         return result
 
     async def _handle_document_processing(self, **kwargs) -> dict[str, Any]:
@@ -674,14 +897,22 @@ class TaskQueue:
     async def get_queue_stats(self) -> dict[str, Any]:
         """Возвращает статистику очереди"""
         redis_queue_size = 0
+        redis_available: bool | None = None
         if self._use_redis:
+            redis_available = False
             redis = _get_redis()
             if redis:
                 try:
-                    for prio_val in (4, 3, 2, 1):
-                        redis_queue_size += await redis.llen(f"{_QUEUE_PREFIX}:{prio_val}")
+                    async with asyncio.timeout(5.0):
+                        for prio_val in (4, 3, 2, 1):
+                            redis_queue_size += await redis.llen(f"{_QUEUE_PREFIX}:{prio_val}")
+                    redis_available = True
                 except Exception:
                     pass
+        local_queue_size = self._fallback_queue.qsize()
+        backend = "memory"
+        if self._use_redis:
+            backend = "redis_unavailable" if not redis_available else "mixed" if local_queue_size else "redis"
 
         total_tasks = len(self.tasks)
         pending_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.PENDING)
@@ -695,9 +926,13 @@ class TaskQueue:
             "running_tasks": running_tasks,
             "completed_tasks": completed_tasks,
             "failed_tasks": failed_tasks,
-            "queue_size": redis_queue_size or self._fallback_queue.qsize(),
+            "queue_size": None if redis_available is False else redis_queue_size + local_queue_size,
+            "local_queue_size": local_queue_size,
+            "redis_queue_size": redis_queue_size if redis_available else None,
+            "redis_available": redis_available,
+            "execution_scope": "process",
             "active_workers": len([w for w in self.workers if not w.done()]),
-            "backend": "redis" if self._use_redis else "memory",
+            "backend": backend,
         }
 
 

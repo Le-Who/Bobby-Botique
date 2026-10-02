@@ -875,6 +875,10 @@ async def main():
             database_available = True
             logging.info("Database initialized successfully")
 
+            from app.runtime_settings.lifecycle import refresh_runtime_settings
+
+            await refresh_runtime_settings(force=True)
+
             # Register config→DB watcher for model migration (AR-4)
             from app.config import config_manager
             from app.repos.chats import model_migration_watcher

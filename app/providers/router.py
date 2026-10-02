@@ -569,6 +569,7 @@ class ProviderRouter:
         thinking_level: str | None = None,
         timeout: float | None = None,
         max_keys: int | None = None,
+        on_model_used: Callable[[str], None] | None = None,
     ) -> _ParsedResponse:
         """Execute an explicit Gemini model sequence on each key before rotation.
 
@@ -681,6 +682,8 @@ class ProviderRouter:
                 except Exception as exc:
                     logging.debug("Non-critical: planned request record_success failed: %s", exc)
                 _log_key_answered(api_key, model_name, False, token_count)
+                if on_model_used is not None:
+                    on_model_used(model_name)
                 return parsed
 
             excluded_keys.add(key_hash)
@@ -699,20 +702,26 @@ class ProviderRouter:
                 async for event in events:
                     yield event
             return
-        async with aclosing(self._stream_serial(request)) as events:
+        async with aclosing(self._stream_serial(request, enable_model_fallback=request.allow_model_fallback)) as events:
             async for event in events:
                 yield event
 
     @staticmethod
     def _interactive_hedge_models(request: GenerationRequest) -> list[str]:
         if (
-            request.workload is not Workload.INTERACTIVE
+            request.route_strategy == "sequential"
+            or request.workload is not Workload.INTERACTIVE
             or request.allow_deferred
             or request.grounding is not GroundingMode.NONE
             or not all(is_gemini_chat_model_id(model) for model in request.models)
         ):
             return []
-        models = _dedupe_models([*request.models, *_ordered_gemini_fallback_models(request.models[0])])
+        models = _dedupe_models(
+            [
+                *request.models,
+                *(_ordered_gemini_fallback_models(request.models[0]) if request.allow_model_fallback else []),
+            ]
+        )
         return models if len(models) > 1 else []
 
     async def _stream_hedged(self, request: GenerationRequest, models: list[str]):
@@ -936,11 +945,15 @@ class ProviderRouter:
                 resolved_model: str | None = None
 
                 for _race_idx in range(2):
-                    key_data, model_used, resolution_status = await use_case.resolve_ai_request(
-                        preferred_model,
-                        use_openrouter=None,
-                        excluded_key_hashes=failed_keys | {key["key_hash"] for key in keys_to_race},
-                    )
+                    excluded = failed_keys | {key["key_hash"] for key in keys_to_race}
+                    if not request.allow_model_fallback:
+                        key_data, model_used, resolution_status = await use_case.resolve_exact_ai_request(
+                            preferred_model, excluded_key_hashes=excluded
+                        )
+                    else:
+                        key_data, model_used, resolution_status = await use_case.resolve_ai_request(
+                            preferred_model, use_openrouter=None, excluded_key_hashes=excluded
+                        )
                     if not key_data or not model_used:
                         break
                     keys_to_race.append(key_data)

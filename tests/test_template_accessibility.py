@@ -115,3 +115,15 @@ def test_dynamic_errors_are_announced_without_marking_password_invalid():
 def test_miniapp_escape_helper_preserves_zero_values():
     source = (_TEMPLATES / "miniapp.html").read_text(encoding="utf-8")
     assert "d.textContent = s ?? '';" in source
+
+
+def test_dashboard_tabs_name_their_panels_and_have_one_keyboard_entry():
+    _, tags = _parse_template("dashboard.html")
+    tabs = [attrs for _, attrs in tags if attrs.get("role") == "tab"]
+    assert len(tabs) == 4
+    assert sum(tab.get("tabindex", "0") == "0" for tab in tabs) == 1
+    for tab in tabs:
+        _, panel = _by_id(tags, str(tab["aria-controls"]))
+        assert panel["aria-labelledby"] == tab["id"]
+        assert panel.get("role") == "tabpanel"
+        assert ("hidden" not in panel) == (tab["aria-selected"] == "true")

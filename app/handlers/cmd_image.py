@@ -55,6 +55,7 @@ from app.config import (
     settings,
 )
 from app.metrics import metrics_collector
+from app.prompt_registry import get_prompt_text
 from app.providers.freetheai_image import (
     FTA_IMAGE_MODEL_LABELS,
     FTA_IMAGE_MODELS,
@@ -75,6 +76,7 @@ from app.providers.pollinations import (
     get_model_label,
     get_pollinations_provider,
 )
+from app.runtime_settings import media_prompts as _media_prompts  # noqa: F401 — registers image prompts
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.ux_improvements import make_copy_text_button
 
@@ -194,54 +196,43 @@ async def check_draw_intent_async(text: str) -> str | None:
 
 
 async def _extract_draw_prompt_ai(text: str) -> str | None:
-    """Use Gemini to extract the core visual subject from a tricky conversational request."""
-    try:
-        from google import genai as _genai  # noqa: F401, F811
-        from google.genai import types as _types
+    """Extract a visual subject with a bounded, quota-accounted Gemini plan."""
+    from google.genai import types
 
-        from app.providers.gemini import get_cached_genai_client
+    from app.observability.workload_events import observe_workload_call
+    from app.providers.gemini import get_cached_genai_client
+    from app.runtime_settings.gemini_execution import run_gemini_override
 
-        api_keys = settings.GEMINI_API_KEYS
-        if not api_keys:
-            return None
-
-        client = get_cached_genai_client(api_keys[0])
-        system = (
-            "Determine if the user's message is asking to GENERATE/DRAW/CREATE a picture/image.\n"
-            "If YES, respond ONLY with the exact descriptive visual subject, removing all conversation.\n"
-            "Resolve any references: e.g. if the user says 'I saw a dog in a hat."
-            " Draw me the same', respond with 'a dog in a hat'.\n"
-            "If NO (they are just chatting), respond with 'NONE'."
-        )
-        from app.observability.workload_events import observe_workload_call
-
+    async def execute(model: str, key: str) -> str:
         response = await observe_workload_call(
-            asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=_TRANSLATE_MODEL,
-                    contents=text,
-                    config=_types.GenerateContentConfig(
-                        system_instruction=system,
-                        temperature=0.0,
-                        max_output_tokens=300,
-                    ),
+            get_cached_genai_client(key).aio.models.generate_content(
+                model=model,
+                contents=text,
+                config=types.GenerateContentConfig(
+                    system_instruction=get_prompt_text("image.prompt_extract"),
+                    temperature=0.0,
+                    max_output_tokens=300,
                 ),
-                timeout=3.0,
             ),
             workload="image_intent",
             provider="gemini",
-            model=_TRANSLATE_MODEL,
-            api_key=api_keys[0],
+            model=model,
+            api_key=key,
             origin="draw_intent",
             input_chars=len(text),
         )
-        if response and response.text:
-            res = response.text.strip().lstrip(":—–-").strip()
-            if res and res.upper() != "NONE":
-                return res
-    except Exception as e:
-        logger.warning("AI draw intent extraction failed (error_type=%s)", type(e).__name__)
-    return None
+        result = (getattr(response, "text", None) or "").strip().lstrip(":—–-").strip()
+        if not result:
+            raise ValueError("Empty image intent")
+        return "" if result.upper() == "NONE" else result
+
+    try:
+        async with asyncio.timeout(3.0):
+            result = await run_gemini_override("image.prompt_extract", (_TRANSLATE_MODEL,), execute, use_baseline=True)
+            return result or None
+    except Exception as error:
+        logger.warning("AI draw intent extraction failed (error_type=%s)", type(error).__name__)
+        return None
 
 
 def check_draw_intent(text: str) -> str | None:
@@ -341,72 +332,46 @@ def _model_label(model: str) -> str:
 # ── Prompt translation ─────────────────────────────────────────────────────────
 
 
-async def _translate_to_english(
-    prompt: str,
-    user_id: int | None = None,
-) -> str:
-    """
-    Translate a prompt to English using gemini-3.1-flash-lite.
+async def _translate_to_english(prompt: str, user_id: int | None = None) -> str:
+    """Translate within one deadline; failed admission keeps the original prompt."""
+    from google.genai import types
 
-    Returns the English translation on success, original prompt on failure.
-    The API call is tracked in metrics_collector.
-    """
-    try:
-        from google import genai as _genai  # noqa: F401, F811
-        from google.genai import types as _types
+    from app.observability.workload_events import observe_workload_call
+    from app.providers.gemini import get_cached_genai_client
+    from app.runtime_settings.gemini_execution import run_gemini_override
 
-        from app.providers.gemini import get_cached_genai_client
-
-        # Pick the first available key (same pool as LLM chat)
-        api_keys = settings.GEMINI_API_KEYS
-        if not api_keys:
-            logger.warning("No Gemini API keys available for prompt translation")
-            return prompt
-
-        api_key = api_keys[0]
-        await metrics_collector.record_api_call(
-            "gemini_img_translate",
-            model=_TRANSLATE_MODEL,
-            user_id=user_id,
-        )
-
-        client = get_cached_genai_client(api_key)
-        system = (
-            "You are a professional image-generation prompt translator. "
-            "Translate the user's prompt into clear, descriptive English "
-            "suitable for an image generation model such as FLUX or Stable Diffusion. "
-            "Keep the meaning intact. Respond ONLY with the translated prompt and "
-            "nothing else — no explanations, no quotes."
-        )
-        from app.observability.workload_events import observe_workload_call
-
+    async def execute(model: str, key: str) -> str:
+        await metrics_collector.record_api_call("gemini_img_translate", model=model, user_id=user_id)
         response = await observe_workload_call(
-            asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=_TRANSLATE_MODEL,
-                    contents=prompt,  # plain str — SDK accepts str directly
-                    config=_types.GenerateContentConfig(
-                        system_instruction=system,
-                        temperature=0.2,
-                        max_output_tokens=300,
-                    ),
+            get_cached_genai_client(key).aio.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=get_prompt_text("image.translate"),
+                    temperature=0.2,
+                    max_output_tokens=300,
                 ),
-                timeout=10.0,
             ),
             workload="image_prompt_translation",
             provider="gemini",
-            model=_TRANSLATE_MODEL,
-            api_key=api_key,
+            model=model,
+            api_key=key,
             origin="image_handler",
             input_chars=len(prompt),
         )
-        translated = (response.text or "").strip()
-        if translated:
-            logger.info("Prompt translated for image generation (user=%s, chars=%d)", user_id, len(translated))
-            return translated
-    except Exception as exc:
-        logger.warning("Prompt translation failed (%s), using original", type(exc).__name__)
-    return prompt
+        translated = (getattr(response, "text", None) or "").strip()
+        if not translated:
+            raise ValueError("Empty prompt translation")
+        return translated
+
+    try:
+        async with asyncio.timeout(10.0):
+            return (
+                await run_gemini_override("image.translate", (_TRANSLATE_MODEL,), execute, use_baseline=True) or prompt
+            )
+    except Exception as error:
+        logger.warning("Prompt translation failed (%s), using original", type(error).__name__)
+        return prompt
 
 
 # ── Keyboard builders ──────────────────────────────────────────────────────────
@@ -721,6 +686,8 @@ def _error_text(err: str) -> str:
             "⏳ *Дневной лимит генерации изображений исчерпан.*\n\n"
             "Попробуйте завтра или переключитесь на другую модель."
         )
+    if err == "quota_unavailable":
+        return "🖼️ *Не удалось проверить лимит генераций.* Сервис учёта временно недоступен; попробуйте позже."
     if err == "user_daily_limit":
         return "⏳ *Ваш дневной лимит генераций Imagen исчерпан.* Попробуйте снова завтра."
     if err == "paid_tier_required":

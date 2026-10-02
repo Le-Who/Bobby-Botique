@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from app.games.crocodile_daily import prepare_daily_puzzle
 from app.repos import crocodile_daily as repo
+from app.runtime_settings.lifecycle import runtime_settings_scope
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
 
@@ -109,6 +110,7 @@ async def _save(puzzle_date: date, job: dict[str, Any], client: Any) -> None:
             logger.warning("Daily preparation status update unavailable")
 
 
+@runtime_settings_scope()
 async def _run(puzzle_date: date, bot: Any, job: dict[str, Any], client: Any) -> None:
     errors: list[str] = []
     try:

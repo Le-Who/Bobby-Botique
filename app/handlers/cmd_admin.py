@@ -1253,11 +1253,13 @@ async def set_inline_model_command(update: Update, context: ContextTypes.DEFAULT
     Usage: /set_inline_model <model_name>
     """
     args = context.args or []
-    current = await get_global_setting("inline_model", settings.INLINE_MODEL)
+    from app.runtime_settings.processes import effective_primary_model, save_primary_model
+
+    current = await effective_primary_model("inline", await get_global_setting("inline_model", settings.INLINE_MODEL))
 
     if not args:
         await update.message.reply_text(
-            f"⚙️ <b>Текущая inline-модель:</b> <code>{current}</code>\n\n"
+            f"⚙️ <b>Текущая inline-модель:</b> <code>{html.escape(current)}</code>\n\n"
             "Использование: <code>/set_inline_model &lt;model_name&gt;</code>\n"
             "Пример: <code>/set_inline_model gemini-3.5-flash</code>\n",
             parse_mode="HTML",
@@ -1265,11 +1267,17 @@ async def set_inline_model_command(update: Update, context: ContextTypes.DEFAULT
         return
 
     model_name = args[0]
-    await set_global_setting("inline_model", model_name)
+    try:
+        await save_primary_model("inline", model_name, actor="admin")
+    except ValueError, ConnectionError:
+        await update.message.reply_text(
+            "Не удалось сохранить модель: проверьте ID и актуальные настройки в панели управления."
+        )
+        return
     logging.info("Admin %s set inline_model → %s", update.effective_user.id, model_name)
 
     await update.message.reply_text(
-        f"✅ Модель по умолчанию для инлайна переключена на: <code>{model_name}</code>\n"
+        f"✅ Модель по умолчанию для инлайна переключена на: <code>{html.escape(model_name)}</code>\n"
         "Смена вступит в силу для всех новых инлайн-запросов.",
         parse_mode="HTML",
     )

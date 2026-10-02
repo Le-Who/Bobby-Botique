@@ -57,6 +57,8 @@ license-denylist = []
 [tool.ruff]
 target-version = "py314"
 line-length = 120
+# Supplied review bundles are external evidence, not application source.
+extend-exclude = ["revisions"]
 
 [tool.ruff.lint]
 select = [

@@ -9,11 +9,13 @@ Validates:
 6. Task cancellation is respected.
 """
 
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app import queue as queue_module
 from app.queue import (
     Task,
     TaskPriority,
@@ -22,6 +24,246 @@ from app.queue import (
     _task_from_json,
     _task_to_json,
 )
+
+
+class QueueRedis:
+    """In-process Redis state for deterministic replica/recovery interleavings."""
+
+    def __init__(self):
+        self.lists = {}
+        self.values = {}
+        self.sets = {}
+
+    async def lpush(self, key, raw):
+        self.lists.setdefault(key, []).insert(0, raw)
+        return len(self.lists[key])
+
+    async def rpoplpush(self, source, destination):
+        items = self.lists.setdefault(source, [])
+        if not items:
+            return None
+        raw = items.pop()
+        await self.lpush(destination, raw)
+        return raw
+
+    async def lrange(self, key, start, end):
+        return list(self.lists.get(key, []))
+
+    async def lrem(self, key, count, raw):
+        items = self.lists.setdefault(key, [])
+        if raw not in items:
+            return 0
+        items.remove(raw)
+        return 1
+
+    async def delete(self, key):
+        self.lists.pop(key, None)
+        self.values.pop(key, None)
+
+    async def llen(self, key):
+        return len(self.lists.get(key, []))
+
+    async def exists(self, key):
+        return int(key in self.values)
+
+    async def smembers(self, key):
+        return self.sets.get(key, set()).copy()
+
+    async def eval(self, script, number, *arguments):
+        keys, args = arguments[:number], arguments[number:]
+        if script == queue_module._ACQUIRE_LEASE:
+            if keys[0] in self.values:
+                return 0
+            self.values[keys[0]] = args[0]
+            self.sets.setdefault(keys[1], set()).add(args[0])
+            return 1
+        if script in (queue_module._RENEW_LEASE, queue_module._RELEASE_LEASE):
+            if self.values.get(keys[0]) != args[0]:
+                return 0
+            if script == queue_module._RELEASE_LEASE:
+                await self.delete(keys[0])
+            return 1
+        if script == queue_module._CLAIM_TASK:
+            if self.values.get(keys[0]) != args[0]:
+                return None
+            return await self.rpoplpush(keys[1], keys[2])
+        if script == queue_module._FINISH_TASK:
+            if self.values.get(keys[0]) != args[0]:
+                return 0
+            removed = await self.lrem(keys[1], 1, args[1])
+            if removed and args[2]:
+                await self.lpush(keys[2], args[2])
+            return removed
+        if script == queue_module._RECOVER_TASK:
+            if args[2] != "legacy" and await self.exists(keys[0]):
+                return 0
+            removed = await self.lrem(keys[1], 1, args[0])
+            if removed:
+                await self.lpush(keys[2], args[1])
+            return removed
+        if script == queue_module._REMOVE_OWNER:
+            if not await self.exists(keys[0]) and not await self.llen(keys[1]):
+                self.sets.setdefault(keys[2], set()).discard(args[0])
+                return 1
+            return 0
+        raise AssertionError("Unexpected Redis script")
+
+
+@pytest.mark.asyncio
+async def test_startup_recovery_does_not_steal_another_replica_task(sample_task):
+    redis = QueueRedis()
+    with patch("app.queue._get_redis", return_value=redis):
+        first = TaskQueue(max_workers=1)
+        second = TaskQueue(max_workers=1)
+        first._use_redis = second._use_redis = True
+        await redis.lpush("gemaibotv2:queue:2", _task_to_json(sample_task).encode())
+        task, original = await first._dequeue_task()
+        assert task is not None
+
+        await second._recover_processing_tasks()
+
+        assert redis.lists["gemaibotv2:queue:2"] == []
+        assert original in [raw for items in redis.lists.values() for raw in items]
+
+
+@pytest.mark.asyncio
+async def test_legacy_processing_requires_explicit_drained_worker_recovery(sample_task):
+    redis = QueueRedis()
+    original = _task_to_json(sample_task).encode()
+    redis.lists[queue_module._PROCESSING_KEY] = [original]
+    with patch("app.queue._get_redis", return_value=redis):
+        queue = TaskQueue()
+        await queue._recover_processing_tasks()
+        assert redis.lists[queue_module._PROCESSING_KEY] == [original]
+        await queue._recover_processing_tasks(recover_legacy=True)
+        assert redis.lists[queue_module._PROCESSING_KEY] == []
+        assert len(redis.lists["gemaibotv2:queue:2"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_owner_cannot_ack_or_retry_recovered_task(sample_task):
+    redis = QueueRedis()
+    with patch("app.queue._get_redis", return_value=redis):
+        first, second = TaskQueue(), TaskQueue()
+        first._use_redis = True
+        await redis.lpush("gemaibotv2:queue:2", _task_to_json(sample_task).encode())
+        task, original = await first._dequeue_task()
+        await redis.delete(first._lease_key)
+        await second._recover_processing_tasks()
+        await first._ack_task(original)
+        await first._nack_task(task, original)
+        assert len(redis.lists["gemaibotv2:queue:2"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_lease_loss_cancels_redis_handlers_but_preserves_local_work(monkeypatch):
+    queue = TaskQueue()
+    queue.running = True
+    local = asyncio.create_task(asyncio.sleep(60))
+    owned = asyncio.create_task(asyncio.sleep(60))
+    queue._executions = {"local": local, "owned": owned}
+    queue._redis_executions = {"owned"}
+    monkeypatch.setattr(queue_module, "_LEASE_RENEW_INTERVAL", 0)
+    monkeypatch.setattr(queue_module, "_get_redis", lambda: None)
+    try:
+        await queue._maintain_lease()
+        await asyncio.sleep(0)
+        assert queue._lease_lost
+        assert owned.cancelled()
+        assert not local.done()
+        assert not await queue._ensure_lease(QueueRedis())
+        queue._redis_executions.clear()
+        old_owner = queue._owner_id
+        queue.running = False
+        assert await queue._ensure_lease(QueueRedis())
+        assert queue._owner_id != old_owner
+    finally:
+        local.cancel()
+        owned.cancel()
+        await asyncio.gather(local, owned, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_cancel_running_job_stops_handler_and_keeps_worker_available():
+    queue = TaskQueue(max_workers=1)
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+    next_done = asyncio.Event()
+
+    async def handler(**data):
+        if data.get("next"):
+            next_done.set()
+            return {}
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            stopped.set()
+
+    queue._task_handlers["test"] = handler
+    worker = asyncio.create_task(queue._worker("test"))
+    try:
+        task_id = await queue.add_task(42, "test", {})
+        await asyncio.wait_for(started.wait(), 1)
+        assert await queue.cancel_task(task_id, 42)
+        await asyncio.wait_for(stopped.wait(), 1)
+        await queue.add_task(42, "test", {"next": True})
+        await asyncio.wait_for(next_done.wait(), 1)
+        assert queue.tasks[task_id].status == TaskStatus.CANCELLED
+    finally:
+        worker.cancel()
+        await worker
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read_error", [False, True])
+async def test_enqueue_failure_local_task_is_consumed_with_existing_redis_client(read_error):
+    redis = AsyncMock()
+    redis.lpush.side_effect = ConnectionError("enqueue unavailable")
+    redis.eval.side_effect = [1, None, None, None, None]
+    if read_error:
+        redis.eval.side_effect = ConnectionError("dequeue unavailable")
+
+    with patch("app.queue._get_redis", return_value=redis):
+        queue = TaskQueue(max_workers=1)
+        queue._use_redis = True
+        task_id = await queue.add_task(42, "document_processing", {"filename": "local.pdf"})
+
+        task, original_json = await queue._dequeue_task()
+
+        assert task is not None
+        assert task.id == task_id
+        assert original_json is None  # A local task must not ACK a Redis processing entry.
+        assert queue._fallback_queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_queue_size_includes_both_redis_and_local_backlogs():
+    redis = AsyncMock()
+    redis.lpush.side_effect = ConnectionError("enqueue unavailable")
+    redis.llen.return_value = 2
+    with patch("app.queue._get_redis", return_value=redis):
+        queue = TaskQueue(max_workers=1)
+        queue._use_redis = True
+        await queue.add_task(42, "document_processing", {"filename": "local.pdf"})
+
+        stats = await queue.get_queue_stats()
+
+        assert stats["queue_size"] == 9
+        assert stats["backend"] == "mixed"
+
+
+@pytest.mark.asyncio
+async def test_failed_backlog_read_reports_unknown_instead_of_zero():
+    redis = AsyncMock()
+    redis.llen.side_effect = ConnectionError("unavailable")
+    with patch("app.queue._get_redis", return_value=redis):
+        queue = TaskQueue(max_workers=1)
+        queue._use_redis = True
+        stats = await queue.get_queue_stats()
+    assert stats["queue_size"] is None
+    assert stats["redis_available"] is False
+    assert stats["backend"] == "redis_unavailable"
 
 
 @pytest.fixture
@@ -116,7 +358,7 @@ class TestTaskQueueRedis:
     @pytest.mark.asyncio
     async def test_add_task_to_redis(self):
         """Task should be LPUSH-ed to Redis."""
-        mock_redis = AsyncMock()
+        mock_redis = QueueRedis()
 
         with patch("app.queue._get_redis", return_value=mock_redis):
             queue = TaskQueue(max_workers=1)
@@ -130,14 +372,14 @@ class TestTaskQueueRedis:
             )
 
             assert task_id != ""
-            mock_redis.lpush.assert_awaited_once()
-            call_args = mock_redis.lpush.call_args
-            assert call_args[0][0] == "gemaibotv2:queue:4"  # URGENT = 4
+            saved = mock_redis.lists["gemaibotv2:queue:4"]
+            assert len(saved) == 1
+            assert _task_from_json(saved[0]).id == task_id
 
     @pytest.mark.asyncio
     async def test_dequeue_respects_priority(self):
         """Dequeue should check URGENT (4) before LOW (1)."""
-        mock_redis = AsyncMock()
+        mock_redis = QueueRedis()
         # First 3 priority levels return None, LOW returns a task
         call_count = 0
 
@@ -173,7 +415,7 @@ class TestTaskQueueRedis:
 
     @pytest.mark.asyncio
     async def test_crash_recovery(self):
-        """Tasks stuck in processing list should be re-queued on startup."""
+        """Expired owners are recovered, with no duplicate under two recoverers."""
         stuck_task = Task(
             id="stuck-1",
             user_id=99,
@@ -185,23 +427,20 @@ class TestTaskQueueRedis:
         )
         stuck_json = _task_to_json(stuck_task).encode()
 
-        mock_redis = AsyncMock()
-        mock_redis.lrange = AsyncMock(return_value=[stuck_json])
-        mock_redis.lpush = AsyncMock()
-        mock_redis.delete = AsyncMock()
+        mock_redis = QueueRedis()
+        mock_redis.sets[queue_module._OWNERS_KEY] = {"crashed"}
+        mock_redis.lists[f"{queue_module._PROCESSING_KEY}:crashed"] = [stuck_json]
 
         with patch("app.queue._get_redis", return_value=mock_redis):
             queue = TaskQueue(max_workers=1)
             queue._use_redis = True
             await queue._recover_processing_tasks()
+            await TaskQueue()._recover_processing_tasks()
 
             # Verify task was re-queued
-            mock_redis.lpush.assert_awaited_once()
-            call_args = mock_redis.lpush.call_args
-            assert call_args[0][0] == "gemaibotv2:queue:2"  # NORMAL = 2
-
-            # Verify processing list was cleared
-            mock_redis.delete.assert_awaited_once_with("gemaibotv2:processing")
+            assert len(mock_redis.lists["gemaibotv2:queue:2"]) == 1
+            assert mock_redis.lists[f"{queue_module._PROCESSING_KEY}:crashed"] == []
+            assert not mock_redis.sets[queue_module._OWNERS_KEY]
 
             # Verify task is in memory cache with incremented retry
             assert "stuck-1" in queue.tasks

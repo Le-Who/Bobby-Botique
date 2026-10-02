@@ -7,7 +7,6 @@ used across DatabaseManager, TaskQueue, and other components.
 
 import asyncio
 import contextlib
-import contextvars
 import logging
 import time
 import uuid
@@ -32,7 +31,9 @@ def start_background_task(
         logging.debug("Background task '%s' already running", task_name)
         return task_ref
 
-    return asyncio.create_task(coro_factory())
+    from app.runtime_settings.lifecycle import detached_settings_context
+
+    return asyncio.create_task(coro_factory(), name=task_name, context=detached_settings_context())
 
 
 async def cancel_background_task(owner: object, attr_name: str) -> None:
@@ -155,9 +156,11 @@ class TaskManager:
             **safe_metadata,
         )
 
-        # Capture caller's tracing context (request_id, user_id, chat_id)
-        # at submission time so background tasks inherit the correct trace.
-        ctx = contextvars.copy_context()
+        # Preserve the caller's tracing/privacy context. A persistent worker
+        # captures runtime settings separately for each job, not at enqueue.
+        from app.runtime_settings.lifecycle import detached_settings_context
+
+        ctx = detached_settings_context()
 
         async def _wrapper():
             execution_id = uuid.uuid4().hex

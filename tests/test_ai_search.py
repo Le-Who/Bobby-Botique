@@ -365,6 +365,53 @@ async def test_research_agent_uses_unified_completed_response_delivery():
     send_long.assert_not_awaited()
 
 
+async def test_research_fallback_shares_budget_and_displays_limit_reason():
+    placeholder = make_placeholder()
+    placeholder.get_bot.return_value = None
+    state = make_chat_state()
+    budgets = []
+    delivery = MagicMock(deliver=AsyncMock())
+
+    def make_agent(**kwargs):
+        budget = kwargs.get("budget")
+        budgets.append(budget)
+
+        async def run(**_kwargs):
+            if len(budgets) == 1:
+                if budget:
+                    budget.begin_attempt()
+                    budget.admit_page()
+                    budget.record_usage(None)
+                return AgenticResult(answer="❌ Provider failed")
+            return AgenticResult(answer="Limited answer", budget_reason="tokens", usage_uncertain=True)
+
+        return SimpleNamespace(run=run)
+
+    with (
+        patch("app.handlers.ai_search.metrics_collector", record_search_query=AsyncMock()),
+        patch("app.handlers.ai_search.AgenticSearch", side_effect=make_agent),
+        patch("app.handlers.ai_search._available_models", return_value=["fallback"]),
+        patch(
+            "app.repos.keys.get_available_gemini_key",
+            new_callable=AsyncMock,
+            return_value={"api_key": "fake", "key_hash": "hash"},
+        ),
+        patch("app.response_delivery.delivery.get_telegram_response_delivery", return_value=delivery),
+        patch("app.handlers.ai_search.update_user_chat", new_callable=AsyncMock),
+    ):
+        from app.handlers.ai_search import _handle_research_agent
+
+        await _handle_research_agent(placeholder, 123, "Query", state)
+
+    assert len(budgets) == 2
+    assert budgets[0] is not None and budgets[0] is budgets[1]
+    assert budgets[1].pages_used == 1
+    assert budgets[1].usage_uncertain
+    presentation = delivery.deliver.await_args.kwargs["presentation"]
+    assert "лимит" in presentation.footer.lower()
+    assert state.history[-1]["parts"] == ["Limited answer"]
+
+
 @pytest.mark.asyncio
 async def test_complex_photo_search_leases_initial_vision_and_route_for_human_user():
     """The bot-authored placeholder must not define the privacy tenant."""

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -22,8 +23,11 @@ async def test_optional_memory_query_expansion_times_out_and_keeps_original_quer
     client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=slow_generate_content)))
     monkeypatch.setattr(memory, "get_cached_genai_client", lambda key: client)
     monkeypatch.setattr(memory, "QUERY_EXPANSION_TIMEOUT_SECONDS", 0.01, raising=False)
+    reserve = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserve)
 
     result = await asyncio.wait_for(memory.expand_query_with_llm("Что мы обсуждали вчера?", "test-key"), 0.25)
 
     assert result == "Что мы обсуждали вчера?"
     assert cancelled.is_set()
+    reserve.assert_awaited_once()
