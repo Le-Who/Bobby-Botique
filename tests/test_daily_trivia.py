@@ -834,7 +834,7 @@ async def test_admin_trivia_settings_rejects_invalid_model_id_without_remote_val
 
     with (
         patch("app.web._is_authenticated", return_value=True),
-        patch("app.repos.settings_repo.set_global_setting", save_setting),
+        patch("app.runtime_settings.processes.save_primary_model", save_setting),
         patch("app.providers.gemini.validate_gemini_chat_model_capability", validate),
     ):
         response = await web_module.quart_app.test_client().post(
@@ -862,7 +862,7 @@ async def test_admin_trivia_settings_does_not_save_unvalidated_model(validation,
 
     with (
         patch("app.web._is_authenticated", return_value=True),
-        patch("app.repos.settings_repo.set_global_setting", save_setting),
+        patch("app.runtime_settings.processes.save_primary_model", save_setting),
         patch(
             "app.providers.gemini.validate_gemini_chat_model_capability",
             new_callable=AsyncMock,

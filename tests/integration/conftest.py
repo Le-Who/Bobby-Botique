@@ -1,17 +1,15 @@
-import pytest
+"""Integration fixtures for an explicitly isolated, migrated PostgreSQL target.
 
-"""Integration tests — fixtures for real Supabase test database.
-
-Uses TEST_DATABASE_URL from .env to connect to a dedicated empty Supabase project.
-Each test runs inside a transaction that is ROLLED BACK — no data persists.
+Uses TEST_DATABASE_URL from the environment or local test configuration.
+The connection fixture owns a transaction and rolls it back on exit.
 """
 
-import json
 import os
 
-import asyncpg
+import pytest
 from dotenv import dotenv_values
 
+from tests.database_fixtures import transactional_connection
 from tests.database_safety import database_identity as _database_identity
 from tests.database_safety import database_target_is_forbidden as _database_target_is_forbidden
 
@@ -56,42 +54,13 @@ def test_user_id():
 async def db_conn(test_db_url):
     """Provide a transactional DB connection that auto-rollbacks.
 
-    - Connects to the test Supabase project
+    - Connects to the dedicated test PostgreSQL target
     - Starts a transaction
     - Yields the connection for test use
     - Rolls back ALL changes after test completes
     """
-    conn = await asyncpg.connect(test_db_url, statement_cache_size=0)
-    # Register JSONB codec to match production db_manager behavior
-    await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
-
-    tx = conn.transaction()
-    await tx.start()
-    try:
-        # Keep compatibility DDL inside the rollback-owned transaction so a
-        # failed test run cannot mutate the dedicated test schema permanently.
-        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS ltm_enabled BOOLEAN DEFAULT TRUE")
-        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS branch_id INTEGER")
-        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS temperature FLOAT")
-        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS voice_id TEXT")
-        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS tts_temperature FLOAT")
-        await conn.execute(
-            "ALTER TABLE long_term_memory ADD COLUMN IF NOT EXISTS rlhf_negative_count INTEGER DEFAULT 0"
-        )
+    async with transactional_connection(test_db_url) as conn:
         yield conn
-    finally:
-        try:
-            # Cancel any in-flight operation that would block rollback.
-            # This can happen when xdist defers fixture teardown while a
-            # query from a prior test is still executing on this connection.
-            if conn.is_in_transaction():
-                await conn.reset(timeout=5.0)
-            else:
-                await tx.rollback()
-        except Exception:
-            pass  # Best-effort cleanup — connection will be closed below
-        finally:
-            await conn.close()
 
 
 @pytest.fixture(autouse=True)

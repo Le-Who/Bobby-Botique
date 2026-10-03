@@ -1,5 +1,4 @@
 import asyncio
-import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -66,21 +65,23 @@ async def test_user_b_settings_callback_not_blocked_by_user_a_long_request(monke
     update_b = DummyUpdate(query_b)
     context_b = SimpleNamespace()
 
+    acquired = asyncio.Event()
+    release = asyncio.Event()
+
     async def long_request_user_a():
         async with state.get_user_lock(user_a):
-            await asyncio.sleep(0.30)
+            acquired.set()
+            await release.wait()
 
     task_a = asyncio.create_task(long_request_user_a())
-    await asyncio.sleep(0.02)  # let A acquire lock
-
-    start = time.perf_counter()
-    await cb_models.model_button_callback(update_b, context_b)
-    elapsed = time.perf_counter() - start
-
-    await task_a
-
-    # Callback must finish well before long request completion.
-    assert elapsed < 0.15
-    mock_update.assert_awaited_once()
-    query_b.edit_message_text.assert_awaited_once()
-    assert any(msg and "Модель изменена" in msg for msg, _ in query_b._answers)
+    try:
+        await asyncio.wait_for(acquired.wait(), timeout=2)
+        await asyncio.wait_for(cb_models.model_button_callback(update_b, context_b), timeout=2)
+        assert not task_a.done()
+        assert state.get_user_lock(user_a).locked()
+        mock_update.assert_awaited_once()
+        query_b.edit_message_text.assert_awaited_once()
+        assert any(msg and "Модель изменена" in msg for msg, _ in query_b._answers)
+    finally:
+        release.set()
+        await task_a

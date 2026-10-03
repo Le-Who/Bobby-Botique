@@ -696,8 +696,11 @@ async def test_graph_triples_do_not_shadow_translation_function(mock_boundaries)
         patch(
             "app.repos.memory.search_memories_with_graph",
             new_callable=AsyncMock,
-            return_value=(mock_memories, mock_graph_triples),
-        ),
+            return_value=(mock_memories, mock_graph_triples, {"user HAS_WIFE Anna": "My wife is Anna."}),
+        ) as recall,
+        patch("app.context.compression.build_l0_facts", new_callable=AsyncMock, return_value=""),
+        patch("app.context.compression.build_l1_context", new_callable=AsyncMock, return_value=""),
+        patch("app.handlers.ai_chat._store_memory_in_background"),
         patch(
             "app.handlers.chat_logic.format_memories_for_system_prompt",
             return_value="<memories>wife: Anna</memories>",
@@ -709,6 +712,13 @@ async def test_graph_triples_do_not_shadow_translation_function(mock_boundaries)
     # ── Assert ──
     # Handler completed: state was persisted (not crashed before update_user_chat)
     mock_boundaries["update_chat"].assert_awaited()
+    recall.assert_awaited_once_with(user_id, user_message, "k", limit=5, min_similarity=0.60)
+    request = mock_boundaries["delivery"].stream.await_args.args[1]
+    assert "<knowledge_graph>" in request.system_instruction
+    assert "user HAS_WIFE Anna" in request.system_instruction
+    assert "<source_passage>My wife is Anna.</source_passage>" in request.system_instruction
+    assert "<temporal_context>" in request.system_instruction
+    assert "[SUPERSEDED] user HAS_WIFE Maria" in request.system_instruction
 
     # The response was appended to history (not rolled back due to an error)
     saved_state = mock_boundaries["update_chat"].call_args_list[-1][0][1]

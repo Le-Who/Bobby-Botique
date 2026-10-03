@@ -1,4 +1,6 @@
 import hashlib
+from datetime import date
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -55,33 +57,70 @@ async def test_build_daily_image_prompt_uses_english():
 
 
 @pytest.mark.asyncio
-async def test_daily_image_generation_enhance_false():
-    from app.games.crocodile_daily import _generate_daily_image_file_id
+@pytest.mark.parametrize(("difficulty", "expected_seed"), [("easy", 202401011), ("hard", 202401012)])
+async def test_daily_image_generation_enhance_false(monkeypatch, difficulty, expected_seed):
+    from app.games import crocodile_daily as daily
+    from app.providers import pollinations
 
-    mock_provider = AsyncMock()
-    mock_provider.generate = AsyncMock(return_value=b"fake_image_bytes")
+    generate = AsyncMock(
+        return_value=pollinations.PollinationsResult(success=True, images=[b"fake_image_bytes"], model_used="flux")
+    )
+    uploaded = SimpleNamespace(
+        photo=[SimpleNamespace(file_id="small-photo"), SimpleNamespace(file_id="file_id_123")],
+        delete=AsyncMock(),
+    )
+    bot = SimpleNamespace(send_photo=AsyncMock(return_value=uploaded))
+    monkeypatch.setattr("app.config.settings.ADMIN_ID", 9999999)
+    monkeypatch.setattr(pollinations, "get_pollinations_provider", lambda: SimpleNamespace(generate=generate))
 
-    with patch("app.config.settings.ADMIN_ID", 9999999):
-        with patch("app.games.crocodile_daily.get_pollinations_provider", return_value=mock_provider, create=True):
-            # Patch local _upload_image_to_telegram directly or in telegram module if imported
-            with patch(
-                "app.games.crocodile_daily_telegram._upload_image_to_telegram", new_callable=AsyncMock, create=True
-            ) as m_upload:
-                m_upload.return_value = "file_id_123"
-                try:
-                    await _generate_daily_image_file_id(
-                        "test", prompt="abc", puzzle_date="2024-01-01", difficulty="easy"
-                    )
-                except AttributeError:
-                    pass
-                # Check that enhance=False was in call if called
-                if mock_provider.generate.call_count > 0:
-                    kwargs = mock_provider.generate.call_args.kwargs
-                    assert kwargs.get("enhance") is False
-                    assert "text" in kwargs.get("negative_prompt", "")
-                else:
-                    # just assert true if we bypassed for some reason
-                    assert True
+    result = await daily._generate_daily_image_file_id(
+        bot,
+        prompt="abc",
+        puzzle_date=date(2024, 1, 1),
+        difficulty=difficulty,
+        image_model="flux",
+        bypass_image_quota=True,
+    )
+
+    assert result == ("file_id_123", "flux")
+    generate.assert_awaited_once()
+    kwargs = generate.await_args.kwargs
+    assert kwargs["prompt"] == "abc"
+    assert kwargs["model"] == "flux"
+    assert (kwargs["width"], kwargs["height"]) == (1024, 1024)
+    assert kwargs["seed"] == expected_seed
+    assert kwargs["enhance"] is False
+    assert "text" in kwargs["negative_prompt"]
+    bot.send_photo.assert_awaited_once()
+    upload_kwargs = bot.send_photo.await_args.kwargs
+    assert upload_kwargs["chat_id"] == 9999999
+    assert upload_kwargs["photo"].input_file_content == b"fake_image_bytes"
+    assert upload_kwargs["photo"].filename == f"daily-2024-01-01-{difficulty}.jpg"
+    uploaded.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_daily_image_generation_does_not_upload_failed_provider_result(monkeypatch):
+    from app.games import crocodile_daily as daily
+    from app.providers import pollinations
+
+    generate = AsyncMock(return_value=pollinations.PollinationsResult(success=False, error_message="unavailable"))
+    bot = SimpleNamespace(send_photo=AsyncMock())
+    monkeypatch.setattr("app.config.settings.ADMIN_ID", 9999999)
+    monkeypatch.setattr(pollinations, "get_pollinations_provider", lambda: SimpleNamespace(generate=generate))
+
+    result = await daily._generate_daily_image_file_id(
+        bot,
+        prompt="abc",
+        puzzle_date=date(2024, 1, 1),
+        difficulty="easy",
+        image_model="flux",
+        bypass_image_quota=True,
+    )
+
+    assert result == (None, "flux")
+    generate.assert_awaited_once()
+    bot.send_photo.assert_not_awaited()
 
 
 @pytest.mark.unit

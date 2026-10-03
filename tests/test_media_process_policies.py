@@ -8,6 +8,13 @@ import pytest
 from app.process_policies import ResolvedPolicy
 
 
+@pytest.fixture(autouse=True)
+def key_health(monkeypatch):
+    manager = SimpleNamespace(record_success=AsyncMock(), suspend_key=AsyncMock())
+    monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: manager)
+    return manager
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("order", [("gemini",), ("gemini", "pollinations")])
 async def test_asr_provider_order_does_not_add_hidden_provider(monkeypatch, order):
@@ -229,7 +236,7 @@ async def test_crocodile_plan_tries_every_configured_model(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_image_prompt_translation_uses_exact_text_model_plan(monkeypatch):
+async def test_image_prompt_translation_uses_exact_text_model_plan(monkeypatch, key_health):
     from app.config import settings
     from app.handlers import cmd_image
     from app.observability import workload_events
@@ -267,3 +274,4 @@ async def test_image_prompt_translation_uses_exact_text_model_plan(monkeypatch):
 
     assert await cmd_image._translate_to_english("кот") == "a painted cat"
     assert attempted == ["gemini-a", "gemini-b"]
+    key_health.record_success.assert_awaited_once_with("test-hash", "gemini-b")

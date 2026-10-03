@@ -54,6 +54,7 @@ def _make_use_case(resolve_side_effects: list, response_side_effects: list):
     uc.resolve_ai_request = AsyncMock(side_effect=resolve_side_effects)
     uc.get_ai_response = AsyncMock(side_effect=response_side_effects)
     uc.increment_key_usage = AsyncMock()
+    uc.reserve_key_usage = AsyncMock(return_value=True)
     return uc
 
 
@@ -108,7 +109,7 @@ class TestOpencodeGetResponseCascade:
 
     @pytest.mark.asyncio
     async def test_vision_model_maps_to_gemini_flash(self):
-        """The vision-capable mimo-v2-omni should cascade to gemini-3.5-flash."""
+        """The vision model cascades to the configured primary Gemini model."""
         fake_status = FakeKeyStatusManager()
         history = [{"role": "user", "parts": ["describe image"]}]
 
@@ -121,8 +122,8 @@ class TestOpencodeGetResponseCascade:
         use_case = _make_use_case(resolve_effects, response_effects)
 
         mock_settings = MagicMock()
-        mock_settings.DEFAULT_MODEL = "gemini-3.5-flash"
-        mock_settings.RESEARCH_MODEL = "gemini-3.5-flash"
+        mock_settings.DEFAULT_MODEL = "gemini-3.1-flash-lite"
+        mock_settings.RESEARCH_MODEL = "gemini-3.1-flash-lite"
         mock_settings.QNA_MODEL = "gemini-3.1-flash-lite"
         mock_settings.AVAILABLE_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
 
@@ -138,6 +139,7 @@ class TestOpencodeGetResponseCascade:
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=use_case),
             patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
             patch("app.providers.router.settings", mock_settings),
+            patch("app.providers.router.GEMINI_PRIMARY_MODEL", "gemini-3.5-flash"),
             patch.object(ProviderRouter, "get_response", _spy_get_response),
         ):
             router = ProviderRouter()

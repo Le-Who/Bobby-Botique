@@ -1,85 +1,21 @@
-import importlib
 import re
-import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from collections import defaultdict, deque
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-# Define keys but do not override them yet
-_mock_keys = [
-    "asyncpg",
-    "asyncpg.pool",
-    "google.genai",
-    "google.genai.errors",
-    "redis",
-    "redis.exceptions",
-    "telegram",
-    "telegram.ext",
-    "telegram.error",
-    "hypercorn.config",
-    "hypercorn.asyncio",
-    "psutil",
-    "app.database",
-]
-_original_modules = {}
-
-
-def setup_module(module):
-    global _original_modules
-    for k in _mock_keys:
-        if k in sys.modules:
-            _original_modules[k] = sys.modules[k]
-        sys.modules[k] = MagicMock()
-
-    # Specialized mocks
-    mock_psutil = MagicMock()
-    mock_psutil.cpu_percent.return_value = 10.0
-    mock_psutil.virtual_memory.return_value.percent = 20.0
-    mock_psutil.virtual_memory.return_value.used = 512 * 1024 * 1024
-    mock_psutil.virtual_memory.return_value.total = 1024 * 1024 * 1024
-    mock_psutil.disk_usage.return_value.percent = 30.0
-    sys.modules["psutil"] = mock_psutil
-
-    mock_db = MagicMock()
-    mock_db.is_database_connected.return_value = True
-    mock_db.get_gemini_key_usage_stats = AsyncMock(return_value=[])
-    mock_db.get_active_key_info = AsyncMock(return_value={})
-    mock_db.get_supabase_metrics = AsyncMock(return_value={"status": "connected", "pool_size": 5})
-    sys.modules["app.database"] = mock_db
-
-
-def teardown_module(module):
-    for k in _mock_keys:
-        if k in sys.modules:
-            del sys.modules[k]
-    sys.modules.update(_original_modules)
-
-
-# Mock app.config settings
-@pytest.fixture
-def mock_settings():
-    with patch("app.config.settings") as mock:
-        mock.TELEGRAM_BOT_TOKEN = "bot_token"
-        mock.ADMIN_SECRET = "test_token"
-        mock.ADMIN_ID = 123
-        mock.DAILY_LIMITS = {}
-        mock.PORT = 5000
-        mock.AVAILABLE_MODELS = ["gemini-2.5-flash"]
-        yield mock
-
 
 @pytest.fixture
-def client(mock_settings):
-    # Force reload of app.web if it's already imported
-    if "app.web" in sys.modules:
-        importlib.reload(sys.modules["app.web"])
+def client(monkeypatch):
+    from app import web, web_miniapp
 
-    # Explicitly patch settings in app.web to be sure
-    with patch("app.web.settings", mock_settings):
-        from app.web import quart_app
-
-        quart_app.config["TESTING"] = True
-        yield quart_app.test_client()
+    monkeypatch.setattr(web, "settings", web.settings.model_copy(update={"ADMIN_SECRET": "test_token"}))
+    monkeypatch.setitem(web.quart_app.config, "TESTING", True)
+    for limiter in (web._login_limiter, web._api_limiter, web_miniapp._reader_limiter):
+        monkeypatch.setattr(limiter, "_requests", defaultdict(deque))
+        monkeypatch.setattr(limiter, "_call_count", 0)
+    with patch.object(web.database, "is_database_connected", return_value=True):
+        yield web.quart_app.test_client()
 
 
 @pytest.mark.asyncio
@@ -151,15 +87,20 @@ async def test_header_auth_still_works(client):
     headers = {"X-Auth-Token": "test_token"}
     response = await client.get("/", headers=headers)
     # Should not redirect — auth passed
-    assert response.status_code != 302
+    assert response.status_code == 200
 
 
 @pytest.mark.asyncio
 async def test_invalid_header_token_redirects(client):
     """Test that invalid token falls through to redirect."""
-    headers = {"X-Auth-Token": "wrong_token"}  # noqa: F841
-    response = await client.get("/")
-    assert response.status_code == 302
+    headers = {"X-Auth-Token": "wrong_token"}
+    with patch("app.web.render_template", new=AsyncMock(return_value="dashboard")) as render:
+        response = await client.get("/", headers=headers)
+        assert response.status_code == 302
+        assert "/login" in response.headers["Location"]
+        render.assert_not_awaited()
+    response = await client.get("/api/overview", headers=headers)
+    assert response.status_code == 401
 
 
 @pytest.mark.asyncio

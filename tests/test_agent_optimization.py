@@ -1,65 +1,63 @@
-def test_optimization_logic():
-    # This is a unit test for the logic I'm implementing
-    selected_urls = ["url1", "url2", "url3"]
-    search_results = [
-        {"url": "url1", "content": "content1"},
-        {"url": "url3", "content": "content3"},
-        {"url": "url4", "content": "content4"},
+"""Search-tool regression tests exercise current research evidence assembly."""
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+from google.genai import types
+
+from app.core import agentic
+
+
+@pytest.fixture
+def agent(monkeypatch):
+    monkeypatch.setattr(agentic, "get_cached_genai_client", lambda _: SimpleNamespace())
+    return agentic.AgenticSearch(model_name="gemini-test", api_key="fake-key")
+
+
+@pytest.mark.asyncio
+async def test_search_tool_deduplicates_tracking_variants_and_keeps_first_evidence(agent, monkeypatch):
+    search = AsyncMock(
+        return_value=[
+            {"url": "https://example.com/article", "content": "First evidence"},
+            {"url": "https://www.example.com/article/?utm_source=news#section", "content": "Duplicate evidence"},
+            {"url": "https://example.com/other", "content": "Other evidence"},
+        ]
+    )
+    monkeypatch.setattr(agentic, "parallel_search", search)
+    call = types.FunctionCall(name="search_web", args={"queries": ["query"]})
+    result = await agent._execute_tool(call, seen_urls=set())
+
+    assert [row["content"] for row in result["results"]] == ["First evidence", "Other evidence"]
+    assert [row["url"] for row in result["results"]] == [
+        "https://example.com/article",
+        "https://example.com/other",
     ]
-
-    # What the optimized logic does:
-    results_map = {res.get("url"): res for res in search_results if res.get("url")}
-    final_context_list = []
-    for url in selected_urls:
-        res = results_map.get(url)
-        if res:
-            source_info = f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
-            final_context_list.append(source_info)
-
-    assert len(final_context_list) == 2
-    assert "Источник: url1" in final_context_list[0]
-    assert "Содержание:\ncontent1" in final_context_list[0]
-    assert "Источник: url3" in final_context_list[1]
-    assert "Содержание:\ncontent3" in final_context_list[1]
+    assert result["_dedup_count"] == 1
+    search.assert_awaited_once_with(["query"], user_id=None, chat_id=None, max_results=10)
 
 
-def test_optimization_logic_with_duplicates():
-    # Test that it handles duplicate selected URLs correctly (repeats them)
-    selected_urls = ["url1", "url1", "url2"]
-    search_results = [
-        {"url": "url1", "content": "content1"},
-        {"url": "url2", "content": "content2"},
-    ]
+@pytest.mark.asyncio
+async def test_search_tool_excludes_seen_evidence_across_searches_but_keeps_distinct_pages(agent, monkeypatch):
+    search = AsyncMock(
+        side_effect=[
+            [{"url": "https://example.com/article?page=1", "content": "Page one"}],
+            [
+                {"url": "https://example.com/article/?page=1&utm_medium=email", "content": "Repeated page one"},
+                {"url": "https://example.com/article?page=2", "content": "Page two"},
+            ],
+        ]
+    )
+    monkeypatch.setattr(agentic, "parallel_search", search)
+    seen = set()
+    first = await agent._execute_tool(
+        types.FunctionCall(name="search_web", args={"queries": ["first query"]}), seen_urls=seen
+    )
+    second = await agent._execute_tool(
+        types.FunctionCall(name="search_web", args={"queries": ["second query"]}), seen_urls=seen
+    )
 
-    results_map = {res.get("url"): res for res in search_results if res.get("url")}
-    final_context_list = []
-    for url in selected_urls:
-        res = results_map.get(url)
-        if res:
-            source_info = f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
-            final_context_list.append(source_info)
-
-    assert len(final_context_list) == 3
-    assert final_context_list[0] == final_context_list[1]
-    assert "url1" in final_context_list[0]
-    assert "url2" in final_context_list[2]
-
-
-def test_optimization_logic_with_duplicate_results():
-    # Test that it handles duplicate search results by taking the last one (O(1) map behavior)
-    selected_urls = ["url1"]
-    search_results = [
-        {"url": "url1", "content": "content1_first"},
-        {"url": "url1", "content": "content1_last"},
-    ]
-
-    results_map = {res.get("url"): res for res in search_results if res.get("url")}
-    final_context_list = []
-    for url in selected_urls:
-        res = results_map.get(url)
-        if res:
-            source_info = f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
-            final_context_list.append(source_info)
-
-    assert len(final_context_list) == 1
-    assert "content1_last" in final_context_list[0]
+    assert [row["content"] for row in first["results"]] == ["Page one"]
+    assert [row["content"] for row in second["results"]] == ["Page two"]
+    assert second["_dedup_count"] == 1
+    assert seen == {"https://example.com/article?page=1", "https://example.com/article?page=2"}

@@ -1,219 +1,234 @@
-import pytest
+"""Integration tests for actual key quota, rotation and health APIs."""
 
-pytestmark = pytest.mark.integration
-"""Integration tests for API key management — mirrors repos/keys.py SQL.
-
-Tests key rotation, usage tracking, daily limits, and key status management.
-"""
+import hashlib
+from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
-pytestmark = pytest.mark.integration
+from app.database import db_manager
+from app.repos import keys
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio, pytest.mark.usefixtures("force_test_db_conn")]
+
+MODEL = "gemini-3.1-flash-lite"
+USAGE_DATE = date(2026, 1, 5)
+
+
+@pytest.fixture
+async def key_clock(db_conn, monkeypatch):
+    frozen_now = await db_conn.fetchval("SELECT CURRENT_TIMESTAMP")
+
+    class DatabaseClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen_now.astimezone(tz) if tz is not None else frozen_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(keys, "datetime", DatabaseClock)
+    return frozen_now
+
+
+@pytest.fixture
+def daily_manager(monkeypatch, key_clock):
+    manager = keys.DailyKeyManager("api_keys", "key_usage")
+    monkeypatch.setattr(manager, "_today", lambda: USAGE_DATE)
+    monkeypatch.setattr(keys, "settings", SimpleNamespace(LIMIT_THRESHOLD_PERCENT=1.0))
+    monkeypatch.setattr(db_manager, "_active_keys_cache", {})
+    return manager
+
+
+@pytest.fixture
+async def selection_keys(db_conn_with_user):
+    conn = db_conn_with_user
+    # Exclude pre-existing keys so this test does not depend on seed data.
+    excluded = {row["key_hash"] for row in await conn.fetch("SELECT key_hash FROM api_keys")}
+    key_a = "integration-gemini-key-a"
+    key_b = "integration-gemini-key-b"
+    hash_a = hashlib.sha256(key_a.encode("utf-8")).hexdigest()
+    hash_b = hashlib.sha256(key_b.encode("utf-8")).hexdigest()
+    await conn.executemany(
+        "INSERT INTO api_keys (api_key, key_hash) VALUES ($1, $2)", [(key_a, hash_a), (key_b, hash_b)]
+    )
+    return conn, hash_a, hash_b, excluded
 
 
 class TestKeyUsageTracking:
-    """Test daily key usage counter (mirrors DailyKeyManager SQL)."""
-
-    @pytest.mark.asyncio
-    async def test_insert_usage_counter(self, db_conn_with_key):
-        """UPSERT into key_usage should create a new counter."""
+    async def test_insert_usage_counter(self, db_conn_with_key, daily_manager):
         conn, key_hash = db_conn_with_key
 
-        await conn.execute(
-            """INSERT INTO key_usage (key_hash, model_name, usage_date, request_count)
-               VALUES ($1, $2, CURRENT_DATE, 1)
-               ON CONFLICT (key_hash, model_name, usage_date) DO UPDATE
-               SET request_count = key_usage.request_count + 1""",
-            key_hash,
-            "gemini-2.5-flash",
-        )
+        assert await daily_manager.increment_usage(key_hash, MODEL) == [{"request_count": 1}]
 
-        row = await conn.fetchrow(
-            "SELECT request_count FROM key_usage WHERE key_hash = $1 AND model_name = $2",
-            key_hash,
-            "gemini-2.5-flash",
-        )
-        assert row["request_count"] == 1
-
-    @pytest.mark.asyncio
-    async def test_increment_usage_counter(self, db_conn_with_key):
-        """Repeated UPSERT should increment the counter."""
-        conn, key_hash = db_conn_with_key
-
-        upsert_sql = """INSERT INTO key_usage (key_hash, model_name, usage_date, request_count)
-                        VALUES ($1, $2, CURRENT_DATE, 1)
-                        ON CONFLICT (key_hash, model_name, usage_date) DO UPDATE
-                        SET request_count = key_usage.request_count + 1"""
-
-        # Insert 3 times
-        for _ in range(3):
-            await conn.execute(upsert_sql, key_hash, "gemini-2.5-flash")
-
-        row = await conn.fetchrow(
-            "SELECT request_count FROM key_usage WHERE key_hash = $1 AND model_name = $2",
-            key_hash,
-            "gemini-2.5-flash",
-        )
-        assert row["request_count"] == 3
-
-    @pytest.mark.asyncio
-    async def test_usage_counter_per_model(self, db_conn_with_key):
-        """Usage should be tracked separately per model."""
-        conn, key_hash = db_conn_with_key
-
-        for model in ("gemini-2.5-flash", "gemini-3.1-flash-lite"):
-            await conn.execute(
-                """INSERT INTO key_usage (key_hash, model_name, usage_date, request_count)
-                   VALUES ($1, $2, CURRENT_DATE, 1)""",
+        assert (
+            await conn.fetchval(
+                "SELECT request_count FROM key_usage WHERE key_hash = $1 AND model_name = $2 AND usage_date = $3",
                 key_hash,
-                model,
+                MODEL,
+                USAGE_DATE,
             )
+            == 1
+        )
+
+    async def test_increment_usage_counter(self, db_conn_with_key, daily_manager):
+        conn, key_hash = db_conn_with_key
+        for expected in (1, 2, 3):
+            assert await daily_manager.increment_usage(key_hash, MODEL) == [{"request_count": expected}]
+
+        assert (
+            await conn.fetchval(
+                "SELECT request_count FROM key_usage WHERE key_hash = $1 AND model_name = $2 AND usage_date = $3",
+                key_hash,
+                MODEL,
+                USAGE_DATE,
+            )
+            == 3
+        )
+
+    async def test_usage_counter_per_model(self, db_conn_with_key, daily_manager):
+        conn, key_hash = db_conn_with_key
+        await daily_manager.increment_usage(key_hash, MODEL)
+        await daily_manager.increment_usage(key_hash, MODEL)
+        await daily_manager.increment_usage(key_hash, "gemini-3.1-pro-preview")
 
         rows = await conn.fetch(
-            "SELECT model_name FROM key_usage WHERE key_hash = $1",
+            "SELECT model_name, request_count FROM key_usage WHERE key_hash = $1 AND usage_date = $2",
             key_hash,
+            USAGE_DATE,
         )
-        models = {r["model_name"] for r in rows}
-        assert models == {"gemini-2.5-flash", "gemini-3.1-flash-lite"}
+        assert {row["model_name"]: row["request_count"] for row in rows} == {MODEL: 2, "gemini-3.1-pro-preview": 1}
+
+    @pytest.mark.parametrize("daily_limit,percent,slots", [(2, 1.0, 2), (10, 0.9, 9)])
+    async def test_reservation_stops_at_threshold(
+        self, db_conn_with_key, daily_manager, monkeypatch, daily_limit, percent, slots
+    ):
+        conn, key_hash = db_conn_with_key
+        monkeypatch.setattr(keys, "settings", SimpleNamespace(LIMIT_THRESHOLD_PERCENT=percent))
+        assert await daily_manager.is_key_available(key_hash, MODEL, daily_limit) is True
+        for count in range(1, slots + 1):
+            assert await daily_manager.reserve_usage(key_hash, MODEL, daily_limit) == count
+
+        assert await daily_manager.reserve_usage(key_hash, MODEL, daily_limit) is None
+        assert await daily_manager.is_key_available(key_hash, MODEL, daily_limit) is False
+        assert await daily_manager.is_key_available(key_hash, "other-model", daily_limit) is True
+        assert (
+            await conn.fetchval(
+                "SELECT request_count FROM key_usage WHERE key_hash = $1 AND model_name = $2 AND usage_date = $3",
+                key_hash,
+                MODEL,
+                USAGE_DATE,
+            )
+            == slots
+        )
+
+    async def test_unlimited_reservations_still_record_usage(self, db_conn_with_key, daily_manager):
+        conn, key_hash = db_conn_with_key
+        for count in (1, 2, 3):
+            assert await daily_manager.reserve_usage(key_hash, MODEL, daily_limit=None) == count
+        assert await daily_manager.is_key_available(key_hash, MODEL, daily_limit=None) is True
+        assert (
+            await conn.fetchval(
+                "SELECT request_count FROM key_usage WHERE key_hash = $1 AND model_name = $2 AND usage_date = $3",
+                key_hash,
+                MODEL,
+                USAGE_DATE,
+            )
+            == 3
+        )
 
 
 class TestKeySelection:
-    """Test key selection queries (mirrors DailyKeyManager.get_available_key)."""
-
-    @pytest.mark.asyncio
-    async def test_select_least_used_key(self, db_conn_with_user):
-        """Key with lowest request_count should be selected first."""
-        conn = db_conn_with_user
-
-        # Insert 2 keys
-        await conn.execute(
-            "INSERT INTO api_keys (api_key, key_hash) VALUES ($1, $2)",
-            "key-a",
-            "hash_a",
-        )
-        await conn.execute(
-            "INSERT INTO api_keys (api_key, key_hash) VALUES ($1, $2)",
-            "key-b",
-            "hash_b",
+    async def test_select_least_used_key(self, selection_keys, daily_manager):
+        conn, hash_a, hash_b, excluded = selection_keys
+        await conn.executemany(
+            "INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, $3, $4)",
+            [(hash_a, MODEL, USAGE_DATE, 5), (hash_b, MODEL, USAGE_DATE, 2)],
         )
 
-        # Key A: 5 requests, Key B: 2 requests
+        selected = await daily_manager.get_fresh_available_key(MODEL, daily_limit=10, excluded_hashes=excluded)
+        assert selected == {"key_hash": hash_b, "api_key": "integration-gemini-key-b"}
+        assert await daily_manager.get_fresh_available_key(
+            MODEL, daily_limit=10, excluded_hashes=excluded | {hash_b}
+        ) == {"key_hash": hash_a, "api_key": "integration-gemini-key-a"}
+
+    async def test_key_with_no_usage_preferred(self, selection_keys, daily_manager):
+        conn, hash_a, hash_b, excluded = selection_keys
         await conn.execute(
-            "INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, CURRENT_DATE, $3)",
-            "hash_a",
-            "gemini-2.5-flash",
+            "INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, $3, $4)",
+            hash_a,
+            MODEL,
+            USAGE_DATE,
             5,
         )
-        await conn.execute(
-            "INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, CURRENT_DATE, $3)",
-            "hash_b",
-            "gemini-2.5-flash",
-            2,
-        )
 
-        # Should select hash_b (least used)
-        row = await conn.fetchrow(
-            """SELECT k.key_hash
-               FROM api_keys k
-               LEFT JOIN key_usage u ON k.key_hash = u.key_hash
-                   AND u.model_name = $1 AND u.usage_date = CURRENT_DATE
-               ORDER BY COALESCE(u.request_count, 0) ASC
-               LIMIT 1""",
-            "gemini-2.5-flash",
-        )
-        assert row["key_hash"] == "hash_b"
+        assert await daily_manager.get_fresh_available_key(MODEL, daily_limit=10, excluded_hashes=excluded) == {
+            "key_hash": hash_b,
+            "api_key": "integration-gemini-key-b",
+        }
 
-    @pytest.mark.asyncio
-    async def test_key_with_no_usage_preferred(self, db_conn_with_user):
-        """Keys with no usage records should be preferred (count = 0)."""
-        conn = db_conn_with_user
-
+    async def test_exhausted_or_suspended_keys_are_not_selected(self, selection_keys, daily_manager):
+        conn, hash_a, hash_b, excluded = selection_keys
         await conn.execute(
-            "INSERT INTO api_keys (api_key, key_hash) VALUES ($1, $2)",
-            "used-key",
-            "hash_used",
-        )
-        await conn.execute(
-            "INSERT INTO api_keys (api_key, key_hash) VALUES ($1, $2)",
-            "fresh-key",
-            "hash_fresh",
-        )
-        await conn.execute(
-            "INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, CURRENT_DATE, $3)",
-            "hash_used",
-            "gemini-2.5-flash",
+            "INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, $3, $4)",
+            hash_a,
+            MODEL,
+            USAGE_DATE,
             10,
         )
+        manager = keys.KeyStatusManager()
+        await manager.suspend_key(hash_b, MODEL, "permanent", "Invalid credential")
 
-        row = await conn.fetchrow(
-            """SELECT k.key_hash
-               FROM api_keys k
-               LEFT JOIN key_usage u ON k.key_hash = u.key_hash
-                   AND u.model_name = $1 AND u.usage_date = CURRENT_DATE
-               ORDER BY COALESCE(u.request_count, 0) ASC
-               LIMIT 1""",
-            "gemini-2.5-flash",
-        )
-        assert row["key_hash"] == "hash_fresh"
+        assert await daily_manager.get_fresh_available_key(MODEL, daily_limit=10, excluded_hashes=excluded) is None
+
+        await manager.record_success(hash_b, MODEL)
+        assert await daily_manager.get_fresh_available_key(MODEL, daily_limit=10, excluded_hashes=excluded) == {
+            "key_hash": hash_b,
+            "api_key": "integration-gemini-key-b",
+        }
 
 
 class TestKeyModelStatus:
-    """Test key model status tracking (mirrors KeyStatusManager SQL)."""
-
-    @pytest.mark.asyncio
-    async def test_suspend_key(self, db_conn_with_key):
-        """Suspending a key should create a status record in key_model_status."""
+    async def test_suspend_key(self, db_conn_with_key, daily_manager, key_clock):
         conn, key_hash = db_conn_with_key
+        manager = keys.KeyStatusManager()
 
-        await conn.execute(
-            """INSERT INTO key_model_status
-                   (key_hash, model_name, status, suspended_until, failure_count, last_error, updated_at)
-               VALUES ($1, $2, 'suspended', NOW() + INTERVAL '60 seconds', 1, 'rate limit hit', NOW())
-               ON CONFLICT (key_hash, model_name) DO UPDATE SET
-                   status = 'suspended',
-                   suspended_until = EXCLUDED.suspended_until,
-                   failure_count = key_model_status.failure_count + 1,
-                   last_error = EXCLUDED.last_error,
-                   updated_at = NOW()""",
-            key_hash,
-            "gemini-2.5-flash",
-        )
-
+        await manager.suspend_key(key_hash, MODEL, "permanent", "Rate limit details")
         row = await conn.fetchrow(
-            "SELECT status, failure_count, last_error FROM key_model_status WHERE key_hash = $1 AND model_name = $2",
+            "SELECT status, failure_count, last_error, suspended_until FROM key_model_status WHERE key_hash = $1 AND model_name = $2",
             key_hash,
-            "gemini-2.5-flash",
+            MODEL,
         )
         assert row["status"] == "suspended"
         assert row["failure_count"] == 1
-        assert row["last_error"] == "rate limit hit"
+        assert row["last_error"] == "Rate limit details"
+        assert row["suspended_until"] == key_clock + timedelta(hours=24)
+        # An immediate duplicate suspension must not increment the DB counter.
+        await manager.suspend_key(key_hash, MODEL, "permanent", "Duplicate")
+        assert (
+            await conn.fetchval(
+                "SELECT failure_count FROM key_model_status WHERE key_hash = $1 AND model_name = $2", key_hash, MODEL
+            )
+            == 1
+        )
+        assert (
+            await conn.fetchval(
+                "SELECT COUNT(*) FROM key_model_status WHERE key_hash = $1 AND model_name = $2", key_hash, "other-model"
+            )
+            == 0
+        )
 
-    @pytest.mark.asyncio
-    async def test_reactivate_key(self, db_conn_with_key):
-        """Recording success should reset key to active."""
+    async def test_reactivate_key(self, db_conn_with_key, daily_manager):
         conn, key_hash = db_conn_with_key
+        manager = keys.KeyStatusManager()
+        await manager.suspend_key(key_hash, MODEL, "permanent", "Invalid credential")
 
-        # First suspend
-        await conn.execute(
-            """INSERT INTO key_model_status (key_hash, model_name, status, failure_count, updated_at)
-               VALUES ($1, $2, 'suspended', 3, NOW())""",
-            key_hash,
-            "gemini-2.5-flash",
-        )
-
-        # Then reactivate (mirrors KeyStatusManager.record_success)
-        await conn.execute(
-            """UPDATE key_model_status
-               SET status = 'active', failure_count = 0, suspended_until = NULL, updated_at = NOW()
-               WHERE key_hash = $1 AND model_name = $2""",
-            key_hash,
-            "gemini-2.5-flash",
-        )
+        await manager.record_success(key_hash, MODEL)
 
         row = await conn.fetchrow(
-            "SELECT status, failure_count FROM key_model_status WHERE key_hash = $1 AND model_name = $2",
+            "SELECT status, failure_count, suspended_until, last_error FROM key_model_status WHERE key_hash = $1 AND model_name = $2",
             key_hash,
-            "gemini-2.5-flash",
+            MODEL,
         )
-        assert row["status"] == "active"
-        assert row["failure_count"] == 0
+        assert dict(row) == {"status": "active", "failure_count": 0, "suspended_until": None, "last_error": None}
+        statuses = await manager.get_all_statuses()
+        own_statuses = [status for status in statuses if status["key_hash"] == key_hash]
+        assert len(own_statuses) == 1
+        assert own_statuses[0]["status"] == "active"

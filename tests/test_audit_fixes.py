@@ -478,12 +478,10 @@ class TestDatabaseCleanImports:
 
     def test_database_module_loads_cleanly(self):
         """database module should import without errors — real behavioral check."""
-        import importlib
-
         import app.database as db_mod
+        from app.repos import keys
 
-        # Re-import to ensure no stale state
-        importlib.reload(db_mod)
+        assert keys.db_manager is db_mod.db_manager
         # Verify key public API exists
         assert hasattr(db_mod, "db_query"), "db_query must be a top-level function"
         assert callable(db_mod.db_query)

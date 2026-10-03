@@ -15,6 +15,7 @@ venv/
 htmlcov/
 .pytest_cache/
 .pytest_tmp/
+node_modules/
 pytest*.log
 pytest_output.txt
 tests_output.log

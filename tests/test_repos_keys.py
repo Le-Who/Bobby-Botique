@@ -1,6 +1,7 @@
 """Tests for app.repos.keys — DailyKeyManager, MonthlyKeyManager, key rotation."""
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,6 +29,7 @@ def mock_deps():
         patch.object(keys, "set_user_context", new_callable=AsyncMock),
         patch.object(keys, "clear_user_context", new_callable=AsyncMock),
         patch.object(keys, "settings", _MockSettings()),
+        patch("app.runtime_settings.models.get_snapshot", new=AsyncMock(return_value=SimpleNamespace(values={}))),
     ):
         m_mgr._active_keys_cache = {}
         m_mgr._model_config_cache = {}
@@ -52,10 +54,9 @@ class TestGetModelDailyLimit:
     async def test_returns_cached_limit(self, mock_deps):
         from app.repos.keys import get_model_daily_limit
 
-        mock_deps["mgr"]._model_config_cache = {"test-model": {"daily_limit": 200}}
+        mock_deps["mgr"]._model_config_cache = {"test-model": 200}
         result = await get_model_daily_limit("test-model")
-        # Cache stores the whole config dict; function returns the daily_limit value
-        assert result == 200 or result == {"daily_limit": 200}
+        assert result == 200
         mock_deps["query"].assert_not_called()
 
     @pytest.mark.asyncio
@@ -65,6 +66,9 @@ class TestGetModelDailyLimit:
         mock_deps["query"].return_value = [{"daily_limit": 300}]
         result = await get_model_daily_limit("other-model")
         assert result == 300
+        assert mock_deps["mgr"]._model_config_cache["other-model"] == 300
+        assert await get_model_daily_limit("other-model") == 300
+        mock_deps["query"].assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_returns_none_if_not_found(self, mock_deps):

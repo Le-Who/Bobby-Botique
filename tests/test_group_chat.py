@@ -6,16 +6,16 @@ from app.group_chat import GroupChat, GroupChatManager
 
 
 @pytest.fixture
-def group_chat_manager():
+def group_chat_manager(monkeypatch):
     # Reset singleton instance
-    GroupChatManager._instance = None
+    monkeypatch.setattr(GroupChatManager, "_instance", None)
     manager = GroupChatManager()
     return manager
 
 
 @pytest.mark.asyncio
-async def test_singleton_behavior():
-    GroupChatManager._instance = None
+async def test_singleton_behavior(monkeypatch):
+    monkeypatch.setattr(GroupChatManager, "_instance", None)
     manager1 = GroupChatManager()
     manager2 = GroupChatManager()
     assert manager1 is manager2

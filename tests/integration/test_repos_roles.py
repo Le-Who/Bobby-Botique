@@ -1,144 +1,84 @@
-import pytest
-
-pytestmark = pytest.mark.integration
-"""Integration tests for custom roles — mirrors repos/roles.py SQL.
-
-Tests CRUD operations for user_roles table.
-"""
+"""Integration tests for custom-role APIs and user scoping."""
 
 import pytest
 
-pytestmark = pytest.mark.integration
+from app.repos import conversations, roles
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio, pytest.mark.usefixtures("force_test_db_conn")]
+
+
+async def _create_role(conn, user_id, title="Writer", prompt="You are a creative writer"):
+    await roles.create_custom_role(user_id, title, prompt)
+    role_id = await conn.fetchval("SELECT id FROM user_roles WHERE user_id = $1 AND title = $2", user_id, title)
+    assert role_id is not None
+    return role_id
 
 
 class TestCustomRolesCRUD:
-    """Test custom role lifecycle mirroring repos/roles.py."""
+    async def test_create_and_list_roles(self, db_conn_with_user, test_user_id):
+        await roles.create_custom_role(test_user_id, "Teacher", "You are a helpful teacher")
+        await roles.create_custom_role(test_user_id, "Developer", "You are a senior dev")
 
-    @pytest.mark.asyncio
-    async def test_create_and_list_roles(self, db_conn_with_user):
-        """Mirrors create_custom_role + get_user_custom_roles."""
-        conn = db_conn_with_user
-        user_id = 999999
-
-        await conn.execute(
-            "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
-            user_id,
-            "Teacher",
-            "You are a helpful teacher",
-        )
-        await conn.execute(
-            "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
-            user_id,
-            "Developer",
-            "You are a senior dev",
-        )
-
-        rows = await conn.fetch(
-            "SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC",
-            user_id,
-        )
+        rows = await roles.get_user_custom_roles(test_user_id)
         assert len(rows) == 2
-        titles = {r["title"] for r in rows}
-        assert titles == {"Teacher", "Developer"}
+        assert {row["title"] for row in rows} == {"Teacher", "Developer"}
+        full = await roles.get_user_custom_roles_full(test_user_id)
+        assert {row["title"]: row["prompt"] for row in full} == {
+            "Teacher": "You are a helpful teacher",
+            "Developer": "You are a senior dev",
+        }
+        assert await db_conn_with_user.fetchval("SELECT COUNT(*) FROM user_roles WHERE user_id = $1", test_user_id) == 2
 
-    @pytest.mark.asyncio
-    async def test_get_role_prompt(self, db_conn_with_user):
-        """Mirrors get_custom_role_prompt."""
-        conn = db_conn_with_user
-        user_id = 999999
+    async def test_get_role_prompt(self, db_conn_with_user, test_user_id):
+        role_id = await _create_role(db_conn_with_user, test_user_id)
 
-        role_id = await conn.fetchval(
-            "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3) RETURNING id",
-            user_id,
-            "Writer",
-            "You are a creative writer",
+        assert await roles.get_custom_role_prompt(role_id, test_user_id) == "You are a creative writer"
+
+    async def test_rename_role(self, db_conn_with_user, test_user_id):
+        role_id = await _create_role(db_conn_with_user, test_user_id, title="Old Name")
+
+        await roles.rename_custom_role(role_id, test_user_id, "New Name")
+
+        assert await db_conn_with_user.fetchval("SELECT title FROM user_roles WHERE id = $1", role_id) == "New Name"
+
+    async def test_update_role_prompt(self, db_conn_with_user, test_user_id):
+        role_id = await _create_role(db_conn_with_user, test_user_id)
+
+        assert await roles.update_custom_role_prompt(role_id, test_user_id, "Updated prompt") is True
+
+        assert (
+            await db_conn_with_user.fetchval("SELECT prompt FROM user_roles WHERE id = $1", role_id) == "Updated prompt"
         )
 
-        row = await conn.fetchrow(
-            "SELECT prompt FROM user_roles WHERE id = $1 AND user_id = $2",
-            role_id,
-            user_id,
-        )
-        assert row["prompt"] == "You are a creative writer"
+    async def test_delete_role(self, db_conn_with_user, test_user_id):
+        role_id = await _create_role(db_conn_with_user, test_user_id)
 
-    @pytest.mark.asyncio
-    async def test_rename_role(self, db_conn_with_user):
-        """Mirrors rename_custom_role."""
-        conn = db_conn_with_user
-        user_id = 999999
+        await roles.delete_custom_role(role_id, test_user_id)
 
-        role_id = await conn.fetchval(
-            "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3) RETURNING id",
-            user_id,
-            "Old Name",
-            "prompt",
-        )
-        await conn.execute(
-            "UPDATE user_roles SET title = $1 WHERE id = $2 AND user_id = $3",
-            "New Name",
-            role_id,
-            user_id,
-        )
+        assert await db_conn_with_user.fetchrow("SELECT id FROM user_roles WHERE id = $1", role_id) is None
+        assert await roles.get_custom_role_prompt(role_id, test_user_id) is None
 
-        row = await conn.fetchrow("SELECT title FROM user_roles WHERE id = $1", role_id)
-        assert row["title"] == "New Name"
+    async def test_role_count(self, db_conn_with_user, test_user_id):
+        assert await roles.get_custom_role_count(test_user_id) == 0
+        for index in range(3):
+            await roles.create_custom_role(test_user_id, f"Role {index}", f"Prompt {index}")
+        assert await roles.get_custom_role_count(test_user_id) == 3
 
-    @pytest.mark.asyncio
-    async def test_delete_role(self, db_conn_with_user):
-        """Mirrors delete_custom_role."""
-        conn = db_conn_with_user
-        user_id = 999999
-
-        role_id = await conn.fetchval(
-            "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3) RETURNING id",
-            user_id,
-            "Temp Role",
-            "temp",
-        )
-        await conn.execute("DELETE FROM user_roles WHERE id = $1 AND user_id = $2", role_id, user_id)
-
-        row = await conn.fetchrow("SELECT * FROM user_roles WHERE id = $1", role_id)
-        assert row is None
-
-    @pytest.mark.asyncio
-    async def test_role_count(self, db_conn_with_user):
-        """Mirrors get_custom_role_count."""
-        conn = db_conn_with_user
-        user_id = 999999
-
-        for i in range(3):
-            await conn.execute(
-                "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
-                user_id,
-                f"Role {i}",
-                f"Prompt {i}",
-            )
-
-        count = await conn.fetchval("SELECT COUNT(*) FROM user_roles WHERE user_id = $1", user_id)
-        assert count == 3
-
-    @pytest.mark.asyncio
-    async def test_role_scoped_to_user(self, db_conn_with_user):
-        """Verify roles are user-scoped: can't access other user's roles."""
-        conn = db_conn_with_user
-        user_id = 999999
+    async def test_role_scoped_to_user(self, db_conn_with_user, test_user_id):
         other_user_id = 888888
+        await db_conn_with_user.execute("INSERT INTO users (user_id) VALUES ($1)", other_user_id)
+        role_id = await _create_role(db_conn_with_user, other_user_id, "Secret Role", "Secret prompt")
 
-        # Create other user
-        await conn.execute("INSERT INTO users (user_id) VALUES ($1)", other_user_id)
+        assert await roles.get_custom_role_prompt(role_id, test_user_id) is None
+        assert await roles.get_user_custom_roles(test_user_id) == []
+        assert await roles.get_user_custom_roles_full(test_user_id) == []
+        assert await roles.get_custom_role_count(test_user_id) == 0
+        assert await conversations.get_role_data(f"user_role:{role_id}", test_user_id) is None
 
-        # Create role for other user
-        role_id = await conn.fetchval(
-            "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3) RETURNING id",
-            other_user_id,
-            "Secret Role",
-            "Secret prompt",
-        )
+        await roles.rename_custom_role(role_id, test_user_id, "Foreign rename")
+        assert await roles.update_custom_role_prompt(role_id, test_user_id, "Foreign prompt") is False
+        await roles.delete_custom_role(role_id, test_user_id)
 
-        # Try to access as user_id=999999 — should return nothing
-        row = await conn.fetchrow(
-            "SELECT prompt FROM user_roles WHERE id = $1 AND user_id = $2",
-            role_id,
-            user_id,
-        )
-        assert row is None
+        row = await db_conn_with_user.fetchrow("SELECT title, prompt FROM user_roles WHERE id = $1", role_id)
+        assert dict(row) == {"title": "Secret Role", "prompt": "Secret prompt"}
+        assert await roles.get_custom_role_prompt(role_id, other_user_id) == "Secret prompt"

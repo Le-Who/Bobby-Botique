@@ -61,29 +61,30 @@ async def test_semaphore_released_on_exception():
 
 @pytest.mark.asyncio
 async def test_semaphore_released_on_asyncio_cancelled_error():
-    """CancelledError (task cancellation) must not permanently hold the slot."""
-    # Arrange
     sem = make_semaphore(limit=1)
-
+    acquired = asyncio.Event()
     with patch("app.cache.redis_client", None):
-        # Act
-        task = asyncio.create_task(_cancel_scenario(sem))
-        await asyncio.sleep(0.01)  # Let task start
-        task.cancel()
+        task = asyncio.create_task(_cancel_scenario(sem, acquired))
         try:
-            await task
-        except asyncio.CancelledError, Exception:
-            pass
+            await asyncio.wait_for(acquired.wait(), timeout=2)
+            assert sem._local_semaphore._value == 0
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert sem._local_semaphore._value == 1
+            async with asyncio.timeout(2), sem:
+                assert sem._local_semaphore._value == 0
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert sem._local_semaphore._value == 1
 
-    # Assert — semaphore must be released despite cancellation
-    assert sem._local_semaphore._value == 1, "Semaphore must release on task cancellation"
 
-
-async def _cancel_scenario(sem: GlobalLLMSemaphore) -> None:
-    """Helper: acquire the semaphore and yield to allow cancellation."""
-    with patch("app.cache.redis_client", None):
-        async with sem:
-            await asyncio.sleep(10)  # Hold slot — will be cancelled here
+async def _cancel_scenario(sem: GlobalLLMSemaphore, acquired: asyncio.Event) -> None:
+    async with sem:
+        acquired.set()
+        await asyncio.Event().wait()
 
 
 @pytest.mark.asyncio
@@ -134,22 +135,42 @@ async def test_semaphore_returns_to_full_capacity_after_all_tasks_complete():
 
 @pytest.mark.asyncio
 async def test_semaphore_limit_one_sequential_execution():
-    """With limit=1, tasks must execute sequentially (no concurrent access)."""
-    # Arrange
     sem = make_semaphore(limit=1)
-    execution_order: list[int] = []
+    all_attempted = asyncio.Event()
+    release = asyncio.Event()
+    attempted = 0
+    active = 0
+    peak = 0
+    execution_order = []
 
-    async def task(n: int) -> None:
-        with patch("app.cache.redis_client", None):
-            async with sem:
-                execution_order.append(n)
-                await asyncio.sleep(0.01)
+    async def work(n):
+        nonlocal attempted, active, peak
+        attempted += 1
+        if attempted == 3:
+            all_attempted.set()
+        async with sem:
+            active += 1
+            peak = max(peak, active)
+            execution_order.append(n)
+            try:
+                await release.wait()
+            finally:
+                active -= 1
 
     with patch("app.cache.redis_client", None):
-        # Act — run 3 tasks that must be sequential
-        await asyncio.gather(task(1), task(2), task(3))
-
-    # Assert — all tasks ran, order may vary but no overlap occurred
+        tasks = [asyncio.create_task(work(n)) for n in (1, 2, 3)]
+        try:
+            await asyncio.wait_for(all_attempted.wait(), timeout=2)
+            assert active == peak == 1
+            release.set()
+            await asyncio.gather(*tasks)
+        finally:
+            release.set()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+    assert peak == 1
     assert sorted(execution_order) == [1, 2, 3]
     assert sem._local_semaphore._value == 1
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -233,6 +234,30 @@ async def test_key_race_first_text_deadline_does_not_reset_after_one_key_fails(m
 
     monkeypatch.setattr(router_module, "KEY_RACE_FIRST_TEXT_TIMEOUT_SECONDS", 0.05, raising=False)
     monkeypatch.setattr(router_module, "_ordered_gemini_fallback_models", lambda model: [])
+    now = 100.0
+    remaining_timeouts = []
+
+    async def observe_queue_wait(awaitable, *, timeout):
+        nonlocal now
+        remaining_timeouts.append(timeout)
+        if len(remaining_timeouts) == 1:
+            item = await asyncio.wait_for(awaitable, 1)
+            now += 0.04
+            return item
+        awaitable.close()
+        raise TimeoutError
+
+    monkeypatch.setattr(
+        router_module,
+        "asyncio",
+        SimpleNamespace(
+            **{
+                **vars(asyncio),
+                "get_running_loop": lambda: SimpleNamespace(time=lambda: now),
+                "wait_for": observe_queue_wait,
+            }
+        ),
+    )
 
     class TwoKeys:
         async def resolve_ai_request(self, preferred_model, *, excluded_key_hashes, **kwargs):
@@ -252,7 +277,6 @@ async def test_key_race_first_text_deadline_does_not_reset_after_one_key_fails(m
 
         async def stream(self, request, *, model_name):
             if self.key == "first":
-                await asyncio.sleep(0.03)
                 yield StreamFailed(
                     code=router_module.ErrorCode.OVERLOADED,
                     phase=FailurePhase.BEFORE_TEXT,
@@ -275,10 +299,11 @@ async def test_key_race_first_text_deadline_does_not_reset_after_one_key_fails(m
         patch("app.providers.base.get_provider_for_model", side_effect=lambda model, key: Provider(key)),
         patch.object(router, "_pick_transient_fallback_model", return_value=None),
     ):
-        events = await asyncio.wait_for(_collect(router.stream(request)), timeout=0.2)
+        events = await asyncio.wait_for(_collect(router.stream(request)), timeout=2)
 
     assert len(events) == 1 and isinstance(events[0], StreamFailed)
     assert events[0].code is router_module.ErrorCode.TIMEOUT
+    assert remaining_timeouts == pytest.approx([0.05, 0.01])
 
 
 async def _collect(stream):

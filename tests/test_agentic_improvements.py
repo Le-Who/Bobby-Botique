@@ -8,6 +8,7 @@ Covers:
   5. Streaming progress (on_status receives detail kwarg)
 """
 
+import asyncio
 import time
 from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -425,17 +426,59 @@ async def test_parallel_execution_of_multiple_tools(mock_agent, mock_status_call
     resp2 = MagicMock()
     resp2.candidates = [MagicMock(content=MagicMock(parts=[MagicMock(function_call=conclude_call, text=None)]))]
 
-    mock_agent.client.aio.models.generate_content.side_effect = [resp1, resp2]
+    replies = iter([resp1, resp2])
+    captured_contents = []
+
+    async def generate(**kwargs):
+        captured_contents.append(list(kwargs["contents"]))
+        return next(replies)
+
+    mock_agent.client.aio.models.generate_content.side_effect = generate
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    started = set()
+
+    async def tool_started(name):
+        started.add(name)
+        if len(started) == 2:
+            both_started.set()
+        await release.wait()
+
+    async def search(*args, **kwargs):
+        await tool_started("search")
+        return [{"url": "http://test.com"}]
+
+    async def read(*args, **kwargs):
+        await tool_started("read")
+        return "Page content"
 
     with (
         patch("app.core.agentic.parallel_search", new_callable=AsyncMock) as mock_search,
         patch("app.core.agentic.read_url", new_callable=AsyncMock) as mock_read,
     ):
-        mock_search.return_value = [{"url": "http://test.com"}]
-        mock_read.return_value = "Page content"
-
-        result = await mock_agent.run("test", mock_status_callback)
+        mock_search.side_effect = search
+        mock_read.side_effect = read
+        task = asyncio.create_task(mock_agent.run("test", mock_status_callback))
+        try:
+            await asyncio.wait_for(both_started.wait(), 1)
+            assert started == {"search", "read"}
+            release.set()
+            result = await asyncio.wait_for(task, 2)
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     assert result.answer == "Parallel done"
-    mock_search.assert_called_once()
-    mock_read.assert_called_once()
+    mock_search.assert_awaited_once()
+    mock_read.assert_awaited_once()
+    contents = captured_contents[1]
+    responses = [
+        part.function_response
+        for row in contents
+        if row.role == "user"
+        for part in row.parts
+        if part.function_response is not None
+    ]
+    assert [response.name for response in responses] == ["search_web", "read_page"]
+    assert responses[1].response == {"content": "Page content"}

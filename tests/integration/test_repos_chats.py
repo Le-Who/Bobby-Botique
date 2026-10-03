@@ -1,164 +1,169 @@
-import pytest
+"""Integration tests for the real chat-state repository APIs."""
 
-pytestmark = pytest.mark.integration
-"""Integration tests for chat state — mirrors repos/chats.py SQL.
-
-Tests get_user_chat / update_user_chat / update_thinking_level logic.
-"""
+from types import SimpleNamespace
 
 import pytest
 
-pytestmark = pytest.mark.integration
+from app.repos import chats
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio, pytest.mark.usefixtures("force_test_db_conn")]
+
+
+@pytest.fixture(autouse=True)
+def default_chat_model(monkeypatch):
+    monkeypatch.setattr(chats, "settings", SimpleNamespace(DEFAULT_MODEL="gemini-3.1-flash-lite"))
 
 
 class TestChatStateLifecycle:
-    """Test chat state CRUD mirroring repos/chats.py SQL."""
+    async def test_get_user_chat_returns_defaults_without_creating_row(self, db_conn_with_user, test_user_id):
+        state = await chats.get_user_chat(test_user_id)
 
-    @pytest.mark.asyncio
-    async def test_get_user_chat_creates_defaults(self, db_conn_with_user):
-        """Mirrors the INSERT ... ON CONFLICT in get_user_chat."""
-        conn = db_conn_with_user
-        user_id = 999999
+        assert state is not None
+        assert state.model == "gemini-3.1-flash-lite"
+        assert state.history == []
+        assert state.token_count == 0
+        assert state.search_enabled is False
+        assert state._has_persisted_chat is False
+        assert await db_conn_with_user.fetchval("SELECT COUNT(*) FROM chats WHERE user_id = $1", test_user_id) == 0
 
-        # Ensure user in users table but no chat yet
-        await conn.execute(
-            """INSERT INTO chats (user_id, model, token_count, search_enabled)
-               VALUES ($1, $2, 0, false)
-               ON CONFLICT (user_id) DO NOTHING""",
-            user_id,
-            "gemini-2.5-flash",
+    async def test_ensure_chat_generation_creates_missing_row(self, db_conn_with_user, test_user_id):
+        epoch = await chats.ensure_chat_generation(test_user_id, expected_epoch=None)
+
+        assert epoch is not None
+        assert (
+            await db_conn_with_user.fetchval("SELECT memory_epoch FROM chats WHERE user_id = $1", test_user_id) == epoch
+        )
+        assert await chats.ensure_chat_generation(test_user_id, expected_epoch=epoch) == epoch
+        assert await chats.ensure_chat_generation(test_user_id, expected_epoch=epoch + 1) is None
+
+    async def test_update_chat_model_and_history(self, db_conn_with_user, test_user_id):
+        state = await chats.get_user_chat(test_user_id)
+        assert state is not None
+        state.model = "gemini-3.1-pro-preview"
+        state.token_count = 150
+        state.history = [{"role": "user", "parts": ["Hello"]}, {"role": "model", "content": "Hi!"}]
+
+        assert await chats.update_user_chat(test_user_id, state) is True
+
+        row = await db_conn_with_user.fetchrow("SELECT model, token_count FROM chats WHERE user_id = $1", test_user_id)
+        assert dict(row) == {"model": "gemini-3.1-pro-preview", "token_count": 150}
+        loaded = await chats.get_user_chat(test_user_id)
+        assert loaded is not None
+        assert loaded.history == [{"role": "user", "parts": ["Hello"]}, {"role": "model", "parts": ["Hi!"]}]
+        assert loaded._has_persisted_chat is True
+
+    async def test_clear_chat_resets_state(self, db_conn_with_user, test_user_id):
+        state = await chats.get_user_chat(test_user_id)
+        assert state is not None
+        state.history = [{"role": "user", "parts": ["old"]}]
+        state.token_count = 500
+        state.context_summary = "Previous summary"
+        assert await chats.update_user_chat(test_user_id, state)
+
+        loaded = await chats.get_user_chat(test_user_id)
+        assert loaded is not None
+        loaded.history = []
+        loaded.token_count = 0
+        loaded.context_summary = None
+        assert await chats.update_user_chat(test_user_id, loaded)
+
+        row = await db_conn_with_user.fetchrow(
+            "SELECT token_count, context_summary FROM chats WHERE user_id = $1", test_user_id
+        )
+        assert dict(row) == {"token_count": 0, "context_summary": None}
+        assert (
+            await db_conn_with_user.fetchval(
+                "SELECT COUNT(*) FROM active_chat_messages WHERE user_id = $1", test_user_id
+            )
+            == 0
         )
 
-        row = await conn.fetchrow("SELECT * FROM chats WHERE user_id = $1", user_id)
-        assert row["model"] == "gemini-2.5-flash"
-        assert row["token_count"] == 0
-        assert row["search_enabled"] is False
-        assert await conn.fetchval("SELECT COUNT(*) FROM active_chat_messages WHERE user_id = $1", user_id) == 0
+    async def test_update_thinking_level(self, db_conn_with_user, test_user_id):
+        assert await chats.ensure_chat_generation(test_user_id, expected_epoch=None) is not None
 
-    @pytest.mark.asyncio
-    async def test_update_chat_model_and_history(self, db_conn_with_user):
-        """Mirrors update_user_chat model/history update."""
-        conn = db_conn_with_user
-        user_id = 999999
-
-        await conn.execute(
-            "INSERT INTO chats (user_id, model) VALUES ($1, $2)",
-            user_id,
-            "gemini-2.5-flash",
+        await chats.update_thinking_level(test_user_id, "high")
+        assert (
+            await db_conn_with_user.fetchval("SELECT thinking_level FROM chats WHERE user_id = $1", test_user_id)
+            == "high"
         )
 
-        history = [
-            {"role": "user", "content": "Hello"},
-            {"role": "model", "content": "Hi!"},
-        ]
-        await conn.execute(
-            "UPDATE chats SET model = $1, token_count = $2 WHERE user_id = $3",
-            "gemini-2.5-flash-lite",
-            150,
-            user_id,
-        )
-        await conn.executemany(
-            "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
-            [(user_id, message["role"], message["content"]) for message in history],
+        await chats.update_thinking_level(test_user_id, None)
+        assert (
+            await db_conn_with_user.fetchval("SELECT thinking_level FROM chats WHERE user_id = $1", test_user_id)
+            is None
         )
 
-        row = await conn.fetchrow("SELECT model, token_count FROM chats WHERE user_id = $1", user_id)
-        assert row["model"] == "gemini-2.5-flash-lite"
-        assert row["token_count"] == 150
-        loaded_history = await conn.fetch(
-            "SELECT role, content FROM active_chat_messages WHERE user_id = $1 ORDER BY id ASC",
-            user_id,
-        )
-        assert len(loaded_history) == 2
-        assert loaded_history[0]["role"] == "user"
+    async def test_stale_epoch_cannot_overwrite_chat_or_messages(self, db_conn_with_user, test_user_id):
+        state = await chats.get_user_chat(test_user_id)
+        assert state is not None
+        state.history = [{"role": "user", "parts": ["Current message"]}]
+        state.token_count = 25
+        assert await chats.update_user_chat(test_user_id, state)
+        stale_epoch = state.memory_epoch + 1
+        state.history = [{"role": "user", "parts": ["Stale replacement"]}]
+        state.token_count = 999
 
-    @pytest.mark.asyncio
-    async def test_clear_chat_resets_state(self, db_conn_with_user):
-        """Mirrors clearing chat state."""
-        conn = db_conn_with_user
-        user_id = 999999
-
-        await conn.execute(
-            "INSERT INTO chats (user_id, model, token_count, context_summary) VALUES ($1, $2, $3, $4)",
-            user_id,
-            "gemini-2.5-flash",
-            500,
-            "Previous summary",
+        assert (
+            await chats.update_user_chat(test_user_id, state, rewrite_history=True, expected_epoch=stale_epoch) is False
         )
 
-        await conn.execute(
-            "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, 'user', 'old')",
-            user_id,
-        )
-        await conn.execute("UPDATE chats SET token_count = 0, context_summary = NULL WHERE user_id = $1", user_id)
-        await conn.execute("DELETE FROM active_chat_messages WHERE user_id = $1", user_id)
-
-        row = await conn.fetchrow("SELECT token_count, context_summary FROM chats WHERE user_id = $1", user_id)
-        assert row["token_count"] == 0
-        assert row["context_summary"] is None
-        assert await conn.fetchval("SELECT COUNT(*) FROM active_chat_messages WHERE user_id = $1", user_id) == 0
-
-    @pytest.mark.asyncio
-    async def test_update_thinking_level(self, db_conn_with_user):
-        """Mirrors update_thinking_level."""
-        conn = db_conn_with_user
-        user_id = 999999
-
-        await conn.execute(
-            "INSERT INTO chats (user_id, model) VALUES ($1, $2)",
-            user_id,
-            "gemini-2.5-flash",
-        )
-
-        await conn.execute("UPDATE chats SET thinking_level = $1 WHERE user_id = $2", "high", user_id)
-        row = await conn.fetchrow("SELECT thinking_level FROM chats WHERE user_id = $1", user_id)
-        assert row["thinking_level"] == "high"
-
-        # Reset to None
-        await conn.execute("UPDATE chats SET thinking_level = NULL WHERE user_id = $1", user_id)
-        row = await conn.fetchrow("SELECT thinking_level FROM chats WHERE user_id = $1", user_id)
-        assert row["thinking_level"] is None
+        loaded = await chats.get_user_chat(test_user_id)
+        assert loaded is not None
+        assert loaded.token_count == 25
+        assert loaded.history == [{"role": "user", "parts": ["Current message"]}]
 
 
 class TestActiveChatMessages:
-    """Test active_chat_messages table (mirrors message sync in update_user_chat)."""
-
-    @pytest.mark.asyncio
-    async def test_bulk_insert_and_query(self, db_conn_with_user):
-        """Mirrors db_execute_many for message batch insert."""
-        conn = db_conn_with_user
-        user_id = 999999
-
-        messages = [
-            (user_id, "user", "What is Python?"),
-            (user_id, "model", "Python is a programming language."),
-            (user_id, "user", "Tell me more"),
+    async def test_append_history_does_not_duplicate_saved_messages(self, db_conn_with_user, test_user_id):
+        state = await chats.get_user_chat(test_user_id)
+        assert state is not None
+        state.history = [
+            {"role": "user", "parts": ["What is Python?"]},
+            {"role": "model", "parts": ["Python is a programming language."]},
+            {"role": "user", "parts": ["Tell me more"]},
         ]
-        await conn.executemany(
-            "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
-            messages,
-        )
+        assert await chats.update_user_chat(test_user_id, state)
+        loaded = await chats.get_user_chat(test_user_id)
+        assert loaded is not None
+        loaded.history.append({"role": "model", "parts": ["It supports async code."]})
 
-        rows = await conn.fetch(
-            "SELECT role, content FROM active_chat_messages WHERE user_id = $1 ORDER BY id ASC",
-            user_id,
-        )
-        assert len(rows) == 3
-        assert rows[0]["content"] == "What is Python?"
-        assert rows[2]["role"] == "user"
+        assert await chats.update_user_chat(test_user_id, loaded)
+        assert await chats.update_user_chat(test_user_id, loaded)
 
-    @pytest.mark.asyncio
-    async def test_delete_messages_on_clear(self, db_conn_with_user):
-        """Mirrors clearing active messages when starting new topic."""
-        conn = db_conn_with_user
-        user_id = 999999
-
-        await conn.execute(
-            "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
-            user_id,
-            "user",
-            "Hello",
+        rows = await db_conn_with_user.fetch(
+            "SELECT role, content FROM active_chat_messages WHERE user_id = $1 ORDER BY id", test_user_id
         )
-        await conn.execute("DELETE FROM active_chat_messages WHERE user_id = $1", user_id)
-        count = await conn.fetchval("SELECT COUNT(*) FROM active_chat_messages WHERE user_id = $1", user_id)
-        assert count == 0
+        assert [(row["role"], row["content"]) for row in rows] == [
+            ("user", "What is Python?"),
+            ("model", "Python is a programming language."),
+            ("user", "Tell me more"),
+            ("model", "It supports async code."),
+        ]
+
+    async def test_rewrite_and_clear_do_not_modify_other_user(self, db_conn_with_user, test_user_id):
+        other_user_id = 888888
+        await db_conn_with_user.execute("INSERT INTO users (user_id) VALUES ($1)", other_user_id)
+        for user_id, content in ((test_user_id, "Own message"), (other_user_id, "Other user's message")):
+            state = await chats.get_user_chat(user_id)
+            assert state is not None
+            state.history = [{"role": "user", "parts": [content]}]
+            state.token_count = 50
+            assert await chats.update_user_chat(user_id, state)
+
+        own = await chats.get_user_chat(test_user_id)
+        assert own is not None
+        own.history = [{"role": "model", "parts": ["Replacement"]}]
+        assert await chats.update_user_chat(test_user_id, own, rewrite_history=True)
+        own.history = []
+        assert await chats.update_user_chat(test_user_id, own)
+
+        assert (
+            await db_conn_with_user.fetchval(
+                "SELECT COUNT(*) FROM active_chat_messages WHERE user_id = $1", test_user_id
+            )
+            == 0
+        )
+        other = await chats.get_user_chat(other_user_id)
+        assert other is not None
+        assert other.token_count == 50
+        assert other.history == [{"role": "user", "parts": ["Other user's message"]}]

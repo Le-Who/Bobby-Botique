@@ -27,7 +27,11 @@ from app.queue import (
 
 
 class QueueRedis:
-    """In-process Redis state for deterministic replica/recovery interleavings."""
+    """Protocol double for deterministic Python queue interleavings.
+
+    This double models Redis responses; it does not interpret production Lua.
+    Script syntax, fencing and TTL semantics require the isolated Redis tests.
+    """
 
     def __init__(self):
         self.lists = {}

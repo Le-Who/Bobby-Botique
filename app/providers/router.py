@@ -92,7 +92,7 @@ def _get_opencode_gemini_fallback() -> dict[str, str]:
     """Build the Opencode → Gemini fallback map from current (live) settings.
 
     Covers all 14 Opencode Go models (opencode.ai/docs/go, 2026-05-01).
-    Vision-capable models fall back to gemini-3.5-flash for image support.
+    Vision-capable models fall back to the primary Gemini model for image support.
     """
     return {
         # GLM family

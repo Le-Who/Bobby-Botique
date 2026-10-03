@@ -98,22 +98,41 @@ async def test_explicit_tts_models_share_whole_message_deadline(monkeypatch):
 
     attempted = []
     cleaned = asyncio.Event()
+    reserve_started = asyncio.Event()
+    timeouts = []
+    observed_deadlines = []
+
+    def observe_timeout(delay):
+        timeout = asyncio.timeout(delay)
+        timeouts.append(timeout)
+        return timeout
+
+    monkeypatch.setattr(voice_engine, "asyncio", SimpleNamespace(**{**vars(asyncio), "timeout": observe_timeout}))
 
     async def synthesize(*_, model_name, **__):
         attempted.append(model_name)
+        observed_deadlines.append(timeouts[-1].when())
         if len(attempted) == 1:
-            await asyncio.sleep(0.01)
             return None
         try:
+            reserve_started.set()
             await asyncio.Event().wait()
         finally:
             cleaned.set()
 
     monkeypatch.setattr(voice_engine, "resolve_process", resolve)
-    monkeypatch.setattr(voice_engine, "_GEMINI_PLAN_TIMEOUT_FACTOR", 0.00075, raising=False)
     monkeypatch.setattr(voice_engine, "_run_gemini_pipeline", synthesize)
     async with runtime_settings_scope(SettingsSnapshot(1, MappingProxyType({}))):
-        assert await asyncio.wait_for(voice_engine.VoiceReplyManager()._pregenerate_audio(job), 2) is None
+        task = asyncio.create_task(voice_engine.VoiceReplyManager()._pregenerate_audio(job))
+        try:
+            await asyncio.wait_for(reserve_started.wait(), 1)
+            assert len(timeouts) == 1
+            assert observed_deadlines[0] == observed_deadlines[1]
+            timeouts[0].reschedule(asyncio.get_running_loop().time())
+            assert await asyncio.wait_for(task, 1) is None
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
     assert attempted == ["gemini-first-tts", "gemini-reserve-tts"]
     assert cleaned.is_set()
 

@@ -4,6 +4,7 @@ Tests the complete flow: raw Markdown → markdown_to_html() → sanitize_html_t
 → split_text_safe(), verifying that the output is always valid Telegram HTML.
 """
 
+import html
 import re
 
 import pytest
@@ -28,8 +29,7 @@ def _validate_balanced_html(text: str) -> None:
     stack: list[str] = []
     for match in tag_pattern.finditer(text):
         is_closing, tag_name = match.group(1) == "/", match.group(2)
-        if tag_name not in _TELEGRAM_TAGS:
-            continue  # ignore non-Telegram tags
+        assert tag_name in _TELEGRAM_TAGS, f"Unsupported Telegram HTML tag: {tag_name}"
         if is_closing:
             assert stack, f"Closing </{tag_name}> without matching open tag in: {text!r}"
             assert stack[-1] == tag_name, f"Tag mismatch: expected </{stack[-1]}>, got </{tag_name}> in: {text!r}"
@@ -205,29 +205,50 @@ class TestSnakeCaseSafety:
     """Underscores in snake_case identifiers should NOT become italic."""
 
     @pytest.mark.parametrize(
-        "text,should_not_have_italic",
+        "text",
         [
-            ("my_variable_name is good", True),
-            ("use get_user_by_id() to fetch", True),
-            ("UPPER_CASE_CONST = 42", True),
-            ("__init__ method", True),
-            ("path/to/file_name.py", True),
+            "my_variable_name is good",
+            "use get_user_by_id() to fetch",
+            "UPPER_CASE_CONST = 42",
+            "__init__ method",
+            "__init__() constructs an instance",
+            "__name__ and __file__ describe the module",
+            "__repr__ returns text from __dict__",
+            "path/to/file_name.py",
         ],
-        ids=["simple", "function", "upper", "dunder", "path"],
+        ids=["simple", "function", "upper", "dunder", "dunder-call", "module-dunders", "object-dunders", "path"],
     )
-    def test_snake_case_not_italicized(self, text, should_not_have_italic):
+    def test_snake_case_not_italicized(self, text):
         result = _full_pipeline(text)
-        if should_not_have_italic:
-            # Should not contain <i> tags (snake_case should be preserved as-is)
-            # Allow for cases where the converter might not handle all edge cases,
-            # but at minimum should not crash
-            _validate_balanced_html(result)
-
-    def test_real_italic_still_works(self):
-        """Actual _italic_ with spaces should still produce <i> tags."""
-        result = _full_pipeline("This is _italic text_ here")
         _validate_balanced_html(result)
-        assert "<i>" in result
+        assert "<i>" not in result
+        assert result == text
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("This is _italic text_ here", "This is <i>italic text</i> here"),
+            ("__italic__", "<i>italic</i>"),
+            ("*italic*", "<i>italic</i>"),
+            ("__init__ with __italic__", "__init__ with <i>italic</i>"),
+            ("__italic__ then __init__", "<i>italic</i> then __init__"),
+            ("__init__ with _italic_", "__init__ with <i>italic</i>"),
+            ("__init__ with *italic*", "__init__ with <i>italic</i>"),
+        ],
+        ids=[
+            "underscore",
+            "double-underscore",
+            "star",
+            "dunder-before",
+            "dunder-after",
+            "dunder-single",
+            "dunder-star",
+        ],
+    )
+    def test_real_italic_still_works(self, text, expected):
+        result = _full_pipeline(text)
+        _validate_balanced_html(result)
+        assert result == expected
 
 
 # ── Test: Special characters ─────────────────────────────────────────────────
@@ -260,10 +281,8 @@ class TestSpecialCharacters:
     def test_special_chars_safe(self, text):
         result = _full_pipeline(text)
         _validate_balanced_html(result)
-        # Must not contain raw < or > (except in tags)
-        raw_text = re.sub(r"<[^>]+>", "", result)
-        assert "<" not in raw_text, f"Raw '<' found in: {raw_text!r}"
-        assert ">" not in raw_text, f"Raw '>' found in: {raw_text!r}"
+        # These inputs are plain text, including the literal script-tag example.
+        assert result == html.escape(text)
 
     def test_ampersand_escaped(self):
         result = _full_pipeline("Tom & Jerry")

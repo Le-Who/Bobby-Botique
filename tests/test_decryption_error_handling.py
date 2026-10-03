@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agent_use_cases import AgentRequestUseCase
-from app.errors import DecryptionError
+from app.errors import DecryptionError, ErrorCode, extract_error_code
 
 
 @pytest.fixture
@@ -60,25 +60,27 @@ async def test_resolve_key_generic_catches_decryption_error_in_fallback(use_case
 
 @pytest.mark.asyncio
 async def test_get_ai_response_with_key_rotation_decryption_message(use_case):
-    """User sees a friendly message (not traceback) when DecryptionError occurs."""
-    with patch(
-        "app.providers.router.ProviderRouter.get_response",
-        new_callable=AsyncMock,
-        return_value=(
-            "⚠️ Не удалось подготовить безопасное подключение. Попробуйте позже; если ошибка повторится, сообщите администратору.",
-            None,
-        ),
+    """The real router renders a safe tagged message when key resolution fails."""
+    from app.providers.router import ProviderRouter
+
+    with (
+        patch("app.providers.get_provider_router", return_value=ProviderRouter()),
+        patch.object(
+            AgentRequestUseCase, "resolve_ai_request", new=AsyncMock(return_value=(None, None, "decryption_failed"))
+        ) as resolve,
+        patch.object(AgentRequestUseCase, "get_ai_response", new=AsyncMock()) as provider,
     ):
         text, token_count = await use_case.get_ai_response_with_key_rotation(
-            preferred_model="gemini-2.5-flash",
-            history=[],
+            preferred_model="gemini-2.5-flash", history=[]
         )
 
+    resolve.assert_awaited_once_with("gemini-2.5-flash", use_openrouter=None, excluded_key_hashes=set())
+    provider.assert_not_awaited()
+    assert extract_error_code(text) is ErrorCode.DECRYPTION_FAILED
     assert token_count is None
     assert "администратор" in text
     assert "ADMIN_SECRET" not in text
     assert "API" not in text
-    # Must NOT contain Python traceback indicators
     assert "Traceback" not in text
     assert "raise " not in text
 

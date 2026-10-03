@@ -1,154 +1,107 @@
-import pytest
-
-pytestmark = pytest.mark.integration
-"""Integration tests for user state persistence — mirrors repos/users.py SQL.
-
-Tests save_user_state and load_user_state UPSERT logic against real DB.
-"""
-
-import json
+"""Integration tests for user-state persistence and feedback repository APIs."""
 
 import pytest
 
-pytestmark = pytest.mark.integration
+from app.repos import users
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio, pytest.mark.usefixtures("force_test_db_conn")]
 
 
 class TestUserStatePersistence:
-    """Test save/load user_state round-trip (mirroring repos/users.py SQL)."""
+    async def test_save_and_load_state_round_trip(self, db_conn_with_user, test_user_id):
+        saved = {
+            "document_mode": True,
+            "selected_document_id": 42,
+            "awaiting_custom_role_input": True,
+            "generated_role": {"title": "Учитель", "prompt": "Ты учишь"},
+            "last_custom_role_prompt": "make me a teacher",
+            "generating_custom_role": True,
+            "last_sent_message_text": "Hello bot",
+            "awaiting_manual_role_title": True,
+            "awaiting_manual_role_prompt": True,
+            "manual_role_title": "Manual title",
+            "manual_role_prompt": "Manual prompt",
+            "role_diaries": {"user_role:42": ["Первая запись", "Вторая запись"]},
+            "tarot_mode": True,
+            "tarot_session": {"step": "reading", "cards": ["star"]},
+        }
 
-    @pytest.mark.asyncio
-    async def test_save_and_load_state_round_trip(self, db_conn_with_user):
-        conn = db_conn_with_user
-        user_id = 999999
+        await users.save_user_state(test_user_id, **saved)
+        loaded = await users.load_user_state(test_user_id)
 
-        # Save (UPSERT) — mirrors save_user_state()
-        role_json = json.dumps({"title": "Teacher", "prompt": "You teach"})
-        await conn.execute(
-            """
-            INSERT INTO user_state (
-                user_id, document_mode, selected_document_id,
-                awaiting_custom_role_input, generated_role,
-                last_custom_role_prompt, generating_custom_role,
-                last_sent_message_text,
-                awaiting_manual_role_title, awaiting_manual_role_prompt,
-                manual_role_title, manual_role_prompt,
-                updated_at
-            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
-            ON CONFLICT (user_id) DO UPDATE SET
-                document_mode = EXCLUDED.document_mode,
-                selected_document_id = EXCLUDED.selected_document_id,
-                awaiting_custom_role_input = EXCLUDED.awaiting_custom_role_input,
-                generated_role = EXCLUDED.generated_role,
-                last_custom_role_prompt = EXCLUDED.last_custom_role_prompt,
-                generating_custom_role = EXCLUDED.generating_custom_role,
-                last_sent_message_text = EXCLUDED.last_sent_message_text,
-                awaiting_manual_role_title = EXCLUDED.awaiting_manual_role_title,
-                awaiting_manual_role_prompt = EXCLUDED.awaiting_manual_role_prompt,
-                manual_role_title = EXCLUDED.manual_role_title,
-                manual_role_prompt = EXCLUDED.manual_role_prompt,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            user_id,
-            True,
-            42,
-            True,
-            role_json,
-            "make me a teacher",
-            True,
-            "Hello bot",
-            False,
-            False,
-            "",
-            "",
+        assert loaded is not None
+        assert {name: loaded[name] for name in saved} == saved
+        row = await db_conn_with_user.fetchrow(
+            "SELECT generated_role, role_diaries, tarot_session, document_mode FROM user_state WHERE user_id = $1",
+            test_user_id,
         )
-
-        # Load — mirrors load_user_state()
-        row = await conn.fetchrow(
-            """
-            SELECT document_mode, selected_document_id,
-                   awaiting_custom_role_input, generated_role,
-                   last_custom_role_prompt, generating_custom_role,
-                   last_sent_message_text,
-                   awaiting_manual_role_title, awaiting_manual_role_prompt,
-                   manual_role_title, manual_role_prompt
-            FROM user_state WHERE user_id = $1
-            """,
-            user_id,
-        )
-
-        assert row is not None
+        assert row["generated_role"] == saved["generated_role"]
+        assert row["role_diaries"] == saved["role_diaries"]
+        assert row["tarot_session"] == saved["tarot_session"]
         assert row["document_mode"] is True
-        assert row["selected_document_id"] == 42
-        assert row["awaiting_custom_role_input"] is True
-        assert row["generating_custom_role"] is True
-        assert row["last_sent_message_text"] == "Hello bot"
-        assert row["last_custom_role_prompt"] == "make me a teacher"
-        # JSONB round-trip
-        role_data = (
-            json.loads(row["generated_role"]) if isinstance(row["generated_role"], str) else row["generated_role"]
-        )
-        assert role_data["title"] == "Teacher"
 
-    @pytest.mark.asyncio
-    async def test_upsert_overwrites_existing(self, db_conn_with_user):
-        conn = db_conn_with_user
-        user_id = 999999
-
-        # First insert
-        await conn.execute(
-            """INSERT INTO user_state (user_id, document_mode, manual_role_title)
-               VALUES ($1, $2, $3)""",
-            user_id,
-            False,
-            "Original",
-        )
-        # Upsert with new values
-        await conn.execute(
-            """INSERT INTO user_state (user_id, document_mode, manual_role_title)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (user_id) DO UPDATE SET
-                   document_mode = EXCLUDED.document_mode,
-                   manual_role_title = EXCLUDED.manual_role_title""",
-            user_id,
-            True,
-            "Updated",
+    async def test_upsert_overwrites_existing(self, db_conn_with_user, test_user_id):
+        await users.save_user_state(
+            test_user_id,
+            document_mode=False,
+            manual_role_title="Original",
+            generated_role={"title": "Original"},
+            role_diaries={"role:1": ["Original diary"]},
+            tarot_mode=True,
+            tarot_session={"step": "reading"},
         )
 
-        row = await conn.fetchrow(
-            "SELECT document_mode, manual_role_title FROM user_state WHERE user_id = $1",
-            user_id,
+        await users.save_user_state(test_user_id, document_mode=True, manual_role_title="Updated")
+        loaded = await users.load_user_state(test_user_id)
+
+        assert loaded is not None
+        assert loaded["document_mode"] is True
+        assert loaded["manual_role_title"] == "Updated"
+        assert loaded["generated_role"] is None
+        assert loaded["role_diaries"] == {}
+        assert loaded["tarot_mode"] is False
+        assert loaded["tarot_session"] is None
+        assert await db_conn_with_user.fetchval("SELECT COUNT(*) FROM user_state WHERE user_id = $1", test_user_id) == 1
+
+    async def test_unsaved_user_returns_none(self, db_conn_with_user, test_user_id):
+        assert await users.load_user_state(test_user_id) is None
+
+    async def test_state_load_and_save_are_scoped_to_user(self, db_conn_with_user, test_user_id):
+        other_user_id = 888888
+        await db_conn_with_user.execute("INSERT INTO users (user_id) VALUES ($1)", other_user_id)
+        await users.save_user_state(
+            test_user_id, last_sent_message_text="Owner message", generated_role={"title": "Owner role"}
         )
-        assert row["document_mode"] is True
-        assert row["manual_role_title"] == "Updated"
+        assert await users.load_user_state(other_user_id) is None
+
+        await users.save_user_state(other_user_id, last_sent_message_text="Other message")
+        await users.save_user_state(other_user_id, last_sent_message_text="Other updated")
+        owner = await users.load_user_state(test_user_id)
+        other = await users.load_user_state(other_user_id)
+
+        assert owner is not None and other is not None
+        assert owner["last_sent_message_text"] == "Owner message"
+        assert owner["generated_role"] == {"title": "Owner role"}
+        assert other["last_sent_message_text"] == "Other updated"
+        assert other["generated_role"] is None
+        rows = await db_conn_with_user.fetch(
+            "SELECT user_id, last_sent_message_text FROM user_state WHERE user_id = ANY($1)",
+            [test_user_id, other_user_id],
+        )
+        assert {row["user_id"]: row["last_sent_message_text"] for row in rows} == {
+            test_user_id: "Owner message",
+            other_user_id: "Other updated",
+        }
 
 
 class TestFeedbackPersistence:
-    """Test feedback insertion with CHECK constraint (mirroring repos/users.py SQL)."""
+    @pytest.mark.parametrize("rating,message_id", [("up", 12345), ("down", 12346)])
+    async def test_save_feedback(self, db_conn_with_user, test_user_id, rating, message_id):
+        await users.save_feedback(test_user_id, message_id, rating)
 
-    @pytest.mark.asyncio
-    async def test_save_feedback_up(self, db_conn_with_user):
-        conn = db_conn_with_user
-        await conn.execute(
-            "INSERT INTO feedback (user_id, message_id, rating) VALUES ($1, $2, $3)",
-            999999,
-            12345,
-            "up",
+        assert (
+            await db_conn_with_user.fetchval(
+                "SELECT rating FROM feedback WHERE user_id = $1 AND message_id = $2", test_user_id, message_id
+            )
+            == rating
         )
-        row = await conn.fetchrow(
-            "SELECT rating FROM feedback WHERE user_id = $1 AND message_id = $2",
-            999999,
-            12345,
-        )
-        assert row["rating"] == "up"
-
-    @pytest.mark.asyncio
-    async def test_save_feedback_down(self, db_conn_with_user):
-        conn = db_conn_with_user
-        await conn.execute(
-            "INSERT INTO feedback (user_id, message_id, rating) VALUES ($1, $2, $3)",
-            999999,
-            12346,
-            "down",
-        )
-        row = await conn.fetchrow("SELECT rating FROM feedback WHERE user_id = $1", 999999)
-        assert row["rating"] == "down"

@@ -1,57 +1,15 @@
-import asyncio
-import os
-import sys
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-# Ensure app can be imported
-sys.path.append(os.getcwd())
+from app import metrics
 
 
-class TestSystemStatus(unittest.TestCase):
-    def setUp(self):
-        import importlib
-        import sys
-
-        self.mock_config = MagicMock()
-        self.mock_database = MagicMock()
-        self.mock_time_utils = MagicMock()
-        self.mock_utils = MagicMock()
-        self.mock_utils.time = self.mock_time_utils
-        self.mock_metrics_middleware = MagicMock()
-
-        self.patcher = patch.dict(
-            "sys.modules",
-            {
-                "app.config": self.mock_config,
-                "app.database": self.mock_database,
-                "app.utils.time": self.mock_time_utils,
-                "app.utils": self.mock_utils,
-                "app.utils.metrics_middleware": self.mock_metrics_middleware,
-            },
-        )
-        self.patcher.start()
-
-        # Reload relevant modules to ensure clean state and usage of mocks
-        if "app.metrics" in sys.modules:
-            importlib.reload(sys.modules["app.metrics"])
-        else:
-            import app.metrics  # noqa: F401
-
-        self.metrics_module = sys.modules["app.metrics"]
-
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-
-    def tearDown(self):
-        self.loop.close()
-        self.patcher.stop()
-
+class TestSystemStatus(unittest.IsolatedAsyncioTestCase):
     @patch("app.metrics.metrics_collector.get_metrics_summary", new_callable=AsyncMock)
     @patch("app.utils.time.get_pacific_date")
     @patch("app.utils.time.get_current_month_str")
     @patch("app.utils.time.get_kyiv_reset_time")
-    def test_get_system_status_data(
+    async def test_get_system_status_data(
         self,
         mock_reset_time,
         mock_current_month,
@@ -85,12 +43,12 @@ class TestSystemStatus(unittest.TestCase):
 
         mock_db_query = AsyncMock(side_effect=db_side_effect)
 
-        # Patch db on the reloaded metrics module directly
-        with patch.object(self.metrics_module, "db") as mock_db:
+        # Scope database calls on the real metrics module
+        with patch.object(metrics, "db") as mock_db:
             mock_db.db_query = mock_db_query
 
             # Run function
-            result = self.loop.run_until_complete(self.metrics_module.get_system_status_data())
+            result = await metrics.get_system_status_data()
 
         # Assertions
         self.assertEqual(result["metrics_summary"], mock_metrics_summary)

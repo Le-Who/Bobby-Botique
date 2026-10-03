@@ -1,9 +1,9 @@
 # tests/test_game_cache.py
 """Unit tests for app/games/judgement_cache.py — the local-file LRU caches.
 
-All tests run offline.  We isolate the in-process stores by clearing them in
-setup/teardown so file I/O is never exercised in CI. Persist helpers are
-patched to no-ops to avoid touching disk.
+All tests run offline. In-process stores are cleared before and after each
+test. Memory-only checks patch persistence; restart checks use real file I/O
+inside pytest's temporary directory.
 """
 
 from __future__ import annotations
@@ -271,31 +271,36 @@ class TestGeneratedWordsCacheRoundTrip:
             same = await get_cached_generated_words("ru", "Персонаж   genshin impact!!!", topic_id="custom:ru:abc")
         assert same == words
 
-    async def test_topic_scoped_generated_words_survive_restart_and_ignore_other_topic(self, monkeypatch):
-        persisted_payload: str | None = None
-
-        async def _persist_generated_words_for_test() -> None:
-            nonlocal persisted_payload
-            persisted_payload = json.dumps(dict(_generated_words_store), ensure_ascii=False)
-
-        def _load_generated_words_from_disk_for_test() -> None:
-            if not persisted_payload:
-                return
-            _generated_words_store.update(json.loads(persisted_payload))
-
-        monkeypatch.setattr(judgement_cache_module, "_persist_generated_words", _persist_generated_words_for_test)
-        monkeypatch.setattr(
-            judgement_cache_module, "_load_generated_words_from_disk", _load_generated_words_from_disk_for_test
-        )
-        _generated_words_store.clear()
+    async def test_topic_scoped_generated_words_survive_restart_and_ignore_other_topic(self, monkeypatch, tmp_path):
+        data_dir = tmp_path / "cache"
+        cache_path = data_dir / "generated_words_cache.json"
+        monkeypatch.setattr(judgement_cache_module, "_DATA_DIR", data_dir)
+        monkeypatch.setattr(judgement_cache_module, "_GEN_WORDS_CACHE_PATH", cache_path)
+        monkeypatch.setattr(judgement_cache_module, "redis_client", None)
         words = ["венти", "чжун ли", "нахида"]
 
         await cache_generated_words("ru", "Персонаж Genshin Impact", words, topic_id="custom:ru:abc")
+        assert cache_path.is_file()
+        persisted_text = cache_path.read_text(encoding="utf-8")
+        assert "венти" in persisted_text
+        assert [json.loads(value) for value in json.loads(persisted_text).values()] == [words]
+        assert not cache_path.with_suffix(".json.tmp").exists()
         _generated_words_store.clear()
         judgement_cache_module._load_generated_words_from_disk()
 
         same = await get_cached_generated_words("ru", "Персонаж   genshin impact!!!", topic_id="custom:ru:abc")
-        other = await get_cached_generated_words("ru", "персонаж honkai star rail", topic_id="custom:ru:def")
+        other = await get_cached_generated_words("ru", "Персонаж Genshin Impact", topic_id="custom:ru:def")
 
         assert same == words
         assert other is None
+
+    async def test_corrupt_persisted_generated_words_start_empty(self, monkeypatch, tmp_path):
+        cache_path = tmp_path / "generated_words_cache.json"
+        cache_path.write_text("not-json", encoding="utf-8")
+        monkeypatch.setattr(judgement_cache_module, "_GEN_WORDS_CACHE_PATH", cache_path)
+        monkeypatch.setattr(judgement_cache_module, "redis_client", None)
+
+        judgement_cache_module._load_generated_words_from_disk()
+
+        assert not _generated_words_store
+        assert await get_cached_generated_words("ru", "Персонаж Genshin Impact", topic_id="custom:ru:abc") is None

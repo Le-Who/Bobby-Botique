@@ -15,7 +15,21 @@ _HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$")
 _HR_RE = re.compile(r"^[-*_]{3,}\s*$")
 _INLINE_CODE_RE = re.compile(r"`([^`]+)`")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
-_ITALIC_UNDER_RE = re.compile(r"__(.+?)__")
+_ITALIC_UNDER_RE = re.compile(r"(?<!\w)__(.+?)__(?!\w)")
+# Python object and module attributes are identifiers even in unquoted prose.
+_PYTHON_DUNDER_NAMES = frozenset(dir(object)) | {
+    "__all__",
+    "__annotations__",
+    "__builtins__",
+    "__dict__",
+    "__file__",
+    "__loader__",
+    "__module__",
+    "__name__",
+    "__package__",
+    "__path__",
+    "__spec__",
+}
 _ITALIC_STAR_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
 _ITALIC_SINGLE_UNDER_RE = re.compile(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)")
 _STRIKETHROUGH_RE = re.compile(r"~~(.+?)~~")
@@ -167,8 +181,11 @@ def markdown_to_html(text: str) -> str:
             # Bold: **text**
             escaped_text = _BOLD_RE.sub(r"<b>\1</b>", escaped_text)
 
-            # Italic: __text__ (Standard Markdown allows this)
-            escaped_text = _ITALIC_UNDER_RE.sub(r"<i>\1</i>", escaped_text)
+            # Preserve Python dunder identifiers alongside legacy __italic__.
+            escaped_text = _ITALIC_UNDER_RE.sub(
+                lambda match: match.group(0) if match.group(0) in _PYTHON_DUNDER_NAMES else f"<i>{match.group(1)}</i>",
+                escaped_text,
+            )
 
             # Italic: *text* (Only if not part of **)
             # This regex uses lookarounds to ensure we don't match inside **

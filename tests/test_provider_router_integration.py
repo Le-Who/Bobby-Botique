@@ -1,17 +1,25 @@
 """
-Integration tests for the ProviderRouter — full chain from router → provider → response.
+Offline orchestration tests for ProviderRouter's resolver, quota and key-health boundaries.
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def key_health(monkeypatch):
+    manager = SimpleNamespace(record_success=AsyncMock(), suspend_key=AsyncMock())
+    monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: manager)
+    return manager
+
+
 class TestProviderRouterIntegration:
-    """Tests the full ProviderRouter chain including key resolution, dispatch, and health tracking."""
+    """Keep router behavior real and isolate slow external boundaries."""
 
     @pytest.mark.asyncio
-    async def test_gemini_full_chain_success(self):
+    async def test_gemini_full_chain_success(self, key_health):
         """Router resolves key → calls get_ai_response → returns text+tokens."""
         from app.providers import ProviderRouter
 
@@ -48,6 +56,8 @@ class TestProviderRouterIntegration:
         assert tokens == 42
         mock_use_case.reserve_key_usage.assert_awaited_once_with("abc", "gemini-3.1-flash-lite", None)
         mock_use_case.increment_key_usage.assert_not_awaited()
+        key_health.record_success.assert_awaited_once_with("abc", "gemini-3.1-flash-lite")
+        key_health.suspend_key.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_openrouter_full_chain_success(self):
@@ -185,11 +195,12 @@ class TestProviderRouterIntegration:
 
         assert text == "Image desc"
         # resolve_ai_request should have been called with use_openrouter=False
-        call_kwargs = mock_use_case.resolve_ai_request.call_args
-        assert call_kwargs[1].get("use_openrouter") is False or call_kwargs[0][0] == "gemini-3.1-flash-lite"
+        mock_use_case.resolve_ai_request.assert_awaited_once_with(
+            "gemini-3.1-flash-lite", use_openrouter=False, excluded_key_hashes=set()
+        )
 
     @pytest.mark.asyncio
-    async def test_key_failure_triggers_retry(self):
+    async def test_key_failure_triggers_retry(self, key_health):
         """Router retries with a different key when the first key returns a key-related error."""
         from app.providers import ProviderRouter
 
@@ -238,3 +249,6 @@ class TestProviderRouterIntegration:
         assert text == "Success!"
         assert tokens == 55
         assert mock_use_case.resolve_ai_request.call_count == 2
+        assert key_health.suspend_key.await_count == 1
+        assert key_health.suspend_key.await_args.args[:2] == ("bad_key", "gemini-3.1-flash-lite")
+        key_health.record_success.assert_awaited_once_with("good_key", "gemini-3.1-flash-lite")

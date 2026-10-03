@@ -131,7 +131,7 @@ async def get_conversation_messages(conversation_id: int, user_id: int, *, conn=
             FROM public.conversations c
             LEFT JOIN conversation_messages cm ON c.id = cm.conversation_id
             WHERE c.id = $1 AND c.user_id = $2
-            ORDER BY cm.created_at ASC
+            ORDER BY cm.created_at ASC, cm.id ASC
         """
         result = await db_query(query, (conversation_id, user_id), conn=conn)
 
@@ -215,10 +215,10 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
 async def rename_conversation(user_id: int, conversation_id: int, new_title: str) -> bool:
     try:
         result = await db_query(
-            "UPDATE public.conversations SET title = $1 WHERE id = $2 AND user_id = $3",
+            "UPDATE public.conversations SET title = $1 WHERE id = $2 AND user_id = $3 RETURNING id",
             (new_title, conversation_id, user_id),
         )
-        return result is not None
+        return bool(result)
     except asyncpg.PostgresError, asyncpg.InterfaceError:
         return False
 

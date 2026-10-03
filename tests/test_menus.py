@@ -1,160 +1,9 @@
-# ruff: noqa: E402
-import importlib
 import sys
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
-# Isolate this module in its own xdist worker to prevent sys.modules contamination
-# of other test workers. setup_module() installs heavy module-level mocks.
-pytestmark = pytest.mark.xdist_group("sys_modules_isolation")
-
-# ==============================================================================
-# PYTEST MARKERS - для разделения типов тестов
-# ==============================================================================
-# Добавьте в pytest.ini:
-# [pytest]
-# markers =
-#     unit: Unit tests with full mocking
-#     integration: Integration tests with real dependencies
-#     slow: Tests that take longer to execute
-
-# ==============================================================================
-# MOCKS FOR UNIT TESTS
-# ==============================================================================
-
-
-def setup_mocks():
-    """Setup all mocks for unit tests."""
-    # Mock external dependencies
-    mock_db = MagicMock()
-    mock_db.get_user_chat = AsyncMock()
-    sys.modules["app.database"] = mock_db
-
-    mock_config = MagicMock()
-    mock_settings = MagicMock()
-    mock_settings.AVAILABLE_MODELS = ["gemini-pro", "gemini-flash"]
-    mock_settings.OPENCODE_AVAILABLE_MODELS = []
-    mock_settings.OPENROUTER_AVAILABLE_MODELS = []
-    mock_settings.DEFAULT_MODEL = "gemini-pro"
-    mock_config.settings = mock_settings
-    sys.modules["app.config"] = mock_config
-
-    mock_metrics = MagicMock()
-    mock_metrics.metrics_collector = MagicMock()
-    sys.modules["app.metrics"] = mock_metrics
-
-    mock_doc_processor = MagicMock()
-    mock_doc_processor.get_user_documents = AsyncMock(return_value=[])
-    sys.modules["app.document_processor"] = mock_doc_processor
-
-    # Mock time utils
-    sys.modules["app.utils.time"] = MagicMock()
-
-    # Mock telegram
-    mock_telegram = MagicMock()
-
-    class MockInlineKeyboardButton:
-        """Mock for Telegram InlineKeyboardButton."""
-
-        def __init__(self, text: str, callback_data: str | None = None, **kwargs):
-            self.text = text
-            self.callback_data = callback_data
-            for k, v in kwargs.items():
-                setattr(self, k, v)
-
-        def __repr__(self):
-            return f"Button(text={self.text!r}, callback={self.callback_data!r})"
-
-    class MockInlineKeyboardMarkup:
-        """Mock for Telegram InlineKeyboardMarkup."""
-
-        def __init__(self, inline_keyboard: list[list[MockInlineKeyboardButton]]):
-            self.inline_keyboard = inline_keyboard
-
-        def __repr__(self):
-            return f"Keyboard(rows={len(self.inline_keyboard)})"
-
-    mock_telegram.InlineKeyboardButton = MockInlineKeyboardButton
-    mock_telegram.InlineKeyboardMarkup = MockInlineKeyboardMarkup
-    sys.modules["telegram"] = mock_telegram
-    sys.modules["telegram.constants"] = MagicMock()
-    sys.modules["telegram.ext"] = MagicMock()
-
-    # Mock pydantic
-    mock_pydantic = MagicMock()
-
-    class MockBaseModel:
-        def __init__(self, **kwargs):
-            for k, v in kwargs.items():
-                setattr(self, k, v)
-
-    mock_pydantic.BaseModel = MockBaseModel
-    mock_pydantic.ValidationError = Exception
-    sys.modules["pydantic"] = mock_pydantic
-
-    # Mock google.genai and redis (mock app.cache to avoid corrupting the real
-    # redis package entry in sys.modules — setup_module runs before conftest
-    # autouse fixtures which import crocodile_runtime → app.cache → redis.asyncio)
-    sys.modules["google.genai"] = MagicMock()
-    sys.modules["google.genai.errors"] = MagicMock()
-    mock_cache = MagicMock()
-    mock_cache.redis_client = MagicMock()
-    sys.modules["app.cache"] = mock_cache
-
-    # Mock other needed parts, but do not override app.handlers package
-    return MockInlineKeyboardButton, MockInlineKeyboardMarkup
-
-
-# Setup mocks at module level for unit tests
-_mocked_module_keys = [
-    "app.database",
-    "app.config",
-    "app.metrics",
-    "app.document_processor",
-    "app.utils.time",
-    "telegram",
-    "telegram.constants",
-    "telegram.ext",
-    "pydantic",
-    "google.genai",
-    "google.genai.errors",
-    "app.cache",
-]
-
-
-# Save original modules before mocking
-def setup_module(module):
-    global MockInlineKeyboardButton, MockInlineKeyboardMarkup, _original_modules
-    import importlib
-
-    _original_modules = {}
-    _original_modules["__app_keys_before__"] = {k for k in sys.modules if k.startswith("app.")}
-    for k in _mocked_module_keys:
-        if k in sys.modules:
-            _original_modules[k] = sys.modules[k]
-
-    MockInlineKeyboardButton, MockInlineKeyboardMarkup = setup_mocks()
-
-    if "app.handlers.menus" in sys.modules:
-        importlib.reload(sys.modules["app.handlers.menus"])
-
-
-def teardown_module(module):
-    """Restore sys.modules to prevent test pollution."""
-    app_keys_before = _original_modules.pop("__app_keys_before__", set())
-    for k in _mocked_module_keys:
-        if k in sys.modules:
-            del sys.modules[k]
-    sys.modules.update(_original_modules)
-
-    # Purge ALL app.* modules imported during the mocked period.
-    # They hold stale MagicMock bindings that persist even after sys.modules restore.
-    for k in list(sys.modules):
-        if k.startswith("app.") and k not in app_keys_before:
-            del sys.modules[k]
-
+from telegram import InlineKeyboardButton
 
 # ==============================================================================
 # FIXTURES
@@ -187,29 +36,6 @@ def mock_context():
 def chat_state():
     """Fixture providing basic chat state."""
     return ChatState(model="gemini-pro")
-
-
-# Integration test fixture
-@pytest.fixture(scope="module")
-def menus_module():
-    """
-    Fixture for integration tests with real Telegram.
-    Ensures clean module import with real dependencies.
-    """
-    # Remove telegram mocks if present
-    if "telegram" in sys.modules and isinstance(sys.modules["telegram"], MagicMock):
-        del sys.modules["telegram"]
-        for module in ["telegram.ext", "telegram.error"]:
-            if module in sys.modules:
-                del sys.modules[module]
-
-    # Reload menus module
-    if "app.handlers.menus" in sys.modules:
-        return importlib.reload(sys.modules["app.handlers.menus"])
-    else:
-        import app.handlers.menus
-
-        return app.handlers.menus
 
 
 # ==============================================================================
@@ -276,11 +102,11 @@ def extract_button_texts(keyboard: list[list[Any]]) -> list[str]:
 
 
 # ==============================================================================
-# UNIT TESTS - Using mocks (fast, isolated)
+# UNIT TESTS - Real menu rendering with scoped configuration
 # ==============================================================================
 
 
-# Import after mocks are set up
+# Use the real module with scoped configuration patches
 def get_menu_methods():
     from app.handlers.menus import get_model_menu_content, get_start_menu_content
 
@@ -603,7 +429,7 @@ def test_model_menu_nonexistent_selected_model(mock_get_keys, mock_settings_obj,
 @pytest.mark.unit
 def test_verify_button_out_of_bounds():
     """Test that verify_button raises AssertionError for out of bounds indices."""
-    keyboard = [[MockInlineKeyboardButton("Test", "callback")]]
+    keyboard = [[InlineKeyboardButton("Test", callback_data="callback")]]
 
     with pytest.raises(AssertionError, match="Row index .* out of bounds"):
         verify_button(keyboard, 5, 0, "Test", "callback")
@@ -615,7 +441,7 @@ def test_verify_button_out_of_bounds():
 @pytest.mark.unit
 def test_find_button_by_text_not_found():
     """Test that find_button_by_text raises AssertionError when button not found."""
-    keyboard = [[MockInlineKeyboardButton("Test", "callback")]]
+    keyboard = [[InlineKeyboardButton("Test", callback_data="callback")]]
 
     with pytest.raises(AssertionError, match="Button with text containing .* not found"):
         find_button_by_text(keyboard, "Nonexistent")
@@ -626,10 +452,10 @@ def test_extract_button_texts():
     """Test extract_button_texts helper function."""
     keyboard = [
         [
-            MockInlineKeyboardButton("Button1", "cb1"),
-            MockInlineKeyboardButton("Button2", "cb2"),
+            InlineKeyboardButton("Button1", callback_data="cb1"),
+            InlineKeyboardButton("Button2", callback_data="cb2"),
         ],
-        [MockInlineKeyboardButton("Button3", "cb3")],
+        [InlineKeyboardButton("Button3", callback_data="cb3")],
     ]
 
     texts = extract_button_texts(keyboard)
@@ -637,69 +463,29 @@ def test_extract_button_texts():
 
 
 # ==============================================================================
-# INTEGRATION TESTS - Using real Telegram (slower, comprehensive)
+# TELEGRAM OBJECT CONTRACT
 # ==============================================================================
 
 
-@pytest.mark.integration
-@pytest.mark.slow
-def test_integration_real_telegram_buttons():
-    """
-    Integration test with real Telegram objects.
-    Temporarily restores original modules, reimports menus, and tests
-    with the real telegram library to ensure our mock-based unit tests
-    aren't masking compatibility issues.
-    """
-    import importlib
+@pytest.mark.unit
+def test_model_menu_uses_real_telegram_buttons(mock_context):
+    from app.handlers import menus
 
-    # Temporarily restore original modules to get a clean import
-    saved = {}
-    for k in _mocked_module_keys:
-        if k in sys.modules:
-            saved[k] = sys.modules.pop(k)
+    with (
+        patch.object(menus, "settings") as settings,
+        patch.object(menus, "get_openrouter_keys", return_value=[]),
+    ):
+        settings.AVAILABLE_MODELS = ["gemini-flash-latest", "gemini-pro"]
+        settings.OPENCODE_AVAILABLE_MODELS = []
+        settings.OPENROUTER_AVAILABLE_MODELS = []
+        settings.FREETHEAI_AVAILABLE_MODELS = []
+        text, _, markup = menus.get_model_menu_content(ChatState(model="gemini-flash-latest"), mock_context)
 
-    # Restore originals that were backed up
-    sys.modules.update(_original_modules)
-
-    try:
-        # Fresh import with real libraries
-        menus = importlib.import_module("app.handlers.menus")
-        importlib.reload(menus)
-
-        from telegram import InlineKeyboardButton
-
-        context = MagicMock()
-        context.user_data = {}
-
-        with (
-            patch.object(menus, "settings") as mock_settings_obj,
-            patch.object(menus, "get_openrouter_keys", return_value=[]),
-        ):
-            mock_settings_obj.AVAILABLE_MODELS = ["gemini-flash-latest", "gemini-pro"]
-            mock_settings_obj.OPENCODE_AVAILABLE_MODELS = []
-            mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = []
-
-            cs = ChatState(model="gemini-flash-latest")
-            text, parse_mode, reply_markup = menus.get_model_menu_content(cs, context)
-
-        # Verify structure with real Telegram objects
-        assert "Google Gemini" in text
-        assert "gemini-flash-latest" in text
-        assert reply_markup is not None
-
-        # Real InlineKeyboardButton objects
-        buttons = [btn.text for row in reply_markup.inline_keyboard for btn in row]
-        assert any("gemini-flash-latest" in btn for btn in buttons)
-        assert any("gemini-pro" in btn for btn in buttons)
-        assert all(isinstance(btn, InlineKeyboardButton) for row in reply_markup.inline_keyboard for btn in row)
-    finally:
-        # Restore the mocked state for any remaining tests in this module
-        for k in _mocked_module_keys:
-            if k in _original_modules:
-                sys.modules.pop(k, None)
-        sys.modules.update(saved)
-        if "app.handlers.menus" in sys.modules:
-            importlib.reload(sys.modules["app.handlers.menus"])
+    assert "Google Gemini" in text
+    buttons = [button for row in markup.inline_keyboard for button in row]
+    assert all(isinstance(button, InlineKeyboardButton) for button in buttons)
+    assert any("gemini-flash-latest" in button.text for button in buttons)
+    assert any("gemini-pro" in button.text for button in buttons)
 
 
 # ==============================================================================
@@ -708,6 +494,5 @@ def test_integration_real_telegram_buttons():
 
 if __name__ == "__main__":
     # Run with: pytest test_menus.py -v -m unit  # Only unit tests
-    # Run with: pytest test_menus.py -v -m integration  # Only integration tests
     # Run with: pytest test_menus.py -v  # All tests
     sys.exit(pytest.main(["-v", __file__]))

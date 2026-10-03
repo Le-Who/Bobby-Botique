@@ -1,18 +1,17 @@
-import pytest
+"""Schema smoke checks for migrated tables, defaults and constraints.
 
-pytestmark = pytest.mark.integration
-"""Integration tests for repos — real database queries against test Supabase project.
-
-All tests use transactional rollback — NO data persists after tests complete.
+These intentionally use direct SQL; the production repository operations are
+covered in test_repos_*.py. Every check uses the isolated transactional fixture.
 """
 
+import asyncpg
 import pytest
 
 pytestmark = pytest.mark.integration
 
 
 class TestUsersTable:
-    """Test basic user CRUD operations against real DB."""
+    """Check the migrated users table's columns and defaults."""
 
     @pytest.mark.asyncio
     async def test_insert_and_select_user(self, db_conn):
@@ -236,7 +235,7 @@ class TestFeedback:
     async def test_invalid_rating_rejected(self, db_conn_with_user):
         conn = db_conn_with_user
         user_id = 999999
-        with pytest.raises(Exception):  # CHECK constraint violation
+        with pytest.raises(asyncpg.CheckViolationError), conn.transaction():
             await conn.execute(
                 "INSERT INTO feedback (user_id, rating) VALUES ($1, $2)",
                 user_id,

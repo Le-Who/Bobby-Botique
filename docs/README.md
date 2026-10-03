@@ -61,6 +61,7 @@ neither authorizes execution now nor proves a feature is missing.
 | 2026-09-10 logging audit/overhaul | [Original audit](logging-audit-2026-09-10.md); implemented contracts are in `app/observability/`, `logging.md` and `log-events.md` |
 | 2026-09-11 log viewer replacement | `ops/observability/`, CI/deploy health/auth gates; the plan is not an unimplemented backlog |
 | 2026-10-02 prompt quality | [Dated audit](prompt-quality-audit-2026-10-02.md); 90 IDs, actual consumers, fixes and offline evidence; current operation is described in [runtime controls](runtime-controls.md) |
+| 2026-10-03 test corpus | [Dated audit](test-corpus-audit-2026-10-03.md), [complete inventory](test-corpus-inventory-2026-10-03.md) and [machine evidence](test-corpus-audit-evidence-2026-10-03.json); source review, actual runs, skipped coverage and proposed corrections, not proof of all runtime behavior |
 
 [CHANGELOG.md](../CHANGELOG.md), [maintainer queue](MAINTAINER_QUEUE.md) and
 `.jules/` journals are historical evidence. Old performance figures and broad

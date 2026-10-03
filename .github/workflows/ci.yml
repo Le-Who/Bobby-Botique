@@ -79,7 +79,7 @@ jobs:
         run: uv run --locked pytest tests/ --ignore=tests/integration -m "not integration" -v
 
   test-integration:
-    name: Test Integration (PostgreSQL)
+    name: Test Integration (PostgreSQL and Redis)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [test-unit]
@@ -116,6 +116,7 @@ jobs:
       TAVILY_API_KEYS: "test-key"
       ADMIN_SECRET: "test-secret"
       REDIS_URL: "redis://localhost:6379/0"
+      TEST_REDIS_URL: "redis://localhost:6379/15"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -125,10 +126,11 @@ jobs:
         run: python -m pip install "uv==0.12.6"
       - name: Sync locked dependencies
         run: uv sync --locked --link-mode copy
-      - name: Require isolated test database
+      - name: Require isolated test services
         run: >-
           python -c "import os; assert os.environ.get('TEST_DATABASE_URL'),
-          'TEST_DATABASE_URL must be set'"
+          'TEST_DATABASE_URL must be set';
+          assert os.environ.get('TEST_REDIS_URL'), 'TEST_REDIS_URL must be set'"
       - name: Apply migrations
         run: |
           uv run --locked python scripts/migrate.py
@@ -136,6 +138,38 @@ jobs:
           uv run --locked python scripts/migrate.py --check
       - name: Run integration tests serially
         run: uv run --locked pytest -m "integration" -n 0 tests/ -v
+
+  test-browser:
+    name: Test Browser (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [lint]
+    env:
+      GEMAIBOT_REQUIRE_BROWSER_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: tests/browser/package-lock.json
+      - name: Install pinned uv
+        run: python -m pip install "uv==0.12.6"
+      - name: Sync locked Python dependencies
+        run: uv sync --locked --link-mode copy
+      - name: Install locked browser dependencies
+        working-directory: tests/browser
+        run: npm ci --ignore-scripts
+      - name: Install Chromium and system dependencies
+        working-directory: tests/browser
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Run required browser regressions
+        run: >-
+          uv run --locked pytest tests/test_natal_web_report.py -m browser -n 0
+          --override-ini="addopts=" --timeout=30 -v
 
   container-smoke:
     name: Build and Smoke Production Image

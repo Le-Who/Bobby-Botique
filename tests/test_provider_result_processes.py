@@ -1,6 +1,7 @@
 """Provider plans preserve their SDK/HTTP contracts and exact fallback order."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -166,16 +167,45 @@ async def test_crocodile_deadline_does_not_restart_for_reserve(monkeypatch):
     monkeypatch.setattr(
         daily_ai,
         "resolve_process",
-        AsyncMock(return_value=ResolvedPolicy(("gemini-first", "gemini-second"), "sequential", True, 1)),
+        AsyncMock(
+            return_value=ResolvedPolicy(("gemini-first", "gemini-second", "gemini-third"), "sequential", True, 1)
+        ),
     )
     attempted = []
+    reserve_started = asyncio.Event()
+    cleaned = asyncio.Event()
+    timeouts = []
+    observed_deadlines = []
+
+    def observe_timeout(delay):
+        timeout = asyncio.timeout(delay)
+        timeouts.append(timeout)
+        return timeout
+
+    monkeypatch.setattr(daily_ai, "asyncio", SimpleNamespace(**{**vars(asyncio), "timeout": observe_timeout}))
 
     async def generate(prompt, model, timeout):
         attempted.append(model)
-        await asyncio.sleep(0.02)
-        raise ValueError("Invalid JSON")
+        observed_deadlines.append(timeouts[-1].when())
+        if model == "gemini-first":
+            return "invalid JSON"
+        reserve_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned.set()
 
     monkeypatch.setattr(daily_ai, "generate_daily_text", generate)
-    with pytest.raises(TimeoutError):
-        await daily_ai.generate_daily_text_for("words", "prompt", "gemini-baseline", timeout=0.01)
-    assert attempted == ["gemini-first"]
+    task = asyncio.create_task(daily_ai.generate_daily_text_for("words", "prompt", "gemini-baseline", timeout=5))
+    try:
+        await asyncio.wait_for(reserve_started.wait(), 1)
+        assert len(timeouts) == 1
+        assert observed_deadlines[0] == observed_deadlines[1]
+        timeouts[0].reschedule(asyncio.get_running_loop().time())
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(task, 1)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert attempted == ["gemini-first", "gemini-second"]
+    assert cleaned.is_set()

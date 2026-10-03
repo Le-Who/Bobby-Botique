@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 import pytest
 
 from app.natal import service
@@ -137,7 +139,8 @@ def test_telegraph_url_validator_rejects_non_telegraph_https_host():
 
 
 @pytest.mark.asyncio
-async def test_create_natal_report_skips_oversized_telegraph_mirror(monkeypatch):
+@pytest.mark.parametrize("markdown_size", [60_001, 100_000])
+async def test_create_natal_report_skips_oversized_telegraph_mirror(monkeypatch, markdown_size):
     birth = BirthInput(
         birth_date="1995-02-14",
         time_precision=TimePrecision.UNKNOWN,
@@ -145,12 +148,9 @@ async def test_create_natal_report_skips_oversized_telegraph_mirror(monkeypatch)
     )
     saved_reports = []
     patch_report_dependencies(monkeypatch, saved_reports=saved_reports, telegraph_enabled=True)
-    monkeypatch.setattr("app.natal.service.build_telegraph_markdown", lambda report: "x" * 100_000)
-
-    async def fail_if_called(title, markdown_content):
-        raise AssertionError("Oversized Telegraph mirror should not be published")
-
-    monkeypatch.setattr("app.natal.service.create_telegraph_page_from_markdown", fail_if_called)
+    monkeypatch.setattr("app.natal.service.build_telegraph_markdown", lambda report: "x" * markdown_size)
+    publish = AsyncMock(return_value="https://telegra.ph/natal-report")
+    monkeypatch.setattr("app.natal.service.create_telegraph_page_from_markdown", publish)
 
     report = await create_natal_report(
         birth_input=birth,
@@ -159,9 +159,38 @@ async def test_create_natal_report_skips_oversized_telegraph_mirror(monkeypatch)
         webhook_url="https://bot.example.com",
     )
 
+    publish.assert_not_awaited()
     assert report.hosted_url.startswith("https://bot.example.com/reports/natal/")
     assert report.telegraph_url is None
     assert len(saved_reports) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_natal_report_publishes_telegraph_mirror_at_size_limit(monkeypatch):
+    birth = BirthInput(
+        birth_date="1995-02-14",
+        time_precision=TimePrecision.UNKNOWN,
+        birth_place="Kyiv, Ukraine",
+    )
+    saved_reports = []
+    patch_report_dependencies(monkeypatch, saved_reports=saved_reports, telegraph_enabled=True)
+    markdown = "x" * 60_000
+    monkeypatch.setattr("app.natal.service.build_telegraph_markdown", lambda report: markdown)
+    publish = AsyncMock(return_value="https://telegra.ph/natal-report")
+    monkeypatch.setattr("app.natal.service.create_telegraph_page_from_markdown", publish)
+
+    report = await create_natal_report(
+        birth_input=birth,
+        user_id=123,
+        chat_id=456,
+        webhook_url="https://bot.example.com",
+    )
+
+    publish.assert_awaited_once_with("Натальная карта", markdown)
+    assert report.telegraph_url == "https://telegra.ph/natal-report"
+    assert len(saved_reports) == 2
+    assert saved_reports[0].telegraph_url is None
+    assert saved_reports[1].telegraph_url == "https://telegra.ph/natal-report"
 
 
 @pytest.mark.asyncio

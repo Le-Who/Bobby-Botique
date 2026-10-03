@@ -49,6 +49,29 @@ The commands above clear `addopts` to run serially without reusing that fixed
 temporary directory and retain the per-test timeout explicitly. Do not use
 `-m unit` as a synonym for all non-integration tests: marker coverage differs.
 
+Runtime warnings and unraisable exceptions fail tests. Fix the owning task or
+fixture cleanup instead of suppressing async driver errors globally. Offline E2E
+cases run without a database; only fixtures that actually acquire a test
+connection skip when their explicitly isolated service is missing.
+
+## Browser regressions
+
+The five natal report browser cases require Node.js 24 and the exact Playwright
+version in `tests/browser/package-lock.json`. Install and run them from the
+repository root:
+
+```bash
+npm --prefix tests/browser ci --ignore-scripts
+node tests/browser/node_modules/playwright/cli.js install --with-deps chromium
+GEMAIBOT_REQUIRE_BROWSER_TESTS=1 uv run --locked pytest tests/test_natal_web_report.py -m browser -n 0 --override-ini="addopts=" --timeout=30
+```
+
+In PowerShell, set `$env:GEMAIBOT_REQUIRE_BROWSER_TESTS = "1"` before the pytest
+command. On Windows the browser installer downloads Chromium; system dependency
+installation applies to Linux. Missing Node.js or the package is an optional skip
+in a minimal local checkout. The dedicated CI browser job sets the required flag,
+installs Chromium and fails if the prerequisites or checks are missing.
+
 Documentation-only edits require source/link review, `git diff --check`,
 `python scripts/check_encoding.py` before and after edits. The script strictly
 decodes tracked and non-ignored new Markdown, rejects unexpected C0/C1 controls
@@ -81,6 +104,12 @@ host, port and database, not just credentials. `GEMAIBOT_TEST_DATABASE_IS_EPHEME
 is a narrowly checked CI/loopback exception, not a local bypass switch.
 Tests may run destructive DDL/DML; transactional fixtures do not protect every
 test path. Do not report skipped integration tests as passed.
+
+The real Redis queue-script tests additionally require `TEST_REDIS_URL` pointing
+to disposable Redis. They execute the production Lua constants, use UUID-scoped
+keys and remove only their own keys. CI uses database 15 of its temporary Redis
+service for these cases. The integration command above selects both PostgreSQL
+and Redis cases; absent service URLs are reported as skips locally.
 
 CI applies the migration chain twice and checks pending versions before tests.
 If preparing a disposable database manually, note that `scripts/migrate.py` reads

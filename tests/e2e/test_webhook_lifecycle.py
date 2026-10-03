@@ -1,198 +1,268 @@
-"""
-E2E testing for the Telegram Webhook lifecycle and Quart web server integrations.
+"""Exercise the webhook registered by the production bot lifecycle."""
 
-Design decisions
-────────────────
-- webhook_client uses a *fresh* Quart() instance (not the production quart_app
-  singleton). This eliminates route-accumulation across test runs: each call
-  to the fixture previously added a new POST handler for the same path to the
-  global url_map, which is only masked by xdist worker isolation. With a
-  dedicated test app the route is registered exactly once per module.
-
-- test_health_endpoint_success uses the production quart_app because it must
-  exercise the real /health route registered at import time.
-"""
-
-import json
-from unittest.mock import AsyncMock, patch
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from quart import Quart
+from quart import Quart, request
 from telegram import Bot, Update
-from telegram.ext import Application
 
 from app.web import quart_app
 
-# ── Fixtures ──────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture(scope="module")
-def _webhook_test_app():
-    """
-    One-time setup: a minimal Quart app with the webhook route registered once.
-
-    scope="module" ensures the route is registered exactly once per test module
-    regardless of how many test functions request webhook_client.
-
-    Returns (test_app, mock_telegram_application) — the mock is shared across
-    module-scoped context; tests reset its call history via mock.reset_mock().
-    """
-    from app.config import settings
-    from bot import _telegram_webhook_path
-
-    webhook_path = _telegram_webhook_path(settings.TELEGRAM_BOT_TOKEN)
-
-    # A real Bot is required because Update.de_json() calls bot.defaults.tzinfo
-    # directly — an AsyncMock here raises "tzinfo argument must be None or of a
-    # tzinfo subclass, not type 'AsyncMock'".
-    bot_instance = Bot("123456789:ABCDefghIJKlmnOPQRstuVWXyz")
-    mock_application = AsyncMock(spec=Application)
-    mock_application.bot = bot_instance
-
-    # Fresh, isolated Quart app — never pollutes production quart_app.url_map
-    test_app = Quart(__name__)
-
-    @test_app.route(webhook_path, methods=["POST"])
-    async def webhook_handler():
-        from quart import request  # noqa: PLC0415
-
-        json_data = await request.get_json()
-        # If the JSON is unparseable Quart returns None for get_json(silent=True).
-        # Returning 400 explicitly mirrors the production error path.
-        if json_data is None:
-            return "Bad Request: invalid JSON", 400
-        try:
-            update_obj = Update.de_json(json_data, mock_application.bot)
-            await mock_application.process_update(update_obj)
-            return "", 200
-        except Exception as exc:  # noqa: BLE001
-            return str(exc), 400
-
-    return test_app, mock_application
+_TOKEN = "123456789:ABCDefghIJKlmnOPQRstuVWXyz"
+_SECRET = "synthetic-webhook-secret"
 
 
 @pytest.fixture
-def webhook_client(_webhook_test_app):
-    """
-    Per-test fixture: yields (QuartClient, mock_application).
+async def webhook_client(monkeypatch):
+    import bot
 
-    Resets mock call history before each test so assertions are independent.
-    """
-    test_app, mock_app = _webhook_test_app
-    mock_app.reset_mock()
-    yield test_app.test_client(), mock_app
+    test_app = Quart(__name__)
+    application = MagicMock()
+    application.bot = Bot(_TOKEN, request=MagicMock(), get_updates_request=MagicMock())
+    application.update_queue = asyncio.Queue(maxsize=2)
+    application.job_queue = None
+    application.initialize = AsyncMock()
+    application.start = AsyncMock()
+    application.stop = AsyncMock()
+    application.process_update = AsyncMock()
+    builder = MagicMock()
+    for method in ("token", "request", "update_queue", "concurrent_updates"):
+        getattr(builder, method).return_value = builder
+    builder.build.return_value = application
+
+    ready = asyncio.Event()
+    shutdown = asyncio.Event()
+
+    async def wait_for_shutdown():
+        ready.set()
+        await shutdown.wait()
+
+    monkeypatch.setenv("WEBHOOK_URL", "https://webhook.example.test")
+    monkeypatch.setattr(bot, "quart_app", test_app)
+    monkeypatch.setattr(bot, "shutdown_event", SimpleNamespace(wait=wait_for_shutdown))
+    monkeypatch.setattr(
+        bot,
+        "settings",
+        SimpleNamespace(
+            TELEGRAM_BOT_TOKEN=_TOKEN,
+            TELEGRAM_LOCAL_SERVER_URL="",
+            UPDATE_QUEUE_MAXSIZE=100,
+            WEBHOOK_SECRET_TOKEN=_SECRET,
+            WEBHOOK_MAX_CONNECTIONS=3,
+        ),
+    )
+    monkeypatch.setattr(bot.Application, "builder", lambda: builder)
+    monkeypatch.setattr("telegram.request.HTTPXRequest", MagicMock())
+    for target in (
+        "bot.commands.register",
+        "bot.callbacks.register",
+        "bot.messages.register",
+        "app.handlers.memory_commands.register",
+        "app.handlers.msg_reactions.register",
+        "app.bot_instance.register_bot",
+    ):
+        monkeypatch.setattr(target, MagicMock())
+    monkeypatch.setattr("app.bot_commands.install_public_command_menu", AsyncMock())
+    monkeypatch.setattr("app.repos.models_repo.sync_models_from_db", AsyncMock())
+    monkeypatch.setattr("app.admin_alerts.alert_admin_startup", AsyncMock())
+    monkeypatch.setattr("app.utils.background_tasks.get_task_manager", lambda: MagicMock())
+    monkeypatch.setattr("app.webhook_dedupe.redis_client", None)
+    monkeypatch.setattr("app.observability.ingress.webhook_origins", MagicMock())
+    monkeypatch.setattr(Bot, "set_webhook", AsyncMock())
+
+    task = asyncio.create_task(bot.run_bot_with_retry())
+    try:
+        await asyncio.wait_for(ready.wait(), timeout=5)
+        yield test_app.test_client(), application, bot._telegram_webhook_path(_TOKEN)
+    finally:
+        shutdown.set()
+        await asyncio.wait_for(task, timeout=5)
 
 
-# ── Webhook lifecycle tests ───────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_webhook_valid_payload(webhook_client):
-    """
-    Arrange: valid minimal Telegram Update JSON.
-    Act:     POST to the derived webhook path.
-    Assert:  HTTP 200 returned; Application.process_update called with
-             a correctly-deserialised Update object.
-    """
-    client, mock_app = webhook_client
-    from app.config import settings
-    from bot import _telegram_webhook_path
-
-    webhook_path = _telegram_webhook_path(settings.TELEGRAM_BOT_TOKEN)
-
-    payload = {
-        "update_id": 987654321,
+def _payload(update_id=987654321):
+    return {
+        "update_id": update_id,
         "message": {
             "message_id": 1111,
             "date": 1690000000,
             "chat": {"id": 123456789, "type": "private"},
-            "text": "/start",
+            "text": "hello",
         },
     }
 
-    response = await client.post(
-        webhook_path,
-        headers={"Content-Type": "application/json"},
-        data=json.dumps(payload),
+
+async def test_webhook_valid_payload_is_queued(webhook_client):
+    client, application, path = webhook_client
+    response = await client.post(path, json=_payload(), headers={"X-Telegram-Bot-Api-Secret-Token": _SECRET})
+    assert response.status_code == 200
+    queued = application.update_queue.get_nowait()
+    assert isinstance(queued, Update)
+    assert queued.update_id == 987654321
+    assert queued.message.text == "hello"
+    application.process_update.assert_not_awaited()
+    application.bot.set_webhook.assert_awaited_once_with(
+        url=f"https://webhook.example.test{path}",
+        allowed_updates=[
+            "message",
+            "edited_message",
+            "callback_query",
+            "inline_query",
+            "chosen_inline_result",
+            "message_reaction",
+        ],
+        drop_pending_updates=True,
+        max_connections=3,
+        secret_token=_SECRET,
     )
 
-    response_text = await response.get_data(as_text=True)
-    assert response.status_code == 200, f"Expected 200 OK, got {response.status_code}: {response_text}"
 
-    mock_app.process_update.assert_awaited_once()
-    passed_update = mock_app.process_update.await_args[0][0]
-    assert isinstance(passed_update, Update)
-    assert passed_update.update_id == 987654321
-    assert passed_update.message is not None
-    assert passed_update.message.text == "/start"
+@pytest.mark.parametrize("secret", ["", "wrong-secret"])
+async def test_webhook_rejects_missing_or_wrong_secret(webhook_client, secret):
+    client, application, path = webhook_client
+    response = await client.post(path, json=_payload(), headers={"X-Telegram-Bot-Api-Secret-Token": secret})
+    assert response.status_code == 403
+    assert application.update_queue.empty()
 
 
-@pytest.mark.asyncio
 async def test_webhook_unregistered_path_returns_404(webhook_client):
-    """
-    Arrange: a path that was never registered as a webhook route.
-    Act:     POST with a fake/wrong bot token.
-    Assert:  HTTP 404 — Quart finds no matching route.
-             process_update is not called.
-
-    Note: this tests *routing* not authentication. The bot only registers one
-    derived path; any other path returns 404 by construction.
-    """
-    client, mock_app = webhook_client
-
-    response = await client.post(
-        "/webhook/invalid:fake_token_for_test",
-        headers={"Content-Type": "application/json"},
-        data=json.dumps({"update_id": 12345}),
-    )
-
+    client, application, _ = webhook_client
+    response = await client.post("/webhook/unregistered", json=_payload())
     assert response.status_code == 404
-    mock_app.process_update.assert_not_called()
+    assert application.update_queue.empty()
 
 
-@pytest.mark.asyncio
-async def test_webhook_malformed_json_returns_400(webhook_client):
-    """
-    Arrange: syntactically invalid JSON body.
-    Act:     POST to the registered webhook path.
-    Assert:  HTTP 400 — handler detects None from get_json() and rejects.
-             process_update is not called (no Update constructed).
-    """
-    client, mock_app = webhook_client
-    from app.config import settings
-    from bot import _telegram_webhook_path
-
-    webhook_path = _telegram_webhook_path(settings.TELEGRAM_BOT_TOKEN)
-
+@pytest.mark.parametrize("body", ["NOT VALID JSON {", "[]", "null"])
+async def test_webhook_malformed_json_returns_400(webhook_client, body):
+    client, application, path = webhook_client
     response = await client.post(
-        webhook_path,
-        headers={"Content-Type": "application/json"},
-        data="NOT VALID JSON {",
+        path,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Telegram-Bot-Api-Secret-Token": _SECRET,
+        },
     )
-
     assert response.status_code == 400
-    mock_app.process_update.assert_not_called()
+    assert application.update_queue.empty()
 
 
-# ── Health endpoint smoke test ────────────────────────────────────────────────
+async def test_webhook_invalid_update_returns_400(webhook_client):
+    client, application, path = webhook_client
+    response = await client.post(
+        path,
+        json={"update_id": 12, "message": {"chat": {"id": "invalid", "type": "private"}}},
+        headers={"X-Telegram-Bot-Api-Secret-Token": _SECRET},
+    )
+    assert response.status_code == 400
+    assert application.update_queue.empty()
 
 
-@pytest.mark.asyncio
+async def test_webhook_duplicate_is_acknowledged_without_second_queue_item(webhook_client):
+    client, application, path = webhook_client
+    for _ in range(2):
+        response = await client.post(path, json=_payload(), headers={"X-Telegram-Bot-Api-Secret-Token": _SECRET})
+        assert response.status_code == 200
+    assert application.update_queue.qsize() == 1
+
+
+async def test_webhook_full_queue_returns_retryable_503(webhook_client):
+    from app.observability.ingress import webhook_origins
+
+    client, application, path = webhook_client
+    for _ in range(application.update_queue.maxsize):
+        application.update_queue.put_nowait(object())
+    response = await client.post(path, json=_payload(), headers={"X-Telegram-Bot-Api-Secret-Token": _SECRET})
+    assert response.status_code == 503
+    assert application.update_queue.full()
+    webhook_origins.remember.assert_not_called()
+    webhook_origins.discard.assert_not_called()
+
+
+@pytest.mark.parametrize("command", [False, True])
+async def test_webhook_retry_after_overload_is_not_lost_to_deduplication(webhook_client, command):
+    client, application, path = webhook_client
+    payload = _payload()
+    if command:
+        payload["message"].update(text="/start", entities=[{"type": "bot_command", "offset": 0, "length": 6}])
+    headers = {"X-Telegram-Bot-Api-Secret-Token": _SECRET}
+    for _ in range(application.update_queue.maxsize):
+        application.update_queue.put_nowait(object())
+    overloaded = await client.post(path, json=payload, headers=headers)
+    assert overloaded.status_code == 503
+    while not application.update_queue.empty():
+        application.update_queue.get_nowait()
+
+    retried = await client.post(path, json=payload, headers=headers)
+    assert retried.status_code == 200
+    assert application.update_queue.qsize() == 1
+    assert application.update_queue.get_nowait().update_id == payload["update_id"]
+
+
+async def test_concurrent_webhooks_claim_only_an_available_queue_slot(webhook_client, monkeypatch):
+    client, application, path = webhook_client
+    application.update_queue.put_nowait(object())
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_started = asyncio.Event()
+    calls = []
+    claimed = set()
+
+    async def redis_set(key, value, **kwargs):
+        calls.append(key)
+        if len(calls) == 1:
+            first_entered.set()
+            await release_first.wait()
+        if key in claimed:
+            return False
+        claimed.add(key)
+        return True
+
+    monkeypatch.setattr("app.webhook_dedupe.redis_client", SimpleNamespace(set=redis_set))
+
+    @client.app.before_request
+    async def observe_second():
+        payload = await request.get_json()
+        if payload["update_id"] == 2:
+            second_started.set()
+
+    headers = {"X-Telegram-Bot-Api-Secret-Token": _SECRET}
+    first = asyncio.create_task(client.post(path, json=_payload(1), headers=headers))
+    second = None
+    try:
+        await asyncio.wait_for(first_entered.wait(), timeout=5)
+        second = asyncio.create_task(client.post(path, json=_payload(2), headers=headers))
+        await asyncio.wait_for(second_started.wait(), timeout=5)
+        assert len(calls) == 1, "Second update claimed before the first admission completed"
+        release_first.set()
+        responses = await asyncio.gather(first, second)
+        assert [response.status_code for response in responses] == [200, 503]
+        assert claimed == {"telegram:webhook:update:1"}
+        while not application.update_queue.empty():
+            application.update_queue.get_nowait()
+        retry = await client.post(path, json=_payload(2), headers=headers)
+        assert retry.status_code == 200
+        assert application.update_queue.qsize() == 1
+        assert application.update_queue.get_nowait().update_id == 2
+    finally:
+        release_first.set()
+        tasks = [first] + ([second] if second is not None else [])
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def test_health_endpoint_success():
-    """
-    Arrange: DB and Redis both report healthy (patched).
-    Act:     GET /health on the production Quart app.
-    Assert:  HTTP 200 with expected JSON structure.
-    """
     client = quart_app.test_client()
     with (
         patch("app.database.is_database_connected", return_value=True),
         patch("app.cache.ping_safe", new_callable=AsyncMock, return_value=True),
     ):
         response = await client.get("/health")
-        assert response.status_code == 200
-
-        json_data = await response.get_json()
-        assert json_data["status"] == "healthy"
-        assert json_data["services"]["database"] == "connected"
-        assert json_data["services"]["bot"] == "running"
+    assert response.status_code == 200
+    data = await response.get_json()
+    assert data["status"] == "healthy"
+    assert data["services"]["database"] == "connected"
+    assert data["services"]["bot"] == "running"

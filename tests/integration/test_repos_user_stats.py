@@ -1,104 +1,92 @@
-import pytest
+"""Integration tests for user statistics through the real repository APIs."""
 
-pytestmark = pytest.mark.integration
-"""Integration tests for user stats — mirrors repos/user_stats.py SQL.
-
-Tests today's request count, weekly stats, and model usage breakdown queries.
-"""
+from datetime import date, timedelta
 
 import pytest
 
-pytestmark = pytest.mark.integration
+from app import metrics
+from app.repos import user_stats
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio, pytest.mark.usefixtures("force_test_db_conn")]
 
 
 class TestUserStatsQueries:
-    """Test user metrics queries mirroring repos/user_stats.py."""
+    async def test_today_request_count(self, db_conn_with_metrics, test_user_id):
+        assert await user_stats.get_user_today_request_count(test_user_id) == 10
 
-    @pytest.mark.asyncio
-    async def test_today_request_count(self, db_conn_with_metrics):
-        """Mirrors get_user_today_request_count() — COALESCE returns 0 when no row."""
-        conn = db_conn_with_metrics
-        user_id = 999999
+    async def test_today_request_count_no_data(self, db_conn_with_user, test_user_id):
+        assert await user_stats.get_user_today_request_count(test_user_id) == 0
+        assert await user_stats.get_user_model_usage_today(test_user_id) == []
 
-        row = await conn.fetchrow(
-            "SELECT COALESCE(request_count, 0) as cnt FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE",
-            user_id,
-        )
-        assert row["cnt"] == 10
-
-    @pytest.mark.asyncio
-    async def test_today_request_count_no_data(self, db_conn_with_user):
-        """When no metrics row exists, query should return empty."""
-        conn = db_conn_with_user
-        user_id = 999999
-
-        rows = await conn.fetch(
-            "SELECT COALESCE(request_count, 0) as cnt FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE",
-            user_id,
-        )
-        assert len(rows) == 0  # No row → caller uses default 0
-
-    @pytest.mark.asyncio
-    async def test_weekly_stats_returns_multiple_days(self, db_conn_with_user):
-        """Mirrors get_user_weekly_stats() — returns per-day counts for last 7 days."""
-        conn = db_conn_with_user
-        user_id = 999999
-
-        # Insert metrics for 3 different days
-        for offset in (0, 1, 3):
-            await conn.execute(
-                """INSERT INTO user_metrics (user_id, metric_date, request_count)
-                   VALUES ($1, CURRENT_DATE - $2 * INTERVAL '1 day', $3)""",
-                user_id,
-                offset,
+    async def test_weekly_stats_returns_only_last_seven_days(self, db_conn_with_user, test_user_id):
+        today = await db_conn_with_user.fetchval("SELECT CURRENT_DATE")
+        for offset in (0, 1, 3, 6, 7):
+            await db_conn_with_user.execute(
+                "INSERT INTO user_metrics (user_id, metric_date, request_count) VALUES ($1, $2, $3)",
+                test_user_id,
+                today - timedelta(days=offset),
                 (offset + 1) * 5,
             )
 
-        rows = await conn.fetch(
-            """SELECT metric_date, request_count as cnt
-               FROM user_metrics
-               WHERE user_id = $1 AND metric_date >= CURRENT_DATE - INTERVAL '6 days'
-               ORDER BY metric_date""",
-            user_id,
+        rows = await user_stats.get_user_weekly_stats(test_user_id)
+
+        assert rows == [
+            {"metric_date": today - timedelta(days=6), "cnt": 35},
+            {"metric_date": today - timedelta(days=3), "cnt": 20},
+            {"metric_date": today - timedelta(days=1), "cnt": 10},
+            {"metric_date": today, "cnt": 5},
+        ]
+
+    async def test_model_usage_jsonb_breakdown(self, db_conn_with_metrics, test_user_id):
+        assert await user_stats.get_user_model_usage_today(test_user_id) == [
+            {"model_name": "gemini-2.5-flash", "cnt": 7},
+            {"model_name": "gemini-3.1-flash-lite", "cnt": 3},
+        ]
+
+    async def test_request_count_increments_through_metrics_collector(
+        self, db_conn_with_metrics, test_user_id, monkeypatch
+    ):
+        today = await db_conn_with_metrics.fetchval("SELECT CURRENT_DATE")
+
+        class DatabaseDate(date):
+            @classmethod
+            def today(cls):
+                return today
+
+        monkeypatch.setattr(metrics, "date", DatabaseDate)
+        collector = metrics.MetricsCollector()
+        await collector.record_request("chat", response_time=0.25, user_id=test_user_id)
+        # Process the owned queue synchronously without starting a background worker.
+        event = collector._events_queue.get_nowait()
+        collector._process_event(event)
+        collector._events_queue.task_done()
+        await collector._save_metrics_to_db()
+
+        assert await user_stats.get_user_today_request_count(test_user_id) == 11
+        assert (
+            await db_conn_with_metrics.fetchval(
+                "SELECT request_count FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE",
+                test_user_id,
+            )
+            == 11
         )
-        assert len(rows) == 3
-        # Most recent day should be first (ascending order), counts should match
-        assert rows[-1]["cnt"] == 5  # Today: offset=0 → count=5
+        assert collector._events_queue.empty()
+        assert collector._user_daily[today.isoformat()][test_user_id]["request_count"] == 0
 
-    @pytest.mark.asyncio
-    async def test_model_usage_jsonb_breakdown(self, db_conn_with_metrics):
-        """Mirrors get_user_model_usage_today() — jsonb_each_text for per-model counts."""
-        conn = db_conn_with_metrics
-        user_id = 999999
-
-        rows = await conn.fetch(
-            """SELECT key as model_name, value::int as cnt
-               FROM user_metrics, jsonb_each_text(model_usage)
-               WHERE user_id = $1 AND metric_date = CURRENT_DATE
-               ORDER BY value::int DESC""",
-            user_id,
-        )
-        assert len(rows) == 2
-        assert rows[0]["model_name"] == "gemini-2.5-flash"
-        assert rows[0]["cnt"] == 7
-        assert rows[1]["model_name"] == "gemini-3.1-flash-lite"
-        assert rows[1]["cnt"] == 3
-
-    @pytest.mark.asyncio
-    async def test_increment_request_count(self, db_conn_with_metrics):
-        """Test incrementing request_count via direct UPDATE (metrics middleware pattern)."""
-        conn = db_conn_with_metrics
-        user_id = 999999
-
-        await conn.execute(
-            """UPDATE user_metrics
-               SET request_count = request_count + 1
-               WHERE user_id = $1 AND metric_date = CURRENT_DATE""",
-            user_id,
+    async def test_other_user_stats_are_not_returned(self, db_conn_with_metrics, test_user_id):
+        other_user_id = 888888
+        await db_conn_with_metrics.execute("INSERT INTO users (user_id) VALUES ($1)", other_user_id)
+        await db_conn_with_metrics.execute(
+            "INSERT INTO user_metrics (user_id, metric_date, request_count, model_usage) VALUES ($1, CURRENT_DATE, 99, $2)",
+            other_user_id,
+            {"other-model": 99},
         )
 
-        row = await conn.fetchrow(
-            "SELECT request_count FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE",
-            user_id,
-        )
-        assert row["request_count"] == 11  # Was 10, +1 = 11
+        assert await user_stats.get_user_today_request_count(test_user_id) == 10
+        assert await user_stats.get_user_model_usage_today(test_user_id) == [
+            {"model_name": "gemini-2.5-flash", "cnt": 7},
+            {"model_name": "gemini-3.1-flash-lite", "cnt": 3},
+        ]
+        assert await user_stats.get_user_weekly_stats(test_user_id) == [
+            {"metric_date": await db_conn_with_metrics.fetchval("SELECT CURRENT_DATE"), "cnt": 10}
+        ]

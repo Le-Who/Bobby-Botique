@@ -1,6 +1,6 @@
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.cache import MultiLayerCache
 
@@ -15,6 +15,7 @@ class TestCacheTTL(unittest.TestCase):
 
     def tearDown(self):
         self.loop.close()
+        asyncio.set_event_loop(None)
 
     def test_ttl_cache_initialization(self):
         """Verify that TTLCache instances are correctly created with custom constraints."""
@@ -66,21 +67,15 @@ class TestCacheTTL(unittest.TestCase):
         # Utilization = 3 / 1200 * 100 = 0.25
         self.assertEqual(stats["memory_utilization"], 0.25)
 
-    @patch("app.cache.redis_client", None)
     def test_clear_cache(self):
-        """Test cache clearing methods properly hit TTLCache clear APIs."""
+        """The public cache-clear operation flushes the configured Redis store."""
+        from app.cache import clear_cache
 
-        async def run_test():
-            self.cache.qna_cache["q2"] = 1
-            from app.cache import clear_cache
-
-            await clear_cache()
-
-            # Because clear_cache utilizes the global multi_layer_cache instance,
-            # we need to manually emulate it here or test the module-level method
-            # Module-level global tests are generally brittle, but direct validation is sound
-
-        self.loop.run_until_complete(run_test())
+        redis = AsyncMock()
+        redis.flushdb.return_value = True
+        with patch("app.cache.redis_client", redis):
+            self.loop.run_until_complete(clear_cache())
+        redis.flushdb.assert_awaited_once_with()
 
 
 if __name__ == "__main__":

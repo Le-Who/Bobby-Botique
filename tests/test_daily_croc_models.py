@@ -115,12 +115,13 @@ async def test_catalog_outage_preserves_text_setting_and_can_load_saved_selectio
     from app import web
     from app.providers import pollinations
     from app.repos import settings_repo
+    from app.runtime_settings import legacy_models
 
     monkeypatch.setattr(web.settings, "ADMIN_SECRET", "test-token")
     monkeypatch.setattr(pollinations, "fetch_models", AsyncMock(side_effect=ValueError("unavailable")))
     monkeypatch.setattr(settings_repo, "get_global_setting", AsyncMock(return_value="gemini-2.5-flash"))
     save = AsyncMock()
-    monkeypatch.setattr(settings_repo, "set_global_setting", save)
+    monkeypatch.setattr(legacy_models, "save_croc_model", save)
     client = web.quart_app.test_client()
     headers = {"X-Auth-Token": "test-token"}
     response = await client.post(

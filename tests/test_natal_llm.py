@@ -1,5 +1,6 @@
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -688,27 +689,18 @@ async def test_generate_interpretation_repairs_technical_and_overly_abstract_lan
         "Например, помогает один ясный шаг. Теневая сторона — ждать идеала."
     )
 
-    class FakeRouter:
-        def __init__(self):
-            self.calls = 0
-
-        async def get_response(self, **kwargs):
-            self.calls += 1
-            if self.calls == 1:
-                return dry_response, 0
-            repair_prompt = kwargs["history"][0]["parts"][0].lower()
-            assert "убери технические примечания" in repair_prompt
-            assert "простым русским языком" in repair_prompt
-            return warm_response, 0
-
-    router = FakeRouter()
+    generate = AsyncMock(side_effect=[(dry_response, 0), (warm_response, 0)])
+    router = SimpleNamespace(get_response=generate)
     monkeypatch.setattr("app.config.settings", SimpleNamespace(RESEARCH_MODEL="test-model", DEFAULT_MODEL=""))
     monkeypatch.setattr("app.providers.get_provider_router", lambda: router)
 
     sections = await generate_interpretation(chart, user_id=123, chat_id=456)
 
     bodies = "\n".join(section.body_markdown for section in sections).lower()
-    assert router.calls == 2
+    assert generate.await_count == 2
+    repair_prompt = generate.await_args_list[1].kwargs["history"][0]["parts"][0].lower()
+    assert "убери технические примечания" in repair_prompt
+    assert "простым русским языком" in repair_prompt
     assert "техническое примечание" not in bodies
     assert "ephem-local" not in bodies
     assert "астрологическая сетка" not in bodies
@@ -763,28 +755,21 @@ async def test_generate_interpretation_repairs_abstract_language_without_technic
         "Вы быстро чувствуете, где стоит вкладываться, а где лучше не отдавать силы просто из привычки.",
     )
 
-    class FakeRouter:
-        def __init__(self):
-            self.calls = 0
-
-        async def get_response(self, **kwargs):
-            self.calls += 1
-            if self.calls == 1:
-                return abstract_response, 0
-            repair_prompt = kwargs["history"][0]["parts"][0].lower()
-            assert "простым русским языком" in repair_prompt
-            return repaired_response, 0
-
-    router = FakeRouter()
+    generate = AsyncMock(side_effect=[(abstract_response, 0), (repaired_response, 0)])
+    router = SimpleNamespace(get_response=generate)
     monkeypatch.setattr("app.config.settings", SimpleNamespace(RESEARCH_MODEL="test-model", DEFAULT_MODEL=""))
     monkeypatch.setattr("app.providers.get_provider_router", lambda: router)
 
     sections = await generate_interpretation(chart, user_id=123, chat_id=456)
 
     bodies = "\n".join(section.body_markdown for section in sections).lower()
-    assert router.calls == 2
+    assert generate.await_count == 2
+    repair_prompt = generate.await_args_list[1].kwargs["history"][0]["parts"][0].lower()
+    assert "простым русским языком" in repair_prompt
     assert "астрологическая сетка" not in bodies
     assert "проецируется" not in bodies
+    assert "вы быстро чувствуете, где стоит вкладываться" in bodies
+    assert "глубокая llm-интерпретация временно недоступна" not in bodies
 
 
 @pytest.mark.asyncio
@@ -831,35 +816,32 @@ async def test_generate_interpretation_repairs_incomplete_practical_structure(mo
         "Например, один честный разговор полезнее идеального плана. Теневая сторона — откладывать."
     )
 
-    class FakeRouter:
-        def __init__(self):
-            self.calls = 0
-
-        async def get_response(self, **kwargs):
-            self.calls += 1
-            if self.calls == 1:
-                return (
-                    "## section-summary | Краткое резюме\n"
-                    "Сухой ответ.\n\n"
-                    "## section-sun | Солнце — ядро личности\n"
-                    "Солнце в Водолее.",
-                    0,
-                )
-            assert "улучши структуру" in kwargs["history"][0]["parts"][0].lower()
-            return complete_response, 0
-
-    router = FakeRouter()
+    incomplete_response = (
+        "## section-summary | Краткое резюме\n"
+        "Сухой ответ.\n\n"
+        "## section-sun | Солнце — ядро личности\n"
+        "Солнце в Водолее."
+    )
+    generate = AsyncMock(side_effect=[(incomplete_response, 0), (complete_response, 0)])
+    router = SimpleNamespace(get_response=generate)
     monkeypatch.setattr("app.config.settings", SimpleNamespace(RESEARCH_MODEL="test-model", DEFAULT_MODEL=""))
     monkeypatch.setattr("app.providers.get_provider_router", lambda: router)
 
     sections = await generate_interpretation(chart, user_id=123, chat_id=456)
 
     ids = {section.id for section in sections}
-    assert router.calls == 2
+    assert generate.await_count == 2
+    repair_prompt = generate.await_args_list[1].kwargs["history"][0]["parts"][0].lower()
+    assert "улучши структуру" in repair_prompt
     assert "section-work-money" in ids
     assert "section-shadow-patterns" in ids
     assert "section-relationships" in ids
     assert "Сухой ответ" not in "\n".join(section.body_markdown for section in sections)
+    growth = next(section for section in sections if section.id == "section-growth")
+    assert "один честный разговор полезнее идеального плана" in growth.body_markdown
+    assert "Глубокая LLM-интерпретация временно недоступна" not in "\n".join(
+        section.body_markdown for section in sections
+    )
 
 
 @pytest.mark.asyncio

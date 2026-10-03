@@ -467,6 +467,7 @@ async def run_bot_with_retry():
             webhook_secret = (settings.WEBHOOK_SECRET_TOKEN or "").strip()
             seen_update_ids: dict[int, float] = {}
             seen_lock = asyncio.Lock()
+            webhook_admission_lock = asyncio.Lock()
             dedup_ttl_seconds = 86_400.0
             dedup_capacity = 10_000
 
@@ -504,39 +505,46 @@ async def run_bot_with_retry():
                 if not isinstance(json_data, dict):
                     return "Bad Request: invalid JSON", 400
 
-                update_id = json_data.get("update_id")
-                if isinstance(update_id, int):
-                    from app.webhook_dedupe import should_accept_webhook_update
-
-                    if not await should_accept_webhook_update(
-                        update_id,
-                        seen_update_ids,
-                        seen_lock,
-                        payload=json_data,
-                        ttl_seconds=dedup_ttl_seconds,
-                        capacity=dedup_capacity,
-                    ):
-                        return "", 200
-
                 try:
                     update_obj = Update.de_json(json_data, application.bot)
                 except Exception as e:
                     logging.warning("Webhook payload decode failed: %s", e)
                     return "Bad Request: invalid update payload", 400
 
-                # Correctly leverage PTB's update_queue to apply `concurrent_updates()` bounds
-                try:
-                    if isinstance(update_id, int):
-                        from app.observability.ingress import webhook_origins
+                # Check capacity before claiming a dedupe identity. Serialize local
+                # admissions across the Redis await so another webhook cannot fill
+                # the last slot after this check and consume an undelivered update.
+                async with webhook_admission_lock:
+                    if application.update_queue.full():
+                        logging.warning("Webhook update_queue is full; returning 503 for retry")
+                        return "Service Unavailable", 503
 
-                        webhook_origins.remember(update_id)
-                    application.update_queue.put_nowait(update_obj)
-                except QueueFull:
+                    update_id = json_data.get("update_id")
                     if isinstance(update_id, int):
-                        webhook_origins.discard(update_id)
-                    # Signal temporary overload so Telegram retries delivery.
-                    logging.warning("Webhook update_queue is full; returning 503 for retry")
-                    return "Service Unavailable", 503
+                        from app.webhook_dedupe import should_accept_webhook_update
+
+                        if not await should_accept_webhook_update(
+                            update_id,
+                            seen_update_ids,
+                            seen_lock,
+                            payload=json_data,
+                            ttl_seconds=dedup_ttl_seconds,
+                            capacity=dedup_capacity,
+                        ):
+                            return "", 200
+
+                    # PTB owns processing concurrency; ingress only enqueues.
+                    try:
+                        if isinstance(update_id, int):
+                            from app.observability.ingress import webhook_origins
+
+                            webhook_origins.remember(update_id)
+                        application.update_queue.put_nowait(update_obj)
+                    except QueueFull:
+                        if isinstance(update_id, int):
+                            webhook_origins.discard(update_id)
+                        logging.warning("Webhook update_queue is full; returning 503 for retry")
+                        return "Service Unavailable", 503
                 return "", 200
 
             await application.bot.set_webhook(

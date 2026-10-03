@@ -10,18 +10,30 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import urllib.parse
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from quart.testing.connections import WebsocketDisconnectError
 
 from app.database import ChatState
 from app.web import quart_app
 from tests.factories import make_valid_init_data
+
+
+@pytest.fixture(autouse=True)
+def isolated_live_runtime_settings(monkeypatch):
+    from app.runtime_settings.store import SettingsSnapshot
+
+    monkeypatch.setattr("app.runtime_settings.lifecycle.refresh_runtime_settings", AsyncMock())
+    monkeypatch.setattr(
+        "app.runtime_settings.store.get_snapshot", AsyncMock(return_value=SettingsSnapshot(0, MappingProxyType({})))
+    )
 
 
 def test_vertex_live_flag_defaults_off_and_is_forwarded_to_runtime(monkeypatch):
@@ -164,22 +176,52 @@ class _RaisingLiveConnect:
 class TestLiveAudioAuth:
     """LA-01: Authentication — reject unauthenticated WebSocket connections."""
 
-    async def test_missing_init_data(self, test_client):
+    async def test_missing_init_data(self, test_client, monkeypatch):
         """Connection without initData should be closed immediately."""
-        try:
+        session = AsyncMock()
+        monkeypatch.setattr("app.web_miniapp._handle_live_session", session)
+        with pytest.raises(WebsocketDisconnectError) as error:
             async with test_client.websocket("/webapp/live/ws") as ws:
-                await ws.receive()
-        except Exception:
-            pass  # Expected — websocket closed by server
+                await asyncio.wait_for(ws.receive(), 1)
+        assert error.value.args == (4003,)
+        session.assert_not_awaited()
 
-    async def test_invalid_init_data(self, test_client, mock_bot_token):
+    async def test_invalid_init_data(self, test_client, mock_bot_token, monkeypatch):
         """Connection with tampered initData should be rejected."""
         url = "/webapp/live/ws?initData=user%3Dfake%26hash%3Dinvalid"
-        try:
+        session = AsyncMock()
+        monkeypatch.setattr("app.web_miniapp._handle_live_session", session)
+        with pytest.raises(WebsocketDisconnectError) as error:
             async with test_client.websocket(url) as ws:
-                await ws.receive()
-        except Exception:
-            pass  # Expected — websocket closed by server
+                await asyncio.wait_for(ws.receive(), 1)
+        assert error.value.args == (4003,)
+        session.assert_not_awaited()
+
+    async def test_expired_init_data(self, test_client, mock_bot_token, monkeypatch):
+        session = AsyncMock()
+        monkeypatch.setattr("app.web_miniapp._handle_live_session", session)
+        expired = make_valid_init_data(mock_bot_token, user_id=555, auth_date=1)
+        url = f"/webapp/live/ws?initData={urllib.parse.quote(expired)}"
+        with pytest.raises(WebsocketDisconnectError) as error:
+            async with test_client.websocket(url) as ws:
+                await asyncio.wait_for(ws.receive(), 1)
+        assert error.value.args == (4003,)
+        session.assert_not_awaited()
+
+    async def test_revoked_user_never_opens_live_session(
+        self, test_client, mock_bot_token, authorized_miniapp_user, monkeypatch
+    ):
+        authorized_miniapp_user.return_value = False
+        session = AsyncMock()
+        monkeypatch.setattr("app.web_miniapp._handle_live_session", session)
+        init_data = make_valid_init_data(mock_bot_token, user_id=555)
+        url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
+        with pytest.raises(WebsocketDisconnectError) as error:
+            async with test_client.websocket(url) as ws:
+                await asyncio.wait_for(ws.receive(), 1)
+        assert error.value.args == (4003,)
+        authorized_miniapp_user.assert_awaited_once_with(555)
+        session.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -472,13 +514,20 @@ class TestLiveAudioProxy:
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
-        mock_session.send_realtime_input = AsyncMock()
+        audio_forwarded = asyncio.Event()
+
+        async def observe_input(**kwargs):
+            if "audio" in kwargs:
+                audio_forwarded.set()
+
+        mock_session.send_realtime_input = AsyncMock(side_effect=observe_input)
 
         # Consumer yields one audio response then stops
         pcm_data = b"\x00\x01" * 100
         responses = [_make_response_with_audio(pcm_data)]
 
         async def _gen():
+            await audio_forwarded.wait()
             for r in responses:
                 yield r
 
@@ -518,10 +567,15 @@ class TestLiveAudioProxy:
                 await ws.send(json.dumps({"type": "activity_end"}))
 
                 # 3. Receive audio output from Gemini
-                audio_raw = await ws.receive()
+                audio_raw = await asyncio.wait_for(ws.receive(), 1)
                 audio_msg = json.loads(audio_raw)
                 assert audio_msg["type"] == "audio"
-                assert audio_msg["data"]  # Non-empty base64
+                assert base64.b64decode(audio_msg["data"]) == pcm_data
+
+        sent = mock_session.send_realtime_input.await_args_list
+        assert [list(call.kwargs) for call in sent] == [["activity_start"], ["audio"], ["activity_end"]]
+        assert sent[1].kwargs["audio"].data == b"\x00\x01" * 50
+        assert sent[1].kwargs["audio"].mime_type == "audio/pcm;rate=16000"
 
     async def test_interrupt_forwarding(self, test_client, mock_bot_token, mock_api_keys):
         """LA-04: Consumer relays 'interrupted' signal to the browser."""

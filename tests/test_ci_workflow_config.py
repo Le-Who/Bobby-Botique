@@ -1,5 +1,6 @@
 """Contract tests for truthful repository verification in GitHub Actions."""
 
+import re
 from pathlib import Path
 
 CI_WORKFLOW = Path(".github/workflows/ci.yml")
@@ -9,11 +10,12 @@ def _workflow() -> str:
     return CI_WORKFLOW.read_text(encoding="utf-8")
 
 
-def _job(text: str, name: str, next_name: str | None = None) -> str:
-    block = text.split(f"  {name}:", 1)[1]
-    if next_name is not None:
-        block = block.split(f"  {next_name}:", 1)[0]
-    return block
+def _jobs(text: str) -> dict[str, str]:
+    return dict(re.findall(r"(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)", text.split("jobs:\n", 1)[1]))
+
+
+def _job(text: str, name: str) -> str:
+    return _jobs(text)[name]
 
 
 def test_ci_verifies_supported_push_branches_and_all_pull_requests() -> None:
@@ -33,14 +35,17 @@ def test_ci_never_references_removed_load_test_module() -> None:
 def test_ci_uses_exact_uv_and_the_committed_lock_in_every_python_job() -> None:
     workflow = _workflow()
 
-    assert 'python -m pip install "uv==0.12.6"' in workflow
-    assert workflow.count("uv sync --locked") == 5
+    python_jobs = {name: body for name, body in _jobs(workflow).items() if "uses: actions/setup-python@" in body}
+    assert python_jobs
+    for name, body in python_jobs.items():
+        assert 'python -m pip install "uv==0.12.6"' in body, name
+        assert "uv sync --locked" in body, name
     assert "-r requirements.txt" not in workflow
     assert "requirements-dev.txt" not in workflow
 
 
 def test_ci_lint_job_enforces_locked_ruff_formatting() -> None:
-    lint_job = _job(_workflow(), "lint", "type-check")
+    lint_job = _job(_workflow(), "lint")
 
     assert "uv run --locked ruff check ." in lint_job
     assert "uv run --locked ruff format --check ." in lint_job
@@ -48,7 +53,7 @@ def test_ci_lint_job_enforces_locked_ruff_formatting() -> None:
 
 def test_ci_separates_unit_and_integration_suites() -> None:
     workflow = _workflow()
-    unit_job = _job(workflow, "test-unit", "test-integration")
+    unit_job = _job(workflow, "test-unit")
     integration_job = _job(workflow, "test-integration")
 
     assert 'uv run --locked pytest tests/ --ignore=tests/integration -m "not integration"' in unit_job
@@ -71,11 +76,23 @@ def test_ci_integration_job_uses_ephemeral_pgvector_database() -> None:
     assert "python scripts/migrate.py --check" in integration_job
     assert "TEST_DATABASE_URL must be set" in integration_job
     assert 'REDIS_URL: "redis://localhost:6379/0"' in integration_job
+    assert 'TEST_REDIS_URL: "redis://localhost:6379/15"' in integration_job
+    assert "TEST_REDIS_URL must be set" in integration_job
+
+
+def test_ci_requires_locked_browser_tests_with_chromium() -> None:
+    browser_job = _job(_workflow(), "test-browser")
+
+    assert 'GEMAIBOT_REQUIRE_BROWSER_TESTS: "1"' in browser_job
+    assert "npm ci --ignore-scripts" in browser_job
+    assert "npx --no-install playwright install --with-deps chromium" in browser_job
+    assert "tests/test_natal_web_report.py -m browser -n 0" in browser_job
+    assert "continue-on-error" not in browser_job
 
 
 def test_ci_gates_application_types_and_production_dependencies() -> None:
     workflow = _workflow()
-    type_job = _job(workflow, "type-check", "test-unit")
+    type_job = _job(workflow, "type-check")
 
     assert "uv run --locked mypy app bot.py" in type_job
     assert "pip-audit" in workflow
@@ -90,7 +107,7 @@ def test_ci_gates_application_types_and_production_dependencies() -> None:
 
 
 def test_ci_builds_and_offline_smokes_the_production_container() -> None:
-    container_job = _job(_workflow(), "container-smoke", "dependency-audit")
+    container_job = _job(_workflow(), "container-smoke")
 
     assert "docker build" in container_job
     assert "docker run --rm --network none" in container_job

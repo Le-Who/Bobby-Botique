@@ -485,23 +485,38 @@ async def test_send_dailycroc_test_callback_uses_daily_prompt_without_marking_de
 @pytest.mark.asyncio
 async def test_result_refresh_coalesces_multiple_queue_calls(monkeypatch) -> None:
     crocodile_daily_telegram.reset_daily_telegram_state_for_tests()
-    calls = 0
+    calls = []
+    refreshed = asyncio.Event()
 
     async def fake_get_messages(puzzle_date, *, limit=200):
-        nonlocal calls
-        calls += 1
+        calls.append((puzzle_date, limit))
+        refreshed.set()
         return []
 
     monkeypatch.setattr(crocodile_daily_telegram.repo, "get_active_result_messages", fake_get_messages)
+    monkeypatch.setattr(crocodile_daily_telegram, "_REFRESH_DEBOUNCE_S", 0)
     bot = SimpleNamespace(edit_message_text=AsyncMock())
+    puzzle_date = date(2026, 4, 21)
+    key = puzzle_date.isoformat()
+    tasks = []
 
-    crocodile_daily_telegram.queue_daily_result_refresh(bot, date(2026, 4, 21))
-    crocodile_daily_telegram.queue_daily_result_refresh(bot, date(2026, 4, 21))
+    try:
+        crocodile_daily_telegram.queue_daily_result_refresh(bot, puzzle_date)
+        tasks.append(crocodile_daily_telegram._refresh_tasks[key])
+        crocodile_daily_telegram.queue_daily_result_refresh(bot, puzzle_date)
+        tasks.append(crocodile_daily_telegram._refresh_tasks[key])
 
-    await asyncio.sleep(2.2)
+        await asyncio.wait_for(refreshed.wait(), timeout=5)
+        await asyncio.wait_for(asyncio.gather(*set(tasks)), timeout=5)
 
-    assert calls == 1
-    crocodile_daily_telegram.reset_daily_telegram_state_for_tests()
+        assert tasks[0] is tasks[1]
+        assert calls == [(puzzle_date, 200)]
+        assert not crocodile_daily_telegram._refresh_tasks
+        assert not crocodile_daily_telegram._pending_bots
+    finally:
+        pending_tasks = set(tasks) | set(crocodile_daily_telegram._refresh_tasks.values())
+        crocodile_daily_telegram.reset_daily_telegram_state_for_tests()
+        await asyncio.gather(*pending_tasks, return_exceptions=True)
 
 
 @pytest.mark.asyncio

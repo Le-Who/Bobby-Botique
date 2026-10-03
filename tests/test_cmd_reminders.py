@@ -1,9 +1,11 @@
 """Tests for app.handlers.cmd_reminders — time parser, intent classifier, and delivery."""
 
+import asyncio
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 
 from app.handlers.cmd_reminders import _classify_reminder_intent, _parse_reminder_args
 
@@ -247,6 +249,19 @@ class TestRemindCommand:
 # ── Delivery ─────────────────────────────────────────────────────────────────
 
 
+@pytest_asyncio.fixture
+async def ai_reminder_tasks(monkeypatch):
+    from app.handlers import cmd_reminders
+
+    tasks = set()
+    monkeypatch.setattr(cmd_reminders, "_background_ai_tasks", tasks)
+    yield tasks
+    owned = tuple(tasks)
+    for task in owned:
+        task.cancel()
+    await asyncio.gather(*owned, return_exceptions=True)
+
+
 class TestCheckAndDeliverReminders:
     @pytest.mark.asyncio
     async def test_no_pending_does_nothing(self):
@@ -279,42 +294,33 @@ class TestCheckAndDeliverReminders:
         mock_mark.assert_awaited_once_with(1)
 
     @pytest.mark.asyncio
-    async def test_dispatches_ai_reminder(self):
-        """AI reminders should fire asyncio.create_task and mark delivered."""
+    async def test_dispatches_ai_reminder(self, ai_reminder_tasks):
         from app.handlers.cmd_reminders import check_and_deliver_reminders
 
         context = MagicMock()
         context.bot.send_message = AsyncMock()
-
         pending = [
-            {
-                "id": 2,
-                "user_id": 42,
-                "prompt": "Find latest news",
-                "context_history": {"is_ai": True, "mode": "qna"},
-            }
+            {"id": 2, "user_id": 42, "prompt": "Find latest news", "context_history": {"is_ai": True, "mode": "qna"}}
         ]
-
         with (
-            patch("app.handlers.cmd_reminders.get_pending_reminders", new_callable=AsyncMock, return_value=pending),
-            patch("app.handlers.cmd_reminders.mark_delivered", new_callable=AsyncMock) as mock_mark,
-            patch("asyncio.create_task") as mock_create_task,
+            patch("app.handlers.cmd_reminders.get_pending_reminders", new=AsyncMock(return_value=pending)),
+            patch("app.handlers.cmd_reminders.mark_delivered", new=AsyncMock()) as mark,
+            patch("app.handlers.cmd_reminders._execute_ai_reminder", new=AsyncMock()) as worker,
         ):
             await check_and_deliver_reminders(context)
-
-        # AI reminder should NOT call bot.send_message directly (that's handled by _execute_ai_reminder)
-        context.bot.send_message.assert_not_awaited()
-        mock_create_task.assert_called_once()
-        mock_mark.assert_awaited_once_with(2)
+            await asyncio.gather(*tuple(ai_reminder_tasks))
+            await asyncio.sleep(0)
+            worker.assert_awaited_once_with(context.bot, 42, "Find latest news", "qna", 2)
+            mark.assert_awaited_once_with(2)
+            context.bot.send_message.assert_not_awaited()
+            assert not ai_reminder_tasks
 
     @pytest.mark.asyncio
-    async def test_dispatches_ai_reminder_from_json_string(self):
-        """AI metadata stored as a JSON string (legacy) should be parsed correctly."""
+    async def test_dispatches_ai_reminder_from_json_string(self, ai_reminder_tasks):
         from app.handlers.cmd_reminders import check_and_deliver_reminders
 
         context = MagicMock()
         context.bot.send_message = AsyncMock()
-
         pending = [
             {
                 "id": 3,
@@ -323,16 +329,18 @@ class TestCheckAndDeliverReminders:
                 "context_history": '{"is_ai": true, "mode": "research"}',
             }
         ]
-
         with (
-            patch("app.handlers.cmd_reminders.get_pending_reminders", new_callable=AsyncMock, return_value=pending),
-            patch("app.handlers.cmd_reminders.mark_delivered", new_callable=AsyncMock) as mock_mark,
-            patch("asyncio.create_task") as mock_create_task,
+            patch("app.handlers.cmd_reminders.get_pending_reminders", new=AsyncMock(return_value=pending)),
+            patch("app.handlers.cmd_reminders.mark_delivered", new=AsyncMock()) as mark,
+            patch("app.handlers.cmd_reminders._execute_ai_reminder", new=AsyncMock()) as worker,
         ):
             await check_and_deliver_reminders(context)
-
-        mock_create_task.assert_called_once()
-        mock_mark.assert_awaited_once_with(3)
+            await asyncio.gather(*tuple(ai_reminder_tasks))
+            await asyncio.sleep(0)
+            worker.assert_awaited_once_with(context.bot, 42, "Research AI trends", "research", 3)
+            mark.assert_awaited_once_with(3)
+            context.bot.send_message.assert_not_awaited()
+            assert not ai_reminder_tasks
 
     @pytest.mark.asyncio
     async def test_delivery_failure_does_not_raise(self):

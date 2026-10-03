@@ -1,6 +1,7 @@
 """Tests for app.context.summarizer — pure chunking and text extraction logic."""
 
 from contextlib import asynccontextmanager
+from types import MappingProxyType
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -21,6 +22,16 @@ def allow_summary_private_data_lease():
 
     with patch("app.repos.memory_consent.private_data_lease", allowed_lease):
         yield
+
+
+@pytest.fixture(autouse=True)
+def isolated_summary_settings(monkeypatch):
+    from app.runtime_settings.store import SettingsSnapshot
+
+    monkeypatch.setattr("app.runtime_settings.lifecycle.refresh_runtime_settings", AsyncMock())
+    monkeypatch.setattr(
+        "app.runtime_settings.store.get_snapshot", AsyncMock(return_value=SettingsSnapshot(0, MappingProxyType({})))
+    )
 
 
 # ── _extract_text ────────────────────────────────────────────────────────────
@@ -133,7 +144,7 @@ async def test_oversized_input_keeps_local_summary_without_external_call(monkeyp
     callback = AsyncMock()
 
     with patch(
-        "app.handlers.ai_core._get_ai_response_with_routing",
+        "app.context.summarizer.execute_text_process",
         new_callable=AsyncMock,
     ) as external_summary:
         await _run_llm_summarization(
@@ -145,6 +156,25 @@ async def test_oversized_input_keeps_local_summary_without_external_call(monkeyp
         )
 
     external_summary.assert_not_awaited()
+    callback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stale_summary_lease_never_sends_conversation_to_provider(monkeypatch):
+    leases = []
+
+    @asynccontextmanager
+    async def denied_lease(user_id, epoch, **kwargs):
+        leases.append((user_id, epoch, kwargs))
+        yield False
+
+    monkeypatch.setattr("app.repos.memory_consent.private_data_lease", denied_lease)
+    provider = AsyncMock(return_value=("should not be generated", None))
+    monkeypatch.setattr("app.context.summarizer.execute_text_process", provider)
+    callback = AsyncMock()
+    await _run_llm_summarization(123, 7, [{"role": "user", "parts": ["private conversation"]}], None, callback)
+    assert leases == [(123, 7, {"purpose": "conversation:summary", "require_ltm": False})]
+    provider.assert_not_awaited()
     callback.assert_not_awaited()
 
 

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatStateRow(BaseModel):
@@ -78,5 +78,6 @@ class UserStateRow(BaseModel):
     awaiting_manual_role_prompt: bool = False
     manual_role_title: str = ""
     manual_role_prompt: str = ""
+    role_diaries: dict[str, list[str]] = Field(default_factory=dict)
     tarot_mode: bool = False
     tarot_session: dict[str, Any] | None = None

@@ -1,79 +1,16 @@
-import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-# Define keys but do not override them yet
-_mock_keys = [
-    "asyncpg",
-    "asyncpg.pool",
-    "google.genai",
-    "google.genai.errors",
-    "redis",
-    "redis.exceptions",
-    "telegram",
-    "telegram.ext",
-    "telegram.error",
-    "hypercorn.config",
-    "hypercorn.asyncio",
-    "app.database",
-]
-_original_modules = {}
-
-
-def setup_module(module):
-    global _original_modules
-    _original_modules["__app_keys_before__"] = {k for k in sys.modules if k.startswith("app.")}
-    for k in _mock_keys:
-        if k in sys.modules:
-            _original_modules[k] = sys.modules[k]
-        sys.modules[k] = MagicMock()
-
-    mock_db = MagicMock()
-    mock_db.is_database_connected.return_value = True
-    sys.modules["app.database"] = mock_db
-
-
-def teardown_module(module):
-    app_keys_before = _original_modules.pop("__app_keys_before__", set())
-    for k in _mock_keys:
-        if k in sys.modules:
-            del sys.modules[k]
-    sys.modules.update(_original_modules)
-    # Purge any app.* modules imported DURING the mocked period
-    for k in list(sys.modules):
-        if k.startswith("app.") and k not in app_keys_before:
-            del sys.modules[k]
-
 
 @pytest.fixture
-def client():
-    # Mock settings before importing web
-    with patch("app.config.settings") as mock_settings:
-        mock_settings.TELEGRAM_BOT_TOKEN = "test_token"
-        mock_settings.ADMIN_ID = 123
-        mock_settings.ADMIN_SECRET = "test_token"
+def client(monkeypatch):
+    from app import web
 
-        # We need to reload or import app.web here to ensure patches are picked up
-        if "app.web" in sys.modules:
-            del sys.modules["app.web"]
-
-        from app.web import quart_app
-
-        quart_app.config["TESTING"] = True
-
-        # Mock psutil for endpoints that use it
-        # Mock database health check to prevent 503 from dead DB pool
-        with (
-            patch("psutil.cpu_percent", return_value=10),
-            patch("psutil.virtual_memory") as mock_vm,
-            patch("psutil.disk_usage") as mock_du,
-            patch("app.web.database.is_database_connected", return_value=True),
-        ):
-            mock_vm.return_value.percent = 20
-            mock_du.return_value.percent = 30
-
-            yield quart_app.test_client()
+    monkeypatch.setattr(web, "settings", web.settings.model_copy(update={"ADMIN_SECRET": "test_token"}))
+    monkeypatch.setitem(web.quart_app.config, "TESTING", True)
+    with patch.object(web.database, "is_database_connected", return_value=True):
+        yield web.quart_app.test_client()
 
 
 @pytest.mark.asyncio

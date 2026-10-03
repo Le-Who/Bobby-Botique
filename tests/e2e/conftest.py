@@ -6,13 +6,12 @@ DB fixtures are shared from tests/integration/conftest.py via explicit import
 """
 
 import contextlib
-import json
 import os
 
-import asyncpg
 import pytest
 from dotenv import dotenv_values
 
+from tests.database_fixtures import transactional_connection
 from tests.database_safety import database_identity as _database_identity
 from tests.database_safety import database_target_is_forbidden as _database_target_is_forbidden
 
@@ -27,17 +26,6 @@ if _database_target_is_forbidden(TEST_DATABASE_URL, _PRODUCTION_DATABASE_URL):
 
 # Shared test user ID constant
 TEST_USER_ID = 999999
-
-
-def pytest_collection_modifyitems(config, items):
-    """Skip e2e tests if TEST_DATABASE_URL is not configured."""
-    if TEST_DATABASE_URL:
-        return
-    skip_marker = pytest.mark.skip(reason="TEST_DATABASE_URL not set")
-    e2e_dir = os.path.join(os.path.dirname(__file__))
-    for item in items:
-        if str(item.fspath).startswith(e2e_dir):
-            item.add_marker(skip_marker)
 
 
 @pytest.fixture(scope="session")
@@ -56,24 +44,8 @@ def test_user_id():
 @pytest.fixture
 async def db_conn(test_db_url):
     """Transactional DB connection that auto-rollbacks after each test."""
-    conn = await asyncpg.connect(test_db_url, statement_cache_size=0)
-    await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
-    tx = conn.transaction()
-    await tx.start()
-    try:
-        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS ltm_enabled BOOLEAN DEFAULT TRUE")
-        await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS branch_id INTEGER")
+    async with transactional_connection(test_db_url) as conn:
         yield conn
-    finally:
-        try:
-            if conn.is_in_transaction():
-                await conn.reset(timeout=5.0)
-            else:
-                await tx.rollback()
-        except Exception:
-            pass
-        finally:
-            await conn.close()
 
 
 @pytest.fixture

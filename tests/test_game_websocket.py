@@ -5,6 +5,7 @@ import urllib.parse
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from quart.testing.connections import WebsocketDisconnectError
 
 from app.observability.context import current_context
 from app.web import quart_app
@@ -39,23 +40,42 @@ pytestmark = pytest.mark.usefixtures("authorized_websocket_user")
 class TestWebSocketAuth:
     """WS-01: Authentication testing."""
 
-    async def test_missing_init_data(self, test_client):
-        try:
-            async with test_client.websocket("/webapp/ws?game_id=123") as ws:
-                await ws.receive()
-        except Exception:
-            pass  # Expected disconnect
+    @pytest.mark.parametrize("init_data", ["", "invalid"], ids=["missing", "invalid"])
+    async def test_rejects_missing_or_invalid_init_data(
+        self, test_client, mock_bot_token, authorized_websocket_user, init_data
+    ):
+        url = f"/webapp/game/ws?initData={urllib.parse.quote(init_data)}&game_id=123"
+        with patch("app.games.crocodile.load_game", new_callable=AsyncMock) as load_mock:
+            with pytest.raises(WebsocketDisconnectError) as exc_info:
+                async with test_client.websocket(url) as ws:
+                    await ws.receive()
+
+        assert exc_info.value.args == (4003,)
+        load_mock.assert_not_awaited()
+        authorized_websocket_user.assert_not_awaited()
 
     async def test_invalid_game_id(self, test_client, mock_bot_token):
         init_data = make_valid_init_data(mock_bot_token, user_id=111)
         url = f"/webapp/game/ws?initData={urllib.parse.quote(init_data)}&game_id=nonexistent"
         with patch("app.games.crocodile.load_game", new_callable=AsyncMock) as load_mock:
             load_mock.return_value = None
-            try:
+            with pytest.raises(WebsocketDisconnectError) as exc_info:
                 async with test_client.websocket(url) as ws:
                     await ws.receive()
-            except Exception:
-                pass
+
+        assert exc_info.value.args == (4008,)
+        load_mock.assert_awaited_once_with("nonexistent")
+
+    async def test_missing_game_id(self, test_client, mock_bot_token):
+        init_data = make_valid_init_data(mock_bot_token, user_id=111)
+        url = f"/webapp/game/ws?initData={urllib.parse.quote(init_data)}"
+        with patch("app.games.crocodile.load_game", new_callable=AsyncMock) as load_mock:
+            with pytest.raises(WebsocketDisconnectError) as exc_info:
+                async with test_client.websocket(url) as ws:
+                    await ws.receive()
+
+        assert exc_info.value.args == (4400,)
+        load_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio

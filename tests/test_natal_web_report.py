@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -10,13 +11,23 @@ from app.natal.models import ChartData, InputQuality, NatalReport, PlanetPositio
 
 
 def _run_browser_regression(payload: dict, scenario: str) -> None:
+    browser_root = Path(__file__).resolve().parent / "browser"
+    required = os.getenv("GEMAIBOT_REQUIRE_BROWSER_TESTS") == "1"
     node = shutil.which("node")
     if node is None:
+        if required:
+            pytest.fail("Required browser regression cannot run: Node.js is missing")
         pytest.skip("Node.js is needed for the optional browser regression")
     probe = subprocess.run(
-        [node, "-e", "require.resolve('playwright')"], capture_output=True, encoding="utf-8", timeout=10
+        [node, "-e", "require.resolve('playwright')"],
+        cwd=browser_root,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=10,
     )
     if probe.returncode:
+        if required:
+            pytest.fail("Required browser regression cannot run: install tests/browser dependencies with npm ci")
         pytest.skip("Playwright is needed for the optional browser regression")
     payload["navigation_script"] = (Path(__file__).resolve().parents[1] / "app/static/js/natal-report.js").read_text(
         encoding="utf-8"
@@ -55,7 +66,12 @@ const payload = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
     result = subprocess.run(
-        [node, "-e", harness], input=json.dumps(payload), capture_output=True, encoding="utf-8", timeout=25
+        [node, "-e", harness],
+        cwd=browser_root,
+        input=json.dumps(payload),
+        capture_output=True,
+        encoding="utf-8",
+        timeout=25,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -154,6 +170,7 @@ async def test_natal_report_route_rejects_invalid_report_id_before_storage(monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_report_links_reveal_closed_sections_and_aliases_in_browser(monkeypatch):
     from app.natal.destiny_matrix import build_destiny_matrix_sections, calculate_destiny_matrix
     from app.natal.svg_renderer import render_chart_svg
@@ -222,6 +239,7 @@ async def test_report_links_reveal_closed_sections_and_aliases_in_browser(monkey
 
 
 @pytest.mark.asyncio
+@pytest.mark.browser
 async def test_matrix_form_skips_natal_fields_and_omits_them_from_submission_in_browser():
     from app.web import quart_app
 
@@ -282,6 +300,7 @@ async def test_matrix_form_skips_natal_fields_and_omits_them_from_submission_in_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["future_date", "time_range", "minimum_year"])
+@pytest.mark.browser
 async def test_form_enforces_supported_birth_values_before_next_step_in_browser(case):
     from app.web import quart_app
 
