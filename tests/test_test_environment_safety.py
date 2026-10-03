@@ -3,11 +3,30 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from tests.e2e import conftest as e2e_conftest
 from tests.integration import conftest as integration_conftest
+
+
+@pytest.mark.parametrize("db_conftest", [integration_conftest, e2e_conftest])
+async def test_database_key_fixture_matches_provider_quota_identity(db_conftest):
+    """A selected plaintext key must refer to the same row when quota hashes it."""
+    conn = SimpleNamespace(execute=AsyncMock())
+    expected_hash = "95dafc45648663c1476b0c93ff45b8fc76520ab4dd280d70833d344dc51ff140"
+
+    result_conn, key_hash = await db_conftest.db_conn_with_key.__wrapped__(conn)
+
+    assert result_conn is conn
+    assert key_hash == expected_hash
+    conn.execute.assert_awaited_once_with(
+        "INSERT INTO api_keys (api_key, key_hash) VALUES ($1, $2)",
+        "test-gemini-key-12345",
+        expected_hash,
+    )
 
 
 def test_unit_tests_force_non_production_credentials():

@@ -113,7 +113,7 @@ async def db_conn_with_key(db_conn_with_user):
     import hashlib
 
     test_key = "test-gemini-key-12345"
-    key_hash = hashlib.sha256(test_key.encode()).hexdigest()[:16]
+    key_hash = hashlib.sha256(test_key.encode("utf-8")).hexdigest()
     await db_conn_with_user.execute(
         "INSERT INTO api_keys (api_key, key_hash) VALUES ($1, $2)",
         test_key,
