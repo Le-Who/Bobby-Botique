@@ -60,6 +60,7 @@ def test_ci_separates_unit_and_integration_suites() -> None:
     assert "--ignore=tests/integration" in unit_job
     assert 'uv run --locked pytest -m "integration"' in integration_job
     assert "-n 0" in integration_job
+    assert "needs: [lint]" in integration_job
 
 
 def test_ci_integration_job_uses_ephemeral_pgvector_database() -> None:

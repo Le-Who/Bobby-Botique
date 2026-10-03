@@ -82,7 +82,7 @@ jobs:
     name: Test Integration (PostgreSQL and Redis)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [test-unit]
+    needs: [lint]
     services:
       postgres:
         image: pgvector/pgvector:pg17
