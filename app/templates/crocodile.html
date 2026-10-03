@@ -259,6 +259,11 @@
     .b-icon  { font-size:13px; line-height:1; }
     .b-score { font-size:11px; color:var(--text-dim); font-variant-numeric:tabular-nums; }
     .b-hint  { display:block; font-size:12px; color:var(--text-dim); margin-top:3px; font-style:italic; }
+    .b-retry {
+      min-height:32px; padding:4px 10px; border:1px solid var(--accent);
+      border-radius:6px; background:transparent; color:var(--accent);
+      font:inherit; font-size:12px; cursor:pointer;
+    }
 
     /* ── Typing indicator ────────────────────────────────────────────────── */
     #typing-row {
@@ -858,6 +863,28 @@ function removePendingBubble(pendingId) {
   updateTyping();
 }
 
+function failPendingBubble(pendingId) {
+  const row = document.getElementById(`bubble-${pendingId}`);
+  if (!row) return;
+  const word = row.querySelector('.b-word')?.textContent || '';
+  const bubble = row.querySelector('.bubble');
+  const meta = bubble?.querySelector('.b-meta');
+  if (!word || !bubble || !meta) return;
+  bubble.classList.remove('pending');
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'b-retry';
+  retry.textContent = '↻ Повторить';
+  retry.addEventListener('click', () => {
+    if (sendGuess(word)) {
+      row.remove();
+      updateTyping();
+    }
+  });
+  meta.replaceChildren(retry);
+  updateTyping();
+}
+
 function appendCompletedBubble(word, { status, hint, score, cached = false }) {
   const pid = uid();
   appendPendingBubble(word, pid);
@@ -1112,7 +1139,7 @@ function handleMessage(msg) {
 
     case 'judge_unavailable': {
       const pid = msg.pending_id;
-      if (pid) removePendingBubble(pid);
+      if (pid) failPendingBubble(pid);
       haptic?.notificationOccurred('warning');
       showError(msg.message || '🤔 Крокодил задумался. Попытка не засчитана — повтори!');
       break;
@@ -1218,19 +1245,21 @@ function setInputEnabled(on) {
   $('send-btn').disabled    = !on;
 }
 
-function sendGuess() {
+function sendGuess(wordOverride) {
   const input = $('guess-input');
-  const word  = input.value.trim();
-  if (!word || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const isRetry = typeof wordOverride === 'string';
+  const word = (isRetry ? wordOverride : input.value).trim();
+  if (!word || gameOver || isCreatorMode || !ws || ws.readyState !== WebSocket.OPEN) return false;
 
   const pid = uid();
   ws.send(JSON.stringify({ type: 'guess', word, pending_id: pid }));
-  input.value = '';
+  if (!isRetry) input.value = '';
   input.focus();
   // Stop typing indicator
   ws.send(JSON.stringify({ type: 'typing', active: false }));
   appendPendingBubble(word, pid);
   haptic?.impactOccurred('medium');
+  return true;
 }
 
 $('send-btn').addEventListener('click', sendGuess);

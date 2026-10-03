@@ -9,11 +9,14 @@ import asyncio
 import logging
 import re
 
+from pydantic import BaseModel
+
 from app.process_policies import resolve_process
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
 from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
+_JUDGE_ATTEMPT_TIMEOUT_S = 12.0
 DAILY_TEXT_MODEL_SETTING_KEY = "daily_croc_text_model"
 TEXT_MODEL_PROCESSES = {
     "words": "Генерация слов",
@@ -65,19 +68,36 @@ async def get_daily_text_model_for(process: str) -> str:
     return policy.models[0] if policy.explicit else baseline
 
 
-async def generate_daily_text_for(process: str, prompt: str, model: str, timeout: float = 30.0) -> str:
+async def generate_daily_text_for(
+    process: str,
+    prompt: str,
+    model: str,
+    timeout: float = 30.0,
+    *,
+    response_schema: type[BaseModel] | None = None,
+) -> str:
     """Execute the complete configured Gemini chain through the existing game SDK path."""
     if process not in TEXT_MODEL_PROCESSES:
         raise ValueError(f"Unknown Crocodile text model process: {process}")
     policy = await resolve_process(f"crocodile.{process}", (model,) if model else ())
+    call_timeout = min(timeout, _JUDGE_ATTEMPT_TIMEOUT_S) if process == "judge" else timeout
+
+    async def generate(candidate: str) -> str:
+        if response_schema is None:
+            return await generate_daily_text(prompt, candidate, timeout=call_timeout)
+        return await generate_daily_text(prompt, candidate, timeout=call_timeout, response_schema=response_schema)
+
     if not policy.explicit:
-        return await generate_daily_text(prompt, model, timeout=timeout)
+        return await generate(model)
     async with asyncio.timeout(timeout):
         last_error: Exception | None = None
         for candidate in policy.models:
             try:
-                response = await generate_daily_text(prompt, candidate, timeout=timeout)
-                json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", response.strip(), flags=re.IGNORECASE))
+                response = await generate(candidate)
+                if response_schema is not None:
+                    response_schema.model_validate_json(response)
+                else:
+                    json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", response.strip(), flags=re.IGNORECASE))
                 return response
             except Exception as exc:
                 last_error = exc
@@ -87,7 +107,9 @@ async def generate_daily_text_for(process: str, prompt: str, model: str, timeout
         raise RuntimeError("Empty Crocodile model plan")
 
 
-async def generate_daily_text(prompt: str, model: str, timeout: float = 30.0) -> str:
+async def generate_daily_text(
+    prompt: str, model: str, timeout: float = 30.0, *, response_schema: type[BaseModel] | None = None
+) -> str:
     """Call Google GenAI directly, preserving the selected Gemini model and quota accounting."""
     from google.genai import types
 
@@ -113,7 +135,9 @@ async def generate_daily_text(prompt: str, model: str, timeout: float = 30.0) ->
                 client.aio.models.generate_content(
                     model=model,
                     contents=prompt,
-                    config=types.GenerateContentConfig(response_mime_type="application/json", max_output_tokens=2048),
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json", response_schema=response_schema, max_output_tokens=2048
+                    ),
                 ),
                 workload="daily_game_generation",
                 provider="gemini",

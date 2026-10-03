@@ -353,7 +353,8 @@ async def game_mutation_lock(game_id: str):
     if redis_client:
         _redis_conn_error = False
         try:
-            lock = redis_client.lock(_lock_key(game_id), timeout=15, blocking_timeout=5)
+            # Cover the judge's 30-second retry budget plus state persistence.
+            lock = redis_client.lock(_lock_key(game_id), timeout=60, blocking_timeout=5)
             acquired = await lock.acquire()
             if not acquired:
                 # Lock is held by another worker — this is contention, NOT a Redis outage.

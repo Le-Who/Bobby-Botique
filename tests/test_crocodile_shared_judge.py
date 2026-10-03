@@ -24,7 +24,7 @@ def isolated(monkeypatch):
 async def test_selected_model_judges_semantics_and_separates_cache(monkeypatch):
     calls = []
 
-    async def generate(prompt, model, timeout):
+    async def generate(prompt, model, timeout, **kwargs):
         calls.append(model)
         assert "кот" in prompt and "тигр" in prompt and "score" in prompt
         score = 0.6 if model == "gemini-3.6-flash" else 0.1
@@ -84,7 +84,7 @@ async def test_selected_judge_failure_never_falls_back(monkeypatch, payload):
     call = AsyncMock(side_effect=payload) if isinstance(payload, Exception) else AsyncMock(return_value=payload)
     monkeypatch.setattr(daily_ai, "generate_daily_text", call)
     assert (await judge.judge_guess("кот", "тигр"))[0] == "judge_unavailable"
-    call.assert_awaited_once()
+    assert call.await_count == 2
     judge._race_generate.assert_not_awaited()
 
 

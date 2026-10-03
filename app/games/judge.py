@@ -27,7 +27,8 @@ import re
 import time
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+import httpx
+from pydantic import BaseModel, Field, ValidationError
 
 from app.games.ai_budget import (
     HintGenerationMode,
@@ -62,6 +63,9 @@ _HINTS_OPENCODE_MODEL_CANDIDATES = (
 _LLM_TIMEOUT_S = 7.0
 # Fallback: single key, last resort — give it twice as long; player waits, not retypes.
 _LLM_FALLBACK_TIMEOUT_S = 14.0
+_JUDGE_TOTAL_TIMEOUT_S = 30.0
+_JUDGE_MAX_ATTEMPTS = 2
+_JUDGE_RETRY_DELAY_S = 0.5
 _HINTS_TIMEOUT_S = 18.0
 
 # ── Circuit breaker for _PRIMARY_MODEL ────────────────────────────────────────
@@ -431,6 +435,7 @@ async def _race_generate(
         finally:
             for t in pending:
                 t.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
         return result
 
     # ── Circuit-breaker check ─────────────────────────────────────────────────
@@ -528,6 +533,7 @@ async def _race_generate(
         finally:
             for t in pending:
                 t.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
 
         if result is not None:
             if _primary_circuit_open_until > 0.0:
@@ -1040,6 +1046,77 @@ def score_bar(score: float, width: int = 10) -> str:
 # ── Public entry point ────────────────────────────────────────────────────────
 
 
+async def _generate_judgement(
+    target: str,
+    guess: str,
+    *,
+    selected_model: str,
+    category: str,
+    topic_id: str,
+    sense_context: str | None,
+) -> GuessJudgement | None:
+    """Retry the same guess within one deadline, preserving its configured model plan."""
+    from app.games.daily_ai import generate_daily_text_for
+
+    result: GuessJudgement | None = None
+    prompt = ""
+    if selected_model:
+        prompt = render_prompt_text(
+            get_prompt_text("crocodile.judge.classic"),
+            W=target,
+            G=guess,
+            C=category or "не указана",
+            T=topic_id or "-",
+            S=sense_context or category or "не указан",
+        )
+
+    try:
+        async with asyncio.timeout(_JUDGE_TOTAL_TIMEOUT_S):
+            for attempt in range(1, _JUDGE_MAX_ATTEMPTS + 1):
+                try:
+                    if selected_model:
+                        response = await generate_daily_text_for(
+                            "judge",
+                            prompt,
+                            selected_model,
+                            timeout=_JUDGE_TOTAL_TIMEOUT_S,
+                            response_schema=GuessJudgement,
+                        )
+                        result = GuessJudgement.model_validate_json(response)
+                        result.cached = False
+                    else:
+                        result = await _race_generate(
+                            target, guess, category=category, topic_id=topic_id, sense_context=sense_context
+                        )
+                    if result is not None:
+                        return result
+                except Exception as exc:
+                    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+                    validation = (
+                        [{"field": item["loc"], "type": item["type"]} for item in exc.errors(include_input=False)][:8]
+                        if isinstance(exc, ValidationError)
+                        else []
+                    )
+                    logger.warning(
+                        "Crocodile judge attempt failed model=%s attempt=%s error_type=%s status_code=%s validation=%s",
+                        selected_model or "auto",
+                        attempt,
+                        type(exc).__name__,
+                        code,
+                        validation,
+                    )
+                    retryable = code in (408, 429, 500, 502, 503, 504) or isinstance(
+                        exc, (TimeoutError, ConnectionError, httpx.TransportError, ValueError)
+                    )
+                    if not retryable:
+                        return None
+                if attempt < _JUDGE_MAX_ATTEMPTS:
+                    await asyncio.sleep(_JUDGE_RETRY_DELAY_S)
+    except TimeoutError:
+        logger.warning("Crocodile judge total deadline exceeded model=%s", selected_model or "auto")
+    return None
+
+
 async def judge_guess(
     target: str,
     guess: str,
@@ -1072,7 +1149,7 @@ async def judge_guess(
         await metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
         return "exact_match", j
 
-    from app.games.daily_ai import generate_daily_text_for, get_daily_text_model_for
+    from app.games.daily_ai import get_daily_text_model_for
 
     selected_model = await get_daily_text_model_for("judge")
     cache_topic = await cache_identity(
@@ -1097,32 +1174,15 @@ async def judge_guess(
         await metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
         return cached.status, cached
 
-    # 3. Race×3 LLM
-    if selected_model:
-        result = None
-        prompt = render_prompt_text(
-            get_prompt_text("crocodile.judge.classic"),
-            W=target,
-            G=guess,
-            C=category or "не указана",
-            T=topic_id or "-",
-            S=sense_context or category or "не указан",
-        )
-        prompt += "\nОтветь только JSON по схеме: " + json.dumps(GuessJudgement.model_json_schema())
-        try:
-            response = await generate_daily_text_for("judge", prompt, selected_model, timeout=_LLM_TIMEOUT_S)
-            result = GuessJudgement.model_validate_json(response)
-            result.cached = False
-        except Exception as exc:
-            logger.warning("Selected Gemini judge failed model=%s: %s", selected_model, type(exc).__name__)
-    else:
-        result = await _race_generate(
-            target,
-            guess,
-            category=category,
-            topic_id=topic_id,
-            sense_context=sense_context,
-        )
+    # 3. Configured model plan / Auto race, with a bounded retry of the same guess.
+    result = await _generate_judgement(
+        target,
+        guess,
+        selected_model=selected_model,
+        category=category,
+        topic_id=topic_id,
+        sense_context=sense_context,
+    )
 
     elapsed = time.monotonic() - t0
 
