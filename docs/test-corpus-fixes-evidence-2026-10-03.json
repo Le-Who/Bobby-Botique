@@ -1,0 +1,1315 @@
+{
+  "date": "2026-10-03",
+  "audit_baseline_commit": "425563b4178f1ff63c3589e772e13c4d6485c630",
+  "audit_baseline_evidence_sha256": "8348a0754042d2af4cf2f9f6ac2c4caa4eeba1d7b19906fa79d444b1f693a19c",
+  "baseline_source_hash_verification": {
+    "baseline_commit": "425563b4178f1ff63c3589e772e13c4d6485c630",
+    "files": 352,
+    "matching_source_hashes": {
+      "git_exact": 195,
+      "git_lf": 157,
+      "git_crlf": 0
+    },
+    "mismatched": [],
+    "note": "Only hash comparison accounts for checkout LF/CRLF; no source or baseline data rewritten."
+  },
+  "verified_code_commit": "b4a22b60e73d5f9f2263da5ea64abc2cedd97a7d",
+  "test_hardening_commit": "44ad2aff50430554e0f1f089b90ef06bd8d0c8c5",
+  "closed_findings": 43,
+  "findings": [
+    {
+      "id": "AI-MEM-001",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "app/repos/memory.py:138",
+        "app/repos/memory.py:168",
+        "tests/test_memory_query_expansion_timeout.py:32"
+      ],
+      "change": "Policy timeout отделён от SDK timeout; проверены SDK entry, cancellation cleanup, fallback и квота.",
+      "files": [
+        "tests/test_memory_query_expansion_timeout.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Separate in-flight SDK timeout from pre-SDK policy timeout. Isolate the policy and prompt lookup, require SDK entry with an Event, verify original-query fallback, exact quota reservation and completed asynchronous SDK cleanup. Await/cancel owned tasks in finally.",
+      "bounded_counterexample": [
+        "001"
+      ],
+      "effective_tests": [
+        "test_expansion_policy_timeout_does_not_start_quota_or_sdk"
+      ]
+    },
+    {
+      "id": "AI-MEM-002",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "app/handlers/msg_voice.py:94",
+        "app/handlers/msg_voice.py:104",
+        "app/handlers/msg_voice.py:144"
+      ],
+      "change": "Voice privacy требует реального lease enter/exit и ASR-вызова либо его запрета.",
+      "files": [
+        "tests/test_msg_voice_privacy.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Require observed exact epoch/purpose lease entry, ASR with downloaded OGG and correct MIME while active, and lease exit. Add generation-denied, lease-denied and cancelled-ASR cleanup cases; all require no forbidden egress or correct cleanup.",
+      "bounded_counterexample": [
+        "002"
+      ],
+      "effective_tests": [
+        "test_stale_voice_generation_never_downloads_or_transcribes[generation]",
+        "test_stale_voice_generation_never_downloads_or_transcribes[lease]",
+        "test_cancelled_asr_releases_voice_lease"
+      ]
+    },
+    {
+      "id": "AI-MEM-003",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "app/providers/router.py:1157",
+        "app/providers/router.py:1163",
+        "tests/test_provider_model_hedge.py:263",
+        "tests/test_provider_model_hedge.py:278"
+      ],
+      "change": "First-text deadline общий для попыток; тест отклоняет его перезапуск.",
+      "files": [
+        "tests/test_provider_model_hedge.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Replace small elapsed-time assumptions with a module-local controlled clock and observed queue waits. After one failed-key notification the second wait must receive only 0.01s of the original 0.05s budget. Outer collection and all SDK task cleanup stay bounded.",
+      "bounded_counterexample": [
+        "003"
+      ],
+      "effective_tests": []
+    },
+    {
+      "id": "AI-MEM-004",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "app/providers/router.py:277",
+        "tests/test_provider_router_integration.py:189"
+      ],
+      "change": "Multimodal routing проверяет фактически выбранного провайдера и payload.",
+      "files": [
+        "tests/test_provider_router_integration.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Remove the permissive OR; require exact awaited resolver arguments including use_openrouter=False. Describe the suite as offline router orchestration rather than a real provider chain.",
+      "bounded_counterexample": [
+        "004"
+      ],
+      "effective_tests": []
+    },
+    {
+      "id": "AI-MEM-005",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "app/context/compression.py:257",
+        "app/context/compression.py:270",
+        "app/context/compression.py:323"
+      ],
+      "change": "Graph fake возвращает актуальные три значения; проверены graph branch и provenance.",
+      "files": [
+        "tests/test_ai_chat.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Supply the current memories/graph/source-passages 3-tuple. Isolate L0/L1 and background storage, require retrieval and observe current, superseded and provenance graph content in the real generated request.",
+      "bounded_counterexample": [
+        "005"
+      ],
+      "effective_tests": []
+    },
+    {
+      "id": "AI-MEM-006",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_agent_optimization.py:1",
+        "tests/test_agent_optimization.py:26",
+        "tests/test_agent_optimization.py:48",
+        "app/core/agentic.py"
+      ],
+      "change": "Optimization cases вызывают настоящее research search tool и проверяют сортировку/дедупликацию.",
+      "files": [
+        "tests/test_agent_optimization.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Replace disconnected local formatting copies with actual AgenticSearch._execute_tool tests. Check first evidence retained under URL/tracking dedup, seen evidence excluded across searches, and distinct query page IDs preserved.",
+      "bounded_counterexample": [
+        "006"
+      ],
+      "effective_tests": []
+    },
+    {
+      "id": "AI-MEM-007",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "app/providers/router.py:280",
+        "app/providers/router.py:488",
+        "app/repos/keys.py:526",
+        "tests/test_media_process_policies.py:232",
+        "app/runtime_settings/gemini_execution.py:124"
+      ],
+      "change": "Key-health persistence отделён от офлайн router tests; неявного DB I/O нет.",
+      "files": [
+        "tests/test_provider_router_integration.py",
+        "tests/test_media_process_policies.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Isolate durable key-health manager with recording AsyncMocks in both files; assert successful key/model health updates and invalid-key suspension/retry. No database status writes are left connected in these cases.",
+      "bounded_counterexample": [
+        "007"
+      ],
+      "effective_tests": []
+    },
+    {
+      "id": "AI-MEM-008",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "app/context/summarizer.py:153",
+        "app/context/summarizer.py:204",
+        "tests/test_context_summarizer.py:136"
+      ],
+      "change": "Oversized summary проверяет используемый execute_text_process seam и приватность входа.",
+      "files": [
+        "tests/test_context_summarizer.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Watch execute_text_process at the current summarizer boundary, pin offline settings snapshots, and add denied-generation lease proof requiring no provider call or callback.",
+      "bounded_counterexample": [
+        "008"
+      ],
+      "effective_tests": [
+        "test_stale_summary_lease_never_sends_conversation_to_provider"
+      ]
+    },
+    {
+      "id": "AI-MEM-009",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "app/core/agentic.py:922",
+        "app/core/agentic.py:936",
+        "app/core/agentic.py:949",
+        "tests/test_agentic_improvements.py:440"
+      ],
+      "change": "Параллельные tools должны одновременно достичь Event-барьера.",
+      "files": [
+        "tests/test_agentic_improvements.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Gate both external tools until both have entered, then release. Require correct final answer and ordered actual function-response contents captured at SDK entry before production clears its history. Cleanup every owned task in finally.",
+      "bounded_counterexample": [
+        "009"
+      ],
+      "effective_tests": []
+    },
+    {
+      "id": "AI-MEM-010",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "app/utils/multimodal_processor.py:514",
+        "app/utils/multimodal_processor.py:526",
+        "app/voice_engine.py:505",
+        "app/voice_engine.py:508",
+        "tests/test_media_chain_deadlines.py:36",
+        "tests/test_voice_race_cleanup.py:80",
+        "tests/test_provider_result_processes.py:163"
+      ],
+      "change": "Media reserve использует оставшийся общий deadline и собственную квоту.",
+      "files": [
+        "tests/test_media_chain_deadlines.py",
+        "tests/test_voice_race_cleanup.py",
+        "tests/test_provider_result_processes.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Observe actual asyncio.Timeout objects and deadlines across the first and reserve attempts. Require one shared scope and identical deadline, enter the reserve before explicitly rescheduling the real timeout to expire, and require cancellation cleanup/no third model. Crocodile now exercises the reserve after invalid first-model JSON.",
+      "bounded_counterexample": [
+        "010-asr",
+        "010-intent",
+        "010-tts",
+        "010-croc"
+      ],
+      "effective_tests": []
+    },
+    {
+      "id": "AI-MEM-011",
+      "priority": "P1",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_live_audio.py:167",
+        "tests/test_live_audio.py:175",
+        "app/web_miniapp.py:2902",
+        "app/web_miniapp.py:2910"
+      ],
+      "change": "Live WebSocket auth требует close 4003 до доступа к provider/session.",
+      "files": [
+        "tests/test_live_audio.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Require concrete WebsocketDisconnectError close code 4003 and no Live session entry for missing/tampered auth. Add expired signed initData and revoked-user denial. Isolate runtime snapshot reads.",
+      "bounded_counterexample": [
+        "011"
+      ],
+      "effective_tests": [
+        "test_expired_init_data",
+        "test_revoked_user_never_opens_live_session"
+      ]
+    },
+    {
+      "id": "AI-MEM-012",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_live_audio.py:475",
+        "tests/test_live_audio.py:481",
+        "tests/test_live_audio.py:523",
+        "app/web_miniapp.py:3239",
+        "app/web_miniapp.py:3248"
+      ],
+      "change": "ASR input проверяет реальные PCM bytes и MIME; scripted output не подменяет эту проверку.",
+      "files": [
+        "tests/test_live_audio.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Make the scripted output wait for an observed SDK audio input. Require activity_start/audio/activity_end order, exact decoded PCM and MIME, and exact returned output bytes. Bounded receive exposes missing forwarding.",
+      "bounded_counterexample": [
+        "012-audio",
+        "012-mime"
+      ],
+      "effective_tests": []
+    },
+    {
+      "id": "HAR-001",
+      "priority": "P1",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/e2e/conftest.py:32"
+      ],
+      "change": "Офлайн E2E выполняются без DB; исправлены async quota fake и конфигурационный seam vision fallback.",
+      "files": [
+        "tests/e2e/conftest.py",
+        "tests/e2e/test_opencode_cascade.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Офлайн E2E выполняются без DB; исправлены async quota fake и конфигурационный seam vision fallback.",
+      "bounded_counterexample": null,
+      "effective_tests": []
+    },
+    {
+      "id": "HAR-002",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/integration/test_repos_roles.py:121"
+      ],
+      "change": "Шесть DB-модулей вызывают API репозиториев; метрики используют настоящий writer/reader; schema smoke обозначен отдельно.",
+      "files": [
+        "tests/integration/test_repos_chats.py",
+        "tests/integration/test_repos_conversations.py",
+        "tests/integration/test_repos_keys.py",
+        "tests/integration/test_repos_roles.py",
+        "tests/integration/test_repos_user_stats.py",
+        "tests/integration/test_repos_users.py",
+        "tests/integration/test_metrics_jsonb.py",
+        "tests/integration/test_db_schema.py",
+        "tests/integration/test_conversation_procedure.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Шесть DB-модулей вызывают API репозиториев; метрики используют настоящий writer/reader; schema smoke обозначен отдельно.",
+      "bounded_counterexample": null,
+      "effective_tests": []
+    },
+    {
+      "id": "HAR-003",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/observability/test_incident_scenarios.py:23"
+      ],
+      "change": "Lifecycle assertions получают реальные workload events при success/error/cancellation.",
+      "files": [
+        "tests/observability/test_incident_scenarios.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Lifecycle assertions получают реальные workload events при success/error/cancellation.",
+      "bounded_counterexample": null,
+      "effective_tests": []
+    },
+    {
+      "id": "HAR-004",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/e2e/test_webhook_lifecycle.py:55"
+      ],
+      "change": "HTTP-запросы идут в маршрут, зарегистрированный bot lifecycle; проверены malformed/auth/duplicate/overload и конкурентный retry.",
+      "files": [
+        "tests/e2e/test_webhook_lifecycle.py",
+        "bot.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "HTTP-запросы идут в маршрут, зарегистрированный bot lifecycle; проверены malformed/auth/duplicate/overload и конкурентный retry.",
+      "bounded_counterexample": null,
+      "effective_tests": []
+    },
+    {
+      "id": "HAR-005",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/e2e/test_chat_happy_path.py:70"
+      ],
+      "change": "Специализированные memory SDK вызовы изолированы, реальная квота проверена; request tasks принадлежат тесту и ожидаются.",
+      "files": [
+        "tests/e2e/test_chat_happy_path.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Специализированные memory SDK вызовы изолированы, реальная квота проверена; request tasks принадлежат тесту и ожидаются.",
+      "bounded_counterexample": null,
+      "effective_tests": []
+    },
+    {
+      "id": "HAR-006",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/integration/conftest.py:65"
+      ],
+      "change": "Общий transactional helper: без compatibility DDL, явные rollback/close, видимые setup/cleanup ошибки и отмена.",
+      "files": [
+        "tests/database_fixtures.py",
+        "tests/test_database_fixture_cleanup.py",
+        "tests/e2e/conftest.py",
+        "tests/integration/conftest.py",
+        "tests/conftest.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Общий transactional helper: без compatibility DDL, явные rollback/close, видимые setup/cleanup ошибки и отмена.",
+      "bounded_counterexample": null,
+      "effective_tests": []
+    },
+    {
+      "id": "HAR-007",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/integration/test_concurrency_locks.py:105"
+      ],
+      "change": "Проверяется настоящий message handler и callback: busy rejection, освобождение lock и повторный приём после завершения/отмены.",
+      "files": [
+        "tests/test_request_concurrency.py"
+      ],
+      "retired_files": [
+        "tests/integration/test_concurrency_locks.py"
+      ],
+      "implementation_details": "Move database-free callback coverage into the offline suite. Replace copied lock/sleep logic with the real handle_request: first request remains Event-gated; second same-user request must return busy without creating a job; after normal or cancellation cleanup a third request is accepted. Verify real lock, processing flag and active-task registry cleanup; own/await all submitted tasks.",
+      "bounded_counterexample": [
+        "HAR007-busy",
+        "HAR007-cleanup",
+        "HAR007-callback"
+      ],
+      "effective_tests": []
+    },
+    {
+      "id": "HAR-008",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/fixtures/db_container.py:51"
+      ],
+      "change": "Неиспользуемый optional-container harness удалён; подписки выполняются через общий изолированный PostgreSQL в CI.",
+      "files": [
+        "tests/conftest.py",
+        "tests/integration/test_horoscope_subscriptions.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Неиспользуемый optional-container harness удалён; подписки выполняются через общий изолированный PostgreSQL в CI.",
+      "bounded_counterexample": null,
+      "effective_tests": []
+    },
+    {
+      "id": "PLAT-001",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_system_status.py:37"
+      ],
+      "change": "Scoped patch реальных модулей заменяет reload/sys.modules substitution; identity восстанавливается.",
+      "files": [
+        "tests/test_system_status.py",
+        "tests/test_auth_headers.py",
+        "tests/test_security_headers.py",
+        "tests/test_web_security.py",
+        "tests/test_menus.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "Removed sys.modules/package replacement and importlib.reload from fixtures; scoped settings, database/method and cache pings on real modules with monkeypatch/patch.",
+        "System metrics now run in IsolatedAsyncioTestCase; menu tests use real Telegram objects and scoped configuration, including a DB-independent object-contract test."
+      ],
+      "bounded_counterexample": {
+        "log": ".codex/test-audit/platform-restoration-red.log",
+        "exit": 1,
+        "observation": "The three original passing bodies left all seven identity/restoration predicates false."
+      },
+      "effective_tests": [
+        {
+          "file": "tests/test_system_status.py",
+          "line": 12,
+          "test": "test_get_system_status_data"
+        },
+        {
+          "file": "tests/test_auth_headers.py",
+          "line": 30,
+          "test": "test_header_auth_works"
+        },
+        {
+          "file": "tests/test_menus.py",
+          "line": 471,
+          "test": "test_model_menu_uses_real_telegram_buttons"
+        }
+      ]
+    },
+    {
+      "id": "PLAT-002",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_audit_fixes.py:486"
+      ],
+      "change": "Database aliases и group singleton сохраняют согласованную identity после теста.",
+      "files": [
+        "tests/test_audit_fixes.py",
+        "tests/test_group_chat.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "Replaced database reload with normal imports and exact db_manager alias identity assertion.",
+        "GroupChatManager singleton resets use monkeypatch so both fixture and standalone singleton test restore the previous instance."
+      ],
+      "bounded_counterexample": {
+        "log": ".codex/test-audit/platform-restoration-red.log",
+        "exit": 1,
+        "observation": "Repository database alias, exported group singleton and prior singleton identity diverged before the fix."
+      },
+      "effective_tests": [
+        {
+          "file": "tests/test_audit_fixes.py",
+          "line": 479,
+          "test": "test_database_module_loads_cleanly"
+        },
+        {
+          "file": "tests/test_group_chat.py",
+          "line": 17,
+          "test": "test_singleton_behavior"
+        }
+      ]
+    },
+    {
+      "id": "PLAT-003",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_waiting_facts.py:30"
+      ],
+      "change": "Waiting-message smoke детерминирован и не обращается к DB.",
+      "files": [
+        "tests/test_waiting_facts.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "Deterministic random draws and fixed facts; personalized branch mocked only at the DB-owning personalization boundary.",
+        "Assert exact static/personalized/fallback text and exact await counts/arguments.",
+        "NULL aggregate test isolates its stat cache with monkeypatch rather than clearing shared state."
+      ],
+      "bounded_counterexample": null,
+      "effective_tests": [
+        {
+          "file": "tests/test_waiting_facts.py",
+          "line": 28,
+          "test": "test_returns_string_without_user_id"
+        },
+        {
+          "file": "tests/test_waiting_facts.py",
+          "line": 46,
+          "test": "test_returns_string_with_user_id"
+        }
+      ]
+    },
+    {
+      "id": "PLAT-004",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_cache_ttl.py:70"
+      ],
+      "change": "Проверяется реальная очистка заполненного cache вместо принудительного no-op.",
+      "files": [
+        "tests/test_cache_ttl.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "Configure a Redis flushdb AsyncMock and require the actual public clear_cache function to await flushdb exactly once.",
+        "Remove unrelated instance-memory seed and no-op Redis-none precondition; detach the closed unittest event loop at teardown."
+      ],
+      "bounded_counterexample": null,
+      "effective_tests": [
+        {
+          "file": "tests/test_cache_ttl.py",
+          "line": 70,
+          "test": "test_clear_cache"
+        }
+      ]
+    },
+    {
+      "id": "PLAT-005",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_io_handlers.py:74"
+      ],
+      "change": "Image executor выполняет настоящий worker; проверены результат и отказ.",
+      "files": [
+        "tests/test_io_handlers.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "Generate valid PNG bytes, call actual save_image_as_bytes through a scoped real ThreadPoolExecutor, spy on the submitted worker and decode the returned JPEG with exact size and mode assertions.",
+        "Separate intentional executor-submission failure regression requires None."
+      ],
+      "bounded_counterexample": null,
+      "effective_tests": [
+        {
+          "file": "tests/test_io_handlers.py",
+          "line": 74,
+          "test": "test_save_image_as_bytes_uses_executor"
+        },
+        {
+          "file": "tests/test_io_handlers.py",
+          "line": 93,
+          "test": "test_save_image_as_bytes_returns_none_on_executor_failure"
+        }
+      ]
+    },
+    {
+      "id": "PLAT-006",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_formatting_e2e.py:220"
+      ],
+      "change": "Oracles отклоняют italicized __init__ и необработанные угловые скобки; formatter исправлен.",
+      "files": [
+        "tests/test_formatting_e2e.py",
+        "app/utils/text_format.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "Reject unsupported HTML tags in the balance oracle.",
+        "Require literal snake-case/dunder output and absence of italic tags; compare plain special-character output to the escaped reference without stripping arbitrary HTML tags.",
+        "Added known Python dunder, constructor-call and mixed real Markdown italic regressions.",
+        "After the strengthened oracle exposed an actual formatter defect, parent explicitly authorized a narrow runtime fix preserving known Python object/module dunder names and word boundaries while retaining legacy __italic__, _italic_ and *italic*."
+      ],
+      "bounded_counterexample": null,
+      "effective_tests": [
+        {
+          "file": "tests/test_formatting_e2e.py",
+          "line": 221,
+          "test": "test_snake_case_not_italicized"
+        },
+        {
+          "file": "tests/test_formatting_e2e.py",
+          "line": 248,
+          "test": "test_real_italic_still_works"
+        },
+        {
+          "file": "tests/test_formatting_e2e.py",
+          "line": 281,
+          "test": "test_special_chars_safe"
+        }
+      ]
+    },
+    {
+      "id": "PLAT-007",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_local_bot_api_release_contract.py:18"
+      ],
+      "change": "AST-проверка требует настоящий awaited Local Bot API release перед последующим этапом.",
+      "files": [
+        "tests/test_local_bot_api_release_contract.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "Parse bot.py AST, select actual run_bot_with_retry and require exactly one awaited cloud release before the actual awaited set_webhook call.",
+        "Retain the explicit deployment workflow policy check."
+      ],
+      "bounded_counterexample": null,
+      "effective_tests": [
+        {
+          "file": "tests/test_local_bot_api_release_contract.py",
+          "line": 32,
+          "test": "test_runtime_releases_cloud_bot_api_before_setting_local_webhook"
+        }
+      ]
+    },
+    {
+      "id": "PLAT-008",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_redis_queue.py:72"
+      ],
+      "change": "Восемь Redis cases исполняют production Lua constants: fencing, ownership, retry и recovery.",
+      "files": [
+        "tests/integration/test_queue_lua.py",
+        "tests/test_redis_queue.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "Platform delegate retained the protocol double and documented that it does not interpret production Lua.",
+        "Parent owns tests/integration/test_queue_lua.py: 8 cases execute all 7 production script constants on isolated Redis and verify fencing, TTL, list moves, idempotent recovery, retry/legacy handling and owner cleanup.",
+        "Parent reported dedicated TEST_REDIS_URL database /15, UUID namespace, deletion of owned keys only, and mandatory integration environment checks."
+      ],
+      "bounded_counterexample": null,
+      "effective_tests": []
+    },
+    {
+      "id": "PLAT-009",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_cmd_reminders.py:301"
+      ],
+      "change": "Reminder tasks создаются, отменяются и ожидаются; незапланированных coroutine в registry нет.",
+      "files": [
+        "tests/test_cmd_reminders.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "Do not mock asyncio.create_task; await real tasks while mocking only the AI worker boundary.",
+        "Own the per-test reminder registry, assert actual worker await arguments, delivery marking and empty registry after done callbacks.",
+        "Async fixture cancels and gathers remaining owned tasks on every exit path."
+      ],
+      "bounded_counterexample": null,
+      "effective_tests": [
+        {
+          "file": "tests/test_cmd_reminders.py",
+          "line": 297,
+          "test": "test_dispatches_ai_reminder"
+        },
+        {
+          "file": "tests/test_cmd_reminders.py",
+          "line": 319,
+          "test": "test_dispatches_ai_reminder_from_json_string"
+        }
+      ]
+    },
+    {
+      "id": "PLAT-010",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_semaphore_invariants.py:75"
+      ],
+      "change": "Проверены фактический вход/выход lease и пиковая взаимная исключительность semaphore.",
+      "files": [
+        "tests/test_semaphore_invariants.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "Cancellation starts only after an event proves real acquisition; assert zero held permits, require CancelledError, assert permit restoration and successful reacquisition.",
+        "Limit-one test holds a real critical section with a release event until all three contenders have attempted entry; require active/peak exactly one.",
+        "Cancel and gather all owned tasks in finally."
+      ],
+      "bounded_counterexample": null,
+      "effective_tests": [
+        {
+          "file": "tests/test_semaphore_invariants.py",
+          "line": 63,
+          "test": "test_semaphore_released_on_asyncio_cancelled_error"
+        },
+        {
+          "file": "tests/test_semaphore_invariants.py",
+          "line": 137,
+          "test": "test_semaphore_limit_one_sequential_execution"
+        }
+      ]
+    },
+    {
+      "id": "PLAT-011",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_repos_keys.py:55"
+      ],
+      "change": "Cached limit fake соблюдает scalar integer contract и проверяет реальный writer.",
+      "files": [
+        "tests/test_repos_keys.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "Seed the daily-limit cache with scalar 200 and require scalar 200 with no query.",
+        "On DB miss verify scalar 300 is written to the real cache path, repeat the real read and require only one database await.",
+        "Isolate runtime model snapshot lookup to an empty typed snapshot."
+      ],
+      "bounded_counterexample": null,
+      "effective_tests": [
+        {
+          "file": "tests/test_repos_keys.py",
+          "line": 54,
+          "test": "test_returns_cached_limit"
+        },
+        {
+          "file": "tests/test_repos_keys.py",
+          "line": 63,
+          "test": "test_returns_db_limit"
+        }
+      ]
+    },
+    {
+      "id": "PLAT-012",
+      "priority": "P3",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_decryption_error_handling.py:65"
+      ],
+      "change": "Decryption failure проходит через настоящую router boundary к пользовательскому сообщению.",
+      "files": [
+        "tests/test_decryption_error_handling.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "The compatibility wrapper uses a fresh actual ProviderRouter; mock only failed key resolution, not the response function or friendly message literal.",
+        "Require actual DECRYPTION_FAILED error tag, friendly/private response and no provider call. Existing real DecryptionError resolver regressions remain."
+      ],
+      "bounded_counterexample": null,
+      "effective_tests": [
+        {
+          "file": "tests/test_decryption_error_handling.py",
+          "line": 62,
+          "test": "test_get_ai_response_with_key_rotation_decryption_message"
+        }
+      ]
+    },
+    {
+      "id": "PLAT-013",
+      "priority": "P3",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_callback_responsiveness_scenario.py:83"
+      ],
+      "change": "Functional Event/barrier assertions заменяют короткие wall-time пределы.",
+      "files": [
+        "tests/test_callback_responsiveness_scenario.py",
+        "tests/test_circuit_breaker_concurrency.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "Callback uses acquired/release barriers: B completes while A demonstrably still owns its user lock.",
+        "Circuit breaker requires all five protected calls to enter before releasing any of them and checks exact results/counters.",
+        "Removed sub-second throughput/latency thresholds; two-second wait_for guards only bound deadlocks."
+      ],
+      "bounded_counterexample": null,
+      "effective_tests": [
+        {
+          "file": "tests/test_callback_responsiveness_scenario.py",
+          "line": 29,
+          "test": "test_user_b_settings_callback_not_blocked_by_user_a_long_request"
+        },
+        {
+          "file": "tests/test_circuit_breaker_concurrency.py",
+          "line": 9,
+          "test": "test_circuit_breaker_concurrency"
+        }
+      ]
+    },
+    {
+      "id": "PLAT-014",
+      "priority": "P3",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_taskmanager_bounded.py:54"
+      ],
+      "change": "Resource-owning cases закрывают ресурсы и ожидают отменённые задачи также на failure path.",
+      "files": [
+        "tests/test_taskmanager_bounded.py",
+        "tests/test_circuit_breaker_concurrency.py",
+        "tests/test_io_handlers.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "TaskManager test cancels and awaits owned tasks/drain task and closes all test coroutines in finally instead of forgetting registry entries.",
+        "Circuit-breaker test cancels/gathers request tasks and awaits shutdown of its monitor.",
+        "PDF/Word files live under pytest tmp_path; executor contexts dispose test pools even on assertions."
+      ],
+      "bounded_counterexample": null,
+      "effective_tests": [
+        {
+          "file": "tests/test_taskmanager_bounded.py",
+          "line": 11,
+          "test": "test_taskmanager_bounded_and_drain"
+        },
+        {
+          "file": "tests/test_circuit_breaker_concurrency.py",
+          "line": 9,
+          "test": "test_circuit_breaker_concurrency"
+        },
+        {
+          "file": "tests/test_io_handlers.py",
+          "line": 13,
+          "test": "test_process_pdf_downloads_to_drive"
+        },
+        {
+          "file": "tests/test_io_handlers.py",
+          "line": 44,
+          "test": "test_process_word_downloads_to_drive"
+        }
+      ]
+    },
+    {
+      "id": "PLAT-015",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_web_security.py:161"
+      ],
+      "change": "Невалидный auth header действительно отправляется в HTTP-запросе.",
+      "files": [
+        "tests/test_web_security.py"
+      ],
+      "retired_files": [],
+      "implementation_details": [
+        "Send the actual wrong X-Auth-Token header; require page redirect to login, no protected template rendering and API 401.",
+        "The correct-header adjacent regression now requires 200."
+      ],
+      "bounded_counterexample": null,
+      "effective_tests": [
+        {
+          "file": "tests/test_web_security.py",
+          "line": 94,
+          "test": "test_invalid_header_token_redirects"
+        }
+      ]
+    },
+    {
+      "id": "PROD-001",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_game_websocket.py:44"
+      ],
+      "change": "Настоящий game WebSocket endpoint проверяет точные close codes и запрет side effects.",
+      "files": [
+        "tests/test_game_websocket.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Use the real /webapp/game/ws endpoint; require precise close codes for missing/invalid auth, invalid game and missing game_id. Check dependency awaits only after websocket close. No swallowed exceptions.",
+      "bounded_counterexample": {
+        "fault": "Close each rejected socket with 4999 instead of the required codes.",
+        "old_checks_passed": true,
+        "new_failures": 4,
+        "evidence": "products-counterexamples-after.xml"
+      },
+      "effective_tests": []
+    },
+    {
+      "id": "PROD-002",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_game_cache.py:286"
+      ],
+      "change": "Restart cache test использует реальные UTF-8 file writer/reader, topic isolation и повреждённый файл.",
+      "files": [
+        "tests/test_game_cache.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Persist via the real generated-word file writer in tmp_path and load through the real reader after clearing memory. Inspect UTF-8 JSON and atomic-write temp cleanup; check topic isolation and corrupt-file recovery.",
+      "bounded_counterexample": {
+        "fault": "Replace the actual persistence writer with a no-op.",
+        "old_checks_passed": true,
+        "new_failures": 1,
+        "evidence": "products-counterexamples-after.xml"
+      },
+      "effective_tests": []
+    },
+    {
+      "id": "PROD-003",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_daily_crocodile_optimizations.py:65"
+      ],
+      "change": "Изображения проверяют используемую Pollinations factory, дату, enhance=False, Easy/Hard и Telegram upload.",
+      "files": [
+        "tests/test_daily_crocodile_optimizations.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Patch the actual Pollinations provider factory, return a real PollinationsResult, pass a real date, and assert enhance=False, hard/easy seeds, returned file/model, upload bytes/name and temp-message deletion after the awaited call. Add failed-image/no-upload case.",
+      "bounded_counterexample": {
+        "fault": "Change the real generation boundary from enhance=False to enhance=True.",
+        "old_checks_passed": true,
+        "new_failures": 2,
+        "evidence": "products-counterexamples-after.xml"
+      },
+      "effective_tests": []
+    },
+    {
+      "id": "PROD-004",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_daily_trivia.py:865"
+      ],
+      "change": "Отрицательные model cases следят за фактическими catalog/settings writers.",
+      "files": [
+        "tests/test_daily_trivia.py",
+        "tests/test_daily_croc_models.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Watch the actual runtime_settings.processes.save_primary_model and legacy_models.save_croc_model writers in all invalid/unvalidated model cases; post-response awaits verify no persistence occurred.",
+      "bounded_counterexample": {
+        "fault": "Insert a premature write before the real admin handler rejects the model.",
+        "old_checks_passed": true,
+        "new_failures": 4,
+        "evidence": "products-counterexamples-after.xml"
+      },
+      "effective_tests": []
+    },
+    {
+      "id": "PROD-005",
+      "priority": "P3",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_daily_crocodile.py:501"
+      ],
+      "change": "Debounce проверяет Event и identity task; cleanup выполняется в finally.",
+      "files": [
+        "tests/test_daily_crocodile.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Replace the real 2.2 second delay with an event and zero configured debounce. Require shared task identity and one refresh. Cancel and await all owned tasks in finally on every failure path.",
+      "bounded_counterexample": {
+        "fault": "Remove the production pending-refresh deduplication guard.",
+        "old_checks_passed": true,
+        "new_failures": 1,
+        "evidence": "products-counterexamples-after.xml"
+      },
+      "effective_tests": []
+    },
+    {
+      "id": "PROD-006",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_horoscope_subscriptions.py:61"
+      ],
+      "change": "Две проверки подписок маркированы integration и выполняются в обязательном PostgreSQL job.",
+      "files": [
+        "tests/test_horoscope_subscriptions.py",
+        "tests/integration/test_horoscope_subscriptions.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Move both PostgreSQL tests from the optional testcontainers harness into the existing isolated rollback-owned integration fixtures with module-level integration marking. Keep four offline unit cases; add two invalid time inputs and check the DB boundary was never awaited. Correct DB TIME expectations, partial-update retention, due boundary/catchup, sent-today suppression, independent tomorrow delivery and inactive subscriptions.",
+      "bounded_counterexample": {
+        "performed": false,
+        "reason": "No explicitly isolated TEST_DATABASE_URL was authorized; the two database tests were collected but not executed."
+      },
+      "effective_tests": []
+    },
+    {
+      "id": "PROD-007",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_natal_service.py:150"
+      ],
+      "change": "Telegraph guard требует assert_not_awaited после возврата реального оркестратора.",
+      "files": [
+        "tests/test_natal_service.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Keep the publisher AsyncMock outside the service exception handler and assert its await count after report creation for two oversize lengths. Add exactly-at-limit publication and persistence checks.",
+      "bounded_counterexample": {
+        "fault": "Increase the publication cap to 200000 so oversized reports are sent.",
+        "old_checks_passed": true,
+        "new_failures": 2,
+        "evidence": "products-counterexamples-after.xml"
+      },
+      "effective_tests": []
+    },
+    {
+      "id": "PROD-008",
+      "priority": "P2",
+      "status": "fixed-and-verified",
+      "baseline_source_refs": [
+        "tests/test_natal_llm.py:775"
+      ],
+      "change": "LLM repair assertions вынесены из callback, где fallback мог поглотить их ошибку.",
+      "files": [
+        "tests/test_natal_llm.py"
+      ],
+      "retired_files": [],
+      "implementation_details": "Record AsyncMock repair requests and assert prompts after generate_interpretation returns. Require distinctive text from the repaired provider output and exclude the local fallback marker. Apply the same post-call assertion pattern to the adjacent technical-repair test.",
+      "bounded_counterexample": {
+        "fault": "Replace the repair prompt builder with unrelated instructions.",
+        "old_checks_passed": true,
+        "new_failures": 2,
+        "evidence": "products-counterexamples-after.xml"
+      },
+      "effective_tests": []
+    }
+  ],
+  "local_full_xdist": {
+    "command": "uv run --locked pytest tests/ --ignore=tests/integration -m 'not integration' --override-ini=addopts= -n 4 --dist=loadgroup --timeout=30",
+    "tests": 3783,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 91.61
+  },
+  "ci": {
+    "id": 37089412317,
+    "commit": "b4a22b60e73d5f9f2263da5ea64abc2cedd97a7d",
+    "url": "https://github.com/Le-Who/Bobby-Botique/actions/runs/37089412317",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "Type Check (Mypy)",
+        "conclusion": "success",
+        "url": "https://github.com/Le-Who/Bobby-Botique/actions/runs/37089412317/job/111106345594"
+      },
+      {
+        "name": "Audit Production Dependencies",
+        "conclusion": "success",
+        "url": "https://github.com/Le-Who/Bobby-Botique/actions/runs/37089412317/job/111106345681"
+      },
+      {
+        "name": "Lint and Format (Ruff)",
+        "conclusion": "success",
+        "url": "https://github.com/Le-Who/Bobby-Botique/actions/runs/37089412317/job/111106345701"
+      },
+      {
+        "name": "Validate Log Viewer Configuration",
+        "conclusion": "success",
+        "url": "https://github.com/Le-Who/Bobby-Botique/actions/runs/37089412317/job/111106345714"
+      },
+      {
+        "name": "Test Browser (Chromium)",
+        "conclusion": "success",
+        "url": "https://github.com/Le-Who/Bobby-Botique/actions/runs/37089412317/job/111106399719"
+      },
+      {
+        "name": "Test Integration (PostgreSQL and Redis)",
+        "conclusion": "success",
+        "url": "https://github.com/Le-Who/Bobby-Botique/actions/runs/37089412317/job/111106399749"
+      },
+      {
+        "name": "Test Unit and E2E",
+        "conclusion": "success",
+        "url": "https://github.com/Le-Who/Bobby-Botique/actions/runs/37089412317/job/111106399765"
+      },
+      {
+        "name": "Build and Smoke Production Image",
+        "conclusion": "success",
+        "url": "https://github.com/Le-Who/Bobby-Botique/actions/runs/37089412317/job/111106577054"
+      }
+    ],
+    "test_statistics": {
+      "unit": {
+        "passed": 3778,
+        "skipped": 5,
+        "seconds": 41.92
+      },
+      "integration": {
+        "passed": 94,
+        "skipped": 0,
+        "seconds": 19.68
+      },
+      "browser": {
+        "passed": 5,
+        "skipped": 0,
+        "seconds": 8.49
+      }
+    },
+    "migration_073_applied": true,
+    "migration_chain_second_apply_and_pending_check": "passed"
+  },
+  "deploy": {
+    "id": 37089539967,
+    "url": "https://github.com/Le-Who/Bobby-Botique/actions/runs/37089539967",
+    "conclusion": "success"
+  },
+  "research_deadline_red_proof": {
+    "command": "uv run --locked pytest tests/test_research_budget_integration.py::test_hanging_synthesis_is_cancelled_at_total_deadline --override-ini=\"addopts=\" --timeout=30 --junitxml=.codex/test-audit/research-synthesis-deadline-red.xml",
+    "exit_code": 1,
+    "passed": 1,
+    "failed": 1,
+    "errors": 0,
+    "skipped": 0,
+    "failing_case": "test_hanging_synthesis_is_cancelled_at_total_deadline[synthesis]",
+    "failure": "SDK cancellation observed and actual inner timeout expired; result.budget_reason was None instead of deadline. Outer-winner parameter passed.",
+    "log": ".codex/test-audit/research-synthesis-deadline-red.log",
+    "xml": ".codex/test-audit/research-synthesis-deadline-red.xml"
+  },
+  "research_final_fix": {
+    "status": "verified-in-ci",
+    "ci_id": 37089412317,
+    "delegate_snapshot_before_ci": {
+      "issue": "Owned research deadline must not be inferred from an early SDK TimeoutError",
+      "date": "2026-10-03",
+      "status": "fixed_and_locally_verified",
+      "prior_report": ".codex/test-audit/research-synthesis-deadline-fix.json",
+      "prior_report_status": "Preserved as the dated first iteration; this report supersedes its unconditional TimeoutError budget classification.",
+      "scope": [
+        "app/core/agentic.py",
+        "tests/test_research_budget_integration.py"
+      ],
+      "confirmed_counterexamples": [
+        {
+          "stage": "synthesis",
+          "provider_exception": "TimeoutError",
+          "owned_expired": [
+            false,
+            false,
+            false
+          ],
+          "remaining_seconds": 30,
+          "wrong_reason": "deadline",
+          "failures": 1,
+          "errors": 0,
+          "skips": 0,
+          "log": ".codex/test-audit/research-sdk-timeout-red.log",
+          "xml": ".codex/test-audit/research-sdk-timeout-red.xml",
+          "evidence": ".codex/test-audit/research-sdk-timeout-red-evidence.json"
+        },
+        {
+          "stage": "iteration",
+          "provider_exception": "TimeoutError",
+          "owned_expired": [
+            false,
+            false,
+            false
+          ],
+          "remaining_seconds": 30,
+          "wrong_reason": "deadline",
+          "failures": 1,
+          "errors": 0,
+          "skips": 0,
+          "log": ".codex/test-audit/research-sdk-timeout-iteration-red.log",
+          "xml": ".codex/test-audit/research-sdk-timeout-iteration-red.xml",
+          "evidence": ".codex/test-audit/research-sdk-timeout-iteration-red-evidence.json"
+        }
+      ],
+      "root_cause": "Exception type does not establish expiration of the owned research budget. The SDK can raise its own TimeoutError before any local timeout expires. The first synthesis fix inferred deadline from exception type, and the preexisting iteration caller separately forced the same reason. Both must rely on admission/deadline ownership rather than provider outcome.",
+      "changes": {
+        "helper": "Retain the real asyncio.Timeout context and set budget.reason=deadline only for TimeoutError with context.expired(). Keep existing workload reason_code=deadline for TimeoutError and provider_error for other exceptions.",
+        "iteration": "Remove unconditional budget.reason reassignment from the TimeoutError/BudgetExhausted handler. Keep its break into forced synthesis. ResearchBudget and the owned helper already persist actual exhaustion.",
+        "tests": "Four bounded combinations cover SDK TimeoutError/RuntimeError at iteration/synthesis, assert unexpired owned contexts, an unchanged 30-second budget, reason=None, expected fallback or error answer, known and unknown token accounting, and real workload-event reason classification. Retain controlled real-deadline ordering parameters and external cancellation/cleanup checks."
+      },
+      "mutation_proofs": [
+        {
+          "mutation": "Remove owned Timeout.expired guard",
+          "failures": 2,
+          "passed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "deselected": 2,
+          "failure_reason": "Both early SDK TimeoutError cases report deadline while all owned contexts remain unexpired.",
+          "log": ".codex/test-audit/research-sdk-timeout-helper-mutant.log",
+          "xml": ".codex/test-audit/research-sdk-timeout-helper-mutant.xml"
+        },
+        {
+          "mutation": "Restore iteration caller's unconditional deadline assignment",
+          "failures": 1,
+          "passed": 1,
+          "errors": 0,
+          "skipped": 0,
+          "deselected": 2,
+          "failure_reason": "The iteration SDK TimeoutError case reports deadline despite unexpired owned contexts; synthesis case remains correct.",
+          "log": ".codex/test-audit/research-sdk-timeout-iteration-mutant.log",
+          "xml": ".codex/test-audit/research-sdk-timeout-iteration-mutant.xml"
+        }
+      ],
+      "checks": [
+        {
+          "name": "focused budget serial",
+          "command": "uv run --locked pytest tests/test_research_budget.py tests/test_research_budget_integration.py --override-ini=\"addopts=\" --timeout=30",
+          "passed": 21,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 4.11,
+          "exit_code": 0,
+          "log": ".codex/test-audit/research-sdk-timeout-focused.log",
+          "xml": ".codex/test-audit/research-sdk-timeout-focused.xml"
+        },
+        {
+          "name": "related agentic serial",
+          "command": "uv run --locked pytest tests/test_research_budget.py tests/test_research_budget_integration.py tests/test_agentic_search.py tests/test_agentic_improvements.py tests/test_agent_optimization.py --override-ini=\"addopts=\" --timeout=30",
+          "passed": 63,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 4.44,
+          "exit_code": 0,
+          "log": ".codex/test-audit/research-sdk-timeout-agentic.log",
+          "xml": ".codex/test-audit/research-sdk-timeout-agentic.xml"
+        },
+        {
+          "name": "focused budget xdist",
+          "command": "uv run --locked pytest tests/test_research_budget.py tests/test_research_budget_integration.py --override-ini=\"addopts=\" --timeout=30 -n 2",
+          "passed": 21,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "seconds": 5.45,
+          "exit_code": 0,
+          "log": ".codex/test-audit/research-sdk-timeout-xdist.log",
+          "xml": ".codex/test-audit/research-sdk-timeout-xdist.xml"
+        },
+        {
+          "name": "Ruff lint",
+          "command": "uv run --locked ruff check app/core/agentic.py tests/test_research_budget.py tests/test_research_budget_integration.py",
+          "exit_code": 0
+        },
+        {
+          "name": "Ruff format",
+          "command": "uv run --locked ruff format --check app/core/agentic.py tests/test_research_budget.py tests/test_research_budget_integration.py",
+          "exit_code": 0
+        },
+        {
+          "name": "Whitespace",
+          "command": "git diff --check -- app/core/agentic.py tests/test_research_budget.py tests/test_research_budget_integration.py",
+          "exit_code": 0
+        }
+      ],
+      "limitations": [
+        "Locked offline verification on Windows Python 3.14.3; final full gates and Linux CI belong to the root agent.",
+        "No live provider, DB, Redis, .env, commit or push; tracked writes began only after root confirmed full xdist snapshot completion.",
+        "Early SDK TimeoutError keeps the existing workload classification while the independent request budget reason remains None."
+      ]
+    }
+  },
+  "proof_boundary": [
+    "CI PostgreSQL/pgvector 17 and Redis 7 are disposable service containers.",
+    "Browser cases run in a required Chromium job; five skips in minimal Python unit CI are covered by that job.",
+    "Controlled mutations are bounded checks for the audited fault modes, not comprehensive mutation testing.",
+    "Live Telegram/provider dialogue and end-to-end production log ingestion are not measured."
+  ],
+  "current_corpus": {
+    "tracked_python_files": 357,
+    "collected_cases": 3877,
+    "ci_unique_executed_cases": 3877
+  }
+}
