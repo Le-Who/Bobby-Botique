@@ -259,8 +259,24 @@ class MetricsCollector:
                         search_queries = metrics.search_queries + EXCLUDED.search_queries,
                         cache_hits = metrics.cache_hits + EXCLUDED.cache_hits,
                         cache_misses = metrics.cache_misses + EXCLUDED.cache_misses,
-                        api_calls = COALESCE(metrics.api_calls, '{}'::jsonb) || EXCLUDED.api_calls,
-                        model_usage = COALESCE(metrics.model_usage, '{}'::jsonb) || EXCLUDED.model_usage,
+                        api_calls = (
+                            SELECT COALESCE(jsonb_object_agg(
+                                COALESCE(stored.key, delta.key),
+                                COALESCE(stored.value::bigint, 0) + COALESCE(delta.value::bigint, 0)
+                            ), '{}'::jsonb)
+                            FROM jsonb_each_text(CASE WHEN jsonb_typeof(metrics.api_calls) = 'object'
+                                THEN metrics.api_calls ELSE '{}'::jsonb END) AS stored
+                            FULL JOIN jsonb_each_text(EXCLUDED.api_calls) AS delta USING (key)
+                        ),
+                        model_usage = (
+                            SELECT COALESCE(jsonb_object_agg(
+                                COALESCE(stored.key, delta.key),
+                                COALESCE(stored.value::bigint, 0) + COALESCE(delta.value::bigint, 0)
+                            ), '{}'::jsonb)
+                            FROM jsonb_each_text(CASE WHEN jsonb_typeof(metrics.model_usage) = 'object'
+                                THEN metrics.model_usage ELSE '{}'::jsonb END) AS stored
+                            FULL JOIN jsonb_each_text(EXCLUDED.model_usage) AS delta USING (key)
+                        ),
                         updated_at = CURRENT_TIMESTAMP
                 """,
                     (
@@ -315,7 +331,15 @@ class MetricsCollector:
                     WHERE app_user.user_id = $1
                     ON CONFLICT (user_id, metric_date) DO UPDATE SET
                         request_count = user_metrics.request_count + EXCLUDED.request_count,
-                        model_usage = COALESCE(user_metrics.model_usage, '{}'::jsonb) || EXCLUDED.model_usage,
+                        model_usage = (
+                            SELECT COALESCE(jsonb_object_agg(
+                                COALESCE(stored.key, delta.key),
+                                COALESCE(stored.value::bigint, 0) + COALESCE(delta.value::bigint, 0)
+                            ), '{}'::jsonb)
+                            FROM jsonb_each_text(CASE WHEN jsonb_typeof(user_metrics.model_usage) = 'object'
+                                THEN user_metrics.model_usage ELSE '{}'::jsonb END) AS stored
+                            FULL JOIN jsonb_each_text(EXCLUDED.model_usage) AS delta USING (key)
+                        ),
                         updated_at = CURRENT_TIMESTAMP
                     """,
                     params_list,

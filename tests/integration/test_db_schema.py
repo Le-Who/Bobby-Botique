@@ -235,12 +235,13 @@ class TestFeedback:
     async def test_invalid_rating_rejected(self, db_conn_with_user):
         conn = db_conn_with_user
         user_id = 999999
-        with pytest.raises(asyncpg.CheckViolationError), conn.transaction():
-            await conn.execute(
-                "INSERT INTO feedback (user_id, rating) VALUES ($1, $2)",
-                user_id,
-                "invalid",
-            )
+        with pytest.raises(asyncpg.CheckViolationError):
+            async with conn.transaction():
+                await conn.execute(
+                    "INSERT INTO feedback (user_id, rating) VALUES ($1, $2)",
+                    user_id,
+                    "invalid",
+                )
 
 
 class TestModelConfiguration:

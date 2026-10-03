@@ -49,8 +49,8 @@ async def test_repeated_delta_saves_accumulate_jsonb_counters(db_conn):
     await _save_snapshot(
         collector,
         count=5,
-        api_calls={"gemini_streaming": 3},
-        model_usage={"gemini-2.5-flash": 2},
+        api_calls={"gemini_streaming": 3, "tavily": 1},
+        model_usage={"gemini-2.5-flash": 2, "gemini-3.1-flash-lite": 1},
     )
     await _save_snapshot(
         collector,
@@ -61,8 +61,8 @@ async def test_repeated_delta_saves_accumulate_jsonb_counters(db_conn):
     loaded = await _load()
     assert loaded.request_count == 12
     assert loaded.total_response_time == pytest.approx(3.0)
-    assert loaded.api_calls == {"gemini_streaming": 7, "gemini_search": 2}
-    assert loaded.model_usage == {"gemini-2.5-flash": 5}
+    assert loaded.api_calls == {"gemini_streaming": 7, "gemini_search": 2, "tavily": 1}
+    assert loaded.model_usage == {"gemini-2.5-flash": 5, "gemini-3.1-flash-lite": 1}
 
 
 async def test_repeated_user_delta_saves_accumulate_model_usage(db_conn_with_user):
@@ -109,6 +109,53 @@ async def test_empty_jsonb_objects_round_trip(db_conn):
     assert loaded.request_count == 1
     assert loaded.api_calls == {}
     assert loaded.model_usage == {}
+
+
+async def test_empty_delta_keeps_existing_jsonb_counters(db_conn):
+    collector = MetricsCollector()
+    await _save_snapshot(collector, count=2, api_calls={"gemini_streaming": 2}, model_usage={"gemini-2.5-flash": 2})
+    await _save_snapshot(collector, count=1, api_calls={}, model_usage={})
+
+    loaded = await _load()
+    assert loaded.request_count == 3
+    assert loaded.api_calls == {"gemini_streaming": 2}
+    assert loaded.model_usage == {"gemini-2.5-flash": 2}
+
+
+@pytest.mark.parametrize("legacy", [None, [1, 2, 3], "legacy"])
+async def test_writer_replaces_non_object_legacy_counters_with_new_delta(db_conn, legacy):
+    await db_conn.execute(
+        "INSERT INTO metrics (metric_date, request_count, api_calls, model_usage) VALUES (CURRENT_DATE, 1, $1, $1)",
+        legacy,
+    )
+    await _save_snapshot(
+        MetricsCollector(), count=2, api_calls={"gemini_streaming": 2}, model_usage={"gemini-2.5-flash": 2}
+    )
+
+    loaded = await _load()
+    assert loaded.request_count == 3
+    assert loaded.api_calls == {"gemini_streaming": 2}
+    assert loaded.model_usage == {"gemini-2.5-flash": 2}
+
+
+@pytest.mark.parametrize("legacy", [None, [1, 2, 3], "legacy"])
+async def test_writer_replaces_non_object_user_model_usage(db_conn_with_user, legacy):
+    await db_conn_with_user.execute(
+        "INSERT INTO user_metrics (user_id, metric_date, request_count, model_usage) VALUES (999999, CURRENT_DATE, 1, $1)",
+        legacy,
+    )
+    collector = MetricsCollector()
+    collector._user_daily[date.today().isoformat()][999999] = {
+        "request_count": 2,
+        "model_usage": {"gemini-2.5-flash": 2},
+    }
+    await _save_snapshot(collector, count=2, api_calls={}, model_usage={"gemini-2.5-flash": 2})
+
+    row = await db_conn_with_user.fetchrow(
+        "SELECT request_count, model_usage FROM user_metrics WHERE user_id = 999999 AND metric_date = CURRENT_DATE"
+    )
+    assert row["request_count"] == 3
+    assert row["model_usage"] == {"gemini-2.5-flash": 2}
 
 
 async def test_reader_skips_legacy_non_object_jsonb(db_conn):

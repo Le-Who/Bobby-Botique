@@ -635,7 +635,7 @@ class AgenticSearch:
             origin="agentic_synthesis" if synthesis else "agentic_loop",
         )
         try:
-            async with asyncio.timeout(remaining):
+            async with asyncio.timeout(remaining) as timeout:
                 response = await self.client.aio.models.generate_content(
                     model=self.model_name,
                     contents=contents,
@@ -647,6 +647,9 @@ class AgenticSearch:
             raise
         except Exception as error:
             budget.record_usage(None)
+            # An SDK TimeoutError alone does not exhaust the request budget.
+            if isinstance(error, TimeoutError) and timeout.expired():
+                budget.reason = "deadline"
             attempt.fail(error, reason_code="deadline" if isinstance(error, TimeoutError) else "provider_error")
             raise
         raw = getattr(getattr(response, "usage_metadata", None), "total_token_count", None)
@@ -763,7 +766,6 @@ class AgenticSearch:
                     response_tokens = self._extract_token_count(response)
                     total_tokens += response_tokens
                 except TimeoutError, BudgetExhausted:
-                    budget.reason = "deadline"
                     break
                 except Exception:
                     return AgenticResult(
