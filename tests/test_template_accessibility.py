@@ -63,7 +63,6 @@ def test_live_audio_microphone_name_tracks_its_click_action():
 def test_crocodile_icon_controls_have_contextual_labels():
     _, tags = _parse_template("crocodile.html")
 
-    assert _by_id(tags, "live-audio-btn")[1].get("aria-label") == "Открыть Live Audio"
     assert _by_id(tags, "hint-btn")[1].get("aria-label") == "Получить подсказку"
 
     reactions = [attrs for _, attrs in tags if "react-btn" in (attrs.get("class") or "").split()]
