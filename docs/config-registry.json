@@ -771,6 +771,7 @@
     "readers": [
       "app/games/crocodile_telegram.py",
       "app/handlers/commands.py",
+      "app/handlers/compatibility.py",
       "app/handlers/daily_2048.py",
       "app/handlers/daily_crocodile.py",
       "app/handlers/daily_trivia.py",
