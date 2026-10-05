@@ -111,11 +111,7 @@ async def resolve_birth_data(
             _validate_coordinates(result.latitude, result.longitude)
             timezone_name = _resolve_timezone(result.latitude, result.longitude, result.display_name)
     _validate_coordinates(result.latitude, result.longitude)
-    try:
-        local_zone = ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError as exc:
-        raise GeocodingError(f"Не удалось определить часовой пояс для места рождения: {timezone_name}.") from exc
-    local_dt = _build_local_datetime(birth, local_zone)
+    local_dt = resolve_local_birth_datetime(birth, timezone_name)
     utc_dt = local_dt.astimezone(UTC)
     return ResolvedBirthData(
         birth_input=birth,
@@ -126,6 +122,19 @@ async def resolve_birth_data(
         utc_datetime=utc_dt.isoformat(),
         display_place=result.display_name,
     )
+
+
+def resolve_local_birth_datetime(birth: BirthInput, timezone_name: str) -> datetime:
+    """Resolve a local clock value, rejecting timezone gaps and ambiguous folds.
+
+    This synchronous boundary also lets local questionnaires validate before
+    acknowledging a background calculation, without geocoding or provider I/O.
+    """
+    try:
+        local_zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise GeocodingError(f"Не удалось определить часовой пояс для места рождения: {timezone_name}.") from exc
+    return _build_local_datetime(birth, local_zone)
 
 
 def _embedded_geocode_result(birth: BirthInput) -> tuple[GeocodeResult, str] | None:

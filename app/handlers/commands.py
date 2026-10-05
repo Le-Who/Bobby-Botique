@@ -965,12 +965,12 @@ def register(application: Application) -> None:
 
     # Horoscope subscription wizard (from horoscope_subscription)
     from app.handlers.horoscope_subscription import (
-        build_horoscope_subscription_handler,
         horoscope_settings_callback,
         horoscope_stop_command,
+        register_horoscope_subscription_handler,
     )
 
-    application.add_handler(build_horoscope_subscription_handler())
+    register_horoscope_subscription_handler(application)
     application.add_handler(CommandHandler("horoscope_stop", horoscope_stop_command))
     application.add_handler(CallbackQueryHandler(horoscope_settings_callback, pattern=r"^horo_settings:"))
 

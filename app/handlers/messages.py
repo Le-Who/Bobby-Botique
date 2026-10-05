@@ -422,7 +422,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         # ── 6b. Natal chart intent ───────────────────────────────────────────
-        if effective_msg.text:
+        if effective_msg.text and update.effective_chat.type == "private":
             from app.handlers.natal_chart import natal_command
             from app.natal.intent import is_natal_chart_request
 
@@ -851,6 +851,13 @@ def register(application: Application) -> None:
     # NEW messages only — explicit UpdateType.MESSAGE guard prevents
     # edited_message / channel_post from leaking into these handlers.
     _msg = filters.UpdateType.MESSAGE
+
+    # Explicit menu entries take priority over an existing Tarot session.
+    from app.handlers.cmd_tarot import tarot_command
+    from app.handlers.menu_intents import TAROT_MENU_RE
+
+    tarot_intent_filter = filters.ChatType.PRIVATE & filters.TEXT & filters.Regex(TAROT_MENU_RE)
+
     # Tarot Mode Interceptor
     from app.handlers.tarot_chat import (
         handle_tarot_end_session_message,
@@ -864,19 +871,15 @@ def register(application: Application) -> None:
         MessageHandler(_msg & filters.TEXT & is_tarot_end_session_filter, handle_tarot_end_session_message, block=False)
     )
     application.add_handler(
-        MessageHandler(_msg & filters.TEXT & is_tarot_mode_filter, handle_tarot_message, block=False)
+        MessageHandler(
+            _msg & filters.TEXT & is_tarot_mode_filter & ~tarot_intent_filter, handle_tarot_message, block=False
+        )
     )
     application.add_handler(
         CallbackQueryHandler(handle_tarot_idle_choice_callback, pattern=r"^tarot_idle:", block=False)
     )
 
-    # Tarot Single-word Intent Interceptor
-    import re
-
-    from app.handlers.cmd_tarot import tarot_command
-
-    tarot_intent_filter = filters.Regex(re.compile(r"^\s*(таро|расклад)\s*[?!.]*\s*$", re.IGNORECASE))
-    application.add_handler(MessageHandler(_msg & filters.TEXT & tarot_intent_filter, tarot_command, block=False))
+    application.add_handler(MessageHandler(_msg & tarot_intent_filter, tarot_command, block=False))
 
     application.add_handler(MessageHandler(_msg & filters.TEXT & ~filters.COMMAND, handle_request, block=False))
     application.add_handler(MessageHandler(_msg & filters.PHOTO, handle_request, block=False))

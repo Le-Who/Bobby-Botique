@@ -13,6 +13,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Upda
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import (
+    BaseHandler,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
@@ -22,6 +23,7 @@ from telegram.ext import (
 )
 
 from app.handlers.conversation import suppress_hybrid_conversation_handler_warning
+from app.handlers.menu_intents import HOROSCOPE_MENU_RE, TAROT_MENU_RE
 from app.natal.city_catalog import CityRecord, CountryRecord, find_city_by_id, search_cities, search_countries
 from app.natal.intent import NATAL_INTENT_RE, NATAL_SLASH_ALIAS_RE
 from app.natal.models import BirthInput, ReportType, TimePrecision
@@ -792,47 +794,66 @@ async def on_tarot_during_natal(update: Update, context: ContextTypes.DEFAULT_TY
     return None
 
 
+async def on_horoscope_during_natal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from app.handlers.horoscope_subscription import horoscope_settings_command
+
+    await horoscope_settings_command(update, context)
+    clear_natal_user_data(context.user_data)
+    return ConversationHandler.END
+
+
 def build_natal_chart_handler() -> ConversationHandler:
+    private_text = filters.UpdateType.MESSAGE & filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND
+    menu_switches: list[BaseHandler[Update, ContextTypes.DEFAULT_TYPE, Any]] = [
+        MessageHandler(private_text & filters.Regex(TAROT_MENU_RE), on_tarot_during_natal),
+        MessageHandler(private_text & filters.Regex(HOROSCOPE_MENU_RE), on_horoscope_during_natal),
+    ]
     with suppress_hybrid_conversation_handler_warning():
         return ConversationHandler(
             entry_points=[
                 CommandHandler("natal", natal_command),
                 MessageHandler(filters.TEXT & filters.Regex(NATAL_SLASH_ALIAS_RE), natal_command),
-                MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(NATAL_INTENT_RE), natal_command),
+                MessageHandler(private_text & filters.Regex(NATAL_INTENT_RE), natal_command),
                 CallbackQueryHandler(natal_command, pattern=r"^start_natal$"),
             ],
             states={
-                NATAL_MODE: [CallbackQueryHandler(on_mode, pattern=r"^natal_mode:")],
-                NATAL_TABLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_table_input)],
+                NATAL_MODE: [*menu_switches, CallbackQueryHandler(on_mode, pattern=r"^natal_mode:")],
+                NATAL_TABLE: [*menu_switches, MessageHandler(filters.TEXT & ~filters.COMMAND, on_table_input)],
                 NATAL_DATE: [
+                    *menu_switches,
                     CallbackQueryHandler(on_date_picker, pattern=r"^natal_date:"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, on_date),
                 ],
                 NATAL_TIME_PRECISION: [
+                    *menu_switches,
                     CallbackQueryHandler(on_time_precision, pattern=r"^natal_time_precision:"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_precision),
                 ],
                 NATAL_TIME_VALUE: [
+                    *menu_switches,
                     CallbackQueryHandler(on_time_picker, pattern=r"^natal_time:"),
                     CallbackQueryHandler(on_input_hint, pattern=r"^natal_input:time$"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_value),
                 ],
                 NATAL_COUNTRY: [
+                    *menu_switches,
                     CallbackQueryHandler(on_input_hint, pattern=r"^natal_input:country$"),
                     CallbackQueryHandler(on_country_selected, pattern=r"^natal_country:"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, on_country),
                 ],
                 NATAL_PLACE: [
+                    *menu_switches,
                     CallbackQueryHandler(on_input_hint, pattern=r"^natal_input:city$"),
                     CallbackQueryHandler(on_place_missing, pattern=r"^natal_place_missing$"),
                     CallbackQueryHandler(on_place_selected, pattern=r"^natal_place:"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, on_place),
                 ],
                 NATAL_FOCUS: [
+                    *menu_switches,
                     CallbackQueryHandler(on_focus, pattern=r"^natal_focus:"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, on_focus),
                 ],
-                NATAL_CONFIRM: [CallbackQueryHandler(on_confirm, pattern=r"^natal_confirm:")],
+                NATAL_CONFIRM: [*menu_switches, CallbackQueryHandler(on_confirm, pattern=r"^natal_confirm:")],
             },
             fallbacks=[
                 CommandHandler("cancel", cancel),

@@ -70,8 +70,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "A brief symbolic reading of Sun signs. Birth dates add personal detail; this is not a compatibility percentage.",
     },
     "compat.date_limit": {
-        "ru": "Время и место рождения неизвестны: возможные знаки перечислены через /. Дома, асцендент и точные межпланетные аспекты не определяются. Это символический разбор, а не обещание событий.",
-        "en": "Birth time and place are unknown: possible signs are separated by /. Houses, ascendants and precise inter-chart aspects are not determined. This is a symbolic reading, not a prediction of events.",
+        "ru": "В этом разборе указаны только даты: возможные знаки перечислены через /. Для домов, асцендентов и подробных межпланетных аспектов добавьте время и место рождения в анкете пары. Это символический разбор, а не обещание событий.",
+        "en": "This reading uses dates only: possible signs are separated by /. Add birth times and places in the pair form for houses, ascendants and detailed inter-chart aspects. This is a symbolic reading, not a prediction of events.",
     },
     "compat.boundary": {
         "ru": "Пограничная дата: Солнце может быть в соседних знаках. Для выбора одного знака нужны время и место рождения; общий вывод по Солнцу пока пропущен.",
@@ -269,7 +269,153 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "Отделяйте чувство от предположения и формулируйте просьбу прямо, оставляя время на самостоятельное восстановление.",
         "en": "Separate feelings from assumptions, state requests clearly, and allow time to recharge individually.",
     },
-    "compat.dates_button": {"ru": "📅 По датам рождения", "en": "📅 Use birth dates"},
+    "compat.dates_button": {"ru": "💞 Подробнее о паре", "en": "💞 More about this pair"},
+    "compat.form_button": {"ru": "📝 Заполнить данные пары", "en": "📝 Enter partner details"},
+    "compat.form_intro": {
+        "ru": "💞 <b>Подробная совместимость пары</b>\n{pair}\n\nУкажите даты рождения обоих партнёров для подробного разбора. Если знаете время и город рождения, добавьте их — в разбор войдут асценденты, дома и взаимодействие двух карт.\n\nВремя рождения можно пропустить для каждого партнёра отдельно. Бот использует доступные данные и объяснит, какие части удалось рассчитать.",
+        "en": "💞 <b>Detailed compatibility</b>\n{pair}\n\nEnter both partners' birth dates for a detailed reading. Add birth times and cities if known to include ascendants, houses and interactions between the charts.\n\nYou can skip birth time separately for each partner. The reading uses the available details and explains which parts could be calculated.",
+    },
+    "compat.form.title": {"ru": "Совместимость пары", "en": "Partner compatibility"},
+    "compat.form.intro": {
+        "ru": "Две даты — начало разбора. Время и город добавят подробности, если они известны.",
+        "en": "Start with two birth dates. Add times and cities for more detail if known.",
+    },
+    "compat.form.first": {"ru": "Первый партнёр", "en": "First partner"},
+    "compat.form.second": {"ru": "Второй партнёр", "en": "Second partner"},
+    "compat.form.date": {"ru": "Дата рождения", "en": "Birth date"},
+    "compat.form.day": {"ru": "День", "en": "Day"},
+    "compat.form.month": {"ru": "Месяц", "en": "Month"},
+    "compat.form.year": {"ru": "Год", "en": "Year"},
+    "compat.form.time": {"ru": "Время рождения", "en": "Birth time"},
+    "compat.form.exact": {"ru": "Точное", "en": "Exact"},
+    "compat.form.approximate": {"ru": "Примерное", "en": "Approximate"},
+    "compat.form.range": {"ru": "Диапазон", "en": "Range"},
+    "compat.form.unknown": {"ru": "Не знаю", "en": "Unknown"},
+    "compat.form.time_start": {"ru": "С", "en": "From"},
+    "compat.form.time_end": {"ru": "До", "en": "To"},
+    "compat.form.place": {"ru": "Место рождения", "en": "Birthplace"},
+    "compat.form.place_unknown": {"ru": "Пропустить место рождения", "en": "Skip birthplace"},
+    "compat.form.country": {"ru": "Страна", "en": "Country"},
+    "compat.form.city": {"ru": "Город", "en": "City"},
+    "compat.form.city_hint": {
+        "ru": "Начните вводить название и выберите город из списка. Если нужного города нет, выберите ближайший крупный.",
+        "en": "Type a name and select a city from the list. If missing, choose the nearest large city.",
+    },
+    "compat.form.next": {"ru": "Далее", "en": "Next"},
+    "compat.form.back": {"ru": "Назад", "en": "Back"},
+    "compat.form.review": {"ru": "Проверьте данные пары", "en": "Review partner details"},
+    "compat.form.submit": {"ru": "💞 Рассчитать совместимость", "en": "💞 Calculate compatibility"},
+    "compat.form.cancel": {"ru": "Закрыть", "en": "Close"},
+    "compat.form.date_error": {
+        "ru": "Выберите существующую дату рождения с 1900 года до сегодняшнего дня.",
+        "en": "Select a valid birth date from 1900 through today.",
+    },
+    "compat.form.time_error": {
+        "ru": "Укажите время или выберите «Не знаю». Диапазон должен заканчиваться позже начала в тот же день.",
+        "en": "Enter a time or choose Unknown. A range must end after it starts on the same day.",
+    },
+    "compat.form.local_time_error": {
+        "ru": "Выбранное местное время не существовало или повторялось из-за перевода часов. Укажите другое время либо выберите «Не знаю»; при необходимости исправьте дату.",
+        "en": "The selected local time did not exist or occurred twice during a clock change. Enter another time or choose Unknown; adjust the date if needed.",
+    },
+    "compat.form.place_error": {
+        "ru": "Выберите страну и город из списка. При неизвестном времени место можно пропустить.",
+        "en": "Select a country and city from the list. With unknown time, you may skip birthplace.",
+    },
+    "compat.form.country_error": {"ru": "Выберите страну из списка.", "en": "Select a country from the list."},
+    "compat.form.form_error": {
+        "ru": "Не удалось отправить анкету. Данные сохранены в форме — попробуйте ещё раз.",
+        "en": "Could not submit the form. Your entries remain here; try again.",
+    },
+    "compat.form.auth_error": {
+        "ru": "Откройте анкету кнопкой в личном чате с ботом.",
+        "en": "Open this form using the button in your private bot chat.",
+    },
+    "compat.form.accepted": {"ru": "Готовим разбор пары", "en": "Preparing your compatibility reading"},
+    "compat.form.accepted_note": {
+        "ru": "Результат придёт в личный чат с ботом. Можете закрыть это окно.",
+        "en": "The result will arrive in your private bot chat. You can close this window.",
+    },
+    "compat.form.step": {"ru": "Шаг {current} из {total}", "en": "Step {current} of {total}"},
+    "compat.form.no_results": {"ru": "Не найдено. Уточните название.", "en": "No matches. Try a more specific name."},
+    "compat.detailed_title": {"ru": "Подробная совместимость пары", "en": "Detailed partner compatibility"},
+    "compat.ascendant": {"ru": "Асцендент", "en": "Ascendant"},
+    "compat.angle.mc": {"ru": "MC", "en": "MC"},
+    "compat.planet.jupiter": {"ru": "Юпитер", "en": "Jupiter"},
+    "compat.planet.saturn": {"ru": "Сатурн", "en": "Saturn"},
+    "compat.planet.uranus": {"ru": "Уран", "en": "Uranus"},
+    "compat.planet.neptune": {"ru": "Нептун", "en": "Neptune"},
+    "compat.planet.pluto": {"ru": "Плутон", "en": "Pluto"},
+    "compat.time_unknown": {
+        "ru": "{partner}: время не указано — его дома и асцендент не рассчитаны.",
+        "en": "{partner}: birth time was omitted; this partner's houses and ascendant are unavailable.",
+    },
+    "compat.place_missing": {
+        "ru": "{partner}: место не указано — возможные знаки учитывают разные часовые пояса.",
+        "en": "{partner}: birthplace was omitted; possible signs include different time zones.",
+    },
+    "compat.time_approximate": {
+        "ru": "{partner}: время примерное или задано диапазоном; дома, углы и аспекты приблизительны.",
+        "en": "{partner}: the time is approximate or a range; houses, angles and aspects are approximate.",
+    },
+    "compat.time_range": {
+        "ru": "{partner}: использована середина указанного диапазона времени; дома, углы и аспекты приблизительны.",
+        "en": "{partner}: the midpoint of the time range is used; houses, angles and aspects are approximate.",
+    },
+    "compat.houses_equal": {
+        "ru": "Дома рассчитаны в системе равных домов от асцендента.",
+        "en": "Houses use the equal-house system from the ascendant.",
+    },
+    "compat.stable_only": {
+        "ru": "При неизвестном времени показаны только аспекты и попадания в дома, сохраняющиеся в проверенном интервале; возможные знаки разделены /.",
+        "en": "With unknown time, only aspects and house placements stable throughout the checked interval are shown; possible signs are separated by /.",
+    },
+    "compat.symbolic": {
+        "ru": "Это символический разбор отношений, а не процент совместимости или обещание событий.",
+        "en": "A symbolic relationship reading, not a compatibility percentage or a prediction of events.",
+    },
+    "compat.aspects": {"ru": "Основные аспекты между картами", "en": "Main aspects between the charts"},
+    "compat.no_aspects": {
+        "ru": "В доступных данных нет устойчивых аспектов в принятых пределах орбиса.",
+        "en": "No stable aspects fall within the adopted orb limits in the available data.",
+    },
+    "compat.aspect.conjunction": {"ru": "соединение", "en": "conjunction"},
+    "compat.aspect.sextile": {"ru": "секстиль", "en": "sextile"},
+    "compat.aspect.square": {"ru": "квадрат", "en": "square"},
+    "compat.aspect.trine": {"ru": "тригон", "en": "trine"},
+    "compat.aspect.opposition": {"ru": "оппозиция", "en": "opposition"},
+    "compat.aspect_meaning.conjunction": {
+        "ru": "Общая тема может ощущаться особенно заметно: полезно обсудить ожидания друг от друга.",
+        "en": "This shared theme may feel prominent; discuss what each partner expects.",
+    },
+    "compat.aspect_meaning.sextile": {
+        "ru": "Символическая возможность для сотрудничества: поддерживайте её конкретными действиями.",
+        "en": "A symbolic opportunity for cooperation; support it with practical action.",
+    },
+    "compat.aspect_meaning.square": {
+        "ru": "Повод обсудить разные привычки и договориться, как обходиться с разногласиями.",
+        "en": "Discuss different habits and agree on ways to handle disagreements.",
+    },
+    "compat.aspect_meaning.trine": {
+        "ru": "Символическая точка взаимной поддержки: замечайте, что уже помогает вам быть вместе.",
+        "en": "A symbolic point of mutual support; notice what already helps you connect.",
+    },
+    "compat.aspect_meaning.opposition": {
+        "ru": "Разные потребности могут дополнять друг друга; оставляйте место обеим позициям.",
+        "en": "Different needs may complement each other; make room for both perspectives.",
+    },
+    "compat.overlays": {
+        "ru": "Планеты партнёра в домах другой карты",
+        "en": "Partner planets in the other chart's houses",
+    },
+    "compat.overlay_line": {
+        "ru": "{planet} партнёра {source} → дом {house} партнёра {target}",
+        "en": "Partner {source}'s {planet} → partner {target}'s house {house}",
+    },
+    "compat.background_failed": {
+        "ru": "Не удалось подготовить совместимость. Откройте анкету пары и попробуйте ещё раз.",
+        "en": "Could not prepare the compatibility reading. Reopen the pair form and try again.",
+    },
     "compat.tarot_button": {"ru": "🔮 Таро для пары", "en": "🔮 Tarot for this pair"},
     "compat.inline_description": {
         "ru": "Краткий разбор · даты рождения и таро в личном чате",
@@ -277,8 +423,8 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "compat.guide_title": {"ru": "💞 Укажите два знака зодиака", "en": "💞 Enter two zodiac signs"},
     "compat.guide": {
-        "ru": "Например: <code>совместимость мужчина скорпион женщина водолей</code> или <code>совм скорпион водолей</code>.\n\nПол можно не указывать. Даты рождения вводятся в личном диалоге через кнопку под готовым разбором.",
-        "en": "Example: <code>compatibility man scorpio woman aquarius</code> or <code>compat scorpio aquarius</code>.\n\nGender is optional. Enter birth dates in private chat using the button below a completed reading.",
+        "ru": "Например: <code>совместимость мужчина скорпион женщина водолей</code> или <code>совм скорпион водолей</code>.\n\nПол можно не указывать. Кнопка «Подробнее о паре» под готовым разбором откроет личный чат для заполнения данных рождения.",
+        "en": "Example: <code>compatibility man scorpio woman aquarius</code> or <code>compat scorpio aquarius</code>.\n\nGender is optional. The More about this pair button below the reading opens private chat to enter birth details.",
     },
     "compat.private_only": {
         "ru": "Для дат рождения и таро откройте эту ссылку в личном чате с ботом.",
@@ -289,8 +435,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Invalid compatibility link. Send a new inline query with two signs.",
     },
     "compat.first_date": {
-        "ru": "📅 <b>Совместимость по датам рождения</b>\n{pair}\n\nШаг 1 из 2. Введите дату рождения первого партнёра ({partner}) в формате <code>ДД.ММ.ГГГГ</code> или <code>YYYY-MM-DD</code>.\n\nРасчёт будет без домов и асцендента. /cancel — отменить; новая команда также завершит ввод.",
-        "en": "📅 <b>Birth date compatibility</b>\n{pair}\n\nStep 1 of 2. Enter the first partner's birth date ({partner}) as <code>DD.MM.YYYY</code> or <code>YYYY-MM-DD</code>.\n\nHouses and ascendants are omitted. /cancel cancels; another command also ends the input flow.",
+        "ru": "📅 <b>Совместимость по датам рождения</b>\n{pair}\n\nШаг 1 из 2. Введите дату рождения первого партнёра ({partner}) в формате <code>ДД.ММ.ГГГГ</code> или <code>YYYY-MM-DD</code>.\n\nЗдесь можно получить краткий разбор по двум датам. /cancel — отменить; новая команда также завершит ввод.",
+        "en": "📅 <b>Birth date compatibility</b>\n{pair}\n\nStep 1 of 2. Enter the first partner's birth date ({partner}) as <code>DD.MM.YYYY</code> or <code>YYYY-MM-DD</code>.\n\nThis chat flow provides a brief reading from two dates. /cancel cancels; another command also ends the input flow.",
     },
     "compat.second_date": {
         "ru": "Шаг 2 из 2. Теперь дата рождения второго партнёра ({partner}), в том же формате. /cancel — отменить.",
@@ -302,24 +448,24 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "compat.cancelled": {"ru": "Ввод дат отменён.", "en": "Birth date input cancelled."},
     "compat.edited_restart": {
-        "ru": "Это сообщение относится к завершённому вводу дат. Для исправленного разбора откройте кнопку «По датам рождения» и введите обе даты заново.",
-        "en": "This message belongs to an ended date flow. Open the birth dates button and enter both dates again for a revised reading.",
+        "ru": "Это сообщение относится к завершённому вводу дат. Для исправленного разбора откройте кнопку «Подробнее о паре» и заполните данные заново.",
+        "en": "This message belongs to an ended date flow. Open More about this pair and enter the details again for a revised reading.",
     },
     "compat.expired": {
-        "ru": "Ввод дат завершён по времени. Откройте кнопку «По датам рождения» ещё раз.",
-        "en": "Birth date input timed out. Open the birth dates button again.",
+        "ru": "Ввод дат завершён по времени. Откройте кнопку «Подробнее о паре» ещё раз.",
+        "en": "Birth date input timed out. Open More about this pair again.",
     },
     "compat.orphan_date": {
-        "ru": "Сейчас форма ввода даты не открыта. Для совместимости нажмите «По датам рождения» под инлайн-разбором; для натальной карты или матрицы судьбы отправьте /natal. Затем введите дату в открывшейся форме.",
-        "en": "No date input form is open. For compatibility, use the birth dates button below the inline reading; for a natal chart or destiny matrix, send /natal. Then enter the date in the opened form.",
+        "ru": "Сейчас форма ввода даты не открыта. Для совместимости нажмите «Подробнее о паре» под инлайн-разбором; для натальной карты или матрицы судьбы отправьте /natal. Затем заполните дату в открывшейся форме.",
+        "en": "No date input form is open. For compatibility, use More about this pair below the inline reading; for a natal chart or destiny matrix, send /natal. Then enter the date in the opened form.",
     },
     "compat.tarot_expired": {
         "ru": "Контекст этого разбора для Таро больше не доступен. Кнопка действует 30 минут и может устареть после перезапуска бота. Подготовьте разбор совместимости заново и нажмите кнопку Таро под новым результатом.",
         "en": "This reading's tarot context is no longer available. The button lasts 30 minutes and can expire after the bot restarts. Prepare a new compatibility reading and use its tarot button.",
     },
     "compat.failed": {
-        "ru": "Не удалось подготовить разбор. Откройте кнопку «По датам рождения» и попробуйте ещё раз.",
-        "en": "Could not prepare the reading. Open the birth dates button and try again.",
+        "ru": "Не удалось подготовить разбор. Откройте кнопку «Подробнее о паре» и попробуйте ещё раз.",
+        "en": "Could not prepare the reading. Open More about this pair and try again.",
     },
     "compat.access_required": {
         "ru": "Для этого разбора нужен доступ к боту. Ввод дат завершён; после восстановления доступа откройте ссылку ещё раз.",

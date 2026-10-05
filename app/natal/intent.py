@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from app.handlers.menu_intents import NATAL_MENU_RE
+
 NATAL_SLASH_ALIAS_RE = re.compile(
     r"^/(?:натальн\w*|карта)(?:@\w+)?(?:\s|$)",
     re.IGNORECASE,
@@ -17,6 +19,7 @@ NATAL_INTENT_RE = re.compile(
     r"|birth\s+chart"
     r"|natal\s+chart"
     r"|астрологическ\w*\s+карт\w*"
+    rf"|{NATAL_MENU_RE.pattern}"
     r")",
     re.IGNORECASE,
 )

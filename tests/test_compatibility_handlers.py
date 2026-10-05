@@ -570,7 +570,7 @@ async def test_orphan_date_prompts_for_a_form_without_echo_or_admin_alert(monkey
     await selected.callback(update, context)
 
     reply = update.effective_message.reply_text.await_args.args[0]
-    assert "По датам рождения" in reply and "/natal" in reply
+    assert "Подробнее о паре" in reply and "/natal" in reply
     assert text not in reply
     assert context.user_data == {}
     alerts.assert_not_awaited()

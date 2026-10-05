@@ -25,7 +25,7 @@ import logging
 import re
 import time
 from datetime import datetime
-from typing import Final
+from typing import Any, Final
 from zoneinfo import ZoneInfo
 
 from telegram import (
@@ -37,6 +37,8 @@ from telegram import (
     Update,
 )
 from telegram.ext import (
+    Application,
+    BaseHandler,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
@@ -46,6 +48,7 @@ from telegram.ext import (
 )
 
 from app.handlers.conversation import suppress_hybrid_conversation_handler_warning
+from app.handlers.menu_intents import NATAL_MENU_RE, TAROT_MENU_RE
 from app.natal.city_catalog import nearest_city_timezone, search_cities
 from app.repos.horoscope_subscriptions import (
     delete_horoscope_subscription,
@@ -715,7 +718,26 @@ async def horoscope_stop_command(update: Update, context: ContextTypes.DEFAULT_T
 
 import re
 
-HOROSCOPE_INTENT_RE = re.compile(r"^\s*(?:гороскоп|настройка гороскопа|подписка на гороскоп)\s*[?!.]*$", re.IGNORECASE)
+HOROSCOPE_INTENT_RE = re.compile(
+    r"^\s*(?:гороскоп|настройка гороскопа|подписка на гороскоп)\s*[?!.]*\s*$", re.IGNORECASE
+)
+
+
+async def on_tarot_during_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
+    from app.handlers.cmd_tarot import tarot_command
+
+    if await tarot_command(update, context):
+        for key in ("horo_sign", "horo_time_today", "horo_time_tomorrow", "horo_utc_offset", "horo_payload"):
+            context.user_data.pop(key, None)
+        return ConversationHandler.END
+    return None
+
+
+async def on_natal_during_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Finish this draft; the later handler group opens the natal conversation."""
+    for key in ("horo_sign", "horo_time_today", "horo_time_tomorrow", "horo_utc_offset", "horo_payload"):
+        context.user_data.pop(key, None)
+    return ConversationHandler.END
 
 
 def build_horoscope_subscription_handler() -> ConversationHandler:
@@ -728,33 +750,41 @@ def build_horoscope_subscription_handler() -> ConversationHandler:
 
     It also registers standalone /horoscope_stop and horo_settings:* callbacks.
     """
+    private_text = filters.UpdateType.MESSAGE & filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND
+    menu_switches: list[BaseHandler[Update, ContextTypes.DEFAULT_TYPE, Any]] = [
+        MessageHandler(private_text & filters.Regex(TAROT_MENU_RE), on_tarot_during_horoscope),
+        MessageHandler(private_text & filters.Regex(NATAL_MENU_RE), on_natal_during_horoscope),
+    ]
     with suppress_hybrid_conversation_handler_warning():
         return ConversationHandler(
             entry_points=[
                 # Deep link entry — called programmatically from start_command
                 CommandHandler("horoscope_settings", horoscope_settings_command),
                 CommandHandler("horoscope", horoscope_settings_command),
-                MessageHandler(filters.TEXT & filters.Regex(HOROSCOPE_INTENT_RE), horoscope_settings_command),
+                MessageHandler(private_text & filters.Regex(HOROSCOPE_INTENT_RE), horoscope_settings_command),
                 CallbackQueryHandler(start_subscribe_horoscope, pattern="^start_horoscope$"),
                 CallbackQueryHandler(horoscope_settings_callback, pattern=r"^horo_settings:(?:start|edit)$"),
             ],
             states={
-                CHOOSE_SIGN: [CallbackQueryHandler(on_sign_chosen, pattern="^horo_sign:")],
+                CHOOSE_SIGN: [*menu_switches, CallbackQueryHandler(on_sign_chosen, pattern="^horo_sign:")],
                 CHOOSE_TIME_TODAY: [
+                    *menu_switches,
                     CallbackQueryHandler(on_time_today_btn, pattern="^horo_time_today:"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_today_text),
                 ],
                 CHOOSE_TIME_TOMORROW: [
+                    *menu_switches,
                     CallbackQueryHandler(on_time_tomorrow_btn, pattern="^horo_time_tomorrow:"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, on_time_tomorrow_text),
                 ],
                 CHOOSE_TZ: [
+                    *menu_switches,
                     MessageHandler(filters.LOCATION, on_tz_location),
                     MessageHandler(filters.Regex("^⌨️ Выбрать вручную из списка$"), on_tz_manual),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, on_tz_text),
                     CallbackQueryHandler(on_tz_chosen, pattern="^horo_tz:"),
                 ],
-                CONFIRM: [CallbackQueryHandler(on_confirm, pattern="^horo_confirm:")],
+                CONFIRM: [*menu_switches, CallbackQueryHandler(on_confirm, pattern="^horo_confirm:")],
             },
             fallbacks=[
                 CommandHandler("horoscope_stop", horoscope_stop_command),
@@ -766,6 +796,20 @@ def build_horoscope_subscription_handler() -> ConversationHandler:
             name="horoscope_subscription",
             persistent=False,
         )
+
+
+def register_horoscope_subscription_handler(application: Application) -> None:
+    """Let the current horoscope owner finish before group 0 opens a natal form."""
+    conversation = build_horoscope_subscription_handler()
+
+    async def close_before_natal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        matched = conversation.check_update(update)
+        if matched is not None:
+            await conversation.handle_update(update, application, matched, context)
+
+    natal_text = filters.UpdateType.MESSAGE & filters.ChatType.PRIVATE & filters.TEXT & filters.Regex(NATAL_MENU_RE)
+    application.add_handler(MessageHandler(natal_text, close_before_natal), group=-88)
+    application.add_handler(conversation)
 
 
 async def send_horoscope_invite(bot, user_id: int) -> bool:

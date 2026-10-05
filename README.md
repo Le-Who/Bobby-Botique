@@ -689,6 +689,11 @@ Administrative and developer commands are deliberately excluded from `app/bot_co
 ## Main User Flows
 
 - Start with `/help` for the current categorized RU/EN public catalog.
+- In private chat, standalone `натальная` opens the natal menu, `таро` or
+  `расклад` opens Tarot, and `гороскоп` opens the horoscope menu without a slash.
+  Case, surrounding whitespace and final `?!.` are accepted. These exact menu
+  words also switch out of an active input form; ordinary phrases retain normal
+  chat routing.
 - Standard chat combines selected model, history and consent-gated memory.
 - `?` requests quick search; `??` requests bounded agentic research.
 - Enable inline mode in BotFather and use the deployed bot's username. Deferred
@@ -696,15 +701,26 @@ Administrative and developer commands are deliberately excluded from `app/bot_co
   work without it.
 - Inline compatibility accepts `@<bot_username> совместимость мужчина скорпион женщина водолей`,
   `совм скорпион водолей` and `compatibility man scorpio woman aquarius`. The result
-  has adjacent buttons for birth date input and a tarot session for the same pair.
-  Birth dates are collected only in private chat, from 1900 through today. Raw dates
-  are cleared on completion, cancellation, mode changes or after 30 minutes;
-  contextual tarot receives derived positions only. Missing time/place and sign
-  boundary uncertainty are stated explicitly; readings are symbolic.
+  has adjacent «Подробнее о паре» and Tarot buttons. The first opens private chat
+  with one «Заполнить данные пары» button for the compatibility Mini App when an
+  HTTPS `WEBAPP_BASE_URL` (or webhook base) is configured. The form collects two
+  dates, optional exact/approximate/range times and local-catalog cities, then
+  provides editable confirmation and one calculation button. Known time requires
+  a city; each partner may independently choose unknown time and skip birthplace.
+  With no HTTPS Mini App base, the existing private two-date chat flow remains.
+  Dates are supported from 1900 through today. Local synastry reuses natal
+  astronomy for inter-chart aspects, Ascendant/MC and equal-house overlays;
+  unknown-time aspects and placements are shown only when stable across the
+  sampled interval. Missing time for one partner preserves the other's houses.
+  Signed and currently authorized Mini App identity determines private delivery;
+  results are not publicly hosted. Birth input is not persisted or sent to an
+  interpretation provider. The chat fallback clears raw dates on completion,
+  cancellation, mode changes or after 30 minutes; contextual Tarot stores derived
+  positions only in its existing bounded 30-minute context. Readings are symbolic.
   Standalone private date messages in `DD.MM.YYYY` or `YYYY-MM-DD` form, including
   invalid calendar dates and edited messages after a restart or eviction of the
   bounded tracking markers, are intercepted before ordinary AI processing and
-  message logging. The reply directs the user to «По датам рождения» or `/natal`;
+  message logging. The reply directs the user to «Подробнее о паре» or `/natal`;
   active compatibility and natal forms keep their own input handlers. This guard
   covers date-only messages, with no general scrubbing promise for dates embedded
   in arbitrary prose.

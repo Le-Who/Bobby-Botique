@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="{{ compatibility_options.lang }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <title>{{ compatibility_options['copy'].title }}</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/css/natal-theme.css">
+  <link rel="stylesheet" href="/static/css/compatibility-form.css">
+  <script nonce="{{ csp_nonce }}" src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script nonce="{{ csp_nonce }}" src="/static/js/natal-theme.js"></script>
+  <script nonce="{{ csp_nonce }}" id="compatibility-options" type="application/json">{{ compatibility_options | tojson }}</script>
+  <script nonce="{{ csp_nonce }}" src="/static/js/compatibility-form.js" defer></script>
+</head>
+<body>
+{% set copy = compatibility_options['copy'] %}
+<main class="pair-page">
+  <header class="pair-topbar">
+    <span class="pair-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><circle cx="8.5" cy="12" r="6" stroke="currentColor" stroke-width="1.5"/><circle cx="15.5" cy="12" r="6" stroke="currentColor" stroke-width="1.5"/></svg>
+    </span>
+    <h1>{{ copy.title }}</h1>
+    <button id="cancel-button" class="cancel-button" type="button">{{ copy.cancel }}</button>
+  </header>
+  <p class="intro">{{ copy.intro }}</p>
+  <nav class="step-progress" aria-label="{{ copy.step }}">
+    <ol class="step-rail">
+      {% for label in [copy.first, copy.second, copy.review] %}
+      <li class="rail-step" {% if loop.first %}aria-current="step"{% endif %}>
+        <span class="rail-marker" aria-hidden="true">{{ loop.index }}</span><span>{{ label }}</span>
+      </li>
+      {% endfor %}
+    </ol>
+    <p id="step-status" class="step-status" aria-live="polite"></p>
+  </nav>
+  <form id="compatibility-form" novalidate autocomplete="off">
+    {% for partner, label in [('first', compatibility_options.first_label), ('second', compatibility_options.second_label)] %}
+    <section id="partner-{{ partner }}" class="partner-panel" aria-labelledby="{{ partner }}-title" {% if not loop.first %}hidden{% endif %}>
+      <h2 id="{{ partner }}-title" class="panel-title" tabindex="-1">{{ label }}</h2>
+      <fieldset class="field-group date-field">
+        <legend>{{ copy.date }}</legend>
+        <div class="date-grid">
+          {% for part in ['day', 'month', 'year'] %}
+          <div class="date-part">
+            <label for="{{ partner }}-{{ part }}">{{ copy[part] }}</label>
+            <select id="{{ partner }}-{{ part }}" aria-describedby="{{ partner }}-date-error" required>
+              <option value="">{{ copy[part] }}</option>
+            </select>
+          </div>
+          {% endfor %}
+        </div>
+        <p id="{{ partner }}-date-error" class="field-error" role="alert" hidden></p>
+      </fieldset>
+      <fieldset class="field-group">
+        <legend>{{ copy.time }}</legend>
+        <div class="precision-grid">
+          {% for precision in ['unknown', 'exact', 'approximate', 'range'] %}
+          <label class="precision-choice">
+            <input type="radio" name="{{ partner }}-time-precision" value="{{ precision }}" {% if loop.first %}checked{% endif %}>
+            <span>{{ copy[precision] }}</span>
+          </label>
+          {% endfor %}
+        </div>
+        <div id="{{ partner }}-single-time" class="time-fields" hidden>
+          <label for="{{ partner }}-time">{{ copy.time }}</label>
+          <input id="{{ partner }}-time" type="time" step="60" aria-describedby="{{ partner }}-time-error">
+        </div>
+        <div id="{{ partner }}-range-time" class="range-fields" hidden>
+          <div class="field">
+            <label for="{{ partner }}-time-start">{{ copy.time_start }}</label>
+            <input id="{{ partner }}-time-start" type="time" step="60" aria-describedby="{{ partner }}-time-error">
+          </div>
+          <div class="field">
+            <label for="{{ partner }}-time-end">{{ copy.time_end }}</label>
+            <input id="{{ partner }}-time-end" type="time" step="60" aria-describedby="{{ partner }}-time-error">
+          </div>
+        </div>
+        <p id="{{ partner }}-time-error" class="field-error" role="alert" hidden></p>
+      </fieldset>
+      <fieldset class="field-group place-field">
+        <legend>{{ copy.place }}</legend>
+        <label class="place-choice">
+          <input id="{{ partner }}-place-unknown" type="checkbox" checked>
+          <span>{{ copy.place_unknown }}</span>
+        </label>
+        <div id="{{ partner }}-place-fields" class="place-fields" hidden>
+          <div class="field autocomplete-field">
+            <label for="{{ partner }}-country">{{ copy.country }}</label>
+            <input id="{{ partner }}-country" type="text" maxlength="100" role="combobox"
+              aria-autocomplete="list" aria-expanded="false" aria-controls="{{ partner }}-country-results"
+              aria-describedby="{{ partner }}-country-error" spellcheck="false">
+            <div id="{{ partner }}-country-results" class="search-results" role="listbox" aria-label="{{ copy.country }}" hidden></div>
+            <p id="{{ partner }}-country-error" class="field-error" role="alert" hidden></p>
+          </div>
+          <div class="field autocomplete-field">
+            <label for="{{ partner }}-city">{{ copy.city }}</label>
+            <input id="{{ partner }}-city" type="text" maxlength="100" role="combobox"
+              aria-autocomplete="list" aria-expanded="false" aria-controls="{{ partner }}-city-results"
+              aria-describedby="{{ partner }}-city-hint {{ partner }}-city-error" spellcheck="false" disabled>
+            <p id="{{ partner }}-city-hint" class="hint">{{ copy.city_hint }}</p>
+            <div id="{{ partner }}-city-results" class="search-results" role="listbox" aria-label="{{ copy.city }}" hidden></div>
+            <p id="{{ partner }}-city-error" class="field-error" role="alert" hidden></p>
+          </div>
+        </div>
+      </fieldset>
+    </section>
+    {% endfor %}
+    <section id="compatibility-review" aria-labelledby="review-title" hidden>
+      <h2 id="review-title" class="panel-title" tabindex="-1">{{ copy.review }}</h2>
+      {% for partner, label in [('first', compatibility_options.first_label), ('second', compatibility_options.second_label)] %}
+      <article id="review-{{ partner }}" class="review-partner">
+        <div class="review-heading">
+          <h3>{{ label }}</h3>
+          <button class="edit-button" type="button" data-edit="{{ partner }}" aria-label="{{ copy.back }}: {{ label }}">{{ copy.back }}</button>
+        </div>
+        <dl class="review-values"></dl>
+      </article>
+      {% endfor %}
+    </section>
+    <p id="form-error" class="form-error" role="alert" tabindex="-1" hidden></p>
+    <div class="action-bar">
+      <div class="action-content">
+        <button id="back-button" class="back-button" type="button" hidden>{{ copy.back }}</button>
+        <button id="next-button" class="primary-button" type="button">{{ copy.next }}</button>
+        <button id="submit-button" class="primary-button" type="submit" hidden>{{ copy.submit }}</button>
+      </div>
+    </div>
+  </form>
+  <section id="submission-status" class="submission-status" role="status" tabindex="-1" hidden>
+    <span class="accepted-mark" aria-hidden="true">✓</span>
+    <h2>{{ copy.accepted }}</h2>
+    <p>{{ copy.accepted_note }}</p>
+  </section>
+</main>
+</body>
+</html>

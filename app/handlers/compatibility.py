@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import html
+import os
 import secrets
 import time
+from urllib.parse import urlencode, urlsplit
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update, WebAppInfo
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from app.i18n import t
@@ -101,6 +103,17 @@ async def start_compatibility(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await ensure_state_loaded(update.effective_user.id)
     clear_tarot_session(update.effective_user.id)
+    form_url = compatibility_form_url(pair)
+    if form_url:
+        labels = " + ".join(partner_label(partner, lang=lang) for partner in (pair.first, pair.second))
+        await message.reply_text(
+            t("compat.form_intro", lang, pair=html.escape(labels)),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton(t("compat.form_button", lang), web_app=WebAppInfo(url=form_url))]]
+            ),
+        )
+        return
     flow_id = secrets.token_hex(8)
     context.user_data[_FLOW_KEY] = {
         "pair": pair,
@@ -136,7 +149,11 @@ class PendingCompatibilityFilter(filters.MessageFilter):
         self._application = application
 
     def filter(self, message) -> bool:
+        from app.handlers.menu_intents import is_standalone_menu_request
+
         if not message.from_user or message.chat.type != "private":
+            return False
+        if is_standalone_menu_request(message.text):
             return False
         user_data = self._application.user_data.get(message.from_user.id)
         return isinstance(user_data, dict) and isinstance(user_data.get(_FLOW_KEY), dict)
@@ -241,7 +258,13 @@ async def handle_compatibility_date(update: Update, context: ContextTypes.DEFAUL
     except Exception:
         await message.reply_text(t("compat.failed", lang))
         return
-    contexts = context.user_data.setdefault(_TAROT_KEY, {})
+    keyboard = compatibility_result_keyboard(context.user_data, reading.tarot_context, lang=lang)
+    await message.reply_text(reading.html, parse_mode="HTML", reply_markup=keyboard)
+
+
+def compatibility_result_keyboard(user_data: dict, question: str, *, lang: str) -> InlineKeyboardMarkup:
+    """Store only derived pair context for both chat and Mini App results."""
+    contexts = user_data.setdefault(_TAROT_KEY, {})
     now = time.monotonic()
     for token in list(contexts):
         if now - contexts[token]["created_at"] > _FLOW_TTL:
@@ -249,11 +272,37 @@ async def handle_compatibility_date(update: Update, context: ContextTypes.DEFAUL
     while len(contexts) >= 5:
         contexts.pop(next(iter(contexts)))
     token = secrets.token_hex(8)
-    contexts[token] = {"question": reading.tarot_context, "created_at": now, "lang": lang}
-    keyboard = InlineKeyboardMarkup(
+    contexts[token] = {"question": question, "created_at": now, "lang": lang}
+    return InlineKeyboardMarkup(
         [[InlineKeyboardButton(t("compat.tarot_button", lang), callback_data=f"compat_tarot:{token}")]]
     )
-    await message.reply_text(reading.html, parse_mode="HTML", reply_markup=keyboard)
+
+
+def compatibility_form_url(pair: CompatibilityPair) -> str:
+    from app.config import settings
+
+    base = (getattr(settings, "WEBAPP_BASE_URL", "") or "").strip().rstrip("/")
+    if not base:
+        base = (
+            (getattr(settings, "WEBHOOK_URL", "") or os.environ.get("WEBHOOK_URL", ""))
+            .split("/webhook", 1)[0]
+            .rstrip("/")
+        )
+    parsed = urlsplit(base)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        return ""
+    return f"{base}/webapp/compatibility-form?{urlencode({'pair': compatibility_start_payload(pair)})}"
+
+
+async def clear_compatibility_on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    clear_compatibility_input(context.user_data)
 
 
 @safe_handler()
@@ -289,9 +338,22 @@ async def compatibility_tarot_callback(update: Update, context: ContextTypes.DEF
 
 
 def register_compatibility_handlers(application: Application) -> None:
+    from app.handlers.menu_intents import is_standalone_menu_request
+
+    class MenuRequestFilter(filters.MessageFilter):
+        def filter(self, message) -> bool:
+            return message.chat.type == "private" and is_standalone_menu_request(message.text)
+
     pending = PendingCompatibilityFilter(application)
     application.add_handler(
         MessageHandler(filters.UpdateType.MESSAGE & filters.COMMAND, clear_compatibility_on_command), group=-90
+    )
+    application.add_handler(
+        MessageHandler(
+            filters.UpdateType.MESSAGE & filters.TEXT & ~filters.COMMAND & MenuRequestFilter(),
+            clear_compatibility_on_menu,
+        ),
+        group=-89,
     )
     # Dates precede both natal conversations and ordinary chat/memory routing.
     private_dates = (filters.UpdateType.MESSAGE & pending) | (
