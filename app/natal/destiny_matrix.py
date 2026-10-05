@@ -284,7 +284,42 @@ def render_destiny_matrix_svg(matrix: DestinyMatrixData) -> str:
         ]
     )
     parts.append("</svg>")
-    return "".join(parts)
+    svg = "".join(parts)
+    palette = {
+        "#fffef7": ("glow", "#f7fdff"),
+        "#eef7f5": ("glow-middle", "#e4f6fc"),
+        "#e6eee9": ("glow-edge", "#d6f2fa"),
+        "#fffefa": ("surface", "#ffffff"),
+        "#1f332c": ("line", "#517f96"),
+        "#93a19a": ("line-soft", "#9bcddb"),
+        "#111827": ("ink", "#1d4156"),
+        "#16251f": ("ink", "#1d4156"),
+        "#f8d84e": ("center", "#87def1"),
+        "#8d5bd6": ("node", "#e0edff"),
+        "#d94d45": ("node", "#e0edff"),
+        "#ef7047": ("node", "#e0edff"),
+        "#7c55ca": ("node", "#e0edff"),
+        "#f3a64d": ("node", "#e0edff"),
+        "#f6f0e8": ("surface", "#ffffff"),
+        "#eff6ff": ("surface", "#ffffff"),
+        "#fff1f2": ("surface", "#ffffff"),
+        "#a8dc62": ("node", "#e0edff"),
+        "#5f7ff0": ("node", "#e0edff"),
+        "#e9f7ff": ("surface", "#ffffff"),
+        "#20352f": ("shadow", "#517f96"),
+        "#2f69c9": ("blue", "#346fa9"),
+        "#d94d6a": ("pink", "#ad4565"),
+        "#c02662": ("pink", "#ad4565"),
+        "#0f8a55": ("green", "#20764f"),
+        "#7c3aed": ("violet", "#7662b0"),
+        "#5b3fb0": ("violet", "#7662b0"),
+        "#9f331f": ("warm", "#925b32"),
+        "#c05621": ("warm", "#925b32"),
+        "#0f766e": ("teal", "#147d7d"),
+    }
+    for color, (token, fallback) in palette.items():
+        svg = svg.replace(f'="{color}"', f'="var(--matrix-{token}, {fallback})"')
+    return svg
 
 
 def build_destiny_matrix_sections(matrix: DestinyMatrixData) -> list[ReportSection]:

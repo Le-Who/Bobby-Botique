@@ -521,11 +521,34 @@ async def test_result_refresh_coalesces_multiple_queue_calls(monkeypatch) -> Non
 
 @pytest.mark.asyncio
 async def test_prepare_daily_puzzle_prefills_hints_and_image(monkeypatch) -> None:
+    from app.games import crocodile_daily, daily_ai, word_bank
     from app.games.crocodile_daily import prepare_daily_puzzle
-    from app.runtime_settings import lifecycle, store
+    from app.repos import settings_repo
+    from app.runtime_settings import models, store
 
-    monkeypatch.setattr(lifecycle, "refresh_runtime_settings", AsyncMock())
+    # Keep lifecycle prompt registration before the operation pins its registry.
+    # Only durable/provider boundaries are replaced: no DB or network is needed.
+    monkeypatch.setattr(models, "refresh_catalogs", AsyncMock())
     monkeypatch.setattr(store, "get_snapshot", AsyncMock(return_value=store.SettingsSnapshot(0, {})))
+    setting_keys = {
+        "daily_croc_text_model",
+        "daily_croc_text_model_image_prompt",
+        repo.DAILY_IMAGE_MODEL_SETTING_KEY,
+        crocodile_daily.DAILY_IMAGE_QUOTA_SETTING_KEY,
+    }
+
+    async def get_test_setting(key, default=""):
+        assert key in setting_keys, f"Unexpected preparation setting: {key}"
+        return default
+
+    monkeypatch.setattr(settings_repo, "get_global_setting", get_test_setting)
+    monkeypatch.setattr(
+        daily_ai,
+        "generate_daily_text_for",
+        AsyncMock(return_value='{"visual_description":"crocodile","is_drawable":true}'),
+    )
+    monkeypatch.setattr(word_bank, "_PROMPT_TRANSLATION_CACHE", {})
+    monkeypatch.setattr(crocodile_daily, "_local_image_quota", {})
 
     puzzle_date = date(2026, 4, 21)
     puzzle = repo.DailyPuzzle(
@@ -566,7 +589,11 @@ async def test_prepare_daily_puzzle_prefills_hints_and_image(monkeypatch) -> Non
     assert prepared.hints == ["h1", "h2", "h3"]
     assert prepared.image_file_id == "file-123"
     assert prepared.prepared_at is not None
-    assert "крокодил" in prepared.image_prompt
+    assert 'The subject is "crocodile"' in prepared.image_prompt
+    assert 'Topic context: "Разное"' in prepared.image_prompt
+    assert "Make the composition immediately readable." in prepared.image_prompt
+    assert "Absolutely no text" in prepared.image_prompt
+    assert provider.generate.await_args.kwargs["prompt"] == prepared.image_prompt
     provider.generate.assert_awaited_once()
     bot.send_photo.assert_awaited_once()
     temp_msg.delete.assert_awaited_once()

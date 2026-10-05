@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import math
+import re
 
 from app.natal.models import ChartData
 
@@ -38,8 +39,9 @@ def render_chart_svg(chart: ChartData) -> str:
     center = 400
     radius = 280
     planet_radius = 235
+    viewbox_height = 680 if chart.input_quality.houses_available else 720
     parts = [
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-labelledby="chart-title chart-desc">',
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="60 60 680 {viewbox_height}" role="img" aria-labelledby="chart-title chart-desc">',
         '<title id="chart-title">Натальная карта</title>',
         '<desc id="chart-desc">Круговая схема планет, аспектов и домов.</desc>',
         "<defs>"
@@ -50,9 +52,7 @@ def render_chart_svg(chart: ChartData) -> str:
         '<feGaussianBlur stdDeviation="5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>'
         "</filter>"
         "</defs>",
-        '<rect width="800" height="800" rx="36" fill="url(#natal-bg)"/>',
-        '<circle cx="224" cy="158" r="74" fill="#ffffff" opacity="0.28"/>',
-        '<circle cx="602" cy="642" r="96" fill="#ffffff" opacity="0.22"/>',
+        '<circle cx="400" cy="400" r="328" fill="url(#natal-bg)"/>',
         f'<circle cx="{center}" cy="{center}" r="{radius}" fill="#fffdfc" fill-opacity="0.92" stroke="#8a6ed0" stroke-width="3.2"/>',
         f'<circle cx="{center}" cy="{center}" r="{planet_radius}" fill="none" stroke="#9b87c9" stroke-width="1.8"/>',
         f'<circle cx="{center}" cy="{center}" r="{radius - 42}" fill="none" stroke="#d79aae" stroke-width="1.4"/>',
@@ -69,7 +69,39 @@ def render_chart_svg(chart: ChartData) -> str:
             'font-size="18" fill="#b45309">Время рождения неизвестно: дома и Асцендент скрыты</text>'
         )
     parts.append("</svg>")
-    return "".join(parts)
+    return apply_chart_palette("".join(parts))
+
+
+def apply_chart_palette(svg: str) -> str:
+    """Theme drawing colors without changing stored coordinates or link targets.
+
+    Fallback colors keep an exported standalone diagram readable. The hosted
+    report supplies the dark Observatory or light Prism palette through CSS.
+    The old renderer colors are also recognized for already stored diagrams.
+    """
+    colors = {
+        "#fffdf8": ("glow", "#f7fdff"),
+        "#f7eefc": ("glow-middle", "#e4f6fc"),
+        "#dcecff": ("glow-edge", "#d6f2fa"),
+        "#ffffff": ("surface", "#ffffff"),
+        "#fffdfc": ("disk", "#effaff"),
+        "#8a6ed0": ("rim", "#39add4"),
+        "#9b87c9": ("ring", "#77b9cd"),
+        "#d79aae": ("ring-soft", "#9bcddb"),
+        "#7d68a8": ("ticks", "#517f96"),
+        "#4d3a75": ("glyph", "#1d4156"),
+        "#d4c6e2": ("houses", "#87b9ca"),
+        "#7da7d9": ("harmonious", "#328bca"),
+        "#d58cab": ("tense", "#d77985"),
+        "#6e5597": ("planet-rim", "#39add4"),
+        "#3f2e5c": ("planet", "#1d4156"),
+        "#b45309": ("notice", "#765321"),
+    }
+    for color, (token, fallback) in colors.items():
+        svg = svg.replace(f'="{color}"', f'="var(--chart-{token}, {fallback})"')
+    # VS15 also repairs the presentation of legacy stored zodiac glyphs on
+    # platforms whose default for these codepoints is a colored emoji tile.
+    return re.sub(r"([♈♉♊♋♌♍♎♏♐♑♒♓])(?![︎️])", r"\1︎", svg)
 
 
 def _render_zodiac_ticks(center: int, radius: int) -> list[str]:
@@ -89,7 +121,7 @@ def _render_zodiac_ticks(center: int, radius: int) -> list[str]:
         )
         parts.append(
             f'<text x="{label_x:.1f}" y="{label_y:.1f}" text-anchor="middle" dominant-baseline="middle" '
-            'font-family="Georgia, serif" font-size="22" fill="#4d3a75">'
+            'font-family="Segoe UI Symbol, Apple Symbols, Noto Sans Symbols 2, sans-serif" font-size="34" fill="#4d3a75">'
             f"<title>{html.escape(sign_name)}</title>{html.escape(sign_symbol)}</text>"
         )
     return parts
@@ -132,15 +164,15 @@ def _render_planets(chart: ChartData, center: int, radius: int) -> list[str]:
         x, y = _point(center, radius, planet.longitude)
         label = html.escape(planet.label)
         section_id = html.escape(f"#section-{planet.key}", quote=True)
-        symbol = html.escape(_PLANET_SYMBOLS.get(planet.key, planet.key[:2].upper()))
+        symbol = html.escape(_PLANET_SYMBOLS.get(planet.key, planet.key[:2].upper()) + "︎")
         parts.append(f'<a href="{section_id}">')
         parts.append(
-            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="17" fill="#ffffff" '
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="21" fill="#ffffff" '
             'stroke="#6e5597" stroke-width="2.2" filter="url(#soft-glow)"/>'
         )
         parts.append(
             f'<text x="{x:.1f}" y="{y + 1:.1f}" text-anchor="middle" dominant-baseline="middle" '
-            f'font-family="Georgia, serif" font-size="18" fill="#3f2e5c">{symbol}</text>'
+            f'font-family="Segoe UI Symbol, Apple Symbols, Noto Sans Symbols 2, sans-serif" font-size="26" fill="#3f2e5c">{symbol}</text>'
         )
         parts.append(f"<title>{label} в знаке {html.escape(planet.sign)}</title></a>")
     return parts

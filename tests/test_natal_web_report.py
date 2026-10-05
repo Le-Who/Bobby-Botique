@@ -29,9 +29,17 @@ def _run_browser_regression(payload: dict, scenario: str) -> None:
         if required:
             pytest.fail("Required browser regression cannot run: install tests/browser dependencies with npm ci")
         pytest.skip("Playwright is needed for the optional browser regression")
-    payload["navigation_script"] = (Path(__file__).resolve().parents[1] / "app/static/js/natal-report.js").read_text(
-        encoding="utf-8"
-    )
+    static_root = Path(__file__).resolve().parents[1] / "app/static"
+    payload["assets"] = {
+        f"/static/{path.relative_to(static_root).as_posix()}": path.read_text(encoding="utf-8")
+        for path in [
+            static_root / "js/natal-theme.js",
+            static_root / "js/natal-report.js",
+            static_root / "css/natal-theme.css",
+            static_root / "css/natal-report.css",
+        ]
+        if path.exists()
+    }
     harness = r"""
 const assert = require('node:assert/strict');
 const { chromium } = require('playwright');
@@ -39,7 +47,10 @@ const payload = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage({ viewport: { width: 320, height: 844 }, reducedMotion: 'reduce' });
+    const page = await browser.newPage({
+      viewport: { width: 320, height: 844 }, reducedMotion: 'reduce',
+      javaScriptEnabled: payload.javascript !== false
+    });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     let submitted;
@@ -47,8 +58,12 @@ const payload = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
       const url = new URL(route.request().url());
       if (url.hostname === 'telegram.org') return route.fulfill({ body: '', contentType: 'application/javascript' });
       if (url.hostname !== 'natal.test') return route.abort();
-      if (url.pathname === '/static/js/natal-report.js') {
-        return route.fulfill({ body: payload.navigation_script, contentType: 'application/javascript' });
+      if (url.pathname.startsWith('/static/')) {
+        const body = payload.assets[url.pathname];
+        return route.fulfill({
+          body: body || '', status: body === undefined ? 404 : 200,
+          contentType: url.pathname.endsWith('.css') ? 'text/css' : 'application/javascript'
+        });
       }
       if (url.pathname === '/webapp/api/natal/submit') {
         submitted = route.request().postDataJSON();
@@ -132,6 +147,8 @@ async def test_natal_report_route_returns_html(monkeypatch):
     )
     assert "object-src 'none'" in response.headers["Content-Security-Policy"]
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+    for script in re.findall(r"<script\b[^>]*>", body):
+        assert f'nonce="{nonce.group(1)}"' in script
 
 
 @pytest.mark.asyncio
@@ -351,5 +368,235 @@ async def test_form_enforces_supported_birth_values_before_next_step_in_browser(
       assert.equal(await page.locator('#birth-time-error').isVisible(), false);
     }
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+""",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+@pytest.mark.parametrize(
+    ("host_theme", "system_theme", "initial_theme"),
+    [("dark", "light", "dark"), ("light", "dark", "light"), (None, "dark", "dark")],
+)
+async def test_form_theme_follows_host_or_system_without_resetting_input_in_browser(
+    host_theme, system_theme, initial_theme
+):
+    from app.web import quart_app
+
+    response = await quart_app.test_client().get("/webapp/natal-form")
+    _run_browser_regression(
+        {
+            "html": await response.get_data(as_text=True),
+            "headers": {"Content-Security-Policy": response.headers["Content-Security-Policy"]},
+            "host_theme": host_theme,
+            "system_theme": system_theme,
+            "initial_theme": initial_theme,
+        },
+        r"""
+    await page.emulateMedia({ colorScheme: payload.system_theme });
+    await page.addInitScript(({ hostTheme }) => {
+      const handlers = {};
+      window.Telegram = { WebApp: {
+        initData: hostTheme ? 'synthetic-test-session' : '',
+        colorScheme: hostTheme || 'light', themeParams: {},
+        onEvent(name, callback) { handlers[name] = callback; },
+        ready() {}, expand() {}, close() {}
+      } };
+      window.changeHostTheme = theme => {
+        window.Telegram.WebApp.colorScheme = theme;
+        handlers.themeChanged?.();
+      };
+    }, { hostTheme: payload.host_theme });
+    await page.goto('http://natal.test/form');
+    assert.equal(await page.locator('html').getAttribute('data-natal-theme'), payload.initial_theme);
+    await page.locator('.option-card[data-value="combined"]').click();
+    await page.locator('#next-button').click();
+    await page.locator('#birth-day').selectOption('09');
+    await page.locator('#birth-month').selectOption('11');
+    await page.locator('#birth-year').selectOption('1997');
+    await page.locator('#next-button').click();
+    await page.locator('[data-group="time_precision"] [data-value="exact"]').click();
+    await page.locator('#birth-time').fill('10:30');
+    const nextTheme = payload.initial_theme === 'dark' ? 'light' : 'dark';
+    if (payload.host_theme) {
+      await page.emulateMedia({ colorScheme: payload.system_theme === 'dark' ? 'light' : 'dark' });
+      assert.equal(await page.locator('html').getAttribute('data-natal-theme'), payload.initial_theme);
+      await page.evaluate(theme => window.changeHostTheme(theme), nextTheme);
+    } else {
+      await page.emulateMedia({ colorScheme: nextTheme });
+    }
+    await page.waitForFunction(theme => document.documentElement.dataset.natalTheme === theme, nextTheme);
+    assert.equal(await page.locator('#birth-time').inputValue(), '10:30');
+    assert.equal(await page.locator('.form-slide[aria-hidden="false"]').getAttribute('id'), 'time-slide');
+    assert.equal(await page.locator('[data-group="time_precision"] [data-value="exact"]').getAttribute('aria-pressed'), 'true');
+    const columns = await page.locator('.precision-grid').evaluate(element => getComputedStyle(element).gridTemplateColumns.split(' ').length);
+    assert.equal(columns, nextTheme === 'dark' ? 2 : 1);
+    for (const width of [320, 390, 900]) {
+      await page.setViewportSize({ width, height: 844 });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    }
+""",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+async def test_form_blocks_duplicate_pending_submission_and_recovers_after_error_in_browser():
+    from app.web import quart_app
+
+    response = await quart_app.test_client().get("/webapp/natal-form")
+    _run_browser_regression(
+        {"html": await response.get_data(as_text=True)},
+        r"""
+    let requests = 0;
+    let releaseResponse;
+    const pendingResponse = new Promise(resolve => { releaseResponse = resolve; });
+    await page.route('**/webapp/api/natal/submit', async route => {
+      requests += 1;
+      if (requests === 1) {
+        await pendingResponse;
+        await route.fulfill({ status: 503, body: '{"ok":false,"detail":"Проверочный отказ"}', contentType: 'application/json' });
+      } else {
+        await route.fulfill({ body: '{"ok":true}', contentType: 'application/json' });
+      }
+    });
+    await page.goto('http://natal.test/form');
+    await page.locator('.option-card[data-value="destiny_matrix"]').click();
+    await page.locator('#next-button').click();
+    await page.locator('#birth-day').selectOption('09');
+    await page.locator('#birth-month').selectOption('11');
+    await page.locator('#birth-year').selectOption('1997');
+    await page.locator('#next-button').click();
+    assert.ok((await page.locator('#summary').innerText()).includes('9 ноября 1997'));
+    await page.locator('#submit-button').click();
+    await page.waitForFunction(() => document.getElementById('submit-button').textContent === 'Отправляю...');
+    await page.locator('#birth-year').dispatchEvent('change');
+    assert.equal(await page.locator('#submit-button').isDisabled(), true);
+    await page.locator('#natal-form').dispatchEvent('submit');
+    releaseResponse();
+    await page.waitForFunction(() => !document.getElementById('error-box').hidden);
+    assert.equal(requests, 1);
+    assert.equal(await page.locator('#error-box').innerText(), 'Проверочный отказ');
+    assert.equal(await page.locator('#submit-button').isEnabled(), true);
+    await page.locator('#submit-button').click();
+    await page.waitForFunction(() => document.getElementById('submit-button').textContent === 'Закрыть');
+    assert.equal(requests, 2);
+""",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+async def test_form_clears_manual_city_when_country_changes_and_focuses_next_in_browser():
+    from app.web import quart_app
+
+    response = await quart_app.test_client().get("/webapp/natal-form")
+    _run_browser_regression(
+        {"html": await response.get_data(as_text=True)},
+        r"""
+    await page.goto('http://natal.test/form');
+    await page.locator('.option-card[data-value="combined"]').click();
+    await page.locator('#next-button').click();
+    await page.locator('#birth-day').selectOption('09');
+    await page.locator('#birth-month').selectOption('11');
+    await page.locator('#birth-year').selectOption('1997');
+    await page.locator('#next-button').click();
+    await page.locator('[data-group="time_precision"] [data-value="unknown"]').click();
+    assert.equal(await page.locator('#single-time-block').isVisible(), false);
+    assert.equal(await page.locator('#range-time-block').isVisible(), false);
+    await page.locator('#next-button').click();
+    await page.locator('#city-chips .chip[data-value="manual"]').click();
+    await page.locator('#manual-city').fill('Тестовый город');
+    assert.equal(await page.locator('#next-button').isEnabled(), true);
+    await page.locator('#country-chips .chip:not([data-value="manual"])').nth(1).click();
+    assert.equal(await page.locator('#manual-city').inputValue(), '');
+    assert.equal(await page.locator('#next-button').isEnabled(), false);
+    await page.locator('#city-chips .chip:not([data-value="manual"])').first().click();
+    await page.waitForFunction(() => document.activeElement.id === 'next-button');
+    await page.locator('#next-button').click();
+    await page.locator('#submit-button').click();
+    await page.waitForFunction(() => document.getElementById('submit-button').textContent === 'Закрыть');
+    assert.equal(submitted.time_precision, 'unknown');
+    assert.equal('birth_time' in submitted, false);
+    assert.equal('city' in submitted, false);
+""",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.browser
+@pytest.mark.parametrize("precision", [TimePrecision.EXACT, TimePrecision.UNKNOWN])
+@pytest.mark.parametrize("javascript", [True, False])
+async def test_report_theme_keeps_real_diagrams_and_precision_limits_in_browser(monkeypatch, precision, javascript):
+    from app.natal.destiny_matrix import build_destiny_matrix_sections, calculate_destiny_matrix
+    from app.natal.svg_renderer import render_chart_svg
+    from app.web import quart_app
+
+    matrix = calculate_destiny_matrix("1997-11-09")
+    known_time = precision != TimePrecision.UNKNOWN
+    chart = ChartData(
+        input_quality=InputQuality(time_precision=precision, houses_available=known_time, angles_available=known_time),
+        planets=[
+            PlanetPosition(key="sun", label="Солнце", longitude=45, sign="Телец", degree_in_sign=15),
+            PlanetPosition(key="moon", label="Луна", longitude=195, sign="Весы", degree_in_sign=15),
+        ],
+        aspects=[],
+        angles={"ascendant": 170},
+        destiny_matrix=matrix,
+    )
+    report = NatalReport(
+        report_id="theme-browser-report-123456",
+        user_id=123,
+        chart=chart,
+        svg=render_chart_svg(chart),
+        sections=[
+            ReportSection(id="section-identity", title="Личность", body_markdown="Синтетический пример."),
+            ReportSection(id="section-emotions", title="Эмоции", body_markdown="Синтетический пример."),
+            *build_destiny_matrix_sections(matrix),
+        ],
+    )
+
+    async def fake_get_report(_report_id: str):
+        return report
+
+    monkeypatch.setattr("app.web_natal.get_report", fake_get_report)
+    response = await quart_app.test_client().get("/reports/natal/theme-browser-report-123456")
+    _run_browser_regression(
+        {
+            "html": await response.get_data(as_text=True),
+            "headers": {"Content-Security-Policy": response.headers["Content-Security-Policy"]},
+            "javascript": javascript,
+            "known_time": known_time,
+        },
+        r"""
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.goto('http://natal.test/report');
+    assert.equal(await page.locator('.chart-stage svg').count(), 1);
+    assert.equal(await page.locator('.matrix-stage svg').count(), 1);
+    assert.equal(await page.locator('[data-point="ascendant"]').count(), payload.known_time ? 1 : 0);
+    assert.equal(await page.locator('.quick-position').count(), payload.known_time ? 3 : 2);
+    assert.equal(await page.locator('.calculation-note').count(), payload.known_time ? 0 : 1);
+    const chartStop = page.locator('.chart-stage stop').first();
+    const matrixStop = page.locator('.matrix-stage stop').first();
+    assert.equal(await chartStop.evaluate(element => getComputedStyle(element).stopColor), 'rgb(16, 54, 61)');
+    assert.equal(await matrixStop.evaluate(element => getComputedStyle(element).stopColor), 'rgb(16, 54, 61)');
+    await page.locator('#positions > summary').click();
+    assert.equal(await page.locator('#positions').evaluate(element => element.open), true);
+    if (payload.javascript) {
+      await page.locator('.report-nav a[href="#full-reading"]').click();
+      await page.waitForFunction(() => document.querySelector('.report-nav a[href="#full-reading"]').getAttribute('aria-current') === 'location');
+      assert.equal(await page.locator('.report-nav a[href="#full-reading"]').getAttribute('aria-current'), 'location');
+      await page.emulateMedia({ colorScheme: 'light' });
+      await page.waitForFunction(() => document.documentElement.dataset.natalTheme === 'light');
+      assert.equal(await page.locator('#positions').evaluate(element => element.open), true);
+      assert.equal(await chartStop.evaluate(element => getComputedStyle(element).stopColor), 'rgb(247, 253, 255)');
+      assert.equal(await matrixStop.evaluate(element => getComputedStyle(element).stopColor), 'rgb(247, 253, 255)');
+    } else {
+      assert.equal(await page.locator('.visual-zoom-toggle').first().isVisible(), false);
+    }
+    for (const width of [320, 390, 1100]) {
+      await page.setViewportSize({ width, height: 844 });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    }
 """,
     )

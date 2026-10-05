@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 import pytest
 
@@ -140,12 +141,13 @@ def test_hosted_report_merges_planet_sections_into_matching_life_topics(sample_n
 
 def test_hosted_report_summary_has_stable_label_area_for_alignment(sample_natal_report: NatalReport):
     html = build_hosted_report_html(sample_natal_report)
-    style = html.split("<style>", 1)[1].split("</style>", 1)[0]
+    style = (Path(__file__).resolve().parents[1] / "app/static/css/natal-report.css").read_text(encoding="utf-8")
 
     assert 'class="summary-kicker"' in html
     assert 'class="summary-title"' in html
-    assert "grid-template-columns:minmax(112px,156px) minmax(0,1fr) 36px" in style
-    assert ".summary-kicker{min-height:44px" in style
+    assert '<link rel="stylesheet" href="/static/css/natal-report.css">' in html
+    assert "grid-template-columns: minmax(112px,156px) minmax(0,1fr) 36px" in style
+    assert ".summary-kicker { min-height: 44px" in style
 
 
 def test_hosted_report_renders_destiny_matrix_as_second_visual_layer(sample_natal_report: NatalReport):
@@ -360,6 +362,15 @@ def test_hosted_report_strips_javascript_urls_from_section_body(sample_natal_rep
     assert "опасная ссылка" in html
 
 
+@pytest.mark.parametrize("scheme", ["java\tscript", "java\nscript", "data"])
+def test_hosted_report_removes_executable_links_even_with_url_control_characters(sample_natal_report, scheme):
+    sample_natal_report.sections[0].body_markdown = f"[опасная ссылка]({scheme}:payload)"
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert "опасная ссылка" in html
+    assert not re.search(r'<a\s+href="[^"]*payload', html)
+
+
 def test_hosted_report_ignores_unsafe_telegraph_url(sample_natal_report: NatalReport):
     sample_natal_report.telegraph_url = "javascript:alert(1)"
 
@@ -398,6 +409,101 @@ def test_hosted_report_sanitizes_svg_event_handler_attributes(sample_natal_repor
     assert "onload=" not in html.lower()
     assert "onclick=" not in html.lower()
     assert "<circle" in html
+
+
+def test_report_overview_uses_real_positions_and_only_links_to_available_readings(sample_natal_report: NatalReport):
+    sample_natal_report.chart.input_quality.angles_available = True
+    sample_natal_report.chart.input_quality.houses_available = True
+    sample_natal_report.chart.input_quality.time_precision = TimePrecision.EXACT
+    sample_natal_report.chart.angles = {"ascendant": 166.5}
+    html = build_hosted_report_html(sample_natal_report, script_nonce="test-nonce")
+    overview = html.split('class="quick-positions"', 1)[1].split("</div>", 1)[0]
+
+    assert 'data-point="sun"' in overview
+    assert 'href="#section-sun"' in overview
+    assert "Водолей" in overview
+    assert 'data-point="ascendant"' in overview
+    assert "Дева" in overview
+    assert 'href="#section-ascendant"' not in overview
+    assert 'href="#overview"' in html
+    assert 'href="#full-reading"' in html
+    assert 'href="#positions"' in html
+    assert '<script src="/static/js/natal-theme.js" nonce="test-nonce"></script>' in html
+
+
+def test_unknown_time_overview_omits_ascendant_even_if_stored_angles_exist(sample_natal_report: NatalReport):
+    sample_natal_report.chart.angles = {"ascendant": 166.5}
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert 'data-point="ascendant"' not in html
+    assert "Время рождения неизвестно" in html
+    assert "дома и Асцендент" in html
+
+
+@pytest.mark.parametrize("precision", [TimePrecision.APPROXIMATE, TimePrecision.RANGE])
+def test_imprecise_time_overview_labels_calculated_angles_as_approximate(sample_natal_report, precision):
+    sample_natal_report.chart.input_quality.time_precision = precision
+    sample_natal_report.chart.input_quality.angles_available = True
+    sample_natal_report.chart.input_quality.houses_available = True
+    sample_natal_report.chart.angles = {"ascendant": 166.5}
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert 'data-point="ascendant"' in html
+    assert "Дева" in html
+    assert "приблизительны" in html
+
+
+def test_stored_svg_cannot_load_external_resources_or_embed_active_html(sample_natal_report):
+    sample_natal_report.svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><iframe src="https://evil.test"/>'
+        '</foreignObject><image href="https://evil.test/track"/>'
+        '<circle cx="1" cy="1" r="1" fill="url(https://evil.test/paint)"/>'
+        '<a href="https://evil.test"><text x="1" y="1">Солнце</text></a></svg>'
+    )
+    html = build_hosted_report_html(sample_natal_report)
+    svg = html.split("<svg", 1)[1].split("</svg>", 1)[0]
+
+    assert "evil.test" not in svg
+    assert "foreignObject" not in svg
+    assert "iframe" not in svg
+    assert "<circle" in svg
+    assert "Солнце" in svg
+
+
+def test_stored_legacy_svg_retains_geometry_local_filters_and_navigation(sample_natal_report):
+    sample_natal_report.svg = (
+        '<svg viewBox="0 0 800 800" role="img" aria-labelledby="chart-title">'
+        '<title id="chart-title">Натальная карта</title><defs><radialGradient id="paint">'
+        '<stop offset="0%" stop-color="#fffdf8"/></radialGradient>'
+        '<filter id="glow"><feGaussianBlur stdDeviation="5"/></filter></defs>'
+        '<a href="#section-sun"><circle cx="265.2" cy="207.5" r="17" fill="url(#paint)" '
+        'stroke="#6e5597" filter="url(#glow)"/></a></svg>'
+    )
+    html = build_hosted_report_html(sample_natal_report)
+    svg = html.split("<svg", 1)[1].split("</svg>", 1)[0]
+
+    assert 'aria-labelledby="chart-title"' in svg
+    assert 'cx="265.2" cy="207.5" r="17"' in svg
+    assert 'fill="url(#paint)"' in svg
+    assert 'filter="url(#glow)"' in svg
+    assert 'href="#section-sun"' in svg
+    assert 'stroke="var(--chart-planet-rim, #39add4)"' in svg
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '<svg onload=alert(1)><circle r="1"/></svg>',
+        '<!DOCTYPE svg [<!ENTITY x "unsafe">]><svg><text>&x;</text></svg>',
+    ],
+)
+def test_malformed_or_entity_bearing_stored_svg_fails_closed(sample_natal_report, payload):
+    sample_natal_report.svg = payload
+    html = build_hosted_report_html(sample_natal_report)
+
+    assert "<svg" not in html
+    assert "unsafe" not in html
+    assert "onload" not in html
 
 
 def test_hosted_report_formats_aspect_bold_blocks_as_separate_paragraphs(sample_natal_report: NatalReport):
@@ -465,8 +571,9 @@ def test_hosted_and_telegraph_reports_suppress_technical_natal_notes(sample_nata
 
 def test_hosted_report_cards_do_not_use_backdrop_filter_for_scroll_stability(sample_natal_report: NatalReport):
     html = build_hosted_report_html(sample_natal_report)
-    style = html.split("<style>", 1)[1].split("</style>", 1)[0]
+    style = (Path(__file__).resolve().parents[1] / "app/static/css/natal-report.css").read_text(encoding="utf-8")
 
+    assert '<link rel="stylesheet" href="/static/css/natal-report.css">' in html
     card_rule = next(rule for rule in style.split("}") if ".position-card,.reading-card" in rule)
     assert "backdrop-filter" not in card_rule
     assert "-webkit-backdrop-filter" not in card_rule

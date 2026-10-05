@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import html
+import math
 import re
+import xml.etree.ElementTree as ET
+from urllib.parse import urlsplit
 
 from app.natal.destiny_matrix import render_destiny_matrix_svg
-from app.natal.models import NatalReport, ReportSection
+from app.natal.models import NatalReport, ReportSection, TimePrecision
+from app.natal.svg_renderer import apply_chart_palette
 from app.natal.text_safety import strip_user_facing_blocked_notes
 from app.utils.text_format import markdown_to_html
 
@@ -116,31 +120,11 @@ def build_hosted_report_html(report: NatalReport, *, script_nonce: str = "") -> 
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>{html.escape(title)}</title>"
         '<link rel="icon" href="data:,">'
-        "<style>"
-        ":root{color-scheme:light;--ink:#22302c;--muted:#66706c;--line:rgba(34,48,44,.14);--surface:#ffffff;--soft:#edf3f1;--teal:#0f766e;--blue:#285f9c;--amber:#b45309;--violet:#7557a6}"
-        "*{box-sizing:border-box}html{scroll-behavior:smooth}"
-        "body{margin:0;font-family:'Aptos','Segoe UI',sans-serif;background:#f4f7f5;color:var(--ink);line-height:1.62}"
-        "main{position:relative;max-width:1160px;margin:0 auto;padding:clamp(16px,4vw,48px)}"
-        ".result-shell{display:grid;gap:18px;margin:0 0 34px}"
-        ".result-copy,.chart-stage,.matrix-stage,.position-card,.reading-card{border:1px solid var(--line);border-radius:8px;background:var(--surface);box-shadow:0 16px 42px rgba(33,45,42,.08)}"
-        ".result-copy{padding:clamp(20px,4vw,34px);display:grid;gap:18px}"
-        ".eyebrow{margin:0;color:var(--teal);font-size:12px;letter-spacing:.12em;text-transform:uppercase;font-weight:800}"
-        "h1{max-width:780px;margin:0;font-family:Georgia,serif;font-size:clamp(36px,6vw,68px);line-height:1;font-weight:500;color:#1e2d29}"
-        ".lead{max-width:720px;margin:0;color:var(--muted);font-size:clamp(16px,2vw,20px)}"
-        ".reading-path{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.path-card{padding:12px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:inherit;background:var(--soft)}.path-card span{display:block;color:var(--teal);font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.path-card strong{display:block;margin-top:4px;font-size:15px}.path-card em{display:block;margin-top:4px;color:var(--muted);font-size:13px;font-style:normal}"
-        ".visual-stack{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:14px;align-items:start}"
-        ".chart-stage,.matrix-stage{position:relative;width:100%;min-width:0;padding:clamp(12px,3vw,22px);overflow:hidden}.chart-stage{--diagram-width:800px}.matrix-stage{--diagram-width:920px}"
-        ".visual-tools{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;font-size:14px;font-weight:700}.visual-zoom-toggle{min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--soft);color:var(--teal);font:inherit;cursor:pointer}.visual-scroll{max-width:100%;overflow:auto;overscroll-behavior-x:contain}.visual-scroll.is-zoomed svg{max-width:none;width:var(--diagram-width);min-width:var(--diagram-width)}"
-        "svg{position:relative;z-index:1;max-width:100%;height:auto;display:block;margin:0 auto}"
-        ".result-shell>*,.full-reading,.reading-group,.reading-card{min-width:0}.reading-body,.summary-title,.lead{overflow-wrap:anywhere}.reading-card{scroll-margin-top:16px}a:focus-visible,summary:focus-visible,button:focus-visible,.visual-scroll:focus-visible{outline:3px solid var(--teal);outline-offset:4px}"
-        ".section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:64px 0 18px}.section-head h2{margin:0;font-family:Georgia,serif;font-size:clamp(28px,4vw,44px);font-weight:500}.section-head p{max-width:480px;margin:0;color:var(--muted)}"
-        ".position-card:hover{transform:translateY(-2px);box-shadow:0 18px 52px rgba(33,45,42,.12)}.summary-kicker,.position-card span{display:block;margin-bottom:0;color:var(--violet);font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}.reading-card summary{list-style:none;cursor:pointer;padding:clamp(18px,3vw,26px);display:grid;grid-template-columns:minmax(112px,156px) minmax(0,1fr) 36px;gap:16px;align-items:center;min-height:116px}.reading-card summary::-webkit-details-marker{display:none}.reading-card summary:after{content:'+';width:36px;height:36px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);font-size:24px;line-height:1;color:var(--teal);background:var(--soft);justify-self:end}.reading-card[open] summary:after{content:'−'}.summary-kicker{min-height:44px;display:flex;align-items:center;overflow-wrap:anywhere}.summary-title{display:block;min-width:0}.summary-title strong{font-family:Georgia,serif;font-size:clamp(23px,3vw,31px);line-height:1.18;font-weight:500;color:var(--ink)}"
-        ".positions-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.position-card{display:block;min-height:132px;padding:16px;text-decoration:none;color:inherit;transition:transform .18s ease,box-shadow .18s ease}.position-card strong{display:block;margin-bottom:6px;font-family:Georgia,serif;font-size:21px;font-weight:500}.position-card p{margin:0;color:var(--muted)}"
-        ".full-reading{display:grid;gap:28px}.reading-group{display:grid;gap:14px;padding-left:16px;border-left:4px solid var(--teal)}.reading-group-destiny{border-left-color:var(--violet)}.reading-group-head{display:grid;gap:4px;margin:0 0 2px}.reading-group-head span{color:var(--teal);font-size:12px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}.reading-group-destiny .reading-group-head span{color:var(--violet)}.reading-group-head h3{margin:0;font-family:Georgia,serif;font-size:clamp(24px,3vw,34px);font-weight:500;color:var(--ink)}.reading-group-head p{max-width:620px;margin:0;color:var(--muted)}.reading-body{max-width:78ch;padding:0 clamp(18px,3vw,26px) clamp(18px,3vw,26px)}.reference-disclosure{margin-top:64px}.reference-body{max-width:none}.reading-card p{margin:0 0 12px}.reading-card ul{padding-left:22px}"
-        ".period-list{display:grid;gap:12px;margin-top:16px}.period-card{border:1px solid var(--line);border-radius:8px;background:var(--soft);padding:14px}.period-card header{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:baseline;margin:0 0 10px}.period-card header span{color:var(--teal);font-size:13px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.period-card header strong{font-family:Georgia,serif;font-size:22px;font-weight:500;color:var(--ink)}.period-card dl{display:grid;gap:9px;margin:0}.period-card dl div{display:grid;gap:2px}.period-card dt{color:var(--violet);font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}.period-card dd{margin:0;color:var(--ink)}.section-anchor{position:relative;top:-12px;display:block;height:0;overflow:hidden}"
-        ".footer{display:flex;flex-wrap:wrap;gap:14px;margin:44px 0 0;color:var(--muted);font-size:14px}.mirror-link{color:var(--blue);font-weight:700}.privacy,.attribution{margin:0}.report-note{flex-basis:100%;margin:6px 0 0;padding-top:14px;border-top:1px solid var(--line)}.report-note strong{color:var(--ink)}"
-        "a{color:var(--blue)}@media(max-width:900px){.reading-path,.positions-grid{grid-template-columns:1fr}.section-head{display:block}.section-head p{margin-top:8px}}@media(max-width:640px){main{padding:14px}.reading-card summary{grid-template-columns:minmax(0,1fr) 34px;gap:6px 10px;min-height:104px}.summary-kicker{grid-column:1;grid-row:1;font-size:11px;letter-spacing:.13em;min-height:0}.summary-title{grid-column:1;grid-row:2}.summary-title strong{font-size:clamp(21px,5vw,27px)}.reading-card summary:after{grid-column:2;grid-row:1 / span 2;width:34px;height:34px;font-size:22px}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.position-card{transition:none}}"
-        "</style></head><body><main>"
+        f'<script src="https://telegram.org/js/telegram-web-app.js"{nonce_attr}></script>'
+        f'<script src="/static/js/natal-theme.js"{nonce_attr}></script>'
+        '<link rel="stylesheet" href="/static/css/natal-theme.css">'
+        '<link rel="stylesheet" href="/static/css/natal-report.css">'
+        "</head><body><main>"
         f"{result_shell}"
         '<section id="full-reading"><div class="section-head"><h2>Полный разбор</h2><p>Подробные интерпретации сгруппированы по смысловым категориям.</p></div>'
         f"{reading_html}</section>"
@@ -439,16 +423,116 @@ def _footer_note_html(note: str) -> str:
 
 def _result_shell(report: NatalReport, title: str, lead: str, visual_layers: str, sections: list[ReportSection]) -> str:
     visual_html = f'<div class="visual-stack">{visual_layers}</div>' if visual_layers else ""
+    lead_html = f'<p class="lead">{html.escape(lead)}</p>' if not report.chart.planets else ""
+    overview_title = "Ваша карта" if report.chart.planets else "Ваша матрица"
+    if not report.chart.planets and report.chart.destiny_matrix is None:
+        overview_title = title
     return (
-        '<section class="result-shell">'
+        '<header class="report-masthead"><span class="brand-mark" aria-hidden="true">☉</span>'
+        f"<span>{html.escape(title)}</span></header>"
+        '<nav class="report-nav" aria-label="Разделы результата">'
+        '<a href="#overview" aria-current="location">Обзор</a>'
+        '<a href="#full-reading">Разбор</a><a href="#positions">Положения</a></nav>'
+        '<section id="overview" class="result-shell" aria-labelledby="overview-title">'
         '<div class="result-copy">'
-        '<p class="eyebrow">Ваш результат уже готов</p>'
-        f"<h1>{html.escape(title)}</h1>"
-        f'<p class="lead">{html.escape(lead)}</p>'
-        f"{_reading_path_html(report, sections)}"
+        '<p class="eyebrow sr-only">Ваш результат уже готов</p>'
+        f'<h1 id="overview-title">{html.escape(overview_title)}</h1>'
+        f"{lead_html}"
         "</div>"
         f"{visual_html}"
+        f"{_quick_positions_html(report, sections)}"
+        f"{_calculation_note_html(report)}"
+        f"{_reading_entry_html(sections)}"
+        f"{_reading_path_html(report, sections)}"
         "</section>"
+    )
+
+
+def _quick_positions_html(report: NatalReport, sections: list[ReportSection]) -> str:
+    section_ids = {section.id for section in sections}
+    cards: list[str] = []
+    symbols = {"sun": "☉", "moon": "☽"}
+    for key in ("sun", "moon"):
+        planet = next((point for point in report.chart.planets if point.key.lower() == key), None)
+        if planet is None:
+            continue
+        raw_target = f"section-{key}"
+        target = _PLANET_SECTION_TARGETS.get(raw_target, raw_target)
+        reading_target: str | None = (
+            target if target in section_ids else raw_target if raw_target in section_ids else None
+        )
+        cards.append(_quick_position_card(key, symbols[key], planet.label, planet.sign, reading_target))
+    quality = report.chart.input_quality
+    ascendant = report.chart.angles.get("ascendant")
+    if (
+        report.chart.planets
+        and quality.angles_available
+        and quality.time_precision != TimePrecision.UNKNOWN
+        and ascendant is not None
+        and math.isfinite(ascendant)
+    ):
+        signs = (
+            "Овен",
+            "Телец",
+            "Близнецы",
+            "Рак",
+            "Лев",
+            "Дева",
+            "Весы",
+            "Скорпион",
+            "Стрелец",
+            "Козерог",
+            "Водолей",
+            "Рыбы",
+        )
+        ascendant_target = next(
+            (key for key in ("section-ascendant", "section-asc", "section-houses") if key in section_ids), None
+        )
+        cards.append(
+            _quick_position_card("ascendant", "↑", "Асцендент", signs[int((ascendant % 360) // 30)], ascendant_target)
+        )
+    return f'<div class="quick-positions" aria-label="Основные позиции">{"".join(cards)}</div>' if cards else ""
+
+
+def _quick_position_card(key: str, symbol: str, label: str, sign: str, target: str | None) -> str:
+    tag = "a" if target else "article"
+    href = f' href="#{html.escape(target, quote=True)}"' if target else ""
+    return (
+        f'<{tag} class="quick-position" data-point="{key}"{href}>'
+        f'<span class="point-symbol" aria-hidden="true">{symbol}</span>'
+        f'<span class="point-label">{html.escape(label)}</span>'
+        f"<strong>{html.escape(sign)}</strong>"
+        f"{'<span class="point-arrow" aria-hidden="true">›</span>' if target else ''}</{tag}>"
+    )
+
+
+def _calculation_note_html(report: NatalReport) -> str:
+    if not report.chart.planets:
+        return ""
+    quality = report.chart.input_quality
+    notes: list[str] = []
+    if quality.time_precision == TimePrecision.UNKNOWN:
+        notes.append("Время рождения неизвестно: дома и Асцендент не показаны.")
+    elif quality.time_precision == TimePrecision.APPROXIMATE:
+        notes.append("Время рождения примерное: дома и Асцендент приблизительны.")
+    elif quality.time_precision == TimePrecision.RANGE:
+        notes.append("Карта рассчитана по середине диапазона времени: дома и Асцендент приблизительны.")
+    if quality.moon_uncertainty:
+        notes.append("Знак и аспекты Луны могут меняться в течение дня.")
+    return f'<p class="calculation-note">{html.escape(" ".join(notes))}</p>' if notes else ""
+
+
+def _reading_entry_html(sections: list[ReportSection]) -> str:
+    if not sections:
+        return ""
+    section = next((section for section in sections if section.id == "section-identity"), sections[0])
+    return (
+        f'<a class="reading-entry" href="#{html.escape(section.id, quote=True)}">'
+        '<span class="entry-symbol" aria-hidden="true">✧</span><span class="entry-copy">'
+        f"<strong>{html.escape(section.title)}</strong>"
+        "<span>Полная интерпретация</span>"
+        '<em>Читать разбор <span aria-hidden="true">→</span></em></span>'
+        '<span class="entry-arrow" aria-hidden="true">›</span></a>'
     )
 
 
@@ -661,15 +745,167 @@ def build_telegraph_markdown(report: NatalReport) -> str:
 
 
 def _sanitize_hosted_body(value: str) -> str:
-    return re.sub(r"javascript\s*:", "", value, flags=re.IGNORECASE)
+    def clean_link(match: re.Match[str]) -> str:
+        # Browsers discard tabs and newlines in URL schemes. Decode HTML once
+        # (as the browser does) and normalize controls before checking it.
+        url = re.sub(r"[\x00-\x20\x7f]+", "", html.unescape(match.group("url")))
+        try:
+            scheme = urlsplit(url).scheme.lower()
+        except ValueError:
+            return ""
+        if scheme not in {"", "https", "http", "mailto", "tel", "tg"}:
+            return ""
+        return match.group(0)
+
+    return re.sub(r'\s+href="(?P<url>[^"]*)"', clean_link, value, flags=re.IGNORECASE)
 
 
 def _sanitize_hosted_svg(value: str) -> str:
-    without_scripts = re.sub(r"<\s*script\b.*?<\s*/\s*script\s*>", "", value, flags=re.IGNORECASE | re.DOTALL)
-    without_event_handlers = re.sub(
-        r"\s+on[a-z0-9_-]+\s*=\s*(['\"]).*?\1", "", without_scripts, flags=re.IGNORECASE | re.DOTALL
+    # Stored diagrams are untrusted. Permit the drawing vocabulary, never active
+    # HTML, event handlers, CSS, or network resources (including SVG paint URLs).
+    if re.search(r"<!\s*(?:DOCTYPE|ENTITY)", value, flags=re.IGNORECASE):
+        return ""
+    try:
+        root = ET.fromstring(value)
+    except ET.ParseError:
+        return ""
+    allowed_tags = {
+        "svg",
+        "g",
+        "a",
+        "title",
+        "desc",
+        "defs",
+        "circle",
+        "ellipse",
+        "rect",
+        "line",
+        "polyline",
+        "polygon",
+        "path",
+        "text",
+        "tspan",
+        "radialGradient",
+        "linearGradient",
+        "stop",
+        "filter",
+        "feGaussianBlur",
+        "feMerge",
+        "feMergeNode",
+        "feDropShadow",
+        "clipPath",
+        "mask",
+        "marker",
+    }
+    allowed_attrs = {
+        "id",
+        "class",
+        "role",
+        "aria-labelledby",
+        "aria-label",
+        "viewBox",
+        "width",
+        "height",
+        "x",
+        "y",
+        "x1",
+        "y1",
+        "x2",
+        "y2",
+        "cx",
+        "cy",
+        "r",
+        "rx",
+        "ry",
+        "d",
+        "points",
+        "transform",
+        "fill",
+        "fill-opacity",
+        "stroke",
+        "stroke-width",
+        "stroke-opacity",
+        "stroke-dasharray",
+        "stroke-linecap",
+        "stroke-linejoin",
+        "opacity",
+        "filter",
+        "text-anchor",
+        "dominant-baseline",
+        "font-family",
+        "font-size",
+        "font-weight",
+        "dx",
+        "dy",
+        "offset",
+        "stop-color",
+        "stop-opacity",
+        "gradientUnits",
+        "gradientTransform",
+        "stdDeviation",
+        "result",
+        "in",
+        "flood-color",
+        "flood-opacity",
+        "clip-path",
+        "mask",
+        "preserveAspectRatio",
+        "href",
+        "data-house",
+        "data-aspect",
+        "data-position",
+        "data-kind",
+        "marker-start",
+        "marker-mid",
+        "marker-end",
+        "markerWidth",
+        "markerHeight",
+        "refX",
+        "refY",
+        "orient",
+        "markerUnits",
+    }
+    paint_attrs = {"fill", "stroke", "stop-color", "flood-color"}
+    local_ref = re.compile(r"#[a-zA-Z_][\w.-]*\Z")
+    local_url = re.compile(r"url\(#[a-zA-Z_][\w.-]*\)\Z")
+    safe_paint = re.compile(
+        r"(?:#[0-9a-fA-F]{3,8}|none|currentColor|transparent|[a-zA-Z]+|var\(--(?:chart|matrix)-[a-z-]+,\s*#[0-9a-fA-F]{6}\))\Z"
     )
-    return re.sub(r"javascript\s*:", "", without_event_handlers, flags=re.IGNORECASE)
+
+    def clean(element: ET.Element) -> None:
+        element.tag = element.tag.rsplit("}", 1)[-1]
+        for child in list(element):
+            if child.tag.rsplit("}", 1)[-1] not in allowed_tags:
+                element.remove(child)
+            else:
+                clean(child)
+        attributes = dict(element.attrib)
+        element.attrib.clear()
+        for raw_name, attribute in attributes.items():
+            name = raw_name.rsplit("}", 1)[-1]
+            if name not in allowed_attrs:
+                continue
+            attribute = attribute.strip()
+            if name == "href" and not local_ref.fullmatch(attribute):
+                continue
+            if name in {
+                "filter",
+                "clip-path",
+                "mask",
+                "marker-start",
+                "marker-mid",
+                "marker-end",
+            } and not local_url.fullmatch(attribute):
+                continue
+            if name in paint_attrs and not (safe_paint.fullmatch(attribute) or local_url.fullmatch(attribute)):
+                continue
+            element.set(name, attribute)
+
+    if root.tag.rsplit("}", 1)[-1] != "svg":
+        return ""
+    clean(root)
+    root.set("xmlns", "http://www.w3.org/2000/svg")
+    return apply_chart_palette(ET.tostring(root, encoding="unicode"))
 
 
 def _is_safe_external_url(value: str) -> bool:
@@ -692,12 +928,12 @@ def _report_lead(report: NatalReport) -> str:
     has_matrix = report.chart.destiny_matrix is not None
     if has_natal and has_matrix:
         return (
-            "Сначала две визуальные карты: астрономический слой натала и архетипический слой матрицы. "
-            "Дальше — разбор натальной карты, линий матрицы, денег, отношений, рода и возрастных периодов."
+            "Натальная карта и матрица по дате рождения. Откройте интересующую тему, "
+            "чтобы прочитать её разбор и увидеть связанные расчётные позиции."
         )
     if has_matrix:
         return "Архетипическая матрица по дате рождения: центр, родовые линии, денежный канал, отношения и возрастные периоды."
-    return "Сначала карта как визуальный центр, затем полный разбор и справочные расчетные позиции."
+    return "Откройте положение планеты или интересующую тему, чтобы прочитать её разбор."
 
 
 def _visual_layers(report: NatalReport) -> str:

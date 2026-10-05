@@ -1,6 +1,37 @@
 (() => {
   'use strict';
 
+  const navigation = document.querySelector('.report-nav');
+  const navigationLinks = Array.from(navigation?.querySelectorAll('a[href^="#"]') || []);
+
+  function updateNavigation() {
+    // Anchor scrolling honors the document's scroll padding. The dark tab bar
+    // is shorter than that offset, so its height alone can leave the section
+    // just below the activation threshold after a successful anchor jump.
+    const scrollPadding = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
+    const threshold = Math.max(scrollPadding, (navigation?.getBoundingClientRect().bottom || 0) + 30) + 2;
+    let current = '#overview';
+    navigationLinks.forEach((link) => {
+      const section = document.getElementById(link.getAttribute('href').slice(1));
+      if (section && section.getBoundingClientRect().top <= threshold) current = link.getAttribute('href');
+    });
+    navigationLinks.forEach((link) => {
+      if (link.getAttribute('href') === current) link.setAttribute('aria-current', 'location');
+      else link.removeAttribute('aria-current');
+    });
+  }
+
+  let scrollFramePending = false;
+  window.addEventListener('scroll', () => {
+    if (scrollFramePending) return;
+    scrollFramePending = true;
+    window.requestAnimationFrame(() => {
+      scrollFramePending = false;
+      updateNavigation();
+    });
+  }, { passive: true });
+  window.addEventListener('resize', updateNavigation);
+
   function revealSection(hash) {
     if (!hash || hash === '#') return false;
     let id;
@@ -29,6 +60,7 @@
       focusTarget.focus({ preventScroll: true });
       focusTarget.scrollIntoView({ block: 'start' });
     }
+    updateNavigation();
     return true;
   }
 
@@ -43,6 +75,7 @@
   window.addEventListener('hashchange', () => revealSection(window.location.hash));
   revealSection(window.location.hash);
   window.addEventListener('load', () => revealSection(window.location.hash), { once: true });
+  updateNavigation();
 
   document.querySelectorAll('.visual-zoom-toggle').forEach((button) => {
     const diagram = document.getElementById(button.getAttribute('aria-controls'));

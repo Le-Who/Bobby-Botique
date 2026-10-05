@@ -1,0 +1,79 @@
+:root {
+  color-scheme: light;
+  --natal-bg: #effaff;
+  --natal-surface: #ffffff;
+  --natal-surface-2: #e5f4fa;
+  --natal-ink: #1d4156;
+  --natal-muted: #4f6e81;
+  --natal-line: #afd4e1;
+  --natal-accent: #39add4;
+  --natal-accent-ink: #123344;
+  --natal-link: #08799b;
+  --natal-shadow: 0 16px 44px rgb(26 109 143 / 9%), 0 1px 3px rgb(26 109 143 / 7%);
+  --natal-control-shadow: inset 0 1px 0 rgb(255 255 255 / 90%), 0 5px 18px rgb(29 112 148 / 9%);
+  --natal-radius: 20px;
+  --natal-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --natal-display-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --natal-page-background: radial-gradient(ellipse at 0% 12%, rgb(255 255 255 / 95%), transparent 58%),
+    radial-gradient(ellipse at 100% 48%, rgb(161 225 246 / 23%), transparent 62%),
+    linear-gradient(150deg, rgb(233 230 255 / 16%), transparent 42%);
+  --bg: var(--natal-bg);
+  --surface: var(--natal-surface);
+  --surface-2: var(--natal-surface-2);
+  --text: var(--natal-ink);
+  --ink: var(--natal-ink);
+  --muted: var(--natal-muted);
+  --line: var(--natal-line);
+  --accent: var(--natal-accent);
+  --accent-text: var(--natal-accent-ink);
+  --soft: var(--natal-surface-2);
+  --teal: var(--natal-link);
+  --blue: var(--natal-link);
+  --amber: #93602b;
+  --violet: #735b9c;
+}
+
+:root[data-natal-theme="dark"] {
+  color-scheme: dark;
+  --natal-bg: #081f24;
+  --natal-surface: #10363d;
+  --natal-surface-2: #153d44;
+  --natal-ink: #eef4ee;
+  --natal-muted: #a3bcb7;
+  --natal-line: #34585e;
+  --natal-accent: #d7b477;
+  --natal-accent-ink: #152b2b;
+  --natal-link: #e3c18a;
+  --natal-shadow: 0 14px 36px rgb(0 11 14 / 18%), inset 0 1px 0 rgb(220 242 233 / 4%);
+  --natal-control-shadow: inset 0 1px 0 rgb(244 232 193 / 8%), 0 4px 12px rgb(0 10 14 / 12%);
+  --natal-radius: 10px;
+  --natal-page-background: radial-gradient(ellipse at 20% 0%, rgb(30 82 85 / 22%), transparent 68%),
+    radial-gradient(ellipse at 100% 70%, rgb(11 55 61 / 20%), transparent 60%);
+  --amber: #e3c18a;
+  --violet: #b9a5db;
+}
+
+/* Keep the page readable before the script runs, and if scripting is disabled. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-natal-theme]) {
+    color-scheme: dark;
+    --natal-bg: #081f24;
+    --natal-surface: #10363d;
+    --natal-surface-2: #153d44;
+    --natal-ink: #eef4ee;
+    --natal-muted: #a3bcb7;
+    --natal-line: #34585e;
+    --natal-accent: #d7b477;
+    --natal-accent-ink: #152b2b;
+    --natal-link: #e3c18a;
+    --natal-shadow: 0 14px 36px rgb(0 11 14 / 18%), inset 0 1px 0 rgb(220 242 233 / 4%);
+    --natal-control-shadow: inset 0 1px 0 rgb(244 232 193 / 8%), 0 4px 12px rgb(0 10 14 / 12%);
+    --natal-radius: 10px;
+    --natal-page-background: radial-gradient(ellipse at 20% 0%, rgb(30 82 85 / 22%), transparent 68%),
+      radial-gradient(ellipse at 100% 70%, rgb(11 55 61 / 20%), transparent 60%);
+    --amber: #e3c18a;
+    --violet: #b9a5db;
+  }
+}
+
+::selection { color: var(--natal-accent-ink); background: var(--natal-accent); }

@@ -125,7 +125,7 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert "Место и часовой пояс" in body
     assert "Проверка перед отправкой" in body
     assert "Начните с типа разбора" in body
-    assert body.index("Дата рождения") < body.index("Место рождения")
+    assert body.index("Дата рождения") < body.index("Страна рождения")
     assert body.index("Что построить") < body.index("Дата рождения")
     assert body.index("Фокус разбора") < body.index("Что построить")
     assert body.index("Что построить") < body.index('data-group="report_type"')
@@ -152,6 +152,29 @@ async def test_natal_form_uses_slide_order_without_single_long_questionnaire():
     assert "Проверить данные" in body
     assert "submitButton.hidden = currentSlide.id !== 'review-slide'" in body
     assert "nextButton.hidden = currentSlide.id === 'review-slide'" in body
+
+
+@pytest.mark.asyncio
+async def test_natal_form_loads_shared_theme_and_labels_precision_choices():
+    response = await quart_app.test_client().get("/webapp/natal-form")
+
+    assert response.status_code == 200
+    body = await response.get_data(as_text=True)
+    assert '<link rel="stylesheet" href="/static/css/natal-theme.css">' in body
+    assert '<script src="/static/js/natal-theme.js"></script>' in body
+    assert body.index("natal-theme.js") < body.index("<style>")
+    assert 'id="step-rail"' in body
+    for step in ("report", "date", "time", "place", "review"):
+        assert f'data-rail-step="{step}"' in body
+    for precision, label in (
+        ("exact", "Точное"),
+        ("approximate", "Примерное"),
+        ("range", "Диапазон"),
+        ("unknown", "Не знаю"),
+    ):
+        assert f'data-value="{precision}" data-label="{label}"' in body
+    assert 'aria-labelledby="time-precision-label"' in body
+    assert "--tg-theme-bg-color" not in body
 
 
 @pytest.mark.asyncio

@@ -1,3 +1,5 @@
+import xml.etree.ElementTree as ET
+
 from app.natal.models import Aspect, ChartData, House, InputQuality, PlanetPosition, TimePrecision
 from app.natal.svg_renderer import render_chart_svg
 
@@ -58,10 +60,10 @@ def test_render_svg_uses_light_base_and_contrast_safe_chart_lines():
     assert 'fill="#000' not in svg.lower()
     assert 'fill="black"' not in svg.lower()
     assert 'fill-opacity="0.92"' in svg
-    assert 'stroke="#8a6ed0" stroke-width="3.2"' in svg
-    assert 'stroke="#7d68a8" stroke-width="1.4"' in svg
+    assert 'stroke="var(--chart-rim, #39add4)" stroke-width="3.2"' in svg
+    assert 'stroke="var(--chart-ticks, #517f96)" stroke-width="1.4"' in svg
     assert 'stroke-width="1.8" opacity="0.72"' in svg
-    assert 'stroke="#6e5597" stroke-width="2.2"' in svg
+    assert 'stroke="var(--chart-planet-rim, #39add4)" stroke-width="2.2"' in svg
 
 
 def test_render_svg_does_not_emit_script_tags():
@@ -69,3 +71,15 @@ def test_render_svg_does_not_emit_script_tags():
 
     assert "<script" not in svg.lower()
     assert "javascript:" not in svg.lower()
+
+
+def test_chart_zodiac_uses_text_presentation_and_round_background():
+    root = ET.fromstring(render_chart_svg(sample_chart()))
+    namespace = {"s": "http://www.w3.org/2000/svg"}
+    zodiac = [text for text in root.findall("s:text", namespace) if text.find("s:title", namespace) is not None]
+
+    assert len(zodiac) == 12
+    assert all(text.find("s:title", namespace).tail.endswith("︎") for text in zodiac)
+    assert all("Segoe UI Symbol" in text.get("font-family") for text in zodiac)
+    assert not root.findall("s:rect", namespace)
+    assert any(circle.get("fill") == "url(#natal-bg)" for circle in root.findall("s:circle", namespace))
