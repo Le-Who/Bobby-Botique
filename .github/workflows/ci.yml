@@ -168,7 +168,8 @@ jobs:
         run: npx --no-install playwright install --with-deps chromium
       - name: Run required browser regressions
         run: >-
-          uv run --locked pytest tests/test_natal_web_report.py -m browser -n 0
+          uv run --locked pytest tests/test_natal_web_report.py tests/test_daily_2048_frontend.py
+          tests/test_daily_trivia_frontend.py tests/test_daily_game_ui.py -m browser -n 0
           --override-ini="addopts=" --timeout=30 -v
 
   container-smoke:

@@ -15,11 +15,16 @@
   };
   let selected = root.dataset.pageGame;
   let busy = false;
+  let readEpoch = 0;
+
+  function setStatus(message, tone = 'info') {
+    status.textContent = message;
+    status.dataset.tone = tone;
+  }
 
   function render(game) {
     if (!games[game]) return;
     selected = game;
-    current.textContent = games[game].name;
     for (const choice of choices) {
       choice.setAttribute('aria-pressed', String(choice.dataset.dailyGame === game));
     }
@@ -27,42 +32,62 @@
 
   async function request(method, game) {
     const initData = window.Telegram?.WebApp?.initData || '';
-    const response = await fetch('/webapp/api/daily-game', {
-      method,
-      headers: { 'X-TG-INIT-DATA': initData, ...(game ? { 'Content-Type': 'application/json' } : {}) },
-      ...(game ? { body: JSON.stringify({ game }) } : {}),
-    });
-    const body = await response.json();
-    if (!response.ok) throw new Error(response.status === 401
-      ? 'Откройте игру в Telegram, чтобы сохранить выбор.'
-      : 'Не удалось сохранить выбор. Проверьте соединение и попробуйте ещё раз.');
-    return body;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+      const response = await fetch('/webapp/api/daily-game', {
+        method,
+        signal: controller.signal,
+        headers: { 'X-TG-INIT-DATA': initData, ...(game ? { 'Content-Type': 'application/json' } : {}) },
+        ...(game ? { body: JSON.stringify({ game }) } : {}),
+      });
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('Откройте игру в Telegram, чтобы сохранить выбор.');
+      }
+      if (!response.ok) throw new Error('Не удалось обновить выбор. Попробуйте ещё раз.');
+      const body = await response.json();
+      if (!games[body.game]) throw new Error('Не удалось загрузить выбор. Попробуйте ещё раз.');
+      return body;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async function load() {
+    const epoch = ++readEpoch;
     try {
       const saved = await request('GET');
-      if (busy) return;
+      if (busy || epoch !== readEpoch) return;
       render(saved.game);
-      status.textContent = saved.subscribed
-        ? 'Вы будете получать выбранную игру каждый день.'
-        : 'Ежедневная рассылка сейчас выключена.';
-    } catch {
-      if (busy) return;
-      status.textContent = 'Откройте игру в Telegram, чтобы сохранить выбор.';
+      setStatus(saved.subscribed
+        ? `В рассылке: ${games[saved.game].name}. Выбор можно изменить.`
+        : 'Ежедневная рассылка выключена. Здесь можно сменить игру.');
+    } catch (error) {
+      if (busy || epoch !== readEpoch) return;
+      setStatus(error instanceof TypeError || error.name === 'AbortError'
+        ? 'Не удалось загрузить выбор. Проверьте соединение и откройте меню ещё раз.'
+        : error.message, 'error');
     }
   }
 
   trigger.addEventListener('click', () => {
+    if (dialog.open) return;
     dialog.showModal();
+    trigger.setAttribute('aria-expanded', 'true');
     const active = choices.find(choice => choice.dataset.dailyGame === selected);
     (active || choices[0]).focus();
     load();
   });
   close.addEventListener('click', () => dialog.close());
-  dialog.addEventListener('close', () => trigger.focus());
+  dialog.addEventListener('close', () => {
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.focus({ preventScroll: true });
+  });
   dialog.addEventListener('click', event => {
-    if (event.target === dialog) dialog.close();
+    if (event.target !== dialog) return;
+    const bounds = dialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right ||
+        event.clientY < bounds.top || event.clientY > bounds.bottom) dialog.close();
   });
 
   for (const choice of choices) {
@@ -71,11 +96,14 @@
       const game = choice.dataset.dailyGame;
       if (!games[game]) return;
       busy = true;
-      status.textContent = 'Сохраняем выбор…';
+      ++readEpoch;
+      dialog.setAttribute('aria-busy', 'true');
+      setStatus('Сохраняем выбор…');
       choices.forEach(button => { button.disabled = true; });
       try {
         const saved = await request('PATCH', game);
         render(saved.game);
+        setStatus('Выбор сохранён.', 'success');
         if (game === root.dataset.pageGame) {
           dialog.close();
           busy = false;
@@ -84,13 +112,18 @@
           window.location.assign(games[game].path);
         }
       } catch (error) {
-        status.textContent = error.message || 'Не удалось сохранить выбор.';
+        setStatus(error instanceof TypeError || error.name === 'AbortError'
+          ? 'Не удалось подтвердить сохранение. Проверьте соединение и попробуйте ещё раз.'
+          : error.message || 'Не удалось сохранить выбор.', 'error');
         busy = false;
         choices.forEach(button => { button.disabled = false; });
+      } finally {
+        dialog.removeAttribute('aria-busy');
       }
     });
   }
 
+  current.textContent = games[selected]?.name || 'Выбрать игру';
   render(selected);
   load();
 })();

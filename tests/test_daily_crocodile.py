@@ -130,7 +130,7 @@ def test_intro_keyboard_labels() -> None:
     markup = daily_crocodile.daily_intro_keyboard()
     labels = [button.text for row in markup.inline_keyboard for button in row]
 
-    assert labels == ["Открыть daily", "Выбрать другую игру", "Получать каждый день", "Не напоминать 2 недели"]
+    assert labels == ["Открыть Крокодила", "Выбрать другую игру", "Получать каждый день", "Не напоминать 2 недели"]
 
 
 @pytest.mark.asyncio

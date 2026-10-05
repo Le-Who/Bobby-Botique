@@ -93,7 +93,7 @@ def _play_button(label: str = "Играть") -> InlineKeyboardButton:
 def daily_intro_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [_play_button("Открыть daily")],
+            [_play_button("Открыть Крокодила")],
             [InlineKeyboardButton("Выбрать другую игру", callback_data="dailycroc:choose")],
             [InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe:crocodile")],
             [InlineKeyboardButton("Не напоминать 2 недели", callback_data="dailycroc:snooze")],
@@ -102,7 +102,7 @@ def daily_intro_keyboard() -> InlineKeyboardMarkup:
 
 
 def daily_play_keyboard(*, include_subscribe: bool = True) -> InlineKeyboardMarkup:
-    rows = [[_play_button("Открыть daily")]]
+    rows = [[_play_button("Открыть Крокодила")]]
     rows.append([InlineKeyboardButton("Выбрать другую игру", callback_data="dailycroc:choose")])
     if include_subscribe:
         rows.append([InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe:crocodile")])
@@ -136,7 +136,7 @@ async def send_discovery_intro(bot, user_id: int) -> bool:
     text = (
         "🐊 <b>Крокодил дня</b>\n\n"
         "Каждый день два независимых режима: <b>Easy</b> и <b>Hard</b>. "
-        "У каждого свои очки, лидерборд и completion state.\n\n"
+        "Прогресс каждого режима сохраняется отдельно, а очки складываются в общий рейтинг дня.\n\n"
         "Можно сыграть сейчас или включить ежедневное напоминание."
     )
     await bot.send_message(
@@ -160,7 +160,7 @@ def _manual_daily_prompt_caption() -> str:
     return (
         "🐊 <b>Крокодил дня</b>\n\n"
         "На сегодня доступны <b>Easy</b> и <b>Hard</b>. "
-        "У каждого режима свои очки, completion и лидерборд."
+        "Прогресс сохраняется отдельно, а очки обоих режимов идут в общий рейтинг дня."
     )
 
 

@@ -994,23 +994,6 @@ async def test_admin_daily_mode_api_switches_to_2048() -> None:
     set_mock.assert_awaited_once_with(repo.DAILY_GAME_MODE_SETTING_KEY, "2048")
 
 
-def test_daily2048_template_has_compact_goal_theme_cycle_and_motion_hooks() -> None:
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
-
-    assert "grid-template-rows: auto auto auto minmax(0, 1fr) auto" in template
-    assert 'id="theme-btn"' in template
-    assert "const THEMES = [" in template
-    for theme in ("aero", "desk", "swiss", "botanical", "deco"):
-        assert f"id: '{theme}'" in template
-        assert f'body[data-theme="{theme}"]' in template
-
-    assert "buildTileModels" in template
-    assert "lastMoveDirection" in template
-    assert ".tile.moved" in template
-    assert ".tile.merged" in template
-    assert ".tile.spawn" in template
-
-
 def test_daily2048_template_uses_pointer_swipes_optimistic_moves_and_visible_timer() -> None:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
 

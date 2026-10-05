@@ -57,8 +57,9 @@ def daily_trivia_keyboard(*, include_subscribe: bool = False) -> InlineKeyboardM
 def _entry_caption(puzzle_date) -> str:
     return (
         f"🧠 <b>Daily Trivia</b> · <code>{puzzle_date.isoformat()}</code>\n\n"
-        "Вас ждут 5 уникальных интеллектуальных вопросов на самые разные темы! "
-        "Узнавайте новые познавательные факты после каждого ответа и зарабатывайте максимум очков за точность и скорость."
+        "Пять вопросов, интересный факт после каждого ответа и очки за точность и скорость.\n\n"
+        "После них можно сыграть 3 супервопроса: правильный ответ добавит двойные очки, ошибка отнимет столько же. "
+        "Суперигра по желанию."
     )
 
 
@@ -309,7 +310,7 @@ async def trivia_monthly_champions_callback(update: Update, context: ContextType
             name = _html.escape((row.get("name") or "").strip() or f"игрок {str(row['user_id'])[-4:]}")
             lines.append(
                 f"{idx}. {name} — <b>{int(row['score'])}</b> очков · "
-                f"{int(row['correct'])}/5 · {int(row['games_played'])} дн."
+                f"{int(row['correct'])}/{int(row['games_played']) * 5} правильных · {int(row['games_played'])} дн."
             )
 
     from telegram import Message

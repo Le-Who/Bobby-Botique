@@ -11,6 +11,21 @@ from telegram.error import BadRequest, TelegramError
 from app.games import cover_photo
 from app.repos import daily_trivia as repo
 
+_RUSSIAN_MONTHS = (
+    "Январь",
+    "Февраль",
+    "Март",
+    "Апрель",
+    "Май",
+    "Июнь",
+    "Июль",
+    "Август",
+    "Сентябрь",
+    "Октябрь",
+    "Ноябрь",
+    "Декабрь",
+)
+
 
 def _format_duration(elapsed_ms: int) -> str:
     total_seconds = max(0, int(elapsed_ms // 1000))
@@ -100,7 +115,7 @@ async def render_result_body(
     if monthly_lb:
         month_medals = ["🥇", "🥈", "🥉"]
         lines.append("")
-        lines.append(f"📅 <b>Топ-3 месяца</b> ({puzzle_date.strftime('%B %Y')})")
+        lines.append(f"📅 <b>Топ-3 месяца</b> ({_RUSSIAN_MONTHS[puzzle_date.month - 1]} {puzzle_date.year})")
         for midx, mrow in enumerate(monthly_lb):
             mname = html.escape((mrow.get("name") or "").strip() or _user_label(int(mrow["user_id"])))
             medal = month_medals[midx] if midx < len(month_medals) else f"{midx + 1}."

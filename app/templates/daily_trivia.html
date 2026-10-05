@@ -19,584 +19,125 @@
 
   <style>
     :root {
-      --bg-color: #0b0f19;
-      --card-bg: rgba(22, 30, 49, 0.75);
-      --border-color: rgba(255, 255, 255, 0.08);
-      --text-main: #f1f5f9;
-      --text-muted: #94a3b8;
-      --accent: #38bdf8;
-      --accent-glow: rgba(56, 189, 248, 0.2);
-      --correct: #10b981;
-      --correct-bg: rgba(16, 185, 129, 0.15);
-      --wrong: #f43f5e;
-      --wrong-bg: rgba(244, 63, 94, 0.15);
-      --amber: #fbbf24;
+      color-scheme: dark;
+      --bg-color: #09171d;
+      --card-bg: #112830;
+      --border-color: #2b454e;
+      --text-main: #ecf6f7;
+      --text-muted: #acc2c8;
+      --accent: #72dce5;
+      --accent-glow: #153a42;
+      --correct: #8ce0b9;
+      --correct-bg: #123c33;
+      --wrong: #ff9dab;
+      --wrong-bg: #40252e;
+      --amber: #f7cd77;
       --radius: 16px;
     }
-
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-      -webkit-tap-highlight-color: transparent;
-    }
-
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body {
-      background: var(--bg-color);
-      color: var(--text-main);
-      font-family: 'Plus Jakarta Sans', sans-serif;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      padding: 16px;
-      background-image:
-        radial-gradient(circle at 10% 20%, rgba(56, 189, 248, 0.08) 0%, transparent 40%),
-        radial-gradient(circle at 90% 80%, rgba(139, 92, 246, 0.08) 0%, transparent 40%);
+      background: var(--bg-color); color: var(--text-main);
+      font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+      min-height: 100vh; min-height: 100dvh;
+      padding: max(16px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
     }
-
-    .container {
-      max-width: 480px;
-      width: 100%;
-      margin: 0 auto;
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-    }
-
-    .container > .daily-choice { margin-bottom: 16px; }
-    .trivia-heading { margin-bottom: 16px; }
-    .trivia-heading h1 { font: 800 clamp(1.55rem, 5vw, 2rem)/1.1 'Outfit', sans-serif; letter-spacing: -.025em; }
-    .trivia-heading p { margin-top: 4px; color: #b7c7d9; font-size: .9rem; }
-    button:focus-visible { outline: 3px solid #fbbf24; outline-offset: 3px; }
-    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
-
-    /* Header */
-    .top-bar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-    }
-
-    .q-counter {
-      font-family: 'Outfit', sans-serif;
-      font-weight: 700;
-      font-size: 1rem;
-      color: var(--accent);
-      background: var(--accent-glow);
-      padding: 6px 14px;
-      border-radius: 20px;
-      border: 1px solid rgba(56, 189, 248, 0.3);
-    }
-
-    .score-badge {
-      font-family: 'Outfit', sans-serif;
-      font-weight: 700;
-      font-size: 1.1rem;
-      color: var(--amber);
-      display: flex;
-      align-items: center;
-      gap: 4px;
-    }
-
-    /* Progress bar */
-    .progress-container {
-      width: 100%;
-      height: 6px;
-      background: rgba(255, 255, 255, 0.06);
-      border-radius: 3px;
-      margin-bottom: 24px;
-      overflow: hidden;
-    }
-
-    .progress-fill {
-      height: 100%;
-      background: linear-gradient(90deg, #38bdf8, #8b5cf6);
-      width: 0%;
-      transition: width 0.3s ease;
-      border-radius: 3px;
-    }
-
-    /* Question card */
-    .question-card {
-      background: var(--card-bg);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius);
-      padding: 20px;
-      margin-bottom: 20px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-    }
-
-    .topic-badge {
-      display: inline-block;
-      font-size: 0.75rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-muted);
-      margin-bottom: 10px;
-    }
-
-    .question-text {
-      font-family: 'Outfit', sans-serif;
-      font-size: 1.25rem;
-      font-weight: 600;
-      line-height: 1.4;
-      color: var(--text-main);
-    }
-
-    /* Options */
-    .options-grid {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      margin-bottom: 20px;
-    }
-
+    .container { max-width: 480px; width: 100%; margin: 0 auto; }
+    .container > .daily-choice { margin-bottom: 18px; }
+    .trivia-heading { margin-bottom: 18px; }
+    .trivia-heading h1 { font: 800 clamp(1.5rem, 5vw, 1.9rem)/1.15 'Outfit', system-ui, sans-serif; letter-spacing: -.025em; }
+    .trivia-heading p { margin-top: 5px; color: var(--text-muted); font-size: .84rem; line-height: 1.5; }
+    button, a { touch-action: manipulation; }
+    button { font: inherit; }
+    button:focus-visible, a:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
+    [tabindex='-1']:focus { outline: none; }
+    button:disabled { cursor: default; }
+    .top-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+    .q-counter { font: 700 .95rem/1.3 'Outfit', system-ui, sans-serif; color: var(--accent); }
+    .score-badge { font: 700 1rem/1.3 'Outfit', system-ui, sans-serif; color: var(--amber); padding: 5px 10px; border-radius: 8px; font-variant-numeric: tabular-nums; }
+    .progress-container { height: 5px; background: var(--border-color); border-radius: 3px; margin-bottom: 18px; overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width .25s ease; border-radius: inherit; }
+    .question-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+    .topic-badge { display: inline-block; font-size: .73rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); margin-bottom: 9px; overflow-wrap: anywhere; }
+    .question-text { font: 600 clamp(1.15rem, 4.5vw, 1.3rem)/1.45 'Outfit', system-ui, sans-serif; overflow-wrap: anywhere; scroll-margin-top: 16px; }
+    .options-grid { display: flex; flex-direction: column; gap: 9px; margin-bottom: 16px; }
     .option-btn {
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius);
-      padding: 14px 18px;
-      color: var(--text-main);
-      font-size: 1rem;
-      font-weight: 500;
-      text-align: left;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      width: 100%; min-height: 52px; background: #10232b; border: 1px solid var(--border-color);
+      border-radius: 12px; padding: 12px 14px; color: var(--text-main); font-size: .95rem;
+      font-weight: 500; line-height: 1.5; text-align: left; cursor: pointer;
+      display: flex; align-items: center; gap: 12px;
+      transition: border-color .16s ease, background-color .16s ease, transform .16s ease;
     }
-
-    .option-btn:hover:not(.disabled) {
-      background: rgba(255, 255, 255, 0.08);
-      border-color: rgba(255, 255, 255, 0.15);
+    .option-letter { flex: 0 0 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-muted); font: 700 .82rem 'Outfit', system-ui, sans-serif; }
+    .option-copy { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+    .option-mark { flex: 0 0 auto; font-weight: 800; }
+    @media (hover: hover) { .option-btn:hover:enabled { background: #17333d; border-color: var(--accent); } }
+    .option-btn:active:enabled { transform: scale(.985); }
+    .option-btn.disabled { color: var(--text-muted); }
+    .option-btn.selected-correct, .option-btn.reveal-correct { background: var(--correct-bg); border-color: var(--correct); color: #c4f5df; }
+    .option-btn.selected-wrong { background: var(--wrong-bg); border-color: var(--wrong); color: #ffd6dd; }
+    .option-btn.selected-correct .option-letter, .option-btn.selected-wrong .option-letter { border-color: currentColor; color: inherit; }
+    .explanation-card { background: #102e37; border: 1px solid #315863; border-radius: var(--radius); padding: 16px; margin: 0 0 12px; animation: fadeIn .22s ease both; }
+    .answer-outcome { font-weight: 700; font-size: 1rem; margin-bottom: 12px; color: var(--correct); line-height: 1.5; }
+    .answer-outcome.wrong { color: var(--wrong); }
+    .explanation-title { font-size: .78rem; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+    .explanation-body, .review-fact-body { color: #d0e1e5; font-size: .9rem; line-height: 1.65; overflow-wrap: anywhere; }
+    .answer-status { color: var(--text-muted); font-size: .8rem; line-height: 1.55; margin: 0 0 12px; min-height: 1.5em; }
+    .answer-status[data-state='failed'] { color: var(--wrong); }
+    .session-note { font-size: .78rem; color: var(--amber); line-height: 1.55; margin-bottom: 12px; }
+    .btn-primary, .btn-secondary, .btn-super { width: 100%; min-height: 48px; padding: 14px; border-radius: 12px; font: 700 1rem/1.4 'Outfit', system-ui, sans-serif; cursor: pointer; transition: opacity .16s ease, transform .16s ease; }
+    .btn-primary { border: 1px solid var(--accent); background: var(--accent); color: #09232b; }
+    .btn-secondary { background: #10232b; border: 1px solid var(--border-color); color: var(--text-main); margin-top: 10px; }
+    .btn-super { background: var(--amber); border: 1px solid var(--amber); color: #30220b; margin-top: 12px; }
+    .btn-primary:disabled, .btn-super:disabled { opacity: .55; }
+    .btn-primary:active:enabled, .btn-secondary:active:enabled, .btn-super:active:enabled { transform: scale(.985); }
+    .finish-card { text-align: center; padding: 26px 20px; }
+    .finish-title { font: 800 1.7rem/1.2 'Outfit', system-ui, sans-serif; margin-bottom: 14px; }
+    .finish-score { font: 800 3rem/1.1 'Outfit', system-ui, sans-serif; color: var(--amber); margin: 6px 0; font-variant-numeric: tabular-nums; }
+    .finish-subtitle { color: var(--text-muted); font-size: .92rem; line-height: 1.6; margin-bottom: 18px; }
+    .super-rules { font-size: .82rem; color: var(--text-muted); line-height: 1.6; text-align: left; padding: 12px; border: 1px solid #665634; background: #2a2b22; border-radius: 10px; }
+    .already-done-badge { font-size: .78rem; font-weight: 700; color: var(--correct); background: var(--correct-bg); border: 1px solid #396d5c; border-radius: 8px; padding: 6px 10px; margin-bottom: 14px; line-height: 1.5; }
+    .review-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+    .review-back-btn { background: #10232b; border: 1px solid var(--border-color); border-radius: 10px; padding: 10px 12px; min-height: 44px; color: var(--text-main); font-size: .9rem; cursor: pointer; white-space: nowrap; }
+    .review-title { font: 700 1.2rem/1.3 'Outfit', system-ui, sans-serif; }
+    .accordion-item { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: var(--radius); margin-bottom: 10px; overflow: hidden; }
+    .accordion-item.correct-item { border-color: #396d5c; }
+    .accordion-item.wrong-item { border-color: #70434e; }
+    .accordion-trigger { display: flex; align-items: center; gap: 10px; padding: 14px; min-height: 48px; cursor: pointer; width: 100%; background: none; border: none; text-align: left; color: var(--text-main); }
+    .accordion-icon { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-size: .85rem; font-weight: 800; flex-shrink: 0; }
+    .icon-correct { background: var(--correct-bg); color: var(--correct); }
+    .icon-wrong { background: var(--wrong-bg); color: var(--wrong); }
+    .accordion-question-text { flex: 1; min-width: 0; font-size: .9rem; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+    .accordion-chevron { color: var(--text-muted); font-size: .75rem; transition: transform .2s ease; flex-shrink: 0; }
+    .accordion-item.open .accordion-chevron { transform: rotate(180deg); }
+    .accordion-body { display: none; padding: 0 14px 14px; animation: fadeIn .18s ease both; }
+    .accordion-item.open .accordion-body { display: block; }
+    .review-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+    .review-option { padding: 10px 12px; border-radius: 10px; font-size: .875rem; line-height: 1.5; border: 1px solid transparent; overflow-wrap: anywhere; }
+    .ro-correct { background: var(--correct-bg); border-color: #396d5c; color: #c4f5df; }
+    .ro-wrong-selected { background: var(--wrong-bg); border-color: #70434e; color: #ffd6dd; }
+    .ro-neutral { background: #10232b; color: var(--text-muted); }
+    .review-fact { background: #102e37; border: 1px solid #315863; border-radius: 10px; padding: 12px; }
+    .review-fact-label { font-size: .75rem; font-weight: 700; color: var(--accent); margin-bottom: 5px; }
+    .btn-ai-more { display: inline-flex; align-items: center; margin-top: 10px; padding: 10px 14px; min-height: 44px; background: var(--accent-glow); border: 1px solid #315863; border-radius: 10px; color: var(--accent); font-size: .82rem; font-weight: 700; text-decoration: none; }
+    .super-title { color: var(--amber); font-weight: 800; font-family: 'Outfit', system-ui, sans-serif; }
+    .super-badge-header { color: var(--amber); background: #2a2b22; border: 1px solid #665634; padding: 4px 8px; border-radius: 8px; font-size: .76rem; font-weight: 700; flex-shrink: 0; }
+    .super-question-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+    .super-question-header .topic-badge { margin-bottom: 0; }
+    .super-divider { margin: 24px 0 16px; display: flex; align-items: center; gap: 12px; }
+    .super-divider-line { flex: 1; height: 1px; background: #665634; }
+    .super-divider-text { font-weight: 800; font-size: .9rem; }
+    .super-locked-box { background: #2a2b22; border: 1px dashed #665634; border-radius: var(--radius); padding: 18px; text-align: center; }
+    .super-locked-text { font-size: .9rem; line-height: 1.55; color: var(--text-muted); }
+    .question-enter { animation: fadeIn .22s ease both; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    @media (max-width: 350px), (max-height: 650px) {
+      .trivia-heading { margin-bottom: 14px; }
+      .question-card { padding: 16px; }
+      .option-btn { padding: 11px 12px; gap: 10px; }
+      .finish-card { padding: 22px 16px; }
     }
-
-    .option-btn.selected-correct {
-      background: var(--correct-bg) !important;
-      border-color: var(--correct) !important;
-      color: #a7f3d0 !important;
-      font-weight: 600;
-    }
-
-    .option-btn.selected-wrong {
-      background: var(--wrong-bg) !important;
-      border-color: var(--wrong) !important;
-      color: #fecdd3 !important;
-    }
-
-    .option-btn.reveal-correct {
-      border-color: var(--correct) !important;
-      background: rgba(16, 185, 129, 0.08) !important;
-    }
-
-    .option-btn.disabled {
-      cursor: default;
-      opacity: 0.7;
-    }
-
-    /* Explanation card */
-    .explanation-card {
-      background: rgba(56, 189, 248, 0.06);
-      border: 1px solid rgba(56, 189, 248, 0.2);
-      border-radius: var(--radius);
-      padding: 16px;
-      margin-bottom: 20px;
-      animation: fadeIn 0.3s ease;
-    }
-
-    .explanation-title {
-      font-size: 0.85rem;
-      font-weight: 700;
-      color: var(--accent);
-      margin-bottom: 6px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .explanation-body {
-      font-size: 0.9rem;
-      line-height: 1.5;
-      color: #cbd5e1;
-    }
-
-    /* Buttons */
-    .btn-primary {
-      width: 100%;
-      background: linear-gradient(135deg, #38bdf8, #8b5cf6);
-      border: none;
-      border-radius: var(--radius);
-      padding: 16px;
-      color: #ffffff;
-      font-family: 'Outfit', sans-serif;
-      font-size: 1.05rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: opacity 0.2s ease;
-      box-shadow: 0 4px 15px rgba(56, 189, 248, 0.3);
-      margin-top: auto;
-    }
-
-    .btn-primary:active {
-      opacity: 0.85;
-    }
-
-    .btn-secondary {
-      width: 100%;
-      background: transparent;
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius);
-      padding: 14px;
-      color: var(--text-muted);
-      font-family: 'Outfit', sans-serif;
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      margin-top: 12px;
-    }
-
-    .btn-secondary:active {
-      opacity: 0.75;
-    }
-
-    /* Finish Screen */
-    .finish-card {
-      text-align: center;
-      padding: 30px 20px;
-      margin: auto 0;
-    }
-
-    .finish-title {
-      font-family: 'Outfit', sans-serif;
-      font-size: 2rem;
-      font-weight: 800;
-      margin-bottom: 12px;
-      background: linear-gradient(90deg, #38bdf8, #fbbf24);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    .finish-score {
-      font-size: 3rem;
-      font-weight: 800;
-      color: var(--amber);
-      margin-bottom: 6px;
-      font-family: 'Outfit', sans-serif;
-    }
-
-    .finish-subtitle {
-      color: var(--text-muted);
-      font-size: 1rem;
-      margin-bottom: 30px;
-    }
-
-    /* Already-completed banner */
-    .already-done-badge {
-      display: inline-block;
-      font-size: 0.78rem;
-      font-weight: 700;
-      color: var(--correct);
-      background: var(--correct-bg);
-      border: 1px solid rgba(16, 185, 129, 0.35);
-      border-radius: 20px;
-      padding: 4px 12px;
-      margin-bottom: 18px;
-    }
-
-    /* Review Screen */
-    .review-header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 20px;
-    }
-
-    .review-back-btn {
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid var(--border-color);
-      border-radius: 10px;
-      padding: 8px 12px;
-      color: var(--text-muted);
-      font-size: 0.9rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      white-space: nowrap;
-    }
-
-    .review-back-btn:active {
-      opacity: 0.7;
-    }
-
-    .review-title {
-      font-family: 'Outfit', sans-serif;
-      font-size: 1.2rem;
-      font-weight: 700;
-      color: var(--text-main);
-    }
-
-    /* Accordion item */
-    .accordion-item {
-      background: var(--card-bg);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius);
-      margin-bottom: 10px;
-      overflow: hidden;
-      transition: border-color 0.2s ease;
-    }
-
-    .accordion-item.correct-item {
-      border-color: rgba(16, 185, 129, 0.3);
-    }
-
-    .accordion-item.wrong-item {
-      border-color: rgba(244, 63, 94, 0.25);
-    }
-
-    .accordion-trigger {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 14px 16px;
-      cursor: pointer;
-      width: 100%;
-      background: none;
-      border: none;
-      text-align: left;
-      color: var(--text-main);
-    }
-
-    .accordion-icon {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.85rem;
-      font-weight: 800;
-      flex-shrink: 0;
-    }
-
-    .icon-correct {
-      background: var(--correct-bg);
-      color: var(--correct);
-      border: 1px solid rgba(16, 185, 129, 0.4);
-    }
-
-    .icon-wrong {
-      background: var(--wrong-bg);
-      color: var(--wrong);
-      border: 1px solid rgba(244, 63, 94, 0.4);
-    }
-
-    .accordion-question-text {
-      flex: 1;
-      font-size: 0.9rem;
-      font-weight: 500;
-      line-height: 1.4;
-      color: var(--text-main);
-    }
-
-    .accordion-chevron {
-      color: var(--text-muted);
-      font-size: 0.75rem;
-      transition: transform 0.25s ease;
-      flex-shrink: 0;
-    }
-
-    .accordion-item.open .accordion-chevron {
-      transform: rotate(180deg);
-    }
-
-    .accordion-body {
-      display: none;
-      padding: 0 16px 16px 16px;
-      animation: fadeIn 0.2s ease;
-    }
-
-    .accordion-item.open .accordion-body {
-      display: block;
-    }
-
-    .review-options {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-
-    .review-option {
-      padding: 10px 14px;
-      border-radius: 10px;
-      font-size: 0.875rem;
-      font-weight: 500;
-      border: 1px solid transparent;
-    }
-
-    .review-option.ro-correct {
-      background: var(--correct-bg);
-      border-color: rgba(16, 185, 129, 0.35);
-      color: #a7f3d0;
-    }
-
-    .review-option.ro-wrong-selected {
-      background: var(--wrong-bg);
-      border-color: rgba(244, 63, 94, 0.35);
-      color: #fecdd3;
-    }
-
-    .review-option.ro-neutral {
-      background: rgba(255, 255, 255, 0.03);
-      border-color: var(--border-color);
-      color: var(--text-muted);
-    }
-
-    .review-fact {
-      background: rgba(56, 189, 248, 0.06);
-      border: 1px solid rgba(56, 189, 248, 0.2);
-      border-radius: 10px;
-      padding: 12px 14px;
-    }
-
-    .review-fact-label {
-      font-size: 0.75rem;
-      font-weight: 700;
-      color: var(--accent);
-      margin-bottom: 5px;
-    }
-
-    .review-fact-body {
-      font-size: 0.875rem;
-      line-height: 1.5;
-      color: #cbd5e1;
-    }
-
-    /* AI deep-dive button inside accordion */
-    .btn-ai-more {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      margin-top: 10px;
-      padding: 8px 14px;
-      background: rgba(139, 92, 246, 0.12);
-      border: 1px solid rgba(139, 92, 246, 0.35);
-      border-radius: 10px;
-      color: #c4b5fd;
-      font-size: 0.82rem;
-      font-weight: 700;
-      cursor: pointer;
-      text-decoration: none;
-      transition: all 0.2s ease;
-    }
-
-    .btn-ai-more:active {
-      opacity: 0.75;
-    }
-
-    /* Super Game Styles */
-    @keyframes superRainbow {
-      0%   { background-position: 0% 50%; }
-      50%  { background-position: 100% 50%; }
-      100% { background-position: 0% 50%; }
-    }
-
-    .super-title {
-      background: linear-gradient(90deg, #ff0080, #ff8c00, #ffe600, #00e5ff, #8000ff, #ff0080);
-      background-size: 300%;
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      animation: superRainbow 3s linear infinite;
-      font-weight: 900;
-      font-family: 'Outfit', sans-serif;
-    }
-
-    .super-badge-header {
-      background: linear-gradient(135deg, rgba(255, 0, 128, 0.2), rgba(0, 229, 255, 0.2));
-      border: 1px solid rgba(255, 0, 128, 0.4);
-      color: #ff80bf;
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 0.8rem;
-      font-weight: 800;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-    }
-
-    .btn-super {
-      width: 100%;
-      background: linear-gradient(90deg, #ff0080, #ff8c00, #00e5ff, #8000ff);
-      background-size: 300%;
-      animation: superRainbow 4s linear infinite;
-      border: none;
-      border-radius: var(--radius);
-      padding: 16px;
-      color: #ffffff;
-      font-family: 'Outfit', sans-serif;
-      font-size: 1.1rem;
-      font-weight: 800;
-      cursor: pointer;
-      box-shadow: 0 4px 20px rgba(255, 0, 128, 0.4);
-      margin-top: 14px;
-      transition: opacity 0.2s ease;
-    }
-
-    .btn-super:active {
-      opacity: 0.85;
-    }
-
-    .super-divider {
-      margin: 24px 0 16px 0;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .super-divider-line {
-      flex: 1;
-      height: 1px;
-      background: rgba(255, 0, 128, 0.3);
-    }
-
-    .super-divider-text {
-      font-family: 'Outfit', sans-serif;
-      font-weight: 800;
-      font-size: 0.9rem;
-      letter-spacing: 0.05em;
-    }
-
-    .super-locked-box {
-      background: rgba(255, 0, 128, 0.05);
-      border: 1px dashed rgba(255, 0, 128, 0.3);
-      border-radius: var(--radius);
-      padding: 20px;
-      text-align: center;
-      margin-top: 10px;
-    }
-
-    .super-locked-text {
-      font-size: 0.9rem;
-      color: var(--text-muted);
-      margin-bottom: 12px;
-    }
-
-    @keyframes fadeIn {
-      from {
-        opacity: 0;
-        transform: translateY(8px);
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
     }
   </style>
 </head>
@@ -607,10 +148,11 @@
     {% include '_daily_game_switcher.html' %}
     <header class="trivia-heading">
       <h1>Викторина дня</h1>
-      <p>Пять вопросов, затем суперигра</p>
+      <p>5 вопросов · после каждого — новый факт</p>
     </header>
+    <p class="session-note" id="sessionNote" hidden>Вне Telegram результат не сохраняется. Откройте игру в боте для участия в рейтинге.</p>
     <div class="top-bar">
-      <div class="q-counter" id="qCounter">Вопрос 1/5</div>
+      <div class="q-counter" id="qCounter">Загружаем викторину…</div>
       <div class="score-badge" id="scoreBadge">⭐ 0</div>
     </div>
 
@@ -619,49 +161,54 @@
     </div>
 
     <!-- Game Screen -->
-    <div id="gameView">
+    <div id="gameView" aria-busy="true">
       <div class="question-card">
         <div class="topic-badge" id="topicBadge">Загрузка...</div>
-        <h2 class="question-text" id="questionText">Пожалуйста, подождите...</h2>
+        <h2 class="question-text" id="questionText" tabindex="-1">Пожалуйста, подождите...</h2>
       </div>
 
       <div class="options-grid" id="optionsGrid"></div>
       <button class="btn-secondary" id="retryBtn" type="button" style="display: none;">Повторить загрузку</button>
 
       <div class="explanation-card" id="explanationCard" role="status" aria-live="polite" style="display: none;">
+        <div class="answer-outcome" id="answerOutcome"></div>
         <div class="explanation-title">💡 Знаете ли вы?</div>
         <div class="explanation-body" id="explanationText"></div>
       </div>
 
+      <p class="answer-status" id="answerStatus" role="status" aria-live="polite"></p>
       <button class="btn-primary" id="nextBtn" style="display: none;">Продолжить</button>
     </div>
 
     <!-- Super Game Screen -->
     <div id="superView" style="display: none;">
-      <div class="question-card" style="border-color: rgba(255, 0, 128, 0.3);">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+      <div class="question-card" style="border-color: #665634;">
+        <div class="super-question-header">
           <div class="topic-badge super-title" id="superTopicBadge">⚡ СУПЕРИГРА</div>
           <div class="super-badge-header">⚡ Ставки ×2</div>
         </div>
-        <h2 class="question-text" id="superQuestionText">...</h2>
+        <h2 class="question-text" id="superQuestionText" tabindex="-1">...</h2>
       </div>
 
       <div class="options-grid" id="superOptionsGrid"></div>
 
-      <div class="explanation-card" id="superExplanationCard" role="status" aria-live="polite" style="display: none; border-color: rgba(255, 0, 128, 0.3); background: rgba(255, 0, 128, 0.06);">
-        <div class="explanation-title" style="color: #ff80bf;">💡 Знаете ли вы?</div>
+      <div class="explanation-card" id="superExplanationCard" role="status" aria-live="polite" style="display: none;">
+        <div class="answer-outcome" id="superAnswerOutcome"></div>
+        <div class="explanation-title">💡 Знаете ли вы?</div>
         <div class="explanation-body" id="superExplanationText"></div>
       </div>
 
+      <p class="answer-status" id="superAnswerStatus" role="status" aria-live="polite"></p>
       <button class="btn-super" id="superNextBtn" style="display: none;">Продолжить</button>
     </div>
 
     <!-- Finish Screen -->
     <div id="finishView" style="display: none;" class="question-card finish-card">
       <div id="alreadyDoneBadge" class="already-done-badge" style="display: none;">✓ Уже пройдено сегодня</div>
-      <div class="finish-title">Викторина завершена!</div>
+      <h2 class="finish-title" tabindex="-1" id="finishTitle">Викторина завершена!</h2>
       <div class="finish-score" id="finalScore">0</div>
       <div class="finish-subtitle" id="finalDetails">Вы правильно ответили на 0 из 5 вопросов</div>
+      <p class="super-rules" id="superRules">Суперигра: 3 вопроса. Верный ответ приносит двойные очки, неверный — вычитает их из результата дня.</p>
       <button class="btn-super" id="superStartBtn">⚡ Сыграть Суперигру (×2 ставки)</button>
       <div id="superDoneStatus" style="display: none; margin-top: 10px;" class="already-done-badge">✓ Суперигра пройдена</div>
       <button class="btn-primary" id="closeBtn" style="margin-top: 12px;">Закрыть</button>
@@ -670,8 +217,8 @@
 
     <!-- Super Finish Screen -->
     <div id="superFinishView" style="display: none;" class="question-card finish-card">
-      <div class="super-title" style="font-size: 1.8rem; margin-bottom: 12px;">⚡ Суперигра завершена!</div>
-      <div class="finish-score" id="superDeltaDisplay" style="color: #ff80bf;">+0</div>
+      <h2 class="super-title finish-title" tabindex="-1" id="superFinishTitle">⚡ Суперигра завершена!</h2>
+      <div class="finish-score" id="superDeltaDisplay">+0</div>
       <div class="finish-subtitle" id="superFinishSubtitle">Итоговый результат дня: 0 очков</div>
       <button class="btn-primary" id="superCloseBtn">Закрыть</button>
       <button class="btn-secondary" id="superReviewBtn">📋 Просмотреть ответы</button>
@@ -685,6 +232,7 @@
       </div>
       <div id="reviewAccordion"></div>
     </div>
+    <button class="btn-secondary" id="saveRecoveryBtn" type="button" style="display: none;">Выбрать другую игру</button>
   </div>
 
   <script>
@@ -712,10 +260,110 @@
     let userSuperResult = null;
     let startTime = 0;
     let answered = false;
+    let answerSaved = false;
+    const savesToAccount = Boolean(tg && tg.initData);
+    document.getElementById('sessionNote').hidden = savesToAccount;
+
+    function updateProgress(done, count, label) {
+      const progress = document.getElementById('quizProgress');
+      progress.setAttribute('aria-valuemax', String(count));
+      progress.setAttribute('aria-valuenow', String(done));
+      progress.setAttribute('aria-valuetext', `${label}: отвечено ${done} из ${count}`);
+      document.getElementById('progressFill').style.width = count ? `${done / count * 100}%` : '0%';
+    }
+
+    function focusElement(id) {
+      document.getElementById(id).focus({ preventScroll: true });
+    }
+
+    function enterQuestion(viewId, headingId) {
+      const view = document.getElementById(viewId);
+      view.classList.remove('question-enter');
+      void view.offsetWidth;
+      view.classList.add('question-enter');
+      focusElement(headingId);
+    }
+
+    function createOption(text, idx, select) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'option-btn';
+      const letter = document.createElement('span');
+      letter.className = 'option-letter';
+      letter.setAttribute('aria-hidden', 'true');
+      letter.innerText = String.fromCharCode(65 + idx);
+      const copy = document.createElement('span');
+      copy.className = 'option-copy';
+      copy.innerText = text;
+      button.append(letter, copy);
+      button.addEventListener('click', function () { select(idx); });
+      return button;
+    }
+
+    function showOutcome(prefix, q, selectedIdx, isCorrect, scoreText) {
+      const grid = document.getElementById(prefix ? 'superOptionsGrid' : 'optionsGrid');
+      Array.from(grid.children).forEach(function (button, idx) {
+        button.disabled = true;
+        button.classList.add('disabled');
+        if (idx === q.correct_index || idx === selectedIdx) {
+          const mark = document.createElement('span');
+          mark.className = 'option-mark';
+          mark.innerText = idx === q.correct_index ? '✓' : '✗';
+          mark.setAttribute('aria-hidden', 'true');
+          button.appendChild(mark);
+          button.setAttribute('aria-label', `${q.options[idx]} — ${idx === q.correct_index ? 'верный ответ' : 'ваш ответ, неверно'}`);
+        }
+      });
+      const outcome = document.getElementById(prefix ? 'superAnswerOutcome' : 'answerOutcome');
+      outcome.classList.toggle('wrong', !isCorrect);
+      outcome.innerText = isCorrect ? `✓ Верно! ${scoreText}` : `✗ Неверно. Правильный ответ: ${q.options[q.correct_index]}. ${scoreText}`;
+    }
+
+    async function saveAnswer(endpoint, body, superGame) {
+      const button = document.getElementById(superGame ? 'superNextBtn' : 'nextBtn');
+      const status = document.getElementById(superGame ? 'superAnswerStatus' : 'answerStatus');
+      button.disabled = true;
+      status.dataset.state = 'saving';
+      status.innerText = savesToAccount ? 'Сохраняем ответ…' : 'Отправляем ответ…';
+      const controller = new AbortController();
+      const timeout = setTimeout(function () { controller.abort(); }, 15000);
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-TG-INIT-DATA': tg ? tg.initData : '' },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error('Answer request failed');
+        const data = await response.json();
+        if (!data.success) throw new Error('Answer was not accepted');
+        if (data.already_completed) {
+          status.innerText = 'Этот раунд уже завершён. Загружаем сохранённый результат…';
+          const loaded = await defInit(superGame ? 'super' : 'main');
+          if (!loaded) throw new Error('Completed result could not be confirmed');
+          return;
+        }
+        answerSaved = true;
+        status.dataset.state = 'saved';
+        status.innerText = savesToAccount ? 'Ответ сохранён' : 'Ответ принят · результат вне Telegram не сохраняется';
+        button.disabled = false;
+        focusElement(button.id);
+      } catch (error) {
+        status.dataset.state = 'failed';
+        status.innerText = 'Не удалось подтвердить сохранение ответа. Не начинайте этот раунд заново: предыдущие ответы уже могли сохраниться. Выберите другую игру и проверьте итог позже.';
+        document.getElementById('saveRecoveryBtn').style.display = 'block';
+        focusElement('saveRecoveryBtn');
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
 
     // Wire up static buttons via addEventListener (CSP-safe)
     document.getElementById('nextBtn').addEventListener('click', nextQuestion);
-    document.getElementById('retryBtn').addEventListener('click', defInit);
+    document.getElementById('retryBtn').addEventListener('click', function () { defInit(); });
+    document.getElementById('saveRecoveryBtn').addEventListener('click', function () {
+      document.getElementById('daily-choice-trigger').click();
+    });
     document.getElementById('superNextBtn').addEventListener('click', nextSuperQuestion);
     document.getElementById('superStartBtn').addEventListener('click', startSuperGame);
     document.getElementById('closeBtn').addEventListener('click', function () {
@@ -730,20 +378,35 @@
       document.getElementById('reviewView').style.display = 'none';
       if (userSuperResult && userSuperResult.status === 'completed') {
         document.getElementById('superFinishView').style.display = 'block';
+        focusElement('superReviewBtn');
       } else {
         document.getElementById('finishView').style.display = 'block';
+        focusElement('reviewBtn');
       }
+      window.scrollTo({ top: 0, behavior: scrollBehavior });
     });
 
-    async function defInit() {
+    async function defInit(completedLane = null) {
+      const controller = new AbortController();
+      const timeout = setTimeout(function () { controller.abort(); }, 15000);
+      document.getElementById('gameView').setAttribute('aria-busy', 'true');
+      document.getElementById('retryBtn').disabled = true;
       document.getElementById('retryBtn').style.display = 'none';
-      document.getElementById('questionText').innerText = 'Загружаем вопросы дня…';
+      if (!completedLane) {
+        document.getElementById('qCounter').innerText = 'Загружаем викторину…';
+        document.getElementById('questionText').innerText = 'Загружаем вопросы дня…';
+      }
       try {
         const response = await fetch('/webapp/api/miniapp/trivia/today', {
-          headers: { 'X-TG-INIT-DATA': tg ? tg.initData : '' }
+          headers: { 'X-TG-INIT-DATA': tg ? tg.initData : '' },
+          signal: controller.signal
         });
         if (!response.ok) throw new Error('Question request failed');
         const data = await response.json();
+        if (completedLane && (data.user_result?.status !== 'completed' ||
+            (completedLane === 'super' && data.user_super_result?.status !== 'completed'))) {
+          throw new Error('Completed result is not available');
+        }
 
         if (!data.questions || data.questions.length === 0) {
           document.getElementById('questionText').innerText = 'Вопросы дня пока готовятся. Попробуйте чуть позже.';
@@ -793,13 +456,24 @@
           }
 
           showFinishScreen(true /* alreadyDone */);
-          return;
+          return true;
         }
 
         renderQuestion();
+        return true;
       } catch (e) {
+        if (completedLane) return false;
         document.getElementById('questionText').innerText = 'Не удалось загрузить вопросы. Проверьте соединение и попробуйте снова.';
         document.getElementById('retryBtn').style.display = 'block';
+      } finally {
+        clearTimeout(timeout);
+        document.getElementById('gameView').setAttribute('aria-busy', 'false');
+        document.getElementById('retryBtn').disabled = false;
+        if (document.getElementById('retryBtn').style.display === 'block') {
+          document.getElementById('qCounter').innerText = 'Вопросы пока недоступны';
+          document.getElementById('topicBadge').innerText = 'Вопросы дня';
+          focusElement('retryBtn');
+        }
       }
     }
 
@@ -810,29 +484,29 @@
       }
 
       answered = false;
+      answerSaved = false;
       const q = questions[currentIdx];
 
       document.getElementById('qCounter').innerText = `Вопрос ${currentIdx + 1}/${questions.length}`;
-      document.getElementById('quizProgress').setAttribute('aria-valuemax', String(questions.length));
-      document.getElementById('quizProgress').setAttribute('aria-valuenow', String(currentIdx));
-      document.getElementById('progressFill').style.width = `${(currentIdx / questions.length) * 100}%`;
+      updateProgress(currentIdx, questions.length, 'Викторина');
       document.getElementById('topicBadge').innerText = q.topic || 'Тривиа';
       document.getElementById('questionText').innerText = q.question;
       document.getElementById('explanationCard').style.display = 'none';
       document.getElementById('nextBtn').style.display = 'none';
+      document.getElementById('nextBtn').disabled = true;
+      document.getElementById('nextBtn').innerText = currentIdx === questions.length - 1 ? 'Посмотреть результат' : 'Следующий вопрос →';
+      document.getElementById('answerStatus').innerText = 'Выберите один ответ';
+      document.getElementById('answerStatus').dataset.state = '';
 
       const grid = document.getElementById('optionsGrid');
       grid.innerHTML = '';
 
       q.options.forEach(function (optText, idx) {
-        const btn = document.createElement('button');
-        btn.className = 'option-btn';
-        btn.innerText = optText;
-        btn.addEventListener('click', function () { selectAnswer(idx); });
-        grid.appendChild(btn);
+        grid.appendChild(createOption(optText, idx, selectAnswer));
       });
 
       startTime = Date.now();
+      enterQuestion('gameView', 'questionText');
     }
 
     function selectAnswer(selectedIdx) {
@@ -854,6 +528,7 @@
         if (i === q.correct_index) buttons[i].classList.add('reveal-correct');
       }
 
+      let awardedScore = 0;
       if (isCorrect) {
         buttons[selectedIdx].classList.add('selected-correct');
         correctCount++;
@@ -862,6 +537,7 @@
           qScore += Math.floor(100 * ((15000 - elapsedMs) / 15000));
         }
         totalScore += qScore;
+        awardedScore = qScore;
         document.getElementById('scoreBadge').innerText = `⭐ ${totalScore}`;
       } else {
         buttons[selectedIdx].classList.add('selected-wrong');
@@ -870,30 +546,21 @@
       document.getElementById('explanationText').innerText = q.explanation || 'Отличный факт!';
       document.getElementById('explanationCard').style.display = 'block';
       document.getElementById('nextBtn').style.display = 'block';
-      document.getElementById('nextBtn').focus();
-
-      setTimeout(function () {
-        document.getElementById('nextBtn').scrollIntoView({ behavior: scrollBehavior, block: 'end' });
-      }, 120);
-
-      fetch('/webapp/api/miniapp/trivia/submit_answer', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-TG-INIT-DATA': tg ? tg.initData : ''
-        },
-        body: JSON.stringify({
-          question_index: currentIdx,
-          selected_index: selectedIdx,
-          is_correct: isCorrect,
-          elapsed_ms: elapsedMs,
-          total_score: totalScore,
-          revision_id: puzzleRevisionId
-        })
-      }).catch(function () { });
+      showOutcome('', q, selectedIdx, isCorrect, awardedScore ? `+${awardedScore} очков` : '');
+      updateProgress(currentIdx + 1, questions.length, 'Викторина');
+      document.getElementById('explanationCard').scrollIntoView({ behavior: scrollBehavior, block: 'nearest' });
+      saveAnswer('/webapp/api/miniapp/trivia/submit_answer', {
+        question_index: currentIdx,
+        selected_index: selectedIdx,
+        is_correct: isCorrect,
+        elapsed_ms: elapsedMs,
+        total_score: totalScore,
+        revision_id: puzzleRevisionId
+      }, false);
     }
 
     function nextQuestion() {
+      if (!answered || !answerSaved) return;
       currentIdx++;
       renderQuestion();
       window.scrollTo({ top: 0, behavior: scrollBehavior });
@@ -902,7 +569,9 @@
     function showFinishScreen(alreadyDone) {
       document.getElementById('gameView').style.display = 'none';
       document.getElementById('superView').style.display = 'none';
-      document.getElementById('progressFill').style.width = '100%';
+      updateProgress(questions.length, questions.length, 'Викторина');
+      document.getElementById('qCounter').innerText = `Викторина ${questions.length}/${questions.length} · завершена`;
+      document.getElementById('scoreBadge').innerText = `⭐ ${totalScore}`;
       document.getElementById('finalScore').innerText = totalScore;
       document.getElementById('finalDetails').innerText =
         `Вы правильно ответили на ${correctCount} из ${questions.length} вопросов`;
@@ -911,17 +580,15 @@
       }
 
       if (userSuperResult && userSuperResult.status === 'completed') {
-        document.getElementById('superStartBtn').style.display = 'none';
-        const doneBadge = document.getElementById('superDoneStatus');
-        doneBadge.style.display = 'inline-block';
-        const dStr = superDeltaScore >= 0 ? `+${superDeltaScore}` : `${superDeltaScore}`;
-        doneBadge.innerText = `✓ Суперигра пройдена (${dStr} очков)`;
+        showSuperFinishScreen();
+        return;
       } else {
         document.getElementById('superStartBtn').style.display = 'block';
         document.getElementById('superDoneStatus').style.display = 'none';
       }
 
       document.getElementById('finishView').style.display = 'block';
+      focusElement('finishTitle');
     }
 
     // --- Super Game Logic ---
@@ -946,12 +613,12 @@
         badge.style.color = '';
       } else if (superDeltaScore > 0) {
         badge.innerText = `⭐ ${totalScore} (+${superDeltaScore})`;
-        badge.style.background = 'rgba(16,185,129,0.18)';
-        badge.style.color = '#10b981';
+        badge.style.background = 'var(--correct-bg)';
+        badge.style.color = 'var(--correct)';
       } else {
         badge.innerText = `⭐ ${totalScore} (${superDeltaScore})`;
-        badge.style.background = 'rgba(244,63,94,0.18)';
-        badge.style.color = '#f43f5e';
+        badge.style.background = 'var(--wrong-bg)';
+        badge.style.color = 'var(--wrong)';
       }
     }
 
@@ -962,29 +629,29 @@
       }
 
       answered = false;
+      answerSaved = false;
       const q = superQuestions[currentSuperIdx];
 
       document.getElementById('qCounter').innerText = `Супервопрос ${currentSuperIdx + 1}/${superQuestions.length}`;
-      document.getElementById('quizProgress').setAttribute('aria-valuemax', String(superQuestions.length));
-      document.getElementById('quizProgress').setAttribute('aria-valuenow', String(currentSuperIdx));
-      document.getElementById('progressFill').style.width = `${((currentSuperIdx) / superQuestions.length) * 100}%`;
+      updateProgress(currentSuperIdx, superQuestions.length, 'Суперигра');
       document.getElementById('superTopicBadge').innerText = `⚡ ${q.topic || 'Суперигра'}`;
       document.getElementById('superQuestionText').innerText = q.question;
       document.getElementById('superExplanationCard').style.display = 'none';
       document.getElementById('superNextBtn').style.display = 'none';
+      document.getElementById('superNextBtn').disabled = true;
+      document.getElementById('superNextBtn').innerText = currentSuperIdx === superQuestions.length - 1 ? 'Посмотреть результат дня' : 'Следующий супервопрос →';
+      document.getElementById('superAnswerStatus').innerText = 'Верный ответ: двойные очки · неверный: двойной штраф';
+      document.getElementById('superAnswerStatus').dataset.state = '';
 
       const grid = document.getElementById('superOptionsGrid');
       grid.innerHTML = '';
 
       q.options.forEach(function (optText, idx) {
-        const btn = document.createElement('button');
-        btn.className = 'option-btn';
-        btn.innerText = optText;
-        btn.addEventListener('click', function () { selectSuperAnswer(idx); });
-        grid.appendChild(btn);
+        grid.appendChild(createOption(optText, idx, selectSuperAnswer));
       });
 
       startTime = Date.now();
+      enterQuestion('superView', 'superQuestionText');
     }
 
     function selectSuperAnswer(selectedIdx) {
@@ -1026,30 +693,21 @@
       document.getElementById('superExplanationText').innerText = q.explanation || 'Отличный факт!';
       document.getElementById('superExplanationCard').style.display = 'block';
       document.getElementById('superNextBtn').style.display = 'block';
-      document.getElementById('superNextBtn').focus();
-
-      setTimeout(function () {
-        document.getElementById('superNextBtn').scrollIntoView({ behavior: scrollBehavior, block: 'end' });
-      }, 120);
-
-      fetch('/webapp/api/miniapp/trivia/submit_super_answer', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-TG-INIT-DATA': tg ? tg.initData : ''
-        },
-        body: JSON.stringify({
-          question_index: currentSuperIdx,
-          selected_index: selectedIdx,
-          is_correct: isCorrect,
-          elapsed_ms: elapsedMs,
-          base_score: baseScore,
-          revision_id: puzzleRevisionId
-        })
-      }).catch(function () { });
+      showOutcome('super', q, selectedIdx, isCorrect, `${qDelta >= 0 ? '+' : ''}${qDelta} очков`);
+      updateProgress(currentSuperIdx + 1, superQuestions.length, 'Суперигра');
+      document.getElementById('superExplanationCard').scrollIntoView({ behavior: scrollBehavior, block: 'nearest' });
+      saveAnswer('/webapp/api/miniapp/trivia/submit_super_answer', {
+        question_index: currentSuperIdx,
+        selected_index: selectedIdx,
+        is_correct: isCorrect,
+        elapsed_ms: elapsedMs,
+        base_score: baseScore,
+        revision_id: puzzleRevisionId
+      }, true);
     }
 
     function nextSuperQuestion() {
+      if (!answered || !answerSaved) return;
       currentSuperIdx++;
       renderSuperQuestion();
       window.scrollTo({ top: 0, behavior: scrollBehavior });
@@ -1060,6 +718,15 @@
       userSuperResult = { status: 'completed', delta_score: superDeltaScore, correct_count: superCorrectCount };
 
       totalScore = Math.max(0, totalScore + superDeltaScore);
+      showSuperFinishScreen();
+    }
+
+    function showSuperFinishScreen() {
+      document.getElementById('gameView').style.display = 'none';
+      document.getElementById('superView').style.display = 'none';
+      document.getElementById('finishView').style.display = 'none';
+      updateProgress(superQuestions.length, superQuestions.length, 'Суперигра');
+      document.getElementById('qCounter').innerText = `Суперигра ${superQuestions.length}/${superQuestions.length} · завершена`;
 
       // Reset score badge to plain style showing final total
       const badge = document.getElementById('scoreBadge');
@@ -1070,12 +737,13 @@
       const dDisplay = document.getElementById('superDeltaDisplay');
       const dStr = superDeltaScore >= 0 ? `+${superDeltaScore}` : `${superDeltaScore}`;
       dDisplay.innerText = dStr;
-      dDisplay.style.color = superDeltaScore >= 0 ? '#10b981' : '#f43f5e';
+      dDisplay.style.color = superDeltaScore >= 0 ? 'var(--correct)' : 'var(--wrong)';
 
       document.getElementById('superFinishSubtitle').innerText =
-        `Итоговый результат дня: ${totalScore} очков (${superCorrectCount}/3 в Суперигре)`;
+        `Итоговый результат дня: ${totalScore} очков (${superCorrectCount}/${superQuestions.length} в Суперигре)`;
 
       document.getElementById('superFinishView').style.display = 'block';
+      focusElement('superFinishTitle');
       window.scrollTo({ top: 0, behavior: scrollBehavior });
     }
 
@@ -1086,6 +754,7 @@
       document.getElementById('superFinishView').style.display = 'none';
       buildAccordion();
       document.getElementById('reviewView').style.display = 'block';
+      focusElement('backToFinishBtn');
       window.scrollTo({ top: 0, behavior: scrollBehavior });
     }
 
@@ -1104,6 +773,8 @@
 
         const trigger = document.createElement('button');
         trigger.className = 'accordion-trigger';
+        trigger.setAttribute('aria-expanded', 'false');
+        trigger.setAttribute('aria-controls', `review-main-${idx}`);
 
         const icon = document.createElement('span');
         icon.className = 'accordion-icon ' + (isCorrect ? 'icon-correct' : 'icon-wrong');
@@ -1121,11 +792,12 @@
         trigger.appendChild(qText);
         trigger.appendChild(chevron);
         trigger.addEventListener('click', function () {
-          item.classList.toggle('open');
+          trigger.setAttribute('aria-expanded', String(item.classList.toggle('open')));
         });
 
         const body = document.createElement('div');
         body.className = 'accordion-body';
+        body.id = `review-main-${idx}`;
 
         const optsList = document.createElement('div');
         optsList.className = 'review-options';
@@ -1219,10 +891,12 @@
 
           const item = document.createElement('div');
           item.className = 'accordion-item ' + (isCorrect ? 'correct-item' : 'wrong-item');
-          item.style.borderColor = isCorrect ? 'rgba(255, 0, 128, 0.4)' : 'rgba(244, 63, 94, 0.4)';
+          item.style.borderColor = isCorrect ? '#396d5c' : '#70434e';
 
           const trigger = document.createElement('button');
           trigger.className = 'accordion-trigger';
+          trigger.setAttribute('aria-expanded', 'false');
+          trigger.setAttribute('aria-controls', `review-super-${sIdx}`);
 
           const icon = document.createElement('span');
           icon.className = 'accordion-icon ' + (isCorrect ? 'icon-correct' : 'icon-wrong');
@@ -1240,11 +914,12 @@
           trigger.appendChild(qText);
           trigger.appendChild(chevron);
           trigger.addEventListener('click', function () {
-            item.classList.toggle('open');
+            trigger.setAttribute('aria-expanded', String(item.classList.toggle('open')));
           });
 
           const body = document.createElement('div');
           body.className = 'accordion-body';
+          body.id = `review-super-${sIdx}`;
 
           const optsList = document.createElement('div');
           optsList.className = 'review-options';
@@ -1269,11 +944,11 @@
           if (sq.explanation) {
             const factBox = document.createElement('div');
             factBox.className = 'review-fact';
-            factBox.style.borderColor = 'rgba(255, 0, 128, 0.3)';
-            factBox.style.background = 'rgba(255, 0, 128, 0.05)';
+            factBox.style.borderColor = '#665634';
+            factBox.style.background = '#2a2b22';
             const factLabel = document.createElement('div');
             factLabel.className = 'review-fact-label';
-            factLabel.style.color = '#ff80bf';
+            factLabel.style.color = 'var(--amber)';
             factLabel.innerText = '💡 Знаете ли вы?';
             const factBody = document.createElement('div');
             factBody.className = 'review-fact-body';
@@ -1288,8 +963,8 @@
             const aiBtn = document.createElement('a');
             aiBtn.href = deepLink;
             aiBtn.className = 'btn-ai-more';
-            aiBtn.style.borderColor = 'rgba(255, 0, 128, 0.4)';
-            aiBtn.style.color = '#ff80bf';
+            aiBtn.style.borderColor = '#396d5c';
+            aiBtn.style.color = 'var(--amber)';
             aiBtn.target = '_blank';
             aiBtn.rel = 'noopener noreferrer';
             aiBtn.innerHTML = '🤖 Узнать больше';

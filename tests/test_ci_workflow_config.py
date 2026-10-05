@@ -87,7 +87,14 @@ def test_ci_requires_locked_browser_tests_with_chromium() -> None:
     assert 'GEMAIBOT_REQUIRE_BROWSER_TESTS: "1"' in browser_job
     assert "npm ci --ignore-scripts" in browser_job
     assert "npx --no-install playwright install --with-deps chromium" in browser_job
-    assert "tests/test_natal_web_report.py -m browser -n 0" in browser_job
+    for path in (
+        "tests/test_natal_web_report.py",
+        "tests/test_daily_2048_frontend.py",
+        "tests/test_daily_trivia_frontend.py",
+        "tests/test_daily_game_ui.py",
+    ):
+        assert path in browser_job
+    assert "-m browser -n 0" in browser_job
     assert "continue-on-error" not in browser_job
 
 

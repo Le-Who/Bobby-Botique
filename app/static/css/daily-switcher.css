@@ -1,20 +1,20 @@
 .daily-choice {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
-  padding: 8px 12px;
-  border: 1px solid #527b78;
-  border-radius: 12px;
-  background: #132b33;
-  color: #f4fbf8;
+  padding: 3px 10px;
+  border: 1px solid var(--line, var(--border-color, #355258));
+  border-radius: 14px;
+  background: var(--panel, var(--card-bg, #152d33));
+  color: var(--text, var(--text-main, #f4fbf8));
   font: 600 13px/1.25 "Segoe UI", system-ui, sans-serif;
   user-select: none;
 }
 
 .daily-choice__eyebrow {
   flex: none;
-  color: #a5d9d0;
+  color: var(--muted, var(--text-muted, var(--text-dim, #b0c6c3)));
   font-size: 11px;
   letter-spacing: .04em;
 }
@@ -26,45 +26,52 @@
   gap: 8px;
   flex: 1;
   min-width: 0;
-  min-height: 32px;
+  min-height: 44px;
   padding: 3px 6px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 10px;
   background: transparent;
-  color: #fff;
+  color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
   touch-action: manipulation;
+  transition: background 160ms ease;
 }
 
-.daily-choice__trigger:hover { background: #254950; }
-.daily-choice__chevron { color: #83ecd7; font-size: 21px; line-height: 1; }
+.daily-choice__trigger:hover { background: #d4edea0d; }
+#daily-choice-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.daily-choice__action { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--muted, var(--text-muted, var(--text-dim, #afcbc5))); font-size: 11px; font-weight: 500; }
+.daily-choice__chevron { color: inherit; font-size: 19px; line-height: 1; }
+.daily-choice__trigger[aria-expanded="true"] .daily-choice__chevron { transform: rotate(180deg); }
 
 .daily-choice-dialog {
   position: fixed;
   inset: auto 12px max(12px, env(safe-area-inset-bottom)) 12px;
   width: min(440px, calc(100% - 24px));
-  max-height: min(620px, calc(100dvh - 24px));
+  max-height: min(620px, calc(100dvh - max(24px, env(safe-area-inset-top)) - env(safe-area-inset-bottom)));
   margin: auto auto 0;
-  padding: 20px;
+  padding: 22px 18px 18px;
   overflow-y: auto;
-  border: 1px solid #547b77;
-  border-radius: 20px;
-  background: #13252d;
+  border: 1px solid #47645f;
+  border-radius: 24px;
+  background: #13282f;
   color: #f4fbf8;
   box-shadow: 0 22px 70px #030b11a8;
   font: 400 14px/1.45 "Segoe UI", system-ui, sans-serif;
   user-select: text;
   touch-action: pan-y;
   z-index: 100;
+  color-scheme: dark;
+  overscroll-behavior: contain;
 }
 
-.daily-choice-dialog::backdrop { background: #07151dd9; }
+.daily-choice-dialog[open] { animation: daily-choice-enter 200ms cubic-bezier(.2,.8,.25,1) both; }
+.daily-choice-dialog::backdrop { background: #061319c7; backdrop-filter: blur(5px); }
 .daily-choice-dialog__head { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
 .daily-choice-dialog__kicker { margin: 0 0 4px; color: #9fe4d5; font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
-.daily-choice-dialog h2 { margin: 0; color: #fff; font: 750 25px/1.12 "Segoe UI", system-ui, sans-serif; letter-spacing: -.03em; }
-.daily-choice-dialog__close { flex: none; width: 40px; height: 40px; border: 1px solid #6b8989; border-radius: 12px; background: #203c42; color: #fff; font: 30px/1 "Segoe UI", sans-serif; cursor: pointer; }
+.daily-choice-dialog h2 { margin: 0; color: #fff; font: 750 26px/1.12 "Segoe UI", system-ui, sans-serif; letter-spacing: -.03em; }
+.daily-choice-dialog__close { flex: none; width: 44px; height: 44px; border: 1px solid #526e6d; border-radius: 14px; background: #203c42; color: #fff; font: 30px/1 "Segoe UI", sans-serif; cursor: pointer; touch-action: manipulation; }
 .daily-choice-dialog__description { margin: 14px 0 18px; color: #c4d9d8; line-height: 1.5; }
 .daily-choice-dialog__games { display: grid; gap: 9px; }
 .daily-choice-dialog__game {
@@ -75,24 +82,35 @@
   width: 100%;
   min-height: 73px;
   padding: 10px 12px;
-  border: 1px solid #4c6c6b;
-  border-radius: 14px;
+  border: 1px solid #415e60;
+  border-radius: 16px;
   background: #1c353b;
   color: #fff;
   font: inherit;
   text-align: left;
   cursor: pointer;
   touch-action: manipulation;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
 }
-.daily-choice-dialog__game:hover { border-color: #9fe4d5; background: #27474a; }
-.daily-choice-dialog__game[aria-pressed="true"] { border-color: #86e6cf; background: #25564f; }
+.daily-choice-dialog__game:hover { border-color: #9fe4d5; background: #244046; }
+.daily-choice-dialog__game:active { transform: scale(.985); }
+.daily-choice-dialog__game[aria-pressed="true"] { border-color: #86e6cf; background: #21463f; }
 .daily-choice-dialog__game:disabled { cursor: wait; opacity: .68; }
-.daily-choice-dialog__icon { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 10px; background: #31545b; color: #a6f3df; font-size: 24px; }
+.daily-choice-dialog__icon { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 14px; background: #284a4d; color: #a6f3df; font-size: 24px; }
+.daily-choice-dialog__icon--2048 { background: #493d2d; color: #ffe0a1; font: 800 14px/1 ui-monospace, Consolas, monospace; }
+.daily-choice-dialog__icon--trivia { background: #233f57; color: #a7e9f5; }
 .daily-choice-dialog__game strong { display: block; font-size: 16px; line-height: 1.25; }
 .daily-choice-dialog__game small { display: block; margin-top: 3px; color: #c3d7d4; font-size: 12px; line-height: 1.3; }
 .daily-choice-dialog__check { visibility: hidden; color: #a7f3df; font-size: 21px; font-weight: 800; }
 .daily-choice-dialog__game[aria-pressed="true"] .daily-choice-dialog__check { visibility: visible; }
-.daily-choice-dialog__status { min-height: 20px; margin: 12px 0 0; color: #ffd7a2; font-size: 12px; }
+.daily-choice-dialog__status { min-height: 20px; margin: 14px 0 0; color: #b8d2cd; font-size: 12px; }
+.daily-choice-dialog__status[data-tone="error"] { color: #ffbdab; }
+.daily-choice-dialog__status[data-tone="success"] { color: #a7f3df; }
+
+@keyframes daily-choice-enter {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
 .daily-choice__trigger:focus-visible,
 .daily-choice-dialog button:focus-visible {
@@ -105,5 +123,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .daily-choice *, .daily-choice-dialog * { scroll-behavior: auto !important; transition: none !important; }
+  .daily-choice *, .daily-choice-dialog, .daily-choice-dialog * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }

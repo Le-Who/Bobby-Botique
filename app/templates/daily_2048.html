@@ -205,17 +205,25 @@
       position: absolute;
       width: var(--cell);
       height: var(--cell);
-      display: grid;
-      place-items: center;
       transform: translate(
         calc(var(--x) * (100% + var(--gap))),
         calc(var(--y) * (100% + var(--gap)))
       );
-      border-radius: var(--radius);
       color: var(--tile-fg);
       font-weight: 900;
       font-size: 28px;
       text-shadow: 0 1px 0 rgba(255, 255, 255, 0.18);
+      pointer-events: none;
+      will-change: transform;
+    }
+
+    .tile-face {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: grid;
+      place-items: center;
+      border-radius: var(--radius);
       border: 1px solid rgba(255, 255, 255, 0.18);
       background:
         radial-gradient(circle at 28% 18%, rgba(255, 255, 255, 0.68), transparent 24%),
@@ -227,11 +235,9 @@
         inset 0 -12px 18px rgba(0, 0, 0, 0.14);
       overflow: hidden;
       isolation: isolate;
-      transition: transform 150ms ease, filter 150ms ease, opacity 150ms ease, box-shadow 150ms ease;
-      animation: pop 150ms ease both;
     }
 
-    .tile::before {
+    .tile-face::before {
       content: "";
       position: absolute;
       inset: 6px 8px auto;
@@ -243,7 +249,7 @@
       z-index: -1;
     }
 
-    .tile::after {
+    .tile-face::after {
       content: "";
       position: absolute;
       inset: -18%;
@@ -253,34 +259,6 @@
       transition: opacity 160ms ease;
       pointer-events: none;
       z-index: -2;
-    }
-
-    .tile:hover {
-      filter: brightness(1.08) saturate(1.04);
-      box-shadow:
-        0 14px 28px rgba(0, 0, 0, 0.36),
-        0 0 26px var(--tile-glow),
-        inset 0 2px 0 rgba(255, 255, 255, 0.42),
-        inset 0 -12px 18px rgba(0, 0, 0, 0.12);
-    }
-
-    .tile:hover::after { opacity: 0.82; }
-
-    .tile.v2 { --tile-top: #fff4d5; --tile-bottom: #d9ba79; --tile-glow: rgba(255, 227, 150, 0.5); }
-    .tile.v4 { --tile-top: #ffe1a8; --tile-bottom: #ca9653; --tile-glow: rgba(242, 186, 87, 0.55); }
-    .tile.v8 { --tile-top: #ffc768; --tile-bottom: #db7e34; --tile-glow: rgba(242, 186, 87, 0.72); }
-    .tile.v16 { --tile-top: #ffab65; --tile-bottom: #c76533; --tile-glow: rgba(242, 121, 99, 0.6); }
-    .tile.v32 { --tile-top: #ff826f; --tile-bottom: #b94a3d; --tile-fg: #fff8ea; --tile-glow: rgba(242, 121, 99, 0.68); }
-    .tile.v64 { --tile-top: #e86454; --tile-bottom: #96392f; --tile-fg: #fff8ea; --tile-glow: rgba(242, 121, 99, 0.72); }
-    .tile.v128 { --tile-top: #adf4d6; --tile-bottom: #49b98f; --tile-glow: rgba(127, 224, 189, 0.7); }
-    .tile.v256 { --tile-top: #79dfbd; --tile-bottom: #279d83; --tile-glow: rgba(127, 224, 189, 0.78); }
-    .tile.v512 { --tile-top: #a2eff9; --tile-bottom: #3aa8bb; --tile-glow: rgba(108, 201, 221, 0.78); }
-    .tile.v1024, .tile.v2048 { --tile-top: #fff2a8; --tile-bottom: #d6c448; --tile-glow: rgba(255, 224, 116, 0.82); }
-    .tile.vbig { --tile-top: #ffe7b5; --tile-bottom: #b9894c; --tile-glow: rgba(255, 224, 161, 0.72); }
-
-    @keyframes pop {
-      from { opacity: 0; transform: translate(calc(var(--x) * (100% + var(--gap))), calc(var(--y) * (100% + var(--gap)))) scale(.86); }
-      to { opacity: 1; transform: translate(calc(var(--x) * (100% + var(--gap))), calc(var(--y) * (100% + var(--gap)))) scale(1); }
     }
 
     .controls {
@@ -339,6 +317,8 @@
     }
 
     .overlay.visible { display: grid; }
+    .overlay.visible .modal { animation: result-enter 180ms ease-out both; }
+    @keyframes result-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
     .modal {
       width: min(420px, 100%);
@@ -418,176 +398,44 @@
       .board-wrap { width: min(52vw, 520px); }
     }
 
-    /* Theme system v2: selected player skins share the same backend contract. */
+    /* Three materials, one deterministic board and movement contract. */
     body[data-theme="aero"] {
-      --bg: #edf9f8;
+      --bg: #07334e;
       --page-bg:
-        radial-gradient(circle at 22% 10%, rgba(255,255,255,.86), transparent 24%),
-        radial-gradient(circle at 80% 18%, rgba(120, 224, 255, .54), transparent 26%),
-        linear-gradient(180deg, #e9fbff 0%, #bfeee7 48%, #fbf1c9 100%);
-      --panel: linear-gradient(145deg, rgba(255,255,255,.74), rgba(255,255,255,.28));
-      --panel-strong: linear-gradient(145deg, rgba(255,255,255,.82), rgba(119,226,216,.34));
-      --line: rgba(255,255,255,.72);
-      --text: #0b3532;
-      --muted: rgba(9, 50, 50, .62);
-      --ink: #103c38;
-      --amber: #c67a2b;
-      --mint: #168c88;
-      --accent: #42cabd;
-      --accent-2: #d88a35;
-      --tile-empty: rgba(29, 128, 126, .09);
-      --tile-radius: 20px;
-      --tile-border: 1px solid rgba(255,255,255,.72);
+        radial-gradient(ellipse at 10% -5%, rgba(71,204,255,.52), transparent 44%),
+        radial-gradient(ellipse at 100% 50%, rgba(24,205,191,.20), transparent 55%),
+        linear-gradient(135deg, #0a527b 0%, #073b59 45%, #062e46 100%);
+      --panel: linear-gradient(135deg, rgba(132,221,255,.13), rgba(7,40,65,.32));
+      --panel-strong: rgba(93,197,240,.18);
+      --line: rgba(174,228,255,.30);
+      --text: #f1fbff;
+      --muted: #b0d2e2;
+      --ink: #073247;
+      --amber: #ffe394;
+      --mint: #8cf0dd;
+      --accent: #5ccfea;
+      --accent-2: #ffd47c;
+      --tile-empty: rgba(1,20,38,.34);
+      --tile-radius: 13px;
+      --tile-border: 1px solid rgba(212,244,255,.58);
       --tile-shadow:
-        0 12px 22px rgba(48,126,130,.22),
-        inset 0 2px 0 rgba(255,255,255,.70),
-        inset 0 -12px 20px rgba(16,93,92,.12);
-      --tile-font: 900 28px/1 "Trebuchet MS", "Segoe UI", sans-serif;
-      --tile-shine: linear-gradient(180deg, rgba(255,255,255,.90), rgba(255,255,255,0));
+        0 4px 7px rgba(0,14,31,.34),
+        inset 0 1px 0 rgba(255,255,255,.80),
+        inset 1px 0 0 rgba(223,249,255,.32),
+        inset 0 -2px 0 rgba(0,31,64,.38),
+        inset 0 0 0 2px rgba(229,249,255,.07);
+      --tile-font: 700 28px/1 "Segoe UI", system-ui, sans-serif;
+      --tile-shine: linear-gradient(145deg, rgba(255,255,255,.46), rgba(255,255,255,.02));
       --trail: rgba(70, 215, 204, .52);
-      --button-radius: 18px;
-      --button-bg:
-        radial-gradient(circle at 28% 18%, rgba(255,255,255,.92), transparent 28%),
-        linear-gradient(145deg, rgba(255,255,255,.76), rgba(119,226,216,.42));
-      --button-shadow: inset 0 1px rgba(255,255,255,.92), 0 12px 24px rgba(55,132,138,.20);
-      --button-color: #164844;
-    }
-
-    body[data-theme="desk"] {
-      --bg: #17100b;
-      --page-bg:
-        radial-gradient(circle at 78% 14%, rgba(255,201,101,.22), transparent 24%),
-        linear-gradient(180deg, #20140c, #0f0d0b 56%, #17100c);
-      --panel: linear-gradient(145deg, rgba(96,61,27,.78), rgba(37,24,13,.90));
-      --panel-strong: linear-gradient(145deg, #805b2d, #34210e);
-      --line: rgba(255,216,145,.28);
-      --text: #fff3d4;
-      --muted: rgba(255, 239, 210, .66);
-      --ink: #3a2817;
-      --amber: #ffd98b;
-      --mint: #d6a757;
-      --accent: #d59d57;
-      --accent-2: #65b989;
-      --tile-empty: rgba(20, 13, 7, .36);
-      --tile-radius: 10px;
-      --tile-border: 2px solid rgba(70,39,15,.30);
-      --tile-shadow:
-        0 7px 0 rgba(54,31,13,.45),
-        0 13px 20px rgba(0,0,0,.28),
-        inset 0 3px 0 rgba(255,255,255,.34),
-        inset 0 -11px 0 rgba(80,43,15,.13);
-      --tile-font: 900 27px/1 Georgia, serif;
-      --tile-shine: linear-gradient(180deg, rgba(255,255,255,.50), rgba(255,255,255,0));
-      --trail: rgba(255, 205, 112, .54);
       --button-radius: 12px;
-      --button-bg:
-        radial-gradient(circle at 28% 18%, rgba(255,255,255,.46), transparent 28%),
-        linear-gradient(145deg, #805b2d, #34210e);
-      --button-shadow: inset 0 1px rgba(255,255,255,.22), 0 10px 20px rgba(0,0,0,.34);
-      --button-color: #fff0c3;
-    }
-
-    body[data-theme="swiss"] {
-      --bg: #f4f0e8;
-      --page-bg: #f4f0e8;
-      --panel: #f4f0e8;
-      --panel-strong: #f4f0e8;
-      --line: #151515;
-      --text: #151515;
-      --muted: rgba(21,21,21,.62);
-      --ink: #151515;
-      --amber: #e34b2f;
-      --mint: #151515;
-      --accent: #e34b2f;
-      --accent-2: #19b7a0;
-      --radius: 0;
-      --tile-empty: #ded9cf;
-      --tile-radius: 0;
-      --tile-border: 0;
-      --tile-shadow: none;
-      --tile-font: 900 26px/1 "Arial Black", Impact, sans-serif;
-      --tile-shine: transparent;
-      --trail: rgba(21, 21, 21, .22);
-      --button-radius: 0;
-      --button-bg: #f4f0e8;
-      --button-shadow: none;
-      --button-color: #151515;
-    }
-
-    body[data-theme="botanical"] {
-      --bg: #07100b;
-      --page-bg:
-        radial-gradient(circle at 18% 16%, rgba(156,255,151,.18), transparent 24%),
-        linear-gradient(160deg, #102414, #07100b 58%, #15210e);
-      --panel: linear-gradient(145deg, rgba(114,190,80,.22), rgba(255,255,255,.055));
-      --panel-strong: linear-gradient(145deg, rgba(185,255,156,.16), rgba(255,255,255,.06));
-      --line: rgba(177,239,149,.24);
-      --text: #f5ffe6;
-      --muted: rgba(238,255,218,.66);
-      --ink: #173916;
-      --amber: #e8ffc0;
-      --mint: #9df091;
-      --accent: #96bd50;
-      --accent-2: #71d5b6;
-      --tile-empty: rgba(226,255,213,.08);
-      --tile-radius: 22px 8px 22px 8px;
-      --tile-border: 1px solid rgba(229,255,216,.28);
-      --tile-shadow:
-        0 12px 20px rgba(0,0,0,.27),
-        inset 0 2px 0 rgba(255,255,255,.34),
-        inset 0 -10px 16px rgba(25,74,28,.14);
-      --tile-font: 900 27px/1 "Trebuchet MS", sans-serif;
-      --tile-shine: linear-gradient(180deg, rgba(255,255,255,.60), transparent);
-      --trail: rgba(171,245,144,.44);
-      --button-radius: 999px 12px 999px 12px;
-      --button-bg:
-        radial-gradient(circle at 30% 18%, rgba(255,255,255,.62), transparent 26%),
-        linear-gradient(145deg, #cdf8a7, #5aac58);
-      --button-shadow: 0 12px 24px rgba(0,0,0,.28), inset 0 1px rgba(255,255,255,.50);
-      --button-color: #173916;
-    }
-
-    body[data-theme="deco"] {
-      --bg: #080706;
-      --page-bg:
-        linear-gradient(135deg, transparent 48%, rgba(255,206,86,.08) 49%, transparent 50%),
-        linear-gradient(225deg, transparent 48%, rgba(255,206,86,.08) 49%, transparent 50%),
-        #080706;
-      --panel: linear-gradient(145deg, rgba(255,210,103,.18), rgba(255,255,255,.035));
-      --panel-strong: linear-gradient(145deg, rgba(255,220,120,.30), rgba(81,49,11,.62));
-      --line: rgba(245,194,84,.34);
-      --text: #fff1c3;
-      --muted: rgba(255,241,195,.64);
-      --ink: #17100a;
-      --amber: #ffe39a;
-      --mint: #d7a848;
-      --accent: #c99235;
-      --accent-2: #3dc8c5;
-      --tile-empty: rgba(255,233,174,.07);
-      --tile-radius: 0;
-      --tile-border: 1px solid rgba(255,222,132,.24);
-      --tile-shadow:
-        0 10px 18px rgba(0,0,0,.36),
-        inset 0 2px 0 rgba(255,255,255,.20),
-        inset 0 -12px 0 rgba(0,0,0,.12);
-      --tile-font: 900 26px/1 Georgia, serif;
-      --tile-shine:
-        linear-gradient(135deg, rgba(255,255,255,.22), transparent 34%),
-        linear-gradient(315deg, rgba(0,0,0,.10), transparent 42%);
-      --trail: rgba(255, 213, 112, .46);
-      --button-radius: 0;
-      --button-bg: linear-gradient(145deg, rgba(255,220,120,.32), rgba(81,49,11,.60));
-      --button-shadow: 0 12px 24px rgba(0,0,0,.38);
-      --button-color: #ffe8a4;
+      --button-bg: linear-gradient(180deg, rgba(196,237,255,.28), rgba(132,202,233,.15) 48%, rgba(13,60,86,.38) 49%, rgba(54,127,154,.35));
+      --button-shadow: inset 0 1px rgba(234,253,255,.48), inset 0 -1px rgba(1,24,48,.30), 0 4px 8px rgba(0,20,39,.24);
+      --button-color: #f1fbff;
     }
 
     body {
       background: var(--page-bg);
-      transition: background 220ms ease, color 220ms ease;
-    }
-
-    body[data-theme="deco"] {
-      background-size: 28px 28px, 28px 28px, auto;
+      transition: none;
     }
 
     #app {
@@ -727,36 +575,6 @@
       overflow: hidden;
     }
 
-    .board-wrap::after {
-      content: "";
-      position: absolute;
-      inset: 10px;
-      border-radius: inherit;
-      pointer-events: none;
-      opacity: 0;
-      z-index: 5;
-    }
-
-    .board-wrap.move-left::after {
-      animation: trail-left 280ms ease-out both;
-      background: linear-gradient(90deg, var(--trail), transparent 72%);
-    }
-
-    .board-wrap.move-right::after {
-      animation: trail-right 280ms ease-out both;
-      background: linear-gradient(270deg, var(--trail), transparent 72%);
-    }
-
-    .board-wrap.move-up::after {
-      animation: trail-up 280ms ease-out both;
-      background: linear-gradient(180deg, var(--trail), transparent 72%);
-    }
-
-    .board-wrap.move-down::after {
-      animation: trail-down 280ms ease-out both;
-      background: linear-gradient(0deg, var(--trail), transparent 72%);
-    }
-
     .cell {
       border-radius: var(--tile-radius);
       background:
@@ -764,55 +582,36 @@
         var(--tile-empty);
     }
 
-    .tile {
+    .tile-face {
       border-radius: var(--tile-radius);
       border: var(--tile-border);
       box-shadow: var(--tile-shadow);
-      font: var(--tile-font);
       background:
         radial-gradient(circle at 28% 18%, rgba(255,255,255,.68), transparent 24%),
         linear-gradient(145deg, var(--tile-top), var(--tile-bottom));
-      animation: none;
-      will-change: transform, opacity, filter;
-      transition: filter 140ms ease, box-shadow 140ms ease;
     }
+
+    .tile { font: var(--tile-font); }
 
     .tile span {
       position: relative;
       z-index: 1;
     }
 
-    .tile::before {
+    .tile-face::before {
       background: var(--tile-shine);
       opacity: .76;
     }
 
-    body[data-theme="deco"] .tile,
-    body[data-theme="deco"] .cell {
-      clip-path: polygon(12% 0, 88% 0, 100% 12%, 100% 88%, 88% 100%, 12% 100%, 0 88%, 0 12%);
-    }
-
-    body[data-theme="deco"] .tile::before {
-      inset: 0;
-      height: 100%;
-      border-radius: 0;
-    }
-
-    .tile.moved {
-      animation: tile-slide 170ms cubic-bezier(.18,.82,.28,1) both;
-    }
-
     .tile.merged {
       z-index: 4;
-      animation:
-        tile-slide 170ms cubic-bezier(.18,.82,.28,1) both,
-        tile-merge 230ms 165ms ease-out both;
     }
 
     .tile.spawn {
       z-index: 3;
-      animation: tile-spawn 190ms cubic-bezier(.2,1.3,.35,1) both;
     }
+
+    .tile.merged .tile-face, .tile.spawn .tile-face { will-change: transform, opacity; }
 
     .controls {
       grid-template-columns: repeat(3, 46px);
@@ -834,193 +633,6 @@
     .theme-btn:active {
       transform: scale(.94);
       filter: brightness(1.08);
-    }
-
-    body[data-theme="swiss"] .top,
-    body[data-theme="swiss"] .goal-band,
-    body[data-theme="swiss"] .metrics {
-      border-radius: 0;
-    }
-
-    body[data-theme="swiss"] .goal-band,
-    body[data-theme="swiss"] .metric,
-    body[data-theme="swiss"] .state-pill,
-    body[data-theme="swiss"] .theme-btn {
-      border-width: 2px;
-      box-shadow: none;
-      backdrop-filter: none;
-    }
-
-    body[data-theme="swiss"] .board-wrap {
-      background: #151515;
-      border: 4px solid #151515;
-      box-shadow: none;
-      padding: 7px;
-    }
-
-    body[data-theme="swiss"] .grid,
-    body[data-theme="swiss"] .tiles {
-      inset: 7px;
-    }
-
-    body[data-theme="desk"] .board-wrap {
-      border: 3px solid #8a5e2e;
-      background:
-        linear-gradient(90deg, rgba(255,255,255,.05), transparent 20%),
-        linear-gradient(145deg, #5d3b20, #21160d);
-    }
-
-    body[data-theme="botanical"] .board-wrap {
-      border-radius: 34px 14px 34px 14px;
-    }
-
-    .tile.v2 { --tile-top: #dafcff; --tile-bottom: #82d6e4; --tile-fg: #07363f; --tile-glow: rgba(112, 221, 238, .66); }
-    .tile.v4 { --tile-top: #c7fff3; --tile-bottom: #50d4bd; --tile-fg: #063a33; --tile-glow: rgba(70, 215, 204, .72); }
-    .tile.v8 { --tile-top: #e4ff88; --tile-bottom: #a7dc3f; --tile-fg: #213409; --tile-glow: rgba(174, 229, 72, .68); }
-    .tile.v16 { --tile-top: #fff9c7; --tile-bottom: #e7c76d; --tile-fg: #3d2c08; --tile-glow: rgba(255, 235, 126, .66); }
-    .tile.v32 { --tile-top: #ffbd72; --tile-bottom: #ff7c42; --tile-fg: #271307; --tile-glow: rgba(255, 145, 72, .68); }
-    .tile.v64 { --tile-top: #ff8787; --tile-bottom: #df4b61; --tile-fg: #fff8ea; --tile-glow: rgba(255, 116, 130, .72); }
-    .tile.v128 { --tile-top: #b9c2ff; --tile-bottom: #6c7df2; --tile-fg: #fff8ea; --tile-glow: rgba(116, 146, 255, .74); }
-    .tile.v256 { --tile-top: #ffc0e5; --tile-bottom: #ef69bb; --tile-fg: #fff8ea; --tile-glow: rgba(255, 122, 199, .78); }
-    .tile.v512 { --tile-top: #8df8ff; --tile-bottom: #20b7e5; --tile-fg: #06343d; --tile-glow: rgba(70, 218, 255, .78); }
-    .tile.v1024 { --tile-top: #fbff91; --tile-bottom: #66cf54; --tile-fg: #17300d; --tile-glow: rgba(180, 238, 93, .82); }
-    .tile.v2048 { --tile-top: #ffffff; --tile-bottom: #7fefff; --tile-fg: #06343d; --tile-glow: rgba(126, 243, 255, .9); }
-    .tile.vbig { --tile-top: #c6b4ff; --tile-bottom: #4c7cff; --tile-fg: #fff8ea; --tile-glow: rgba(94,170,255,.78); }
-
-    body[data-theme="desk"] .tile.v2 { --tile-top: #f8e4b0; --tile-bottom: #c8944b; --tile-fg: #241407; }
-    body[data-theme="desk"] .tile.v4 { --tile-top: #bfd88a; --tile-bottom: #657b39; --tile-fg: #241407; }
-    body[data-theme="desk"] .tile.v8 { --tile-top: #72c8b0; --tile-bottom: #2f7768; --tile-fg: #fff1d1; }
-    body[data-theme="desk"] .tile.v16 { --tile-top: #e8b765; --tile-bottom: #a96a32; --tile-fg: #241407; }
-    body[data-theme="desk"] .tile.v32 { --tile-top: #c7633b; --tile-bottom: #76311f; --tile-fg: #fff1d1; }
-    body[data-theme="desk"] .tile.v64 { --tile-top: #8d3340; --tile-bottom: #411416; --tile-fg: #fff1d1; }
-    body[data-theme="desk"] .tile.v128 { --tile-top: #65b989; --tile-bottom: #2f7556; --tile-fg: #fff1d1; }
-    body[data-theme="desk"] .tile.v256 { --tile-top: #5da8c7; --tile-bottom: #22566c; --tile-fg: #fff1d1; }
-    body[data-theme="desk"] .tile.v512 { --tile-top: #a679ba; --tile-bottom: #57406d; --tile-fg: #fff1d1; }
-    body[data-theme="desk"] .tile.v1024 { --tile-top: #d6a84f; --tile-bottom: #7b5420; --tile-fg: #fff1d1; }
-    body[data-theme="desk"] .tile.v2048 { --tile-top: #f6d36e; --tile-bottom: #3d2811; --tile-fg: #241407; }
-    body[data-theme="desk"] .tile.vbig { --tile-top: #4d3219; --tile-bottom: #11100c; --tile-fg: #fff1d1; }
-
-    body[data-theme="swiss"] .tile.v2 { --tile-top: #37cdd6; --tile-bottom: #37cdd6; --tile-fg: #151515; }
-    body[data-theme="swiss"] .tile.v4 { --tile-top: #f4f0e8; --tile-bottom: #f4f0e8; --tile-fg: #151515; }
-    body[data-theme="swiss"] .tile.v8 { --tile-top: #f7d948; --tile-bottom: #f7d948; --tile-fg: #151515; }
-    body[data-theme="swiss"] .tile.v16 { --tile-top: #e94b35; --tile-bottom: #e94b35; --tile-fg: #fff8ea; }
-    body[data-theme="swiss"] .tile.v32 { --tile-top: #151515; --tile-bottom: #151515; --tile-fg: #fff8ea; }
-    body[data-theme="swiss"] .tile.v64 { --tile-top: #2e6ce6; --tile-bottom: #2e6ce6; --tile-fg: #fff8ea; }
-    body[data-theme="swiss"] .tile.v128 { --tile-top: #19b75a; --tile-bottom: #19b75a; --tile-fg: #151515; }
-    body[data-theme="swiss"] .tile.v256 { --tile-top: #ff80b5; --tile-bottom: #ff80b5; --tile-fg: #151515; }
-    body[data-theme="swiss"] .tile.v512 { --tile-top: #6f46d9; --tile-bottom: #6f46d9; --tile-fg: #fff8ea; }
-    body[data-theme="swiss"] .tile.v1024 { --tile-top: #f28c28; --tile-bottom: #f28c28; --tile-fg: #151515; }
-    body[data-theme="swiss"] .tile.v2048 { --tile-top: #151515; --tile-bottom: #151515; --tile-fg: #fff8ea; }
-    body[data-theme="swiss"] .tile.vbig { --tile-top: #f4f0e8; --tile-bottom: #f4f0e8; --tile-fg: #151515; --tile-border: 3px solid #151515; }
-
-    body[data-theme="botanical"] .tile.v2 { --tile-top: #f2de91; --tile-bottom: #d1aa56; --tile-fg: #1f1a12; }
-    body[data-theme="botanical"] .tile.v4 { --tile-top: #d7e87a; --tile-bottom: #96bd50; --tile-fg: #1f1a12; }
-    body[data-theme="botanical"] .tile.v8 { --tile-top: #9bd26e; --tile-bottom: #5eaa54; --tile-fg: #1f1a12; }
-    body[data-theme="botanical"] .tile.v16 { --tile-top: #65b96a; --tile-bottom: #2d7a4b; --tile-fg: #fff8ea; }
-    body[data-theme="botanical"] .tile.v32 { --tile-top: #3a9b63; --tile-bottom: #1c5f40; --tile-fg: #fff8ea; }
-    body[data-theme="botanical"] .tile.v64 { --tile-top: #24724e; --tile-bottom: #0e382b; --tile-fg: #fff8ea; }
-    body[data-theme="botanical"] .tile.v128 { --tile-top: #f2a15d; --tile-bottom: #c95f36; --tile-fg: #1f1a12; }
-    body[data-theme="botanical"] .tile.v256 { --tile-top: #71d5b6; --tile-bottom: #2b9c7b; --tile-fg: #1f1a12; }
-    body[data-theme="botanical"] .tile.v512 { --tile-top: #b985d6; --tile-bottom: #704caa; --tile-fg: #fff8ea; }
-    body[data-theme="botanical"] .tile.v1024 { --tile-top: #d75e70; --tile-bottom: #913244; --tile-fg: #fff8ea; }
-    body[data-theme="botanical"] .tile.v2048 { --tile-top: #f4cf68; --tile-bottom: #b98325; --tile-fg: #1f1a12; }
-    body[data-theme="botanical"] .tile.vbig { --tile-top: #99d66d; --tile-bottom: #324b22; --tile-fg: #fff8ea; }
-
-    body[data-theme="deco"] .tile.v2 { --tile-top: #f6d894; --tile-bottom: #b98437; --tile-fg: #17100a; }
-    body[data-theme="deco"] .tile.v4 { --tile-top: #53c9b4; --tile-bottom: #146454; --tile-fg: #17100a; }
-    body[data-theme="deco"] .tile.v8 { --tile-top: #7a4fc9; --tile-bottom: #2d174f; --tile-fg: #fff1c3; }
-    body[data-theme="deco"] .tile.v16 { --tile-top: #c83d4f; --tile-bottom: #5c1f18; --tile-fg: #fff1c3; }
-    body[data-theme="deco"] .tile.v32 { --tile-top: #1d1710; --tile-bottom: #d6a83d; --tile-fg: #fff1c3; }
-    body[data-theme="deco"] .tile.v64 { --tile-top: #4fc09a; --tile-bottom: #145d4a; --tile-fg: #17100a; }
-    body[data-theme="deco"] .tile.v128 { --tile-top: #3a86d9; --tile-bottom: #123e78; --tile-fg: #fff1c3; }
-    body[data-theme="deco"] .tile.v256 { --tile-top: #eedc8a; --tile-bottom: #80651e; --tile-fg: #17100a; }
-    body[data-theme="deco"] .tile.v512 { --tile-top: #e66f5e; --tile-bottom: #7b2e28; --tile-fg: #fff1c3; }
-    body[data-theme="deco"] .tile.v1024 { --tile-top: #201525; --tile-bottom: #9a4c88; --tile-fg: #fff1c3; }
-    body[data-theme="deco"] .tile.v2048 { --tile-top: #fff1c3; --tile-bottom: #c99235; --tile-fg: #17100a; }
-    body[data-theme="deco"] .tile.vbig { --tile-top: #070604; --tile-bottom: #8d6922; --tile-fg: #fff1c3; }
-
-    @keyframes tile-slide {
-      from {
-        opacity: .92;
-        transform: translate(
-          calc(var(--from-x) * (100% + var(--gap))),
-          calc(var(--from-y) * (100% + var(--gap)))
-        ) scale(.985);
-      }
-      to {
-        opacity: 1;
-        transform: translate(
-          calc(var(--x) * (100% + var(--gap))),
-          calc(var(--y) * (100% + var(--gap)))
-        ) scale(1);
-      }
-    }
-
-    @keyframes tile-spawn {
-      from {
-        opacity: 0;
-        transform: translate(
-          calc(var(--x) * (100% + var(--gap))),
-          calc(var(--y) * (100% + var(--gap)))
-        ) scale(.62);
-        filter: brightness(1.28);
-      }
-      to {
-        opacity: 1;
-        transform: translate(
-          calc(var(--x) * (100% + var(--gap))),
-          calc(var(--y) * (100% + var(--gap)))
-        ) scale(1);
-        filter: brightness(1);
-      }
-    }
-
-    @keyframes tile-merge {
-      0% {
-        transform: translate(
-          calc(var(--x) * (100% + var(--gap))),
-          calc(var(--y) * (100% + var(--gap)))
-        ) scale(1);
-        filter: brightness(1);
-      }
-      48% {
-        transform: translate(
-          calc(var(--x) * (100% + var(--gap))),
-          calc(var(--y) * (100% + var(--gap)))
-        ) scale(1.12);
-        filter: brightness(1.22);
-      }
-      100% {
-        transform: translate(
-          calc(var(--x) * (100% + var(--gap))),
-          calc(var(--y) * (100% + var(--gap)))
-        ) scale(1);
-        filter: brightness(1);
-      }
-    }
-
-    @keyframes trail-left {
-      from { opacity: 0; transform: translateX(22px) scaleX(.72); }
-      35% { opacity: .82; }
-      to { opacity: 0; transform: translateX(-12px) scaleX(1); }
-    }
-
-    @keyframes trail-right {
-      from { opacity: 0; transform: translateX(-22px) scaleX(.72); }
-      35% { opacity: .82; }
-      to { opacity: 0; transform: translateX(12px) scaleX(1); }
-    }
-
-    @keyframes trail-up {
-      from { opacity: 0; transform: translateY(22px) scaleY(.72); }
-      35% { opacity: .82; }
-      to { opacity: 0; transform: translateY(-12px) scaleY(1); }
-    }
-
-    @keyframes trail-down {
-      from { opacity: 0; transform: translateY(-22px) scaleY(.72); }
-      35% { opacity: .82; }
-      to { opacity: 0; transform: translateY(12px) scaleY(1); }
     }
 
     @media (min-width: 760px) {
@@ -1051,6 +663,226 @@
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     button:focus-visible, #board:focus-visible { outline: 3px solid #a14900; outline-offset: 3px; }
     .controls button:focus-visible { outline-color: #166e69; }
+
+    /* Keep the board as the visual centre, with quiet scorekeeping around it. */
+    #app { width: min(100%, 460px); margin: 0 auto; gap: 12px; }
+    h1 { font-size: 32px; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
+    .eyebrow { letter-spacing: .12em; font-size: 10px; }
+    .theme-btn { font-family: var(--font); font-weight: 650; letter-spacing: 0; }
+    .theme-btn small { font-weight: 600; }
+    .state-pill, .metric { box-shadow: none; backdrop-filter: none; }
+    .state-pill { border: 0; background: transparent; padding-right: 0; }
+    .goal-band { box-shadow: none; backdrop-filter: none; }
+    .goal-band .label { white-space: normal; font-size: 15px; line-height: 1.25; }
+    .goal-band .hint { font-size: 12px; line-height: 1.35; }
+    .goal-meta { display: none; }
+    .goal-band { grid-template-columns: 48px minmax(0, 1fr); }
+    .metric { border: 0; border-radius: 10px; padding: 10px; }
+    .metric b { font-variant-numeric: tabular-nums; }
+    .metric-score { position: relative; }
+    .score-gain { position: absolute; top: -8px; right: 7px; opacity: 0; color: var(--amber); font-size: 13px; font-weight: 700; pointer-events: none; }
+    .score-gain.react { animation: score-rise 420ms ease-out both; }
+    @keyframes score-rise { 0% { opacity: 0; transform: translateY(4px); } 20%, 60% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
+    .board-wrap { width: min(100%, 390px); min-width: 0; border-radius: 20px; }
+    .tile { font-size: clamp(22px, 7vw, 30px); }
+    .tile.v1024, .tile.v2048, .tile.vbig { font-size: clamp(18px, 5.8vw, 26px); }
+    .controls { grid-template-columns: repeat(3, 58px); gap: 8px; }
+    .ctrl { width: 58px; height: 48px; }
+    .input-area { display: grid; justify-items: center; gap: 10px; }
+    .input-hint { font-size: 12px; color: var(--muted); line-height: 1.4; text-align: center; }
+    .modal { background: var(--bg); color: var(--text); max-height: 88dvh; overflow-y: auto; }
+    .modal h2 { color: var(--amber); }
+    .modal button { background: var(--button-bg); color: var(--button-color); border: 1px solid var(--line); }
+    body[data-theme="aero"] { --font: "Segoe UI", system-ui, sans-serif; }
+    body[data-theme="aero"]::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none;
+      background:
+        linear-gradient(118deg, transparent 18%, rgba(137,226,255,.08) 18.2%, rgba(137,226,255,.02) 34%, transparent 34.2%),
+        linear-gradient(118deg, transparent 42%, rgba(204,249,255,.05) 42.2%, transparent 57%),
+        radial-gradient(ellipse at 12% 22%, rgba(162,241,255,.10), transparent 46%);
+    }
+    body[data-theme="aero"] #app { position: relative; }
+    body[data-theme="aero"] h1 { font-weight: 600; text-shadow: 0 2px 7px rgba(0,18,38,.38); }
+    body[data-theme="aero"] .eyebrow { color: #b4edff; }
+    body[data-theme="aero"] .state-pill strong { color: #ffe3a0; }
+    body[data-theme="aero"] .goal-band,
+    body[data-theme="aero"] .metric {
+      border: 1px solid rgba(177,229,255,.24);
+      background: linear-gradient(145deg, rgba(200,243,255,.16), rgba(52,138,176,.09) 47%, rgba(3,40,63,.28) 48%);
+      box-shadow: inset 0 1px rgba(226,250,255,.24), 0 4px 12px rgba(0,21,43,.15);
+      backdrop-filter: blur(12px);
+    }
+    body[data-theme="aero"] .goal-band { border-radius: 16px; }
+    body[data-theme="aero"] .goal-target {
+      background: linear-gradient(180deg, rgba(255,255,255,.44), transparent 45%, rgba(124,83,0,.11) 46%), linear-gradient(145deg, #ffe9a7, #dba845);
+      color: #473113; border-color: #ffedb7;
+    }
+    body[data-theme="aero"] .board-wrap {
+      background: linear-gradient(145deg, rgba(105,181,211,.26), rgba(3,29,49,.72) 42%, rgba(13,69,88,.60));
+      border: 1px solid rgba(197,242,255,.64);
+      box-shadow: 0 20px 48px rgba(0,14,32,.35), 0 0 30px rgba(25,148,189,.10),
+        inset 0 1px rgba(246,255,255,.72), inset 1px 0 rgba(175,233,255,.26),
+        inset 0 -2px rgba(0,16,39,.42), inset 0 0 0 4px rgba(112,205,235,.08);
+      backdrop-filter: blur(18px);
+    }
+    body[data-theme="aero"] .board-wrap::before {
+      content: ""; position: absolute; inset: 1px; border-radius: inherit; pointer-events: none;
+      background: linear-gradient(135deg, rgba(255,255,255,.09), transparent 36%);
+    }
+    body[data-theme="aero"] .cell {
+      border: 1px solid rgba(120,193,225,.12);
+      background: linear-gradient(145deg, rgba(0,21,44,.44), rgba(82,158,179,.10));
+      box-shadow: inset 0 2px 5px rgba(0,16,35,.22), 0 1px rgba(198,241,255,.09);
+    }
+    body[data-theme="aero"] .tile-face {
+      background: linear-gradient(180deg, rgba(231,251,255,.42), rgba(226,249,255,.16) 43%, rgba(0,30,63,.26) 44%, rgba(0,29,52,.07) 100%),
+        linear-gradient(135deg, var(--tile-top), var(--tile-bottom));
+      text-shadow: 0 1px 1px rgba(0,19,47,.64), 0 0 8px rgba(231,252,255,.14);
+      color: var(--tile-fg, #fff);
+    }
+    body[data-theme="aero"] .tile-face::before {
+      inset: 3px 3px auto; height: 41%; border-radius: 10px 10px 2px 2px; opacity: .64;
+      background: linear-gradient(135deg, rgba(255,255,255,.34), rgba(255,255,255,.02));
+    }
+    body[data-theme="aero"] .tile-face::after {
+      inset: 2px; opacity: 1; z-index: -1; border-radius: 10px;
+      background: linear-gradient(135deg, rgba(255,255,255,.34), transparent 28%, transparent 70%, rgba(216,253,255,.10));
+      border: 1px solid rgba(241,254,255,.14);
+    }
+    body[data-theme="aero"] .tile.v2 { --tile-top: #239aca; --tile-bottom: #095180; --tile-fg: #f4fdff; }
+    body[data-theme="aero"] .tile.v4 { --tile-top: #29b5df; --tile-bottom: #076b99; --tile-fg: #f4fdff; }
+    body[data-theme="aero"] .tile.v8 { --tile-top: #35d5d6; --tile-bottom: #087980; --tile-fg: #f4fdff; }
+    body[data-theme="aero"] .tile.v16 { --tile-top: #55dcae; --tile-bottom: #076d57; --tile-fg: #f4fdff; }
+    body[data-theme="aero"] .tile.v32 { --tile-top: #abd76c; --tile-bottom: #477735; --tile-fg: #faffef; }
+    body[data-theme="aero"] .tile.v64 { --tile-top: #ffe591; --tile-bottom: #dcaa3c; --tile-fg: #453010; text-shadow: 0 1px rgba(255,255,255,.35); }
+    body[data-theme="aero"] .tile.v128 { --tile-top: #ffca73; --tile-bottom: #df8530; --tile-fg: #3b260e; text-shadow: 0 1px rgba(255,255,255,.35); }
+    body[data-theme="aero"] .tile.v256 { --tile-top: #ff9378; --tile-bottom: #b94746; --tile-fg: #fff9f5; }
+    body[data-theme="aero"] .tile.v512 { --tile-top: #bd9de9; --tile-bottom: #6252a8; --tile-fg: #fffaff; }
+    body[data-theme="aero"] .tile.v1024 { --tile-top: #e96f9e; --tile-bottom: #943d6b; --tile-fg: #fffaff; }
+    body[data-theme="aero"] .tile.v2048 { --tile-top: #fff2b1; --tile-bottom: #edba49; --tile-fg: #3a2b11; text-shadow: 0 1px rgba(255,255,255,.35); }
+    body[data-theme="aero"] .tile.vbig { --tile-top: #b6eeff; --tile-bottom: #3189b6; --tile-fg: #f4fdff; }
+    body[data-theme="aero"] .ctrl { font: 600 26px/1 "Segoe UI", system-ui, sans-serif; border-color: rgba(179,231,255,.44); backdrop-filter: blur(14px); }
+    body[data-theme="aero"] .ctrl:active { box-shadow: inset 0 1px rgba(255,255,255,.6), 0 0 18px rgba(107,232,255,.35); }
+    body[data-theme="aero"] .modal { background: rgba(5,38,58,.96); border-color: rgba(176,235,255,.45); backdrop-filter: blur(24px); }
+    body[data-theme="aero"] button:focus-visible,
+    body[data-theme="aero"] #board:focus-visible { outline-color: #9af4ec; }
+
+    body[data-theme="obsidian"] {
+      --bg: #0c1017;
+      --page-bg: radial-gradient(ellipse at 90% 0%, rgba(104,119,159,.14), transparent 45%), #0c1017;
+      --panel: #171c26;
+      --panel-strong: #232a36;
+      --line: #343c4a;
+      --text: #edf2fb;
+      --muted: #a2aab9;
+      --ink: #141b27;
+      --amber: #e5bd72;
+      --mint: #9fcbc5;
+      --tile-empty: #111721;
+      --tile-radius: 12px;
+      --tile-border: 1px solid rgba(218,229,251,.12);
+      --tile-font: 650 28px/1 "Segoe UI", system-ui, sans-serif;
+      --tile-shadow: 0 4px 8px rgba(0,0,0,.24), inset 0 1px rgba(255,255,255,.12), inset 0 -2px rgba(0,0,0,.20);
+      --tile-shine: transparent;
+      --button-radius: 12px;
+      --button-bg: linear-gradient(145deg, #2b3341, #1b222e);
+      --button-shadow: inset 0 1px rgba(255,255,255,.10), 0 4px 10px rgba(0,0,0,.22);
+      --button-color: #e6edf9;
+      --font: "Segoe UI", system-ui, sans-serif;
+    }
+    body[data-theme="obsidian"] h1 { font-weight: 500; letter-spacing: -.04em; }
+    body[data-theme="obsidian"] .eyebrow { color: #b9c1d0; }
+    body[data-theme="obsidian"] .goal-band { border-color: rgba(219,185,119,.26); background: linear-gradient(145deg, #24262b, #181e28); }
+    body[data-theme="obsidian"] .goal-target { background: linear-gradient(145deg, #5f5541, #393429); color: #f5d597; border-color: rgba(233,204,147,.30); }
+    body[data-theme="obsidian"] .metric { background: transparent; border-bottom: 1px solid #343c4a; border-radius: 0; padding: 9px 8px 11px; }
+    body[data-theme="obsidian"] .board-wrap { background: linear-gradient(145deg, #242c39, #151d28); border-color: #414a5a; border-radius: 18px; box-shadow: 0 20px 46px rgba(0,0,0,.36), inset 0 1px rgba(255,255,255,.09); }
+    body[data-theme="obsidian"] .cell { background: #111721; box-shadow: inset 0 2px 5px rgba(0,0,0,.24), 0 1px rgba(240,245,255,.03); }
+    body[data-theme="obsidian"] .tile-face { background: linear-gradient(145deg, var(--tile-top), var(--tile-bottom)); text-shadow: 0 0 14px var(--tile-glow); }
+    body[data-theme="obsidian"] .tile-face::before { inset: 1px 12px auto; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,.2), transparent); }
+    body[data-theme="obsidian"] .tile.v2 { --tile-top: #303b4f; --tile-bottom: #242e40; --tile-fg: #d4e0fa; --tile-glow: rgba(195,217,255,.18); }
+    body[data-theme="obsidian"] .tile.v4 { --tile-top: #2b4354; --tile-bottom: #223746; --tile-fg: #a5dafa; --tile-glow: rgba(122,207,255,.22); }
+    body[data-theme="obsidian"] .tile.v8 { --tile-top: #264948; --tile-bottom: #1a3738; --tile-fg: #9fe8df; --tile-glow: rgba(122,237,223,.22); }
+    body[data-theme="obsidian"] .tile.v16 { --tile-top: #304b3c; --tile-bottom: #263c30; --tile-fg: #b1e7be; --tile-glow: rgba(132,240,165,.22); }
+    body[data-theme="obsidian"] .tile.v32 { --tile-top: #46523b; --tile-bottom: #333e2b; --tile-fg: #dbeaae; --tile-glow: rgba(193,228,134,.22); }
+    body[data-theme="obsidian"] .tile.v64 { --tile-top: #594c32; --tile-bottom: #423927; --tile-fg: #f5d79b; --tile-glow: rgba(249,207,128,.25); }
+    body[data-theme="obsidian"] .tile.v128 { --tile-top: #60462f; --tile-bottom: #453323; --tile-fg: #f9cb94; --tile-glow: rgba(255,185,113,.22); }
+    body[data-theme="obsidian"] .tile.v256 { --tile-top: #5a363c; --tile-bottom: #402931; --tile-fg: #f4b2bb; --tile-glow: rgba(252,146,174,.25); }
+    body[data-theme="obsidian"] .tile.v512 { --tile-top: #453b5b; --tile-bottom: #312b43; --tile-fg: #d6c0f4; --tile-glow: rgba(201,157,254,.25); }
+    body[data-theme="obsidian"] .tile.v1024 { --tile-top: #3e3e60; --tile-bottom: #2d2e44; --tile-fg: #c9c4fc; --tile-glow: rgba(178,168,255,.25); }
+    body[data-theme="obsidian"] .tile.v2048 { --tile-top: #d7ba7a; --tile-bottom: #b2945a; --tile-fg: #2b271f; --tile-glow: transparent; }
+    body[data-theme="obsidian"] .tile.vbig { --tile-top: #6b6250; --tile-bottom: #494333; --tile-fg: #f7deb0; }
+    body[data-theme="obsidian"] button:focus-visible,
+    body[data-theme="obsidian"] #board:focus-visible { outline-color: #c4d5ed; }
+
+    body[data-theme="material"] {
+      --bg: #faf8f4;
+      --page-bg: radial-gradient(ellipse at 100% 0%, #e8e2ff 0%, transparent 50%), #faf8f4;
+      --panel: #f0ecf5;
+      --panel-strong: #e9e0f4;
+      --line: #d5cede;
+      --text: #2f2342;
+      --muted: #695e78;
+      --ink: #302046;
+      --amber: #68519a;
+      --mint: #5b4981;
+      --tile-empty: #c6bdd3;
+      --tile-radius: 15px;
+      --tile-border: 0;
+      --tile-font: 800 28px/1 "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+      --tile-shadow: 0 3px 0 rgba(50,26,82,.13);
+      --tile-shine: transparent;
+      --button-radius: 999px;
+      --button-bg: #e6def2;
+      --button-shadow: 0 3px 0 #ccc0df;
+      --button-color: #49336c;
+      --font: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+    }
+    body[data-theme="material"] h1 { font-weight: 900; letter-spacing: -.065em; }
+    body[data-theme="material"] .goal-band { border: 0; background: #eae3f5; border-radius: 24px; }
+    body[data-theme="material"] .goal-target { background: #695297; color: #fff; border: 0; box-shadow: none; border-radius: 50%; }
+    body[data-theme="material"] .metric { background: #f0ecf5; border-radius: 18px; }
+    body[data-theme="material"] .metric span { letter-spacing: .03em; }
+    body[data-theme="material"] .board-wrap { background: #ded5e9; border: 0; border-radius: 26px; box-shadow: 0 8px 0 #cbbfd9, 0 16px 28px rgba(54,31,86,.10); }
+    body[data-theme="material"] .cell { background: #c9bfd7; box-shadow: none; }
+    body[data-theme="material"] .tile-face { background: var(--tile-top); text-shadow: none; }
+    body[data-theme="material"] .tile-face::before,
+    body[data-theme="material"] .tile-face::after { display: none; }
+    body[data-theme="material"] .tile.v2 { --tile-top: #f8f2ff; --tile-fg: #554070; }
+    body[data-theme="material"] .tile.v4 { --tile-top: #d8c4f5; --tile-fg: #4b326b; }
+    body[data-theme="material"] .tile.v8 { --tile-top: #ac89dd; --tile-fg: #291842; }
+    body[data-theme="material"] .tile.v16 { --tile-top: #7652a8; --tile-fg: #fff8ff; }
+    body[data-theme="material"] .tile.v32 { --tile-top: #57347d; --tile-fg: #fff8ff; }
+    body[data-theme="material"] .tile.v64 { --tile-top: #a9d8c4; --tile-fg: #204b3e; }
+    body[data-theme="material"] .tile.v128 { --tile-top: #548e7a; --tile-fg: #fff; }
+    body[data-theme="material"] .tile.v256 { --tile-top: #f1bc77; --tile-fg: #623b11; }
+    body[data-theme="material"] .tile.v512 { --tile-top: #eb9a89; --tile-fg: #672e27; }
+    body[data-theme="material"] .tile.v1024 { --tile-top: #d96764; --tile-fg: #fff; }
+    body[data-theme="material"] .tile.v2048 { --tile-top: #35244b; --tile-fg: #fff0c2; }
+    body[data-theme="material"] .tile.vbig { --tile-top: #e8d590; --tile-fg: #493c1b; }
+    body[data-theme="material"] .theme-btn { padding-inline: 13px; background: #6e529c; color: #fff; border: 0; box-shadow: 0 3px 0 #4f3777; }
+    body[data-theme="material"] .ctrl:active { box-shadow: none; transform: translateY(2px); }
+    body[data-theme="material"] .modal { border: 0; border-radius: 28px; background: #faf8f4; }
+    body[data-theme="material"] button:focus-visible,
+    body[data-theme="material"] #board:focus-visible { outline-color: #7452a6; }
+    @media (min-width: 760px) {
+      #app { width: min(100%, 820px); max-width: 820px; grid-template-columns: 300px minmax(0, 1fr); padding: 24px; gap: 20px; }
+      .input-area { grid-column: 1; }
+      .board-wrap { width: min(100%, 440px); min-width: 0; }
+    }
+    @media (max-height: 700px) and (max-width: 759px) {
+      #app { gap: 6px; }
+      .board-wrap { width: min(100%, 320px, max(240px, calc(100dvh - 330px))); }
+      .goal-band .hint { display: none; }
+      .input-area { gap: 8px; }
+      .controls { grid-template-columns: repeat(4, 58px); }
+      .ctrl.blank { display: none; }
+      .ctrl[data-dir="left"] { order: -1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tile, .tile.moved, .tile.merged, .tile.spawn, .ctrl { transition: none; animation: none; }
+      .score-gain.react, #score.react { animation: none; }
+      .overlay.visible .modal { animation: none; }
+    }
   </style>
 </head>
 <body data-theme="aero">
@@ -1085,7 +917,7 @@
     <section class="metrics">
       <div class="metric"><b id="timer">0:00</b><span>время</span></div>
       <div class="metric"><b id="moves">0</b><span>ходы</span></div>
-      <div class="metric"><b id="score">0</b><span>очки</span></div>
+      <div class="metric metric-score"><b id="score">0</b><span>очки</span><small class="score-gain" id="score-gain" aria-hidden="true"></small></div>
     </section>
 
     <section class="stage">
@@ -1103,20 +935,23 @@
     <p class="sr-only" id="board-help">Для хода используйте клавиши со стрелками или кнопки под полем.</p>
     <p class="sr-only" id="board-status" role="status" aria-live="polite"></p>
 
-    <section class="controls">
+    <section class="input-area" aria-label="Управление">
+    <p class="input-hint" id="connection-status" role="status">Подключаемся…</p>
+    <div class="controls">
       <span class="ctrl blank" aria-hidden="true"></span>
       <button class="ctrl" type="button" data-dir="up" aria-label="Вверх">↑</button>
       <span class="ctrl blank" aria-hidden="true"></span>
       <button class="ctrl" type="button" data-dir="left" aria-label="Влево">←</button>
       <button class="ctrl" type="button" data-dir="down" aria-label="Вниз">↓</button>
       <button class="ctrl" type="button" data-dir="right" aria-label="Вправо">→</button>
+    </div>
     </section>
   </main>
 
   <div class="toast" id="toast"></div>
 
   <div class="overlay" id="overlay">
-    <div class="modal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="overlay-title">
       <h2 id="overlay-title">Финиш</h2>
       <div class="summary">
         <div><b id="overlay-score">0</b><span>очки</span></div>
@@ -1153,6 +988,21 @@
     let pendingMove = false;
     let pendingMoveTimer = null;
     let pendingMoveSnapshot = null;
+    let pendingMoveId = null;
+    const moveQueue = [];
+    let serverSeq = -1;
+    let reconnectTimer = null;
+    let reconnectAttempt = 0;
+    let liveTiles = [];
+    const visualQueue = [];
+    let activeMotion = null;
+    let motionEpoch = 0;
+    let motionRate = 1;
+    let pendingOverlay = null;
+    let overlayWait = null;
+    const SLIDE_MS = 110;
+    const SLIDE_EASING = 'cubic-bezier(.2,0,.3,1)';
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
     let tickTimer = null;
     let pendingCounter = 0;
     let lastMoveDirection = null;
@@ -1162,17 +1012,18 @@
 
     const THEMES = [
       { id: 'aero', label: 'Aero' },
-      { id: 'desk', label: 'Desk' },
-      { id: 'swiss', label: 'Swiss' },
-      { id: 'botanical', label: 'Leaf' },
-      { id: 'deco', label: 'Deco' }
+      { id: 'obsidian', label: 'Obsidian' },
+      { id: 'material', label: 'Material' }
     ];
+    const LEGACY_THEMES = { desk: 'obsidian', botanical: 'obsidian', swiss: 'material', deco: 'material' };
     const THEME_STORAGE_KEY = 'daily2048:theme';
 
     function applyTheme(themeId) {
-      const theme = THEMES.find(item => item.id === themeId) || THEMES[0];
+      const selected = LEGACY_THEMES[themeId] || themeId;
+      const theme = THEMES.find(item => item.id === selected) || THEMES[0];
       document.body.dataset.theme = theme.id;
       $('theme-label').textContent = theme.label;
+      $('theme-btn').setAttribute('aria-label', `Тема ${theme.label}. Нажмите для переключения`);
       try { localStorage.setItem(THEME_STORAGE_KEY, theme.id); } catch {}
     }
 
@@ -1264,106 +1115,206 @@
       return { board: next, moved: !boardsEqual(normalized, next), gained };
     }
 
-    function flattenBoard(source) {
-      const result = [];
-      for (let y = 0; y < 4; y++) {
-        for (let x = 0; x < 4; x++) {
-          const value = Number(source[y]?.[x] || 0);
-          if (value) result.push({ x, y, value, used: false });
-        }
-      }
-      return result;
-    }
-
-    function directionDistance(from, to) {
-      if (!lastMoveDirection) return Math.abs(from.x - to.x) + Math.abs(from.y - to.y);
-      if (lastMoveDirection === 'left') return Math.abs(from.y - to.y) * 8 + Math.max(0, from.x - to.x);
-      if (lastMoveDirection === 'right') return Math.abs(from.y - to.y) * 8 + Math.max(0, to.x - from.x);
-      if (lastMoveDirection === 'up') return Math.abs(from.x - to.x) * 8 + Math.max(0, from.y - to.y);
-      if (lastMoveDirection === 'down') return Math.abs(from.x - to.x) * 8 + Math.max(0, to.y - from.y);
-      return Math.abs(from.x - to.x) + Math.abs(from.y - to.y);
-    }
-
-    function takeSource(sources, tile, value) {
-      let best = null;
-      let bestDistance = Infinity;
-      for (const source of sources) {
-        if (source.used || source.value !== value) continue;
-        const distance = directionDistance(source, tile);
-        if (distance < bestDistance) {
-          best = source;
-          bestDistance = distance;
-        }
-      }
-      if (best) best.used = true;
-      return best;
-    }
-
     function isSpawnedTile(tile, spawned) {
       if (!spawned) return false;
       return Number(spawned.x) === tile.x && Number(spawned.y) === tile.y && Number(spawned.value) === tile.value;
     }
 
-    function buildTileModels(previous, next, options = {}) {
-      const sources = flattenBoard(previous);
-      const spawned = options.spawned || null;
+    // Follow the actual lane order. Equal values elsewhere never exchange identity.
+    function buildTileModels(direction) {
+      const vertical = direction === 'up' || direction === 'down';
+      const reverse = direction === 'right' || direction === 'down';
       const models = [];
-      for (let y = 0; y < 4; y++) {
-        for (let x = 0; x < 4; x++) {
-          const value = Number(next[y]?.[x] || 0);
-          if (!value) continue;
-          const tile = { x, y, value };
-          if (isSpawnedTile(tile, spawned)) {
-            models.push({ x, y, fromX: x, fromY: y, value, state: hasRenderedBoard ? 'spawn' : '' });
-            continue;
-          }
-          let source = takeSource(sources, tile, value);
-          let state = 'moved';
-
-          if (!source && value > 2) {
-            source = takeSource(sources, tile, value / 2);
-            if (source) {
-              takeSource(sources, tile, value / 2);
-              state = 'merged';
-            }
-          }
-
-          if (!source) {
-            source = { x, y, value };
-            state = hasRenderedBoard ? 'spawn' : '';
-          }
-
-          if (source.x === x && source.y === y && state === 'moved') state = '';
-          models.push({ x, y, fromX: source.x, fromY: source.y, value, state });
+      for (let lane = 0; lane < 4; lane++) {
+        const sources = liveTiles.filter(tile => (vertical ? tile.x : tile.y) === lane)
+          .sort((a, b) => (reverse ? -1 : 1) * ((vertical ? a.y : a.x) - (vertical ? b.y : b.x)));
+        let target = 0;
+        for (let index = 0; index < sources.length; index++, target++) {
+          const source = sources[index];
+          const other = sources[index + 1];
+          const absorbed = other?.value === source.value ? other : null;
+          const position = reverse ? 3 - target : target;
+          models.push({ source, absorbed, x: vertical ? lane : position,
+            y: vertical ? position : lane, value: source.value * (absorbed ? 2 : 1) });
+          if (absorbed) index++;
         }
       }
       return models;
     }
 
-    function flashDirection(direction) {
-      const boardEl = $('board');
-      if (!direction) return;
-      boardEl.classList.remove('move-left', 'move-right', 'move-up', 'move-down');
-      void boardEl.offsetWidth;
-      boardEl.classList.add(`move-${direction}`);
-      clearTimeout(flashDirection._timer);
-      flashDirection._timer = setTimeout(() => boardEl.classList.remove(`move-${direction}`), 320);
+    function positionTile(tile, x, y) {
+      tile.x = x;
+      tile.y = y;
+      tile.el.style.setProperty('--x', x);
+      tile.el.style.setProperty('--y', y);
+    }
+
+    function tileTranslation(x, y) {
+      return `translate(calc(${x} * (100% + var(--gap))), calc(${y} * (100% + var(--gap))))`;
+    }
+
+    function animateTileFeedback(tile, kind) {
+      if (reducedMotion.matches) return;
+      // Scale the face around its own centre; never scale the cell translation.
+      const previous = tile.feedback;
+      const from = previous ? getComputedStyle(tile.face).transform : 'scale(1)';
+      previous?.cancel();
+      tile.el.classList.remove('spawn', 'merged');
+      tile.el.classList.add(kind);
+      const frames = kind === 'spawn' ? [
+        { transform: 'scale(.82)', opacity: 0 },
+        { transform: 'scale(1)', opacity: 1 }
+      ] : [
+        { transform: from === 'none' ? 'scale(1)' : from, offset: 0 },
+        { transform: 'scale(1.055)', offset: .35 },
+        { transform: 'scale(1)', offset: 1 }
+      ];
+      const animation = tile.face.animate(frames, {
+        duration: kind === 'spawn' ? 140 : 130,
+        easing: 'cubic-bezier(.2,0,.3,1)', fill: 'both'
+      });
+      tile.feedback = animation;
+      animation.finished.then(() => {
+        if (tile.feedback !== animation) return;
+        tile.feedback = null;
+        tile.el.classList.remove(kind);
+        animation.cancel();
+      }).catch(() => {}); // Reset/reconnect and a later merge own cancellation.
+    }
+
+    function createTile(x, y, value, spawn = false) {
+      const el = document.createElement('div');
+      el.className = `tile ${tileClass(value)}`;
+      const face = document.createElement('div');
+      face.className = 'tile-face';
+      const number = document.createElement('span');
+      number.textContent = value;
+      face.append(number);
+      el.append(face);
+      const tile = { x, y, value, el, face, number, feedback: null };
+      positionTile(tile, x, y);
+      $('tiles').append(el);
+      if (spawn) animateTileFeedback(tile, 'spawn');
+      return tile;
+    }
+
+    function resetVisualBoard(next) {
+      motionEpoch++;
+      activeMotion = null;
+      motionRate = 1;
+      cancelPendingOverlay();
+      visualQueue.length = 0;
+      $('tiles').getAnimations({ subtree: true }).forEach(animation => animation.cancel());
+      $('tiles').replaceChildren();
+      liveTiles = [];
+      for (let y = 0; y < 4; y++) {
+        for (let x = 0; x < 4; x++) {
+          if (next[y][x]) liveTiles.push(createTile(x, y, next[y][x]));
+        }
+      }
+    }
+
+    function runVisualQueue() {
+      if (activeMotion) return;
+      if (!visualQueue.length) {
+        motionRate = 1;
+        presentOverlayWhenIdle();
+        return;
+      }
+      const task = visualQueue.shift();
+      if (!task.direction) {
+        // A normal acknowledgement adds only the server-selected spawn.
+        const current = cloneBoard([]);
+        liveTiles.forEach(tile => { current[tile.y][tile.x] = tile.value; });
+        const spawned = task.spawned;
+        if (spawned && !current[spawned.y]?.[spawned.x] && isSpawnedTile(
+          { x: spawned.x, y: spawned.y, value: task.board[spawned.y]?.[spawned.x] }, spawned)) {
+          current[spawned.y][spawned.x] = spawned.value;
+          if (boardsEqual(current, task.board)) {
+            liveTiles.push(createTile(spawned.x, spawned.y, spawned.value, true));
+          } else {
+            resetVisualBoard(task.board);
+          }
+        } else if (!boardsEqual(current, task.board)) {
+          resetVisualBoard(task.board);
+        }
+        showScoreGain(task.gainedScore);
+        runVisualQueue();
+        return;
+      }
+      const models = buildTileModels(task.direction);
+      const run = { epoch: motionEpoch, animations: [] };
+      activeMotion = run;
+      for (const model of models) {
+        for (const tile of [model.source, model.absorbed].filter(Boolean)) {
+          const from = tileTranslation(tile.x, tile.y);
+          const moved = tile.x !== model.x || tile.y !== model.y;
+          positionTile(tile, model.x, model.y);
+          if (moved && !reducedMotion.matches) {
+            const animation = tile.el.animate([
+              { transform: from }, { transform: tileTranslation(model.x, model.y) }
+            ], { duration: SLIDE_MS, easing: SLIDE_EASING, fill: 'both' });
+            // Start the group on the current document frame, without a pending-play frame per queued move.
+            animation.playbackRate = motionRate;
+            animation.startTime = document.timeline.currentTime;
+            run.animations.push(animation);
+          }
+        }
+      }
+      const finish = () => {
+        if (activeMotion !== run || run.epoch !== motionEpoch) return;
+        activeMotion = null;
+        // The compositor has reached the cell before changing numbers/removing sources.
+        run.animations.forEach(animation => animation.cancel());
+        liveTiles = models.map(model => {
+          model.absorbed?.feedback?.cancel();
+          model.absorbed?.el.remove();
+          const tile = model.source;
+          if (model.absorbed) {
+            tile.el.classList.remove(tileClass(tile.value));
+            tile.value = model.value;
+            tile.el.classList.add(tileClass(tile.value));
+            tile.number.textContent = tile.value;
+            animateTileFeedback(tile, 'merged');
+          }
+          return tile;
+        });
+        runVisualQueue();
+      };
+      if (!run.animations.length) finish();
+      else Promise.all(run.animations.map(animation => animation.finished)).then(finish).catch(() => {});
+    }
+
+    function accelerateVisualQueue() {
+      if (!activeMotion) return;
+      const queuedMoves = visualQueue.filter(task => task.direction).length;
+      // Preserve currentTime and every path through its cell. Never jump to a snapshot.
+      motionRate = Math.max(motionRate, Math.min(32, 1 + queuedMoves));
+      activeMotion.animations.forEach(animation => animation.updatePlaybackRate(motionRate));
     }
 
     function renderBoard(next, options = {}) {
       const nextBoard = Array.isArray(next) ? cloneBoard(next) : cloneBoard(board);
-      const previous = options.instant ? cloneBoard(nextBoard) : cloneBoard(board);
-      const shouldFlash = hasRenderedBoard && !options.instant;
-      const tiles = buildTileModels(previous, nextBoard, options).map(tile => (
-        `<div class="tile ${tileClass(tile.value)} ${tile.state}" style="--x:${tile.x};--y:${tile.y};--from-x:${tile.fromX};--from-y:${tile.fromY}"><span>${tile.value}</span></div>`
-      ));
       board = nextBoard;
-      $('tiles').innerHTML = tiles.join('');
+      if (!hasRenderedBoard || options.instant) resetVisualBoard(nextBoard);
+      else {
+        visualQueue.push({ board: nextBoard, direction: options.optimistic ? lastMoveDirection : null,
+          spawned: options.spawned, gainedScore: options.gainedScore });
+        accelerateVisualQueue();
+        runVisualQueue();
+      }
       $('board-status').textContent = `Поле: ${nextBoard.map(row => row.map(value => value || 'пусто').join(', ')).join('; ')}`;
-      if (shouldFlash) flashDirection(lastMoveDirection);
       hasRenderedBoard = true;
       lastMoveDirection = null;
     }
+
+    reducedMotion.addEventListener('change', () => {
+      if (reducedMotion.matches && hasRenderedBoard) {
+        const result = pendingOverlay;
+        resetVisualBoard(board);
+        if (result) showOverlay(result);
+      }
+    });
 
     function updateClock() {
       if (activeStartedAt !== null && !isTimerForeground()) {
@@ -1436,10 +1387,21 @@
       else stopTimer();
     }
 
+    function showScoreGain(gained) {
+      if (!(gained > 0)) return;
+      const gain = $('score-gain');
+      gain.textContent = `+${gained}`;
+      gain.classList.remove('react');
+      void gain.offsetWidth;
+      if (!reducedMotion.matches) gain.classList.add('react');
+    }
+
     function setGoal(goal) {
       if (!goal) return;
-      $('goal-label').textContent = goal.label || `Цель ${goal.value}`;
-      $('goal-help').textContent = goal.help || '';
+      $('goal-label').textContent = goal.type === 'total' ? `Сумма плиток: ${goal.value}` :
+        goal.type === 'tile' ? `Собери плитку ${goal.value}` : goal.label || `Цель ${goal.value}`;
+      $('goal-help').textContent = goal.type === 'total' ? 'Общая сумма всех чисел на поле.' :
+        goal.type === 'tile' ? 'Объединяй одинаковые плитки и собери цель.' : goal.help || '';
       $('goal-target').textContent = goal.value ? String(goal.value) : '...';
       $('goal-meta').textContent = recordable ? 'зачёт' : 'игра';
     }
@@ -1464,7 +1426,35 @@
       }).join('');
     }
 
+    function cancelPendingOverlay() {
+      pendingOverlay = null;
+      overlayWait = null;
+    }
+
+    function presentOverlayWhenIdle() {
+      if (!pendingOverlay || overlayWait || activeMotion || visualQueue.length) return;
+      const msg = pendingOverlay;
+      const reactions = $('tiles').getAnimations({ subtree: true }).filter(animation => animation.playState === 'running');
+      if (reducedMotion.matches || !reactions.length) { showOverlay(msg); return; }
+      const wait = { epoch: motionEpoch };
+      overlayWait = wait;
+      Promise.allSettled(reactions.map(animation => animation.finished)).then(() => {
+        if (overlayWait !== wait || pendingOverlay !== msg || wait.epoch !== motionEpoch) return;
+        showOverlay(msg);
+      });
+    }
+
+    function queueOverlay(msg) {
+      cancelPendingOverlay();
+      moveQueue.length = 0;
+      status = msg.status || 'won';
+      setMetrics({ ...msg, recordable: false });
+      pendingOverlay = msg;
+      presentOverlayWhenIdle();
+    }
+
     function showOverlay(msg) {
+      cancelPendingOverlay();
       const lost = msg.status === 'lost';
       practiceStartStatus = lost ? 'lost' : 'won';
       $('overlay-title').textContent = lost ? 'Ходов больше нет' : 'Цель собрана';
@@ -1474,6 +1464,9 @@
       $('practice-btn').textContent = lost ? 'Начать заново' : 'Играть дальше';
       renderLeaderboard(msg.leaderboard || []);
       $('overlay').classList.add('visible');
+      $('app').inert = true;
+      $('practice-btn').focus();
+      moveQueue.length = 0;
       status = msg.status || 'won';
       setMetrics({ ...msg, recordable: false });
     }
@@ -1484,43 +1477,78 @@
     }
 
     function connect() {
-      ws = new WebSocket(wsUrl());
-      ws.onopen = () => showToast('Готово');
-      ws.onmessage = ev => {
+      clearTimeout(reconnectTimer);
+      const socket = new WebSocket(wsUrl());
+      ws = socket;
+      serverSeq = -1;
+      socket.onopen = () => {
+        if (socket !== ws) return;
+        $('connection-status').textContent = 'Синхронизация…';
+      };
+      socket.onmessage = ev => {
+        if (socket !== ws) return;
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }
         handleMessage(msg);
       };
-      ws.onclose = ev => {
-        if (ev.code === 4003) showToast('Ошибка авторизации');
-        else if (status === 'active') showToast('Соединение закрыто');
+      socket.onclose = ev => {
+        if (socket !== ws) return;
+        pauseTimer();
+        cancelPendingOverlay();
+        status = 'syncing';
+        clearPendingMove();
+        moveQueue.length = 0;
+        resetPointer();
+        // Never replay a move whose acceptance is uncertain. The next snapshot owns recovery.
+        if (ev.code === 4003) {
+          $('connection-status').textContent = 'Откройте игру заново в Telegram';
+          showToast('Ошибка авторизации');
+          return;
+        }
+        $('connection-status').textContent = 'Восстанавливаем соединение…';
+        reconnectTimer = setTimeout(connect, Math.min(1000 * 2 ** reconnectAttempt++, 8000));
       };
     }
 
     function handleMessage(msg) {
+      if (msg.event === 'move_result' && (!pendingMoveId || msg.pending_id !== pendingMoveId)) return;
+      if (typeof msg.seq === 'number') {
+        if (msg.seq <= serverSeq) return;
+        serverSeq = msg.seq;
+      }
       if (msg.event === 'game_state') {
+        clearPendingMove();
+        moveQueue.length = 0;
+        reconnectAttempt = 0;
         status = msg.status || 'active';
+        $('connection-status').textContent = 'Свайп по полю · стрелки или WASD';
         if (msg.start_board) startBoard = cloneBoard(msg.start_board);
         setGoal(msg.goal);
-        renderBoard(msg.board);
+        renderBoard(msg.board, { instant: true });
         setMetrics(msg);
+        if (status === 'lost') showOverlay(msg);
         return;
       }
       if (msg.event === 'move_result') {
+        const expected = cloneBoard(board);
+        if (msg.spawned) expected[msg.spawned.y][msg.spawned.x] = msg.spawned.value;
+        const corrected = !boardsEqual(expected, msg.board);
         clearPendingMove();
+        if (corrected) moveQueue.length = 0;
         if (msg.status) status = msg.status;
         if (msg.start_board) startBoard = cloneBoard(msg.start_board);
         setGoal(msg.goal);
-        renderBoard(msg.board, { spawned: msg.spawned });
+        renderBoard(msg.board, { spawned: msg.spawned, instant: corrected, gainedScore: msg.gained_score });
         setMetrics(msg);
-        if (msg.daily2048_completed || msg.game_over) showOverlay(msg);
+        if (msg.daily2048_completed || msg.game_over) queueOverlay(msg);
+        else drainMoveQueue();
         return;
       }
       if (msg.event === 'daily2048_completed') {
         clearPendingMove();
         if (msg.start_board) startBoard = cloneBoard(msg.start_board);
         renderBoard(msg.board);
-        showOverlay(msg);
+        queueOverlay(msg);
         return;
       }
       if (msg.event === 'timer_sync') {
@@ -1528,8 +1556,9 @@
         return;
       }
       if (msg.event === 'error') {
-        if (pendingMoveSnapshot) renderBoard(pendingMoveSnapshot);
+        if (pendingMoveSnapshot) renderBoard(pendingMoveSnapshot, { instant: true });
         clearPendingMove();
+        moveQueue.length = 0;
         showToast(msg.message || 'Ошибка');
       }
     }
@@ -1537,12 +1566,17 @@
     function clearPendingMove() {
       pendingMove = false;
       pendingMoveSnapshot = null;
+      pendingMoveId = null;
       clearTimeout(pendingMoveTimer);
       pendingMoveTimer = null;
     }
 
     function sendMove(direction) {
-      if (!ws || ws.readyState !== WebSocket.OPEN || pendingMove || status !== 'active') return;
+      if (!ws || ws.readyState !== WebSocket.OPEN || status !== 'active' || document.querySelector('dialog[open]')) return;
+      if (pendingMove) {
+        if (moveQueue.length < 2) moveQueue.push(direction);
+        return;
+      }
       const beforeBoard = cloneBoard(board);
       const outcome = applyMoveClient(beforeBoard, direction);
       if (!outcome.moved) return;
@@ -1552,19 +1586,33 @@
       tg?.HapticFeedback?.impactOccurred('light');
       renderBoard(outcome.board, { optimistic: true });
       const pendingId = `${CLIENT_SESSION_ID}:m${++pendingCounter}`;
-      ws.send(JSON.stringify({
+      pendingMoveId = pendingId;
+      try { ws.send(JSON.stringify({
         type: 'move',
         direction,
         pending_id: pendingId,
         client_elapsed_ms: currentElapsedMs(),
         client_board_before: pendingMoveSnapshot,
         client_board_after: outcome.board
-      }));
+      })); } catch {
+        renderBoard(beforeBoard, { instant: true });
+        clearPendingMove();
+        moveQueue.length = 0;
+        showToast('Соединение прервано');
+        ws.close();
+        return;
+      }
       clearTimeout(pendingMoveTimer);
       pendingMoveTimer = setTimeout(() => {
-        pendingMoveTimer = null;
         showToast('Ждём сервер');
+        pendingMoveTimer = setTimeout(() => {
+          if (pendingMoveId === pendingId) ws?.close();
+        }, 10000);
       }, 5000);
+    }
+
+    function drainMoveQueue() {
+      while (!pendingMove && status === 'active' && moveQueue.length) sendMove(moveQueue.shift());
     }
 
     $('theme-btn').addEventListener('click', () => {
@@ -1577,7 +1625,9 @@
     });
 
     document.addEventListener('keydown', ev => {
-      if ($('daily-choice-dialog').open) return;
+      if (ev.defaultPrevented || ev.altKey || ev.ctrlKey || ev.metaKey || ev.repeat ||
+          document.querySelector('dialog[open]') || $('overlay').classList.contains('visible') ||
+          ev.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]')) return;
       const map = {
         ArrowLeft: 'left', a: 'left', A: 'left',
         ArrowRight: 'right', d: 'right', D: 'right',
@@ -1648,6 +1698,8 @@
 
     $('practice-btn').addEventListener('click', () => {
       $('overlay').classList.remove('visible');
+      $('app').inert = false;
+      $('board').focus({ preventScroll: true });
       status = 'active';
       recordable = false;
       if (practiceStartStatus === 'lost') {
