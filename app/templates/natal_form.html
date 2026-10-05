@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Разбор рождения</title>
+<title>Ваш разбор</title>
 <link rel="icon" href="data:,">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="stylesheet" href="/static/css/natal-theme.css">
@@ -29,13 +29,15 @@ h1 { margin: 0; font-size: 17px; line-height: 1.2; font-weight: 700; }
 .eyebrow { margin: 0 0 3px; color: var(--muted); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; }
 .intro-lead { margin: 18px 0 0; color: var(--muted); font-size: 14px; }
 .status-pill { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
-.cancel { width: 44px; height: 44px; padding: 0; flex: none; border: 1px solid var(--line); border-radius: 50%; background: transparent; color: var(--muted); font-size: 24px; line-height: 1; }
+.cancel { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; flex: none; border: 1px solid var(--line); border-radius: 50%; background: transparent; color: var(--muted); }
+.cancel svg { display: block; width: 20px; height: 20px; }
 .progress-shell { display: grid; gap: 22px; margin: 22px 0 8px; }
 .step-rail { display: grid; grid-template-columns: repeat(var(--rail-count, 5), minmax(0, 1fr)); margin: 0 -6px; padding: 0; list-style: none; }
 .rail-step { position: relative; display: grid; justify-items: center; gap: 7px; min-width: 0; color: var(--muted); font-size: 10px; text-align: center; }
 .rail-step::before { content: ''; position: absolute; z-index: 0; top: 15px; right: 50%; width: 100%; height: 1px; background: var(--line); }
 .rail-step:first-child::before { display: none; }
-.rail-marker { z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 50%; background: var(--bg); font-size: 13px; }
+.rail-marker { z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 50%; background: var(--bg); font-size: 13px; line-height: 1; }
+.rail-marker svg { display: block; width: 16px; height: 16px; }
 .rail-step[data-complete='true']::before, .rail-step[aria-current='step']::before { background: var(--accent); }
 .rail-step[data-complete='true'] .rail-marker, .rail-step[aria-current='step'] .rail-marker { border-color: var(--accent); background: var(--accent); color: var(--accent-text); box-shadow: var(--natal-control-shadow); }
 .rail-step[aria-current='step'] { color: var(--text); font-weight: 700; }
@@ -95,7 +97,7 @@ html[data-natal-theme='light'] .precision-icon svg { display: none; }
 html[data-natal-theme='light'] .precision-choice[aria-pressed='true'] .precision-icon { border-color: var(--natal-link); background: var(--natal-link); box-shadow: inset 0 0 0 4px var(--surface); }
 .time-block[hidden], .manual-block[hidden], .layout[hidden], .done[hidden], .error[hidden], .natal-only[hidden] { display: none; }
 .time-input-shell { position: relative; }
-.time-input-shell > svg { position: absolute; z-index: 1; left: 17px; top: 20px; width: 24px; height: 24px; fill: none; stroke: var(--muted); stroke-width: 1.5; pointer-events: none; }
+.time-input-shell > svg { position: absolute; z-index: 1; left: 17px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; fill: none; stroke: var(--muted); stroke-width: 1.5; pointer-events: none; }
 .time-input-shell input { padding-left: 55px; }
 .sticky-summary { display: grid; gap: 15px; padding: 20px; border: 1px solid var(--line); border-radius: var(--natal-radius); background: var(--surface); margin-top: 18px; }
 .summary-head { display: grid; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
@@ -129,11 +131,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, .panel-title:fo
   <div class="topbar">
     <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="12" cy="12" r="5"/><path d="M12 1v4m0 14v4M1 12h4m14 0h4M4 4l3 3m10 10 3 3M4 20l3-3M17 7l3-3"/></svg></span>
     <div>
-      <p class="eyebrow">Натал + матрица судьбы</p>
-      <h1>Разбор рождения</h1>
+      <p class="eyebrow">Натальная карта и матрица</p>
+      <h1>Ваш разбор</h1>
     </div>
     <div class="status-pill" id="status-pill">Анкета</div>
-    <button class="cancel" id="cancel-button" type="button" aria-label="Отменить анкету">×</button>
+    <button class="cancel" id="cancel-button" type="button" aria-label="Отменить анкету"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
   </div>
   <p class="intro-lead" id="intro-lead">Выберите формат и дату рождения. Для матрицы достаточно даты.</p>
 
@@ -160,17 +162,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, .panel-title:fo
         <section class="form-slide" id="report-slide" data-slide="report">
           <div class="step-card" id="report-type-panel" data-step="report">
             <div class="panel-head">
-              <h2 class="panel-title">Фокус и формат</h2>
+              <h2 class="panel-title">Выберите разбор</h2>
               <span class="panel-note" id="report-type-step-note">1 из 5</span>
             </div>
             <div class="fields">
               <div class="field">
-                <label>Фокус разбора</label>
-                <p class="hint">Что для вас сейчас важнее всего?</p>
+                <label>Что хотите узнать?</label>
+                <p class="hint">Выберите тему, которая сейчас важнее всего.</p>
                 <div class="chips" id="focus-chips"></div>
               </div>
               <div class="field">
-                <p class="field-label">Что построить</p>
+                <p class="field-label">Формат разбора</p>
                 <div class="option-grid" id="report-type-chips" data-group="report_type"></div>
               </div>
             </div>
@@ -180,7 +182,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, .panel-title:fo
         <section class="form-slide" id="date-slide" data-slide="date">
           <div class="step-card" id="datetime-panel" data-step="date">
             <div class="panel-head">
-              <h2 class="panel-title" id="datetime-panel-title">Сначала дата</h2>
+              <h2 class="panel-title" id="datetime-panel-title">Дата рождения</h2>
               <span class="panel-note" id="datetime-step-note">2 из 5</span>
             </div>
             <div class="fields">
@@ -243,7 +245,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, .panel-title:fo
                     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 6v6h5"/></svg>
                     <input id="birth-time" name="birth_time" type="time" aria-describedby="birth-time-hint">
                   </div>
-                  <p class="hint" id="birth-time-hint">Укажите как в свидетельстве или со слов близких.</p>
+                  <p class="hint" id="birth-time-hint">Укажите время из документа или со слов близких.</p>
                 </div>
               </div>
               <div class="time-block natal-only" id="range-time-block" data-time-block="range" hidden>
@@ -266,13 +268,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, .panel-title:fo
         <section class="form-slide" id="place-slide" data-slide="place">
           <div class="step-card natal-only" id="place-panel" data-step="place">
             <div class="panel-head">
-              <h2 class="panel-title">Место и часовой пояс</h2>
+              <h2 class="panel-title">Место рождения</h2>
               <span class="panel-note" id="place-step-note">4 из 5</span>
             </div>
             <div class="fields">
               <div class="field">
                 <label>Страна рождения</label>
-                <p class="hint">Для координат и часового пояса.</p>
+                <p class="hint">По месту рождения определим координаты и часовой пояс.</p>
                 <div class="chips" id="country-chips"></div>
               </div>
               <div class="field manual-block" id="manual-country-block" hidden>
@@ -294,11 +296,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, .panel-title:fo
         <section class="form-slide" id="review-slide" data-slide="review">
           <div class="step-card" id="review-panel" data-step="review">
             <div class="panel-head">
-              <h2 class="panel-title">Проверить данные</h2>
+              <h2 class="panel-title">Проверьте данные</h2>
               <span class="panel-note" id="review-step-note">5 из 5</span>
             </div>
             <div class="fields">
-              <p class="hint" id="review-hint">Проверка перед отправкой: дата, время, место и формат расчёта должны совпадать с тем, что вы хотите получить.</p>
+              <p class="hint" id="review-hint">Проверьте дату, время и место рождения, а также выбранный формат разбора.</p>
             </div>
             <div class="sticky-summary" id="summary">
               <div class="summary-head">
@@ -314,17 +316,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, .panel-title:fo
     <div class="error" id="error-box" role="alert" hidden></div>
     <div class="done" id="done-box" data-state="processing" hidden>
       <div class="done-mark" aria-hidden="true"></div>
-      <p class="done-title" id="done-title">Создаём разбор рождения</p>
+      <p class="done-title" id="done-title">Готовим ваш разбор</p>
       <p class="done-text" id="done-text">
-        <span>Окно можно закрывать.</span>
-        <span>Ответ будет отправлен новым сообщением в чат с ботом.</span>
+        <span>Можете закрыть окно.</span>
+        <span>Пришлём результат в чат с ботом.</span>
       </p>
     </div>
 
     <div class="action-bar" id="action-bar">
       <button class="back" id="back-button" type="button">Назад</button>
       <button class="next" id="next-button" type="button" disabled>Далее</button>
-      <button class="submit" id="submit-button" type="submit" hidden>Построить разбор</button>
+      <button class="submit" id="submit-button" type="submit" hidden>Создать разбор</button>
     </div>
   </form>
 </main>
@@ -405,9 +407,9 @@ function showAcceptedState() {
   isSubmitting = false;
   formLayout.hidden = true;
   doneBox.dataset.state = 'processing';
-  setDoneMessage('Создаём разбор рождения', [
-    'Окно можно закрывать.',
-    'Ответ будет отправлен новым сообщением в чат с ботом.',
+  setDoneMessage('Готовим ваш разбор', [
+    'Можете закрыть окно.',
+    'Пришлём результат в чат с ботом.',
   ]);
   doneBox.hidden = false;
   statusPill.textContent = 'Создаём';
@@ -427,7 +429,7 @@ function restoreFormState(message) {
   errorBox.textContent = message;
   errorBox.hidden = false;
   submitButton.disabled = false;
-  submitButton.textContent = 'Построить разбор';
+  submitButton.textContent = 'Создать разбор';
   statusPill.textContent = 'Анкета';
   updateSlideControls();
 }
@@ -704,8 +706,8 @@ function isMatrixOnly() {
 
 function updateProductVisibility() {
   document.getElementById('review-hint').textContent = isMatrixOnly()
-    ? 'Проверка перед отправкой: проверьте дату рождения и выбранный фокус матрицы. Время и место не требуются.'
-    : 'Проверка перед отправкой: дата, время, место и формат расчёта должны совпадать с тем, что вы хотите получить.';
+    ? 'Проверьте дату рождения и выбранную тему разбора. Для матрицы время и место не нужны.'
+    : 'Проверьте дату, время и место рождения, а также выбранный формат разбора.';
   goToSlide(0);
   updateStepNotes();
   showTimeBlocks();
@@ -801,7 +803,7 @@ function updateProgress() {
   const completed = items.filter((item) => item.done).length;
   const percent = Math.max(18, Math.round((completed / total) * 100));
   progressText.textContent = firstMissingIndex === -1 ? 'Готово к отправке' : `Шаг ${current} из ${total}`;
-  progressStatus.textContent = firstMissingIndex === -1 ? 'Можно строить разбор' : `Осталось заполнить: ${items[firstMissingIndex].label}`;
+  progressStatus.textContent = firstMissingIndex === -1 ? 'Данные заполнены' : `Осталось заполнить: ${items[firstMissingIndex].label}`;
   progressMeter.style.width = `${percent}%`;
   const visibleSlides = activeSlides();
   const rail = document.getElementById('step-rail');
@@ -812,7 +814,12 @@ function updateProgress() {
     if (index === -1) return;
     const complete = index < currentSlideIndex && items[index].done;
     step.dataset.complete = String(complete);
-    step.querySelector('.rail-marker').textContent = complete ? '✓' : String(index + 1);
+    const marker = step.querySelector('.rail-marker');
+    if (complete) {
+      marker.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8 3 3 7-6"/></svg>';
+    } else {
+      marker.textContent = String(index + 1);
+    }
     if (index === currentSlideIndex) step.setAttribute('aria-current', 'step');
     else step.removeAttribute('aria-current');
     const label = step.querySelector('span:last-child').textContent;
@@ -859,7 +866,7 @@ function renderSummary() {
       ['Город', city],
     );
   }
-  rows.push(['Фокус', focus]);
+  rows.push(['Тема', focus]);
   rows.forEach(([label, value]) => {
     const row = document.createElement('div');
     row.className = 'summary-row';
@@ -879,6 +886,9 @@ function showTimeBlocks() {
   const range = document.querySelector('[data-time-block="range"]');
   single.hidden = isMatrixOnly() || !['exact', 'approximate'].includes(state.time_precision);
   range.hidden = isMatrixOnly() || state.time_precision !== 'range';
+  document.getElementById('birth-time-hint').textContent = state.time_precision === 'approximate'
+    ? 'Введите наиболее вероятное время рождения.'
+    : 'Укажите время из документа или со слов близких.';
   renderSummary();
 }
 

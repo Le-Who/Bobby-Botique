@@ -120,7 +120,7 @@ def _render_zodiac_ticks(center: int, radius: int) -> list[str]:
             f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="#7d68a8" stroke-width="1.4"/>'
         )
         parts.append(
-            f'<text x="{label_x:.1f}" y="{label_y:.1f}" text-anchor="middle" dominant-baseline="middle" '
+            f'<text x="{label_x:.1f}" y="{label_y:.1f}" text-anchor="middle" dominant-baseline="central" '
             'font-family="Segoe UI Symbol, Apple Symbols, Noto Sans Symbols 2, sans-serif" font-size="34" fill="#4d3a75">'
             f"<title>{html.escape(sign_name)}</title>{html.escape(sign_symbol)}</text>"
         )
@@ -171,7 +171,7 @@ def _render_planets(chart: ChartData, center: int, radius: int) -> list[str]:
             'stroke="#6e5597" stroke-width="2.2" filter="url(#soft-glow)"/>'
         )
         parts.append(
-            f'<text x="{x:.1f}" y="{y + 1:.1f}" text-anchor="middle" dominant-baseline="middle" '
+            f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="middle" dominant-baseline="central" '
             f'font-family="Segoe UI Symbol, Apple Symbols, Noto Sans Symbols 2, sans-serif" font-size="26" fill="#3f2e5c">{symbol}</text>'
         )
         parts.append(f"<title>{label} в знаке {html.escape(planet.sign)}</title></a>")

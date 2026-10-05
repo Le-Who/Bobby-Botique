@@ -86,7 +86,8 @@ def build_hosted_report_html(report: NatalReport, *, script_nonce: str = "") -> 
                 f'{aliases}<details id="{section_id}" class="reading-card reading-disclosure" '
                 f'data-category="{category}"{default_open}>'
                 f'<summary><span class="summary-kicker">{category}</span>'
-                f'<span class="summary-title"><strong>{title}</strong></span></summary>'
+                f'<span class="summary-title"><strong>{title}</strong></span>'
+                f'<span class="disclosure-icon" aria-hidden="true">{_ui_icon("disclosure")}</span></summary>'
                 f'<div class="reading-body">{body}</div></details>',
             )
         )
@@ -126,7 +127,7 @@ def build_hosted_report_html(report: NatalReport, *, script_nonce: str = "") -> 
         '<link rel="stylesheet" href="/static/css/natal-report.css">'
         "</head><body><main>"
         f"{result_shell}"
-        '<section id="full-reading"><div class="section-head"><h2>Полный разбор</h2><p>Подробные интерпретации сгруппированы по смысловым категориям.</p></div>'
+        '<section id="full-reading"><div class="section-head"><h2>Полный разбор</h2><p>Откройте интересующую тему. Разделы можно читать в любом порядке.</p></div>'
         f"{reading_html}</section>"
         f"{positions_html}"
         f'<footer class="footer">{telegraph}'
@@ -147,7 +148,7 @@ def _full_reading_html(full_sections: list[tuple[ReportSection, str]]) -> str:
                 "natal",
                 "Натальная карта",
                 "Разбор натальной карты",
-                "Астрологические точки, аспекты и жизненные темы: как устроены реакции, выборы, близость и реализация.",
+                "О личности, привычных реакциях, отношениях и самореализации.",
                 natal_sections,
             )
         )
@@ -185,11 +186,12 @@ def _is_destiny_reading_section(section: ReportSection) -> bool:
 def _positions_reference_html(positions: str) -> str:
     return (
         '<details id="positions" class="reference-disclosure reading-card">'
-        '<summary><span class="summary-kicker">Справочный слой</span>'
-        '<span class="summary-title"><strong>Расчетные позиции</strong></span></summary>'
+        '<summary><span class="summary-kicker">Расчётные данные</span>'
+        '<span class="summary-title"><strong>Все положения</strong></span>'
+        f'<span class="disclosure-icon" aria-hidden="true">{_ui_icon("disclosure")}</span></summary>'
         '<div class="reading-body reference-body">'
-        "<p>Здесь собраны расчетные точки карты и матрицы. Это навигационный слой: его удобно открыть, "
-        "когда хочется проверить, откуда взят конкретный вывод в разборе.</p>"
+        "<p>Положения планет и точки матрицы, на которых основан разбор. "
+        "Нажмите на положение, чтобы перейти к соответствующей теме.</p>"
         f'<div class="positions-grid">{positions}</div></div></details>'
     )
 
@@ -421,6 +423,24 @@ def _footer_note_html(note: str) -> str:
     return f'<p class="report-note"><strong>Примечание:</strong> {text}</p>'
 
 
+def _ui_icon(name: str) -> str:
+    # Fixed geometry keeps decorative icons centered independently of platform fonts.
+    shapes = {
+        "sun": '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>',
+        "moon": '<path d="M12 3A9 9 0 1 0 21 12A9 9 0 0 1 12 3Z"/>',
+        "ascendant": '<path d="M12 21V3M7 8l5-5 5 5"/>',
+        "spark": '<path d="M12 3l2.7 6.3L21 12l-6.3 2.7L12 21l-2.7-6.3L3 12l6.3-2.7Z"/>',
+        "chevron": '<path d="M8.5 6l7 6-7 6"/>',
+        "arrow": '<path d="M4 12h16m-6-6 6 6-6 6"/>',
+        "disclosure": '<path d="M5 12h14"/><path class="disclosure-vertical" d="M12 5v14"/>',
+    }
+    return (
+        '<svg class="natal-ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" '
+        'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+        f"{shapes[name]}</svg>"
+    )
+
+
 def _result_shell(report: NatalReport, title: str, lead: str, visual_layers: str, sections: list[ReportSection]) -> str:
     visual_html = f'<div class="visual-stack">{visual_layers}</div>' if visual_layers else ""
     lead_html = f'<p class="lead">{html.escape(lead)}</p>' if not report.chart.planets else ""
@@ -428,7 +448,7 @@ def _result_shell(report: NatalReport, title: str, lead: str, visual_layers: str
     if not report.chart.planets and report.chart.destiny_matrix is None:
         overview_title = title
     return (
-        '<header class="report-masthead"><span class="brand-mark" aria-hidden="true">☉</span>'
+        f'<header class="report-masthead"><span class="brand-mark" aria-hidden="true">{_ui_icon("sun")}</span>'
         f"<span>{html.escape(title)}</span></header>"
         '<nav class="report-nav" aria-label="Разделы результата">'
         '<a href="#overview" aria-current="location">Обзор</a>'
@@ -451,7 +471,6 @@ def _result_shell(report: NatalReport, title: str, lead: str, visual_layers: str
 def _quick_positions_html(report: NatalReport, sections: list[ReportSection]) -> str:
     section_ids = {section.id for section in sections}
     cards: list[str] = []
-    symbols = {"sun": "☉", "moon": "☽"}
     for key in ("sun", "moon"):
         planet = next((point for point in report.chart.planets if point.key.lower() == key), None)
         if planet is None:
@@ -461,7 +480,7 @@ def _quick_positions_html(report: NatalReport, sections: list[ReportSection]) ->
         reading_target: str | None = (
             target if target in section_ids else raw_target if raw_target in section_ids else None
         )
-        cards.append(_quick_position_card(key, symbols[key], planet.label, planet.sign, reading_target))
+        cards.append(_quick_position_card(key, planet.label, planet.sign, reading_target))
     quality = report.chart.input_quality
     ascendant = report.chart.angles.get("ascendant")
     if (
@@ -489,20 +508,21 @@ def _quick_positions_html(report: NatalReport, sections: list[ReportSection]) ->
             (key for key in ("section-ascendant", "section-asc", "section-houses") if key in section_ids), None
         )
         cards.append(
-            _quick_position_card("ascendant", "↑", "Асцендент", signs[int((ascendant % 360) // 30)], ascendant_target)
+            _quick_position_card("ascendant", "Асцендент", signs[int((ascendant % 360) // 30)], ascendant_target)
         )
     return f'<div class="quick-positions" aria-label="Основные позиции">{"".join(cards)}</div>' if cards else ""
 
 
-def _quick_position_card(key: str, symbol: str, label: str, sign: str, target: str | None) -> str:
+def _quick_position_card(key: str, label: str, sign: str, target: str | None) -> str:
     tag = "a" if target else "article"
     href = f' href="#{html.escape(target, quote=True)}"' if target else ""
+    arrow = f'<span class="point-arrow" aria-hidden="true">{_ui_icon("chevron")}</span>' if target else ""
     return (
         f'<{tag} class="quick-position" data-point="{key}"{href}>'
-        f'<span class="point-symbol" aria-hidden="true">{symbol}</span>'
+        f'<span class="point-symbol" aria-hidden="true">{_ui_icon(key)}</span>'
         f'<span class="point-label">{html.escape(label)}</span>'
         f"<strong>{html.escape(sign)}</strong>"
-        f"{'<span class="point-arrow" aria-hidden="true">›</span>' if target else ''}</{tag}>"
+        f"{arrow}</{tag}>"
     )
 
 
@@ -528,11 +548,11 @@ def _reading_entry_html(sections: list[ReportSection]) -> str:
     section = next((section for section in sections if section.id == "section-identity"), sections[0])
     return (
         f'<a class="reading-entry" href="#{html.escape(section.id, quote=True)}">'
-        '<span class="entry-symbol" aria-hidden="true">✧</span><span class="entry-copy">'
+        f'<span class="entry-symbol" aria-hidden="true">{_ui_icon("spark")}</span><span class="entry-copy">'
         f"<strong>{html.escape(section.title)}</strong>"
-        "<span>Полная интерпретация</span>"
-        '<em>Читать разбор <span aria-hidden="true">→</span></em></span>'
-        '<span class="entry-arrow" aria-hidden="true">›</span></a>'
+        "<span>Что это значит для вас</span>"
+        f"<em>Читать разбор {_ui_icon('arrow')}</em></span>"
+        f'<span class="entry-arrow" aria-hidden="true">{_ui_icon("chevron")}</span></a>'
     )
 
 
@@ -545,33 +565,33 @@ def _reading_path_html(report: NatalReport, sections: list[ReportSection]) -> st
     periods_target = "section-destiny-periods" if "section-destiny-periods" in section_ids else "positions"
     if has_natal and has_matrix:
         cards = [
-            _path_card("1 шаг", natal_target, "Натальная карта", "Перейти к началу астрологического разбора."),
-            _path_card("2 шаг", matrix_target, "Матрица судьбы", "Перейти к началу разбора матрицы."),
-            _path_card("3 шаг", periods_target, "Возрастные периоды", "Посмотреть десятилетние акценты матрицы."),
+            _path_card("Карта", natal_target, "Натальная карта", "Открыть разбор натальной карты."),
+            _path_card("Матрица", matrix_target, "Матрица судьбы", "Открыть разбор матрицы."),
+            _path_card("Периоды", periods_target, "Возрастные периоды", "Посмотреть темы разных периодов жизни."),
         ]
     elif has_matrix:
         cards = [
-            _path_card("1 шаг", matrix_target, "Матрица судьбы", "Перейти к началу разбора матрицы."),
+            _path_card("Обзор", matrix_target, "Матрица судьбы", "Открыть разбор матрицы."),
             _path_card(
-                "2 шаг",
+                "Реализация",
                 _target_section("section-destiny-money", section_ids),
                 "Денежный канал",
-                "Открыть практическую линию реализации.",
+                "Прочитать о деньгах и самореализации.",
             ),
-            _path_card("3 шаг", periods_target, "Возрастные периоды", "Посмотреть десятилетние акценты матрицы."),
+            _path_card("Периоды", periods_target, "Возрастные периоды", "Посмотреть темы разных периодов жизни."),
         ]
     else:
         cards = [
-            _path_card("1 шаг", natal_target, "Натальная карта", "Перейти к началу астрологического разбора."),
-            _path_card("2 шаг", "full-reading", "Полный разбор", "Развернуть темы без потери контекста."),
-            _path_card("3 шаг", "positions", "Расчетные позиции", "Проверить справочный слой карты."),
+            _path_card("Обзор", natal_target, "Натальная карта", "Открыть разбор натальной карты."),
+            _path_card("Темы", "full-reading", "Полный разбор", "Открыть все темы разбора."),
+            _path_card("Детали", "positions", "Все положения", "Посмотреть положения планет."),
         ]
     return f'<nav class="reading-path" aria-label="Быстрые переходы">{"".join(cards)}</nav>'
 
 
-def _path_card(step: str, target: str, title: str, subtitle: str) -> str:
+def _path_card(kicker: str, target: str, title: str, subtitle: str) -> str:
     return (
-        f'<a class="path-card" href="#{html.escape(target, quote=True)}"><span>{html.escape(step)}</span>'
+        f'<a class="path-card" href="#{html.escape(target, quote=True)}"><span>{html.escape(kicker)}</span>'
         f"<strong>{html.escape(title)}</strong><em>{html.escape(subtitle)}</em></a>"
     )
 
@@ -949,6 +969,9 @@ def _visual_layers(report: NatalReport) -> str:
 
 
 def _visual_stage_html(kind: str, title: str, svg: str) -> str:
+    safe_svg = _sanitize_hosted_svg(svg)
+    if not safe_svg:
+        return ""
     diagram_id = f"{kind}-diagram"
     return (
         f'<div class="{kind}-stage"><div class="visual-tools"><span>{html.escape(title)}</span>'
@@ -956,7 +979,7 @@ def _visual_stage_html(kind: str, title: str, svg: str) -> str:
         'aria-pressed="false" hidden>Увеличить схему</button></div>'
         f'<div id="{diagram_id}" class="visual-scroll" tabindex="0" '
         f'role="region" aria-label="{html.escape(title)}: схема с прокруткой">'
-        f"{_sanitize_hosted_svg(svg)}</div></div>"
+        f"{safe_svg}</div></div>"
     )
 
 

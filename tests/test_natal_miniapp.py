@@ -82,12 +82,12 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert 'data-api="/webapp/api/natal/submit"' in body
     assert "Дата рождения" in body
     assert 'data-group="report_type"' in body
-    assert "Натал + матрица" in body
+    assert "Натальная карта и матрица" in body
     options = json.loads(body.split("const OPTIONS = ", 1)[1].split(";", 1)[0])
     report_types = {item["id"]: item for item in options["report_types"]}
-    assert report_types["destiny_matrix"]["label"] == "Только матрица"
+    assert report_types["destiny_matrix"]["label"] == "Матрица судьбы"
     assert report_types["combined"]["badge"] == "Рекомендуем"
-    assert report_types["combined"]["summary"] == "Лучший выбор для первого разбора"
+    assert report_types["combined"]["summary"] == "Два разбора в одном отчёте"
     assert 'id="report-type-panel"' in body
     assert 'id="cancel-button"' in body
     assert 'id="progress-meter"' in body
@@ -95,10 +95,10 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert "Шаг 1 из 5" in body
     assert "Ваш разбор" in body
     assert "Осталось заполнить" in body
-    assert "Фокус разбора" in body
-    assert "Создаём разбор рождения" in body
-    assert "Окно можно закрывать." in body
-    assert "Ответ будет отправлен новым сообщением" in body
+    assert "Что хотите узнать?" in body
+    assert "Готовим ваш разбор" in body
+    assert "Можете закрыть окно." in body
+    assert "Пришлём результат в чат с ботом." in body
     assert ".layout[hidden]" in body
     assert "scrollIntoView" in body
     assert "advanceToNextItem" in body
@@ -115,20 +115,20 @@ async def test_natal_form_page_returns_miniapp_shell():
     assert "currentSlideIndex" in body
     assert "translateX(calc(var(--slide-index) * -100%))" in body
     assert "nextButton.disabled = !isCurrentSlideComplete()" in body
-    assert "Построить разбор" in body
+    assert "Создать разбор" in body
     assert 'class="step-card"' in body
     assert 'class="sticky-summary"' in body
     assert 'data-step="date"' in body
     assert 'data-step="place"' in body
     assert 'data-step="review"' in body
-    assert "Сначала дата" in body
-    assert "Место и часовой пояс" in body
-    assert "Проверка перед отправкой" in body
+    assert "Дата рождения" in body
+    assert "Место рождения" in body
+    assert "Проверьте дату, время и место рождения" in body
     assert "Начните с типа разбора" in body
     assert body.index("Дата рождения") < body.index("Страна рождения")
-    assert body.index("Что построить") < body.index("Дата рождения")
-    assert body.index("Фокус разбора") < body.index("Что построить")
-    assert body.index("Что построить") < body.index('data-group="report_type"')
+    assert body.index("Формат разбора") < body.index("Дата рождения")
+    assert body.index("Что хотите узнать?") < body.index("Формат разбора")
+    assert body.index("Формат разбора") < body.index('data-group="report_type"')
     assert body.index("const response = await fetch") < body.index("showAcceptedState();")
 
 
@@ -149,7 +149,7 @@ async def test_natal_form_uses_slide_order_without_single_long_questionnaire():
     ]
     assert [body.index(marker) for marker in slide_order] == sorted(body.index(marker) for marker in slide_order)
     assert body.count('class="form-slide"') == 5
-    assert "Проверить данные" in body
+    assert "Проверьте данные" in body
     assert "submitButton.hidden = currentSlide.id !== 'review-slide'" in body
     assert "nextButton.hidden = currentSlide.id === 'review-slide'" in body
 
@@ -189,7 +189,7 @@ async def test_natal_form_keeps_questionnaire_lightweight():
     assert "Расчёт строится локально" not in body
     assert "Выберите формат и дату рождения" in body
     assert "Для матрицы достаточно даты" in body
-    assert body.index("Что построить") < body.index("Дата рождения")
+    assert body.index("Формат разбора") < body.index("Дата рождения")
 
 
 @pytest.mark.asyncio

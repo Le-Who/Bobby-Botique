@@ -434,6 +434,19 @@ async def test_form_theme_follows_host_or_system_without_resetting_input_in_brow
     for (const width of [320, 390, 900]) {
       await page.setViewportSize({ width, height: 844 });
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+      const iconOffsets = await page.locator('.cancel svg, .brand-mark svg, .rail-marker svg, .precision-icon svg').evaluateAll(icons => icons.filter(icon => icon.getClientRects().length).map(svg => {
+        const cell = svg.parentElement.getBoundingClientRect();
+        const bounds = svg.getBBox();
+        const icon = new DOMPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2).matrixTransform(svg.getScreenCTM());
+        return { dx: icon.x - cell.x - cell.width / 2, dy: icon.y - cell.y - cell.height / 2 };
+      }));
+      assert.ok(iconOffsets.every(({ dx, dy }) => Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5), JSON.stringify(iconOffsets));
+      const clockOffset = await page.locator('.time-input-shell').evaluate(shell => {
+        const icon = shell.querySelector('svg').getBoundingClientRect();
+        const input = shell.querySelector('input').getBoundingClientRect();
+        return icon.y + icon.height / 2 - input.y - input.height / 2;
+      });
+      assert.ok(Math.abs(clockOffset) < 0.5, String(clockOffset));
     }
 """,
     )
@@ -594,9 +607,36 @@ async def test_report_theme_keeps_real_diagrams_and_precision_limits_in_browser(
     } else {
       assert.equal(await page.locator('.visual-zoom-toggle').first().isVisible(), false);
     }
+    await page.emulateMedia({ forcedColors: 'active' });
+    const disclosure = page.locator('#positions .disclosure-icon');
+    assert.equal(await disclosure.isVisible(), true);
+    assert.equal(await disclosure.locator('.disclosure-vertical').evaluate(element => getComputedStyle(element).display), 'none');
+    assert.notEqual(await disclosure.locator('path').first().evaluate(element => getComputedStyle(element).stroke), 'none');
+    await page.locator('#positions > summary').click();
+    assert.notEqual(await disclosure.locator('.disclosure-vertical').evaluate(element => getComputedStyle(element).display), 'none');
+    await page.emulateMedia({ forcedColors: 'none' });
     for (const width of [320, 390, 1100]) {
       await page.setViewportSize({ width, height: 844 });
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+      const glyphOffsets = await page.locator('.chart-stage svg a').evaluateAll(links => links.map(link => {
+        const circle = link.querySelector('circle');
+        const text = link.querySelector('text');
+        const bounds = text.getBBox();
+        const matrix = text.getScreenCTM();
+        const glyph = new DOMPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2).matrixTransform(matrix);
+        const center = new DOMPoint(circle.cx.baseVal.value, circle.cy.baseVal.value).matrixTransform(matrix);
+        return { dx: glyph.x - center.x, dy: glyph.y - center.y };
+      }));
+      // Text-anchor centers the advance width; natural side bearings may differ by a subpixel.
+      assert.ok(glyphOffsets.every(({ dx, dy }) => Math.abs(dx) < 1 && Math.abs(dy) < 0.5), JSON.stringify(glyphOffsets));
+      const iconOffsets = await page.locator('.brand-mark, .point-symbol, .entry-symbol, .point-arrow, .entry-arrow, .disclosure-icon').evaluateAll(cells => cells.filter(cell => cell.getClientRects().length).map(cell => {
+        const svg = cell.querySelector('svg');
+        const box = cell.getBoundingClientRect();
+        const bounds = svg.getBBox();
+        const icon = new DOMPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2).matrixTransform(svg.getScreenCTM());
+        return { dx: icon.x - box.x - box.width / 2, dy: icon.y - box.y - box.height / 2 };
+      }));
+      assert.ok(iconOffsets.every(({ dx, dy }) => Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5), JSON.stringify(iconOffsets));
     }
 """,
     )

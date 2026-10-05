@@ -211,8 +211,8 @@ def test_hosted_report_hides_calculated_positions_in_expandable_reference_menu(s
 
     assert '<details id="positions"' in html
     assert 'class="reference-disclosure' in html
-    assert '<summary><span class="summary-kicker">Справочный слой</span>' in html
-    assert "Расчетные позиции" in html
+    assert '<summary><span class="summary-kicker">Расчётные данные</span>' in html
+    assert "Все положения" in html
     positions_html = html.split('<details id="positions"', 1)[1].split("</details>", 1)[0]
     assert 'class="positions-grid"' in positions_html
     assert '<section id="positions"' not in html
@@ -314,7 +314,7 @@ def test_hosted_report_places_full_interpretation_before_reference_positions(sam
     assert html.index('class="full-reading"') < html.index('class="positions-grid"')
     assert "Главные акценты" not in html
     assert "главные акценты" not in html.lower()
-    assert "Расчетные позиции" in html
+    assert "Все положения" in html
     assert "Полный разбор" in html
     assert "Аспекты" in html
 
@@ -395,7 +395,8 @@ def test_hosted_report_sanitizes_stored_svg_payload(sample_natal_report: NatalRe
     html = build_hosted_report_html(sample_natal_report)
 
     assert "<svg" in html
-    svg = html.split("<svg", 1)[1].split("</svg>", 1)[0]
+    chart_stage = html.split('class="chart-stage"', 1)[1]
+    svg = chart_stage.split("<svg", 1)[1].split("</svg>", 1)[0]
     assert "<script" not in svg.lower()
     assert "javascript:" not in html.lower()
 
@@ -461,7 +462,8 @@ def test_stored_svg_cannot_load_external_resources_or_embed_active_html(sample_n
         '<a href="https://evil.test"><text x="1" y="1">Солнце</text></a></svg>'
     )
     html = build_hosted_report_html(sample_natal_report)
-    svg = html.split("<svg", 1)[1].split("</svg>", 1)[0]
+    chart_stage = html.split('class="chart-stage"', 1)[1]
+    svg = chart_stage.split("<svg", 1)[1].split("</svg>", 1)[0]
 
     assert "evil.test" not in svg
     assert "foreignObject" not in svg
@@ -480,7 +482,8 @@ def test_stored_legacy_svg_retains_geometry_local_filters_and_navigation(sample_
         'stroke="#6e5597" filter="url(#glow)"/></a></svg>'
     )
     html = build_hosted_report_html(sample_natal_report)
-    svg = html.split("<svg", 1)[1].split("</svg>", 1)[0]
+    chart_stage = html.split('class="chart-stage"', 1)[1]
+    svg = chart_stage.split("<svg", 1)[1].split("</svg>", 1)[0]
 
     assert 'aria-labelledby="chart-title"' in svg
     assert 'cx="265.2" cy="207.5" r="17"' in svg
@@ -501,7 +504,7 @@ def test_malformed_or_entity_bearing_stored_svg_fails_closed(sample_natal_report
     sample_natal_report.svg = payload
     html = build_hosted_report_html(sample_natal_report)
 
-    assert "<svg" not in html
+    assert 'class="chart-stage"' not in html
     assert "unsafe" not in html
     assert "onload" not in html
 
