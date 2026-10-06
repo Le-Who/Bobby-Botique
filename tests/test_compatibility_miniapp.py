@@ -14,6 +14,14 @@ _TOKEN = "1234567890:dummy-token-for-tests-only"
 _PAIR = "compat_m7_f10"
 
 
+@pytest.fixture(autouse=True)
+def _offline_interpretation(monkeypatch):
+    async def interpret_response(*args, history, **kwargs):
+        return "Совместимость пары\n" + history[0]["parts"][0], 120
+
+    monkeypatch.setattr("app.natal.compatibility_interpretation.execute_text_process", interpret_response)
+
+
 def _payload(**first):
     return {
         "pair": _PAIR,
@@ -24,6 +32,69 @@ def _payload(**first):
 
 def _headers():
     return {"Authorization": f"tma {make_valid_init_data(_TOKEN, user_id=777)}"}
+
+
+@pytest.mark.asyncio
+async def test_detailed_delivery_contains_model_interpretation_and_keeps_derived_tarot(monkeypatch):
+    from app import web_compatibility
+    from app.natal.compatibility_input import parse_pair_input
+
+    async def model_response(*args, **kwargs):
+        return "**История этой пары**\nЖивой разбор эмоционального диалога.", 120
+
+    monkeypatch.setattr("app.repos.users.is_authorized", AsyncMock(return_value=True))
+    monkeypatch.setattr("app.natal.compatibility_interpretation.execute_text_process", model_response)
+    bot = SimpleNamespace(send_message=AsyncMock())
+    user_data = {777: {}}
+    await web_compatibility._send_pair_result(
+        bot, SimpleNamespace(user_data=user_data), 777, parse_pair_input(_payload())
+    )
+
+    result = bot.send_message.await_args.kwargs
+    assert "<b>История этой пары</b>" in result["text"]
+    assert "Живой разбор эмоционального диалога." in result["text"]
+    assert "В этом разборе указаны только даты" in result["text"]
+    stored = next(iter(user_data[777]["compatibility_tarot_context"].values()))
+    assert "Солнце: Близнецы" in stored["question"]
+    assert "История этой пары" not in stored["question"]
+
+
+@pytest.mark.asyncio
+async def test_failed_model_delivery_has_retry_notice_without_template_or_tarot(monkeypatch, caplog):
+    from app import web_compatibility
+    from app.natal.compatibility_input import parse_pair_input
+
+    monkeypatch.setattr("app.repos.users.is_authorized", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        "app.natal.compatibility_interpretation.execute_text_process", AsyncMock(side_effect=TimeoutError("1995-06-15"))
+    )
+    bot = SimpleNamespace(send_message=AsyncMock())
+    user_data = {777: {}}
+    await web_compatibility._send_pair_result(
+        bot, SimpleNamespace(user_data=user_data), 777, parse_pair_input(_payload())
+    )
+
+    result = bot.send_message.await_args.kwargs
+    assert "попробуйте ещё раз" in result["text"]
+    assert "reply_markup" not in result
+    assert "compatibility_tarot_context" not in user_data[777]
+    assert "1995-06-15" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_access_revoked_during_interpretation_prevents_result_delivery(monkeypatch):
+    from app import web_compatibility
+    from app.natal.compatibility_input import parse_pair_input
+
+    monkeypatch.setattr("app.repos.users.is_authorized", AsyncMock(side_effect=[True, True, False]))
+    bot = SimpleNamespace(send_message=AsyncMock())
+    user_data = {777: {}}
+    await web_compatibility._send_pair_result(
+        bot, SimpleNamespace(user_data=user_data), 777, parse_pair_input(_payload())
+    )
+
+    assert bot.send_message.await_count == 1  # Only the initial progress notice.
+    assert "compatibility_tarot_context" not in user_data[777]
 
 
 def test_date_only_form_does_not_require_place_or_time():

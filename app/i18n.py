@@ -61,6 +61,20 @@ def detect_language(text: str | None) -> str:
 _STRINGS: dict[str, dict[str, str]] = {
     # ── Compatibility ────────────────────────────────────────────────────
     "compat.title": {"ru": "Совместимость по знакам", "en": "Zodiac compatibility"},
+    "compat.pick_first": {
+        "ru": "💞 <b>Совместимость пары</b>\n\nВыберите знак первого партнёра, затем второго — я сразу покажу краткую совместимость. Для подробного разбора можно будет заполнить даты рождения: бот рассчитает данные, а нейросеть свяжет их в живую интерпретацию отношений.",
+        "en": "💞 <b>Partner compatibility</b>\n\nChoose the first partner’s sign, then the second’s for an instant brief reading. For a detailed reading, you can then enter birth details: the bot calculates the facts and AI weaves them into a personal interpretation.",
+    },
+    "compat.pick_second": {
+        "ru": "💞 Первый партнёр: <b>{first}</b>\n\nВыберите знак второго партнёра.",
+        "en": "💞 First partner: <b>{first}</b>\n\nChoose the second partner’s sign.",
+    },
+    "compat.pick_back": {"ru": "← Изменить первый знак", "en": "← Change first sign"},
+    "compat.pick_again": {"ru": "🔄 Другая пара", "en": "🔄 Another pair"},
+    "compat.interpreting": {
+        "ru": "⏳ Рассчитываю данные пары и готовлю подробную интерпретацию отношений…",
+        "en": "⏳ Calculating the pair’s chart data and preparing a detailed relationship interpretation…",
+    },
     "compat.dates_title": {"ru": "Совместимость по датам рождения", "en": "Birth date compatibility"},
     "compat.strength": {"ru": "Сильная сторона.", "en": "Strength."},
     "compat.tension": {"ru": "Зона внимания.", "en": "Watch for."},
@@ -272,8 +286,8 @@ _STRINGS: dict[str, dict[str, str]] = {
     "compat.dates_button": {"ru": "💞 Подробнее о паре", "en": "💞 More about this pair"},
     "compat.form_button": {"ru": "📝 Заполнить данные пары", "en": "📝 Enter partner details"},
     "compat.form_intro": {
-        "ru": "💞 <b>Подробная совместимость пары</b>\n{pair}\n\nУкажите даты рождения обоих партнёров для подробного разбора. Если знаете время и город рождения, добавьте их — в разбор войдут асценденты, дома и взаимодействие двух карт.\n\nВремя рождения можно пропустить для каждого партнёра отдельно. Бот использует доступные данные и объяснит, какие части удалось рассчитать.",
-        "en": "💞 <b>Detailed compatibility</b>\n{pair}\n\nEnter both partners' birth dates for a detailed reading. Add birth times and cities if known to include ascendants, houses and interactions between the charts.\n\nYou can skip birth time separately for each partner. The reading uses the available details and explains which parts could be calculated.",
+        "ru": "💞 <b>Подробная совместимость пары</b>\n{pair}\n\nУкажите даты рождения обоих партнёров. Бот рассчитает положения планет, а нейросеть свяжет их в живой разбор притяжения, общения и отношений. Если знаете время и город рождения, добавьте их — в разбор войдут асценденты, дома и взаимодействие двух карт.\n\nВремя рождения можно пропустить для каждого партнёра отдельно. Разбор опирается на рассчитанные данные и учитывает их точность.",
+        "en": "💞 <b>Detailed compatibility</b>\n{pair}\n\nEnter both partners' birth dates. The bot calculates planetary positions and AI weaves them into a personal reading of attraction, communication and relationships. Add birth times and cities if known to include ascendants, houses and interactions between the charts.\n\nYou can skip birth time separately for each partner. The reading follows the calculated facts and their accuracy limits.",
     },
     "compat.form.title": {"ru": "Совместимость пары", "en": "Partner compatibility"},
     "compat.form.intro": {
@@ -1062,8 +1076,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Open the game hub or launch a daily game directly. Reminders can bring a task back at the right time.",
     },
     "help.topic.insights": {
-        "ru": "Здесь собраны расклады Таро, натальная карта и ежедневный гороскоп. Настройки гороскопа позволяют выбрать удобное время или полностью остановить доставку.",
-        "en": "This section includes Tarot readings, a natal chart, and daily horoscopes. Horoscope settings let you choose delivery times or stop delivery completely.",
+        "ru": "Здесь собраны расклады Таро, совместимость пары, натальная карта и ежедневный гороскоп. Совместимость можно открыть словами «совместимость», «совм» или /совместимость. Настройки гороскопа позволяют выбрать удобное время или полностью остановить доставку.",
+        "en": "This section includes Tarot readings, partner compatibility, a natal chart, and daily horoscopes. Horoscope settings let you choose delivery times or stop delivery completely.",
     },
     "help.command.start": {"ru": "Открыть главное меню", "en": "Open the main menu"},
     "help.command.help": {"ru": "Посмотреть возможности бота", "en": "See what the bot can do"},
@@ -1097,6 +1111,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "help.command.remind": {"ru": "Создать напоминание", "en": "Create a reminder"},
     "help.command.tarot": {"ru": "Начать расклад Таро", "en": "Start a Tarot reading"},
     "help.command.natal": {"ru": "Составить натальную карту", "en": "Create a natal chart"},
+    "help.command.compatibility": {"ru": "Проверить совместимость пары", "en": "Check partner compatibility"},
     "help.command.horoscope_settings": {"ru": "Настроить ежедневный гороскоп", "en": "Set up daily horoscopes"},
     "help.command.horoscope_stop": {"ru": "Остановить доставку гороскопа", "en": "Stop horoscope delivery"},
     # ── Search Toggle ────────────────────────────────────────────────────

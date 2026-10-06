@@ -708,10 +708,21 @@ Administrative and developer commands are deliberately excluded from `app/bot_co
   provides editable confirmation and one calculation button. Known time requires
   a city; each partner may independently choose unknown time and skip birthplace.
   With no HTTPS Mini App base, the existing private two-date chat flow remains.
+  In private chat, `/compatibility`, `/совместимость`, `совместимость` and `совм`
+  open a two-sign picker with the same instant brief reading and a detailed-reading
+  entry. `/compatibility` is also listed in Telegram's command menu and `/help`.
   Dates are supported from 1900 through today. Local synastry reuses natal
   astronomy for inter-chart aspects, Ascendant/MC and equal-house overlays;
   unknown-time aspects and placements are shown only when stable across the
   sampled interval. Missing time for one partner preserves the other's houses.
+  Detailed results from both the Mini App and the chat date flow pass these local
+  facts to AI for a connected relationship interpretation. The model receives only
+  derived positions, aspects, symbolic matrix data and accuracy limits, without raw
+  dates, times or birthplaces. Calculation-owned limits are appended separately;
+  an unavailable model produces a retry notice rather than a template reading.
+  Process `compatibility` and prompt `compatibility.interpretation` use the existing
+  runtime model and prompt controls; the default model follows Tarot chat
+  (`gemini-3.1-flash-lite`). Brief sign compatibility remains entirely local.
   Signed and currently authorized Mini App identity determines private delivery;
   results are not publicly hosted. Birth input is not persisted or sent to an
   interpretation provider. The chat fallback clears raw dates on completion,

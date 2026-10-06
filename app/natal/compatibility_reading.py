@@ -38,6 +38,7 @@ def render_synastry(data: SynastryData, value: PairInput, *, lang: str) -> Birth
     parts = [f"💞 <b>{t('compat.detailed_title', lang)}</b>"]
     unknown = False
     has_houses = False
+    limitations: list[str] = []
     for index, (partner, birth) in enumerate(
         zip((data.first, data.second), (value.first, value.second), strict=True), 1
     ):
@@ -54,13 +55,17 @@ def render_synastry(data: SynastryData, value: PairInput, *, lang: str) -> Birth
                 )
         if birth.time_precision == TimePrecision.UNKNOWN:
             unknown = True
-            parts.append(t("compat.time_unknown", lang, partner=label))
+            limitations.append(t("compat.time_unknown", lang, partner=label))
+            parts.append(limitations[-1])
         elif birth.time_precision == TimePrecision.RANGE:
-            parts.append(t("compat.time_range", lang, partner=label))
+            limitations.append(t("compat.time_range", lang, partner=label))
+            parts.append(limitations[-1])
         elif birth.time_precision != TimePrecision.EXACT:
-            parts.append(t("compat.time_approximate", lang, partner=label))
+            limitations.append(t("compat.time_approximate", lang, partner=label))
+            parts.append(limitations[-1])
         if not birth.birth_place:
-            parts.append(t("compat.place_missing", lang, partner=label))
+            limitations.append(t("compat.place_missing", lang, partner=label))
+            parts.append(limitations[-1])
     parts.append(f"\n<b>{t('compat.aspects', lang)}</b>")
     if not data.aspects:
         parts.append(t("compat.no_aspects", lang))
@@ -94,13 +99,16 @@ def render_synastry(data: SynastryData, value: PairInput, *, lang: str) -> Birth
             )
     if has_houses:
         parts.append("\n" + t("compat.houses_equal", lang))
+        limitations.append(t("compat.houses_equal", lang))
     if unknown:
         parts.append(t("compat.stable_only", lang))
+        limitations.append(t("compat.stable_only", lang))
     parts.append(t("compat.symbolic", lang))
+    limitations.append(t("compat.symbolic", lang))
     # All inputs to this body are derived chart data and fixed translations.
     body = "\n".join(parts)
     context = t("compat.tarot_from_dates", lang) + "\n" + strip_formatting(body)
-    return BirthDateCompatibility(html=body, tarot_context=context)
+    return BirthDateCompatibility(html=body, tarot_context=context, limitations=tuple(limitations))
 
 
 def _point_label(key: str, lang: str) -> str:

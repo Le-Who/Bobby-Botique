@@ -255,11 +255,23 @@ async def handle_compatibility_date(update: Update, context: ContextTypes.DEFAUL
     clear_compatibility_input(context.user_data)
     try:
         reading = await asyncio.to_thread(build_birth_date_compatibility, pair, first_date, birth_date, lang=lang)
+        from app.natal.compatibility_interpretation import interpret_compatibility
+
+        await message.reply_text(t("compat.interpreting", lang))
+        if not await is_authorized(update.effective_user.id):
+            return
+        reading = await interpret_compatibility(reading, user_id=update.effective_user.id, lang=lang)
     except Exception:
         await message.reply_text(t("compat.failed", lang))
         return
+    if not await is_authorized(update.effective_user.id):
+        return
     keyboard = compatibility_result_keyboard(context.user_data, reading.tarot_context, lang=lang)
-    await message.reply_text(reading.html, parse_mode="HTML", reply_markup=keyboard)
+    from app.utils.text_format import split_text_safe
+
+    chunks = split_text_safe(reading.html)
+    for index, chunk in enumerate(chunks):
+        await message.reply_text(chunk, parse_mode="HTML", reply_markup=keyboard if index == len(chunks) - 1 else None)
 
 
 def compatibility_result_keyboard(user_data: dict, question: str, *, lang: str) -> InlineKeyboardMarkup:

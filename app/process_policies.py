@@ -100,6 +100,7 @@ PROCESSES: dict[str, ProcessSpec] = {
     ),
     "trivia.explain": ProcessSpec("Викторина: объяснение ответа", "Игры", "DEFAULT_MODEL", "gemini-3.6-flash"),
     "tarot.chat": ProcessSpec("Таро: диалог", "Астрология", "", "gemini-3.1-flash-lite"),
+    "compatibility": ProcessSpec("Совместимость: интерпретация пары", "Астрология", "", "gemini-3.1-flash-lite"),
     "tarot.inline": ProcessSpec("Таро: inline-расклад", "Астрология", "", "gemini-3.1-flash-lite", hedging=True),
     "vision.intent": ProcessSpec(
         "Изображение: определение намерения", "Изображения", "INLINE_MODEL", "gemini-3.1-flash-lite"

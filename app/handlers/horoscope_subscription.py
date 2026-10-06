@@ -48,7 +48,7 @@ from telegram.ext import (
 )
 
 from app.handlers.conversation import suppress_hybrid_conversation_handler_warning
-from app.handlers.menu_intents import NATAL_MENU_RE, TAROT_MENU_RE
+from app.handlers.menu_intents import COMPATIBILITY_ENTRY_RE, NATAL_MENU_RE, TAROT_MENU_RE
 from app.natal.city_catalog import nearest_city_timezone, search_cities
 from app.repos.horoscope_subscriptions import (
     delete_horoscope_subscription,
@@ -740,6 +740,11 @@ async def on_natal_during_horoscope(update: Update, context: ContextTypes.DEFAUL
     return ConversationHandler.END
 
 
+async def on_compatibility_during_horoscope(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Release horoscope ownership for the later compatibility menu handler."""
+    return await on_natal_during_horoscope(update, context)
+
+
 def build_horoscope_subscription_handler() -> ConversationHandler:
     """Return a ConversationHandler for the horoscope subscription wizard.
 
@@ -752,6 +757,15 @@ def build_horoscope_subscription_handler() -> ConversationHandler:
     """
     private_text = filters.UpdateType.MESSAGE & filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND
     menu_switches: list[BaseHandler[Update, ContextTypes.DEFAULT_TYPE, Any]] = [
+        MessageHandler(
+            filters.UpdateType.MESSAGE
+            & filters.ChatType.PRIVATE
+            & filters.TEXT
+            & filters.Regex(COMPATIBILITY_ENTRY_RE),
+            on_compatibility_during_horoscope,
+        ),
+        CommandHandler("compatibility", on_compatibility_during_horoscope),
+        CallbackQueryHandler(on_compatibility_during_horoscope, pattern=r"^compat_(?:pick:|pair:|dates:|menu$)"),
         MessageHandler(private_text & filters.Regex(TAROT_MENU_RE), on_tarot_during_horoscope),
         MessageHandler(private_text & filters.Regex(NATAL_MENU_RE), on_natal_during_horoscope),
     ]
@@ -807,8 +821,19 @@ def register_horoscope_subscription_handler(application: Application) -> None:
         if matched is not None:
             await conversation.handle_update(update, application, matched, context)
 
+    async def close_before_compatibility(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await close_before_natal(update, context)
+
     natal_text = filters.UpdateType.MESSAGE & filters.ChatType.PRIVATE & filters.TEXT & filters.Regex(NATAL_MENU_RE)
+    compatibility_text = (
+        filters.UpdateType.MESSAGE & filters.ChatType.PRIVATE & filters.TEXT & filters.Regex(COMPATIBILITY_ENTRY_RE)
+    )
     application.add_handler(MessageHandler(natal_text, close_before_natal), group=-88)
+    application.add_handler(MessageHandler(compatibility_text, close_before_compatibility), group=-88)
+    application.add_handler(CommandHandler("compatibility", close_before_compatibility), group=-88)
+    application.add_handler(
+        CallbackQueryHandler(close_before_compatibility, pattern=r"^compat_(?:pick:|pair:|dates:|menu$)"), group=-88
+    )
     application.add_handler(conversation)
 
 

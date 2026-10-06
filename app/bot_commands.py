@@ -102,6 +102,7 @@ PUBLIC_COMMANDS = (
     PublicCommand("play_daily_trivia", "trivia", "games", "help.command.trivia"),
     PublicCommand("create_reminder", "remind", "games", "help.command.remind", "private_chat"),
     PublicCommand("start_tarot", "tarot", "insights", "help.command.tarot"),
+    PublicCommand("check_compatibility", "compatibility", "insights", "help.command.compatibility", "private_chat"),
     PublicCommand("create_natal_chart", "natal", "insights", "help.command.natal", "private_chat"),
     PublicCommand(
         "manage_horoscope",

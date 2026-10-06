@@ -281,3 +281,68 @@ async def test_menu_words_leave_pending_compatibility_birth_input(application, w
         )
     else:
         assert state.get_tarot_session(_USER_ID)["waiting_for_question"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["/совместимость", "совместимость", "совм", "  СОВМ?!  ", "/compatibility"])
+@pytest.mark.parametrize("previous", ["natal", "horoscope", "tarot", "dates", "none"])
+async def test_compatibility_entries_open_picker_and_release_previous_owner(application, entry, previous):
+    if previous == "natal":
+        _conversation(application, "natal_chart")._conversations[_KEY] = natal_chart.NATAL_DATE
+        application.user_data[_USER_ID]["natal_date"] = "Synthetic previous input"
+    elif previous == "horoscope":
+        _conversation(application, "horoscope_subscription")._conversations[_KEY] = (
+            horoscope_subscription.CHOOSE_TIME_TODAY
+        )
+        application.user_data[_USER_ID]["horo_sign"] = "aries"
+    elif previous == "tarot":
+        await state.ensure_state_loaded(_USER_ID)
+        state.set_tarot_mode(_USER_ID, True)
+        state.set_tarot_session(_USER_ID, {"waiting_for_question": True})
+    elif previous == "dates":
+        application.user_data[_USER_ID]["compatibility_flow"] = {"first_date": "Synthetic previous input"}
+
+    context = await _dispatch(application, _update(entry))
+
+    sent = application.bot.send_message.await_args.kwargs
+    buttons = [button for row in sent["reply_markup"].inline_keyboard for button in row]
+    assert len(buttons) == 12
+    assert buttons[0].callback_data == "compat_pick:ru:0"
+    assert buttons[-1].callback_data == "compat_pick:ru:11"
+    assert _KEY not in _conversation(application, "natal_chart")._conversations
+    assert _KEY not in _conversation(application, "horoscope_subscription")._conversations
+    assert not state.is_in_tarot_mode(_USER_ID)
+    assert "compatibility_flow" not in context.user_data
+    assert "natal_date" not in context.user_data
+    assert "horo_sign" not in context.user_data
+
+
+@pytest.mark.asyncio
+async def test_sign_picker_shows_short_reading_then_opens_pair_form(application, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "WEBAPP_BASE_URL", "https://bot.example.com")
+    await _dispatch(application, _update("совместимость"))
+    await _dispatch(application, _update("First sign", callback="compat_pick:ru:7"))
+    second = application.bot.edit_message_text.await_args.kwargs
+    assert "Скорпион" in second["text"]
+    assert second["reply_markup"].inline_keyboard[0][0].callback_data == "compat_pair:ru:7:0"
+
+    await _dispatch(application, _update("Second sign", callback="compat_pair:ru:7:10"))
+    short = application.bot.edit_message_text.await_args.kwargs
+    assert "Скорпион" in short["text"] and "Водолей" in short["text"]
+    assert "Сильная сторона" in short["text"]
+    details = short["reply_markup"].inline_keyboard[0][0].callback_data
+    assert details == "compat_dates:compat_n7_n10"
+
+    await _dispatch(application, _update("Details", callback=details))
+    intro = application.bot.send_message.await_args.kwargs
+    assert intro["reply_markup"].inline_keyboard[0][0].web_app.url.endswith("?pair=compat_n7_n10")
+
+
+@pytest.mark.parametrize(
+    "text", ["совместимость характеров", "обсудим совместимость", "совмещать", "совм скорпион водолей"]
+)
+def test_regular_phrases_are_not_compatibility_menu_entries(application, text):
+    selected, matched = _selected(application, _update(text))
+    assert _callback(selected, matched) is messages.handle_request

@@ -831,6 +831,9 @@ def register(application: Application) -> None:
     except Exception as exc:
         logging.warning("Failed to warm natal city catalog: %s", exc)
     application.add_handler(build_natal_chart_handler())
+    from app.handlers.compatibility_menu import register_compatibility_menu
+
+    register_compatibility_menu(application)
     register_birth_date_privacy_guard(application)
     application.add_handler(CallbackQueryHandler(compatibility_tarot_callback, pattern=r"^compat_tarot:[0-9a-f]{16}$"))
     application.add_handler(CommandHandler("start", start_command))

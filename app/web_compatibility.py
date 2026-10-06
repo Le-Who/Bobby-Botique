@@ -14,6 +14,7 @@ from app.i18n import t
 from app.natal.city_catalog import search_cities, search_countries
 from app.natal.compatibility import CompatibilityQueryError, parse_compatibility_start_payload, partner_label
 from app.natal.compatibility_input import PairInput, PairInputError, parse_pair_input
+from app.natal.compatibility_interpretation import interpret_compatibility
 from app.natal.compatibility_reading import build_pair_reading
 from app.request_context import set_user_context
 from app.utils.background_tasks import submit_task
@@ -130,7 +131,11 @@ async def _send_pair_result(bot: Any, application: Any, user_id: int, value: Pai
     try:
         if not await is_authorized(user_id):
             return
+        await bot.send_message(chat_id=user_id, text=t("compat.interpreting", lang))
         reading = await build_pair_reading(value)
+        if not await is_authorized(user_id):
+            return
+        reading = await interpret_compatibility(reading, user_id=user_id, lang=lang)
         if not await is_authorized(user_id):
             return
         keyboard = compatibility_result_keyboard(application.user_data[user_id], reading.tarot_context, lang=lang)

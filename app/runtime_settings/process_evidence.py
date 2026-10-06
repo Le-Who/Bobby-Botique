@@ -148,6 +148,12 @@ PROCESS_EVIDENCE: dict[str, ProcessEvidence] = {
         _TRIVIA_BANK,
         ("app/handlers/commands.py", "start_command"),
     ),
+    "compatibility": _row(
+        "ProviderRouter: завершённый текст",
+        "Художественная интерпретация локально рассчитанных данных совместимости пары.",
+        "Действует для следующего подробного разбора; краткая совместимость по знакам считается локально.",
+        ("app/natal/compatibility_interpretation.py", "interpret_compatibility"),
+    ),
     "tarot.chat": _row(
         "ProviderRouter: завершённый текст",
         "Продолжение личного диалога по раскладу Таро.",

@@ -87,6 +87,7 @@ class CompatibilityPair:
 class BirthDateCompatibility:
     html: str
     tarot_context: str
+    limitations: tuple[str, ...] = ()
 
 
 def is_compatibility_query(query: str) -> bool:
@@ -226,6 +227,7 @@ def build_birth_date_compatibility(
         for value in (first_date, second_date)
     ]
     parts = [f"💞 <b>{t('compat.dates_title', lang)}</b>\n"]
+    limitations = [t("compat.date_limit", lang)]
     derived_context: list[str] = []
     for index, (partner, signature) in enumerate(zip((pair.first, pair.second), signatures, strict=True), start=1):
         label = (
@@ -240,6 +242,7 @@ def build_birth_date_compatibility(
         derived_context.append(f"{label}: {positions}")
     if any(len(signature["sun"]) > 1 for signature in signatures):
         parts.append(f"<i>{t('compat.boundary', lang)}</i>\n")
+        limitations.insert(0, t("compat.boundary", lang))
     else:
         first_sun, second_sun = (signature["sun"][0] for signature in signatures)
         strength, tension, action = _pair_dynamics(first_sun, second_sun, lang=lang)
@@ -264,4 +267,4 @@ def build_birth_date_compatibility(
     derived_context.append(matrix_copy)
     parts.append(f"<i>{t('compat.date_limit', lang)}</i>")
     context = t("compat.tarot_from_dates", lang) + "\n" + "\n".join(derived_context)
-    return BirthDateCompatibility(html="\n".join(parts), tarot_context=context)
+    return BirthDateCompatibility(html="\n".join(parts), tarot_context=context, limitations=tuple(limitations))

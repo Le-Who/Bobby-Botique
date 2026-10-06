@@ -38,6 +38,10 @@ def _context(payload="compat_m7_f10"):
 
 @pytest.fixture(autouse=True)
 def _isolated_bot_state(monkeypatch):
+    async def interpret_response(*args, history, **kwargs):
+        return "Совместимость пары\n" + history[0]["parts"][0], 120
+
+    monkeypatch.setattr("app.natal.compatibility_interpretation.execute_text_process", interpret_response)
     monkeypatch.setattr("app.utils.decorators.is_authorized", AsyncMock(return_value=True))
     monkeypatch.setattr("app.repos.users.is_authorized", AsyncMock(return_value=True))
     monkeypatch.setattr(state, "_schedule_persist", lambda _: None)
@@ -147,6 +151,32 @@ async def test_date_flow_validates_each_partner_and_erases_raw_dates_after_resul
     stored = next(iter(context.user_data["compatibility_tarot_context"].values()))
     context_text = stored["question"]
     assert "2003-06-30" not in context_text and "1997-11-09" not in context_text
+
+
+@pytest.mark.asyncio
+async def test_chat_date_flow_delivers_model_text_and_clears_input_on_model_failure(monkeypatch):
+    from app.handlers import compatibility as handler
+
+    async def model_response(*args, **kwargs):
+        return "Модель связывает эмоции этой пары в цельный рассказ.", 100
+
+    monkeypatch.setattr("app.natal.compatibility_interpretation.execute_text_process", model_response)
+    update, context = _update(), _context()
+    await commands.start_command(update, context)
+    for birthday in ("30.06.2003", "09.11.1997"):
+        update.message.text = birthday
+        await handler.handle_compatibility_date(update, context)
+    assert "Модель связывает эмоции" in update.message.reply_text.await_args.args[0]
+
+    monkeypatch.setattr(
+        "app.natal.compatibility_interpretation.execute_text_process", AsyncMock(side_effect=TimeoutError())
+    )
+    await commands.start_command(update, context)
+    for birthday in ("30.06.2003", "09.11.1997"):
+        update.message.text = birthday
+        await handler.handle_compatibility_date(update, context)
+    assert "Не удалось подготовить разбор" in update.message.reply_text.await_args.args[0]
+    assert "compatibility_flow" not in context.user_data
 
 
 @pytest.mark.asyncio

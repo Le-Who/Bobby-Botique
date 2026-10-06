@@ -23,7 +23,7 @@ from telegram.ext import (
 )
 
 from app.handlers.conversation import suppress_hybrid_conversation_handler_warning
-from app.handlers.menu_intents import HOROSCOPE_MENU_RE, TAROT_MENU_RE
+from app.handlers.menu_intents import COMPATIBILITY_ENTRY_RE, HOROSCOPE_MENU_RE, TAROT_MENU_RE
 from app.natal.city_catalog import CityRecord, CountryRecord, find_city_by_id, search_cities, search_countries
 from app.natal.intent import NATAL_INTENT_RE, NATAL_SLASH_ALIAS_RE
 from app.natal.models import BirthInput, ReportType, TimePrecision
@@ -805,6 +805,13 @@ async def on_horoscope_during_natal(update: Update, context: ContextTypes.DEFAUL
 def build_natal_chart_handler() -> ConversationHandler:
     private_text = filters.UpdateType.MESSAGE & filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND
     menu_switches: list[BaseHandler[Update, ContextTypes.DEFAULT_TYPE, Any]] = [
+        MessageHandler(
+            filters.UpdateType.MESSAGE
+            & filters.ChatType.PRIVATE
+            & filters.TEXT
+            & filters.Regex(COMPATIBILITY_ENTRY_RE),
+            on_compatibility_during_natal,
+        ),
         MessageHandler(private_text & filters.Regex(TAROT_MENU_RE), on_tarot_during_natal),
         MessageHandler(private_text & filters.Regex(HOROSCOPE_MENU_RE), on_horoscope_during_natal),
     ]
@@ -856,6 +863,8 @@ def build_natal_chart_handler() -> ConversationHandler:
                 NATAL_CONFIRM: [*menu_switches, CallbackQueryHandler(on_confirm, pattern=r"^natal_confirm:")],
             },
             fallbacks=[
+                CommandHandler("compatibility", on_compatibility_during_natal),
+                CallbackQueryHandler(on_compatibility_during_natal, pattern=r"^compat_(?:pick:|pair:|dates:|menu$)"),
                 CommandHandler("cancel", cancel),
                 CommandHandler("start", on_start_during_natal),
                 CallbackQueryHandler(on_compatibility_tarot_during_natal, pattern=r"^compat_tarot:[0-9a-f]{16}$"),
@@ -870,6 +879,16 @@ def build_natal_chart_handler() -> ConversationHandler:
             name="natal_chart",
             persistent=False,
         )
+
+
+async def on_compatibility_during_natal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
+    from app.handlers.compatibility_menu import compatibility_command, compatibility_menu_callback
+
+    callback = compatibility_menu_callback if update.callback_query else compatibility_command
+    if await callback(update, context):
+        clear_natal_user_data(context.user_data)
+        return ConversationHandler.END
+    return None
 
 
 def clear_natal_user_data(user_data: dict) -> None:
