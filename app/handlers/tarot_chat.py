@@ -61,6 +61,9 @@ class IsTarotMode(MessageFilter):
 
 
 class IsTarotEndSession(MessageFilter):
+    inventory_pattern = _TAROT_END_SESSION_RE
+    inventory_aliases = (TAROT_END_SESSION_TEXT,)
+
     def filter(self, message) -> bool:
         return bool(message and is_tarot_end_session_text(getattr(message, "text", None)))
 

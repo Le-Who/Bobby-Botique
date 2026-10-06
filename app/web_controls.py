@@ -1,5 +1,6 @@
 """Authenticated, versioned runtime control endpoints, separate from metrics."""
 
+import asyncio
 import hmac
 import secrets
 from collections.abc import Mapping
@@ -90,8 +91,18 @@ def _validated(data: dict[str, Any]) -> tuple[str, str, Any]:
 
 
 def _validate_restored_values(values: Mapping[str, Any]) -> None:
+    from app.prompt_registry import get_global_registry
+
     for key, value in values.items():
         section, _, identity = key.partition(":")
+        if section == "process" and identity not in PROCESSES:
+            continue
+        if section == "prompt":
+            try:
+                get_global_registry().get_prompt_text(identity)
+            except KeyError:
+                # Retired values remain in history, without being applied.
+                continue
         if section == "catalog_baseline":
             if identity not in models.PROVIDERS or value is not True:
                 raise ValueError("Invalid catalog baseline marker")
@@ -135,7 +146,7 @@ def register_controls(app, require_auth) -> None:
         if request.method == "GET":
             from app.runtime_settings.lifecycle import load_controlled_prompts, runtime_settings_scope
 
-            load_controlled_prompts()
+            await asyncio.to_thread(load_controlled_prompts)
             snapshot, history = await get_state(force=True)
             async with runtime_settings_scope(snapshot):
                 return jsonify(
@@ -187,6 +198,14 @@ def register_controls(app, require_auth) -> None:
             ), 503
         return jsonify(revision=snapshot.revision)
 
+    @bp.route("/api/admin/controls/commands", methods=["GET"])
+    @require_auth
+    async def controls_commands():
+        from app.bot_instance import get_application
+        from app.command_inventory import command_inventory
+
+        return jsonify(command_inventory(get_application()))
+
     @bp.route("/api/admin/controls/preview", methods=["POST"])
     @require_auth
     async def controls_preview():
@@ -212,6 +231,9 @@ def register_controls(app, require_auth) -> None:
         revision = data.get("revision")
         if type(revision) is not int or revision < 0:
             raise ValueError("Некорректная версия")
+        from app.runtime_settings.lifecycle import load_controlled_prompts
+
+        await asyncio.to_thread(load_controlled_prompts)
         try:
             snapshot = await restore_revision(
                 revision, expected_revision=data["expected_revision"], actor="admin", validate=_validate_restored_values

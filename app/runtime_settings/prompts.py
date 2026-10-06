@@ -14,12 +14,19 @@ _PREFIX = "prompt:"
 
 
 def _overrides(values: Mapping[str, object]) -> dict[str, str]:
-    """Validate a complete persisted prompt set before applying any of it."""
-    return {
-        key.removeprefix(_PREFIX): validate_prompt_text(key.removeprefix(_PREFIX), value)
-        for key, value in values.items()
-        if key.startswith(_PREFIX)
-    }
+    """Validate active overrides; keep retired IDs stored without applying them."""
+    registry = get_registry()
+    overrides = {}
+    for key, value in values.items():
+        if not key.startswith(_PREFIX):
+            continue
+        name = key.removeprefix(_PREFIX)
+        try:
+            registry.get_prompt_text(name)
+        except KeyError:
+            continue
+        overrides[name] = validate_prompt_text(name, value)
+    return overrides
 
 
 def _apply(snapshot: SettingsSnapshot) -> SettingsSnapshot:

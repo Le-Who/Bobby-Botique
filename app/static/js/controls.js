@@ -53,6 +53,7 @@
   let loadSequence = 0;
   let minimumRevision = 0;
   const pendingSaves = [];
+  let commandsSnapshot = { available: false, commands: [], note: "Получаем зарегистрированные команды…" };
 
   function element(tag, className, value) {
     const node = document.createElement(tag);
@@ -113,7 +114,10 @@
   async function load() {
     const sequence = ++loadSequence;
     try {
-      const data = await api(endpoint);
+      const [data, commands] = await Promise.all([
+        api(endpoint),
+        api(`${endpoint}/commands`).catch(() => ({ available: false, commands: [], note: "Каталог команд недоступен. Повторите обновление." })),
+      ]);
       if (sequence !== loadSequence) return { ok: false, superseded: true };
       if (!Number.isSafeInteger(data.revision) || data.revision < minimumRevision ||
           ![data.processes, data.prompts, data.catalogs, data.limits, data.history].every(Array.isArray)) {
@@ -123,6 +127,7 @@
         throw new Error("Источник настроек недоступен. Подтвердите сохранённую ревизию повторным обновлением.");
       }
       if (data.csrf_token) csrf = data.csrf_token;
+      commandsSnapshot = commands;
       drafts.setSnapshot(data);
       minimumRevision = Math.max(minimumRevision, data.revision);
       pendingSaves.splice(0).forEach(saved => drafts.acceptSavedDraft(
@@ -334,7 +339,7 @@
     if (Array.isArray(item.evidence) && item.evidence.length) {
       const evidence = element("details", "technical muted");
       evidence.append(element("summary", "", `Исполнитель: ${item.executor_family || "код приложения"}`));
-      item.evidence.forEach(location => evidence.append(element("p", "", `${location.file} · ${location.function}`)));
+      item.evidence.forEach(location => evidence.append(element("p", "", `${location.file}${location.line ? `:${location.line}` : ""} · ${location.function}`)));
       node.append(evidence);
     }
     if (!item.editable) {
@@ -428,6 +433,14 @@
     node.dataset.searchIdentity = [id, item.title].join(" ");
     node.dataset.search = [node.dataset.searchIdentity, drafts.getDraft("prompt", id)?.value ?? item.text].join(" ").toLocaleLowerCase("ru");
     node.append(header(item, id), meta(item));
+    const sources = [...(item.evidence || []).map(location => ({ ...location, kind: "Чтение" })),
+      ...(item.definitions || []).map(location => ({ ...location, kind: "Определение" }))];
+    if (sources.length) {
+      const evidence = element("details", "technical muted");
+      evidence.append(element("summary", "", "Определение и обращения в коде"));
+      sources.forEach(location => evidence.append(element("p", "", `${location.kind}: ${location.file}:${location.line} · ${location.function}`)));
+      node.append(evidence);
+    }
     if (Array.isArray(item.variables) && item.variables.length) {
       node.append(element("p", "muted technical", `Переменные: ${item.variables.join(", ")}`));
     }
@@ -478,6 +491,43 @@
     staleDraftControl(node, "prompt", id, item.text || "", status);
     if (drafts.getDraft("prompt", id)) message(status, `Черновик · исходная ревизия ${drafts.getDraft("prompt", id).expected_revision}`);
     return node;
+  }
+
+  function renderCommands() {
+    const items = Array.isArray(commandsSnapshot.commands) ? commandsSnapshot.commands : [];
+    byId("command-note").textContent = commandsSnapshot.note || "Каталог зарегистрированных команд.";
+    byId("command-count").textContent = commandsSnapshot.available ? items.length : "—";
+    byId("command-list").replaceChildren(...items.map(item => {
+      const node = card("command", String(item.id));
+      node.dataset.kind = item.public ? "public" : "service";
+      node.dataset.search = [item.command, item.title, ...(item.aliases || []),
+        ...(item.text_patterns || []).map(rule => rule.pattern), ...(item.bindings || []).map(binding => binding.handler)]
+        .join(" ").toLocaleLowerCase("ru");
+      node.append(header({ title: item.command || "Текстовый вход", source: item.public ? "Публичное меню" : "Вне меню" }, item.id));
+      node.append(element("p", "", item.title));
+      if (item.aliases?.length) node.append(element("p", "control-note", `Алиасы и примеры ввода: ${item.aliases.join(" · ")}`));
+      if (item.availability === "private_chat") node.append(element("p", "muted", "Команда публичного меню предназначена для личного чата."));
+      if (item.availability === "when_configured") node.append(element("p", "muted", "Для работы требуется настройка соответствующей функции."));
+      if (item.text_patterns?.length) {
+        const rules = element("details", "technical muted");
+        rules.append(element("summary", "", `Полные текстовые правила: ${item.text_patterns.length}`));
+        item.text_patterns.forEach(rule => {
+          rules.append(element("p", "", rule.pattern));
+          if (rule.flags & 2) rules.append(element("p", "muted", "Без учёта регистра"));
+        });
+        node.append(rules);
+      }
+      const bindings = element("details", "technical muted");
+      bindings.append(element("summary", "", "Обработчики и условия"));
+      (item.bindings || []).forEach(binding => {
+        bindings.append(element("p", "", `${binding.file}${binding.line ? `:${binding.line}` : ""} · ${binding.handler}`));
+        bindings.append(element("p", "", binding.context));
+        if (binding.filters) bindings.append(element("p", "", binding.filters));
+      });
+      node.append(bindings);
+      return node;
+    }));
+    filterCards("command");
   }
 
   function renderCatalog(item) {
@@ -642,6 +692,7 @@
       if (!limits.some((item) => String(item.model) === id)) limitHolder.append(renderLimit({ model: id, limit: null, source: "Новый" }));
     });
     renderHistory(Array.isArray(data.history) ? data.history : []);
+    renderCommands();
     filterCards("process");
     filterCards("prompt");
     if (focusedCard && focusIndex >= 0) {
@@ -658,17 +709,19 @@
   function filterCards(section) {
     const query = byId(`${section}-search`).value.trim().toLocaleLowerCase("ru");
     const group = section === "process" ? byId("process-group").value : "";
+    const kind = section === "command" ? byId("command-kind").value : "";
     const cards = [...byId(`${section}-list`).children];
     let visible = 0;
     cards.forEach(node => {
-      node.hidden = (group && node.dataset.group !== group) || !(node.dataset.search || "").includes(query);
+      node.hidden = (group && node.dataset.group !== group) || (kind && node.dataset.kind !== kind) || !(node.dataset.search || "").includes(query);
       if (!node.hidden) visible += 1;
     });
     byId(`${section}-visible`).textContent = `Показано ${visible} из ${cards.length}`;
   }
 
-  ["process", "prompt"].forEach(section => byId(`${section}-search`).addEventListener("input", () => filterCards(section)));
+  ["process", "prompt", "command"].forEach(section => byId(`${section}-search`).addEventListener("input", () => filterCards(section)));
   byId("process-group").addEventListener("change", () => filterCards("process"));
+  byId("command-kind").addEventListener("change", () => filterCards("command"));
 
   byId("refresh").addEventListener("click", load);
   window.addEventListener("beforeunload", event => {

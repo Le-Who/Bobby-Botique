@@ -93,6 +93,15 @@ Inspect the relevant code/tests and the guide for the affected boundary.
 
 - `bot.py` owns lifecycle/registration; `app/bot_commands.py` owns public menu/help
   identities, not handler execution. Keep RU/EN descriptions in `app/i18n.py`.
+- When adding, moving or removing model consumers, prompts or command inputs,
+  keep the dashboard inventory current in the same change. Prompt definitions use
+  module-level `register_controlled_text`; their modules and literal consumers are
+  discovered automatically. Maintain process capabilities and execution notes in
+  `app/process_policies.py` and `app/runtime_settings/process_evidence.py`; remove
+  retired registrations with their consumers. Verify inventory coverage with
+  `tests/test_source_inventory.py` and `tests/test_command_inventory.py`. Live command
+  aliases come from handler registrations. See [runtime controls](docs/runtime-controls.md)
+  for dynamic-reader limits and retained historical overrides.
 - Routed chat/search uses `app/providers/router.py` and typed requests/events.
   Agentic research in `app/core/agentic.py` calls Gemini directly; its handler owns
   model/key fallback. Preserve specialized integrations: explicit Crocodile selections use

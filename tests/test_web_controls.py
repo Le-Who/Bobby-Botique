@@ -89,3 +89,31 @@ async def test_chunked_oversized_mutation_is_rejected_before_write():
         response = await connection.as_response()
         assert response.status_code == 413
         write.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_command_inventory_requires_auth_and_reads_live_handlers(monkeypatch):
+    from types import SimpleNamespace
+
+    from telegram.ext import CommandHandler
+
+    from app import bot_instance
+    from app.web import quart_app
+
+    async def draw(update, context):
+        pass
+
+    application = SimpleNamespace(handlers={0: [CommandHandler(["draw", "img"], draw)]})
+    monkeypatch.setattr(bot_instance, "get_application", lambda: application)
+    client = quart_app.test_client()
+    assert (await client.get("/api/admin/controls/commands")).status_code == 401
+    async with client.session_transaction() as session:
+        session["authenticated"] = True
+    response = await client.get("/api/admin/controls/commands")
+    assert response.status_code == 200
+    payload = await response.get_json()
+    assert payload["available"] is True
+    assert payload["commands"][0]["command"] == "/draw"
+    assert payload["commands"][0]["aliases"] == ["/img"]
+    application.handlers.clear()
+    assert (await (await client.get("/api/admin/controls/commands")).get_json())["commands"] == []

@@ -1,10 +1,12 @@
 """Refresh control snapshots at request/startup boundaries without restarting."""
 
+import asyncio
 import importlib
 import logging
 from contextlib import asynccontextmanager
 from contextvars import Context, ContextVar, copy_context
 
+from app.runtime_settings.source_inventory import get_source_inventory
 from app.runtime_settings.store import SettingsSnapshot
 
 _operation_snapshot: ContextVar[SettingsSnapshot | None] = ContextVar("runtime_operation_snapshot", default=None)
@@ -21,37 +23,9 @@ def detached_settings_context() -> Context:
 
 
 def load_controlled_prompts() -> None:
-    # Import definitions, never user data. All modules are normal bot components.
-    for module in (
-        "app.games.daily_trivia",
-        "app.games.daily_ai",
-        "app.games.judge",
-        "app.games.word_bank",
-        "app.games.hinting",
-        "app.games.crocodile_daily",
-        "app.games.daily_trivia_authoring",
-        "app.natal.llm",
-        "app.tarot_daily",
-        "app.runtime_settings.media_prompts",
-        "app.runtime_settings.interactive_prompts",
-        "app.runtime_settings.additional_prompts",
-        "app.utils.multimodal_processor",
-        "app.utils.vision_intent",
-        "app.handlers.ai_photo",
-        "app.handlers.ai_document",
-        "app.handlers.ai_search",
-        "app.handlers.inline",
-        "app.handlers.board_handler",
-        "app.handlers.commands",
-        "app.handlers.msg_roles",
-        "app.providers.tts",
-        "app.context.summarizer",
-        "app.voice_intent",
-        "app.repos.memory_extraction",
-        "app.repos.memory_consolidation",
-        "app.repos.memory",
-        "app.handlers.scheduled_briefs",
-    ):
+    # Only import modules declaring controlled static templates. New definitions
+    # no longer require a second registration in this loader.
+    for module in get_source_inventory().prompt_modules:
         importlib.import_module(module)
 
 
@@ -60,7 +34,7 @@ async def refresh_runtime_settings(*, force: bool = False) -> None:
     from app.runtime_settings.prompts import refresh_prompts
 
     try:
-        load_controlled_prompts()
+        await asyncio.to_thread(load_controlled_prompts)
         await refresh_prompts(force=force)
         await refresh_catalogs()
     except Exception as error:

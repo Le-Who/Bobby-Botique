@@ -329,8 +329,10 @@ def resolve_policy_value(
 async def list_processes() -> list[dict[str, Any]]:
     from app.runtime_settings.lifecycle import operation_snapshot
     from app.runtime_settings.process_evidence import process_evidence
+    from app.runtime_settings.source_inventory import get_source_inventory
 
     snapshot = await operation_snapshot()
+    inventory = get_source_inventory()
     rows = []
     for process_id, spec in PROCESSES.items():
         baseline = list(await baseline_models(process_id))
@@ -353,6 +355,25 @@ async def list_processes() -> list[dict[str, Any]]:
                 "apply": "new_session" if process_id in {"live", "live.vertex"} else "next_request",
                 "registry_version": 1,
                 **process_evidence(process_id),
+                **(
+                    {"evidence": [location.as_dict() for location in inventory.process_consumers[process_id]]}
+                    if process_id in inventory.process_consumers
+                    else {}
+                ),
+            }
+        )
+    # A newly introduced reader is visible even before it has the semantic
+    # metadata required for safe editing. The coverage test also rejects it.
+    for process_id in sorted(set(inventory.process_consumers) - set(PROCESSES)):
+        rows.append(
+            {
+                "id": process_id,
+                "title": process_id,
+                "group": "Без регистрации",
+                "models": [],
+                "editable": False,
+                "note": "Обнаружен вызов незарегистрированного маршрута. Добавьте описание и возможности в PROCESSES.",
+                "evidence": [location.as_dict() for location in inventory.process_consumers[process_id]],
             }
         )
     return rows

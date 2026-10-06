@@ -140,6 +140,36 @@ async def test_reset_restore_and_bounded_history(backend):
 
 
 @pytest.mark.asyncio
+async def test_history_restore_keeps_retired_prompts_without_blocking_active_values(backend):
+    from app.runtime_settings import prompts
+    from app.web_controls import _validate_restored_values
+
+    settings = store.RuntimeSettingsStore()
+    await settings.update_values(
+        {
+            "prompt:removed.feature": "Retired text",
+            "process:removed.feature": {
+                "models": ["retired-model"],
+                "strategy": "sequential",
+                "inherit_user_model": False,
+            },
+        },
+        expected_revision=0,
+        actor="admin",
+    )
+    await settings.set_value("prompt:formatting_rules", "Saved rules", expected_revision=1, actor="admin")
+    await settings.set_value("prompt:formatting_rules", "New rules", expected_revision=2, actor="admin")
+    restored = await settings.restore_revision(
+        2, expected_revision=3, actor="admin", validate=_validate_restored_values
+    )
+    assert restored.values["prompt:removed.feature"] == "Retired text"
+    assert restored.values["process:removed.feature"]["models"] == ("retired-model",)
+    assert prompts._overrides(restored.values) == {"formatting_rules": "Saved rules"}
+    with pytest.raises(ValueError):
+        _validate_restored_values({"prompt:removed.feature": "Retired text", "prompt:formatting_rules": ""})
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "value",
     [float("nan"), {1: "invalid"}, object(), "x" * 300_000],

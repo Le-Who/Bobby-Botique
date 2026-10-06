@@ -10,6 +10,8 @@
     ['process-search', 'process'],
     ['process-group', 'group'],
     ['prompt-search', 'prompt'],
+    ['command-search', 'command'],
+    ['command-kind', 'command_kind'],
   ];
 
   function showSection({ focus = false } = {}) {
