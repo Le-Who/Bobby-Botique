@@ -1,58 +1,29 @@
 # AGENTS.md — Repository working agreements
 
-Applies to this repository. Last reviewed: 2026-09-20, against checkout
-`f44541a7`. This is coding-agent guidance, not the bot's system prompt.
+Applies to this repository. This is coding-agent guidance, not the bot's system prompt.
 
 ## Scope and working style
 
-- Follow the requested outcome through the authorized edits and appropriate verification.
-  Make routine, reversible choices within scope and proceed; do not stop at a plan
-  or ask again for an action the user has already authorized. Incorporate follow-up
-  corrections without losing the original objective; honor explicit pause/stop requests.
 - A request to explain, review, or diagnose is not permission to implement, publish,
   deploy, migrate a database, rotate keys, or change external state.
-- Ask only when a missing decision materially changes the result or requires new authority.
-  Continue independent work while awaiting an answer. A documentation/roadmap request
+- A documentation/roadmap request
   authorizes editing those documents, not implementing their proposed features.
-- System/developer instructions and explicit user instructions take precedence over
-  repository conventions and skill guidance. Check applicable nested `AGENTS.md`
-  and `AGENTS.override.md`. Apply skills to the actual task, not keyword overlap;
-  use their relevant sections instead of importing an unrelated process. Routine
-  authorized edits do not need another design approval just because a skill
-  prescribes one. If an applicable higher-priority rule blocks work, identify its
-  source and exact requirement, distinguish interpretation, and explain the impact.
-- Use subagents only when the user or governing instructions authorize them. Give
-  authorized delegates bounded independent tasks; avoid concurrent edits to the same files.
-- Communicate in the user's language, lead with the result, and keep progress/final
-  reports concise. Report actual checks and remaining limitations, not assumed success.
 - Before edits, inspect `git status --short`. Preserve unrelated changes and temporary
   artifacts, including work from an earlier turn. Do not commit, push, open a PR,
   or deploy unless requested; do not expand a documentation task into runtime fixes.
 
-These project choices were checked against [GPT-6 Astra guidance](https://developers.openai.com/api/docs/guides/latest-model)
-and [OpenAI's guidance on maintaining skills and AGENTS.md](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra)
-on 2026-09-20: keep task-relevant context, explicit authority and proportionate
-verification. They are not a special model-required format or blanket permission
-to delegate. Keep this file focused on durable repository constraints; put detailed
-procedures in the linked guides rather than adding a mandatory workflow for every edit.
-[Codex instruction discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
-explains scope and overrides. Do not change the application's model defaults merely
-because the coding agent uses Astra.
-
 ## Read the right source
 
-Use these as a navigation map, not a checklist to read in full before every change.
-Inspect the relevant code/tests and the guide for the affected boundary.
+Read the relevant code/tests and the guide triggered by the affected boundary:
 
-- [README.md](README.md): setup, capabilities, configuration and operations.
-- [docs/README.md](docs/README.md): current reference versus historical evidence.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): boundaries and code locations.
-- [CONTEXT.md](CONTEXT.md) and [docs/adr/](docs/adr/): domain terms and accepted decisions.
-- [CONTRIBUTING.md](CONTRIBUTING.md): reproducible commands and test isolation.
-- [Logging](docs/logging.md) and [private log search](ops/observability/README.md):
-  event/privacy contracts, incident export and collector operations.
-- [Daily Crocodile](docs/pollinations-daily-croc.md) and
-  [natal readiness](docs/natal-chart-product-readiness.md): specialized product checks.
+- Capabilities, configuration or operations: [README.md](README.md).
+- Current versus historical documentation: [docs/README.md](docs/README.md).
+- Architectural boundaries or code locations: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- Domain terms or accepted decisions: [CONTEXT.md](CONTEXT.md) and [docs/adr/](docs/adr/).
+- Logging events or privacy: [logging policy](docs/logging.md).
+- Incident export or collector operations: [private log search](ops/observability/README.md).
+- Daily Crocodile changes: [Daily Crocodile](docs/pollinations-daily-croc.md).
+- Natal report changes: [natal readiness](docs/natal-chart-product-readiness.md).
 - Manifests, code, SQL and workflows establish what the checkout implements.
   Docs explain intent; a disagreement is a finding to reconcile, not permission to
   silently change behavior. Plans, changelog entries and `.jules/` journals are
@@ -62,32 +33,13 @@ Inspect the relevant code/tests and the guide for the affected boundary.
 
 ## Setup and verification
 
-- Runtime: Python `>=3.14,<3.15`; pinned package manager: `uv==0.12.6`.
-  `pyproject.toml` is the dependency manifest; `uv.lock` is the exact graph.
-- Setup: `python -m pip install "uv==0.12.6"`, then `uv sync --locked`.
-  Do not regenerate the lockfile or upgrade dependencies for unrelated work.
-- Focused test: `uv run --locked pytest tests/test_<area>.py --override-ini="addopts=" --timeout=30`.
-  Replace the path with an existing relevant test.
-- Unit/E2E: `uv run --locked pytest tests/ --ignore=tests/integration -m "not integration" --override-ini="addopts=" --timeout=30`.
-- Python gates: `uv run --locked ruff check .`,
-  `uv run --locked ruff format --check .`, `uv run --locked mypy app bot.py`.
-- Integration: `uv run --locked pytest tests/ -m integration -n 0 --override-ini="addopts=" --timeout=30`,
-  only against an explicitly isolated `TEST_DATABASE_URL` (and test Redis as needed).
+- Setup, dependency changes, tests, lint/type checks and hooks: use
+  [CONTRIBUTING.md](CONTRIBUTING.md) for locked commands and change-type checks.
+- Inspect test fixtures/targets for integration or live dependencies. Integration
+  checks require an explicitly isolated `TEST_DATABASE_URL` and test Redis as needed.
   Missing services/skipped tests are not passes. Tests may execute destructive DDL/DML.
-- `pytest.ini` defaults to `-n auto --dist=loadgroup --basetemp=.pytest_tmp --timeout=30`.
-  Overriding `addopts` clears those flags; keep a timeout explicitly when needed.
-- Start with the smallest meaningful check. Broaden for cross-cutting behavior,
-  schema, auth, provider or lifecycle changes. Prose-only changes need encoding,
-  links, factual checks and `git diff --check`, not the entire runtime suite.
-- Run relevant offline checks and fix regressions caused by the requested change
-  without repeated confirmation. Do not assume all tests are offline: inspect the
-  fixtures/targets for integration or live checks. Report unrelated failures separately.
-- Once required checks pass, repeat or expand only for new changes/failures/concerns.
-  Never claim live Telegram/provider/VPS validation from local unit tests.
-- Pre-commit and locked/CI tooling use Ruff 0.15.2. Install local hooks with
-  `uv run --locked pre-commit install`; cloning alone does not install them.
-  The documentation-encoding hook is read-only; Ruff hooks may apply fixes.
-  Use locked lint/format check commands when a read-only check is intended.
+- Prose-only changes need encoding, links, factual checks and `git diff --check`.
+- Local unit tests do not establish live Telegram/provider/VPS behavior.
 
 ## Implementation boundaries
 
@@ -109,7 +61,8 @@ Inspect the relevant code/tests and the guide for the affected boundary.
   paths have their own contracts. Do not force every SDK call through the chat router.
 - Model role defaults and selector parsing live in `app/config.py`; explicit model
   catalog overrides live in `app/repos/models_repo.py`. Preserve env/default versus
-  admin-override precedence and intentional `none` lists.
+  admin-override precedence and intentional `none` lists. Do not change application
+  model defaults to match the coding agent's model.
 - Verify configuration at its actual reader (`load_settings()` or infrastructure
   module), not just a Settings field or README table. Check workflow forwarding
   separately: adding an environment name/GitHub Secret does not wire it through
