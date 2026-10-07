@@ -8,9 +8,10 @@ historical plans, journals and test/deploy reports are not current instructions.
 | Document | Responsibility |
 | --- | --- |
 | [Repository README](../README.md) | Capabilities, setup, configuration and operations |
-| [AGENTS.md](../AGENTS.md) | Shared repository working agreements for coding agents |
+| [AGENTS.md](../AGENTS.md) | Coding-agent entry point: authority, workspace, sensitive data and cumulative task routes |
+| [CODING_STANDARDS.md](../CODING_STANDARDS.md) | Task selection index, UTF-8 editing conventions, implementation ownership and specialized safety contracts |
 | [GEMINI.md](../GEMINI.md) | Entry-point pointer, not a second rulebook |
-| [CONTRIBUTING.md](../CONTRIBUTING.md) | Locked tooling, checks, test safety and hook installation |
+| [CONTRIBUTING.md](../CONTRIBUTING.md) | Human-facing setup and verification recipes, test isolation and hook installation |
 | [CONTEXT.md](../CONTEXT.md) | Domain vocabulary: delivery, state, consent, provenance and model roles |
 | [Architecture](ARCHITECTURE.md) | Source-backed ownership boundaries and rationale |
 | [Runtime controls](runtime-controls.md) | Model/prompt editor, revision semantics, quota boundaries, queue cutover and embedding migration procedure |
