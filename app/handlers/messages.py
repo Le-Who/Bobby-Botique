@@ -426,7 +426,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             from app.handlers.natal_chart import natal_command
             from app.natal.intent import is_natal_chart_request
 
-            if is_natal_chart_request(message_text):
+            if is_natal_chart_request(message_text, bot_username=context.bot.username):
                 await natal_command(update, context)
                 return
 

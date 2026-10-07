@@ -10,6 +10,14 @@ from quart import Blueprint, jsonify, render_template, request, session
 from quart.wrappers import Request
 from werkzeug.exceptions import RequestEntityTooLarge
 
+from app import bot_instance
+from app.command_aliases import (
+    command_alias_inventory,
+    reset_aliases,
+    save_aliases,
+    validate_alias_values,
+    validate_aliases,
+)
 from app.process_policies import PROCESSES, baseline_models, list_processes, resolve_policy_value, validate_policy
 from app.runtime_settings import models, prompts
 from app.runtime_settings.store import (
@@ -85,6 +93,8 @@ def _validated(data: dict[str, Any]) -> tuple[str, str, Any]:
         models.validate_model_id(identity)
         if not data.get("reset"):
             value = models.validate_limit(identity, value)
+    elif section == "command":
+        value = validate_aliases(bot_instance.get_application(), identity, [] if data.get("reset") else value)
     else:
         raise ValueError("Неизвестный раздел")
     return section, identity, value
@@ -112,7 +122,10 @@ def _validate_restored_values(values: Mapping[str, Any]) -> None:
 
             validate_value(identity, value)
             continue
+        if section == "command_aliases":
+            continue
         _validated({"section": "limit" if section == "model_limit" else section, "id": identity, "value": value})
+    validate_alias_values(bot_instance.get_application(), values)
 
 
 def register_controls(app, require_auth) -> None:
@@ -157,6 +170,7 @@ def register_controls(app, require_auth) -> None:
                     prompts=await prompts.list_prompts(),
                     catalogs=await models.list_catalogs(snapshot=snapshot),
                     limits=await models.list_limits(snapshot=snapshot),
+                    commands=command_alias_inventory(bot_instance.get_application(), snapshot),
                     history=[
                         {**row, "created_at": row.get("at"), "changed_key": ", ".join(row.get("changed_keys", []))}
                         for row in history
@@ -184,6 +198,12 @@ def register_controls(app, require_auth) -> None:
                     if data.get("reset")
                     else await models.save_limit(identity, value, **options)
                 )
+            elif section == "command":
+                snapshot = (
+                    await reset_aliases(bot_instance.get_application(), identity, **options)
+                    if data.get("reset")
+                    else await save_aliases(bot_instance.get_application(), identity, value, **options)
+                )
             else:
                 key = f"process:{identity}"
                 snapshot = (
@@ -201,10 +221,10 @@ def register_controls(app, require_auth) -> None:
     @bp.route("/api/admin/controls/commands", methods=["GET"])
     @require_auth
     async def controls_commands():
-        from app.bot_instance import get_application
-        from app.command_inventory import command_inventory
+        from app.runtime_settings.store import get_snapshot
 
-        return jsonify(command_inventory(get_application()))
+        snapshot = await get_snapshot(force=True)
+        return jsonify(command_alias_inventory(bot_instance.get_application(), snapshot))
 
     @bp.route("/api/admin/controls/preview", methods=["POST"])
     @require_auth
@@ -212,6 +232,16 @@ def register_controls(app, require_auth) -> None:
         data = await _mutation_body()
         section, identity, value = _validated(data)
         planned_models = []
+        if section == "command":
+            from app.command_aliases import PREFIX
+
+            snapshot, _ = await get_state(force=True)
+            values = dict(snapshot.values)
+            if data.get("reset"):
+                values.pop(f"{PREFIX}{identity}", None)
+            else:
+                values[f"{PREFIX}{identity}"] = value
+            validate_alias_values(bot_instance.get_application(), values)
         if section == "process":
             baseline = await baseline_models(identity)
             selected = data.get("selected_model")
@@ -221,7 +251,11 @@ def register_controls(app, require_auth) -> None:
         return jsonify(
             valid=True,
             models=planned_models,
-            notes=["Проверена структура. Доступность модели у провайдера и остаток внешней квоты не проверялись."],
+            notes=(
+                ["Проверены формат и конфликты алиасов. Основная команда и проверки доступа сохраняются."]
+                if section == "command"
+                else ["Проверена структура. Доступность модели у провайдера и остаток внешней квоты не проверялись."]
+            ),
         )
 
     @bp.route("/api/admin/controls/restore", methods=["POST"])

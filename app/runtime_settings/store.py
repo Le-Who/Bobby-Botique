@@ -21,7 +21,15 @@ from app import database as db
 from app.utils.json_compat import json
 
 _KEY = "runtime_controls:v1"
-_PREFIXES = ("process:", "prompt:", "model_limit:", "catalog:", "catalog_baseline:", "legacy_model:")
+_PREFIXES = (
+    "process:",
+    "prompt:",
+    "model_limit:",
+    "catalog:",
+    "catalog_baseline:",
+    "legacy_model:",
+    "command_aliases:",
+)
 _VALUE_LIMIT = 256 * 1024
 _VALUES_LIMIT = 512 * 1024
 _DOCUMENT_LIMIT = 17 * 1024 * 1024
@@ -277,10 +285,18 @@ class RuntimeSettingsStore:
         return await self._change(key=key, reset=True, expected_revision=expected_revision, actor=actor)
 
     async def update_values(
-        self, updates: dict[str, Any], *, removals: tuple[str, ...] = (), expected_revision: int, actor: str
+        self,
+        updates: dict[str, Any],
+        *,
+        removals: tuple[str, ...] = (),
+        expected_revision: int,
+        actor: str,
+        validate: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> SettingsSnapshot:
         """Commit related overrides and removals as one revision and one CAS."""
-        return await self._change(updates=updates, removals=removals, expected_revision=expected_revision, actor=actor)
+        return await self._change(
+            updates=updates, removals=removals, expected_revision=expected_revision, actor=actor, validate=validate
+        )
 
     async def restore_revision(
         self,

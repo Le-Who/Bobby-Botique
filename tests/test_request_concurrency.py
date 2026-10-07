@@ -37,7 +37,6 @@ async def request_boundary(monkeypatch):
     monkeypatch.setattr("app.handlers.board_handler.try_handle_board_reply", AsyncMock(return_value=False))
     monkeypatch.setattr("app.handlers.cmd_image.handle_draw_prompt_input", AsyncMock(return_value=False))
     monkeypatch.setattr("app.handlers.cmd_image.check_draw_intent_async", AsyncMock(return_value=None))
-    monkeypatch.setattr("app.natal.intent.is_natal_chart_request", lambda _: False)
     monkeypatch.setattr("app.middleware.dedup.is_duplicate_request", AsyncMock(return_value=False))
     monkeypatch.setattr("app.intent_router.try_direct_intent", AsyncMock(return_value=None))
     monkeypatch.setattr(

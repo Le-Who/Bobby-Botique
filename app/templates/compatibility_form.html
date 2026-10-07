@@ -11,7 +11,7 @@
   <script nonce="{{ csp_nonce }}" src="https://telegram.org/js/telegram-web-app.js"></script>
   <script nonce="{{ csp_nonce }}" src="/static/js/natal-theme.js"></script>
   <script nonce="{{ csp_nonce }}" id="compatibility-options" type="application/json">{{ compatibility_options | tojson }}</script>
-  <script nonce="{{ csp_nonce }}" src="/static/js/compatibility-form.js" defer></script>
+  <script nonce="{{ csp_nonce }}" src="/static/js/compatibility-form.js?v=20261007-1" defer></script>
 </head>
 <body>
 {% set copy = compatibility_options['copy'] %}

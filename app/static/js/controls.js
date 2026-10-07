@@ -114,10 +114,9 @@
   async function load() {
     const sequence = ++loadSequence;
     try {
-      const [data, commands] = await Promise.all([
-        api(endpoint),
-        api(`${endpoint}/commands`).catch(() => ({ available: false, commands: [], note: "Каталог команд недоступен. Повторите обновление." })),
-      ]);
+      const data = await api(endpoint);
+      const commands = data.commands || await api(`${endpoint}/commands`).catch(() =>
+        ({ available: false, commands: [], note: "Каталог команд недоступен. Повторите обновление." }));
       if (sequence !== loadSequence) return { ok: false, superseded: true };
       if (!Number.isSafeInteger(data.revision) || data.revision < minimumRevision ||
           ![data.processes, data.prompts, data.catalogs, data.limits, data.history].every(Array.isArray)) {
@@ -125,6 +124,9 @@
       }
       if (data.degraded && needsRefresh) {
         throw new Error("Источник настроек недоступен. Подтвердите сохранённую ревизию повторным обновлением.");
+      }
+      if (commands.revision !== undefined && commands.revision !== data.revision) {
+        throw new Error("Каталог алиасов относится к другой ревизии. Обновите данные ещё раз.");
       }
       if (data.csrf_token) csrf = data.csrf_token;
       commandsSnapshot = commands;
@@ -195,8 +197,8 @@
   function markDraft(section, id, value, node, status) {
     drafts.setDraft(section, id, value);
     node.classList.add("dirty");
-    if (section === "process" || section === "prompt") {
-      const content = section === "process" ? value.models : [value];
+    if (section === "process" || section === "prompt" || section === "command") {
+      const content = section === "process" ? value.models : section === "command" ? value : [value];
       node.dataset.search = [node.dataset.searchIdentity, ...content].join(" ").toLocaleLowerCase("ru");
     }
     message(status, `Черновик · исходная ревизия ${drafts.getDraft(section, id).expected_revision}`);
@@ -500,17 +502,58 @@
     byId("command-list").replaceChildren(...items.map(item => {
       const node = card("command", String(item.id));
       node.dataset.kind = item.public ? "public" : "service";
-      node.dataset.search = [item.command, item.title, ...(item.aliases || []),
+      node.dataset.searchIdentity = [item.command, item.title,
         ...(item.text_patterns || []).map(rule => rule.pattern), ...(item.bindings || []).map(binding => binding.handler)]
-        .join(" ").toLocaleLowerCase("ru");
+        .join(" ");
+      const current = drafts.getDraft("command", item.id)?.value ?? item.aliases ?? [];
+      node.dataset.search = [node.dataset.searchIdentity, ...current].join(" ").toLocaleLowerCase("ru");
       node.append(header({ title: item.command || "Текстовый вход", source: item.public ? "Публичное меню" : "Вне меню" }, item.id));
       node.append(element("p", "", item.title));
-      if (item.aliases?.length) node.append(element("p", "control-note", `Алиасы и примеры ввода: ${item.aliases.join(" · ")}`));
+      if (item.editable) {
+        const field = element("label", "field", "Алиасы — по одному на строке");
+        const input = element("textarea", "alias-editor");
+        input.value = current.join("\n");
+        input.rows = Math.max(3, Math.min(8, current.length));
+        input.spellcheck = false;
+        input.setAttribute("aria-label", `Алиасы команды ${item.command}`);
+        input.placeholder = "/paint\n/рисуй\nнарисуй";
+        field.append(input);
+        node.append(field, element("p", "muted", "Slash-алиасы принимают аргументы; текстовые — целую фразу без учёта регистра. Новые текстовые входы без исходного текстового правила работают в личном чате. Пустой список отключает алиасы."));
+        node.append(element("p", "muted", item.alias_note));
+        const defaults = element("details", "baseline");
+        defaults.append(element("summary", "", item.source === "override" ? "Настроено вручную · исходные алиасы" : "Исходные алиасы"));
+        defaults.append(element("pre", "", (item.default_aliases || []).join("\n") || "Исходных алиасов нет."));
+        node.append(defaults);
+        const status = feedback(node);
+        input.addEventListener("input", () => {
+          const aliases = input.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+          markDraft("command", item.id, aliases, node, status);
+        });
+        const actions = actionRow(node);
+        actions.append(mutationButton("Проверить алиасы", "secondary", async () => {
+          if (busy || needsRefresh) return;
+          const draft = drafts.getDraft("command", item.id);
+          message(status, "Проверяем алиасы…");
+          try {
+            const result = await api(`${endpoint}/preview`, {
+              section: "command", id: item.id, value: draft?.value ?? item.aliases ?? [],
+              expected_revision: draft?.expected_revision ?? drafts.getSnapshot().revision,
+            });
+            message(status, (result.notes || ["Алиасы проверены."]).join("\n"));
+          } catch (error) { message(status, errorText(error), true); }
+        }));
+        actions.append(mutationButton("Вернуть исходные алиасы", "quiet", () => save("command", item.id, status, true)));
+        actions.append(mutationButton("Сохранить алиасы", "save", () => save("command", item.id, status, false)));
+        staleDraftControl(node, "command", item.id, item.aliases || [], status);
+      } else {
+        if (item.aliases?.length) node.append(element("p", "control-note", `Алиасы и примеры ввода: ${item.aliases.join(" · ")}`));
+        if (item.alias_note) node.append(element("p", "readonly", item.alias_note));
+      }
       if (item.availability === "private_chat") node.append(element("p", "muted", "Команда публичного меню предназначена для личного чата."));
       if (item.availability === "when_configured") node.append(element("p", "muted", "Для работы требуется настройка соответствующей функции."));
       if (item.text_patterns?.length) {
         const rules = element("details", "technical muted");
-        rules.append(element("summary", "", `Полные текстовые правила: ${item.text_patterns.length}`));
+        rules.append(element("summary", "", `Исходные текстовые правила: ${item.text_patterns.length}`));
         item.text_patterns.forEach(rule => {
           rules.append(element("p", "", rule.pattern));
           if (rule.flags & 2) rules.append(element("p", "muted", "Без учёта регистра"));
@@ -626,7 +669,7 @@
         row.append(mutationButton("Восстановить", "secondary", async () => {
           if (busy || needsRefresh) return;
           const data = drafts.getSnapshot();
-          const scope = `маршруты моделей (${data.processes.length}), промпты (${data.prompts.length}), каталоги и лимиты`;
+          const scope = `маршруты моделей (${data.processes.length}), промпты (${data.prompts.length}), алиасы команд, каталоги и лимиты`;
           if (!window.confirm(`Восстановить ревизию ${entry.revision} всей конфигурации?\nБудут заменены ${scope}. Это создаст новую ревизию и повлияет на новые запросы. Черновики останутся на странице для сравнения.`)) return;
           setBusy(true);
           message(status, "Восстанавливаем…");

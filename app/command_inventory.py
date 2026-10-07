@@ -114,14 +114,14 @@ def _binding(handler: Any, context: str) -> dict[str, Any]:
     }
 
 
-def command_inventory(application: Any | None) -> dict[str, Any]:
+def registered_commands(application: Any | None) -> tuple[dict[str, Any], dict[str, list[Any]]]:
     """Snapshot registered commands, positive text rules and conversation controls.
 
     Callback data and arbitrary AI-classified intent are different input surfaces.
     No handler is invoked and no Telegram API, settings store or user data is read.
     """
     if application is None:
-        return {"available": False, "commands": [], "note": "Бот ещё не зарегистрировал обработчики команд."}
+        return {"available": False, "commands": [], "note": "Бот ещё не зарегистрировал обработчики команд."}, {}
     leaves = [
         pair
         for group, handlers in application.handlers.items()
@@ -137,6 +137,7 @@ def command_inventory(application: Any | None) -> dict[str, Any]:
                 preferred.setdefault(id(inspect.unwrap(handler.callback)), set()).update(public_names)
 
     rows: dict[str, dict[str, Any]] = {}
+    bindings: dict[str, list[Any]] = {}
     callbacks: dict[int, set[str]] = {}
     text_identities: dict[int, str] = {}
 
@@ -176,6 +177,7 @@ def command_inventory(application: Any | None) -> dict[str, Any]:
                 f"/{name}" for name in sorted(handler.commands) if name != canonical and name not in public
             )
             row["bindings"].append(_binding(handler, context))
+            bindings.setdefault(canonical, []).append(handler)
             callbacks.setdefault(callback, set()).add(canonical)
 
     for handler, context in leaves:
@@ -211,6 +213,7 @@ def command_inventory(application: Any | None) -> dict[str, Any]:
                     row["text_patterns"].append(rule)
                 row["aliases"].extend(examples)
             row["bindings"].append(_binding(handler, context))
+            bindings.setdefault(identity, []).append(handler)
 
     for row in rows.values():
         row["aliases"] = sorted(set(row["aliases"]) - {row["command"]})
@@ -222,4 +225,9 @@ def command_inventory(application: Any | None) -> dict[str, Any]:
             "Текстовые алиасы показаны как примеры; полные правила и контекст доступны в карточках. "
             "Доступ определяется фильтрами и проверками обработчиков."
         ),
-    }
+    }, bindings
+
+
+def command_inventory(application: Any | None) -> dict[str, Any]:
+    """Read registered inputs without settings, provider calls or user data."""
+    return registered_commands(application)[0]
