@@ -1,7 +1,8 @@
 # Contributing
 
-Read [AGENTS.md](AGENTS.md) for repository agreements and the
-[documentation index](docs/README.md) for current versus historical references.
+Read [AGENTS.md](AGENTS.md) for repository agreements and task-triggered sections of
+[CODING_STANDARDS.md](CODING_STANDARDS.md) for implementation/safety contracts. Use
+the [documentation index](docs/README.md) for current versus historical references.
 Keep changes focused, preserve user data and use redacted/fake test inputs.
 Never commit credentials, service-account JSON, private logs or database dumps.
 

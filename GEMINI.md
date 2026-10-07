@@ -1,7 +1,8 @@
 # Gemini coding-agent entry point
 
 Read [AGENTS.md](AGENTS.md) for repository working agreements before editing.
-It is the shared instruction source for coding agents, including Gemini and Codex.
+It is the shared entry point for coding agents, including Gemini and Codex, and routes
+affected work to [CODING_STANDARDS.md](CODING_STANDARDS.md).
 
 For project context, use [README.md](README.md), the
 [documentation index](docs/README.md), [architecture](docs/ARCHITECTURE.md),

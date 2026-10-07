@@ -8,7 +8,8 @@ historical plans, journals and test/deploy reports are not current instructions.
 | Document | Responsibility |
 | --- | --- |
 | [Repository README](../README.md) | Capabilities, setup, configuration and operations |
-| [AGENTS.md](../AGENTS.md) | Shared repository working agreements for coding agents |
+| [AGENTS.md](../AGENTS.md) | Global coding-agent agreements and task-triggered reading |
+| [CODING_STANDARDS.md](../CODING_STANDARDS.md) | Implementation ownership and specialized safety contracts by affected boundary |
 | [GEMINI.md](../GEMINI.md) | Entry-point pointer, not a second rulebook |
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | Locked tooling, checks, test safety and hook installation |
 | [CONTEXT.md](../CONTEXT.md) | Domain vocabulary: delivery, state, consent, provenance and model roles |
