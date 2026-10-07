@@ -149,11 +149,12 @@ class PendingCompatibilityFilter(filters.MessageFilter):
         self._application = application
 
     def filter(self, message) -> bool:
+        from app.command_aliases import matches_alias_input
         from app.handlers.menu_intents import is_standalone_menu_request
 
         if not message.from_user or message.chat.type != "private":
             return False
-        if is_standalone_menu_request(message.text):
+        if is_standalone_menu_request(message.text) and not matches_alias_input("cancel", message.text):
             return False
         user_data = self._application.user_data.get(message.from_user.id)
         return isinstance(user_data, dict) and isinstance(user_data.get(_FLOW_KEY), dict)
@@ -188,8 +189,11 @@ async def handle_orphan_birth_date(update: Update, context: ContextTypes.DEFAULT
 
 
 async def clear_compatibility_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    from app.command_aliases import alias_message_input, matches_alias_input
+
     message = update.effective_message
-    if message and (message.text or "").split(maxsplit=1)[0].split("@", 1)[0].casefold() != "/cancel":
+    parsed = alias_message_input(message) if message else None
+    if parsed is not None and parsed[0] != "/cancel" and not matches_alias_input("cancel", parsed[0]):
         clear_compatibility_input(context.user_data)
 
 
@@ -314,7 +318,11 @@ def compatibility_form_url(pair: CompatibilityPair) -> str:
 
 
 async def clear_compatibility_on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    clear_compatibility_input(context.user_data)
+    from app.command_aliases import alias_message_input, matches_alias_input
+
+    parsed = alias_message_input(update.effective_message)
+    if parsed is not None and not matches_alias_input("cancel", parsed[0]):
+        clear_compatibility_input(context.user_data)
 
 
 @safe_handler()

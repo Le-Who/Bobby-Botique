@@ -117,3 +117,74 @@ async def test_command_inventory_requires_auth_and_reads_live_handlers(monkeypat
     assert payload["commands"][0]["aliases"] == ["/img"]
     application.handlers.clear()
     assert (await (await client.get("/api/admin/controls/commands")).get_json())["commands"] == []
+
+
+@pytest.mark.asyncio
+async def test_command_aliases_save_conflict_reset_and_restore(monkeypatch):
+    from types import SimpleNamespace
+
+    from telegram.ext import CommandHandler
+
+    from app import bot_instance, web_controls
+    from app.runtime_settings import store
+    from app.web import quart_app
+    from tests.test_runtime_settings_store import Database
+
+    async def draw(update, context):
+        pass
+
+    application = SimpleNamespace(handlers={0: [CommandHandler(["draw", "img"], draw)]})
+    monkeypatch.setattr(bot_instance, "get_application", lambda: application)
+    database = Database()
+    backend = store.RuntimeSettingsStore()
+    monkeypatch.setattr(store.db.db_manager, "pool", database)
+    for name in ("get_state", "get_snapshot", "update_values", "restore_revision"):
+        monkeypatch.setattr(store, name, getattr(backend, name))
+    monkeypatch.setattr(web_controls, "get_state", backend.get_state)
+    monkeypatch.setattr(web_controls, "restore_revision", backend.restore_revision)
+    client = quart_app.test_client()
+    async with client.session_transaction() as session:
+        session.update(authenticated=True, controls_csrf="test-csrf")
+    headers = {"X-CSRF-Token": "test-csrf"}
+
+    response = await client.post(
+        "/api/admin/controls",
+        json={"section": "command", "id": "draw", "value": ["/paint", "/рисуй", "нарисуй"], "expected_revision": 0},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert (await response.get_json())["revision"] == 1
+    inventory = await (await client.get("/api/admin/controls/commands")).get_json()
+    assert inventory["revision"] == 1
+    row = inventory["commands"][0]
+    assert row["editable"] is True
+    assert row["aliases"] == ["/paint", "/рисуй", "нарисуй"]
+    assert row["default_aliases"] == ["/img"]
+    assert row["source"] == "override"
+
+    conflict = await client.post(
+        "/api/admin/controls",
+        json={"section": "command", "id": "draw", "value": ["/other"], "expected_revision": 0},
+        headers=headers,
+    )
+    assert conflict.status_code == 409
+    assert database.writes == 1
+
+    reset = await client.post(
+        "/api/admin/controls",
+        json={"section": "command", "id": "draw", "reset": True, "expected_revision": 1},
+        headers=headers,
+    )
+    assert reset.status_code == 200
+    row = (await (await client.get("/api/admin/controls/commands")).get_json())["commands"][0]
+    assert row["aliases"] == ["/img"]
+    assert row["source"] == "default"
+
+    restored = await client.post(
+        "/api/admin/controls/restore",
+        json={"revision": 1, "expected_revision": 2},
+        headers=headers,
+    )
+    assert restored.status_code == 200
+    row = (await (await client.get("/api/admin/controls/commands")).get_json())["commands"][0]
+    assert row["aliases"] == ["/paint", "/рисуй", "нарисуй"]

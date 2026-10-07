@@ -409,6 +409,10 @@ async def run_bot_with_retry():
 
         application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
 
+        from app.command_aliases import install_command_aliases
+
+        install_command_aliases(application)
+
         # Register global error handler
         application.add_error_handler(global_error_handler)
 

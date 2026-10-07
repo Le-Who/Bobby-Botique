@@ -25,5 +25,10 @@ NATAL_INTENT_RE = re.compile(
 )
 
 
-def is_natal_chart_request(text: str) -> bool:
+def is_natal_chart_request(text: str, *, bot_username: str | None = None) -> bool:
+    from app.command_aliases import matches_alias_input
+
+    configured = matches_alias_input("natal", text, bot_username=bot_username)
+    if configured is not None:
+        return configured
     return bool(NATAL_INTENT_RE.search(text or ""))

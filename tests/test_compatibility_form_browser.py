@@ -274,6 +274,26 @@ def test_submission_error_retains_inputs_and_allows_one_retry():
 
 
 @pytest.mark.browser
+def test_validation_refocus_keeps_city_suggestions_open():
+    _run_browser(r"""
+    await fillDate('first');
+    await page.locator('[name="first-time-precision"][value="approximate"]').check();
+    await page.locator('#first-time').fill('08:15');
+    await page.locator('#first-country').fill('Ук');
+    await page.locator('#first-country-results button').first().click();
+    await page.locator('#first-city').fill('Ки');
+    await page.locator('#first-city-results').waitFor({ state: 'visible' });
+    await page.locator('#next-button').click();
+    assert.equal(await page.locator('#first-city').evaluate(node => node === document.activeElement), true);
+    // A queued blur close must not hide results after validation returns focus.
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('#first-city-results').isVisible(), true);
+    await page.locator('#first-city-results button').first().click();
+    assert.equal(await page.locator('#first-city').inputValue(), 'Киев');
+""")
+
+
+@pytest.mark.browser
 def test_form_has_no_horizontal_overflow_and_theme_changes_keep_dates():
     # Catches mobile clipping and state resets when the host theme changes.
     _run_browser(r"""

@@ -6,9 +6,9 @@
     <meta name="csrf-token" content="{{ csrf_token }}" />
     <meta name="color-scheme" content="dark" />
     <title>Управление · GemAI</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/controls.css', v='controls-20261006-1') }}" />
-    <script nonce="{{ g.csp_nonce }}" src="{{ url_for('static', filename='js/controls.js', v='controls-20261006-1') }}" defer></script>
-    <script nonce="{{ g.csp_nonce }}" src="{{ url_for('static', filename='js/controls-navigation.js', v='controls-20261006-1') }}" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/controls.css', v='controls-20261007-1') }}" />
+    <script nonce="{{ g.csp_nonce }}" src="{{ url_for('static', filename='js/controls.js', v='controls-20261007-1') }}" defer></script>
+    <script nonce="{{ g.csp_nonce }}" src="{{ url_for('static', filename='js/controls-navigation.js', v='controls-20261007-1') }}" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">К настройкам</a>
@@ -30,7 +30,7 @@
         <div class="sidebar-note"><strong id="revision">Загрузка…</strong><p>Изменения применяются к новым запросам. Другие экземпляры проверяют их при следующем обращении; TTL кэша — 5 секунд. Момент применения указан в каждой карточке.</p></div>
       </aside>
       <main id="main" tabindex="-1">
-        <div class="page-heading"><p class="eyebrow">GemAI / настройки</p><h1>Управление моделями</h1><p class="intro">Маршруты, инструкции, команды и лимиты. Изменения сохраняются отдельно в каждой карточке.</p></div>
+        <div class="page-heading"><p class="eyebrow">GemAI / настройки</p><h1>Управление ботом</h1><p class="intro">Модели, инструкции, алиасы команд и лимиты. Изменения сохраняются отдельно в каждой карточке.</p></div>
         <div class="view-toolbar">
           <label class="section-picker" for="section-select">Раздел<select id="section-select"><option value="processes">Маршруты моделей</option><option value="prompts">Системные промпты</option><option value="commands">Команды и алиасы</option><option value="catalogs">Каталоги моделей</option><option value="limits">Суточные лимиты</option><option value="history">История изменений</option></select></label>
           <strong id="view-revision" class="muted">Загрузка…</strong>

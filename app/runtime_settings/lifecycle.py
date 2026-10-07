@@ -48,6 +48,11 @@ async def operation_snapshot() -> SettingsSnapshot:
     return _operation_snapshot.get() or await get_snapshot()
 
 
+def current_operation_snapshot() -> SettingsSnapshot | None:
+    """Read the pinned revision synchronously while PTB checks input filters."""
+    return _operation_snapshot.get()
+
+
 @asynccontextmanager
 async def runtime_settings_scope(snapshot: SettingsSnapshot | None = None):
     """Capture route and prompt revisions when work begins, including scheduled jobs."""
