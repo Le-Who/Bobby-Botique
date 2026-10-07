@@ -1,8 +1,49 @@
 # Coding standards
 
-This is the authoritative home for repository implementation and specialized safety
-contracts. [AGENTS.md](AGENTS.md) routes work to the affected sections; setup and
-verification recipes belong to [CONTRIBUTING.md](CONTRIBUTING.md).
+This is the authoritative home for text-editing, implementation and specialized safety
+contracts. [AGENTS.md](AGENTS.md) is the shared coding-agent entry point;
+[CONTRIBUTING.md](CONTRIBUTING.md) owns setup and verification recipes.
+
+## Task index
+
+Select every matching section before affected work.
+
+| Task scope | Required section or guide |
+| --- | --- |
+| Any repository text edit | [Text editing and UTF-8](#text-editing-and-utf-8) |
+| Bot lifecycle, commands, prompts, model consumers or dashboard inventory | [Commands and runtime controls](#commands-and-runtime-controls) |
+| Provider calls, model selection, environment configuration or reload | [Providers, models and configuration](#providers-models-and-configuration) |
+| Telegram replies, formatting, JSON compatibility or async tasks | [Telegram delivery and async work](#telegram-delivery-and-async-work) |
+| User state, Redis coordination or private memory | [State and memory](#state-and-memory) |
+| Schema, migrations, database checks or RLS | [Database and migrations](#database-and-migrations) |
+| Daily preparation, readiness, images or quota | [Daily preparation](#daily-preparation) |
+| Natal reports or rollout | [Natal readiness](docs/natal-chart-product-readiness.md) |
+| Credentials, sensitive test data/findings, Mini App/web authentication or webhooks | [Credentials, authentication and webhooks](#credentials-authentication-and-webhooks) |
+| Logging, event ownership, incident export or collector access | [Logging and private observability](#logging-and-private-observability) |
+| Telegraph, Reader cold storage or natal mirrors | [Public publication](#public-publication) |
+| Deployment, reload or health checks | [Deployment and readiness](#deployment-and-readiness) |
+
+## Text editing and UTF-8
+
+All repository text files are UTF-8. In Python text-file I/O specify
+`encoding="utf-8"`; in PowerShell use `Get-Content -Encoding UTF8`.
+Binary I/O is not text encoding. Use UTF-8-safe patch tools for edits.
+
+Preserve raw emoji, Cyrillic and punctuation. Do not replace them with question
+marks or Unicode escapes, or run byte-level quote normalization. Never repair files
+solely because terminal emoji look garbled: strict UTF-8 decoding checks validity,
+not all forms of mojibake; inspect actual characters.
+
+Windows default encoding depends on the interpreter/terminal. Set
+`$env:PYTHONUTF8 = "1"` before launching Python, or use `python -X utf8`.
+Changing `os.environ["PYTHONUTF8"]` inside a running interpreter does not reconfigure
+that interpreter. For display, `sys.stdout.reconfigure(encoding="utf-8")` affects
+stdout only.
+
+For documentation edits, follow [Documentation checks](CONTRIBUTING.md#documentation-checks)
+for before/after encoding scans, source/link review and diff validation. Update current
+reference docs with changed behavior; keep old plans and release evidence explicitly
+historical.
 
 ## Commands and runtime controls
 
@@ -78,9 +119,11 @@ Numbered SQL is under `scripts/migrations/`; manifest validation is in
 schema/RLS checks when appropriate. Preserve startup failure on migration, schema
 or RLS errors.
 
-Migration commands are state-changing diagnostics: even `scripts/migrate.py --check`
-can create the tracking table. Read [database and integration safety](CONTRIBUTING.md#database-and-integration-safety)
-before running migration or database checks; it covers target selection and
+Treat migration checks as potentially state-changing. `scripts/migrate.py` reads
+`DATABASE_URL`, not `TEST_DATABASE_URL`; even `--check`/`--status` can create
+`schema_migrations` and do not verify complete schema drift. Never run them against
+production during routine checks. Read [database and integration safety](CONTRIBUTING.md#database-and-integration-safety)
+before running migration or database checks for deliberate target selection and
 destructive integration-test isolation.
 
 RLS is defense-in-depth with the current single migration/runtime DSN: privileged
@@ -100,6 +143,9 @@ preparation, image and quota contracts.
 API keys use Fernet derived from `ADMIN_SECRET` (`app/crypto.py`); changing the secret
 can make existing keys unreadable. Telegram Mini App and web/admin guards are
 separate boundaries.
+
+Use redacted/fake test inputs and preserve user data. Sensitive findings follow the
+[security reporting route](SECURITY.md); keep them out of public PR text.
 
 Preserve webhook token hashing, optional secret-header validation and deduplication.
 `app/webhook_security.py` validates configured secrets and uses constant-time

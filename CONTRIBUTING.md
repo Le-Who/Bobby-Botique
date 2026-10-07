@@ -1,10 +1,9 @@
 # Contributing
 
-Read [AGENTS.md](AGENTS.md) for repository agreements and task-triggered sections of
-[CODING_STANDARDS.md](CODING_STANDARDS.md) for implementation/safety contracts. Use
-the [documentation index](docs/README.md) for current versus historical references.
-Keep changes focused, preserve user data and use redacted/fake test inputs.
-Never commit credentials, service-account JSON, private logs or database dumps.
+Read [AGENTS.md](AGENTS.md) for authority, workspace and sensitive-data agreements.
+Select implementation/safety contracts through the [standards task index](CODING_STANDARDS.md#task-index).
+This guide owns reproducible setup, checks and service isolation; the
+[documentation index](docs/README.md) distinguishes current and historical references.
 
 ## Reproducible setup
 
@@ -73,8 +72,19 @@ installation applies to Linux. Missing Node.js or the package is an optional ski
 in a minimal local checkout. The dedicated CI browser job sets the required flag,
 installs Chromium and fails if the prerequisites or checks are missing.
 
-Documentation-only edits require source/link review, `git diff --check`,
-`python scripts/check_encoding.py` before and after edits. The script strictly
+## Documentation checks
+
+Read [Text editing and UTF-8](CODING_STANDARDS.md#text-editing-and-utf-8) before editing.
+Run the encoding scan before and after documentation edits; after edits, also review
+source facts and links and check the diff:
+
+```bash
+python -X utf8 scripts/check_encoding.py
+python -X utf8 scripts/check_docs_links.py
+git diff --check
+```
+
+The encoding script strictly
 decodes tracked and non-ignored new Markdown, rejects unexpected C0/C1 controls
 and known mojibake signatures, and never modifies files. Explicit filenames limit
 the check to those inputs. It cannot detect every semantically damaged word.
@@ -113,10 +123,9 @@ service for these cases. The integration command above selects both PostgreSQL
 and Redis cases; absent service URLs are reported as skips locally.
 
 CI applies the migration chain twice and checks pending versions before tests.
-If preparing a disposable database manually, note that `scripts/migrate.py` reads
-`DATABASE_URL`, not `TEST_DATABASE_URL`; set its target deliberately.
-Even `--check`/`--status` can create `schema_migrations` and do not verify complete
-schema drift. Never run these against production during a routine local check.
+Before preparing a disposable database manually, read [Database and migrations](CODING_STANDARDS.md#database-and-migrations)
+for the migration command's target and write side effects, then set that target
+deliberately.
 
 ## Tooling and hooks
 
@@ -140,19 +149,20 @@ It does not currently assert end-to-end ingestion of a synthetic bot event.
 Live canary/deployment actions need dedicated credentials and explicit operational
 scope; see [dependency maintenance](README.md#dependency-maintenance).
 
-## Implementation and review
+## Review evidence
 
-- Reuse existing adapters, repositories, formatting and fixtures where they fit.
-- Preserve async boundaries, tracked background work and response ownership.
 - Add meaningful regression tests for changed behavior; do not create tests that
   merely duplicate low-impact prose or configuration text.
+- Inspect fixtures/targets before execution: a test name does not establish offline
+  scope. Start with the smallest meaningful check; broaden for cross-cutting behavior,
+  schema, auth, provider or lifecycle changes, and fix regressions caused by the change.
 - Run additional checks only when the scope, a failure or an unresolved concern
   warrants them. Report pre-existing failures separately without masking them.
-- Update current reference docs with changed behavior; keep old plans and release
-  evidence explicitly historical.
-- For environment changes, verify the effective reader/default, deployment
-  forwarding and reload/restart behavior separately. Settings fields, workflow
-  variables and documented names alone do not prove that a switch takes effect.
 - A review summary should state the change, exact checks/results, and remaining
-  gaps. Do not equate local tests with deployed/provider verification.
-- Do not publish sensitive findings in PR text; follow [SECURITY.md](SECURITY.md).
+  gaps. Use [Deployment and readiness](CODING_STANDARDS.md#deployment-and-readiness)
+  for the limits of local/service evidence.
+
+For environment changes, apply [Providers, models and configuration](CODING_STANDARDS.md#providers-models-and-configuration);
+for async or response changes, apply [Telegram delivery and async work](CODING_STANDARDS.md#telegram-delivery-and-async-work).
+Test data and sensitive findings follow [Credentials, authentication and webhooks](CODING_STANDARDS.md#credentials-authentication-and-webhooks);
+message-bearing logs follow [Logging and private observability](CODING_STANDARDS.md#logging-and-private-observability).
