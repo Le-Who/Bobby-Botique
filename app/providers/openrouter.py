@@ -178,9 +178,11 @@ class OpenRouterProvider(BaseAIProvider):
                 failure_phase=(FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT).value,
             )
             body_error_type: str | None
+            response_text = ""
             try:
                 await exc.response.aread()
-                response_chars = len(exc.response.text)
+                response_text = exc.response.text
+                response_chars = len(response_text)
             except Exception as body_error:
                 response_chars = None
                 body_error_type = type(body_error).__name__
@@ -191,6 +193,10 @@ class OpenRouterProvider(BaseAIProvider):
                 code = ErrorCode.RATE_LIMIT
                 key = KeyDisposition.RATE_LIMITED
                 retry = RetryDisposition.TRY_NEXT_KEY
+            elif self._is_model_access_denied(status, response_text):
+                code = ErrorCode.INVALID_REQUEST
+                key = KeyDisposition.UNCHANGED
+                retry = RetryDisposition.DO_NOT_RETRY
             elif status in {401, 403}:
                 code = ErrorCode.INVALID_KEY
                 key = KeyDisposition.INVALID
@@ -265,6 +271,10 @@ class OpenRouterProvider(BaseAIProvider):
         )
 
     # ── Overridable template methods ─────────────────────────────────────────
+
+    def _is_model_access_denied(self, status: int, response_text: str) -> bool:
+        """Allow compatible endpoints to distinguish model access from bad auth."""
+        return False
 
     def _get_url(self) -> str:
         """Return the chat completions endpoint URL."""

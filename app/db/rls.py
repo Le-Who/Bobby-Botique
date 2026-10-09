@@ -47,6 +47,19 @@ WITH CHECK (
 );
 """
 
+# Membership is the root of group authorization: querying this table from its
+# own policy recurses, and allowing tenant INSERT would permit self-enrollment.
+_GROUP_MEMBERS_USING = """
+    user_id = (select NULLIF(current_setting('app.user_id', true), '')::bigint) OR
+    (select current_setting('app.is_admin', true)) = 'true'
+"""
+_GROUP_MEMBERS_CHECK = "(select current_setting('app.is_admin', true)) = 'true'"
+RLS_POLICY_GROUP_MEMBERS = f"""
+CREATE POLICY {{policy_name}} ON {{table_name}}
+FOR ALL USING ({_GROUP_MEMBERS_USING})
+WITH CHECK ({_GROUP_MEMBERS_CHECK});
+"""
+
 RLS_POLICY_CONVERSATION_MESSAGES = """
 CREATE POLICY {policy_name} ON {table_name}
 FOR ALL USING (
@@ -97,7 +110,7 @@ RLS_CONFIG = {
     ],
     "schema_migrations": [{"name": "schema_migrations_policy", "template": RLS_POLICY_ADMIN}],
     "group_chats": [{"name": "group_chats_policy", "template": RLS_POLICY_GROUP}],
-    "group_members": [{"name": "group_members_policy", "template": RLS_POLICY_GROUP}],
+    "group_members": [{"name": "group_members_policy", "template": RLS_POLICY_GROUP_MEMBERS}],
     "group_messages": [{"name": "group_messages_policy", "template": RLS_POLICY_GROUP}],
     "api_keys": [{"name": "api_keys_policy", "template": RLS_POLICY_ADMIN}],
     "key_usage": [{"name": "key_usage_policy", "template": RLS_POLICY_ADMIN}],
@@ -170,6 +183,13 @@ async def create_rls_policies(table_name: str, db_query):
     for policy_cfg in policies:
         policy_name = policy_cfg["name"]
         if policy_name in existing_policies:
+            if table_name == "group_members" and policy_name == "group_members_policy":
+                # Repair historical self-recursive policies atomically, without
+                # dropping the policy or changing its identity/grants.
+                await db_query(
+                    f"ALTER POLICY {quote_ident(policy_name)} ON {quote_ident(table_name)} "
+                    f"USING ({_GROUP_MEMBERS_USING}) WITH CHECK ({_GROUP_MEMBERS_CHECK});"
+                )
             continue
 
         if "sql" in policy_cfg:

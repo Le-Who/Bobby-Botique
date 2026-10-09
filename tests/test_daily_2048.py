@@ -477,6 +477,7 @@ async def test_process_move_trusts_valid_client_board_when_persisted_board_lags(
             "moves": 23,
             "merge_score": 632,
             "elapsed_ms": 58_000,
+            "recordable": False,
         }
     )
 
@@ -500,8 +501,10 @@ async def test_process_move_trusts_valid_client_board_when_persisted_board_lags(
 
     assert update_mock.await_args.kwargs["board"] == expected_board
     assert update_mock.await_args.kwargs["merge_score"] == 632
+    assert update_mock.await_args.kwargs["recordable"] is False
     assert event["board"] == expected_board
     assert event["spawned"] == {"x": 3, "y": 1, "value": 2}
+    assert event["recordable"] is False
 
 
 @pytest.mark.asyncio

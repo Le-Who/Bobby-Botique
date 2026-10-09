@@ -386,14 +386,32 @@ class TestLLMSummarizationScheduling:
         callback = AsyncMock()
         dropped = make_history(20, msg_size=500)
 
-        # Use the event loop from the async test
+        import app.context.summarizer as summarizer
+
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def runner(*_args):
+            entered.set()
+            await release.wait()
+
         with patch(
             "app.context.summarizer._run_llm_summarization",
-            new_callable=AsyncMock,
-        ):
-            schedule_llm_summarization(42, dropped, None, callback, expected_epoch=7)
-            # Allow the task to start
-            await asyncio.sleep(0.01)
+            side_effect=runner,
+        ) as mock_runner:
+            task = schedule_llm_summarization(42, dropped, None, callback, expected_epoch=7)
+            try:
+                assert isinstance(task, asyncio.Task)
+                assert task in summarizer._summarization_tasks_by_user[42]
+                await asyncio.wait_for(entered.wait(), timeout=1)
+                mock_runner.assert_awaited_once_with(42, 7, dropped, None, callback)
+                assert not task.done()
+            finally:
+                release.set()
+                if task is not None:
+                    await task
+            assert task.done()
+            assert 42 not in summarizer._summarization_tasks_by_user
 
     @pytest.mark.asyncio
     async def test_cancel_user_tasks_cancels_and_awaits_shutdown(self):

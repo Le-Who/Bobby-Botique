@@ -14,7 +14,7 @@ from app.errors import UserLimitExceededError
 @pytest.mark.asyncio
 async def test_global_capacity_timeout_rejects_and_releases_local_slot():
     redis = AsyncMock()
-    redis.zcard.return_value = 1
+    redis.eval.return_value = 0
     clock = SimpleNamespace(monotonic=Mock(side_effect=[0, 61]), monotonic_ns=time.monotonic_ns, time=time.time)
     sem = GlobalLLMSemaphore(limit=1, timeout=60)
     with patch("app.cache.redis_client", redis), patch("app.adapters.concurrency.time", clock):
@@ -28,14 +28,13 @@ async def test_global_capacity_timeout_rejects_and_releases_local_slot():
 @pytest.mark.asyncio
 async def test_cancellation_during_redis_acquire_removes_token_and_releases_slot():
     redis = AsyncMock()
-    redis.zcard.return_value = 0
-    checking_rank = asyncio.Event()
+    checking_admission = asyncio.Event()
 
-    async def blocked_rank(*args):
-        checking_rank.set()
+    async def blocked_admission(*args):
+        checking_admission.set()
         await asyncio.Future()
 
-    redis.zrank.side_effect = blocked_rank
+    redis.eval.side_effect = blocked_admission
     sem = GlobalLLMSemaphore(limit=1)
 
     async def acquire():
@@ -45,20 +44,20 @@ async def test_cancellation_during_redis_acquire_removes_token_and_releases_slot
     with patch("app.cache.redis_client", redis):
         task = asyncio.create_task(acquire())
         try:
-            await asyncio.wait_for(checking_rank.wait(), timeout=1)
+            await asyncio.wait_for(checking_admission.wait(), timeout=1)
         finally:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
     assert sem._local_semaphore._value == 1
-    token = next(iter(redis.zadd.call_args.args[1]))
+    token = redis.eval.call_args.args[-1]
     redis.zrem.assert_awaited_once_with(sem._key, token)
 
 
 @pytest.mark.asyncio
 async def test_redis_outage_still_allows_bounded_local_fallback():
     redis = AsyncMock()
-    redis.zremrangebyscore.side_effect = ConnectionError("synthetic outage")
+    redis.eval.side_effect = ConnectionError("synthetic outage")
     sem = GlobalLLMSemaphore(limit=1)
     with patch("app.cache.redis_client", redis):
         async with sem:
@@ -69,30 +68,28 @@ async def test_redis_outage_still_allows_bounded_local_fallback():
 @pytest.mark.asyncio
 async def test_nested_different_semaphores_release_their_own_tokens():
     redis = AsyncMock()
-    redis.zcard.return_value = 0
-    redis.zrank.return_value = 0
+    redis.eval.return_value = 1
     outer = GlobalLLMSemaphore(1, redis_key="outer")
     inner = GlobalLLMSemaphore(1, redis_key="inner")
     with patch("app.cache.redis_client", redis):
         async with outer, inner:
             pass
-    tokens = {call.args[0]: next(iter(call.args[1])) for call in redis.zadd.call_args_list}
+    tokens = {call.args[2]: call.args[-1] for call in redis.eval.call_args_list}
     assert {call.args for call in redis.zrem.call_args_list} == {("outer", tokens["outer"]), ("inner", tokens["inner"])}
 
 
 @pytest.mark.asyncio
 async def test_long_running_slot_is_renewed_and_renewal_stops_on_exit():
     redis = AsyncMock()
-    redis.zcard.return_value = 0
-    redis.zrank.return_value = 0
+    redis.eval.return_value = 1
     renewed = asyncio.Event()
 
-    async def zadd(key, members, **options):
-        if options.get("xx"):
+    async def eval_slot(*args):
+        if len(args) == 4:
             renewed.set()
         return 1
 
-    redis.zadd.side_effect = zadd
+    redis.eval.side_effect = eval_slot
     sem = GlobalLLMSemaphore(1)
     sem._renew_interval = 0.01
     with patch("app.cache.redis_client", redis):

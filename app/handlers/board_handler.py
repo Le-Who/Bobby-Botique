@@ -389,12 +389,15 @@ async def handle_board_close_callback(
 
     data = query.data or ""
     parts = data.split(":", 1)
-    if len(parts) != 2:
+    if len(parts) != 2 or parts[0] != "board_close":
         return
 
     try:
         board_id = int(parts[1])
     except ValueError:
+        return
+
+    if board_id <= 0:
         return
 
     inline_message_id = query.inline_message_id
@@ -404,16 +407,20 @@ async def handle_board_close_callback(
     from app.repos.boards_repo import close_board, get_board_by_inline_msg
 
     board = await get_board_by_inline_msg(inline_message_id)
-    if not board:
+    if not board or board.get("id") != board_id:
+        await query.answer("ℹ️ Доска уже закрыта или не найдена.", show_alert=True)
         return
 
     # Only the creator can close
     requester_id = query.from_user.id if query.from_user else None
-    if requester_id and requester_id != board.get("creator_id"):
+    creator_id = board.get("creator_id")
+    if requester_id is None or creator_id is None or requester_id != creator_id:
         await query.answer("🔒 Только создатель доски может её закрыть.", show_alert=True)
         return
 
-    await close_board(board_id)
+    if not await close_board(board_id):
+        await query.answer("⚠️ Не удалось закрыть доску. Попробуйте позже.", show_alert=True)
+        return
 
     topic = board.get("topic", "")
     summary = board.get("last_summary", "")

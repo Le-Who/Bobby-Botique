@@ -78,16 +78,39 @@ class TestFeedbackCallback:
 
     @pytest.mark.asyncio
     async def test_feedback_replaces_keyboard_row(self, _update_with_feedback):
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
         from app.handlers.cb_feedback import feedback_callback
 
         update, query = _update_with_feedback
         query.data = "feedback:up"
+        markup = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("Publish", url="https://example.test/publication")],
+                [
+                    InlineKeyboardButton("👍", callback_data="feedback:up"),
+                    InlineKeyboardButton("👎", callback_data="feedback:down"),
+                ],
+                [
+                    InlineKeyboardButton("Retry", callback_data="retry:999"),
+                    InlineKeyboardButton("Facts", callback_data="facts:999"),
+                ],
+            ]
+        )
+        query.message.reply_markup = markup
 
         with patch("app.handlers.cb_feedback.save_feedback", new_callable=AsyncMock):
             await feedback_callback(update, MagicMock())
 
         # The feedback row should be replaced, edit_reply_markup called
         query.message.edit_reply_markup.assert_awaited_once()
+        result = query.message.edit_reply_markup.await_args.kwargs["reply_markup"]
+        assert result.inline_keyboard == (
+            markup.inline_keyboard[0],
+            markup.inline_keyboard[2],
+            (InlineKeyboardButton("👍 Отзыв учтён ✓", callback_data="noop"),),
+        )
+        assert query.message.reply_markup == markup
 
     @pytest.mark.asyncio
     async def test_save_failure_does_not_raise(self, _update_with_feedback):

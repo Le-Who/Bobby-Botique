@@ -935,6 +935,7 @@ function initSwipeToDelete(card) {
 }
 
 function scheduleDelete(id, cardNode) {
+  if (pendingDeletions[id]) return;
   // Hide element visually
   cardNode.style.height = cardNode.offsetHeight + 'px';
   cardNode.style.opacity = '1';
@@ -957,6 +958,20 @@ function scheduleDelete(id, cardNode) {
       prevHeader.style.opacity = '0';
       prevHeader.style.height = '0';
   }
+
+  const restoreCard = () => {
+    cardNode.style.height = '';
+    cardNode.style.opacity = '1';
+    cardNode.style.margin = '';
+    cardNode.style.border = '';
+    const inner = cardNode.querySelector('.memory-card-inner');
+    inner.style.opacity = '1';
+    inner.style.transform = 'translateX(0)';
+    if (prevHeader) {
+      prevHeader.style.opacity = '1';
+      prevHeader.style.height = '';
+    }
+  };
   
   // Set deletion timer
   const doDelete = async () => {
@@ -973,8 +988,7 @@ function scheduleDelete(id, cardNode) {
       allMemories = allMemories.filter(m => m.id !== id);
     } catch(e) {
       showToast('Ошибка удаления');
-      cardNode.style.height = ''; cardNode.style.opacity = '1';
-      if (prevHeader) prevHeader.style.opacity = '1';
+      restoreCard();
     }
   };
   let timer = setTimeout(doDelete, 5000);
@@ -985,16 +999,7 @@ function scheduleDelete(id, cardNode) {
   showUndoToast('Воспоминание удалено', () => {
     clearTimeout(timer);
     delete pendingDeletions[id];
-    cardNode.style.height = '';
-    cardNode.style.opacity = '1';
-    cardNode.style.margin = '';
-    cardNode.style.borderBottom = '.5px solid var(--secondary-bg)';
-    const inner = cardNode.querySelector('.memory-card-inner');
-    inner.style.transform = 'translateX(0)';
-    if (prevHeader) {
-      prevHeader.style.opacity = '1';
-      prevHeader.style.height = '';
-    }
+    restoreCard();
   });
 }
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+from collections.abc import Awaitable, Callable
 
 from app.natal.calculator import calculate_chart
 from app.natal.destiny_matrix import build_destiny_matrix_sections, calculate_destiny_matrix, render_destiny_matrix_svg
@@ -27,15 +28,27 @@ class NatalConfigurationError(NatalReportError):
     pass
 
 
+class NatalAccessRevoked(NatalReportError):
+    pass
+
+
+async def _check_access(access_guard: Callable[[], Awaitable[bool]] | None) -> None:
+    if access_guard is not None and not await access_guard():
+        raise NatalAccessRevoked("Natal report access revoked.")
+
+
 async def create_natal_report(
     birth_input: BirthInput,
     user_id: int,
     chat_id: int,
     webhook_url: str,
+    *,
+    access_guard: Callable[[], Awaitable[bool]] | None = None,
 ) -> NatalReport:
     if not _natal_reports_enabled():
         raise NatalConfigurationError("Natal reports are disabled.")
     _validate_webhook_url(webhook_url)
+    await _check_access(access_guard)
     report_type = birth_input.report_type
     matrix = calculate_destiny_matrix(birth_input.birth_date) if _includes_destiny_matrix(report_type) else None
     if _requires_natal_chart(report_type):
@@ -43,6 +56,7 @@ async def create_natal_report(
         chart = await calculate_chart(resolved)
         chart.destiny_matrix = matrix
         svg = render_chart_svg(chart)
+        await _check_access(access_guard)
         sections = await generate_interpretation(
             chart,
             user_id=user_id,
@@ -66,11 +80,14 @@ async def create_natal_report(
         sections=sections,
         hosted_url=hosted_url,
     )
+    await _check_access(access_guard)
     await save_report(report)
     if _telegraph_publication_enabled():
+        await _check_access(access_guard)
         telegraph_url = await _try_publish_telegraph(report)
         if _is_safe_telegraph_url(telegraph_url):
             report.telegraph_url = telegraph_url
+            await _check_access(access_guard)
             await save_report(report)
     return report
 
@@ -135,7 +152,7 @@ async def _try_publish_telegraph(report: NatalReport) -> str | None:
             return None
         return await create_telegraph_page_from_markdown("Натальная карта", markdown)
     except Exception as exc:
-        logger.warning("Natal Telegraph mirror creation failed: %s", exc)
+        logger.warning("Natal Telegraph mirror creation failed type=%s", type(exc).__name__)
         return None
 
 

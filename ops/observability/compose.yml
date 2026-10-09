@@ -54,6 +54,7 @@ services:
       - /etc/alloy/config.alloy
     volumes:
       - ./config.alloy:/etc/alloy/config.alloy:ro
+      - ./alloy-healthcheck.sh:/etc/alloy/healthcheck.sh:ro
       - alloy-data:/var/lib/alloy/data
     tmpfs:
       - /tmp:size=32m,mode=1777
@@ -68,7 +69,7 @@ services:
     mem_limit: 256m
     cpus: 0.25
     healthcheck:
-      test: ["CMD", "/bin/alloy", "validate", "--stability.level=experimental", "/etc/alloy/config.alloy"]
+      test: ["CMD", "/usr/bin/bash", "/etc/alloy/healthcheck.sh"]
       interval: 10s
       timeout: 5s
       retries: 3

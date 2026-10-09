@@ -280,7 +280,7 @@ async def test_natal_submit_accepts_form_before_report_is_ready(monkeypatch):
     sent = {}
     scheduled = {}
 
-    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url):
+    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url, access_guard=None):
         assert isinstance(birth_input, BirthInput)
         sent["birth_input"] = birth_input
         sent["user_id"] = user_id
@@ -339,7 +339,7 @@ async def test_natal_submit_matrix_only_requires_only_birth_date(monkeypatch):
     sent = {}
     scheduled = {}
 
-    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url):
+    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url, access_guard=None):
         sent["birth_input"] = birth_input
         sent["user_id"] = user_id
         sent["chat_id"] = chat_id

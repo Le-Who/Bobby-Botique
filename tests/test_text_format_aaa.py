@@ -10,6 +10,10 @@ Covers:
 These are critical risk areas: invalid HTML causes Telegram to reject edit_text.
 """
 
+from html.parser import HTMLParser
+
+import pytest
+
 from app.utils.text_format import (
     markdown_to_html,
     sanitize_html_tags,
@@ -18,6 +22,59 @@ from app.utils.text_format import (
 )
 
 MAX_LEN = 4096
+
+
+class _CodeMarkupParser(HTMLParser):
+    """Validate original chunks independently, before any repair."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.text = []
+        self.code_text = []
+        self.plain_text = []
+        self.code_blocks = 0
+
+    def handle_starttag(self, tag, attrs):
+        assert tag in {"pre", "code"}
+        if tag == "pre":
+            assert not self.stack
+            assert attrs == []
+        else:
+            assert self.stack == ["pre"]
+            assert attrs == [("class", "language-python")]
+            self.code_blocks += 1
+        self.stack.append(tag)
+
+    def handle_endtag(self, tag):
+        assert self.stack and self.stack.pop() == tag
+
+    def handle_startendtag(self, tag, attrs):
+        raise AssertionError(f"Self-closing {tag} cannot preserve a code wrapper")
+
+    def handle_data(self, data):
+        if self.stack == ["pre", "code"]:
+            self.code_text.append(data)
+        else:
+            assert self.stack == [], "Code data must remain inside pre/code"
+            self.plain_text.append(data)
+        self.text.append(data)
+
+
+@pytest.mark.parametrize(
+    "markup,error",
+    [
+        ('<pre><code class="language-python"/>value_0 = 0</pre>', "Self-closing"),
+        ("<pre/>value_0 = 0", "Self-closing"),
+        ('<pre><code class="language-python"></code>value_0 = 0</pre>', "Code data"),
+    ],
+    ids=["self_closing_code", "self_closing_pre", "code_data_after_close"],
+)
+def test_code_markup_parser_rejects_lost_code_wrappers(markup, error):
+    parser = _CodeMarkupParser()
+    with pytest.raises(AssertionError, match=error):
+        parser.feed(markup)
+        parser.close()
 
 
 # ─── markdown_to_html ─────────────────────────────────────────────────────────
@@ -236,10 +293,7 @@ def test_misnested_tags_are_reordered_correctly():
     result = sanitize_html_tags(html)
 
     # Assert
-    # After sanitization, all tags must be balanced
-    assert result.count("<code>") == result.count("</code>")
-    assert result.count("<i>") == result.count("</i>")
-    assert "text" in result
+    assert result == "<code><i>text</i></code>"
 
 
 def test_orphaned_close_tag_is_dropped():
@@ -269,8 +323,7 @@ def test_nested_valid_tags_preserved():
     result = sanitize_html_tags(html)
 
     # Assert
-    assert "print(1)" in result
-    assert "<pre>" in result or result.startswith("<pre>") or "pre" in result
+    assert result == html
 
 
 # ─── split_text_safe ──────────────────────────────────────────────────────────
@@ -310,7 +363,7 @@ def test_all_chunks_combined_equal_original_content():
     guaranteed. We verify the word-level content is preserved instead.
     """
     # Arrange
-    text = "word " * 500  # 2500 chars, well over 400-char limit
+    text = " ".join(f"token_{i:04d}" for i in range(500))
 
     # Act
     chunks = split_text_safe(text, max_length=400)
@@ -318,9 +371,8 @@ def test_all_chunks_combined_equal_original_content():
     original_words = text.split()
 
     # Assert — all original words appear (order preserved, count matches)
-    assert len(combined_words) == len(original_words), (
-        f"Word count mismatch: original={len(original_words)}, combined={len(combined_words)}"
-    )
+    assert len(chunks) > 1
+    assert combined_words == original_words
 
 
 def test_split_does_not_produce_empty_chunks():
@@ -338,7 +390,7 @@ def test_split_does_not_produce_empty_chunks():
 def test_split_preserves_code_block_tags():
     """After splitting, opened <pre> must have matching </pre> in same chunk."""
     # Arrange
-    inner_code = "x = 1\n" * 50  # Extracted to avoid backslash-in-f-string (py<3.12)
+    inner_code = "\n".join(f"value_{i} = {i}" for i in range(80))
     code_block = f'<pre><code class="language-python">{inner_code}</code></pre>'
     text = code_block + " some text after"
 
@@ -346,10 +398,24 @@ def test_split_preserves_code_block_tags():
     chunks = split_text_safe(text, max_length=400)
 
     # Assert
+    assert len(chunks) > 1
+    plain_chunks = []
+    code_data = []
+    trailing_data = []
+    code_chunks = 0
     for chunk in chunks:
-        # Each chunk must be individually parseable (balanced tags)
-        cleaned = sanitize_html_tags(chunk)
-        assert cleaned  # Not empty after sanitization
+        parser = _CodeMarkupParser()
+        parser.feed(chunk)
+        parser.close()
+        assert parser.stack == []
+        plain_chunks.append("".join(parser.text))
+        code_data.append("".join(parser.code_text))
+        trailing_data.append("".join(parser.plain_text))
+        code_chunks += parser.code_blocks
+    assert code_chunks > 1
+    assert " ".join(code_data).split() == inner_code.split()
+    assert " ".join(trailing_data).split() == ["some", "text", "after"]
+    assert " ".join(plain_chunks).split() == (inner_code + " some text after").split()
 
 
 # ─── strip_formatting ─────────────────────────────────────────────────────────

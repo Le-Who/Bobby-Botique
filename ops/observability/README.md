@@ -30,9 +30,13 @@ secret-file value and verifies authenticated `/api/user` access before replacing
 the bot container. A password changed only in Grafana is therefore overwritten
 on the next deployment. There is no soak-period or calendar wait.
 
-These gates verify service readiness and login, not end-to-end ingestion of a
-new bot event. Synthetic generation/query/export helpers exist below; the current
-CI/deploy workflow does not automatically assert that a generated event is searchable.
+Deployment gates verify service readiness and login. CI also starts the isolated
+stack, sends synthetic bot stdout through the Docker collector, and requires the
+exact events to be searchable through the authenticated Grafana datasource.
+It checks source filters, bounded payloads, query limits and protected synthetic
+content. This does not establish ingestion or Telegram/provider availability on
+the deployed VPS. Alloy health checks the running `/-/ready` endpoint; configuration
+validation remains a separate CI step.
 
 The generated password is never printed by CI. Retrieve it in a private SSH
 session on the VPS:

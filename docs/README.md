@@ -63,6 +63,8 @@ neither authorizes execution now nor proves a feature is missing.
 | 2026-09-11 log viewer replacement | `ops/observability/`, CI/deploy health/auth gates; the plan is not an unimplemented backlog |
 | 2026-10-02 prompt quality | [Dated audit](prompt-quality-audit-2026-10-02.md); 90 IDs, actual consumers, fixes and offline evidence; current operation is described in [runtime controls](runtime-controls.md) |
 | 2026-10-03 test corpus | [Dated audit](test-corpus-audit-2026-10-03.md), [complete inventory](test-corpus-inventory-2026-10-03.md) and [baseline evidence](test-corpus-audit-evidence-2026-10-03.json); [43 implemented corrections](test-corpus-fixes-2026-10-03.md) with [verification evidence](test-corpus-fixes-evidence-2026-10-03.json). Reports distinguish source review, selected test execution and live-runtime boundaries |
+| 2026-10-09 code/test coverage | [Dated coverage and quality map](test-coverage-map-2026-10-09.md), [all source files](test-coverage/2026-10-09/sources.csv), [all test modules](test-coverage/2026-10-09/test-quality.csv) and [measured evidence](test-coverage/2026-10-09/evidence.json); scoped gaps, exact oracles and independent verification |
+| 2026-10-09 coverage improvements | [Final implementation report](test-coverage-improvements-2026-10-09.md) and [verified appendix](test-coverage/2026-10-09-improvements/README.md); 30 scenarios closed, 18 quality corrections, 2 useful limits preserved; exact passing evidence and independent review |
 
 [CHANGELOG.md](../CHANGELOG.md), [maintainer queue](MAINTAINER_QUEUE.md) and
 `.jules/` journals are historical evidence. Old performance figures and broad

@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telegram.ext import CommandHandler, MessageHandler
@@ -88,8 +88,10 @@ async def test_manual_reading_uses_subscription_without_changing_delivery(monkey
         horoscope, "get_horoscope_subscription", AsyncMock(return_value={"sign": "leo", "is_active": active})
     )
     writes = AsyncMock(side_effect=AssertionError("manual reading must not update subscription"))
+    claims = MagicMock(side_effect=AssertionError("manual reading must not claim scheduled delivery"))
     monkeypatch.setattr(horoscope, "upsert_horoscope_subscription", writes)
-    monkeypatch.setattr("app.handlers.scheduled_horoscopes.mark_horoscope_sent", writes)
+    monkeypatch.setattr("app.repos.horoscope_subscriptions.mark_horoscope_sent", writes)
+    monkeypatch.setattr("app.handlers.scheduled_horoscopes.claim_horoscope_delivery", claims)
     monkeypatch.setattr(
         "app.intent_router._handle_horoscope", AsyncMock(return_value=SimpleNamespace(text="Прогноз готов"))
     )
@@ -104,6 +106,7 @@ async def test_manual_reading_uses_subscription_without_changing_delivery(monkey
     assert ("сегодня" if kind == "today" else "завтра") in sent.kwargs["text"]
     assert context.user_data["horo_sign"] == "aries"
     writes.assert_not_awaited()
+    claims.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -487,6 +487,7 @@ let audioCtx = null;
 let workletNode = null;
 let micStream = null;
 let micSinkGain = null;
+let activeMicCapture = null;
 let playbackCtx = null;
 let scheduledSources = [];
 let nextPlaybackTime = 0;
@@ -683,7 +684,7 @@ function requestSettingsReconnect() {
   sessionEndedIntentionally = false;
   liveFatalState = null;
   flushPlayback();
-  if (recording) {
+  if (recording || pendingRecordingStart || activeMicCapture) {
     stopRecording({ preserveStatus: true });
   }
   setStatus('Применяю новые настройки…', '');
@@ -1001,9 +1002,7 @@ function connectWS(options = {}) {
           (msg.reason === 'misconfigured' || msg.reason === 'server_capacity') &&
           maybeQueueStandardFallback(msg.reason, 'Internet-режим недоступен. Переключаю на стандартный Live.')
         ) {
-          if (recording) {
-            stopRecording({ preserveStatus: true });
-          }
+          stopRecording({ preserveStatus: true });
           if (ws === socket && socket.readyState === WebSocket.OPEN) {
             socket.close(1000, 'vertex-fallback');
           }
@@ -1011,9 +1010,7 @@ function connectWS(options = {}) {
         }
         liveFatalState = msg.reason || 'fatal';
         clearTimeout(reconnectTimer);
-        if (recording) {
-          stopRecording({ preserveStatus: true });
-        }
+        stopRecording({ preserveStatus: true });
         sessionEndedIntentionally = true;
         endBtn.disabled = true;
         setStatus(msg.message || 'Голосовой режим временно недоступен', 'error');
@@ -1028,6 +1025,7 @@ function connectWS(options = {}) {
           msg.reason === 'connect_failed' &&
           maybeQueueStandardFallback(msg.reason, 'Не удалось запустить internet-live. Переключаю на стандартный Live.')
         ) {
+          stopRecording({ preserveStatus: true });
           if (ws === socket && socket.readyState === WebSocket.OPEN) {
             socket.close(1000, 'vertex-connect-failed');
           }
@@ -1139,32 +1137,47 @@ function finalizeTranscriptDraft() {
 }
 
 /* ── Mic capture via AudioWorklet ───────────────────────────────────── */
+function releaseMicCapture(capture) {
+  if (!capture || capture.disposed) return;
+  capture.disposed = true;
+  capture.worklet?.disconnect();
+  capture.sink?.disconnect();
+  capture.source?.disconnect();
+  if (capture.context) void capture.context.close().catch(() => {});
+  capture.stream?.getTracks().forEach(track => track.stop());
+}
+
 async function startMicCapture() {
+  if (activeMicCapture) return;
+  const capture = { disposed: false };
+  activeMicCapture = capture;
+  const isCurrent = () => activeMicCapture === capture && !capture.disposed;
+  setMicState({ isConnecting: true });
+  let failureMessage = 'Нет доступа к микрофону';
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, sampleRate: 16000 }
     });
-  } catch (err) {
-    showError('Нет доступа к микрофону');
-    return;
-  }
+    if (!isCurrent()) {
+      stream.getTracks().forEach(track => track.stop());
+      return;
+    }
+    capture.stream = stream;
+    failureMessage = 'Не удалось запустить микрофон';
+    capture.context = new AudioContext({ sampleRate: 48000 });
+    capture.source = capture.context.createMediaStreamSource(stream);
+    const analyser = capture.context.createAnalyser();
+    analyser.fftSize = 256;
+    capture.source.connect(analyser);
 
-  audioCtx = new AudioContext({ sampleRate: 48000 });
-  const source = audioCtx.createMediaStreamSource(micStream);
-
-  // Analyser for visualizer
-  const analyser = audioCtx.createAnalyser();
-  analyser.fftSize = 256;
-  source.connect(analyser);
-
-  // AudioWorklet
-  try {
-    await audioCtx.audioWorklet.addModule('/static/js/audio-processor.js');
-    workletNode = new AudioWorkletNode(audioCtx, 'mic-processor');
-    micSinkGain = audioCtx.createGain();
-    micSinkGain.gain.value = 0;
-    workletNode.port.onmessage = (ev) => {
-      if (!recording || !ws || ws.readyState !== WebSocket.OPEN) return;
+    failureMessage = 'AudioWorklet не поддерживается в этом браузере';
+    await capture.context.audioWorklet.addModule('/static/js/audio-processor.js');
+    if (!isCurrent()) return;
+    capture.worklet = new AudioWorkletNode(capture.context, 'mic-processor');
+    capture.sink = capture.context.createGain();
+    capture.sink.gain.value = 0;
+    capture.worklet.port.onmessage = (ev) => {
+      if (!isCurrent() || !recording || !ws || ws.readyState !== WebSocket.OPEN) return;
       const b64 = arrayBufferToBase64(ev.data);
       ws.send(JSON.stringify({
         type: 'realtime_input',
@@ -1172,24 +1185,31 @@ async function startMicCapture() {
         data: b64
       }));
     };
-    source.connect(workletNode);
-    workletNode.connect(micSinkGain);
-    micSinkGain.connect(audioCtx.destination);
+    capture.source.connect(capture.worklet);
+    capture.worklet.connect(capture.sink);
+    capture.sink.connect(capture.context.destination);
+
+    // Publish only resources owned by the still-current start request.
+    micStream = capture.stream;
+    audioCtx = capture.context;
+    workletNode = capture.worklet;
+    micSinkGain = capture.sink;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'activity_start' }));
+    }
+    setMicState({ isRecording: true, isConnecting: false });
+    vizWrap.classList.add('recording');
+    startViz(analyser);
+    setStatus('Слушаю…', 'active');
+    haptic?.impactOccurred('medium');
   } catch (err) {
-    showError('AudioWorklet не поддерживается в этом браузере');
-    return;
+    if (!isCurrent()) return;
+    releaseMicCapture(capture);
+    activeMicCapture = null;
+    setMicState({ isRecording: false, isConnecting: false });
+    vizWrap.classList.remove('connecting');
+    showError(failureMessage);
   }
-
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'activity_start' }));
-  }
-
-  setMicState({ isRecording: true, isConnecting: false });
-  vizWrap.classList.add('recording');
-  startViz(analyser);
-  setStatus('Слушаю…', 'active');
-  haptic?.impactOccurred('medium');
-
 }
 
 function startRecording() {
@@ -1210,7 +1230,7 @@ function startRecording() {
 
 function stopRecording({ preserveStatus = false } = {}) {
   const cancelPendingStart = pendingRecordingStart && !recording;
-  if (!recording && !cancelPendingStart) {
+  if (!recording && !cancelPendingStart && !activeMicCapture) {
     return;
   }
   setMicState({ isRecording: false, isConnecting: false });
@@ -1224,10 +1244,12 @@ function stopRecording({ preserveStatus = false } = {}) {
   }
 
   // Cleanup mic only
-  if (workletNode) { workletNode.disconnect(); workletNode = null; }
-  if (micSinkGain) { micSinkGain.disconnect(); micSinkGain = null; }
-  if (audioCtx) { audioCtx.close(); audioCtx = null; }
-  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  releaseMicCapture(activeMicCapture);
+  activeMicCapture = null;
+  workletNode = null;
+  micSinkGain = null;
+  audioCtx = null;
+  micStream = null;
 
   if (cancelPendingStart && ws && !liveSessionEstablished && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
     plannedReconnect = false;
@@ -1240,6 +1262,7 @@ function stopRecording({ preserveStatus = false } = {}) {
 }
 
 function endSession() {
+  if (recording || pendingRecordingStart || activeMicCapture) stopRecording();
   sessionEndedIntentionally = true;
   clearTimeout(reconnectTimer);
   plannedReconnect = false;
@@ -1255,7 +1278,6 @@ function endSession() {
   sessionStorage.removeItem('liveResumptionToken');
   reconnectAttempt = 0;
   
-  if (recording) stopRecording();
   if (ws) { ws.close(); ws = null; }
   
   flushPlayback();

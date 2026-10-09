@@ -12,10 +12,12 @@ Verifies:
 
 from unittest.mock import AsyncMock, patch
 
+import asyncpg
 import pytest
 
 from app.errors import (
     APIError,
+    APIQuotaExceededError,
     CacheError,
     CircuitBreakerOpenError,
     ConfigurationError,
@@ -118,26 +120,43 @@ class TestConvertToTypedException:
     """Verify the conversion utility maps exceptions correctly."""
 
     def test_asyncpg_connection_error(self):
-        original = Exception("asyncpg connection timeout")
+        original = asyncpg.ConnectionDoesNotExistError("connection was closed in the middle of operation")
         result = convert_to_typed_exception(original, "db_init")
-        assert isinstance(result, GemaibotBaseException)
+        assert type(result) is DatabaseConnectionError
+        assert result.details == {"original_error": "ConnectionDoesNotExistError", "context": "db_init"}
 
     def test_rate_limit_maps_to_database_rate_limit(self):
-        original = Exception("rate limit exceeded")
-        # The converter checks error_message for "rate limit"
+        original = asyncpg.TooManyConnectionsError("rate limit exceeded")
         result = convert_to_typed_exception(original, "query")
-        assert isinstance(result, GemaibotBaseException)
+        assert type(result) is DatabaseRateLimitError
+        assert result.details == {"original_error": "TooManyConnectionsError", "context": "query"}
 
-    def test_api_quota_maps_to_api_error(self):
+    def test_api_quota_maps_to_api_quota_exceeded_error(self):
         original = Exception("API quota exceeded")
         result = convert_to_typed_exception(original, "gemini_call")
-        assert isinstance(result, (GemaibotAPIError, GemaibotBaseException))
+        assert type(result) is APIQuotaExceededError
+        assert result.details == {"original_error": "Exception", "context": "gemini_call"}
 
     def test_unknown_error_maps_to_base(self):
         original = ValueError("some random error")
         result = convert_to_typed_exception(original, "unknown")
-        assert isinstance(result, GemaibotBaseException)
+        assert type(result) is GemaibotBaseException
         assert "Unexpected error" in str(result)
+
+    def test_asyncpg_application_subclass_retains_database_ownership(self):
+        class ApplicationConnectionError(asyncpg.ConnectionDoesNotExistError):
+            pass
+
+        original = ApplicationConnectionError("connection was closed in the middle of operation")
+        result = convert_to_typed_exception(original, "application_db")
+        assert type(result) is DatabaseConnectionError
+        assert result.details == {"original_error": "ApplicationConnectionError", "context": "application_db"}
+
+    def test_postgres_message_fallback_still_classifies_generic_exception(self):
+        original = RuntimeError("postgres connection refused")
+        result = convert_to_typed_exception(original, "legacy_db")
+        assert type(result) is DatabaseConnectionError
+        assert result.details == {"original_error": "RuntimeError", "context": "legacy_db"}
 
 
 # ─── Database Layer Integration Tests ────────────────────────────────────────

@@ -193,9 +193,10 @@ def convert_to_typed_exception(exception: Exception, context: str = "") -> Gemai
 
     error_message = str(exception)
     error_type = type(exception).__name__
+    error_modules = {base.__module__.split(".", 1)[0] for base in type(exception).__mro__}
 
     # Database exceptions
-    if "asyncpg" in error_type or "postgres" in error_message.lower():
+    if "asyncpg" in error_modules or "asyncpg" in error_type or "postgres" in error_message.lower():
         if "connection" in error_message.lower() or "timeout" in error_message.lower():
             return DatabaseConnectionError(
                 f"Database connection failed: {error_message}",

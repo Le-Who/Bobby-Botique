@@ -168,9 +168,7 @@ jobs:
         run: npx --no-install playwright install --with-deps chromium
       - name: Run required browser regressions
         run: >-
-          uv run --locked pytest tests/test_natal_web_report.py tests/test_daily_2048_frontend.py
-          tests/test_daily_trivia_frontend.py tests/test_daily_game_ui.py
-          tests/test_controls_commands_browser.py -m browser -n 0
+          uv run --locked pytest tests/ -m browser -n 0
           --override-ini="addopts=" --timeout=30 -v
 
   container-smoke:
@@ -249,6 +247,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install pinned uv
+        run: python -m pip install "uv==0.12.6"
+      - name: Sync locked dependencies
+        run: uv sync --locked --link-mode copy
       - name: Validate Compose, Alloy, Loki, and Docker API proxy
         run: |
           mkdir -p ops/observability/secrets
@@ -297,3 +302,19 @@ jobs:
           echo "Checking Loki internal endpoint"
           docker compose -f ops/observability/compose.yml exec -T grafana \
             curl -fsS http://loki:3100/ready >/dev/null
+
+          uv run --locked python scripts/generate_observability_private_probe.py \
+            --output .pytest_tmp/observability-private-event.json
+          uv run --locked python scripts/check_observability_stack.py \
+            --ephemeral --grafana-url http://127.0.0.1:3000 \
+            --password-file ops/observability/secrets/grafana_admin_password \
+            --private-event-file .pytest_tmp/observability-private-event.json \
+            --output .pytest_tmp/observability-probe
+          export PYTHON_DOTENV_DISABLED=1
+          export GEMAIBOT_REQUIRE_OBSERVABILITY_TESTS=1
+          export GEMAIBOT_OBSERVABILITY_IS_EPHEMERAL=1
+          export TEST_GRAFANA_URL=http://127.0.0.1:3000
+          export TEST_GRAFANA_PASSWORD_FILE=ops/observability/secrets/grafana_admin_password
+          export TEST_OBSERVABILITY_MANIFEST=.pytest_tmp/observability-probe/manifest.json
+          uv run --locked pytest tests/observability/test_collector_e2e.py \
+            -m integration -n 0 --override-ini="addopts=" --timeout=30 -v

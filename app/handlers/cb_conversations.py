@@ -102,9 +102,13 @@ async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Переключение на конкретную беседу"""
     query = update.callback_query
+    if query is None:
+        return
+    conv_id = _scoped_conversation_id(query, "conv_switch_to")
+    if conv_id is None:
+        await query.answer("❌ Беседа не найдена.")
+        return
     user_id = query.from_user.id
-
-    conv_id = int(query.data.split(":")[1])
 
     try:
         success = await switch_to_conversation(user_id, conv_id)
@@ -217,11 +221,20 @@ async def conv_rename_cancel_callback(update: Update, context: ContextTypes.DEFA
 async def conv_delete_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Подтверждение удаления беседы"""
     query = update.callback_query
+    if query is None:
+        return
 
-    conv_id = int(query.data.split(":")[1])
+    conv_id = _scoped_conversation_id(query, "conv_delete_confirm")
+    if conv_id is None:
+        await query.answer("❌ Беседа не найдена.")
+        return
     user_id = query.from_user.id
 
-    success = await delete_conversation(user_id, conv_id)
+    try:
+        success = await delete_conversation(user_id, conv_id)
+    except Exception as exc:
+        logging.error("Conversation delete failed user=%s id=%s type=%s", user_id, conv_id, type(exc).__name__)
+        success = False
 
     if success:
         await role_conv_metrics.record_conversation_deleted()
@@ -239,6 +252,20 @@ async def conv_delete_confirm_callback(update: Update, context: ContextTypes.DEF
             reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам"),
         )
         await query.answer("❌ Ошибка при удалении беседы")
+
+
+def _scoped_conversation_id(query, expected_action: str) -> int | None:
+    parts = (query.data or "").split(":")
+    if (
+        query.from_user is None
+        or len(parts) != 2
+        or parts[0] != expected_action
+        or not parts[1].isascii()
+        or not parts[1].isdigit()
+    ):
+        return None
+    conv_id = int(parts[1])
+    return conv_id if conv_id > 0 else None
 
 
 async def conv_delete_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

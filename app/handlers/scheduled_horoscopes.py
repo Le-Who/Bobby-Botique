@@ -20,8 +20,8 @@ from datetime import UTC, datetime
 from telegram.ext import ContextTypes
 
 from app.repos.horoscope_subscriptions import (
+    claim_horoscope_delivery,
     get_due_horoscope_subscriptions,
-    mark_horoscope_sent,
 )
 
 logger = logging.getLogger(__name__)
@@ -151,11 +151,14 @@ async def check_and_send_horoscopes(context: ContextTypes.DEFAULT_TYPE) -> None:
         async def deliver_one(sub: dict, delivery_kind: str = kind) -> None:
             async with delivery_slots:
                 user_id: int = sub["user_id"]
-                sign: str = sub.get("sign", "aries")
-
-                success = await _deliver_horoscope(context.bot, user_id, sign, delivery_kind)
+                async with claim_horoscope_delivery(user_id, delivery_kind) as claim:
+                    if claim is None:
+                        return
+                    sign = claim.sign
+                    success = await _deliver_horoscope(context.bot, user_id, sign, delivery_kind)
+                    if success:
+                        await claim.mark_sent()
                 if success:
-                    await mark_horoscope_sent(user_id, delivery_kind)
                     logger.info("Horoscope '%s' delivered to user=%s sign=%s", delivery_kind, user_id, sign)
                 else:
                     logger.warning(

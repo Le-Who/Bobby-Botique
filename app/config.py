@@ -730,15 +730,16 @@ class ConfigManager:
         if self._settings is None:
             self._settings = get_settings()
         current_time = time.time()
-        if current_time - self._last_reload > self._reload_interval:
-            # Debounce: update timestamp eagerly to prevent overlapping reloads
-            self._last_reload = current_time
-            # Only create a new task if the previous one is done
-            if self._reload_task is None or self._reload_task.done():
-                try:
-                    self._reload_task = asyncio.create_task(self._reload_config())
-                except RuntimeError:
-                    pass  # No running event loop (e.g. during tests)
+        if current_time - self._last_reload > self._reload_interval and (
+            self._reload_task is None or self._reload_task.done()
+        ):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass  # A synchronous reader keeps the next async reload due.
+            else:
+                self._last_reload = current_time
+                self._reload_task = loop.create_task(self._reload_config())
         return self._settings
 
     async def _reload_config(self) -> None:

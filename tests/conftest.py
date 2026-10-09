@@ -132,6 +132,7 @@ def _clear_user_state():
     from app.state import USER_STATES
 
     USER_STATES._states.clear()
+    USER_STATES._live_states.clear()
 
 
 @pytest.fixture(autouse=True)

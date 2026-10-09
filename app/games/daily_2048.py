@@ -296,11 +296,17 @@ async def process_move(
     if result.status != "active":
         return _event_from_result(result, puzzle, moved=False)
 
-    outcome = _validated_client_move_outcome(
+    client_outcome = _validated_client_move_outcome(
         direction,
         client_board_before=client_board_before,
         client_board_after=client_board_after,
-    ) or apply_move(result.board, direction)
+    )
+    # Valid client slides recover gameplay, but only the persisted source board
+    # establishes ranked provenance. Once lost, it cannot be recovered later.
+    recordable = result.recordable and (
+        client_outcome is None or repo.normalize_board(client_board_before) == result.board
+    )
+    outcome = client_outcome or apply_move(result.board, direction)
     if not outcome.moved:
         return _event_from_result(result, puzzle, moved=False)
 
@@ -330,6 +336,7 @@ async def process_move(
         final_score=final_score,
         won=won,
         finished=won or lost,
+        recordable=recordable,
     )
     return _event_from_result(
         updated,

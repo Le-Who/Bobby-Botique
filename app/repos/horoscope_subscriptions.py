@@ -15,16 +15,105 @@ Scheduler query:
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from datetime import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from datetime import datetime, time
 from typing import Any
 
-from app.database import db_query
+from app.database import db_manager, db_query, set_user_context
 
 logger = logging.getLogger(__name__)
 
 # Sentinel to distinguish "not provided" from None (which explicitly disables a slot)
 _MISSING = object()
+
+
+@dataclass(slots=True)
+class HoroscopeDeliveryClaim:
+    """One live transaction's authority to acknowledge this recipient/slot."""
+
+    user_id: int
+    kind: str
+    sign: str
+    claimed_at: datetime
+    utc_offset: int
+    delivery_time: time
+    _connection: Any = field(repr=False)
+    _active: bool = field(default=True, repr=False)
+
+    async def mark_sent(self) -> None:
+        if not self._active:
+            raise RuntimeError("Horoscope delivery claim is no longer active")
+        rows = await self._connection.fetch(
+            f"""
+            UPDATE public.horoscope_subscriptions
+            SET last_{self.kind}_sent = $2
+            WHERE user_id = $1 AND is_active = TRUE
+              AND sign = $3 AND utc_offset = $4 AND time_{self.kind} = $5
+            RETURNING user_id
+            """,
+            self.user_id,
+            self.claimed_at,
+            self.sign,
+            self.utc_offset,
+            self.delivery_time,
+        )
+        if not rows:
+            raise RuntimeError("Horoscope subscription changed before delivery acknowledgment")
+
+
+@asynccontextmanager
+async def claim_horoscope_delivery(user_id: int, kind: str) -> AsyncIterator[HoroscopeDeliveryClaim | None]:
+    """Claim a due slot across replicas; failed/canceled sends remain retryable.
+
+    Telegram sends run within this bounded owner transaction. The marker uses
+    the claim's date, so a send crossing local midnight does not consume the
+    new day's slot. External delivery and COMMIT cannot be atomic.
+    """
+    if kind not in ("today", "tomorrow"):
+        raise ValueError(f"kind must be 'today' or 'tomorrow', got {kind!r}")
+    if db_manager.pool is None:
+        raise RuntimeError("Database pool is required for horoscope delivery claims")
+    async with asyncio.timeout(120), db_manager.pool.acquire() as connection, connection.transaction():
+        await connection.execute("SET LOCAL idle_in_transaction_session_timeout = '180s'")
+        await set_user_context(0, True, conn=connection)
+        acquired = await connection.fetchval(
+            "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))",
+            f"gemaibotv2:horoscope-delivery:{user_id}:{kind}",
+        )
+        if not acquired:
+            yield None
+            return
+        claimed_at = await connection.fetchval("SELECT clock_timestamp()")
+        row = await connection.fetchrow(
+            f"""
+            SELECT user_id, sign, utc_offset, time_{kind} AS delivery_time
+            FROM public.horoscope_subscriptions
+            WHERE user_id = $1 AND is_active = TRUE AND time_{kind} IS NOT NULL
+              AND time_{kind} <= (($2::timestamptz AT TIME ZONE 'UTC')
+                                  + make_interval(hours => utc_offset))::time
+              AND (last_{kind}_sent IS NULL
+                   OR ((last_{kind}_sent AT TIME ZONE 'UTC')
+                       + make_interval(hours => utc_offset))::date
+                      < (($2::timestamptz AT TIME ZONE 'UTC')
+                         + make_interval(hours => utc_offset))::date)
+            """,
+            user_id,
+            claimed_at,
+        )
+        if row is None:
+            yield None
+            return
+        claim = HoroscopeDeliveryClaim(
+            user_id, kind, row["sign"], claimed_at, row["utc_offset"], row["delivery_time"], connection
+        )
+        try:
+            yield claim
+        finally:
+            claim._active = False
 
 
 def _normalize_delivery_time(value: Any) -> time | None:

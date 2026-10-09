@@ -8,6 +8,23 @@ from contextlib import suppress
 from app.config import settings
 from app.observability.events import emit
 
+_ADMIT_SLOT = """
+local clock = redis.call('TIME')
+local now = tonumber(clock[1]) + tonumber(clock[2]) / 1000000
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, now - tonumber(ARGV[1]))
+if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2]) then
+    return 0
+end
+redis.call('ZADD', KEYS[1], now, ARGV[3])
+return 1
+"""
+
+_RENEW_SLOT = """
+local clock = redis.call('TIME')
+local now = tonumber(clock[1]) + tonumber(clock[2]) / 1000000
+return redis.call('ZADD', KEYS[1], 'XX', now, ARGV[1])
+"""
+
 
 class GlobalLLMSemaphore:
     """
@@ -36,7 +53,7 @@ class GlobalLLMSemaphore:
             try:
                 async with asyncio.timeout(min(5.0, self._renew_interval)):
                     # XX never resurrects a token already released by its owner.
-                    await redis.zadd(self._key, {token: time.time()}, xx=True)
+                    await redis.eval(_RENEW_SLOT, 1, self._key, token)
             except Exception as error:
                 logging.warning("Semaphore renewal unavailable key=%s type=%s", self._key, type(error).__name__)
 
@@ -107,31 +124,21 @@ class GlobalLLMSemaphore:
 
             started_waiting = time.monotonic()
             while True:
-                now = time.time()
-                # Clean up zombies
-                await redis_client.zremrangebyscore(self._key, 0, now - self._timeout)
-
-                # Check global capacity
-                count = await redis_client.zcard(self._key)
-                if count < self._limit:
-                    await redis_client.zadd(self._key, {token: now})
-
-                    # Verify our rank to avoid race conditions
-                    rank = await redis_client.zrank(self._key, token)
-                    if rank is not None and rank < self._limit:
-                        self._renewal.set(asyncio.create_task(self._renew_slot(redis_client, token)))
-                        emit(
-                            "concurrency.acquire_finished",
-                            operation="concurrency.acquire",
-                            outcome="acquired",
-                            mode="distributed",
-                            semaphore=self._key,
-                            wait_ms=round((time.monotonic_ns() - wait_started_ns) / 1_000_000, 2),
-                        )
-                        return self
-
-                    # Lost the race, remove and wait
-                    await redis_client.zrem(self._key, token)
+                # Expiry, capacity check and insertion are one server operation.
+                # Timestamp at execution so queued commands and replica clocks
+                # cannot expire or extend the admitted owner's lease.
+                admitted = await redis_client.eval(_ADMIT_SLOT, 1, self._key, self._timeout, self._limit, token)
+                if admitted == 1:
+                    self._renewal.set(asyncio.create_task(self._renew_slot(redis_client, token)))
+                    emit(
+                        "concurrency.acquire_finished",
+                        operation="concurrency.acquire",
+                        outcome="acquired",
+                        mode="distributed",
+                        semaphore=self._key,
+                        wait_ms=round((time.monotonic_ns() - wait_started_ns) / 1_000_000, 2),
+                    )
+                    return self
 
                 if (time.monotonic() - started_waiting) > float(self._timeout):
                     from app.errors import UserLimitExceededError
@@ -169,22 +176,36 @@ class GlobalLLMSemaphore:
             )
             return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        try:
-            renewal = self._renewal.get()
-            if renewal is not None:
-                renewal.cancel()
-                with suppress(asyncio.CancelledError):
-                    await renewal
-                self._renewal.set(None)
-            from app.cache import redis_client
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        async def release_distributed() -> None:
+            try:
+                renewal = self._renewal.get()
+                if renewal is not None:
+                    renewal.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await renewal
+                from app.cache import redis_client
 
-            token = self._token.get()
-            if redis_client and token:
-                await redis_client.zrem(self._key, token)
-        except Exception as e:
-            logging.warning("Error releasing Redis distributed semaphore: %s", e)
+                token = self._token.get()
+                if redis_client and token:
+                    await redis_client.zrem(self._key, token)
+            except Exception as e:
+                logging.warning("Error releasing Redis distributed semaphore: %s", e)
+
+        # A cancellation during __aexit__ must not abandon renewal shutdown or
+        # leave an owned token behind. This request-scoped child is always awaited.
+        cleanup = asyncio.create_task(release_distributed())
+        cancelled: asyncio.CancelledError | None = None
+        try:
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError as error:
+                    cancelled = error
+            if cancelled is not None:
+                raise cancelled
         finally:
+            self._renewal.set(None)
             await self._local_semaphore.__aexit__(exc_type, exc_val, exc_tb)
             acquired_ns = self._acquired_ns.get()
             emit(

@@ -107,6 +107,24 @@ async def heartbeat_save(
         logger.warning("Heartbeat save failed for user %d: %s", user_id, exc)
 
 
+async def _cancel_and_await(tasks: list[asyncio.Task], *, cancellation: asyncio.CancelledError | None = None) -> None:
+    """Retain shutdown ownership while children finish asynchronous cleanup."""
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    completion = asyncio.gather(*tasks, return_exceptions=True)
+    while not completion.done():
+        try:
+            await asyncio.shield(completion)
+        except asyncio.CancelledError as error:
+            # Further shutdown cancellation must not interrupt rollback/release
+            # in a child's finally. Propagate it after all children are done.
+            cancellation = cancellation or error
+    completion.result()
+    if cancellation is not None:
+        raise cancellation
+
+
 async def pre_shutdown_compact(timeout: float = 8.0) -> int:
     """Flush partially-accumulated consolidation state before shutdown.
 
@@ -115,7 +133,8 @@ async def pre_shutdown_compact(timeout: float = 8.0) -> int:
     users with >= half the gate threshold, we fire a quick consolidation check.
 
     Returns:
-        Number of users for which consolidation was attempted.
+        Number of candidate attempts completed within the timeout, including
+        handled failures. Timed-out attempts are cancelled and awaited.
     """
     try:
         from app.repos.memory_consolidation import (
@@ -148,12 +167,15 @@ async def pre_shutdown_compact(timeout: float = 8.0) -> int:
                 logger.warning("Pre-shutdown consolidation failed for user %d: %s", uid, exc)
 
         tasks = [asyncio.create_task(_try_consolidate(uid)) for uid in candidates]
-        done, pending = await asyncio.wait(tasks, timeout=timeout)
-
-        for task in pending:
-            task.cancel()
-
-        return len(done)
+        cancellation = None
+        try:
+            done, _pending = await asyncio.wait(tasks, timeout=timeout)
+            return len(done)
+        except asyncio.CancelledError as error:
+            cancellation = error
+            raise
+        finally:
+            await _cancel_and_await(tasks, cancellation=cancellation)
 
     except Exception as exc:
         logger.warning("Pre-shutdown compact failed: %s", exc)
@@ -171,11 +193,13 @@ async def drain_pending_memory_writes(timeout: float = 5.0) -> None:
         return
 
     count = len(_inflight_memory_tasks)
+    tasks = list(_inflight_memory_tasks)
     logger.info("Draining %d in-flight memory write tasks...", count)
 
+    cancellation = None
     try:
         done, pending = await asyncio.wait(
-            list(_inflight_memory_tasks),
+            tasks,
             timeout=timeout,
         )
         if pending:
@@ -185,9 +209,12 @@ async def drain_pending_memory_writes(timeout: float = 5.0) -> None:
                 count,
                 len(pending),
             )
-            for task in pending:
-                task.cancel()
         else:
             logger.info("Memory drain: all %d tasks completed", count)
+    except asyncio.CancelledError as error:
+        cancellation = error
+        raise
     except Exception as exc:
         logger.warning("Memory drain failed: %s", exc)
+    finally:
+        await _cancel_and_await(tasks, cancellation=cancellation)

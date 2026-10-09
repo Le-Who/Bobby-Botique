@@ -4,7 +4,8 @@ import asyncio
 import logging
 import os
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import AsyncGenerator, Callable, Iterable
+from contextlib import aclosing
 from enum import StrEnum
 from typing import Any, cast
 
@@ -335,39 +336,40 @@ class GeminiProvider(BaseAIProvider):
                 ),
                 timeout=request.provider_timeout_seconds,
             )
-            async for chunk in response_stream:
-                candidates = getattr(chunk, "candidates", None) or []
-                if candidates:
-                    raw_finish = getattr(candidates[0], "finish_reason", None)
-                    if raw_finish and str(raw_finish) != "FINISH_REASON_UNSPECIFIED":
-                        finish_reason = FinishReason.from_raw(str(raw_finish))
+            async with aclosing(cast(AsyncGenerator[types.GenerateContentResponse], response_stream)):
+                async for chunk in response_stream:
+                    candidates = getattr(chunk, "candidates", None) or []
+                    if candidates:
+                        raw_finish = getattr(candidates[0], "finish_reason", None)
+                        if raw_finish and str(raw_finish) != "FINISH_REASON_UNSPECIFIED":
+                            finish_reason = FinishReason.from_raw(str(raw_finish))
 
-                    metadata = getattr(candidates[0], "grounding_metadata", None)
-                    grounding_chunks = getattr(metadata, "grounding_chunks", None) or []
-                    sources: list[GroundingSource] = []
-                    for grounding_chunk in grounding_chunks:
-                        web = getattr(grounding_chunk, "web", None)
-                        url = getattr(web, "uri", "") if web else ""
-                        title = (getattr(web, "title", "") if web else "") or url
-                        if url:
-                            sources.append(GroundingSource(url=url, title=title))
-                    if sources:
-                        grounding = GroundingReport(sources=tuple(sources))
+                        metadata = getattr(candidates[0], "grounding_metadata", None)
+                        grounding_chunks = getattr(metadata, "grounding_chunks", None) or []
+                        sources: list[GroundingSource] = []
+                        for grounding_chunk in grounding_chunks:
+                            web = getattr(grounding_chunk, "web", None)
+                            url = getattr(web, "uri", "") if web else ""
+                            title = (getattr(web, "title", "") if web else "") or url
+                            if url:
+                                sources.append(GroundingSource(url=url, title=title))
+                        if sources:
+                            grounding = GroundingReport(sources=tuple(sources))
 
-                native_usage = getattr(chunk, "usage_metadata", None)
-                if native_usage is not None:
-                    usage = TokenUsage(
-                        prompt=_optional_int_attribute(native_usage, "prompt_token_count"),
-                        completion=_optional_int_attribute(native_usage, "candidates_token_count"),
-                        total=_optional_int_attribute(native_usage, "total_token_count"),
-                        cached=_optional_int_attribute(native_usage, "cached_content_token_count"),
-                    )
+                    native_usage = getattr(chunk, "usage_metadata", None)
+                    if native_usage is not None:
+                        usage = TokenUsage(
+                            prompt=_optional_int_attribute(native_usage, "prompt_token_count"),
+                            completion=_optional_int_attribute(native_usage, "candidates_token_count"),
+                            total=_optional_int_attribute(native_usage, "total_token_count"),
+                            cached=_optional_int_attribute(native_usage, "cached_content_token_count"),
+                        )
 
-                text = getattr(chunk, "text", None)
-                delta = text_buffer.push(text) if isinstance(text, str) else None
-                if delta is not None:
-                    text_emitted = True
-                    yield delta
+                    text = getattr(chunk, "text", None)
+                    delta = text_buffer.push(text) if isinstance(text, str) else None
+                    if delta is not None:
+                        text_emitted = True
+                        yield delta
 
         except asyncio.CancelledError:
             raise

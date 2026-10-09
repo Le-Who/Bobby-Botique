@@ -1,9 +1,11 @@
-import ast
+import asyncio
+import importlib
+from contextlib import ExitStack
+from copy import deepcopy
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
-
-def _module(path: str) -> ast.Module:
-    return ast.parse(Path(path).read_text(encoding="utf-8"))
+import pytest
 
 
 def test_role_custom_retry_registered_once():
@@ -48,37 +50,56 @@ def test_is_user_busy_helper_exists():
     assert "_BUSY_TOAST" in source
 
 
-def test_streaming_lock_guards_on_state_mutating_callbacks():
-    """All 6 state-mutating callbacks must check _is_user_busy before mutation.
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "module_name,handler_name,data,initial_answer",
+    [
+        ("cb_models", "model_button_callback", "model:0", call()),
+        ("cb_models", "switch_model_callback", "switch_model:gemini-3.1-flash-lite", call()),
+        ("cb_navigation", "new_topic_callback", "new_topic", call("...")),
+        ("cb_navigation", "new_chat_callback", "new_chat", None),
+        ("cb_navigation", "deep_dive_callback", "deep_dive:new_topic", call()),
+        ("cb_navigation", "toggle_search_callback", "toggle_search", None),
+    ],
+    ids=["model", "switch_model", "new_topic", "new_chat", "deep_dive", "toggle_search"],
+)
+async def test_busy_state_mutating_callbacks_have_no_effects(module_name, handler_name, data, initial_answer):
+    from app.handlers.callbacks import _BUSY_TOAST
 
-    These handlers perform Read-Modify-Write on chat_state. Without the guard,
-    they race with the streaming handler's final update_user_chat, causing
-    the user's intent (model switch, history clear, search toggle) to be silently lost.
-    """
-    # After the HI-4 split, handlers live across multiple cb_* modules
-    handler_module_map = {
-        "model_button_callback": "app/handlers/cb_models.py",
-        "switch_model_callback": "app/handlers/cb_models.py",
-        "new_topic_callback": "app/handlers/cb_navigation.py",
-        "new_chat_callback": "app/handlers/cb_navigation.py",
-        "deep_dive_callback": "app/handlers/cb_navigation.py",
-        "toggle_search_callback": "app/handlers/cb_navigation.py",
-    }
+    module = importlib.import_module(f"app.handlers.{module_name}")
+    update = MagicMock()
+    query = update.callback_query
+    query.data = data
+    query.from_user.id = 73421
+    update.effective_user.language_code = "ru"
+    query.answer = AsyncMock()
+    query.edit_message_text = AsyncMock()
+    query.edit_message_reply_markup = AsyncMock()
+    query.message.reply_text = AsyncMock()
+    context = MagicMock()
+    context.user_data = {"model_list": ["gemini-3.1-flash-lite"], "sentinel": "keep"}
+    before = deepcopy(context.user_data)
+    lock = asyncio.Lock()
+    await lock.acquire()
+    with ExitStack() as stack:
+        lock_reader = stack.enter_context(patch("app.handlers.callbacks.state.get_user_lock", return_value=lock))
+        get_chat = stack.enter_context(patch.object(module, "get_user_chat", new_callable=AsyncMock))
+        update_chat = stack.enter_context(patch.object(module, "update_user_chat", new_callable=AsyncMock))
+        menus = stack.enter_context(patch.object(module, "menus"))
+        submit = stack.enter_context(patch("app.utils.background_tasks.submit_task"))
+        try:
+            await getattr(module, handler_name)(update, context)
+        finally:
+            lock.release()
 
-    for handler_name, module_path in handler_module_map.items():
-        source = Path(module_path).read_text(encoding="utf-8")
-        tree = ast.parse(source)
-
-        found = False
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if node.name == handler_name:
-                    func_source = ast.get_source_segment(source, node)
-                    assert func_source is not None, f"Could not get source for {handler_name}"
-                    assert "_is_user_busy" in func_source, (
-                        f"{handler_name} is missing _is_user_busy guard — it mutates chat_state and will race with streaming"
-                    )
-                    found = True
-                    break
-
-        assert found, f"Handler {handler_name} not found in {module_path}"
+    lock_reader.assert_called_once_with(73421)
+    expected_answers = [] if initial_answer is None else [initial_answer]
+    assert query.answer.await_args_list == expected_answers + [call(_BUSY_TOAST, show_alert=True)]
+    get_chat.assert_not_called()
+    update_chat.assert_not_called()
+    assert menus.mock_calls == []
+    submit.assert_not_called()
+    query.edit_message_text.assert_not_called()
+    query.edit_message_reply_markup.assert_not_called()
+    query.message.reply_text.assert_not_called()
+    assert context.user_data == before

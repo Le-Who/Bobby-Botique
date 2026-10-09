@@ -11,6 +11,7 @@ Inherits streaming, error handling, and message formatting from
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from app.errors import ErrorCode, tag_error
@@ -42,6 +43,16 @@ class FreeTheAIProvider(OpenRouterProvider):
         """FreeTheAI uses full slugs (e.g. cat/claude-4-6-sonnet) — no stripping."""
         return model_name
 
+    def _is_model_access_denied(self, status: int, response_text: str) -> bool:
+        if status != 403:
+            return False
+        body = re.sub(r"[\W_]+", " ", response_text.lower())
+        credential = r"(?:api key|access token|token|credentials?)"
+        rejected = r"(?:invalid|expired|revoked|missing|incorrect)"
+        if re.search(rf"\b{rejected} {credential}\b|\b{credential} (?:is )?{rejected}\b", body):
+            return False
+        return bool(re.search(r"\b(?:model|tier)\b", body))
+
     def _build_http_error_tag(
         self,
         status: int,
@@ -49,17 +60,15 @@ class FreeTheAIProvider(OpenRouterProvider):
         model_name: str,
     ) -> str:
         """Map FTA HTTP errors to user-friendly messages."""
-        body = (response_text or "").lower()
-
         if status == 401:
             return tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный FreeTheAI ключ. Проверьте FREETHEAI_API_KEYS.")
         if status == 403:
-            if "model" in body or "access" in body or "tier" in body:
+            if self._is_model_access_denied(status, response_text or ""):
                 logging.warning(
-                    "FreeTheAI rejected model access: model=%s status=%s body=%s",
+                    "FreeTheAI rejected model access: model=%s status=%s response_chars=%s",
                     model_name,
                     status,
-                    (response_text or "")[:200],
+                    len(response_text or ""),
                 )
                 return tag_error(
                     ErrorCode.INVALID_REQUEST,

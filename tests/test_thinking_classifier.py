@@ -404,4 +404,4 @@ def test_resolve_unknown_user_level_falls_through_to_auto():
     result = resolve_thinking_level("unknown_level", greeting)
 
     # Assert
-    assert result in ("low", "medium", "high"), "Invalid level should auto-classify, not crash"
+    assert result == "low"

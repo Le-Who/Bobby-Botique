@@ -1,7 +1,7 @@
 from app.natal.models import BirthInput, TimePrecision
 
 
-def test_birth_input_exact_time_requires_time_value():
+def test_birth_input_exact_time_preserves_supplied_time_value():
     data = BirthInput(
         birth_date="1995-02-14",
         time_precision=TimePrecision.EXACT,

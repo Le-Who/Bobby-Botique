@@ -100,6 +100,9 @@ class _MessageEntry:
     stt_future: asyncio.Future[str] | None = field(default=None, repr=False)
     """Pending STT future for forwarded voice messages. None for text/photo."""
 
+    stt_task: asyncio.Task | None = field(default=None, repr=False)
+    """Owned transcription task, cancelled if the slot owner exits early."""
+
 
 @dataclass
 class DebounceResult:
@@ -297,15 +300,19 @@ async def debounce_message(
     current_timeout = _FORWARD_WINDOW_S if entry.is_forwarded else _DEFAULT_WINDOW_S
     slot.timer_task = asyncio.create_task(_timer(current_timeout))
 
-    # Block until window fires
-    await slot.ready_event.wait()
-
-    # Await any pending STT futures with a bounded grace period
-    await _resolve_stt_futures(slot.entries)
-
-    # Harvest
-    result = DebounceResult(entries=list(slot.entries))
-    _debounce_slots.pop(user_id, None)
+    completed = False
+    cancellation = None
+    try:
+        # Block until window fires, then resolve voice entries within the grace budget.
+        await slot.ready_event.wait()
+        await _resolve_stt_futures(slot.entries)
+        result = DebounceResult(entries=list(slot.entries))
+        completed = True
+    except asyncio.CancelledError as error:
+        cancellation = error
+        raise
+    finally:
+        await _release_slot(user_id, slot, cancel_stt=not completed, cancellation=cancellation)
 
     if len(slot.entries) > 1:
         logger.info(
@@ -343,11 +350,12 @@ async def debounce_text_message(user_id: int, text: str, is_forward: bool = Fals
     # (avoids importing telegram.Message at module level)
     class _FakeMsg:
         forward_origin = None
-        text = text
+        text = ""
         voice = None
         caption = None
 
     fake = _FakeMsg()
+    fake.text = text
 
     if slot is not None and not slot.ready_event.is_set():
         # Reconstruct entry inline for the shim
@@ -383,9 +391,15 @@ async def debounce_text_message(user_id: int, text: str, is_forward: bool = Fals
     current_timeout = _FORWARD_WINDOW_S if is_forward else _DEFAULT_WINDOW_S
     slot.timer_task = asyncio.create_task(_timer(current_timeout))
 
-    await slot.ready_event.wait()
-    merged = "\n".join(e.text for e in slot.entries)
-    _debounce_slots.pop(user_id, None)
+    cancellation = None
+    try:
+        await slot.ready_event.wait()
+        merged = "\n".join(e.text for e in slot.entries)
+    except asyncio.CancelledError as error:
+        cancellation = error
+        raise
+    finally:
+        await _release_slot(user_id, slot, cancel_stt=True, cancellation=cancellation)
 
     if len(slot.entries) > 1:
         logger.info(
@@ -399,6 +413,40 @@ async def debounce_text_message(user_id: int, text: str, is_forward: bool = Fals
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+async def _release_slot(
+    user_id: int,
+    slot: _DebounceSlot,
+    *,
+    cancel_stt: bool,
+    cancellation: asyncio.CancelledError | None = None,
+) -> None:
+    """Release only this owner's slot and await its cancelled child work."""
+    if _debounce_slots.get(user_id) is slot:
+        _debounce_slots.pop(user_id, None)
+    tasks = [slot.timer_task] if slot.timer_task is not None else []
+    if cancel_stt:
+        for entry in slot.entries:
+            if entry.stt_future is not None and not entry.stt_future.done():
+                entry.stt_future.cancel()
+            if entry.stt_task is not None:
+                tasks.append(entry.stt_task)
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    if tasks:
+        completion = asyncio.gather(*tasks, return_exceptions=True)
+        while not completion.done():
+            try:
+                await asyncio.shield(completion)
+            except asyncio.CancelledError as error:
+                # Keep the cancelled transcription owned until its async
+                # cleanup finishes, including another shutdown cancellation.
+                cancellation = cancellation or error
+        completion.result()
+    if cancellation is not None:
+        raise cancellation
 
 
 async def _build_entry(message: Message, *, bot=None) -> _MessageEntry:
@@ -427,9 +475,10 @@ async def _build_entry(message: Message, *, bot=None) -> _MessageEntry:
 
     # ── Voice STT (fire-and-forget future, resolved after window closes) ─────
     stt_future: asyncio.Future[str] | None = None
+    stt_task: asyncio.Task | None = None
     if is_forwarded and message.voice:
         stt_future = asyncio.get_event_loop().create_future()
-        submit_task(_transcribe_forwarded_voice(message, stt_future))
+        stt_task = submit_task(_transcribe_forwarded_voice(message, stt_future))
 
     # ── Reaction feedback ────────────────────────────────────────────────────
     # Put 👀 on the message to confirm the bot received it into the debounce slot
@@ -444,6 +493,7 @@ async def _build_entry(message: Message, *, bot=None) -> _MessageEntry:
         is_forwarded=is_forwarded,
         is_user_authored=is_user_authored,
         stt_future=stt_future,
+        stt_task=stt_task,
     )
 
 

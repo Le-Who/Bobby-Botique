@@ -473,6 +473,7 @@ async def update_result_after_move(
     final_score: int,
     won: bool,
     finished: bool,
+    recordable: bool = True,
 ) -> Daily2048Result:
     rows = await db.db_query(
         """
@@ -486,6 +487,7 @@ async def update_result_after_move(
             final_score = CASE WHEN $10 THEN $9 ELSE final_score END,
             won_at = CASE WHEN $11 THEN NOW() ELSE won_at END,
             finished_at = CASE WHEN $12 THEN NOW() ELSE finished_at END,
+            recordable = recordable AND $13,
             updated_at = NOW()
         WHERE user_id = $1 AND puzzle_date = $2 AND status = 'active'
         RETURNING user_id, puzzle_date, status, board, spawn_index, moves, merge_score,
@@ -504,6 +506,7 @@ async def update_result_after_move(
             won,
             won,
             finished,
+            recordable,
         ),
     )
     if rows:

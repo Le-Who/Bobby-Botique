@@ -1,6 +1,6 @@
 """Tests for app.handlers.cb_models — model selection callbacks."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -132,10 +132,24 @@ class TestSwitchModelCallback:
 
         update, query = _make_update("switch_model:gemini-3.1-flash-lite")
 
-        with patch("app.handlers.cb_models._is_user_busy", return_value=True):
+        with (
+            patch("app.handlers.cb_models._is_user_busy", return_value=True),
+            patch("app.handlers.cb_models.get_user_chat", new_callable=AsyncMock) as get_chat,
+            patch("app.handlers.cb_models.update_user_chat", new_callable=AsyncMock) as update_chat,
+            patch("app.handlers.cb_models.menus") as menus,
+        ):
             await switch_model_callback(update, MagicMock())
 
-        query.answer.assert_awaited()
+        from app.handlers.callbacks import _BUSY_TOAST
+
+        assert query.answer.await_args_list == [
+            call(),
+            call(_BUSY_TOAST, show_alert=True),
+        ]
+        get_chat.assert_not_awaited()
+        update_chat.assert_not_awaited()
+        assert menus.mock_calls == []
+        query.edit_message_text.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_unavailable_model_shows_warning(self):

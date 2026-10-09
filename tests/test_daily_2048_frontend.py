@@ -118,6 +118,36 @@ const payload = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
 
 
 @pytest.mark.browser
+def test_unranked_recovery_win_keeps_completion_visible_and_allows_practice():
+    _run_browser(
+        r"""
+    await page.evaluate(state => window.sockets[0].receive(state), {
+      ...initial, seq:2, board:[[1024,1024,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]], recordable:false
+    });
+    await page.keyboard.press('ArrowLeft');
+    await ack(0, [[2048,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,2]], {
+      seq:3, spawned:{x:3,y:3,value:2}, status:'won', daily2048_completed:true, game_over:true,
+      recordable:false, final_score:5648, moves:1, elapsed_ms:0, rank:null,
+      leaderboard:[{user_id:8111778,display_name:'Trusted player',final_score:4880,moves:1}]
+    });
+    await page.waitForFunction(() => document.querySelector('#overlay').classList.contains('visible'));
+    assert.equal(await page.locator('#overlay-title').textContent(), 'Цель собрана');
+    assert.equal(await page.locator('#overlay-score').textContent(), '5648');
+    assert.equal(await page.locator('#record-state').textContent(), 'PLAY');
+    assert.equal(await page.locator('#leaderboard').textContent(), '#1Trusted player4880');
+    await page.locator('#practice-btn').click();
+    await page.keyboard.press('ArrowRight');
+    assert.equal((await moves()).length, 2);
+    assert.deepEqual((await moves())[1].client_board_before,
+      [[2048,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,2]]);
+    assert.equal(await page.locator('#overlay').isVisible(), false);
+    assert.equal(await page.locator('#app').evaluate(element => element.inert), false);
+""",
+        reduced_motion=True,
+    )
+
+
+@pytest.mark.browser
 def test_tiles_keep_identity_and_both_merge_sources_slide_before_value_changes():
     _run_browser(
         r"""

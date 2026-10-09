@@ -248,10 +248,22 @@ async def _handle_document_delete_document(query, context, user_id):
 async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обрабатывает callback-кнопки для управления документами"""
     query = update.callback_query
+    if query is None:
+        return
     await query.answer()
 
-    action = query.data.split(":")[1]
+    parts = (query.data or "").split(":")
+    if len(parts) < 2 or parts[0] != "doc" or query.from_user is None:
+        return
+    action = parts[1]
     user_id = query.from_user.id
+
+    if action in {"use_existing", "select", "delete_document"}:
+        if len(parts) != 3 or not parts[2].isascii() or not parts[2].isdigit() or int(parts[2]) <= 0:
+            await query.answer(t("doc.not_found"))
+            return
+    elif len(parts) != 2:
+        return
 
     handlers = {
         "upload_new": _handle_document_upload_new,
@@ -268,6 +280,10 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     handler = handlers.get(action)
     if handler:
-        await handler(query, context, user_id)
+        try:
+            await handler(query, context, user_id)
+        except Exception as exc:
+            logging.error("Document callback failed user=%s action=%s type=%s", user_id, action, type(exc).__name__)
+            await query.answer(t("doc.delete_error"))
     else:
         logging.warning("Unknown document action: %s", action)

@@ -15,6 +15,7 @@ __all__ = ["voice_callback"]
 import asyncio
 import contextlib
 import logging
+from dataclasses import dataclass
 
 import telegram
 from telegram import Update
@@ -31,20 +32,155 @@ from app.request_context import ensure_request_id as set_request_id
 from app.request_context import set_user_context
 
 
+@dataclass(eq=False)
+class _VoiceOperation:
+    key: tuple[int, int | None, int]
+    lang: str
+    task: asyncio.Task | None
+    pending: dict | None = None
+    cancelled: bool = False
+
+
+_voice_operations: dict[tuple[int, int | None, int], _VoiceOperation] = {}
+
+
+def _voice_operation_key(user_id, message):
+    return user_id, getattr(getattr(message, "chat", None), "id", None), message.message_id
+
+
+def _register_voice_operation(user_id, message, lang, *, pending=None, operation=None):
+    key = _voice_operation_key(user_id, message)
+    if operation is not None:
+        return operation if _voice_operation_current(operation) and operation.key == key else None
+    if key in _voice_operations:
+        return None
+    owner = _VoiceOperation(key, lang, asyncio.current_task(), pending)
+    _voice_operations[key] = owner
+    if pending is not None:
+        pending["_operation"] = owner
+    return owner
+
+
+def _voice_operation_current(operation):
+    return operation is not None and not operation.cancelled and _voice_operations.get(operation.key) is operation
+
+
+def _finish_voice_operation(operation):
+    if _voice_operations.get(operation.key) is operation:
+        _voice_operations.pop(operation.key)
+    if operation.pending is not None and operation.pending.get("_operation") is operation:
+        operation.pending.pop("_operation", None)
+
+
 async def voice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Router for all voice:* callbacks."""
     query = update.callback_query
+    if query is None:
+        return
+    if query.from_user is None or query.message is None:
+        await query.answer()
+        return
     set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
     set_user_context(
         query.from_user.id,
         getattr(query.message.chat, "id", None) if query.message else None,
     )
-    action = query.data.split(":")[1] if query.data and ":" in query.data else ""
+    data_parts = (query.data or "").split(":")
+    action = data_parts[1] if len(data_parts) == 2 and data_parts[0] == "voice" else ""
 
     # Retrieve pending voice data bound EXACTLY to this message UI
     pending_key = f"voice_pending_{query.message.message_id}" if query.message else "voice_pending"
     pending = context.user_data.get(pending_key) if context.user_data else None
-    lang = pending.get("lang", "ru") if pending else "ru"
+    operation = _voice_operations.get(_voice_operation_key(query.from_user.id, query.message))
+    lang = pending.get("lang", "ru") if pending else operation.lang if operation else "ru"
+
+    if pending and (
+        pending.get("user_id") != query.from_user.id or pending.get("placeholder_id") != query.message.message_id
+    ):
+        await query.answer(t("voice.no_pending", lang))
+        return
+
+    if pending and action in {"confirm", "deep_search", "transcribe_only", "retranscribe_flash", "edit"}:
+        user_lock = state.get_user_lock(pending["user_id"])
+        if user_lock.locked():
+            await query.answer(t("busy.toast", lang))
+            return
+        await user_lock.acquire()
+        operation = _register_voice_operation(pending["user_id"], query.message, lang, pending=pending)
+        if operation is None:
+            user_lock.release()
+            await query.answer(t("busy.toast", lang))
+            return
+        owned = True
+
+        def release_lock(_task=None):
+            nonlocal owned
+            if owned:
+                owned = False
+                user_lock.release()
+
+        pending["_release_lock"] = release_lock
+        try:
+            if not await _pending_current(pending):
+                context.user_data.pop(pending_key, None)
+                await query.answer()
+                await query.edit_message_text(t("voice.no_pending", lang))
+                return
+            await _dispatch_voice_action(action, query, context, pending, pending_key, lang)
+        finally:
+            if operation.task is asyncio.current_task():
+                _finish_voice_operation(operation)
+            if pending.get("_task") is None:
+                release_lock()
+                pending.pop("_release_lock", None)
+        return
+
+    await _dispatch_voice_action(action, query, context, pending, pending_key, lang)
+
+
+async def _pending_current(pending: dict) -> bool:
+    from app.repos.memory_consent import is_private_data_snapshot_current
+
+    operation = pending.get("_operation")
+    if not _voice_operation_current(operation):
+        return False
+    current = await is_private_data_snapshot_current(pending["user_id"], pending.get("memory_epoch"), require_ltm=False)
+    return current and _voice_operation_current(operation)
+
+
+def _track_voice_task(coro, pending: dict) -> None:
+    release_lock = pending["_release_lock"]
+    operation = pending["_operation"]
+    started = False
+
+    async def run_owned():
+        nonlocal started
+        started = True
+        try:
+            await coro
+        finally:
+            release_lock()
+            _finish_voice_operation(operation)
+
+    task = asyncio.create_task(run_owned())
+    operation.task = task
+    pending["_task"] = task
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    task.add_done_callback(release_lock)
+
+    def clear_task(done):
+        _finish_voice_operation(operation)
+        if not started:
+            coro.close()
+        if pending.get("_task") is done:
+            pending.pop("_task", None)
+            pending.pop("_release_lock", None)
+
+    task.add_done_callback(clear_task)
+
+
+async def _dispatch_voice_action(action, query, context, pending, pending_key, lang):
 
     if action == "cancel":
         await _handle_cancel(query, context, lang)
@@ -64,12 +200,45 @@ async def voice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def _handle_cancel(query, context, lang: str) -> None:
     """Cancel the voice request — clean up."""
+    pending_key = f"voice_pending_{query.message.message_id}"
+    pending = context.user_data.get(pending_key) if context.user_data is not None else None
+    operation = _voice_operations.get(_voice_operation_key(query.from_user.id, query.message))
+    if pending is None and operation is None:
+        await query.answer()
+        with contextlib.suppress(telegram.error.BadRequest):
+            await query.edit_message_text(t("voice.no_pending", lang))
+        return
+    if operation is not None:
+        first_cancel = not operation.cancelled
+        operation.cancelled = True
+    if context.user_data is not None and context.user_data.get(pending_key) is pending:
+        context.user_data.pop(pending_key, None)
+    if operation is not None and operation.task is not None:
+        task = operation.task
+        caller_task = asyncio.current_task()
+        if task is caller_task:
+            await query.answer(t("voice.no_pending", lang))
+            return
+        if first_cancel and not task.done():
+            task.cancel()
+        caller_cancel = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as exc:
+                # Owner completion can precede delivery of the caller's cancellation.
+                if caller_task is not None and caller_task.cancelling():
+                    caller_cancel = caller_cancel or exc
+            except Exception:
+                break
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            task.result()
+        _finish_voice_operation(operation)
+        if caller_cancel is not None:
+            raise caller_cancel
     await query.answer()
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(t("voice.cancelled", lang))
-    # Clean up pending data
-    if context.user_data and query.message:
-        context.user_data.pop(f"voice_pending_{query.message.message_id}", None)
 
 
 async def _handle_transcribe_only(query, context, pending: dict | None, lang: str) -> None:
@@ -82,15 +251,27 @@ async def _handle_transcribe_only(query, context, pending: dict | None, lang: st
         return
 
     from app.handlers.msg_voice import _show_transcript_only
+    from app.repos.memory_consent import private_data_lease
 
-    await _show_transcript_only(
-        query.message,
-        pending["transcript"],
-        lang,
-        pending["user_id"],
-        pending.get("voice_bytes", b""),
-        type("FakeVoice", (), {"file_unique_id": pending.get("file_unique_id")})(),
-    )
+    # Consume before awaiting; a repeated callback cannot store this turn twice.
+    context.user_data.pop(f"voice_pending_{query.message.message_id}", None)
+    async with private_data_lease(
+        pending["user_id"], pending["memory_epoch"], purpose="conversation:voice-transcript", require_ltm=False
+    ) as current:
+        if not current or not await _pending_current(pending):
+            return
+        chat_state = await get_user_chat(pending["user_id"])
+        if not await _pending_current(pending):
+            return
+        await _show_transcript_only(
+            query.message,
+            pending["transcript"],
+            lang,
+            pending["user_id"],
+            pending.get("voice_bytes", b""),
+            type("FakeVoice", (), {"file_unique_id": pending.get("file_unique_id")})(),
+            chat_state=chat_state,
+        )
 
     # Clean up
     if context.user_data and query.message:
@@ -110,12 +291,7 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
         return
 
     user_id = pending["user_id"]
-    user_lock = state.get_user_lock(user_id)
-
-    # Single query.answer() — busy check
-    await query.answer(t("busy.toast", lang) if user_lock.locked() else "")
-    if user_lock.locked():
-        return
+    await query.answer()
 
     # Update placeholder to show processing, leaving transcript intact
     from app.utils.formatting import TelegramFormatter
@@ -126,6 +302,9 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
         await query.edit_message_text(fmt, parse_mode=pm, reply_markup=None)
 
     new_placeholder = await query.message.reply_text("⏳ _Анализирую текст..._", parse_mode="Markdown")
+    if context.user_data.get(f"voice_pending_{query.message.message_id}") is not pending:
+        await new_placeholder.edit_text(t("voice.cancelled", lang))
+        return
     transcript = pending["transcript"]
     attached_image = pending.get("attached_image")
 
@@ -137,8 +316,12 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
         try:
             from app.handlers.ai_chat import _handle_regular_chat
 
-            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+            async with _HEAVY_CALLBACK_SEMAPHORE:
+                if not await _pending_current(pending):
+                    return
                 chat_state = await get_user_chat(user_id)
+                if not await _pending_current(pending):
+                    return
 
                 # Keep multimodal content in the current canonical user turn.
                 # Pre-appending it to history would make the chat pipeline add
@@ -181,9 +364,7 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
             with contextlib.suppress(Exception):
                 await new_placeholder.edit_text(t("error.generic", lang))
 
-    _task = asyncio.create_task(_confirm_wrapper())
-    _background_tasks.add(_task)
-    _task.add_done_callback(_background_tasks.discard)
+    _track_voice_task(_confirm_wrapper(), pending)
 
 
 async def _handle_edit(query, context, pending: dict | None, lang: str) -> None:
@@ -207,7 +388,7 @@ async def _handle_edit(query, context, pending: dict | None, lang: str) -> None:
         await query.edit_message_text(formatted, parse_mode=parse_mode, reply_markup=None)
 
     # Mark that we're waiting for an edited text from the user
-    if context.user_data:
+    if context.user_data and _voice_operation_current(pending.get("_operation")):
         context.user_data["voice_edit_pending"] = True
         # Keep voice_pending so we can reference language/user_id later
 
@@ -225,12 +406,7 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
         return
 
     user_id = pending["user_id"]
-    user_lock = state.get_user_lock(user_id)
-
-    # Busy check
-    await query.answer(t("busy.toast", lang) if user_lock.locked() else "")
-    if user_lock.locked():
-        return
+    await query.answer()
 
     # Update placeholder to finalize transcript
     from app.utils.formatting import TelegramFormatter
@@ -241,6 +417,9 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
         await query.edit_message_text(fmt, parse_mode=pm, reply_markup=None)
 
     new_placeholder = await query.message.reply_text("⏳ _Анализирую текст..._", parse_mode="Markdown")
+    if context.user_data.get(f"voice_pending_{query.message.message_id}") is not pending:
+        await new_placeholder.edit_text(t("voice.cancelled", lang))
+        return
     transcript = pending["transcript"]
 
     # Clean up pending
@@ -251,19 +430,22 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
         try:
             from app.handlers.ai_search import _handle_research_agent
 
-            chat_state = await get_user_chat(user_id)
+            async with _HEAVY_CALLBACK_SEMAPHORE:
+                if not await _pending_current(pending):
+                    return
+                chat_state = await get_user_chat(user_id)
+                if not await _pending_current(pending):
+                    return
 
-            # Store voice as user message in history
-            from app.i18n import t as _t
+                # Store only after admission and exact generation validation.
+                from app.i18n import t as _t
 
-            chat_state.history.append(
-                {
-                    "role": "user",
-                    "parts": [f"🔍 {_t('voice.history_marker', lang)}\n{transcript}"],
-                }
-            )
-
-            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+                chat_state.history.append(
+                    {
+                        "role": "user",
+                        "parts": [f"🔍 {_t('voice.history_marker', lang)}\n{transcript}"],
+                    }
+                )
                 await _handle_research_agent(
                     new_placeholder,
                     user_id,
@@ -275,9 +457,7 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
             with contextlib.suppress(Exception):
                 await new_placeholder.edit_text(t("error.generic", lang))
 
-    _task = asyncio.create_task(_deep_search_wrapper())
-    _background_tasks.add(_task)
-    _task.add_done_callback(_background_tasks.discard)
+    _track_voice_task(_deep_search_wrapper(), pending)
 
 
 async def _handle_retranscribe_flash(query, context, pending: dict | None, pending_key: str, lang: str) -> None:
@@ -289,12 +469,7 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
         return
 
     user_id = pending["user_id"]
-    user_lock = state.get_user_lock(user_id)
-
-    # Busy check
-    await query.answer(t("busy.toast", lang) if user_lock.locked() else "")
-    if user_lock.locked():
-        return
+    await query.answer()
 
     # Update UI to show processing
     with contextlib.suppress(telegram.error.BadRequest):
@@ -308,13 +483,29 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
     async def _retranscribe_wrapper() -> None:
         try:
             from app.handlers.msg_voice import _show_confirmation_ui
+            from app.repos.memory_consent import private_data_lease
             from app.utils.multimodal_processor import transcribe_voice
 
-            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+            async with (
+                _HEAVY_CALLBACK_SEMAPHORE,
+                private_data_lease(
+                    user_id, pending["memory_epoch"], purpose="conversation:voice-retranscribe", require_ltm=False
+                ) as current,
+            ):
+                if (
+                    not current
+                    or not await _pending_current(pending)
+                    or context.user_data.get(pending_key) is not pending
+                ):
+                    context.user_data.pop(pending_key, None)
+                    return
                 # Retranscribe with the specific premium model requested
                 new_transcript, new_intent, new_draw_prompt = await transcribe_voice(
                     voice_bytes, model="gemini-3.5-flash"
                 )
+                if not await _pending_current(pending) or context.user_data.get(pending_key) is not pending:
+                    context.user_data.pop(pending_key, None)
+                    return
 
                 if new_transcript is None:
                     # Revert nicely
@@ -322,12 +513,15 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
                     return
 
                 # We need to update the transcript in the context so the user can Confirm the NEW transcript
-                pending["transcript"] = new_transcript
-                pending["intent"] = new_intent
-                pending["draw_prompt"] = new_draw_prompt
                 from app.voice_intent import detect_tts_intent
 
                 voice_decision = await detect_tts_intent(user_text=new_transcript)
+                if not await _pending_current(pending) or context.user_data.get(pending_key) is not pending:
+                    context.user_data.pop(pending_key, None)
+                    return
+                pending["transcript"] = new_transcript
+                pending["intent"] = new_intent
+                pending["draw_prompt"] = new_draw_prompt
                 pending["reply_with_voice"] = voice_decision.explicit_tts
                 if context.user_data:
                     context.user_data[pending_key] = pending
@@ -345,6 +539,8 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
                     context=context,
                     intent=new_intent,
                     attached_image=pending.get("attached_image"),
+                    memory_epoch=pending["memory_epoch"],
+                    _operation=pending["_operation"],
                 )
 
         except Exception as e:
@@ -352,6 +548,4 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
             with contextlib.suppress(Exception):
                 await placeholder_message.edit_text(t("error.generic", lang))
 
-    _task = asyncio.create_task(_retranscribe_wrapper())
-    _background_tasks.add(_task)
-    _task.add_done_callback(_background_tasks.discard)
+    _track_voice_task(_retranscribe_wrapper(), pending)

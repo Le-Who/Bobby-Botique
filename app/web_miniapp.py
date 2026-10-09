@@ -33,7 +33,7 @@ from app.config import GEMINI_LIVE_VOICE_NAME, settings
 from app.games import crocodile_runtime as _croc_runtime
 from app.natal.city_catalog import find_city_by_id, search_cities, search_countries
 from app.natal.models import BirthInput, ReportType, TimePrecision
-from app.natal.service import create_natal_report
+from app.natal.service import NatalAccessRevoked, create_natal_report
 from app.observability.context import current_context, request_scope
 from app.observability.events import emit, record_exception
 from app.observability.schema import JsonValue
@@ -649,15 +649,24 @@ async def api_natal_submit(user_id: int):
 
 async def _build_and_send_natal_report(bot: Any, user_id: int, birth_input: BirthInput, webhook_url: str) -> None:
     try:
+        if not await _natal_user_has_access(user_id):
+            return
         report = await create_natal_report(
             birth_input=birth_input,
             user_id=user_id,
             chat_id=user_id,
             webhook_url=webhook_url,
+            access_guard=lambda: _natal_user_has_access(user_id),
         )
+        if not await _natal_user_has_access(user_id):
+            return
         await _send_natal_report_to_private_chat(bot, user_id, report, birth_input)
+    except NatalAccessRevoked:
+        logger.info("Mini App natal background access revoked user=%s", user_id)
     except Exception as exc:
-        logger.error("Mini App natal background task failed user=%s: %s", user_id, exc, exc_info=True)
+        logger.error("Mini App natal background task failed user=%s type=%s", user_id, type(exc).__name__)
+        if not await _natal_user_has_access(user_id):
+            return
         try:
             await bot.send_message(
                 chat_id=user_id,
@@ -667,7 +676,19 @@ async def _build_and_send_natal_report(bot: Any, user_id: int, birth_input: Birt
                 ),
             )
         except TelegramError as notify_error:
-            logger.warning("Failed to notify user %s about natal report failure: %s", user_id, notify_error)
+            logger.warning(
+                "Failed to notify user %s about natal report failure type=%s", user_id, type(notify_error).__name__
+            )
+
+
+async def _natal_user_has_access(user_id: int) -> bool:
+    from app.repos.users import is_authorized
+
+    try:
+        return bool(await is_authorized(user_id))
+    except Exception as exc:
+        logger.warning("Mini App natal access check failed user=%s type=%s", user_id, type(exc).__name__)
+        return False
 
 
 def _natal_form_options() -> dict[str, Any]:
@@ -867,6 +888,8 @@ async def _send_natal_report_to_private_chat(bot, user_id: int, report, birth_in
     caption = natal_result_caption(report, birth_input)
     keyboard = natal_result_keyboard(report)
     cover = await get_natal_cover_photo()
+    if not await _natal_user_has_access(user_id):
+        return
     if cover is not None:
         try:
             message = await bot.send_photo(
@@ -879,7 +902,9 @@ async def _send_natal_report_to_private_chat(bot, user_id: int, report, birth_in
             await remember_natal_cover_file_id(message)
             return
         except (OSError, TelegramError) as exc:
-            logger.warning("Mini App natal cover send failed user=%s: %s", user_id, exc)
+            logger.warning("Mini App natal cover send failed user=%s type=%s", user_id, type(exc).__name__)
+    if not await _natal_user_has_access(user_id):
+        return
     await bot.send_message(
         chat_id=user_id,
         text=caption,
@@ -2145,7 +2170,7 @@ async def daily2048_ws():
                     "merge_score": result.merge_score,
                     "elapsed_ms": result.elapsed_ms,
                     "final_score": result.final_score,
-                    "recordable": True,
+                    "recordable": bool(result.recordable),
                     **completion,
                 },
             )
@@ -2808,12 +2833,24 @@ async def game_ws():
 
             try:
                 async with game_mutation_lock(game_id):
+                    # Another tab may have accepted this action while we waited.
+                    if pending_id:
+                        cached_event = await get_cached_pending_action_result(game_id, pending_id)
+                        if cached_event is not None:
+                            await websocket.send_json(cached_event)
+                            continue
                     # Reload game state from Redis (another tab may have mutated it)
                     game = await load_game(game_id) or game
                     if game.status != "active":
                         break
 
                     event = await game.process_guess(word)
+                    # Publish the replay record before releasing mutation ownership.
+                    if pending_id:
+                        event["pending_id"] = pending_id
+                    event = await stamp_runtime_payload(game_id, event)
+                    if pending_id:
+                        await cache_pending_action_result(game_id, pending_id, event)
             except TimeoutError:
                 logger.warning("game_ws: mutation lock timeout game=%s", game_id)
                 await websocket.send_json(
@@ -2826,13 +2863,6 @@ async def game_ws():
                     )
                 )
                 continue
-
-            # Echo pending_id back so the client can resolve its optimistic bubble
-            if pending_id:
-                event["pending_id"] = pending_id
-            event = await stamp_runtime_payload(game_id, event)
-            if pending_id:
-                await cache_pending_action_result(game_id, pending_id, event)
 
             await websocket.send_json(event)
 

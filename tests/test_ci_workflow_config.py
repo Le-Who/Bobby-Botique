@@ -1,7 +1,15 @@
 """Contract tests for truthful repository verification in GitHub Actions."""
 
+import json
+import os
 import re
+import shlex
+import subprocess
+import sys
+import time
 from pathlib import Path
+
+import yaml
 
 CI_WORKFLOW = Path(".github/workflows/ci.yml")
 
@@ -87,15 +95,56 @@ def test_ci_requires_locked_browser_tests_with_chromium() -> None:
     assert 'GEMAIBOT_REQUIRE_BROWSER_TESTS: "1"' in browser_job
     assert "npm ci --ignore-scripts" in browser_job
     assert "npx --no-install playwright install --with-deps chromium" in browser_job
-    for path in (
-        "tests/test_natal_web_report.py",
-        "tests/test_daily_2048_frontend.py",
-        "tests/test_daily_trivia_frontend.py",
-        "tests/test_daily_game_ui.py",
-    ):
-        assert path in browser_job
+    # Discover every marked browser test, including new modules. A fixed list
+    # previously omitted the compatibility form from the required Chromium job.
+    assert "uv run --locked pytest tests/ -m browser -n 0" in browser_job
+    assert not re.search(r"tests/test_\w+\.py", browser_job)
     assert "-m browser -n 0" in browser_job
+    assert '--override-ini="addopts=" --timeout=30' in browser_job
     assert "continue-on-error" not in browser_job
+
+
+def test_browser_job_selection_matches_all_discovered_browser_modules(tmp_path) -> None:
+    """Compare real pytest discovery with the effective workflow selector."""
+    job = yaml.safe_load(_workflow())["jobs"]["test-browser"]
+    run = next(step["run"] for step in job["steps"] if step.get("name") == "Run required browser regressions")
+    command = shlex.split(run)
+    assert command[:4] == ["uv", "run", "--locked", "pytest"]
+    deadline = time.monotonic() + 25
+    (tmp_path / "ci_browser_inventory.py").write_text(
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "def pytest_collection_finish(session):\n"
+        "    Path(os.environ['GEMAIBOT_BROWSER_INVENTORY']).write_text(\n"
+        "        json.dumps([item.nodeid for item in session.items]), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    environment = {
+        **os.environ,
+        "PYTHON_DOTENV_DISABLED": "1",
+        "GEMAIBOT_REQUIRE_BROWSER_TESTS": "1",
+        "PYTHONPATH": str(tmp_path) + os.pathsep + os.environ.get("PYTHONPATH", ""),
+    }
+    inventories = iter([tmp_path / "reference.json", tmp_path / "effective.json"])
+
+    def discovered(arguments: list[str]) -> set[str]:
+        inventory = next(inventories)
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", *arguments, "--collect-only", "-q", "-p", "ci_browser_inventory"],
+            capture_output=True,
+            encoding="utf-8",
+            timeout=max(1, deadline - time.monotonic()),
+            env={**environment, "GEMAIBOT_BROWSER_INVENTORY": str(inventory)},
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
+        return set(json.loads(inventory.read_text(encoding="utf-8")))
+
+    reference = discovered(["tests/", "-m", "browser", "-n", "0", "--override-ini=addopts=", "--timeout=30"])
+    effective = discovered(command[4:])
+    assert reference, "a missing browser inventory must not pass the CI selection contract"
+    assert effective == reference, f"omitted={sorted(reference - effective)}, extra={sorted(effective - reference)}"
+    assert {node.split("::", 1)[0] for node in effective} == {node.split("::", 1)[0] for node in reference}
 
 
 def test_ci_gates_application_types_and_production_dependencies() -> None:
@@ -122,3 +171,19 @@ def test_ci_builds_and_offline_smokes_the_production_container() -> None:
     assert "scripts/dependency_container_smoke.py" in container_job
     assert "uv pip check" in container_job
     assert "continue-on-error" not in container_job
+
+
+def test_ci_requires_actual_stdout_ingestion_and_protected_datasource_checks() -> None:
+    job = _job(_workflow(), "observability-config")
+
+    assert "python scripts/generate_observability_private_probe.py" in job
+    assert "python scripts/check_observability_stack.py" in job
+    assert "--ephemeral --grafana-url http://127.0.0.1:3000" in job
+    assert "--private-event-file .pytest_tmp/observability-private-event.json" in job
+    assert "GEMAIBOT_REQUIRE_OBSERVABILITY_TESTS=1" in job
+    assert "GEMAIBOT_OBSERVABILITY_IS_EPHEMERAL=1" in job
+    assert "TEST_OBSERVABILITY_MANIFEST=.pytest_tmp/observability-probe/manifest.json" in job
+    assert "pytest tests/observability/test_collector_e2e.py" in job
+    assert '-m integration -n 0 --override-ini="addopts=" --timeout=30' in job
+    assert "trap cleanup_observability EXIT" in job
+    assert "continue-on-error" not in job

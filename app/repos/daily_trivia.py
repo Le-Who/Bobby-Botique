@@ -854,6 +854,8 @@ async def update_super_result_answer(
                     status = $7,
                     finished_at = CASE WHEN $8::boolean THEN NOW() ELSE finished_at END
                 WHERE user_id = $1 AND puzzle_date = $2
+                  AND status <> 'completed'
+                  AND finished_at IS NULL
                 RETURNING user_id, puzzle_date, status, delta_score, correct_count,
                           elapsed_ms, answers, started_at, finished_at, puzzle_revision_id
                 """,
@@ -866,6 +868,18 @@ async def update_super_result_answer(
                 status,
                 finished,
             )
+            if not rows:
+                rows = await conn.fetch(
+                    """
+                    SELECT user_id, puzzle_date, status, delta_score, correct_count,
+                           elapsed_ms, answers, started_at, finished_at, puzzle_revision_id
+                    FROM public.daily_trivia_super_results
+                    WHERE user_id = $1 AND puzzle_date = $2
+                    """,
+                    user_id,
+                    puzzle_date,
+                )
+                return _row_to_super_result([dict(r) for r in rows][0])
             await conn.execute(
                 """
                 UPDATE public.daily_trivia_results
@@ -893,11 +907,18 @@ async def update_super_result_answer(
             status = $7,
             finished_at = CASE WHEN $8::boolean THEN NOW() ELSE finished_at END
         WHERE user_id = $1 AND puzzle_date = $2
+          AND status <> 'completed'
+          AND finished_at IS NULL
         RETURNING user_id, puzzle_date, status, delta_score, correct_count,
                   elapsed_ms, answers, started_at, finished_at, puzzle_revision_id
         """,
         (user_id, puzzle_date, delta_score, correct_count, elapsed_ms, answers_json, status, finished),
     )
+    if not rows:
+        result = await get_super_result_if_exists(user_id, puzzle_date)
+        if result is None:
+            raise ValueError("Daily Trivia super result does not exist")
+        return result
     return _row_to_super_result(rows[0])
 
 

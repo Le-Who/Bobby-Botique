@@ -117,6 +117,7 @@ async def _process_voice_pipeline(
             user_id,
             voice,
             lang,
+            memory_epoch=expected_epoch,
         )
 
 
@@ -127,6 +128,8 @@ async def _process_voice_pipeline_leased_impl(
     user_id: int,
     voice,
     lang: str,
+    *,
+    memory_epoch: int | None = None,
 ) -> None:
     """Core voice pipeline: download → transcribe → show UI / auto-route."""
     _t0 = time.monotonic()
@@ -238,6 +241,7 @@ async def _process_voice_pipeline_leased_impl(
                 context,
                 intent=intent,
                 attached_image=attached_image,
+                memory_epoch=memory_epoch,
             )
     else:
         # Intent: conversational → check if auto-routing is applicable
@@ -278,6 +282,7 @@ async def _process_voice_pipeline_leased_impl(
                 context,
                 intent=intent,
                 attached_image=attached_image,
+                memory_epoch=memory_epoch,
             )
 
     logging.info(
@@ -370,8 +375,49 @@ async def _show_confirmation_ui(
     *,
     intent: str = "conversational",
     attached_image: dict | None = None,
+    memory_epoch: int | None = None,
+    _operation=None,
+) -> None:
+    from app.handlers.cb_voice import _finish_voice_operation, _register_voice_operation
+
+    operation = _register_voice_operation(user_id, placeholder, lang, operation=_operation)
+    if operation is None:
+        return
+    try:
+        await _show_confirmation_ui_owned(
+            placeholder,
+            transcript,
+            lang,
+            user_id,
+            voice_bytes,
+            voice,
+            context,
+            intent=intent,
+            attached_image=attached_image,
+            memory_epoch=memory_epoch,
+            _operation=operation,
+        )
+    finally:
+        if _operation is None:
+            _finish_voice_operation(operation)
+
+
+async def _show_confirmation_ui_owned(
+    placeholder,
+    transcript,
+    lang,
+    user_id,
+    voice_bytes,
+    voice,
+    context,
+    *,
+    intent,
+    attached_image,
+    memory_epoch,
+    _operation,
 ) -> None:
     """Show transcript with confirmation buttons. Dynamic layout based on intent."""
+    from app.handlers.cb_voice import _voice_operation_current
     from app.utils.formatting import TelegramFormatter
 
     # Build display text
@@ -412,12 +458,23 @@ async def _show_confirmation_ui(
         parse_mode=parse_mode,
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
+    if not _voice_operation_current(_operation):
+        return
 
     # Store pending voice data for callback handler
     if context.user_data is not None:
         from app.voice_intent import detect_tts_intent
 
         voice_decision = await detect_tts_intent(user_text=transcript)
+        if not _voice_operation_current(_operation):
+            return
+        from app.repos.memory_consent import is_private_data_snapshot_current
+
+        if not await is_private_data_snapshot_current(
+            user_id, memory_epoch, require_ltm=False
+        ) or not _voice_operation_current(_operation):
+            context.user_data.pop(f"voice_pending_{placeholder.message_id}", None)
+            return
         pending = {
             "transcript": transcript,
             "voice_bytes": voice_bytes,
@@ -425,13 +482,16 @@ async def _show_confirmation_ui(
             "lang": lang,
             "file_unique_id": voice.file_unique_id,
             "placeholder_id": placeholder.message_id,
+            "memory_epoch": memory_epoch,
             "intent": intent,
             "reply_with_voice": voice_decision.explicit_tts,
+            "_operation": _operation,
         }
         # Attach "Show & Tell" image if present
         if attached_image:
             pending["attached_image"] = attached_image
 
+        _operation.pending = pending
         context.user_data[f"voice_pending_{placeholder.message_id}"] = pending
 
 

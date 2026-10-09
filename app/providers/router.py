@@ -852,7 +852,7 @@ class ProviderRouter:
                     )
         finally:
             for task in all_tasks:
-                if not task.done():
+                if not task.done() and not task.cancelling():
                     task.cancel()
             await asyncio.gather(*all_tasks, return_exceptions=True)
 
@@ -1115,17 +1115,20 @@ class ProviderRouter:
                             race_id=provider_race_id,
                             key_source=key_data.get("source"),
                         )
-                        async for event in observed_events:
-                            if terminal is not None:
-                                raise ProviderStreamProtocolError(
-                                    f"{provider.provider_name} emitted an event after terminal"
-                                )
-                            if isinstance(event, TextDelta):
-                                race_queue.put_nowait((idx, event, None, False))
-                            elif is_terminal_event(event):
-                                terminal = event
-                            else:
-                                raise ProviderStreamProtocolError(f"Unsupported provider event: {type(event).__name__}")
+                        async with aclosing(observed_events):
+                            async for event in observed_events:
+                                if terminal is not None:
+                                    raise ProviderStreamProtocolError(
+                                        f"{provider.provider_name} emitted an event after terminal"
+                                    )
+                                if isinstance(event, TextDelta):
+                                    race_queue.put_nowait((idx, event, None, False))
+                                elif is_terminal_event(event):
+                                    terminal = event
+                                else:
+                                    raise ProviderStreamProtocolError(
+                                        f"Unsupported provider event: {type(event).__name__}"
+                                    )
                         if terminal is None:
                             raise ProviderStreamProtocolError(f"{provider.provider_name} ended without terminal event")
                         race_queue.put_nowait((idx, terminal, None, False))
@@ -1258,7 +1261,7 @@ class ProviderRouter:
                         return
                 finally:
                     for task in tasks:
-                        if not task.done():
+                        if not task.done() and not task.cancelling():
                             task.cancel()
                     await asyncio.gather(*tasks, return_exceptions=True)
 

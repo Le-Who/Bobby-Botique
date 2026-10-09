@@ -272,18 +272,31 @@ async def test_start_monitoring_already_done(cb):
 
 
 @pytest.mark.asyncio
-async def test_monitor_loop_exception_handling(cb):
+async def test_monitor_loop_exception_handling(cb, caplog):
     from unittest.mock import patch
 
-    with patch("asyncio.sleep", side_effect=Exception("mocked error")):
-        # The monitor loop should catch the exception and log it, then next iteration will fail again if mocked,
-        # but here we just want to ensure it handles one exception. Since it's a while True, if sleep always raises,
-        # it might infinite loop. Let's just side_effect a single exception then CancelledError.
-        with patch(
-            "app.circuit_breaker.asyncio.sleep",
-            side_effect=[Exception("mocked"), asyncio.CancelledError()],
-        ):
-            await cb._monitor_loop()
+    await cb.shutdown()
+    cb._failure_count = cb.config.max_failures + 1
+    with patch(
+        "app.circuit_breaker.asyncio.sleep",
+        new_callable=AsyncMock,
+        side_effect=[RuntimeError("monitor fault"), None, asyncio.CancelledError()],
+    ) as sleep:
+        task = asyncio.create_task(cb._monitor_loop())
+        try:
+            await task
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
-    # Should exit gracefully on CancelledError
-    assert True
+    assert sleep.await_count == 3
+    assert all(call.args == (cb.config.monitor_interval,) for call in sleep.await_args_list)
+    records = [r for r in caplog.records if "monitoring error" in r.getMessage()]
+    assert len(records) == 1
+    assert records[0].levelname == "ERROR"
+    assert "monitor fault" in records[0].getMessage()
+    assert isinstance(records[0].exc_info[1], RuntimeError)
+    assert cb._failure_count == cb.config.max_failures
+    assert task.done() and not task.cancelled()
+    assert cb._monitor_task.done()

@@ -186,3 +186,16 @@ async def test_setup_row_level_security_propagates_alter_failure():
 
     with pytest.raises(asyncpg.InsufficientPrivilegeError, match="cannot enable RLS"):
         await rls.setup_row_level_security(failing_query)
+
+
+@pytest.mark.asyncio
+async def test_existing_group_members_repair_failure_is_startup_error():
+    """Existing policy names must not hide failure to repair recursive membership RLS."""
+    query = AsyncMock(
+        side_effect=[
+            [{"policyname": "group_members_policy"}],
+            asyncpg.InsufficientPrivilegeError("membership repair denied"),
+        ]
+    )
+    with pytest.raises(asyncpg.InsufficientPrivilegeError, match="membership repair denied"):
+        await rls.create_rls_policies("group_members", query)

@@ -118,6 +118,16 @@ async def run_status(conn: asyncpg.Connection) -> None:
 
 async def run_apply(conn: asyncpg.Connection) -> bool:
     """Apply all pending migrations. Return True if all succeeded."""
+    # Share startup's transaction-scoped lock before initialization/version
+    # reads, so a concurrent runner cannot replay a stale pending list.
+    async with conn.transaction():
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext('gemaibotv2:schema_migrations'))")
+        await _ensure_tracking_table(conn)
+        return await _run_apply_locked(conn)
+
+
+async def _run_apply_locked(conn: asyncpg.Connection) -> bool:
+    """Apply files while the caller holds the shared migration lock."""
     pending = await _pending(conn)
     if not pending:
         log.info("✓ No pending migrations.")
@@ -201,13 +211,13 @@ async def main(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        await _ensure_tracking_table(conn)
-
         if args.mode == "check":
+            await _ensure_tracking_table(conn)
             ok = await run_check(conn)
             return 0 if ok else 1
 
         if args.mode == "status":
+            await _ensure_tracking_table(conn)
             await run_status(conn)
             return 0
 

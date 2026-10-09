@@ -14,6 +14,8 @@ Covers gaps in the existing test_errors.py:
 These tests verify behavior (observable transformations) not implementation details.
 """
 
+import asyncpg
+import httpx
 import pytest
 
 from app.errors import (
@@ -255,34 +257,29 @@ def test_classify_error_string_fallback(message, expected_code):
 # ─── convert_to_typed_exception ──────────────────────────────────────────────
 
 
-def test_convert_asyncpg_timeout_becomes_database_connection_error():
+def test_convert_asyncpg_connection_loss_becomes_database_connection_error():
     """asyncpg exceptions with 'connection' keyword should become DatabaseConnectionError."""
 
-    # Arrange
-    class FakeAsyncpgError(Exception):
-        pass
-
-    # Simulate an asyncpg error (type name contains 'asyncpg')
-    # We patch by naming the class appropriately
-    exc = ValueError("asyncpg: connection timeout to database")
+    exc = asyncpg.ConnectionDoesNotExistError("connection was closed in the middle of operation")
 
     # Act
     typed = convert_to_typed_exception(exc, context="test_query")
 
-    # Assert — must be a subtype of GemaibotBaseException
-    assert isinstance(typed, GemaibotBaseException)
+    assert type(typed) is DatabaseConnectionError
+    assert typed.details == {"original_error": "ConnectionDoesNotExistError", "context": "test_query"}
 
 
 def test_convert_network_timeout_becomes_connection_timeout_error():
     """An httpx timeout error should map to a connection-related typed exception."""
     # Arrange
-    exc = ConnectionError("httpx: connection timeout")
+    exc = httpx.ConnectTimeout("connection timeout", request=httpx.Request("GET", "https://example.test"))
 
     # Act
     typed = convert_to_typed_exception(exc, context="external_api")
 
     # Assert
-    assert isinstance(typed, GemaibotBaseException)
+    assert type(typed) is ConnectionTimeoutError
+    assert typed.details == {"original_error": "ConnectTimeout", "context": "external_api"}
 
 
 # ─── Error inheritance hierarchy ─────────────────────────────────────────────

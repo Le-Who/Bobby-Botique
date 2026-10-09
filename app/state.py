@@ -13,8 +13,17 @@ Runtime-only maps (never persisted, ephemeral per-process):
 import asyncio
 import logging
 import time
+import weakref
 
 from app.observability.events import emit, record_exception
+
+
+class _UserStateLock(asyncio.Lock):
+    """Keep the canonical state alive while a caller owns only its lock."""
+
+    def __init__(self, owner: UserState):
+        super().__init__()
+        self._owner = owner
 
 
 class UserState:
@@ -28,6 +37,7 @@ class UserState:
     """
 
     __slots__ = (
+        "__weakref__",
         "lock",
         # Persisted fields
         "document_mode",
@@ -56,7 +66,7 @@ class UserState:
     )
 
     def __init__(self, user_id: int = 0):
-        self.lock = asyncio.Lock()
+        self.lock = _UserStateLock(self)
         self._user_id = user_id
         # Persisted fields
         self.document_mode = False
@@ -92,25 +102,29 @@ class _UserStateStore:
     """User state store with LRU eviction and lazy DB loading.
 
     Uses LRUCache to cap in-memory state at ``maxsize`` users.
-    Evicted entries are silently re-loaded from DB on next access
-    via ``_ensure_loaded``, so no data is lost.
+    Evicted entries with live owners are reused through a weak index, retaining
+    their lock and pending mutations. Otherwise the next access reloads from DB.
     """
 
     def __init__(self, maxsize: int = 50_000):
         from cachetools import LRUCache
 
         self._states: LRUCache = LRUCache(maxsize=maxsize)
+        self._live_states: weakref.WeakValueDictionary[int, UserState] = weakref.WeakValueDictionary()
 
     def __getitem__(self, user_id: int) -> UserState:
         try:
             return self._states[user_id]
         except KeyError:
-            state = UserState(user_id)
+            state = self._live_states.get(user_id)
+            if state is None:
+                state = UserState(user_id)
+                self._live_states[user_id] = state
             self._states[user_id] = state
             return state
 
     def __contains__(self, user_id: int) -> bool:
-        return user_id in self._states
+        return user_id in self._states or user_id in self._live_states
 
 
 def _create_user_state_store() -> _UserStateStore:
@@ -155,7 +169,12 @@ def purge_user_runtime_state(user_id: int) -> None:
     if task is not None and not task.done():
         task.cancel()
 
-    USER_STATES._states.pop(user_id, None)
+    cached_state = USER_STATES._states.pop(user_id, None)
+    live_state = USER_STATES._live_states.pop(user_id, None)
+    for old_state in (cached_state, live_state):
+        if old_state is not None:
+            # A detached pre-erasure reference cannot schedule another durable write.
+            old_state._user_id = 0
     _NETWORK_STALL_SINCE.pop(user_id, None)
     _LAST_BOT_MESSAGE.pop(user_id, None)
 
@@ -279,6 +298,9 @@ def _schedule_persist(state: UserState) -> None:
     be written after newer state.
     """
 
+    if state._user_id == 0:
+        return
+
     def _fire() -> None:
         _pending_persists.pop(state._user_id, None)
         task = loop.create_task(_persist(state))
@@ -329,7 +351,7 @@ def get_user_lock(user_id: int) -> asyncio.Lock:
 
 def get_active_user_lock_count() -> int:
     """Return the number of currently-held process-local user locks."""
-    return sum(1 for user_state in USER_STATES._states.values() if user_state.lock.locked())
+    return sum(1 for user_state in USER_STATES._live_states.values() if user_state.lock.locked())
 
 
 # --- Async load API (call once per handler, early) ---

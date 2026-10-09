@@ -58,7 +58,8 @@ def test_alloy_runs_as_the_owner_of_its_persistent_data_directory():
 
     assert compose["services"]["alloy"]["user"] == "473:473"
     assert "alloy-data:/var/lib/alloy/data" in compose["services"]["alloy"]["volumes"]
-    assert "/bin/alloy validate" in " ".join(compose["services"]["alloy"]["healthcheck"]["test"])
+    assert compose["services"]["alloy"]["healthcheck"]["test"] == ["CMD", "/usr/bin/bash", "/etc/alloy/healthcheck.sh"]
+    assert "./alloy-healthcheck.sh:/etc/alloy/healthcheck.sh:ro" in compose["services"]["alloy"]["volumes"]
 
 
 def test_loki_healthcheck_waits_for_request_readiness():

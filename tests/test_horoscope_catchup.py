@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -45,11 +46,15 @@ async def test_slow_horoscope_does_not_block_another_due_recipient() -> None:
             second_started.set()
         return True
 
+    @asynccontextmanager
+    async def claim(user_id, _kind):
+        yield SimpleNamespace(sign="aries" if user_id == 7 else "taurus", mark_sent=AsyncMock())
+
     with (
         patch("app.repos.settings_repo.get_global_setting", new=AsyncMock(return_value="on")),
         patch("app.handlers.scheduled_horoscopes.get_due_horoscope_subscriptions", new=due),
         patch("app.handlers.scheduled_horoscopes._deliver_horoscope", new=deliver),
-        patch("app.handlers.scheduled_horoscopes.mark_horoscope_sent", new=AsyncMock()),
+        patch("app.handlers.scheduled_horoscopes.claim_horoscope_delivery", new=claim),
     ):
         task = asyncio.create_task(scheduled_horoscopes.check_and_send_horoscopes(SimpleNamespace(bot=object())))
         try:

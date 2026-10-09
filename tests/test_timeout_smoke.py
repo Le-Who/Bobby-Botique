@@ -151,16 +151,19 @@ class TestGeminiTimeoutSmoke:
             mock_aio_models.count_tokens = AsyncMock(return_value=mock_token)
             MockClient.return_value.aio.models = mock_aio_models
 
-            await provider._execute_request(
-                history=[{"role": "user", "parts": ["hi"]}],
-                model_name="gemini-2.5-flash",
-                system_instruction=None,
-                user_id=None,
-                chat_id=None,
-                timeout=100.0,
-            )
+            real_wait_for = asyncio.wait_for
+            with patch("app.providers.gemini.asyncio.wait_for", wraps=real_wait_for) as wait_for:
+                await provider._execute_request(
+                    history=[{"role": "user", "parts": ["hi"]}],
+                    model_name="gemini-2.5-flash",
+                    system_instruction=None,
+                    user_id=None,
+                    chat_id=None,
+                    timeout=100.0,
+                )
+            assert wait_for.await_args.kwargs["timeout"] == 100.0
 
         call_kwargs = MockClient.call_args[1]
         assert "http_options" in call_kwargs
         http_opts = call_kwargs["http_options"]
-        assert hasattr(http_opts, "timeout") or "timeout" in str(call_kwargs)
+        assert http_opts.timeout == 90_000

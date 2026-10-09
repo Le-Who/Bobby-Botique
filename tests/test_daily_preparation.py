@@ -121,6 +121,27 @@ async def test_cancelled_job_is_failed_and_retryable(store, monkeypatch):
         await service._tasks[DAY]
 
 
+@pytest.mark.asyncio
+async def test_local_fallback_preparation_timeout_is_bounded_and_cleans_worker(store, monkeypatch):
+    cleaned = asyncio.Event()
+
+    async def prepare(*args, **kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned.set()
+
+    monkeypatch.setattr(service, "_TIMEOUT", 0.02)
+    monkeypatch.setattr(service, "prepare_daily_puzzle", prepare)
+    job = await service.start_day_preparation(DAY, object())
+    await asyncio.wait_for(service._tasks[DAY], 1)
+    result = await service.get_day_readiness(DAY)
+    assert cleaned.is_set()
+    assert result["job"]["id"] == job["id"]
+    assert result["job"]["state"] == "failed"
+    assert result["job"]["errors"] == ["Preparation interrupted or readiness unavailable; retry is available."]
+
+
 class RedisStore:
     def __init__(self):
         self.values = {}

@@ -9,20 +9,10 @@ Validates:
 6. Different users have independent state.
 """
 
-import sys
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
-# ── Mock all transitive deps of memory_consolidation before import ────
-for mod_name in (
-    "google",
-    "google.generativeai",
-    "app.database",
-    "app.repos.db_helpers",
-):
-    sys.modules.setdefault(mod_name, MagicMock())
 
 from app.repos.memory_consolidation import (
     _MSG_GATE,

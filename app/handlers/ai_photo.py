@@ -378,7 +378,9 @@ async def process_media_group_request(
 ) -> None:
     # context используется for совместимости с другими функциями
     """Обрабатывает группу изображений как единое целое"""
-    user_id = update.effective_user.id
+    user_id = _media_group_user_id(messages)
+    if update.effective_user is None or int(update.effective_user.id) != user_id:
+        raise ValueError("media group sender does not match update identity")
     chat_state = await get_user_chat(user_id)
 
     count = len(messages) if messages else 0
@@ -479,6 +481,8 @@ def _media_group_user_id(messages: list[Message]) -> int:
     user_id = int(messages[0].from_user.id)
     if any(message.from_user is None or int(message.from_user.id) != user_id for message in messages):
         raise ValueError("media group contains messages from different senders")
+    if any(getattr(message.from_user, "is_bot", False) for message in messages):
+        raise ValueError("media group requires a human sender")
     return user_id
 
 

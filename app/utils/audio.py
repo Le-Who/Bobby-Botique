@@ -49,6 +49,8 @@ async def pcm_to_ogg_opus(
         "pipe:1",  # Write to stdout
     ]
 
+    proc = None
+    cancellation = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *ffmpeg_cmd,
@@ -81,21 +83,39 @@ async def pcm_to_ogg_opus(
         logging.debug("PCM→OGG Opus: %d bytes → %d bytes", len(pcm_data), len(stdout))
         return stdout
 
+    except asyncio.CancelledError as error:
+        cancellation = error
+        raise
     except FileNotFoundError:
         logging.error(
             "ffmpeg not found in PATH. Install ffmpeg to enable voice responses. On Docker: apt-get install -y ffmpeg"
         )
         return None
     except TimeoutError:
-        try:
-            proc.kill()
-        except OSError:
-            pass
         logging.error("ffmpeg encoding timed out (>90s)")
         return None
     except Exception as e:
         logging.error("Audio encoding failed: %s", e)
         return None
+    finally:
+        # communicate() can be interrupted while ffmpeg is still alive. Own
+        # the child until it is killed and reaped, including caller cancellation.
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass  # The child may have exited between the check and kill.
+            reap_task = asyncio.create_task(proc.wait())
+            while not reap_task.done():
+                try:
+                    await asyncio.shield(reap_task)
+                except asyncio.CancelledError as error:
+                    # A second purge/shutdown must not abandon our child. Keep
+                    # awaiting the same reap task and restore cancellation after.
+                    cancellation = cancellation or error
+            reap_task.result()
+            if cancellation is not None:
+                raise cancellation
 
 
 def make_voice_file(ogg_bytes: bytes) -> io.BytesIO:

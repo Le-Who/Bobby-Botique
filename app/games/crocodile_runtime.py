@@ -351,15 +351,15 @@ def get_runtime_health_snapshot() -> dict[str, int]:
 @asynccontextmanager
 async def game_mutation_lock(game_id: str):
     if redis_client:
-        _redis_conn_error = False
         try:
             # Cover the judge's 30-second retry budget plus state persistence.
             lock = redis_client.lock(_lock_key(game_id), timeout=60, blocking_timeout=5)
             acquired = await lock.acquire()
+        except Exception as exc:
+            logger.warning("Runtime Redis lock unavailable, falling back to local lock game=%s: %s", game_id, exc)
+        else:
             if not acquired:
-                # Lock is held by another worker — this is contention, NOT a Redis outage.
-                # Falling through to a local asyncio.Lock would allow both workers to
-                # mutate the game concurrently. Raise so the caller can surface an error.
+                # Contention must never permit a concurrent process-local mutation.
                 raise TimeoutError(f"game_mutation_lock: timed out waiting for game={game_id}")
             try:
                 yield
@@ -369,21 +369,6 @@ async def game_mutation_lock(game_id: str):
                     await lock.release()
                 except Exception as exc:
                     logger.debug("Runtime lock release failed game=%s: %s", game_id, exc)
-        except TimeoutError:
-            # Re-raise contention errors — do NOT fall back to local lock.
-            raise
-        except Exception as exc:
-            # Only genuine Redis connectivity failures reach here (e.g. ConnectionError,
-            # OSError, socket timeouts). In single-process/test mode, falling back to a
-            # local asyncio.Lock is safe.
-            logger.warning("Runtime Redis lock unavailable, falling back to local lock game=%s: %s", game_id, exc)
-            _redis_conn_error = True
-
-        if _redis_conn_error:
-            local_lock = _local_locks.setdefault(game_id, asyncio.Lock())
-            async with local_lock:
-                yield
-            return
     local_lock = _local_locks.setdefault(game_id, asyncio.Lock())
     async with local_lock:
         yield

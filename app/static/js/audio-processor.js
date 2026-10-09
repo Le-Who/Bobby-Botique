@@ -10,6 +10,9 @@ class MicProcessor extends AudioWorkletProcessor {
     super();
     this._buffer = [];
     this._bufferLength = 0;
+    this._inputSamples = 0;
+    this._outputSamples = 0;
+    this._lastSample = 0;
     // We'll send chunks every ~100ms of audio at 16kHz = 1600 samples
     this._chunkSize = 1600;
   }
@@ -19,18 +22,25 @@ class MicProcessor extends AudioWorkletProcessor {
    * using simple linear interpolation.
    */
   _downsample(float32Data, inputRate, outputRate) {
-    if (inputRate === outputRate) return float32Data;
-    const ratio = inputRate / outputRate;
-    const newLen = Math.round(float32Data.length / ratio);
-    const result = new Float32Array(newLen);
-    for (let i = 0; i < newLen; i++) {
-      const srcIdx = i * ratio;
-      const lo = Math.floor(srcIdx);
-      const hi = Math.min(lo + 1, float32Data.length - 1);
-      const frac = srcIdx - lo;
-      result[i] = float32Data[lo] * (1 - frac) + float32Data[hi] * frac;
+    const start = this._inputSamples;
+    const end = start + float32Data.length - 1;
+    const result = [];
+    while (true) {
+      // Use the continuous input timeline, not a rounded length per render
+      // quantum. Fractional boundary samples wait for the next input block.
+      const position = this._outputSamples * inputRate / outputRate;
+      const lo = Math.floor(position);
+      const frac = position - lo;
+      if (lo > end || (frac > 0 && lo === end)) break;
+      const index = lo - start;
+      const left = index < 0 ? this._lastSample : float32Data[index];
+      const right = frac > 0 ? float32Data[index + 1] : left;
+      result.push(left * (1 - frac) + right * frac);
+      this._outputSamples++;
     }
-    return result;
+    this._inputSamples += float32Data.length;
+    this._lastSample = float32Data[float32Data.length - 1];
+    return Float32Array.from(result);
   }
 
   /**
