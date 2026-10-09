@@ -34,7 +34,7 @@ code/tests and linked guides.
   [standards index](CODING_STANDARDS.md#task-index) for safety and evidence contracts.
 - **Context or history:** use [docs/README.md](docs/README.md) for current versus
   historical sources, [README.md](README.md) for capabilities/operations,
-  [architecture](docs/ARCHITECTURE.md) for boundaries, and [CONTEXT.md](CONTEXT.md)/
+  [architecture](docs/ARCHITECTURE.md) for boundaries, and [GLOSSARY.md](GLOSSARY.md)/
   [ADRs](docs/adr/) for domain terms and decisions. Manifests, code, SQL and workflows
   establish implementation; document disagreements are findings, not permission to
   change behavior. Plans, changelogs, journals and installed skills are not current

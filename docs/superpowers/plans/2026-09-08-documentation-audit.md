@@ -30,7 +30,7 @@ record, not an instruction to rerun or delegate this work. See
 
 ### Task 2: Reconcile current guidance
 
-**Files:** `AGENTS.md`, `GEMINI.md`, `README.md`, `CONTRIBUTING.md`, `CONTEXT.md`, `SECURITY.md`, `ROADMAP.md`, `docs/ARCHITECTURE.md`, natal/operations docs, `docs/adr/0001-single-owner-ai-response-delivery.md`.
+**Files:** `AGENTS.md`, `GEMINI.md`, `README.md`, `CONTRIBUTING.md`, `GLOSSARY.md`, `SECURITY.md`, `ROADMAP.md`, `docs/ARCHITECTURE.md`, natal/operations docs, `docs/adr/0001-single-owner-ai-response-delivery.md`.
 
 - [x] Replace duplicated/invented agent invariants with verified boundaries and scoped workflow rules.
 - [x] Correct architecture, configuration, setup, privacy, dependency, and verification descriptions.

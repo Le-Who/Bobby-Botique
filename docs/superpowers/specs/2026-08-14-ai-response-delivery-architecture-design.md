@@ -498,7 +498,7 @@ production searches на старые string chunks, tuple unpacking и post-fin
 
 Удалить `stream_and_display`, старый public `StreamingWriter` use,
 `StreamingUIAdapter`, local task registries, duplicate Long Read, obsolete tests
-и migration adapters. Обновить `CONTEXT.md`, `docs/ARCHITECTURE.md` и записать
+и migration adapters. Обновить `GLOSSARY.md`, `docs/ARCHITECTURE.md` и записать
 ADR о единственном владельце Telegram response delivery.
 
 ## 13. Completion criteria

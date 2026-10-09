@@ -12,7 +12,7 @@ historical plans, journals and test/deploy reports are not current instructions.
 | [CODING_STANDARDS.md](../CODING_STANDARDS.md) | Task selection index, UTF-8 editing conventions, implementation ownership and specialized safety contracts |
 | [GEMINI.md](../GEMINI.md) | Entry-point pointer, not a second rulebook |
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | Human-facing setup and verification recipes, test isolation and hook installation |
-| [CONTEXT.md](../CONTEXT.md) | Domain vocabulary: delivery, state, consent, provenance and model roles |
+| [GLOSSARY.md](../GLOSSARY.md) | Domain vocabulary: delivery, state, consent, provenance and model roles |
 | [Architecture](ARCHITECTURE.md) | Source-backed ownership boundaries and rationale |
 | [Runtime controls](runtime-controls.md) | Model/prompt editor, revision semantics, quota boundaries, queue cutover and embedding migration procedure |
 | [Security policy](../SECURITY.md) | Reporting route and implementation limits |

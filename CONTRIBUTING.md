@@ -145,7 +145,8 @@ CI also builds/smokes the production image and produces dependency audit,
 SBOM and license inventory evidence. These are distinct from local unit checks.
 The observability job validates pinned Compose/Alloy/Loki/HAProxy configuration
 and starts the private stack to check readiness and Grafana authentication.
-It does not currently assert end-to-end ingestion of a synthetic bot event.
+It also verifies end-to-end ingestion of synthetic bot events through the stdout
+collector pipeline, including filtering, privacy and query-limit checks.
 Live canary/deployment actions need dedicated credentials and explicit operational
 scope; see [dependency maintenance](README.md#dependency-maintenance).
 
