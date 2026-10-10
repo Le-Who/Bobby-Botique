@@ -258,8 +258,10 @@ jobs:
         run: |
           mkdir -p ops/observability/secrets
           printf '%s\n' 'ci-only-not-a-production-secret' > ops/observability/secrets/grafana_admin_password
-          sudo chown root:root ops/observability/secrets/grafana_admin_password
+          # The host probe reads as the runner; Grafana (472:0) reads through group 0.
+          sudo chown "$(id -u):0" ops/observability/secrets/grafana_admin_password
           sudo chmod 0640 ops/observability/secrets/grafana_admin_password
+          test -r ops/observability/secrets/grafana_admin_password
           DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock)"
           export DOCKER_SOCKET_GID
           docker compose -f ops/observability/compose.yml config --quiet

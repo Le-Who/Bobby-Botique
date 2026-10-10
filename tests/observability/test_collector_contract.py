@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from pathlib import Path
 
 import yaml
@@ -215,8 +216,6 @@ def test_ci_validates_vendor_configs_with_the_same_pinned_images():
     assert "-verify-config" in workflow
     assert "haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg" in workflow
     assert "docker compose -f ops/observability/compose.yml up -d --wait --wait-timeout" in workflow
-    assert "sudo chown root:root ops/observability/secrets/grafana_admin_password" in workflow
-    assert "chmod 0640 ops/observability/secrets/grafana_admin_password" in workflow
     assert "http://127.0.0.1:3000/api/user" in workflow
     assert "DOCKER_SOCKET_GID=\"$(stat -c '%g' /var/run/docker.sock)\"" in workflow
     assert "export DOCKER_SOCKET_GID" in workflow
@@ -225,3 +224,54 @@ def test_ci_validates_vendor_configs_with_the_same_pinned_images():
     assert "http://loki:3100/ready" in workflow
     for service_name in ("alloy", "docker-proxy", "loki"):
         assert compose["services"][service_name]["image"] in workflow
+
+
+def test_ci_grafana_secret_allows_the_host_probe_and_container_but_no_other_users():
+    """Catch root-only host access or loss of Grafana's group access to the shared secret."""
+    compose = _load_yaml("compose.yml")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["observability-config"]["steps"]
+    run = next(step["run"] for step in steps if "docker compose" in step.get("run", ""))
+    grafana = compose["services"]["grafana"]
+    assert grafana["secrets"] == ["grafana_admin_password"]
+    assert grafana["environment"]["GF_SECURITY_ADMIN_PASSWORD__FILE"] == "/run/secrets/grafana_admin_password"
+    container_uid, container_gid = map(int, grafana["user"].split(":"))
+    secret_default = compose["secrets"]["grafana_admin_password"]["file"].split(":-", 1)[1].removesuffix("}")
+    secret = (Path("ops/observability") / secret_default).as_posix()
+
+    # Both actual host consumers use StackProbe, whose constructor reads this file.
+    probe_passwords = re.findall(r"--password-file\s+(\S+)", run)
+    e2e_passwords = re.findall(r"export TEST_GRAFANA_PASSWORD_FILE=(\S+)", run)
+    assert probe_passwords == e2e_passwords == [secret]
+
+    runner_uid, runner_gid = 1001, 1001
+    commands = [shlex.split(line.rstrip("\\").replace("$(id -u)", str(runner_uid))) for line in run.splitlines()]
+    owners = [command[-2] for command in commands if command[:2] == ["sudo", "chown"] and command[-1] == secret]
+    modes = [command[-2] for command in commands if command[:2] == ["sudo", "chmod"] and command[-1] == secret]
+    assert len(owners) == len(modes) == 1
+    owner, group = (0 if value == "root" else int(value) for value in owners[0].split(":"))
+    mode = int(modes[0], 8)
+
+    def can_read(uid: int, gid: int) -> bool:
+        permission = 0o400 if uid == owner else 0o040 if gid == group else 0o004
+        return bool(mode & permission)
+
+    assert can_read(runner_uid, runner_gid), "the non-root CI host cannot read its Grafana probe password"
+    assert can_read(container_uid, container_gid), "Grafana cannot read its bind-mounted secret"
+    assert mode == 0o640
+    assert not can_read(2000, 2000), "the Grafana password must not be world-readable"
+
+
+def test_ci_checks_host_secret_readability_before_starting_docker():
+    """Catch permission failures before pulling or starting the disposable stack."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["observability-config"]["steps"]
+    run = next(step["run"] for step in steps if "docker compose" in step.get("run", ""))
+    secret = re.search(r"--password-file\s+(\S+)", run).group(1)
+    commands = [shlex.split(line.rstrip("\\")) for line in run.splitlines()]
+    readability_check = ["test", "-r", secret]
+    assert readability_check in commands, "CI must check host password readability before starting Docker"
+    check = commands.index(readability_check)
+    permission_setup = next(i for i, command in enumerate(commands) if command[:2] == ["sudo", "chmod"])
+    docker_start = next(i for i, command in enumerate(commands) if command and command[0] == "docker")
+    assert permission_setup < check < docker_start
