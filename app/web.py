@@ -251,7 +251,7 @@ def _is_authenticated():
     # Fallback: check X-Auth-Token header (for API/monitoring tools)
     token = request.headers.get("X-Auth-Token")
     expected = _get_admin_secret()
-    if token and expected and hmac.compare_digest(token, expected):
+    if token and expected and hmac.compare_digest(token.encode("utf-8"), expected.encode("utf-8")):
         return True
     # Fallback: check Authorization header for Telegram WebApp initData (tma <initData>)
     auth_header = request.headers.get("Authorization", "")
@@ -323,11 +323,15 @@ async def login_page():
 
         # Validate CSRF token
         expected_csrf = session.get("csrf_token", "")
-        if not csrf_token or not expected_csrf or not hmac.compare_digest(csrf_token, expected_csrf):
+        if (
+            not csrf_token
+            or not expected_csrf
+            or not hmac.compare_digest(csrf_token.encode("utf-8"), expected_csrf.encode("utf-8"))
+        ):
             error = "Invalid request. Please try again."
         elif not expected:
             error = "Server misconfiguration: ADMIN_SECRET not set."
-        elif hmac.compare_digest(password, expected):
+        elif hmac.compare_digest(password.encode("utf-8"), expected.encode("utf-8")):
             session.pop("csrf_token", None)  # Consume the token
             session["authenticated"] = True
             session.permanent = True

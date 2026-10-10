@@ -105,6 +105,7 @@ from app.update_processor import UserScopedUpdateProcessor
 
 # Import extracted modules
 from app.web import quart_app
+from app.webhook_admission import AdmissionClosed, WebhookAdmissionGate, _await_owned
 from app.webhook_security import webhook_secret_matches as _webhook_secret_matches
 
 # Global shutdown event
@@ -202,10 +203,30 @@ async def basic_monitoring():
     logging.info("Monitoring task stopped due to shutdown signal")
 
 
-async def _cleanup_application(application, reason: str = "cleanup"):
+async def _cleanup_application(
+    application, reason: str = "cleanup", *, webhook_admission: WebhookAdmissionGate | None = None
+):
     """Очищает ресурсы application при ошибках"""
     if not application:
         return
+    if webhook_admission is not None:
+        webhook_admission.close()
+        # Error cleanup can itself be cancelled before reaching the PTB-stop
+        # barrier. Keep its full resource sequence owned independently of the
+        # shared stop task, which may already have a terminal result.
+        child = asyncio.create_task(
+            _cleanup_application_resources(application, reason, webhook_admission=webhook_admission),
+            name="webhook-application-cleanup",
+        )
+        await _await_owned(child)
+    else:
+        await _cleanup_application_resources(application, reason)
+
+
+async def _cleanup_application_resources(
+    application, reason: str, *, webhook_admission: WebhookAdmissionGate | None = None
+):
+    """Run the existing cleanup order; the caller owns any cancellation deferral."""
 
     # Send shutdown alert to admin
     try:
@@ -268,8 +289,15 @@ async def _cleanup_application(application, reason: str = "cleanup"):
         logging.warning(f"Cleanup error (updater): {cleanup_error}")
 
     try:
-        if hasattr(application, "_initialized") and application._initialized:
-            await application.stop()
+
+        async def stop_application():
+            if hasattr(application, "_initialized") and application._initialized:
+                await application.stop()
+
+        if webhook_admission is not None:
+            await webhook_admission.shutdown(stop_application)
+        else:
+            await stop_application()
     except Exception as cleanup_error:
         logging.warning(f"Cleanup error (application): {cleanup_error}")
 
@@ -325,6 +353,7 @@ async def run_bot_with_retry():
     logging.info(f"Python-telegram-bot version: {version_info}")
 
     application = None
+    webhook_admission = None
 
     try:
         from telegram.request import HTTPXRequest
@@ -471,7 +500,7 @@ async def run_bot_with_retry():
             webhook_secret = (settings.WEBHOOK_SECRET_TOKEN or "").strip()
             seen_update_ids: dict[int, float] = {}
             seen_lock = asyncio.Lock()
-            webhook_admission_lock = asyncio.Lock()
+            webhook_admission = WebhookAdmissionGate()
             dedup_ttl_seconds = 86_400.0
             dedup_capacity = 10_000
 
@@ -515,10 +544,9 @@ async def run_bot_with_retry():
                     logging.warning("Webhook payload decode failed: %s", e)
                     return "Bad Request: invalid update payload", 400
 
-                # Check capacity before claiming a dedupe identity. Serialize local
-                # admissions across the Redis await so another webhook cannot fill
-                # the last slot after this check and consume an undelivered update.
-                async with webhook_admission_lock:
+                async def admit_update():
+                    # Capacity, claims, origin and queue handoff share one owner.
+                    # The gate keeps this operation alive across request cancellation.
                     if application.update_queue.full():
                         logging.warning("Webhook update_queue is full; returning 503 for retry")
                         return "Service Unavailable", 503
@@ -538,18 +566,27 @@ async def run_bot_with_retry():
                             return "", 200
 
                     # PTB owns processing concurrency; ingress only enqueues.
-                    try:
-                        if isinstance(update_id, int):
-                            from app.observability.ingress import webhook_origins
+                    if isinstance(update_id, int):
+                        from app.observability.ingress import webhook_origins
 
-                            webhook_origins.remember(update_id)
+                        webhook_origins.remember(update_id)
+                    try:
                         application.update_queue.put_nowait(update_obj)
                     except QueueFull:
                         if isinstance(update_id, int):
                             webhook_origins.discard(update_id)
                         logging.warning("Webhook update_queue is full; returning 503 for retry")
                         return "Service Unavailable", 503
-                return "", 200
+                    except BaseException:
+                        if isinstance(update_id, int):
+                            webhook_origins.discard(update_id)
+                        raise
+                    return "", 200
+
+                try:
+                    return await webhook_admission.admit(admit_update)
+                except AdmissionClosed:
+                    return "Service Unavailable", 503
 
             await application.bot.set_webhook(
                 url=full_url,
@@ -676,15 +713,28 @@ async def run_bot_with_retry():
             # We shield the shutdown calls to ensure they run even if the cancellation propagates
             if webhook_url:
                 logging.info("Webhook mode shutdown: preserving Telegram webhook for zero-downtime deploy.")
+                await webhook_admission.shutdown(application.stop)
             else:
                 await asyncio.shield(application.updater.stop())
-            await asyncio.shield(application.stop())
+                await asyncio.shield(application.stop())
             logging.info("Bot stopped.")
 
+    except asyncio.CancelledError as cancellation:
+        if application and webhook_admission is not None:
+            # Startup can be cancelled after route registration. Own the existing
+            # cleanup behind the admission barrier and retain the original reason.
+            try:
+                await webhook_admission.shutdown(lambda: _cleanup_application(application))
+            except asyncio.CancelledError as later_cancellation:
+                raise cancellation from later_cancellation
+            except Exception as cleanup_error:
+                logging.warning("Bot cancellation cleanup failed", exc_info=True)
+                raise cancellation from cleanup_error
+        raise
     except Exception as e:
         logging.critical(f"Critical bot error: {e}", exc_info=True)
         if application:
-            await _cleanup_application(application)
+            await _cleanup_application(application, webhook_admission=webhook_admission)
         # Propagate to trigger restart if needed, or exit
         raise e
 

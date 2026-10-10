@@ -71,7 +71,8 @@ async def should_accept_webhook_update(
 
     Redis is the primary guard so overlapping old/new bot containers cannot both
     process the same webhook update during deploys. The in-process map remains a
-    fallback for local/dev or degraded Redis.
+    bounded history of confirmed admissions for local/dev or degraded Redis.
+    It cannot recover unknown Redis acknowledgements or survive process restarts.
     """
     ttl = max(1, int(ttl_seconds))
     keys: list[object] = [update_id]
@@ -79,6 +80,7 @@ async def should_accept_webhook_update(
     if command_key:
         keys.append(command_key)
 
+    redis_confirmed = False
     if redis_client:
         try:
             for key in keys:
@@ -86,7 +88,7 @@ async def should_accept_webhook_update(
                 claimed = await redis_client.set(redis_key, "1", ex=ttl, nx=True)
                 if not claimed:
                     return False
-            return True
+            redis_confirmed = True
         except Exception as exc:
             logger.warning("Webhook Redis dedupe unavailable; using local fallback: %s", exc)
 
@@ -96,15 +98,22 @@ async def should_accept_webhook_update(
         for uid in stale:
             seen_update_ids.pop(uid, None)
 
-        if update_id in seen_update_ids:
+        if not redis_confirmed and update_id in seen_update_ids:
             return False
-        if command_key and command_key in seen_update_ids:
+        if not redis_confirmed and command_key and command_key in seen_update_ids:
             return False
 
-        if len(seen_update_ids) >= capacity:
-            oldest = sorted(seen_update_ids.items(), key=lambda item: item[1])[: max(1, capacity // 10)]
+        local_capacity = max(1, capacity)
+        remembered_keys = keys[-local_capacity:]
+        new_keys = sum(key not in seen_update_ids for key in remembered_keys)
+        overflow = len(seen_update_ids) + new_keys - local_capacity
+        if overflow > 0:
+            oldest = sorted(
+                ((uid, ts) for uid, ts in seen_update_ids.items() if uid not in remembered_keys),
+                key=lambda item: item[1],
+            )[: max(overflow, max(1, local_capacity // 10))]
             for uid, _ in oldest:
                 seen_update_ids.pop(uid, None)
-        for key in keys:
+        for key in remembered_keys:
             seen_update_ids[key] = now
         return True

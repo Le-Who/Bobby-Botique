@@ -93,6 +93,63 @@ def _payload(update_id=987654321):
     }
 
 
+class _RedisClaims:
+    """Stateful SET NX transport double; outage occurs before any write."""
+
+    def __init__(self):
+        self.claims = set()
+        self.available = True
+
+    async def set(self, key, value, *, ex, nx):
+        assert value == "1" and ex > 0 and nx is True
+        if not self.available:
+            raise ConnectionError("synthetic Redis outage")
+        if key in self.claims:
+            return None
+        self.claims.add(key)
+        return True
+
+
+@pytest.mark.parametrize("command", [False, True])
+async def test_confirmed_redis_update_is_not_requeued_during_outage(webhook_client, monkeypatch, command):
+    from app.observability.ingress import WebhookOriginStore
+
+    client, application, path = webhook_client
+    redis = _RedisClaims()
+    origins = WebhookOriginStore()
+    monkeypatch.setattr("app.webhook_dedupe.redis_client", redis)
+    monkeypatch.setattr("app.observability.ingress.webhook_origins", origins)
+    payload = _payload(42)
+    if command:
+        payload["message"].update(text="/start", entities=[{"type": "bot_command", "offset": 0, "length": 6}])
+    headers = {"X-Telegram-Bot-Api-Secret-Token": _SECRET}
+
+    accepted = await client.post(path, json=payload, headers=headers)
+    assert accepted.status_code == 200
+    assert application.update_queue.get_nowait().update_id == 42
+    assert application.update_queue.empty()
+    assert origins.consume(42) is not None
+
+    redis.available = False
+    replay = dict(payload, update_id=43) if command else payload
+    duplicate = await client.post(path, json=replay, headers=headers)
+    assert duplicate.status_code == 200
+    assert application.update_queue.empty(), "Confirmed Redis admission was queued again in local fallback"
+    assert origins.consume(replay["update_id"]) is None
+    application.process_update.assert_not_awaited()
+
+    # A distinct message remains deliverable while Redis is down.
+    fresh = _payload(44)
+    fresh["message"]["message_id"] = 1112
+    if command:
+        fresh["message"].update(text="/start", entities=[{"type": "bot_command", "offset": 0, "length": 6}])
+    response = await client.post(path, json=fresh, headers=headers)
+    assert response.status_code == 200
+    assert application.update_queue.get_nowait().update_id == 44
+    assert application.update_queue.empty()
+    assert origins.consume(44) is not None
+
+
 async def test_webhook_valid_payload_is_queued(webhook_client):
     client, application, path = webhook_client
     response = await client.post(path, json=_payload(), headers={"X-Telegram-Bot-Api-Secret-Token": _SECRET})

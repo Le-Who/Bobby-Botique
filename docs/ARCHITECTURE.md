@@ -18,6 +18,17 @@ long callbacks cannot make their Telegram query IDs expire before answering.
 `app/webhook_dedupe.py` is distinct from message double-tap deduplication in
 `app/middleware/dedup.py`.
 
+Webhook admission ownership was updated on 2026-10-10. After PTB starts,
+`bot.py` registers the route and uses `app/webhook_admission.py` to serialize
+capacity checks, dedupe claims, origin registration and queue handoff. A caller
+cancelled while waiting starts no claim. Once admission starts, its owned child
+finishes before caller cancellation is restored and the lock is released.
+Lifecycle cleanup closes admission before yielding, drains active admission and
+then stops PTB. The queue remains process-local: process crashes and unknown
+Redis acknowledgements are outside this cooperative cancellation guarantee.
+See the [dated verification report](webhook-admission-ownership-2026-10-10.md)
+for tested scenarios and evidence limits.
+
 ```text
 Telegram update → bot.py / handlers → context + provider routing
                                       ↓ typed generation events

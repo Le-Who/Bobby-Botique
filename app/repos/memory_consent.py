@@ -295,8 +295,24 @@ async def private_data_lease(
         yield True
     finally:
         heartbeat.cancel()
-        await asyncio.gather(heartbeat, return_exceptions=True)
-        await _release_private_data_lease(user_id, lease_id)
+
+        async def cleanup() -> None:
+            await asyncio.gather(heartbeat, return_exceptions=True)
+            await _release_private_data_lease(user_id, lease_id)
+
+        # Revocation observes this durable row until release finishes. Repeated
+        # owner cancellation must not interrupt either heartbeat teardown or SQL
+        # release; retain and await this task rather than leaving detached work.
+        cleanup_task = asyncio.create_task(cleanup())
+        cancellation: asyncio.CancelledError | None = None
+        while not cleanup_task.done():
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError as exc:
+                cancellation = exc
+        cleanup_task.result()
+        if cancellation is not None:
+            raise cancellation
 
 
 async def wait_for_private_data_leases(

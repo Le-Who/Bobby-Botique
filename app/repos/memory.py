@@ -560,18 +560,21 @@ async def _check_trgm_available() -> bool:
     return _trgm_available
 
 
-async def _is_ltm_read_enabled(user_id: int) -> bool:
+async def _is_ltm_read_enabled(user_id: int, expected_epoch: int | None = None) -> bool:
     """Return durable read consent, failing closed on missing state or DB errors."""
     try:
         async with db_manager.pool.acquire() as conn, conn.transaction():
             await set_user_context(user_id, False, conn=conn)
             rows = await db_query(
                 """
-                    SELECT ltm_enabled
-                    FROM chats
-                    WHERE user_id = $1
+                    SELECT chat.ltm_enabled
+                    FROM chats AS chat
+                    JOIN public.users AS account ON account.user_id = chat.user_id
+                    WHERE chat.user_id = $1
+                      AND chat.private_data_blocked IS FALSE
+                      AND ($2::bigint IS NULL OR chat.memory_epoch = $2)
                     """,
-                (user_id,),
+                (user_id, expected_epoch),
                 conn=conn,
             )
         return bool(rows and rows[0]["ltm_enabled"] is True)
@@ -580,21 +583,24 @@ async def _is_ltm_read_enabled(user_id: int) -> bool:
         return False
 
 
-async def _lock_ltm_read_consent(user_id: int, conn) -> bool:
-    """Linearize tenant reads against a concurrent LTM opt-out.
+async def _lock_ltm_read_consent(user_id: int, conn, expected_epoch: int | None = None) -> bool:
+    """Linearize tenant reads against consent changes for the captured generation.
 
     The caller must hold an explicit transaction. ``FOR SHARE`` makes a disable
     update wait until the protected LTM/graph read commits; if disable committed
-    first, this sees ``false`` and the repository reads no private memory rows.
+    first, a changed epoch or blocked account also rejects the private read.
     """
     rows = await db_query(
         """
-        SELECT ltm_enabled
-        FROM chats
-        WHERE user_id = $1
-        FOR SHARE
+        SELECT chat.ltm_enabled
+        FROM chats AS chat
+        JOIN public.users AS account ON account.user_id = chat.user_id
+        WHERE chat.user_id = $1
+          AND chat.private_data_blocked IS FALSE
+          AND ($2::bigint IS NULL OR chat.memory_epoch = $2)
+        FOR SHARE OF chat
         """,
-        (user_id,),
+        (user_id, expected_epoch),
         conn=conn,
     )
     return bool(rows and rows[0]["ltm_enabled"] is True)
@@ -630,6 +636,7 @@ async def search_memories(
             limit=limit,
             min_similarity=min_similarity,
             _consent_checked=_consent_checked,
+            expected_epoch=expected_epoch,
         )
 
 
@@ -641,6 +648,7 @@ async def _search_memories_impl(
     limit: int = 5,
     min_similarity: float = 0.5,
     _consent_checked: bool = False,
+    expected_epoch: int | None = None,
 ) -> list[dict[str, Any]]:
     """Search memories by semantic similarity with hybrid RRF + Adaptive Thresholding.
 
@@ -668,7 +676,7 @@ async def _search_memories_impl(
     """
     # This repository boundary is authoritative even when a caller bypasses the
     # handler guard. Consent must be known before sending text to an embedding API.
-    if not _consent_checked and not await _is_ltm_read_enabled(user_id):
+    if not _consent_checked and not await _is_ltm_read_enabled(user_id, expected_epoch):
         return []
 
     query_embedding = await _get_embedding(query, api_key, task_type="RETRIEVAL_QUERY")
@@ -686,7 +694,7 @@ async def _search_memories_impl(
     try:
         async with db_manager.pool.acquire() as conn, conn.transaction():
             await set_user_context(user_id, False, conn=conn)
-            if not await _lock_ltm_read_consent(user_id, conn):
+            if not await _lock_ltm_read_consent(user_id, conn, expected_epoch):
                 return []
 
             if use_trgm:
@@ -856,6 +864,7 @@ async def search_memories_with_graph(
             api_key,
             limit=limit,
             min_similarity=min_similarity,
+            expected_epoch=expected_epoch,
         )
 
 
@@ -866,6 +875,7 @@ async def _search_memories_with_graph_impl(
     *,
     limit: int = 5,
     min_similarity: float = 0.5,
+    expected_epoch: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[str], dict[str, str]]:
     """Graph-augmented memory search with Multi-Query Expansion, 2-Hop traversal, and Temporal Context.
 
@@ -889,7 +899,7 @@ async def _search_memories_with_graph_impl(
 
     # Fail closed before query expansion or embedding sends any user text to an
     # external model. Missing chat state is not implicit consent for recall.
-    if not await _is_ltm_read_enabled(user_id):
+    if not await _is_ltm_read_enabled(user_id, expected_epoch):
         return [], [], {}
 
     # Multi-Query Expansion gate
@@ -905,6 +915,7 @@ async def _search_memories_with_graph_impl(
         api_key,
         limit=limit,
         min_similarity=min_similarity,
+        expected_epoch=expected_epoch,
     )
 
     # 2. Graph traversal: find related entities
@@ -913,10 +924,14 @@ async def _search_memories_with_graph_impl(
     try:
         # Vector retrieval may have taken long enough for consent to change. Recheck
         # immediately before the separate graph embedding leaves the process.
-        if not await _is_ltm_read_enabled(user_id):
+        if not await _is_ltm_read_enabled(user_id, expected_epoch):
             return [], [], {}
 
         query_embedding = await _get_embedding(expanded_query, api_key, task_type="RETRIEVAL_QUERY")
+        # Provider failure may return None after consent changed while it was
+        # pending. Even a vector-only fallback must still belong to this epoch.
+        if not await _is_ltm_read_enabled(user_id, expected_epoch):
+            return [], [], {}
         if query_embedding is None:
             return memories, graph_triples, source_passages
 
@@ -924,7 +939,7 @@ async def _search_memories_with_graph_impl(
 
         async with db_manager.pool.acquire() as conn, conn.transaction():
             await set_user_context(user_id, False, conn=conn)
-            if not await _lock_ltm_read_consent(user_id, conn):
+            if not await _lock_ltm_read_consent(user_id, conn, expected_epoch):
                 return [], [], {}
 
             # Find top-K similar entity nodes
@@ -1242,6 +1257,8 @@ async def _search_memories_with_graph_impl(
     except Exception as e:
         _current_retrieved_edge_ids.set((user_id, ()))
         logging.warning("Graph traversal failed (non-critical): %s", e)
+        if not await _is_ltm_read_enabled(user_id, expected_epoch):
+            return [], [], {}
 
     return memories, graph_triples, source_passages
 
@@ -1275,6 +1292,7 @@ async def search_memories_with_llm_judge(
             api_key,
             limit=limit,
             candidate_floor=candidate_floor,
+            expected_epoch=expected_epoch,
         )
 
 
@@ -1285,6 +1303,7 @@ async def _search_memories_with_llm_judge_impl(
     *,
     limit: int = 3,
     candidate_floor: float = 0.42,
+    expected_epoch: int | None = None,
 ) -> list[dict[str, Any]]:
     """Low-confidence fallback: fetch candidates + LLM relevance judge.
 
@@ -1309,6 +1328,7 @@ async def _search_memories_with_llm_judge_impl(
         api_key,
         limit=limit * 2,
         min_similarity=candidate_floor,
+        expected_epoch=expected_epoch,
     )
     if not candidates:
         logging.debug(
@@ -1321,7 +1341,7 @@ async def _search_memories_with_llm_judge_impl(
     # Retrieval and its embedding are a separate phase. A user can opt out while
     # candidates are being fetched, so never send stored facts to the judge without
     # a fresh durable check immediately before this external call.
-    if not await _is_ltm_read_enabled(user_id):
+    if not await _is_ltm_read_enabled(user_id, expected_epoch):
         return []
 
     # Step 2: Build batch judge prompt — one call for all candidates

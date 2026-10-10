@@ -3,6 +3,8 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -290,3 +292,158 @@ async def test_batch_auto_reset_is_atomic_and_preserves_other_roles(backend):
             {"legacy_model:daily_croc_text_model": "gemini-stale"}, expected_revision=1, actor="admin"
         )
     assert backend.writes == 2
+
+
+class TransactionDatabase(Database):
+    """Stage RETURNING rows separately from durable data until transaction exit."""
+
+    def __init__(self):
+        super().__init__()
+        self.pending = None
+        self.dirty = False
+        self.exit_fault = None
+        self.persist_before_fault = False
+        self.block_exit = False
+        self.exit_entered = asyncio.Event()
+        self.exit_release = asyncio.Event()
+
+    @asynccontextmanager
+    async def transaction(self):
+        self.pending = self.raw
+        self.dirty = False
+        try:
+            yield self
+            if self.dirty:
+                if self.persist_before_fault:
+                    self.raw = self.pending
+                if self.block_exit:
+                    self.exit_entered.set()
+                    await self.exit_release.wait()
+                if self.exit_fault is not None:
+                    raise self.exit_fault
+                self.raw = self.pending
+        finally:
+            self.pending = None
+            self.dirty = False
+            self.admin = False
+
+    async def fetch(self, sql, *params):
+        if sql.lstrip().startswith("SELECT"):
+            return await super().fetch(sql, *params)
+        durable = self.raw
+        try:
+            rows = await super().fetch(sql, *params)
+            if rows:
+                self.pending = self.raw
+                self.dirty = True
+            return rows
+        finally:
+            self.raw = durable
+
+
+@pytest.fixture
+def transaction_backend(monkeypatch):
+    database = TransactionDatabase()
+    monkeypatch.setattr(store.db.db_manager, "pool", database)
+    monkeypatch.setattr(store, "time", SimpleNamespace(monotonic=lambda: 100.0))
+    return database
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("persisted,revision,value,history", [(False, 1, "old", [0]), (True, 2, "new", [0, 1])])
+async def test_transaction_exit_error_reconciles_durable_outcome_without_retry(
+    transaction_backend, monkeypatch, persisted, revision, value, history
+):
+    settings = store.RuntimeSettingsStore()
+    confirmed = await settings.set_value("prompt:chat", "old", expected_revision=0, actor="admin")
+    # Record acceptance timing as a supplementary oracle. Reconciliation below
+    # uses the ordinary public read and proves invalidation with a warm cache.
+    accept = Mock(wraps=settings._accept)
+    monkeypatch.setattr(settings, "_accept", accept)
+    fault = ConnectionError("synthetic commit acknowledgement failure")
+    transaction_backend.exit_fault = fault
+    transaction_backend.persist_before_fault = persisted
+    reads = transaction_backend.reads
+    with pytest.raises(ConnectionError) as raised:
+        await settings.set_value("prompt:chat", "new", expected_revision=1, actor="admin")
+    assert raised.value is fault
+    assert transaction_backend.writes == 2
+    accept.assert_not_called()
+    assert confirmed.revision == 1 and confirmed.values["prompt:chat"] == "old"
+    assert json.loads(transaction_backend.raw)["revision"] == revision
+
+    snapshot, actual_history = await settings.get_state()
+    assert snapshot.revision == revision
+    assert snapshot.values["prompt:chat"] == value
+    assert not snapshot.degraded
+    assert [row["revision"] for row in actual_history] == history
+    assert transaction_backend.reads == reads + 2  # mutation SELECT + normal reconciliation SELECT
+    assert transaction_backend.writes == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("persisted,revision,value", [(False, 1, "old"), (True, 2, "new")])
+async def test_cancellation_at_transaction_exit_preserves_acceptance_and_releases_lock(
+    transaction_backend, monkeypatch, persisted, revision, value
+):
+    settings = store.RuntimeSettingsStore()
+    await settings.set_value("prompt:chat", "old", expected_revision=0, actor="admin")
+    accept = Mock(wraps=settings._accept)
+    monkeypatch.setattr(settings, "_accept", accept)
+    transaction_backend.persist_before_fault = persisted
+    transaction_backend.block_exit = True
+    operation = asyncio.create_task(settings.set_value("prompt:chat", "new", expected_revision=1, actor="admin"))
+    try:
+        await asyncio.wait_for(transaction_backend.exit_entered.wait(), timeout=1)
+        # RETURNING has completed, but the write has no confirmed commit yet.
+        assert transaction_backend.writes == 2
+        during = await settings.get_snapshot()
+        assert during.revision == 1 and during.values["prompt:chat"] == "old"
+        accept.assert_not_called()
+        operation.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+    finally:
+        if not operation.done():
+            operation.cancel()
+        await asyncio.gather(operation, return_exceptions=True)
+    accept.assert_not_called()
+    reads = transaction_backend.reads
+    snapshot = await asyncio.wait_for(settings.get_snapshot(), timeout=1)
+    assert snapshot.revision == revision and snapshot.values["prompt:chat"] == value
+    assert not snapshot.degraded
+    assert transaction_backend.reads == reads + 1
+    assert transaction_backend.writes == 2
+    # A subsequent mutation can also acquire the released write lock.
+    transaction_backend.block_exit = False
+    transaction_backend.persist_before_fault = False
+    saved = await asyncio.wait_for(
+        settings.set_value("prompt:chat", "after", expected_revision=revision, actor="admin"), timeout=1
+    )
+    assert saved.revision == revision + 1
+    assert transaction_backend.writes == 3
+
+
+@pytest.mark.asyncio
+async def test_successful_write_is_published_only_after_transaction_exit(transaction_backend):
+    settings = store.RuntimeSettingsStore()
+    await settings.set_value("prompt:chat", "old", expected_revision=0, actor="admin")
+    transaction_backend.block_exit = True
+    operation = asyncio.create_task(settings.set_value("prompt:chat", "new", expected_revision=1, actor="admin"))
+    try:
+        await asyncio.wait_for(transaction_backend.exit_entered.wait(), timeout=1)
+        assert json.loads(transaction_backend.raw)["values"]["prompt:chat"] == "old"
+        assert (await settings.get_snapshot()).values["prompt:chat"] == "old"
+        assert not operation.done()
+        transaction_backend.exit_release.set()
+        saved = await asyncio.wait_for(operation, timeout=1)
+    finally:
+        if not operation.done():
+            operation.cancel()
+        await asyncio.gather(operation, return_exceptions=True)
+    assert saved.revision == 2 and saved.values["prompt:chat"] == "new"
+    assert json.loads(transaction_backend.raw)["revision"] == 2
+    snapshot, history = await settings.get_state()
+    assert snapshot.revision == 2
+    assert [row["revision"] for row in history] == [0, 1]
+    assert transaction_backend.writes == 2
