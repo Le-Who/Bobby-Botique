@@ -33,6 +33,7 @@ from app.bot_commands import (
 )
 from app.handlers import menus
 from app.handlers.callbacks import _BUSY_TOAST, _is_user_busy
+from app.handlers.tarot_chat import leave_tarot_for_chat
 from app.i18n import t
 from app.repos.chats import get_user_chat, set_ltm_enabled, update_user_chat
 from app.utils.formatting import TelegramFormatter
@@ -114,6 +115,7 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat_state.is_deep_dive = False
     chat_state.deep_dive_thread_id = None
     await update_user_chat(user_id, chat_state)
+    await leave_tarot_for_chat(user_id, query.message)
 
     # Remove the old inline keyboard
     await query.edit_message_reply_markup(reply_markup=None)
@@ -139,6 +141,7 @@ async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     chat_state.is_deep_dive = False
     chat_state.deep_dive_thread_id = None
     await update_user_chat(user_id, chat_state)
+    await leave_tarot_for_chat(user_id, query.message)
 
     lang = _lang(update)
     text = t("chat.new_started", lang)

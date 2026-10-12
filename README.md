@@ -695,6 +695,10 @@ Administrative and developer commands are deliberately excluded from `app/bot_co
   words also switch out of an active input form; ordinary phrases retain normal
   chat routing.
 - Standard chat combines selected model, history and consent-gated memory.
+- An idle Tarot session offers a choice to continue Tarot or send the text as
+  an ordinary request, including the first message after state restoration.
+  A successful model selection, `/newchat`, normal `/start`, or the new-chat/
+  new-topic buttons end the Tarot session and remove its reply keyboard.
 - `?` requests quick search; `??` requests bounded agentic research.
 - Enable inline mode in BotFather and use the deployed bot's username. Deferred
   AI answers also require chosen-result feedback; immediate compatibility results

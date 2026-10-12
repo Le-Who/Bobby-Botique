@@ -15,6 +15,7 @@ from telegram.ext import ContextTypes
 from app.config import get_model_hash, get_openrouter_keys, settings
 from app.handlers import menus
 from app.handlers.callbacks import _BUSY_TOAST, _is_user_busy
+from app.handlers.tarot_chat import leave_tarot_for_chat
 from app.repos.chats import get_user_chat, update_user_chat
 
 
@@ -100,6 +101,7 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     chat_state = await get_user_chat(user_id)
     chat_state.model = model_name
     await update_user_chat(user_id, chat_state)
+    await leave_tarot_for_chat(user_id, query.message)
 
     # Update menu с новой выбранной modelю
     formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(chat_state, context)
@@ -148,6 +150,7 @@ async def switch_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
     chat_state = await get_user_chat(user_id)
     chat_state.model = model_name
     await update_user_chat(user_id, chat_state)
+    await leave_tarot_for_chat(user_id, query.message)
 
     if model_name.startswith("opencode-go/"):
         display_name = model_name.replace("opencode-go/", "").replace("-", " ").title()

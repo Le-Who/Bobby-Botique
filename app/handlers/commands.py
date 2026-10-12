@@ -25,6 +25,7 @@ from app.bot_commands import (
     render_help_overview,
 )
 from app.handlers import menus
+from app.handlers.tarot_chat import leave_tarot_for_chat
 from app.i18n import t
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
 from app.repos.chats import get_user_chat, update_user_chat
@@ -195,6 +196,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     chat_state = await get_user_chat(user_id)
+    await leave_tarot_for_chat(user_id, update.message)
     formatted_text, parse_mode, reply_markup = await menus.get_start_menu_content(chat_state, user_id=user_id)
 
     await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
@@ -285,6 +287,7 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     chat_state.token_count = 0
     chat_state.system_prompt = None
     await update_user_chat(user_id, chat_state)
+    await leave_tarot_for_chat(user_id, update.message)
 
     from app.middleware.dedup import clear_user_dedup
 

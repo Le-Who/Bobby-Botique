@@ -188,6 +188,14 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     await ensure_state_loaded(user_id)
 
+    # Filters run before lazy hydration. Recheck the restored mode so the first
+    # message after a restart follows the same route as subsequent messages.
+    if effective_msg.text and state.is_in_tarot_mode(user_id):
+        from app.handlers.tarot_chat import handle_tarot_message
+
+        await handle_tarot_message(update, context)
+        return
+
     request_id = set_request_id(f"tgmsg-{chat_id}-{getattr(update, 'update_id', 'na')}")
     set_user_context(user_id, chat_id)
 

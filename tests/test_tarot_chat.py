@@ -7,6 +7,12 @@ from app import state
 from app.handlers import messages, tarot_chat
 
 
+@pytest.fixture(autouse=True)
+def _offline_persistence(monkeypatch):
+    monkeypatch.setattr(state, "_schedule_persist", lambda _state: None)
+    monkeypatch.setattr("app.repos.users.load_user_state", AsyncMock(return_value=None))
+
+
 class DummyUser:
     def __init__(self, user_id: int = 123):
         self.id = user_id
@@ -159,13 +165,34 @@ async def test_idle_tarot_message_prompts_route_choice_without_calling_tarot_pro
     assert session["last_activity_at"] == 1.0
     update.message.reply_text.assert_awaited_once()
     reply_kwargs = update.message.reply_text.await_args.kwargs
-    assert isinstance(reply_kwargs["reply_markup"], ReplyKeyboardRemove)
-    update.message.reply_text.return_value.edit_text.assert_awaited_once()
-    edit_kwargs = update.message.reply_text.return_value.edit_text.await_args.kwargs
-    assert isinstance(edit_kwargs["reply_markup"], InlineKeyboardMarkup)
-    labels = [button.text for row in edit_kwargs["reply_markup"].inline_keyboard for button in row]
+    assert isinstance(reply_kwargs["reply_markup"], InlineKeyboardMarkup)
+    update.message.reply_text.return_value.edit_text.assert_not_awaited()
+    labels = [button.text for row in reply_kwargs["reply_markup"].inline_keyboard for button in row]
     assert "Продолжить сеанс Таро" in labels
     assert "Отправить как обычный запрос" in labels
+
+
+@pytest.mark.asyncio
+async def test_first_message_after_hydration_offers_choice_for_persisted_tarot_session():
+    user_id = 222004
+    update = DummyUpdate("Что ты умеешь?", user_id=user_id)
+    context = DummyContext()
+    persisted = {
+        "tarot_mode": True,
+        "tarot_session": {"history": [], "drawn_cards": [], "last_activity_at": 1.0},
+    }
+    assert not tarot_chat.is_tarot_mode_filter.filter(update.message)
+
+    with (
+        patch("app.repos.users.load_user_state", new=AsyncMock(return_value=persisted)),
+        patch("app.utils.decorators.is_authorized", new=AsyncMock(return_value=True)),
+        patch("app.handlers.messages.process_media_group_update", new=AsyncMock(return_value=True)),
+    ):
+        await messages.handle_request(update, context)
+
+    reply_markup = update.message.reply_text.await_args.kwargs["reply_markup"]
+    assert isinstance(reply_markup, InlineKeyboardMarkup)
+    assert state.get_tarot_session(user_id)["pending_idle_text"] == "Что ты умеешь?"
 
 
 @pytest.mark.asyncio
@@ -201,6 +228,7 @@ async def test_idle_tarot_llm_choice_clears_tarot_mode_and_processes_pending_tex
     kwargs = process_long_request.await_args.kwargs
     assert args == (update.callback_query.message, update, context)
     assert kwargs["text_override"] == "таро"
+    assert isinstance(update.callback_query.message.reply_text.await_args.kwargs["reply_markup"], ReplyKeyboardRemove)
 
 
 @pytest.mark.asyncio

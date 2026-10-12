@@ -6,6 +6,7 @@ import pytest
 
 from app import state
 from app.handlers import cb_models
+from app.repos import users
 
 
 class DummyQuery:
@@ -55,6 +56,7 @@ async def test_user_b_settings_callback_not_blocked_by_user_a_long_request(monke
     mock_update = AsyncMock()
     monkeypatch.setattr(cb_models, "get_user_chat", mock_get)
     monkeypatch.setattr(cb_models, "update_user_chat", mock_update)
+    monkeypatch.setattr(users, "load_user_state", AsyncMock(return_value=None))
     monkeypatch.setattr(
         cb_models.menus,
         "get_model_menu_content",

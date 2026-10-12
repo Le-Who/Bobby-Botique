@@ -5,6 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _offline_state_hydration(monkeypatch):
+    monkeypatch.setattr("app.repos.users.load_user_state", AsyncMock(return_value=None))
+
+
 def _make_update(callback_data: str, user_id: int = 42):
     """Build a mock Update with given callback_data."""
     update = MagicMock()

@@ -4,6 +4,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _offline_state_hydration(monkeypatch):
+    monkeypatch.setattr("app.repos.users.load_user_state", AsyncMock(return_value=None))
+
+
 @pytest.mark.asyncio
 async def test_new_chat_command():
     # Setup standard mock objects

@@ -8,14 +8,21 @@ import re
 import time
 from types import SimpleNamespace
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
+)
 from telegram.ext import ContextTypes
 from telegram.ext.filters import MessageFilter
 
 from app.handlers.inline import _build_tarot_system_prompt
 from app.i18n import t
 from app.providers.router import get_provider_router
-from app.state import clear_tarot_session, get_tarot_session, is_in_tarot_mode, set_tarot_session
+from app.state import clear_tarot_session, ensure_state_loaded, get_tarot_session, is_in_tarot_mode, set_tarot_session
 from app.tarot import SpreadType, draw_cards
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
@@ -79,6 +86,15 @@ async def _finish_tarot_session(update: Update, user_id: int) -> None:
     )
 
 
+async def leave_tarot_for_chat(user_id: int, message: Message) -> None:
+    """End a persisted Tarot session when an ordinary-chat action succeeds."""
+    await ensure_state_loaded(user_id)
+    if not is_in_tarot_mode(user_id) and get_tarot_session(user_id) is None:
+        return
+    clear_tarot_session(user_id)
+    await message.reply_text("Сеанс Таро завершен. Возвращаюсь в обычный режим.", reply_markup=ReplyKeyboardRemove())
+
+
 async def _send_idle_route_choice(update: Update, user_id: int, session: dict, text: str) -> None:
     session["pending_idle_text"] = text
     set_tarot_session(user_id, session)
@@ -92,8 +108,9 @@ async def _send_idle_route_choice(update: Update, user_id: int, session: dict, t
     prompt = (
         "Сеанс Таро всё ещё активен, но прошло много времени с последнего сообщения.\n\nКак обработать ваш новый текст?"
     )
-    cleanup_msg = await update.message.reply_text("⏳", reply_markup=ReplyKeyboardRemove())
-    await cleanup_msg.edit_text(prompt, reply_markup=keyboard)
+    # Telegram cannot edit a message sent with ReplyKeyboardRemove. Send the
+    # choice directly and keep the existing end-session keyboard available.
+    await update.message.reply_text(prompt, reply_markup=keyboard)
 
 
 @authorized_only
@@ -276,7 +293,7 @@ async def handle_tarot_idle_choice_callback(update: Update, context: ContextType
         return
 
     if query.data == "tarot_idle:llm":
-        clear_tarot_session(user_id)
+        await leave_tarot_for_chat(user_id, query.message)
         await query.edit_message_text("🤔 Думаю...")
         from app.handlers.agent import process_long_request
 
