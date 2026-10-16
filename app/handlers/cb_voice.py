@@ -102,7 +102,7 @@ async def voice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if pending and action in {"confirm", "deep_search", "transcribe_only", "retranscribe_flash", "edit"}:
         user_lock = state.get_user_lock(pending["user_id"])
-        if user_lock.locked():
+        if state.get_user_state(pending["user_id"]).is_processing or user_lock.locked():
             await query.answer(t("busy.toast", lang))
             return
         await user_lock.acquire()

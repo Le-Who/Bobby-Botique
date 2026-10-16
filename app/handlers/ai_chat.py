@@ -19,6 +19,7 @@ from app.i18n import detect_language, t
 from app.prompt_registry import get_registry
 from app.repos.chats import ensure_chat_generation, update_user_chat
 from app.utils.formatting import TelegramFormatter
+from app.utils.heartbeat import retire_heartbeat
 from app.utils.stage_indicators import STAGES_CHAT, update_stage
 from app.utils.ux_improvements import (
     make_feedback_buttons,
@@ -39,6 +40,13 @@ _DEFAULT_MODEL_CONTEXT_BUDGETS = {
 def _setting(name: str, fallback: Any) -> Any:
     value = getattr(settings, name, None) if settings is not None else None
     return fallback if value is None else value
+
+
+async def _retire_placeholder_notice(placeholder_message: Message) -> None:
+    await retire_heartbeat(
+        placeholder_message.message_id,
+        chat_id=getattr(placeholder_message, "chat_id", None),
+    )
 
 
 def _canonical_user_parts(
@@ -247,6 +255,7 @@ async def _handle_regular_chat(
     # ChatState again after an await could accidentally adopt a recreated
     # account's generation.
     if bool(getattr(chat_state, "private_data_blocked", False)):
+        await _retire_placeholder_notice(placeholder_message)
         await placeholder_message.edit_text(t("error.generic", detect_language(user_message)))
         return
     known_epoch = (
@@ -259,6 +268,7 @@ async def _handle_regular_chat(
         expected_epoch=known_epoch,
     )
     if request_epoch is None:
+        await _retire_placeholder_notice(placeholder_message)
         await placeholder_message.edit_text(t("error.generic", detect_language(user_message)))
         return
     chat_state.memory_epoch = request_epoch
@@ -281,6 +291,7 @@ async def _handle_regular_chat(
             require_ltm=False,
         ) as lease_current:
             if not lease_current:
+                await _retire_placeholder_notice(placeholder_message)
                 await placeholder_message.edit_text(t("error.generic", detect_language(user_message)))
                 return
             await _handle_lyria_audio(placeholder_message, user_id, user_message, model_for_this_request)
@@ -303,6 +314,7 @@ async def _handle_regular_chat(
     if resolution in ("all_exhausted", "decryption_failed"):
         result = classify_resolution(resolution, model_for_this_request)
         try:
+            await _retire_placeholder_notice(placeholder_message)
             await placeholder_message.edit_text(result.user_message or "")
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
@@ -321,6 +333,7 @@ async def _handle_regular_chat(
             [InlineKeyboardButton(t("chat.cancel_fallback", lang), callback_data="fallback:cancel")],
         ]
         try:
+            await _retire_placeholder_notice(placeholder_message)
             await placeholder_message.edit_text(
                 result.user_message or "",
                 reply_markup=InlineKeyboardMarkup(keyboard),
@@ -593,6 +606,7 @@ async def _handle_regular_chat(
         await provider_lease.aclose()
         chat_state.history = history_before_request
         chat_state.context_summary = existing_summary
+        await _retire_placeholder_notice(placeholder_message)
         await placeholder_message.edit_text(t("error.generic", lang))
         return
 
@@ -897,6 +911,7 @@ async def _handle_lyria_audio(
         stop_event.set()
         heartbeat_task.cancel()
 
+    await _retire_placeholder_notice(placeholder_message)
     if result.success and result.audio_bytes:
         # Determine file extension from mime type
         ext_map = {

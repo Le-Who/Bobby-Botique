@@ -17,6 +17,7 @@ Key architectural decisions:
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest, NetworkError
@@ -49,7 +50,13 @@ from app.security import check_user_rate_limit
 from app.tracing import bind_request_span
 from app.utils.api_logger import api_logger
 from app.utils.background_tasks import submit_task
-from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
+from app.utils.heartbeat import (
+    register_heartbeat,
+    register_wait_notice,
+    retire_heartbeat,
+    stop_heartbeat,
+    unregister_heartbeat,
+)
 
 
 async def show_long_wait_retry(
@@ -160,6 +167,63 @@ async def _send_busy_ephemeral(update: Update) -> None:
         submit_task(_del())
     except Exception as e:
         logging.warning("Failed to send busy toast: %s", e)
+
+
+async def _cancel_and_drain(task: asyncio.Task, *, cancellation: asyncio.CancelledError | None = None) -> None:
+    """Keep cancelled request work owned through asynchronous cleanup."""
+    if not task.done() and not task.cancelling():
+        task.cancel()
+    # Task callbacks run in registration order. Include the already-registered
+    # resource cleanup even when the task is done but its callbacks are queued.
+    completion: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    task.add_done_callback(lambda _owner: completion.set_result(None))
+    while not completion.done():
+        try:
+            await asyncio.shield(completion)
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+    completion.result()
+    try:
+        task.result()
+    except Exception, asyncio.CancelledError:
+        pass
+    if cancellation is not None:
+        raise cancellation
+
+
+def _release_admission(user_id: int, owner: asyncio.Task) -> None:
+    if state.get_active_task(user_id) is owner:
+        state.get_user_state(user_id).is_processing = False
+        state.clear_active_task(user_id)
+
+
+def _request_cleanup(user_id: int, placeholder_message, done_event: asyncio.Event) -> Callable[[asyncio.Task], None]:
+    """Release worker resources even when cancellation precedes its first step."""
+    finished = False
+
+    def finish(owner: asyncio.Task) -> None:
+        nonlocal finished
+        if finished:
+            return
+        finished = True
+        _release_admission(user_id, owner)
+        stop_heartbeat(placeholder_message.message_id, event=done_event)
+        unregister_heartbeat(placeholder_message.message_id, event=done_event)
+        done_event.set()
+
+    return finish
+
+
+def _submit_request_worker(user_id: int, coroutine, finish_request: Callable[[asyncio.Task], None]) -> None:
+    """Own the input coroutine even if the task manager never enters it."""
+    task = submit_task(coroutine)
+    state.register_active_task(user_id, task)
+
+    def completed(owner: asyncio.Task) -> None:
+        coroutine.close()
+        finish_request(owner)
+
+    task.add_done_callback(completed)
 
 
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -329,7 +393,12 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 return
             user_state.is_processing = True
 
-            placeholder_message = await effective_msg.reply_text(t("voice.processing", "ru"))
+            try:
+                placeholder_message = await effective_msg.reply_text(t("voice.processing", "ru"))
+            except Exception, asyncio.CancelledError:
+                # No worker owns cleanup until the placeholder has been sent.
+                user_state.is_processing = False
+                raise
 
             done_event = asyncio.Event()
             register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
@@ -507,7 +576,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 return
             user_state.is_processing = True
 
-            draw_placeholder = await effective_msg.reply_text("🎨 Рисую... это займёт несколько секунд.")
+            try:
+                draw_placeholder = await effective_msg.reply_text("🎨 Рисую... это займёт несколько секунд.")
+            except Exception, asyncio.CancelledError:
+                user_state.is_processing = False
+                raise
 
             async def _draw_task_wrapper(
                 _prompt=_draw_prompt,
@@ -582,11 +655,15 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # ── Intent Direct Routing (Plan §4) ──────────────────────────────
         # For text-only messages, try resolving via lightweight APIs
         # (weather, currency) before consuming an LLM call.
+        admission_owner = asyncio.current_task()
+        assert admission_owner is not None
+        state.register_active_task(user_id, admission_owner)
         if not is_photo and message_text:
             try:
                 from app.intent_router import try_direct_intent
 
-                intent_result = await try_direct_intent(message_text)
+                intent_task = asyncio.create_task(try_direct_intent(message_text))
+                intent_result = await asyncio.shield(intent_task)
                 if intent_result and intent_result.handled:
                     user_state.is_processing = False
                     direct_reply = await effective_msg.reply_text(
@@ -616,6 +693,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             logging.debug("Direct intent TTS skipped: %s", tts_err)
                     state.set_last_sent_message(user_id, message_text)
                     logging.info("Intent direct routing handled for user %s", user_id)
+                    _release_admission(user_id, admission_owner)
                     return
                 elif intent_result and not intent_result.handled and intent_result.context_data:
                     message_text = (
@@ -624,23 +702,31 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         f"Используй эти актуальные данные для формирования полноценного ответа."
                     )
                     logging.info("Context enriched with live data for user %s", user_id)
+            except asyncio.CancelledError as cancellation:
+                try:
+                    await _cancel_and_drain(intent_task, cancellation=cancellation)
+                finally:
+                    _release_admission(user_id, admission_owner)
             except Exception as e:
                 logging.debug("Intent routing failed (falling back to LLM): %s", e)
 
-        if is_photo:
-            logging.info("Processing single photo from user %s", user_id)
-            placeholder_message = await effective_msg.reply_text(t("msg.processing_image"))
-        else:
-            logging.info("Processing text message from user %s", user_id)
-            placeholder_message = await effective_msg.reply_text(t("msg.thinking"))
+        try:
+            if is_photo:
+                logging.info("Processing single photo from user %s", user_id)
+                placeholder_message = await effective_msg.reply_text(t("msg.processing_image"))
+            else:
+                logging.info("Processing text message from user %s", user_id)
+                placeholder_message = await effective_msg.reply_text(t("msg.thinking"))
+        except Exception, asyncio.CancelledError:
+            _release_admission(user_id, admission_owner)
+            raise
 
         # Track this placeholder so edited_message handler can reuse it
         state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
 
         done_event = asyncio.Event()
         register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
-        if not is_photo:
-            submit_task(show_long_wait_retry(placeholder_message, done_event, lang=detect_language(message_text)))
+        finish_request = _request_cleanup(user_id, placeholder_message, done_event)
 
         async def task_wrapper() -> None:
             try:
@@ -649,6 +735,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 # Semaphore is now acquired inside process_long_request based on request classification.
                 async with state.get_user_lock(user_id):
                     logging.info("Starting task processing for user %s", user_id)
+                    if not is_photo:
+                        notice = show_long_wait_retry(
+                            placeholder_message, done_event, lang=detect_language(message_text)
+                        )
+                        register_wait_notice(done_event, submit_task(notice), notice)
 
                     try:
                         from app.handlers.agent import process_long_request
@@ -661,7 +752,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             reply_with_voice=reply_with_voice,
                         )
                     except ImportError:
-                        stop_heartbeat(placeholder_message.message_id)
+                        await retire_heartbeat(placeholder_message.message_id, event=done_event)
                         await placeholder_message.edit_text(t("processing.simplified"))
 
                     stop_heartbeat(placeholder_message.message_id)
@@ -685,7 +776,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             except Exception as e:
                 logging.error("Error in task wrapper for user %s: %s", user_id, e, exc_info=True)
                 try:
-                    stop_heartbeat(placeholder_message.message_id)
+                    await retire_heartbeat(placeholder_message.message_id, event=done_event)
                     from app.errors import build_retry_and_roles_keyboard
 
                     await placeholder_message.edit_text(
@@ -704,15 +795,14 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
                 await metrics_collector.record_request("handle_message", elapsed, success=False, user_id=user_id)
             finally:
-                user_state = state.get_user_state(user_id)
-                user_state.is_processing = False
-                state.clear_active_task(user_id)
-                unregister_heartbeat(placeholder_message.message_id)
-                if not done_event.is_set():
-                    stop_heartbeat(placeholder_message.message_id)
+                try:
+                    await retire_heartbeat(placeholder_message.message_id, event=done_event)
+                finally:
+                    owner = asyncio.current_task()
+                    assert owner is not None
+                    finish_request(owner)
 
-        ai_task = submit_task(task_wrapper())
-        state.register_active_task(user_id, ai_task)
+        _submit_request_worker(user_id, task_wrapper(), finish_request)
 
 
 async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -758,101 +848,97 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
         },
     )
 
-    # ── Cancel any inflight task ──────────────────────────────────────────────
-    was_cancelled = state.cancel_active_task(user_id)
-    if was_cancelled:
-        logging.info("edit: cancelled inflight task for user %s", user_id)
-        # Brief yield so the cancelled task's finally-block can release user_lock
-        await asyncio.sleep(0.15)
+    previous_owner = state.get_active_task(user_id)
+    admission_owner = asyncio.current_task()
+    assert admission_owner is not None
+    state.register_active_task(user_id, admission_owner)
+    state.get_user_state(user_id).is_processing = True
+    try:
+        # Retain admission ownership while the predecessor completes all cleanup,
+        # including error UI outside the canonical lock. A further edit drains
+        # this admission owner in turn before reusing the same placeholder.
+        if previous_owner is not None and previous_owner is not admission_owner:
+            await _cancel_and_drain(previous_owner)
 
-    # ── Find or create the placeholder ───────────────────────────────────────
-    last = state.get_last_bot_message(user_id)
-    placeholder_message = None
+        # ── Find or create the placeholder ───────────────────────────────────
+        last = state.get_last_bot_message(user_id)
+        placeholder_message = None
 
-    if last:
-        last_msg_id, last_chat_id = last
-        if last_chat_id == chat_id:
+        if last:
+            last_msg_id, last_chat_id = last
+            if last_chat_id == chat_id:
+                try:
+                    _edited = await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=last_msg_id,
+                        text=t("msg.rethinking"),
+                    )
+                    placeholder_message = None if isinstance(_edited, bool) else _edited
+                except (BadRequest, NetworkError) as e:
+                    logging.warning("edit: could not reuse message %s: %s", last_msg_id, e)
+
+        if placeholder_message is None:
+            placeholder_message = await edited_msg.reply_text(t("msg.rethinking"))
+
+        state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
+        state.set_last_sent_message(user_id, new_text)
+
+        done_event = asyncio.Event()
+        register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
+        finish_request = _request_cleanup(user_id, placeholder_message, done_event)
+
+        start_time = api_logger.log_request("telegram", method="handle_edited_message", message_type="text")
+
+        async def edit_task_wrapper() -> None:
             try:
-                # Edit existing bot message in-place — this is the core UX win
-                _edited = await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=last_msg_id,
-                    text=t("msg.rethinking"),
+                async with state.get_user_lock(user_id):
+                    from app.handlers.agent import process_long_request
+
+                    await process_long_request(placeholder_message, update, context, text_override=new_text)
+
+                    stop_heartbeat(placeholder_message.message_id)
+                    state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
+                    logging.info("edit: completed for user %s", user_id)
+
+                    elapsed = api_logger.log_response("telegram", start_time, method="handle_edited_message")
+                    await metrics_collector.record_request(
+                        "handle_edited_message", elapsed, success=True, user_id=user_id
+                    )
+
+            except asyncio.CancelledError:
+                logging.info("edit: task cancelled for user %s (superseded by newer edit)", user_id)
+                stop_heartbeat(placeholder_message.message_id)
+            except Exception as e:
+                logging.error("edit: error for user %s: %s", user_id, e, exc_info=True)
+                try:
+                    await retire_heartbeat(placeholder_message.message_id, event=done_event)
+                    from app.errors import build_retry_and_roles_keyboard
+
+                    await placeholder_message.edit_text(
+                        t("error.generic"), reply_markup=build_retry_and_roles_keyboard()
+                    )
+                except Exception:
+                    pass
+
+                elapsed = api_logger.log_response(
+                    "telegram",
+                    start_time,
+                    method="handle_edited_message",
+                    success=False,
+                    error_message=str(e),
                 )
-                placeholder_message = None if isinstance(_edited, bool) else _edited
-            except (BadRequest, NetworkError) as e:
-                logging.warning("edit: could not reuse message %s: %s", last_msg_id, e)
+                await metrics_collector.record_request("handle_edited_message", elapsed, success=False, user_id=user_id)
+            finally:
+                try:
+                    await retire_heartbeat(placeholder_message.message_id, event=done_event)
+                finally:
+                    owner = asyncio.current_task()
+                    assert owner is not None
+                    finish_request(owner)
 
-    if placeholder_message is None:
-        # Fallback: send a fresh reply (e.g. old message was deleted by user)
-        placeholder_message = await edited_msg.reply_text(t("msg.rethinking"))
-
-    state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
-
-    user_st = state.get_user_state(user_id)
-    user_st.is_processing = True
-    state.set_last_sent_message(user_id, new_text)
-
-    done_event = asyncio.Event()
-    register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
-
-    start_time = api_logger.log_request("telegram", method="handle_edited_message", message_type="text")
-
-    async def edit_task_wrapper() -> None:
-        try:
-            async with state.get_user_lock(user_id):
-                from app.handlers.agent import process_long_request
-
-                # Inject corrected text override so agent reads the new text
-                # (update.edited_message.text is the corrected version; agent reads
-                #  update.message.text normally, so we patch via user_data)
-                if context.user_data is not None:
-                    context.user_data["_edited_text_override"] = new_text
-
-                await process_long_request(placeholder_message, update, context)
-
-                if context.user_data is not None:
-                    context.user_data.pop("_edited_text_override", None)
-
-                stop_heartbeat(placeholder_message.message_id)
-                state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
-                logging.info("edit: completed for user %s", user_id)
-
-                elapsed = api_logger.log_response("telegram", start_time, method="handle_edited_message")
-                await metrics_collector.record_request("handle_edited_message", elapsed, success=True, user_id=user_id)
-
-        except asyncio.CancelledError:
-            # This edit was superseded by yet another edit — clean up silently
-            logging.info("edit: task cancelled for user %s (superseded by newer edit)", user_id)
-            stop_heartbeat(placeholder_message.message_id)
-        except Exception as e:
-            logging.error("edit: error for user %s: %s", user_id, e, exc_info=True)
-            try:
-                stop_heartbeat(placeholder_message.message_id)
-                from app.errors import build_retry_and_roles_keyboard
-
-                await placeholder_message.edit_text(t("error.generic"), reply_markup=build_retry_and_roles_keyboard())
-            except Exception:
-                pass
-
-            elapsed = api_logger.log_response(
-                "telegram",
-                start_time,
-                method="handle_edited_message",
-                success=False,
-                error_message=str(e),
-            )
-            await metrics_collector.record_request("handle_edited_message", elapsed, success=False, user_id=user_id)
-        finally:
-            usr = state.get_user_state(user_id)
-            usr.is_processing = False
-            state.clear_active_task(user_id)
-            unregister_heartbeat(placeholder_message.message_id)
-            if not done_event.is_set():
-                stop_heartbeat(placeholder_message.message_id)
-
-    edit_ai_task = submit_task(edit_task_wrapper())
-    state.register_active_task(user_id, edit_ai_task)
+        _submit_request_worker(user_id, edit_task_wrapper(), finish_request)
+    finally:
+        _release_admission(user_id, admission_owner)
 
 
 def register(application: Application) -> None:

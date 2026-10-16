@@ -28,7 +28,7 @@ from app.metrics import metrics_collector, track_metrics
 from app.prompt_registry import get_prompt_text, get_registry, register_controlled_text, render_prompt_text
 from app.providers.base import is_opencode_model
 from app.repos.chats import ensure_chat_generation, get_user_chat, update_user_chat
-from app.utils.heartbeat import stop_heartbeat
+from app.utils.heartbeat import retire_heartbeat
 from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import (
     STAGES_SEARCH_QUICK,
@@ -49,6 +49,13 @@ _DEFAULT_OPENCODE_QNA_MODEL = "opencode-go/qwen3.6-plus"
 def _setting(name: str, fallback: Any) -> Any:
     value = getattr(settings, name, None) if settings is not None else None
     return fallback if value is None else value
+
+
+async def _retire_placeholder_notice(placeholder_message: Message) -> None:
+    await retire_heartbeat(
+        placeholder_message.message_id,
+        chat_id=getattr(placeholder_message, "chat_id", None),
+    )
 
 
 def _available_models() -> list[str]:
@@ -121,7 +128,7 @@ async def _handle_qna_search_leased_impl(
     """
     actual_search_query = search_query if search_query else user_message
 
-    stop_heartbeat(placeholder_message.message_id)
+    await _retire_placeholder_notice(placeholder_message)
     await metrics_collector.record_search_query()
 
     try:
@@ -225,6 +232,7 @@ async def _handle_research_agent(
     known_epoch = None if getattr(chat_state, "_has_persisted_chat", True) is False else int(chat_state.memory_epoch)
     expected_epoch = await ensure_chat_generation(user_id, expected_epoch=known_epoch)
     if expected_epoch is None:
+        await _retire_placeholder_notice(placeholder_message)
         await placeholder_message.edit_text("Запрос отменён: настройки приватности изменились.")
         return
     chat_state.memory_epoch = expected_epoch
@@ -258,6 +266,7 @@ async def _handle_research_agent(
         require_ltm=False,
     ) as lease_current:
         if not lease_current:
+            await _retire_placeholder_notice(placeholder_message)
             await placeholder_message.edit_text("Запрос отменён: настройки приватности изменились.")
             return
         return await _handle_research_agent_leased_impl(
@@ -286,7 +295,7 @@ async def _handle_research_agent_leased_impl(
     # If search_query is provided, use it for search, else use user_message
     actual_search_query = search_query if search_query else user_message
 
-    stop_heartbeat(placeholder_message.message_id)
+    await _retire_placeholder_notice(placeholder_message)
     await metrics_collector.record_search_query()
 
     # Determine trace IDs

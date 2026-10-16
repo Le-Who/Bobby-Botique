@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -169,7 +170,7 @@ async def test_handle_request_text_message_happy_path(monkeypatch):
 
     def capture_submit(coro, *args, **kwargs):
         captured_coros.append(coro)
-        noop_task = AsyncMock()
+        noop_task = MagicMock(spec=asyncio.Task)
         noop_task.cancel = MagicMock()
         return noop_task
 
@@ -237,14 +238,20 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
     update = DummyUpdate(message=message)
     context = DummyContext()
 
-    # Capture coroutines so we can drive them deterministically.
-    captured_coros = []
+    # Use real task completion callbacks while omitting the notice's timer.
+    submitted_tasks = []
 
     def capture_submit(coro, *args, **kwargs):
-        captured_coros.append(coro)
-        noop_task = AsyncMock()
-        noop_task.cancel = MagicMock()
-        return noop_task
+        if coro.cr_code.co_name == "show_long_wait_retry":
+            coro.close()
+
+            async def completed_notice():
+                pass
+
+            coro = completed_notice()
+        task = asyncio.get_running_loop().create_task(coro)
+        submitted_tasks.append(task)
+        return task
 
     async def _debounce_passthrough(uid, msg, bot=None):
         from app.middleware.debounce import DebounceResult, _MessageEntry
@@ -296,13 +303,8 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
             coro = call_args[0][0]
             coro.close()
 
-        # Execute the request worker; the delayed long-wait notice is tested
-        # separately and must not hold this test for its production delay.
-        for coro in captured_coros:
-            if coro.cr_code.co_name == "task_wrapper":
-                await coro
-            else:
-                coro.close()
+        # The real worker owns and joins any notice task submitted after entry.
+        await asyncio.gather(*submitted_tasks)
 
         mock_agent_process.assert_awaited_once()
         # Verify arguments passed to process_long_request
@@ -326,7 +328,7 @@ async def test_handle_request_photo_message():
 
     def capture_submit(coro, *args, **kwargs):
         captured_coros.append(coro)
-        noop_task = AsyncMock()
+        noop_task = MagicMock(spec=asyncio.Task)
         noop_task.cancel = MagicMock()
         return noop_task
 
@@ -411,13 +413,19 @@ async def test_handle_request_exception_handling():
     update = DummyUpdate(message=message)
     context = DummyContext()
 
-    captured_coros = []
+    submitted_tasks = []
 
     def capture_submit(coro, *args, **kwargs):
-        captured_coros.append(coro)
-        noop_task = AsyncMock()
-        noop_task.cancel = MagicMock()
-        return noop_task
+        if coro.cr_code.co_name == "show_long_wait_retry":
+            coro.close()
+
+            async def completed_notice():
+                pass
+
+            coro = completed_notice()
+        task = asyncio.get_running_loop().create_task(coro)
+        submitted_tasks.append(task)
+        return task
 
     # Heartbeat coroutines captured via create_task mock (NOT real tasks)
     heartbeat_coros = []
@@ -467,11 +475,7 @@ async def test_handle_request_exception_handling():
 
         await messages.handle_request(update, context)
 
-        for coro in captured_coros:
-            if coro.cr_code.co_name == "task_wrapper":
-                await coro
-            else:
-                coro.close()
+        await asyncio.gather(*submitted_tasks)
 
         # Close heartbeat coroutines to avoid warnings
         for coro in heartbeat_coros:

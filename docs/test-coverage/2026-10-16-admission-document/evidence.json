@@ -1,0 +1,1969 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "dated voice admission and bulk document outcome verification",
+  "date": "2026-10-16",
+  "audit_started_date": "2026-10-15",
+  "verified_at_utc": "2026-10-15T21:56:17.231555+00:00",
+  "base_checkout": "68489459ecf7660eb2a23da474b52c430cb9be2f",
+  "working_tree_uncommitted": true,
+  "baseline": "entry working bytes, including all earlier uncommitted coverage rounds",
+  "new_cases": {
+    "tests/test_voice_callback_admission.py": [
+      "tests/test_voice_callback_admission.py::test_cancelling_text_and_voice_pending_does_not_disturb_another_text_owner",
+      "tests/test_voice_callback_admission.py::test_held_canonical_lock_still_rejects_voice[confirm]",
+      "tests/test_voice_callback_admission.py::test_held_canonical_lock_still_rejects_voice[deep_search]",
+      "tests/test_voice_callback_admission.py::test_held_canonical_lock_still_rejects_voice[edit]",
+      "tests/test_voice_callback_admission.py::test_held_canonical_lock_still_rejects_voice[retranscribe_flash]",
+      "tests/test_voice_callback_admission.py::test_held_canonical_lock_still_rejects_voice[transcribe_only]",
+      "tests/test_voice_callback_admission.py::test_idle_voice_action_still_admits_once[confirm]",
+      "tests/test_voice_callback_admission.py::test_idle_voice_action_still_admits_once[deep_search]",
+      "tests/test_voice_callback_admission.py::test_idle_voice_action_still_admits_once[edit]",
+      "tests/test_voice_callback_admission.py::test_idle_voice_action_still_admits_once[retranscribe_flash]",
+      "tests/test_voice_callback_admission.py::test_idle_voice_action_still_admits_once[transcribe_only]",
+      "tests/test_voice_callback_admission.py::test_other_user_voice_runs_while_text_reservation_survives[intent]",
+      "tests/test_voice_callback_admission.py::test_other_user_voice_runs_while_text_reservation_survives[placeholder]",
+      "tests/test_voice_callback_admission.py::test_preserved_pending_retries_after_text_releases_admission[cancel-intent]",
+      "tests/test_voice_callback_admission.py::test_preserved_pending_retries_after_text_releases_admission[cancel-placeholder]",
+      "tests/test_voice_callback_admission.py::test_preserved_pending_retries_after_text_releases_admission[complete-intent]",
+      "tests/test_voice_callback_admission.py::test_preserved_pending_retries_after_text_releases_admission[complete-placeholder]",
+      "tests/test_voice_callback_admission.py::test_text_reservation_rejects_voice_without_consuming_pending[confirm-intent]",
+      "tests/test_voice_callback_admission.py::test_text_reservation_rejects_voice_without_consuming_pending[confirm-placeholder]",
+      "tests/test_voice_callback_admission.py::test_text_reservation_rejects_voice_without_consuming_pending[deep_search-intent]",
+      "tests/test_voice_callback_admission.py::test_text_reservation_rejects_voice_without_consuming_pending[deep_search-placeholder]",
+      "tests/test_voice_callback_admission.py::test_text_reservation_rejects_voice_without_consuming_pending[edit-intent]",
+      "tests/test_voice_callback_admission.py::test_text_reservation_rejects_voice_without_consuming_pending[edit-placeholder]",
+      "tests/test_voice_callback_admission.py::test_text_reservation_rejects_voice_without_consuming_pending[retranscribe_flash-intent]",
+      "tests/test_voice_callback_admission.py::test_text_reservation_rejects_voice_without_consuming_pending[retranscribe_flash-placeholder]",
+      "tests/test_voice_callback_admission.py::test_text_reservation_rejects_voice_without_consuming_pending[transcribe_only-intent]",
+      "tests/test_voice_callback_admission.py::test_text_reservation_rejects_voice_without_consuming_pending[transcribe_only-placeholder]",
+      "tests/test_voice_callback_admission.py::test_voice_cancel_remains_available_without_releasing_text_owner[intent]",
+      "tests/test_voice_callback_admission.py::test_voice_cancel_remains_available_without_releasing_text_owner[placeholder]"
+    ],
+    "tests/test_document_delete_all_outcomes.py": [
+      "tests/test_document_delete_all_outcomes.py::test_cancellation_before_driver_mutation_propagates_and_releases[callback]",
+      "tests/test_document_delete_all_outcomes.py::test_cancellation_before_driver_mutation_propagates_and_releases[facade]",
+      "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_reaches_facade_unchanged[InterfaceError]",
+      "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_reaches_facade_unchanged[PostgresError]",
+      "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_uses_controlled_callback_feedback[InterfaceError]",
+      "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_uses_controlled_callback_feedback[PostgresError]",
+      "tests/test_document_delete_all_outcomes.py::test_facade_returns_exact_scoped_count_then_zero_on_replay[0]",
+      "tests/test_document_delete_all_outcomes.py::test_facade_returns_exact_scoped_count_then_zero_on_replay[1]",
+      "tests/test_document_delete_all_outcomes.py::test_facade_returns_exact_scoped_count_then_zero_on_replay[3]",
+      "tests/test_document_delete_all_outcomes.py::test_genuine_empty_callback_keeps_stale_selection_and_refreshes_real_menu",
+      "tests/test_document_delete_all_outcomes.py::test_successful_callback_cleans_selection_and_replay_has_no_second_success",
+      "tests/test_document_delete_all_outcomes.py::test_transient_driver_failure_recovers_before_successful_callback[InterfaceError]",
+      "tests/test_document_delete_all_outcomes.py::test_transient_driver_failure_recovers_before_successful_callback[PostgresError]"
+    ]
+  },
+  "final_full_run": {
+    "arguments": [
+      "tests/",
+      "--ignore=tests/integration",
+      "-m",
+      "not integration",
+      "--override-ini=addopts=",
+      "--timeout=30",
+      "-q",
+      "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\offline-final-02\\focus-tmp",
+      "-x"
+    ],
+    "exit_code": 0,
+    "duration_seconds": 451.867,
+    "python": "3.14.3",
+    "versions": {
+      "pytest": "9.1.1",
+      "pytest-cov": "6.3.0",
+      "coverage": "7.15.4",
+      "pytest-asyncio": "1.4.0",
+      "pytest-timeout": "2.4.0",
+      "pytest-xdist": "3.8.0"
+    },
+    "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+    "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/offline-final-02",
+    "json_sha256": "01f6a6929e140f6e01ee54cc269c7bf806544a3643c6510718da0f2d2dd45134",
+    "log_sha256": "293475601d5b34724bf8b2e921a99a17f0dfb67e07fc530fdcf97086d625702b",
+    "phase_outcomes": {
+      "setup:passed": 4756,
+      "call:passed": 4756,
+      "teardown:passed": 4756
+    },
+    "passing_cases": 4756,
+    "passing_browser_marked_cases": 118,
+    "deselected": [
+      "tests/e2e/test_chat_happy_path.py::test_e2e_happy_path_conversation",
+      "tests/observability/test_collector_e2e.py::test_protected_datasource_requires_authentication",
+      "tests/observability/test_collector_e2e.py::test_stdout_event_cardinality_envelope_labels_and_large_payload_survive[gemaibotv2]",
+      "tests/observability/test_collector_e2e.py::test_stdout_event_cardinality_envelope_labels_and_large_payload_survive[ytdlbot]",
+      "tests/observability/test_collector_e2e.py::test_container_allowlist_excludes_private_other_sources_and_keeps_invalid_lines_scoped",
+      "tests/observability/test_collector_e2e.py::test_server_query_limits_are_enforced_through_authenticated_grafana_proxy",
+      "tests/observability/test_collector_e2e.py::test_collected_synthetic_stream_has_no_forbidden_fields_or_excluded_content"
+    ],
+    "failures": [],
+    "collection_errors": [],
+    "blocked_python_socket_connections": 0,
+    "log_warning_signals": []
+  },
+  "final_focused_runs": {
+    "impl-voice-final-01": {
+      "arguments": [
+        "tests/test_request_concurrency.py",
+        "tests/test_message_admission_failures.py",
+        "tests/test_msg_voice_privacy.py",
+        "tests/test_voice_callback_lifecycle.py",
+        "tests/test_voice_race_cleanup.py",
+        "tests/test_direct_intent_admission_ownership.py",
+        "tests/test_update_processor.py",
+        "tests/test_voice_callback_admission.py",
+        "-p",
+        "no:cacheprovider",
+        "--cov=app.handlers.cb_voice",
+        "--cov-branch",
+        "--cov-report=json:E:/Projects/gemaibotv2/.superpowers/sdd/2026-10-15-admission-document-coverage/impl-voice-final-01/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-voice-final-01\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 15.013,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-voice-final-01",
+      "json_sha256": "b3175a15c29f6722970423113c41b48d5ad3599fef85d93d9fa1b56f8ee81aa7",
+      "log_sha256": "8a58057f4465ef8b51bb3b0b53166ae03bdd719436c26b6d52a57fe87f9bafb6",
+      "phase_outcomes": {
+        "setup:passed": 112,
+        "call:passed": 112,
+        "teardown:passed": 112
+      },
+      "passing_cases": 112,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-documents-fix-legacy-final": {
+      "arguments": [
+        "tests/test_callbacks.py",
+        "tests/test_documents_repository.py",
+        "tests/test_destructive_callbacks.py",
+        "tests/test_document_delete_all_outcomes.py",
+        "--cov=app.documents.repository",
+        "--cov=app.handlers.cb_documents",
+        "--cov-branch",
+        "--cov-report=json:.superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-fix-legacy-final/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-documents-fix-legacy-final\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 38.611,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-fix-legacy-final",
+      "json_sha256": "666203043f478e083477e04bb0cbae01865379acd18c02b5d1bf396ac706238c",
+      "log_sha256": "4cf02da150992cba715b3ff1d5fe13f97792310f4baa4f56a048cd008dd5fb77",
+      "phase_outcomes": {
+        "setup:passed": 59,
+        "call:passed": 59,
+        "teardown:passed": 59
+      },
+      "passing_cases": 59,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    }
+  },
+  "distinct_final_focused_cases": 171,
+  "all_recorded_runs": {
+    "audit-admission-diagnostic-01": {
+      "arguments": [
+        ".superpowers/sdd/2026-10-15-admission-document-coverage/audit-admission-probes.py",
+        "-p",
+        "tests.conftest",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\audit-admission-diagnostic-01\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 4.569,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/audit-admission-diagnostic-01",
+      "json_sha256": "0e5e3977e03199268390384d388bc6b038121170fa61c42468834bdef059d76a",
+      "log_sha256": "06932a9be2140b704011148f00a52ed88595ebc7d68f583babb94e2473122b6a",
+      "phase_outcomes": {
+        "setup:passed": 3,
+        "call:passed": 3,
+        "teardown:passed": 3
+      },
+      "passing_cases": 3,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "audit-admission-existing-01": {
+      "arguments": [
+        "tests/test_request_concurrency.py",
+        "tests/test_message_admission_failures.py",
+        "tests/test_msg_voice_privacy.py",
+        "tests/test_voice_callback_lifecycle.py",
+        "tests/test_voice_race_cleanup.py",
+        "tests/test_direct_intent_admission_ownership.py",
+        "tests/test_update_processor.py",
+        "-p",
+        "no:cacheprovider",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\audit-admission-existing-01\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 6.207,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/audit-admission-existing-01",
+      "json_sha256": "7c1a3094ee7a5ff176bbdda7b58260d901cef876cc82af12c4ff146fa002a8bd",
+      "log_sha256": "b2a06d03a8ac979c49a9eca376ce89f532b6a9a6206b6003f16a2c0efea6b440",
+      "phase_outcomes": {
+        "setup:passed": 83,
+        "call:passed": 83,
+        "teardown:passed": 83
+      },
+      "passing_cases": 83,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "audit-admission-red-01": {
+      "arguments": [
+        ".superpowers/sdd/2026-10-15-admission-document-coverage/audit-admission-probes.py",
+        "-p",
+        "tests.conftest",
+        "-p",
+        "no:cacheprovider",
+        "-k",
+        "crosschannel",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\audit-admission-red-01\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 5.108,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/audit-admission-red-01",
+      "json_sha256": "1a9fbd86de344fe5b4ee4eeb091442c3b5d28e08bb6137b0d4bd36e7f5e8a502",
+      "log_sha256": "daeb6e8af447210ca986cd36882c97ea36ed794219b135a444354abf6d2f3759",
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected": [
+        ".superpowers/sdd/2026-10-15-admission-document-coverage/audit-admission-probes.py::test_network_stall_policy_quick_vs_delayed_cleanup[quick]",
+        ".superpowers/sdd/2026-10-15-admission-document-coverage/audit-admission-probes.py::test_network_stall_policy_quick_vs_delayed_cleanup[delayed]"
+      ],
+      "failures": [
+        {
+          "nodeid": ".superpowers/sdd/2026-10-15-admission-document-coverage/audit-admission-probes.py::test_crosschannel_callback_against_real_processor_and_ptb",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "audit-documents-results": {
+      "arguments": [
+        "tests/test_documents_repository.py",
+        "tests/test_destructive_callbacks.py",
+        ".superpowers/sdd/2026-10-15-admission-document-coverage/audit-documents-probe/test_document_failure_priority_probe.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\audit-documents-results\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 19.541,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/audit-documents-results",
+      "json_sha256": "63938cc1e9364fd5fa2d4cb71461b1a84f1db78586684f04f189ace89230bdba",
+      "log_sha256": "d47eba42fb14f2088ad72f600cbff773701e78b78ad763b7a1ed911bbca84e08",
+      "phase_outcomes": {
+        "setup:passed": 50,
+        "call:passed": 50,
+        "teardown:passed": 50
+      },
+      "passing_cases": 50,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-documents-baseline": {
+      "arguments": [
+        "tests/test_documents_repository.py",
+        "tests/test_destructive_callbacks.py",
+        "--cov=app.documents.repository",
+        "--cov=app.handlers.cb_documents",
+        "--cov-branch",
+        "--cov-report=json:.superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-baseline/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-documents-baseline\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 9.314,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-baseline",
+      "json_sha256": "c1345a9fceec6baa41a4553b786e4908e520a475df0fa3c5d5095fa79abe22f2",
+      "log_sha256": "43140ac6871d24f4353f0f73ec4bc26bac14b7187be9544faa4908b1f183cee8",
+      "phase_outcomes": {
+        "setup:passed": 45,
+        "call:passed": 45,
+        "teardown:passed": 45
+      },
+      "passing_cases": 45,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-documents-final": {
+      "arguments": [
+        "tests/test_documents_repository.py",
+        "tests/test_destructive_callbacks.py",
+        "tests/test_document_delete_all_outcomes.py",
+        "--cov=app.documents.repository",
+        "--cov=app.handlers.cb_documents",
+        "--cov-branch",
+        "--cov-report=json:.superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-final/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-documents-final\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 41.936,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-final",
+      "json_sha256": "85d0c4dfaef685fe0fd291ddc2642d57d712be8d40ac0731d8bceed932bc964e",
+      "log_sha256": "2dc31af333de2bb324c95fa62ccdf58cfed474e6aa54a5501633c19e0934a66d",
+      "phase_outcomes": {
+        "setup:passed": 58,
+        "call:passed": 58,
+        "teardown:passed": 58
+      },
+      "passing_cases": 58,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-documents-fix-final": {
+      "arguments": [
+        "tests/test_callbacks.py",
+        "tests/test_documents_repository.py",
+        "tests/test_destructive_callbacks.py",
+        "tests/test_document_delete_all_outcomes.py",
+        "--cov=app.documents.repository",
+        "--cov=app.handlers.cb_documents",
+        "--cov-branch",
+        "--cov-report=json:.superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-fix-final/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-documents-fix-final\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 36.684,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-fix-final",
+      "json_sha256": "6c825a9549534e47b5da6b1b5ddc39af82991402cfdd8ec79ac5574a1df6bef0",
+      "log_sha256": "079da4aad48aec5941f661fac53dbaa278db3470dd7c81bb33d86418c6462228",
+      "phase_outcomes": {
+        "setup:passed": 59,
+        "call:passed": 59,
+        "teardown:passed": 59
+      },
+      "passing_cases": 59,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-documents-fix-green": {
+      "arguments": [
+        "tests/test_callbacks.py",
+        "tests/test_document_delete_all_outcomes.py::test_successful_callback_cleans_selection_and_replay_has_no_second_success",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-documents-fix-green\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 2.638,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-fix-green",
+      "json_sha256": "dbef0574e8851222f11eb2d3f7ea8c4df1c9adfce22c62787f4fec129c9db338",
+      "log_sha256": "086fb908c29402d0269af518ed3c371e3f6fb8b91e2fd0deee11dfe835500109",
+      "phase_outcomes": {
+        "setup:passed": 2,
+        "call:passed": 2,
+        "teardown:passed": 2
+      },
+      "passing_cases": 2,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-documents-fix-legacy-final": {
+      "arguments": [
+        "tests/test_callbacks.py",
+        "tests/test_documents_repository.py",
+        "tests/test_destructive_callbacks.py",
+        "tests/test_document_delete_all_outcomes.py",
+        "--cov=app.documents.repository",
+        "--cov=app.handlers.cb_documents",
+        "--cov-branch",
+        "--cov-report=json:.superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-fix-legacy-final/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-documents-fix-legacy-final\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 38.611,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-fix-legacy-final",
+      "json_sha256": "666203043f478e083477e04bb0cbae01865379acd18c02b5d1bf396ac706238c",
+      "log_sha256": "4cf02da150992cba715b3ff1d5fe13f97792310f4baa4f56a048cd008dd5fb77",
+      "phase_outcomes": {
+        "setup:passed": 59,
+        "call:passed": 59,
+        "teardown:passed": 59
+      },
+      "passing_cases": 59,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-documents-fix-red": {
+      "arguments": [
+        "tests/test_callbacks.py",
+        "tests/test_document_delete_all_outcomes.py::test_successful_callback_cleans_selection_and_replay_has_no_second_success",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-documents-fix-red\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 3.632,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-fix-red",
+      "json_sha256": "23672a4e72aa2daf0d95c1b0aca47681061e0faf096fa039a4386ca5dc3efb5f",
+      "log_sha256": "10ffd6813686b3fb2efb72c7c66298930f202d36b8d3f314bc95a1bbe62f6ae5",
+      "phase_outcomes": {
+        "setup:passed": 2,
+        "call:passed": 1,
+        "teardown:passed": 2,
+        "call:failed": 1
+      },
+      "passing_cases": 1,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [
+        {
+          "nodeid": "tests/test_document_delete_all_outcomes.py::test_successful_callback_cleans_selection_and_replay_has_no_second_success",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-documents-red-callback-interface": {
+      "arguments": [
+        "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_uses_controlled_callback_feedback[InterfaceError]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-documents-red-callback-interface\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 12.822,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-red-callback-interface",
+      "json_sha256": "8aef907c665eb11afc47cbf573c188a823a53a43d31f9b88dc83ef2bfc308b18",
+      "log_sha256": "e182728dfc07ffd297a2350fe42c95d1083a8fce4b326ca029fdf65d37e0b587",
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [
+        {
+          "nodeid": "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_uses_controlled_callback_feedback[InterfaceError]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-documents-red-callback-postgres": {
+      "arguments": [
+        "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_uses_controlled_callback_feedback[PostgresError]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-documents-red-callback-postgres\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 12.829,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-red-callback-postgres",
+      "json_sha256": "0ffec4e58ea2a73b0946450d9ba2c1a055b4f9b99a166bee324fa6bf13f88d9e",
+      "log_sha256": "f9b9774d6d516cd414e33a6259cb7aab54de2930d48383d325761ce2dd7991c5",
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [
+        {
+          "nodeid": "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_uses_controlled_callback_feedback[PostgresError]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-documents-red-facade-interface": {
+      "arguments": [
+        "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_reaches_facade_unchanged[InterfaceError]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-documents-red-facade-interface\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 12.832,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-red-facade-interface",
+      "json_sha256": "3e33a8196e4d7d89df62b2fdaaf4f50a833189eac54d9248699b2c00caecd215",
+      "log_sha256": "95ba5c8a32d5e9d1eac6eb3f7227534a220bbdd4431fb65f01e21f34a3b3825e",
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [
+        {
+          "nodeid": "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_reaches_facade_unchanged[InterfaceError]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-documents-red-facade-postgres": {
+      "arguments": [
+        "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_reaches_facade_unchanged[PostgresError]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-documents-red-facade-postgres\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 3.464,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-red-facade-postgres",
+      "json_sha256": "785218888e030164ad36a51dae6baf25adb27edf1f71abc95f8622f68f8bf953",
+      "log_sha256": "047378453c9a1b141f43b4df5083c86bd4e924770b0e7a462d26c58827f7a886",
+      "phase_outcomes": {
+        "setup:failed": 1,
+        "teardown:passed": 1
+      },
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [
+        {
+          "nodeid": "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_reaches_facade_unchanged[PostgresError]",
+          "when": "setup",
+          "outcome": "failed"
+        }
+      ],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-documents-red-facade-postgres-2": {
+      "arguments": [
+        "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_reaches_facade_unchanged[PostgresError]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-documents-red-facade-postgres-2\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 12.009,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-documents-red-facade-postgres-2",
+      "json_sha256": "625b4e652ab614c62ee77e835365be6c3900b47306ff43acdf102b4f08413ee9",
+      "log_sha256": "1f403f6de4a5f2f36ccfdc3022301e9f57a32bb3f1c62c9fd738ec95c7e16e4a",
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [
+        {
+          "nodeid": "tests/test_document_delete_all_outcomes.py::test_exhausted_driver_error_reaches_facade_unchanged[PostgresError]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-voice-baseline-01": {
+      "arguments": [
+        "tests/test_request_concurrency.py",
+        "tests/test_message_admission_failures.py",
+        "tests/test_msg_voice_privacy.py",
+        "tests/test_voice_callback_lifecycle.py",
+        "tests/test_voice_race_cleanup.py",
+        "tests/test_direct_intent_admission_ownership.py",
+        "tests/test_update_processor.py",
+        "-p",
+        "no:cacheprovider",
+        "--cov=app.handlers.cb_voice",
+        "--cov-branch",
+        "--cov-report=json:E:/Projects/gemaibotv2/.superpowers/sdd/2026-10-15-admission-document-coverage/impl-voice-baseline-01/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-voice-baseline-01\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 11.894,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-voice-baseline-01",
+      "json_sha256": "c4271d6b767ae40cf83926d2bc1e302938e81f78c6583640bdb2e43597d18c79",
+      "log_sha256": "9d2f3fac8c82a80bf87d533e2deb34facd053fffe822a8d273416b04f3230000",
+      "phase_outcomes": {
+        "setup:passed": 83,
+        "call:passed": 83,
+        "teardown:passed": 83
+      },
+      "passing_cases": 83,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-voice-final-01": {
+      "arguments": [
+        "tests/test_request_concurrency.py",
+        "tests/test_message_admission_failures.py",
+        "tests/test_msg_voice_privacy.py",
+        "tests/test_voice_callback_lifecycle.py",
+        "tests/test_voice_race_cleanup.py",
+        "tests/test_direct_intent_admission_ownership.py",
+        "tests/test_update_processor.py",
+        "tests/test_voice_callback_admission.py",
+        "-p",
+        "no:cacheprovider",
+        "--cov=app.handlers.cb_voice",
+        "--cov-branch",
+        "--cov-report=json:E:/Projects/gemaibotv2/.superpowers/sdd/2026-10-15-admission-document-coverage/impl-voice-final-01/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-voice-final-01\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 15.013,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-voice-final-01",
+      "json_sha256": "b3175a15c29f6722970423113c41b48d5ad3599fef85d93d9fa1b56f8ee81aa7",
+      "log_sha256": "8a58057f4465ef8b51bb3b0b53166ae03bdd719436c26b6d52a57fe87f9bafb6",
+      "phase_outcomes": {
+        "setup:passed": 112,
+        "call:passed": 112,
+        "teardown:passed": 112
+      },
+      "passing_cases": 112,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-voice-green-01": {
+      "arguments": [
+        "tests/test_voice_callback_admission.py",
+        "-p",
+        "no:cacheprovider",
+        "--cov=app.handlers.cb_voice",
+        "--cov-branch",
+        "--cov-report=json:E:/Projects/gemaibotv2/.superpowers/sdd/2026-10-15-admission-document-coverage/impl-voice-green-01/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-voice-green-01\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 10.671,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-voice-green-01",
+      "json_sha256": "2e385fde3849e5701a911406ce4002670dce04146a3cf8d0a81d403d33890fc2",
+      "log_sha256": "7d57aaf2988ef687c9751da836e522bdc07c6a662f2b9e16477f1714207d76fc",
+      "phase_outcomes": {
+        "setup:passed": 13,
+        "call:passed": 12,
+        "teardown:passed": 12,
+        "call:failed": 1,
+        "teardown:failed": 1
+      },
+      "passing_cases": 12,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [
+        {
+          "nodeid": "tests/test_voice_callback_admission.py::test_idle_voice_action_still_admits_once[transcribe_only]",
+          "when": "call",
+          "outcome": "failed"
+        },
+        {
+          "nodeid": "tests/test_voice_callback_admission.py::test_idle_voice_action_still_admits_once[transcribe_only]",
+          "when": "teardown",
+          "outcome": "failed"
+        }
+      ],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-voice-green-02": {
+      "arguments": [
+        "tests/test_voice_callback_admission.py",
+        "-p",
+        "no:cacheprovider",
+        "--cov=app.handlers.cb_voice",
+        "--cov-branch",
+        "--cov-report=json:E:/Projects/gemaibotv2/.superpowers/sdd/2026-10-15-admission-document-coverage/impl-voice-green-02/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-voice-green-02\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 12.556,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-voice-green-02",
+      "json_sha256": "2875da87e459ec865d8d28b00a25ceda02071f348298b71d024c975e2b822997",
+      "log_sha256": "1bc1d9891582f0c52c1caa26e403eb52ae4c6d5572668f6951a7cd25db17102b",
+      "phase_outcomes": {
+        "setup:passed": 29,
+        "call:passed": 29,
+        "teardown:passed": 29
+      },
+      "passing_cases": 29,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-voice-red-01": {
+      "arguments": [
+        "tests/test_voice_callback_admission.py",
+        "-p",
+        "no:cacheprovider",
+        "--cov=app.handlers.cb_voice",
+        "--cov-branch",
+        "--cov-report=json:E:/Projects/gemaibotv2/.superpowers/sdd/2026-10-15-admission-document-coverage/impl-voice-red-01/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\impl-voice-red-01\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 7.198,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/impl-voice-red-01",
+      "json_sha256": "683e1ec11dc294b63320d4d2447b8b63f05b3f5abd412762d275777a38ea7d55",
+      "log_sha256": "1d2c95e6075c87fdaea65f6641ff32efb607da9430c0664e16cf46e21ac08f35",
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected": [],
+      "failures": [
+        {
+          "nodeid": "tests/test_voice_callback_admission.py::test_text_reservation_rejects_voice_without_consuming_pending[confirm-intent]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "offline-final": {
+      "arguments": [
+        "tests/",
+        "--ignore=tests/integration",
+        "-m",
+        "not integration",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\offline-final\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 270.482,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/offline-final",
+      "json_sha256": "012016dc6c8f656bf209e26f66a7e406638e7398812c7b3b2df82b0a6a65f7ed",
+      "log_sha256": "275422d939039ffdf0abd3e38ad0eb26f5614d77e28f2a9da52f9db74bc48287",
+      "phase_outcomes": {
+        "setup:passed": 1787,
+        "call:passed": 1786,
+        "teardown:passed": 1787,
+        "call:failed": 1
+      },
+      "passing_cases": 1786,
+      "passing_browser_marked_cases": 72,
+      "deselected": [
+        "tests/e2e/test_chat_happy_path.py::test_e2e_happy_path_conversation",
+        "tests/observability/test_collector_e2e.py::test_protected_datasource_requires_authentication",
+        "tests/observability/test_collector_e2e.py::test_stdout_event_cardinality_envelope_labels_and_large_payload_survive[gemaibotv2]",
+        "tests/observability/test_collector_e2e.py::test_stdout_event_cardinality_envelope_labels_and_large_payload_survive[ytdlbot]",
+        "tests/observability/test_collector_e2e.py::test_container_allowlist_excludes_private_other_sources_and_keeps_invalid_lines_scoped",
+        "tests/observability/test_collector_e2e.py::test_server_query_limits_are_enforced_through_authenticated_grafana_proxy",
+        "tests/observability/test_collector_e2e.py::test_collected_synthetic_stream_has_no_forbidden_fields_or_excluded_content"
+      ],
+      "failures": [
+        {
+          "nodeid": "tests/test_document_delete_all_outcomes.py::test_successful_callback_cleans_selection_and_replay_has_no_second_success",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "offline-final-02": {
+      "arguments": [
+        "tests/",
+        "--ignore=tests/integration",
+        "-m",
+        "not integration",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-admission-document-coverage\\offline-final-02\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 451.867,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "directory": ".superpowers/sdd/2026-10-15-admission-document-coverage/offline-final-02",
+      "json_sha256": "01f6a6929e140f6e01ee54cc269c7bf806544a3643c6510718da0f2d2dd45134",
+      "log_sha256": "293475601d5b34724bf8b2e921a99a17f0dfb67e07fc530fdcf97086d625702b",
+      "phase_outcomes": {
+        "setup:passed": 4756,
+        "call:passed": 4756,
+        "teardown:passed": 4756
+      },
+      "passing_cases": 4756,
+      "passing_browser_marked_cases": 118,
+      "deselected": [
+        "tests/e2e/test_chat_happy_path.py::test_e2e_happy_path_conversation",
+        "tests/observability/test_collector_e2e.py::test_protected_datasource_requires_authentication",
+        "tests/observability/test_collector_e2e.py::test_stdout_event_cardinality_envelope_labels_and_large_payload_survive[gemaibotv2]",
+        "tests/observability/test_collector_e2e.py::test_stdout_event_cardinality_envelope_labels_and_large_payload_survive[ytdlbot]",
+        "tests/observability/test_collector_e2e.py::test_container_allowlist_excludes_private_other_sources_and_keeps_invalid_lines_scoped",
+        "tests/observability/test_collector_e2e.py::test_server_query_limits_are_enforced_through_authenticated_grafana_proxy",
+        "tests/observability/test_collector_e2e.py::test_collected_synthetic_stream_has_no_forbidden_fields_or_excluded_content"
+      ],
+      "failures": [],
+      "collection_errors": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    }
+  },
+  "run_purposes": {
+    "audit-documents-results": "45 existing cases plus 5 diagnostic boundary scenarios. Error probes assert the old incorrect empty feedback; they are not regression GREEN.",
+    "audit-admission-diagnostic-01": "Three diagnostic probes: old voice overtaking and two passing controls for the existing network-stall policy.",
+    "audit-admission-red-01": "Desired busy-rejection RED through real PTB dispatch: one intended failed call and two deselected probes, before the source edit.",
+    "audit-admission-existing-01": "83 existing admission, voice and processor cases before source changes, without coverage instrumentation.",
+    "impl-voice-baseline-01": "83 existing cases before the source edit; selected cb_voice branch baseline.",
+    "impl-voice-red-01": "Permanent desired busy-rejection RED before the source correction: one failed call with passing setup and teardown.",
+    "impl-voice-green-01": "Exploratory attempt: 12 passing calls, one failed call and one teardown failure from a new transcript-only test-double signature. The double was corrected.",
+    "impl-voice-green-02": "All 29 permanent voice cases pass after the source correction and test-double repair.",
+    "impl-voice-final-01": "Final voice cohort: 83 existing plus 29 new cases, with selected branch coverage.",
+    "impl-documents-baseline": "45 existing repository and destructive-callback cases before the source edit; selected branch baseline.",
+    "impl-documents-red-facade-postgres": "Exploratory setup failure from vars() on slotted UserState. No desired assertion ran; this is not genuine RED.",
+    "impl-documents-red-facade-postgres-2": "Permanent desired PostgresError propagation RED at the real facade, before the source correction.",
+    "impl-documents-red-facade-interface": "Permanent desired InterfaceError propagation RED at the real facade, before the source correction.",
+    "impl-documents-red-callback-postgres": "Permanent desired callback error-feedback RED after exhausted real-manager PostgresError retries, before the source correction.",
+    "impl-documents-red-callback-interface": "Permanent desired callback error-feedback RED after exhausted real-manager InterfaceError retries, before the source correction.",
+    "impl-documents-final": "Initial document GREEN: 45 existing plus 13 new cases. The final covering cohort later adds the leaking predecessor and its correction.",
+    "offline-final": "First full attempt: 1786 passing calls and one failure from a leaked legacy menu mock, with seven deselected cases. This is not final GREEN.",
+    "impl-documents-fix-red": "Minimal order-dependent reproduction: the legacy callback predecessor passes, then the new real-menu assertion fails.",
+    "impl-documents-fix-green": "Exploratory two-case GREEN with a defensive new-fixture rebind; superseded by restoration at the legacy mock's source.",
+    "impl-documents-fix-final": "Exploratory 59-case GREEN with the defensive fixture workaround. That workaround was removed from the final design.",
+    "impl-documents-fix-legacy-final": "Final 59-case document cohort after scoped legacy mock restoration. The 13-case new module retains its reviewed bytes and assertions.",
+    "offline-final-02": "Final frozen serial offline non-integration full suite after the legacy isolation correction, without coverage instrumentation."
+  },
+  "runs_without_recorder_json": {},
+  "scoped_coverage": {
+    "impl-documents-baseline": {
+      "sha256": "5c2b31d3aa91c5d091afd1d4747d8584a8dd4cfc63a91d7b1ea9768b787a9a12",
+      "metadata": {
+        "format": 3,
+        "version": "7.15.4",
+        "timestamp": "2026-10-16T00:16:32.773522",
+        "branch_coverage": true,
+        "show_contexts": false
+      },
+      "modules": {
+        "app/documents/repository.py": {
+          "covered_lines": 68,
+          "num_statements": 120,
+          "percent_covered": 56.06060606060606,
+          "percent_covered_display": "56",
+          "missing_lines": 52,
+          "excluded_lines": 0,
+          "percent_statements_covered": 56.666666666666664,
+          "percent_statements_covered_display": "57",
+          "num_branches": 12,
+          "num_partial_branches": 2,
+          "covered_branches": 6,
+          "missing_branches": 6,
+          "percent_branches_covered": 50.0,
+          "percent_branches_covered_display": "50"
+        },
+        "app/handlers/cb_documents.py": {
+          "covered_lines": 68,
+          "num_statements": 135,
+          "percent_covered": 50.292397660818715,
+          "percent_covered_display": "50",
+          "missing_lines": 67,
+          "excluded_lines": 0,
+          "percent_statements_covered": 50.370370370370374,
+          "percent_statements_covered_display": "50",
+          "num_branches": 36,
+          "num_partial_branches": 4,
+          "covered_branches": 18,
+          "missing_branches": 18,
+          "percent_branches_covered": 50.0,
+          "percent_branches_covered_display": "50"
+        }
+      }
+    },
+    "impl-documents-final": {
+      "sha256": "3544813e4901bd0679f13f32dfd7237e2e5ae3f524d418c3b61d917142cbb4a3",
+      "metadata": {
+        "format": 3,
+        "version": "7.15.4",
+        "timestamp": "2026-10-16T00:19:55.625665",
+        "branch_coverage": true,
+        "show_contexts": false
+      },
+      "modules": {
+        "app/documents/repository.py": {
+          "covered_lines": 78,
+          "num_statements": 120,
+          "percent_covered": 63.63636363636363,
+          "percent_covered_display": "64",
+          "missing_lines": 42,
+          "excluded_lines": 0,
+          "percent_statements_covered": 65.0,
+          "percent_statements_covered_display": "65",
+          "num_branches": 12,
+          "num_partial_branches": 2,
+          "covered_branches": 6,
+          "missing_branches": 6,
+          "percent_branches_covered": 50.0,
+          "percent_branches_covered_display": "50"
+        },
+        "app/handlers/cb_documents.py": {
+          "covered_lines": 68,
+          "num_statements": 135,
+          "percent_covered": 50.292397660818715,
+          "percent_covered_display": "50",
+          "missing_lines": 67,
+          "excluded_lines": 0,
+          "percent_statements_covered": 50.370370370370374,
+          "percent_statements_covered_display": "50",
+          "num_branches": 36,
+          "num_partial_branches": 4,
+          "covered_branches": 18,
+          "missing_branches": 18,
+          "percent_branches_covered": 50.0,
+          "percent_branches_covered_display": "50"
+        }
+      }
+    },
+    "impl-documents-fix-final": {
+      "sha256": "a4b909de41062a2760349b425819cabe8b0a702f4c0a173a8f57a267782c0ae8",
+      "metadata": {
+        "format": 3,
+        "version": "7.15.4",
+        "timestamp": "2026-10-16T00:37:38.649517",
+        "branch_coverage": true,
+        "show_contexts": false
+      },
+      "modules": {
+        "app/documents/repository.py": {
+          "covered_lines": 78,
+          "num_statements": 120,
+          "percent_covered": 63.63636363636363,
+          "percent_covered_display": "64",
+          "missing_lines": 42,
+          "excluded_lines": 0,
+          "percent_statements_covered": 65.0,
+          "percent_statements_covered_display": "65",
+          "num_branches": 12,
+          "num_partial_branches": 2,
+          "covered_branches": 6,
+          "missing_branches": 6,
+          "percent_branches_covered": 50.0,
+          "percent_branches_covered_display": "50"
+        },
+        "app/handlers/cb_documents.py": {
+          "covered_lines": 70,
+          "num_statements": 135,
+          "percent_covered": 51.461988304093566,
+          "percent_covered_display": "51",
+          "missing_lines": 65,
+          "excluded_lines": 0,
+          "percent_statements_covered": 51.851851851851855,
+          "percent_statements_covered_display": "52",
+          "num_branches": 36,
+          "num_partial_branches": 4,
+          "covered_branches": 18,
+          "missing_branches": 18,
+          "percent_branches_covered": 50.0,
+          "percent_branches_covered_display": "50"
+        }
+      }
+    },
+    "impl-documents-fix-legacy-final": {
+      "sha256": "c2c130c585dbdab15d883ddc747422fc8fe7b0077bbc7e47a82b9a304684b97a",
+      "metadata": {
+        "format": 3,
+        "version": "7.15.4",
+        "timestamp": "2026-10-16T00:38:54.040308",
+        "branch_coverage": true,
+        "show_contexts": false
+      },
+      "modules": {
+        "app/documents/repository.py": {
+          "covered_lines": 78,
+          "num_statements": 120,
+          "percent_covered": 63.63636363636363,
+          "percent_covered_display": "64",
+          "missing_lines": 42,
+          "excluded_lines": 0,
+          "percent_statements_covered": 65.0,
+          "percent_statements_covered_display": "65",
+          "num_branches": 12,
+          "num_partial_branches": 2,
+          "covered_branches": 6,
+          "missing_branches": 6,
+          "percent_branches_covered": 50.0,
+          "percent_branches_covered_display": "50"
+        },
+        "app/handlers/cb_documents.py": {
+          "covered_lines": 70,
+          "num_statements": 135,
+          "percent_covered": 51.461988304093566,
+          "percent_covered_display": "51",
+          "missing_lines": 65,
+          "excluded_lines": 0,
+          "percent_statements_covered": 51.851851851851855,
+          "percent_statements_covered_display": "52",
+          "num_branches": 36,
+          "num_partial_branches": 4,
+          "covered_branches": 18,
+          "missing_branches": 18,
+          "percent_branches_covered": 50.0,
+          "percent_branches_covered_display": "50"
+        }
+      }
+    },
+    "impl-voice-baseline-01": {
+      "sha256": "fbf7446aae31e05ec80b20af14bacfc2d62021fd03d98af8cb7e135a5bb39ceb",
+      "metadata": {
+        "format": 3,
+        "version": "7.15.4",
+        "timestamp": "2026-10-16T00:04:58.652035",
+        "branch_coverage": true,
+        "show_contexts": false
+      },
+      "modules": {
+        "app/handlers/cb_voice.py": {
+          "covered_lines": 283,
+          "num_statements": 331,
+          "percent_covered": 82.61851015801355,
+          "percent_covered_display": "83",
+          "missing_lines": 48,
+          "excluded_lines": 0,
+          "percent_statements_covered": 85.49848942598187,
+          "percent_statements_covered_display": "85",
+          "num_branches": 112,
+          "num_partial_branches": 25,
+          "covered_branches": 83,
+          "missing_branches": 29,
+          "percent_branches_covered": 74.10714285714286,
+          "percent_branches_covered_display": "74"
+        }
+      }
+    },
+    "impl-voice-final-01": {
+      "sha256": "fdb8a6e7aefd177b7e30ff8497f289df1505dad96eb34f9c790740ed18280555",
+      "metadata": {
+        "format": 3,
+        "version": "7.15.4",
+        "timestamp": "2026-10-16T00:08:31.299954",
+        "branch_coverage": true,
+        "show_contexts": false
+      },
+      "modules": {
+        "app/handlers/cb_voice.py": {
+          "covered_lines": 294,
+          "num_statements": 331,
+          "percent_covered": 86.45598194130926,
+          "percent_covered_display": "86",
+          "missing_lines": 37,
+          "excluded_lines": 0,
+          "percent_statements_covered": 88.82175226586102,
+          "percent_statements_covered_display": "89",
+          "num_branches": 112,
+          "num_partial_branches": 23,
+          "covered_branches": 89,
+          "missing_branches": 23,
+          "percent_branches_covered": 79.46428571428571,
+          "percent_branches_covered_display": "79"
+        }
+      }
+    },
+    "impl-voice-green-02": {
+      "sha256": "292f64fdd50890078b6dfd6562167f5d26bac2b08e6cf84f668ae9cd6fab7191",
+      "metadata": {
+        "format": 3,
+        "version": "7.15.4",
+        "timestamp": "2026-10-16T00:08:01.551576",
+        "branch_coverage": true,
+        "show_contexts": false
+      },
+      "modules": {
+        "app/handlers/cb_voice.py": {
+          "covered_lines": 235,
+          "num_statements": 331,
+          "percent_covered": 67.2686230248307,
+          "percent_covered_display": "67",
+          "missing_lines": 96,
+          "excluded_lines": 0,
+          "percent_statements_covered": 70.99697885196375,
+          "percent_statements_covered_display": "71",
+          "num_branches": 112,
+          "num_partial_branches": 39,
+          "covered_branches": 63,
+          "missing_branches": 49,
+          "percent_branches_covered": 56.25,
+          "percent_branches_covered_display": "56"
+        }
+      }
+    }
+  },
+  "coverage_limits": [
+    "Selected modules/cohorts only; no whole-project or per-test coverage attribution.",
+    "Baseline/final cohorts can differ; counters do not isolate gains from new tests.",
+    "Admission protection can improve without numerical line/branch gains."
+  ],
+  "snapshot": {
+    "files": 938,
+    "unchanged_during_full_run": true,
+    "before_sha256": "def7104525a8fe334af294d28c0216246a0d8c053e8c94bc24fe2f605bf75e61",
+    "after_sha256": "def7104525a8fe334af294d28c0216246a0d8c053e8c94bc24fe2f605bf75e61"
+  },
+  "verified_source_sha256": {
+    "app/handlers/cb_voice.py": "2d0c579ec0f340f5723a2616a9a21aa5318bb4680810b7ef4343aa0f23a59963",
+    "tests/test_voice_callback_admission.py": "c382e95e70ab59f8e1010f6ddc4574152b56d85f3e4a2b52f07ed03ee889385b",
+    "app/documents/repository.py": "90f3932af12fe4b6048fa3b26477a617bd1c813619975349443015ff8b87ad2c",
+    "tests/test_document_delete_all_outcomes.py": "5736851251e77e9ec821b90933e4965c6e5cf4bdf441c945e636d0fc32da8992",
+    "tests/test_callbacks.py": "d327a46ad36835d713b18fc1637e252e486f585506db2ce8c0a09390c303468f"
+  },
+  "entry_preservation": {
+    "initial_files": 935,
+    "unchanged_entry_files": 931,
+    "existing_files_changed_this_turn": [
+      "app/documents/repository.py",
+      "app/handlers/cb_voice.py",
+      "docs/README.md",
+      "tests/test_callbacks.py"
+    ]
+  },
+  "prior_public_artifact_sha256_unchanged": {
+    "docs/message-ownership-followup-2026-10-15.md": "b8e0982eb60020397fc155a10c0e5fab2d6295c2d05847dab6666e80cf3da285",
+    "docs/superpowers/plans/2026-10-15-message-ownership-followup.md": "0b6ec8b6e83b02e9e1af329d00c385dfe20617d2cd1a88a5bfa90e3119c29e3f",
+    "docs/superpowers/plans/2026-10-15-next-priority-coverage.md": "7f081152bad62a3b709025934adce92a17b8b898997d601a00b3c446e3ca2baa",
+    "docs/superpowers/plans/2026-10-15-priority-test-coverage.md": "224251377449dd1035b1eb92fa3095a7b4d883869341220cca7319ba493af2ea",
+    "docs/test-coverage-next-priority-2026-10-15.md": "0d272055e9d6567a02cbf23bcc523a9e5d73909cf82430981d22efe48d6468c9",
+    "docs/test-coverage-priority-2026-10-15.md": "c792c66bcba67d2f8a8b133a40fc81e0c672db762d0f05641169aa89af551607",
+    "docs/test-coverage/2026-10-15-message-ownership/README.md": "f9112131f089a45a096ef3e17a276ad7bfdd39ddc2384329f1cdb04f326dbfe9",
+    "docs/test-coverage/2026-10-15-message-ownership/evidence.json": "ae27be2598e0246adcecf1ffee2f554347264c295881e58738a49f7c9f0cc161",
+    "docs/test-coverage/2026-10-15-next-priority/README.md": "c6fc4ee63b41170924c405b3f88473ffaa53d4014cb5877a261700574ee7fca1",
+    "docs/test-coverage/2026-10-15-next-priority/evidence.json": "797039ded88d600dcb68b6b43844d786ecf8617a1cedd39e5a1496cfd598c6e6",
+    "docs/test-coverage/2026-10-15-priority/README.md": "c7974e9b3a75063504b8b0d4a328d097bca1e4b446b4271eb7e9f09d7e91d8ed",
+    "docs/test-coverage/2026-10-15-priority/evidence.json": "b38813e26b1a9c13d038d1a5de0477af373f70e8349c121f7064303c436b7def"
+  },
+  "reviews": {
+    "task1": {
+      "model": "gpt-6.1-sol",
+      "reasoning": "xhigh",
+      "status": "approved",
+      "spec_compliance": "pass",
+      "quality": "approved",
+      "open_findings": 0,
+      "report": ".superpowers/sdd/2026-10-15-admission-document-coverage/task-1-review-report.md",
+      "report_sha256": "3e5718d0a18aa924190a9e264a33568762b8d7c8ca31cd558d8de4dd2c79735f",
+      "package": "task-1-review-v1.md"
+    },
+    "task2": {
+      "model": "gpt-6.1-sol",
+      "reasoning": "high",
+      "status": "approved",
+      "spec_compliance": "pass",
+      "quality": "approved",
+      "open_findings": 0,
+      "report": ".superpowers/sdd/2026-10-15-admission-document-coverage/task-2-review-report.md",
+      "report_sha256": "85b3d9b40ea61fe2e22a7532121ed8c06040cd01da1dbe427a7cd585a5a7abf2",
+      "package": "task-2-review-v1.md",
+      "controller_confirmations": [
+        "Actual proper-RED notification reached root before the author source correction; root chronology retained in progress.md and conversation.",
+        "Voice scope preservation covered by Task1 independent review and112clean focusedcases.",
+        "Combined five Python files frozen; current source-gates-02 passed; final full4756 passes and171 focused joins verified;938 before/after input hashes identical. Final artifact review approved; only mechanical finalization remains."
+      ],
+      "post_full_fix_review": ".superpowers/sdd/2026-10-15-admission-document-coverage/final-fix-review-report.md"
+    },
+    "final": {
+      "model": "gpt-6.1-sol",
+      "reasoning": "xhigh",
+      "status": "approved",
+      "open_findings": 0,
+      "report": ".superpowers/sdd/2026-10-15-admission-document-coverage/final-fix-review-report.md",
+      "report_sha256": "a4bfd50f9041866c8c601fb920fcadc9fee735b099a6ee01aa416cd3461ea8ae",
+      "package": "final-fix-review-v1.md",
+      "artifact_status": "approved",
+      "initial_source_status": "approved",
+      "initial_source_report": ".superpowers/sdd/2026-10-15-admission-document-coverage/final-source-review-report.md",
+      "initial_source_report_sha256": "7594e878e197c14ab256c2a72678e45fc10627d636257561fb59d0e413c3df67",
+      "source_fix_wave": "Legacy menu mock leak addressed at its source; newmodule restored byte-exact; same-seat scoped review approved.",
+      "artifact_open_findings": 0,
+      "artifact_report": ".superpowers/sdd/2026-10-15-admission-document-coverage/final-artifact-review-report.md",
+      "artifact_report_sha256": "973819b2c6d07a7b1da3d6464278aa18cb6fc5ecb746d0fadcbc7104b13a51b1"
+    }
+  },
+  "checks": {
+    "before-plan-01": {
+      "encoding": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "scripts/check_encoding.py"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.6904524999990826,
+        "output": "PASS: encoding integrity (87 Markdown files)\n"
+      }
+    },
+    "after-plan-01": {
+      "encoding": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "scripts/check_encoding.py"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.6311864000017522,
+        "output": "PASS: encoding integrity (88 Markdown files)\n"
+      }
+    },
+    "source-gates-01": {
+      "ruff": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "ruff",
+          "check",
+          "."
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.1223323000012897,
+        "output": "All checks passed!\n"
+      },
+      "format": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "ruff",
+          "format",
+          "--check",
+          "."
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.11749169998802245,
+        "output": "740 files already formatted\n"
+      },
+      "mypy": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "mypy",
+          "app",
+          "bot.py"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 7.595311099998071,
+        "output": "app\\prompt_registry.py:787: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\prompt_registry.py:789: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\db\\schema.py:146: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\utils\\telegraph.py:106: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\utils\\telegraph.py:107: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\metrics.py:46: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\metrics.py:48: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\metrics.py:194: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\repos\\keys.py:465: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\group_chat.py:38: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\group_chat.py:39: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\group_chat.py:40: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web_miniapp.py:2694: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:1746: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2143: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2148: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2320: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2324: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2325: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2387: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2388: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2447: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2448: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2697: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\nbot.py:501: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\nSuccess: no issues found in 288 source files\n"
+      },
+      "env-registry": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "scripts/check_env_registry.py"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 1.9934849999990547,
+        "output": "PASS: 111 environment names; 0 changes\n"
+      }
+    },
+    "source-gates-02": {
+      "ruff": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "ruff",
+          "check",
+          "."
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.10974639999039937,
+        "output": "All checks passed!\n"
+      },
+      "format": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "ruff",
+          "format",
+          "--check",
+          "."
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.10962950000248384,
+        "output": "740 files already formatted\n"
+      },
+      "mypy": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "mypy",
+          "app",
+          "bot.py"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 1.6588886999961687,
+        "output": "app\\prompt_registry.py:787: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\prompt_registry.py:789: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\db\\schema.py:146: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\utils\\telegraph.py:106: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\utils\\telegraph.py:107: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\metrics.py:46: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\metrics.py:48: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\metrics.py:194: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\repos\\keys.py:465: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\group_chat.py:38: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\group_chat.py:39: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\group_chat.py:40: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web_miniapp.py:2694: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:1746: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2143: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2148: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2320: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2324: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2325: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2387: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2388: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2447: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2448: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\napp\\web.py:2697: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\nbot.py:501: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]\nSuccess: no issues found in 288 source files\n"
+      },
+      "env-registry": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "scripts/check_env_registry.py"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 1.9748302000080002,
+        "output": "PASS: 111 environment names; 0 changes\n"
+      }
+    },
+    "before-publish-01": {
+      "encoding": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "scripts/check_encoding.py"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.6239220999996178,
+        "output": "PASS: encoding integrity (88 Markdown files)\n"
+      }
+    },
+    "docs-gates-01": {
+      "encoding": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "scripts/check_encoding.py"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.6067738999990979,
+        "output": "PASS: encoding integrity (90 Markdown files)\n"
+      },
+      "current-links": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "scripts/check_docs_links.py"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.5635608000011416,
+        "output": "PASS: 35 Markdown documents; 0 link errors\n"
+      },
+      "dated-links": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "-c",
+          "from pathlib import Path; from scripts.check_docs_links import check_document; root=Path.cwd(); names=['docs/test-coverage-admission-document-2026-10-16.md', 'docs/test-coverage/2026-10-16-admission-document/README.md', 'docs/superpowers/plans/2026-10-16-admission-document-coverage.md', 'docs/README.md']; errors=[e for n in names for e in check_document(root/n,root)]; print({'documents':len(names),'errors':errors}); assert not errors"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.30305410000437405,
+        "output": "{'documents': 4, 'errors': []}\n"
+      },
+      "whitespace": {
+        "arguments": [
+          "git",
+          "diff",
+          "--check"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.0818693000037456,
+        "output": "warning: in the working copy of 'app/repos/memory_graph_writer.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/response_delivery/coordinator.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/response_delivery/delivery.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docs/README.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tests/test_integration_flow.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tests/test_request_concurrency.py', LF will be replaced by CRLF the next time Git touches it\n"
+      },
+      "new-file-whitespace": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "-c",
+          "from pathlib import Path; root=Path.cwd(); names=['docs/test-coverage-admission-document-2026-10-16.md', 'docs/test-coverage/2026-10-16-admission-document/README.md', 'docs/superpowers/plans/2026-10-16-admission-document-coverage.md', 'docs/README.md', 'docs/test-coverage/2026-10-16-admission-document/evidence.json', 'tests/test_voice_callback_admission.py', 'tests/test_document_delete_all_outcomes.py']; errors=[f'{n}:{i}' for n in names for i,line in enumerate((root/n).read_text(encoding='utf-8').splitlines(),1) if line.rstrip(' \\t')!=line]; print({'files':len(names),'errors':errors}); assert not errors"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.2305878000042867,
+        "output": "{'files': 7, 'errors': []}\n"
+      }
+    },
+    "docs-gates-01-final": {
+      "encoding": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "scripts/check_encoding.py"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.6123732999985805,
+        "output": "PASS: encoding integrity (90 Markdown files)\n"
+      },
+      "current-links": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "scripts/check_docs_links.py"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.5411982000077842,
+        "output": "PASS: 35 Markdown documents; 0 link errors\n"
+      },
+      "dated-links": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "-c",
+          "from pathlib import Path; from scripts.check_docs_links import check_document; root=Path.cwd(); names=['docs/test-coverage-admission-document-2026-10-16.md', 'docs/test-coverage/2026-10-16-admission-document/README.md', 'docs/superpowers/plans/2026-10-16-admission-document-coverage.md', 'docs/README.md']; errors=[e for n in names for e in check_document(root/n,root)]; print({'documents':len(names),'errors':errors}); assert not errors"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.31022260000463575,
+        "output": "{'documents': 4, 'errors': []}\n"
+      },
+      "whitespace": {
+        "arguments": [
+          "git",
+          "diff",
+          "--check"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.08600090000254568,
+        "output": "warning: in the working copy of 'app/repos/memory_graph_writer.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/response_delivery/coordinator.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/response_delivery/delivery.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docs/README.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tests/test_integration_flow.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tests/test_request_concurrency.py', LF will be replaced by CRLF the next time Git touches it\n"
+      },
+      "new-file-whitespace": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "-c",
+          "from pathlib import Path; root=Path.cwd(); names=['docs/test-coverage-admission-document-2026-10-16.md', 'docs/test-coverage/2026-10-16-admission-document/README.md', 'docs/superpowers/plans/2026-10-16-admission-document-coverage.md', 'docs/README.md', 'docs/test-coverage/2026-10-16-admission-document/evidence.json', 'tests/test_voice_callback_admission.py', 'tests/test_document_delete_all_outcomes.py']; errors=[f'{n}:{i}' for n in names for i,line in enumerate((root/n).read_text(encoding='utf-8').splitlines(),1) if line.rstrip(' \\t')!=line]; print({'files':len(names),'errors':errors}); assert not errors"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.24070449999999255,
+        "output": "{'files': 7, 'errors': []}\n"
+      }
+    },
+    "docs-gates-02": {
+      "encoding": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "scripts/check_encoding.py"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.6478604000003543,
+        "output": "PASS: encoding integrity (90 Markdown files)\n"
+      },
+      "current-links": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "scripts/check_docs_links.py"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.5432190999999875,
+        "output": "PASS: 35 Markdown documents; 0 link errors\n"
+      },
+      "dated-links": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "-c",
+          "from pathlib import Path; from scripts.check_docs_links import check_document; root=Path.cwd(); names=['docs/test-coverage-admission-document-2026-10-16.md', 'docs/test-coverage/2026-10-16-admission-document/README.md', 'docs/superpowers/plans/2026-10-16-admission-document-coverage.md', 'docs/README.md']; errors=[e for n in names for e in check_document(root/n,root)]; print({'documents':len(names),'errors':errors}); assert not errors"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.30288129999826197,
+        "output": "{'documents': 4, 'errors': []}\n"
+      },
+      "whitespace": {
+        "arguments": [
+          "git",
+          "diff",
+          "--check"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.07986070000333712,
+        "output": "warning: in the working copy of 'app/repos/memory_graph_writer.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/response_delivery/coordinator.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'app/response_delivery/delivery.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docs/README.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tests/test_integration_flow.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tests/test_request_concurrency.py', LF will be replaced by CRLF the next time Git touches it\n"
+      },
+      "new-file-whitespace": {
+        "arguments": [
+          "uv",
+          "run",
+          "--locked",
+          "python",
+          "-X",
+          "utf8",
+          "-c",
+          "from pathlib import Path; root=Path.cwd(); names=['docs/test-coverage-admission-document-2026-10-16.md', 'docs/test-coverage/2026-10-16-admission-document/README.md', 'docs/superpowers/plans/2026-10-16-admission-document-coverage.md', 'docs/README.md', 'docs/test-coverage/2026-10-16-admission-document/evidence.json', 'tests/test_voice_callback_admission.py', 'tests/test_document_delete_all_outcomes.py']; errors=[f'{n}:{i}' for n in names for i,line in enumerate((root/n).read_text(encoding='utf-8').splitlines(),1) if line.rstrip(' \\t')!=line]; print({'files':len(names),'errors':errors}); assert not errors"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.22551580000435933,
+        "output": "{'files': 7, 'errors': []}\n"
+      }
+    }
+  },
+  "limits": [
+    "Real registered PTB dispatch with synthetic bot/lifecycle/transport/provider boundaries; not live startup or Telegram delivery.",
+    "Local UserState admission/lock behavior, not distributed or cross-process serialization.",
+    "Fake driver errors and cancellation before mutation do not establish a real PostgreSQL commit/rollback or durable erasure outcome.",
+    "Existing database retry/reconnect and network-stall thresholds/recheck policy unchanged.",
+    "Synthetic credentials, denied repository .env reads, unset integration targets and Python socket guard are not an OS network sandbox.",
+    "No live provider/Telegram/PostgreSQL/Redis, migration, dependency change or deployment verification."
+  ],
+  "current_source_gate": "source-gates-02",
+  "first_full_attempt_snapshot": {
+    "files": 938,
+    "unchanged_during_run": true,
+    "before_sha256": "0bbafeaffdc30df101ff599c62f560184426f5965f7ed9f9f8fe829b8b300b8e",
+    "after_sha256": "0bbafeaffdc30df101ff599c62f560184426f5965f7ed9f9f8fe829b8b300b8e",
+    "final_green": false
+  }
+}

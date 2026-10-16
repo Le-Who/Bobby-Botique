@@ -591,16 +591,23 @@ def register_active_task(user_id: int, task: asyncio.Task) -> None:
     _ACTIVE_TASKS[user_id] = task
 
 
+def get_active_task(user_id: int) -> asyncio.Task | None:
+    """Return the request owner, including one still completing cancellation."""
+    return _ACTIVE_TASKS.get(user_id)
+
+
 def cancel_active_task(user_id: int) -> bool:
     """Cancel the inflight AI task for a user, if any.
 
-    Returns True if a task was found and cancel() was called.
+    Returns True if a live task has cancellation requested.
     Note: cancel() is a request, not a guarantee — await the task
-    with return_exceptions=True to confirm cancellation.
+    with return_exceptions=True to confirm cancellation. Keep it registered
+    until cleanup finishes so a replacement can drain its ownership.
     """
-    task = _ACTIVE_TASKS.pop(user_id, None)
+    task = _ACTIVE_TASKS.get(user_id)
     if task and not task.done():
-        task.cancel()
+        if not task.cancelling():
+            task.cancel()
         return True
     return False
 

@@ -1,7 +1,7 @@
 # ruff: noqa: E402
 import asyncio
 import sys
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -71,15 +71,16 @@ async def async_test_document_callback_structure():
     query.edit_message_text = AsyncMock()
 
     # Mock the menus module used by cb_documents
-    cb_documents.menus.get_documents_menu_content = AsyncMock(return_value=("text", "mode", "markup"))
+    with patch.object(
+        cb_documents.menus, "get_documents_menu_content", AsyncMock(return_value=("text", "mode", "markup"))
+    ):
+        # Call the function
+        await cb_documents.document_callback(update, context)
 
-    # Call the function
-    await cb_documents.document_callback(update, context)
-
-    # Assertions
-    query.answer.assert_called()
-    cb_documents.menus.get_documents_menu_content.assert_called_with(12345)
-    query.edit_message_text.assert_called()
+        # Assertions
+        query.answer.assert_called()
+        cb_documents.menus.get_documents_menu_content.assert_called_with(12345)
+        query.edit_message_text.assert_called()
 
 
 def test_document_callback_structure():

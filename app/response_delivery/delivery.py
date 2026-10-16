@@ -76,6 +76,18 @@ class TelegramResponseDelivery:
             private_content=target.private_content,
         )
 
+    @staticmethod
+    async def _retire_heartbeat(target: TelegramTarget) -> None:
+        if target.placeholder_message is None:
+            return
+        from app.utils.heartbeat import retire_heartbeat
+
+        message = target.placeholder_message
+        await retire_heartbeat(
+            message.message_id,
+            chat_id=target.chat_id or getattr(message, "chat_id", None),
+        )
+
     async def stream(
         self,
         target: TelegramTarget,
@@ -103,16 +115,13 @@ class TelegramResponseDelivery:
         session = self._renderer(target).open()
 
         async def _stop_heartbeat() -> None:
-            if target.placeholder_message is None:
-                return
-            from app.utils.heartbeat import stop_heartbeat
-
-            stop_heartbeat(target.placeholder_message.message_id)
+            await self._retire_heartbeat(target)
 
         coordinator = AIStreamCoordinator(
             router,
             session,
             on_first_text=_stop_heartbeat,
+            on_before_terminal=_stop_heartbeat,
         )
         return await coordinator.run(generation, presentation)
 
@@ -136,6 +145,7 @@ class TelegramResponseDelivery:
         presentation: TelegramPresentation,
     ) -> TelegramResponseOutcome:
         session = self._renderer(target).open()
+        await self._retire_heartbeat(target)
 
         if isinstance(completed, CompletedResponse):
             prepared = presentation.prepare(

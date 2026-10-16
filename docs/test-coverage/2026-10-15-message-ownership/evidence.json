@@ -1,0 +1,1611 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "dated edited-request and direct-intent ownership verification",
+  "date": "2026-10-15",
+  "verified_at_utc": "2026-10-15T19:22:38.031373+00:00",
+  "base_checkout": "68489459ecf7660eb2a23da474b52c430cb9be2f",
+  "baseline": "entry working bytes, including previous uncommitted priority coverage work",
+  "working_tree_uncommitted": true,
+  "new_cases": {
+    "tests/test_edited_request_ownership.py": [
+      "tests/test_edited_request_ownership.py::test_cancelling_edit_admission_keeps_predecessor_cleanup_owned",
+      "tests/test_edited_request_ownership.py::test_completed_prestart_cleanup_cannot_stop_replacement_heartbeat",
+      "tests/test_edited_request_ownership.py::test_edited_placeholder_failure_releases_admission[cancel]",
+      "tests/test_edited_request_ownership.py::test_edited_placeholder_failure_releases_admission[error]",
+      "tests/test_edited_request_ownership.py::test_edited_text_is_request_scoped_after_every_exit[cancel]",
+      "tests/test_edited_request_ownership.py::test_edited_text_is_request_scoped_after_every_exit[error]",
+      "tests/test_edited_request_ownership.py::test_edited_text_is_request_scoped_after_every_exit[success]",
+      "tests/test_edited_request_ownership.py::test_legacy_agent_override_call_remains_compatible",
+      "tests/test_edited_request_ownership.py::test_rapid_edits_keep_latest_admission_owned_until_predecessor_drains",
+      "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[button-cancel-edit]",
+      "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[button-cancel-ordinary]",
+      "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[button-error-edit]",
+      "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[button-error-ordinary]",
+      "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[edit-cancel-edit]",
+      "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[edit-cancel-ordinary]",
+      "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[edit-error-edit]",
+      "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[edit-error-ordinary]",
+      "tests/test_edited_request_ownership.py::test_worker_cancelled_before_first_step_releases_owned_resources[False]",
+      "tests/test_edited_request_ownership.py::test_worker_cancelled_before_first_step_releases_owned_resources[True]"
+    ],
+    "tests/test_direct_intent_admission_ownership.py": [
+      "tests/test_direct_intent_admission_ownership.py::test_cancelled_intent_releases_admission_after_owned_cleanup[False]",
+      "tests/test_direct_intent_admission_ownership.py::test_cancelled_intent_releases_admission_after_owned_cleanup[True]",
+      "tests/test_direct_intent_admission_ownership.py::test_edit_drains_normal_intent_admission_before_starting_new_work",
+      "tests/test_direct_intent_admission_ownership.py::test_intent_completion_racing_caller_cancellation_stays_owned[False]",
+      "tests/test_direct_intent_admission_ownership.py::test_intent_completion_racing_caller_cancellation_stays_owned[True]",
+      "tests/test_direct_intent_admission_ownership.py::test_intent_success_and_fallback_semantics_remain[context]",
+      "tests/test_direct_intent_admission_ownership.py::test_intent_success_and_fallback_semantics_remain[error]",
+      "tests/test_direct_intent_admission_ownership.py::test_intent_success_and_fallback_semantics_remain[handled]",
+      "tests/test_direct_intent_admission_ownership.py::test_intent_success_and_fallback_semantics_remain[none]",
+      "tests/test_direct_intent_admission_ownership.py::test_intent_success_and_fallback_semantics_remain[unhandled]",
+      "tests/test_direct_intent_admission_ownership.py::test_self_cancelled_intent_propagates_cancellation_after_cleanup"
+    ]
+  },
+  "distinct_final_focused_cases": 90,
+  "offline_run": {
+    "arguments": [
+      "tests/",
+      "--ignore=tests/integration",
+      "-m",
+      "not integration",
+      "--override-ini=addopts=",
+      "--timeout=30",
+      "-q",
+      "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\offline-confirmation\\focus-tmp",
+      "-x"
+    ],
+    "exit_code": 0,
+    "duration_seconds": 426.745,
+    "python": "3.14.3",
+    "versions": {
+      "pytest": "9.1.1",
+      "pytest-cov": "6.3.0",
+      "coverage": "7.15.4",
+      "pytest-asyncio": "1.4.0",
+      "pytest-timeout": "2.4.0",
+      "pytest-xdist": "3.8.0"
+    },
+    "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+    "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/offline-confirmation",
+    "recorder_sha256": "9ef2d4978f5ce7735355d8481d9566c092e13eeb1f6355ff66399179e125bdd0",
+    "log_sha256": "254c43c3c6bb6618297592a979f6f48ff6456bc6e1e7da1bb61bdad7c3fd31aa",
+    "passing_cases": 4642,
+    "passing_browser_marked_cases": 118,
+    "deselected_cases": [
+      "tests/e2e/test_chat_happy_path.py::test_e2e_happy_path_conversation",
+      "tests/observability/test_collector_e2e.py::test_protected_datasource_requires_authentication",
+      "tests/observability/test_collector_e2e.py::test_stdout_event_cardinality_envelope_labels_and_large_payload_survive[gemaibotv2]",
+      "tests/observability/test_collector_e2e.py::test_stdout_event_cardinality_envelope_labels_and_large_payload_survive[ytdlbot]",
+      "tests/observability/test_collector_e2e.py::test_container_allowlist_excludes_private_other_sources_and_keeps_invalid_lines_scoped",
+      "tests/observability/test_collector_e2e.py::test_server_query_limits_are_enforced_through_authenticated_grafana_proxy",
+      "tests/observability/test_collector_e2e.py::test_collected_synthetic_stream_has_no_forbidden_fields_or_excluded_content"
+    ],
+    "phase_outcomes": {
+      "setup:passed": 4642,
+      "call:passed": 4642,
+      "teardown:passed": 4642
+    },
+    "failures": [],
+    "blocked_python_socket_connections": 0,
+    "log_warning_signals": []
+  },
+  "final_scoped_run": {
+    "arguments": [
+      "tests/test_request_concurrency.py",
+      "tests/test_message_admission_failures.py",
+      "tests/test_long_wait_recovery.py",
+      "tests/test_edited_request_ownership.py",
+      "tests/test_direct_intent_admission_ownership.py",
+      "--cov=app.handlers.messages",
+      "--cov=app.state",
+      "--cov=app.utils.heartbeat",
+      "--cov=app.handlers.agent",
+      "--cov-branch",
+      "--cov-context=test",
+      "--cov-report=json:.superpowers/sdd/2026-10-15-message-ownership-followup/impl-finalfix-scoped/coverage.json",
+      "--cov-report=",
+      "--override-ini=addopts=",
+      "--timeout=30",
+      "-q",
+      "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-finalfix-scoped\\focus-tmp",
+      "-x"
+    ],
+    "exit_code": 0,
+    "duration_seconds": 8.705,
+    "python": "3.14.3",
+    "versions": {
+      "pytest": "9.1.1",
+      "pytest-cov": "6.3.0",
+      "coverage": "7.15.4",
+      "pytest-asyncio": "1.4.0",
+      "pytest-timeout": "2.4.0",
+      "pytest-xdist": "3.8.0"
+    },
+    "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+    "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-finalfix-scoped",
+    "recorder_sha256": "0a23772cdc509aad360914a2bbcd0a793ccaaa2e07b40ee3df1fb020758c1ac4",
+    "log_sha256": "1ff197a4ed8d7002b3d2a51ecd5693a05658177b1f13672014623e4eb590f404",
+    "passing_cases": 44,
+    "passing_browser_marked_cases": 0,
+    "deselected_cases": [],
+    "phase_outcomes": {
+      "setup:passed": 44,
+      "call:passed": 44,
+      "teardown:passed": 44
+    },
+    "failures": [],
+    "blocked_python_socket_connections": 0,
+    "log_warning_signals": []
+  },
+  "neighbor_runs": {
+    "impl-finalfix-neighbors": {
+      "arguments": [
+        "tests/test_messages.py",
+        "tests/test_heartbeat.py",
+        "tests/test_user_state_locks.py",
+        "tests/test_state_lifecycle.py",
+        "tests/test_state_eviction_ownership.py",
+        "tests/test_integration_flow.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-finalfix-neighbors\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 39.104,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-finalfix-neighbors",
+      "recorder_sha256": "d6189bb3738e53a00baf740572852102f68f9a11cd2ddf8b2294297f1a94a81d",
+      "log_sha256": "f7ee732b6aff9c01a5096ed482d940890a854a573ede165125ee209a2df07031",
+      "passing_cases": 46,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 46,
+        "call:passed": 46,
+        "teardown:passed": 46
+      },
+      "failures": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    }
+  },
+  "baseline_run": {
+    "arguments": [
+      "tests/test_request_concurrency.py",
+      "tests/test_message_admission_failures.py",
+      "tests/test_long_wait_recovery.py",
+      "--cov=app.handlers.messages",
+      "--cov=app.state",
+      "--cov=app.utils.heartbeat",
+      "--cov=app.handlers.agent",
+      "--cov-branch",
+      "--cov-context=test",
+      "--cov-report=json:.superpowers/sdd/2026-10-15-message-ownership-followup/impl-baseline/coverage.json",
+      "--cov-report=",
+      "--override-ini=addopts=",
+      "--timeout=30",
+      "-q",
+      "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-baseline\\focus-tmp",
+      "-x"
+    ],
+    "exit_code": 0,
+    "duration_seconds": 7.248,
+    "python": "3.14.3",
+    "versions": {
+      "pytest": "9.1.1",
+      "pytest-cov": "6.3.0",
+      "coverage": "7.15.4",
+      "pytest-asyncio": "1.4.0",
+      "pytest-timeout": "2.4.0",
+      "pytest-xdist": "3.8.0"
+    },
+    "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+    "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-baseline",
+    "recorder_sha256": "bce1b558ebe3484d7ff708c3e4afb1fde66ed79a621aec2a395f8e4e59e87b8e",
+    "log_sha256": "c645225d448445f5182db229daaf59677810f2821cc329f4b2e0022cae88874e",
+    "passing_cases": 14,
+    "passing_browser_marked_cases": 0,
+    "deselected_cases": [],
+    "phase_outcomes": {
+      "setup:passed": 14,
+      "call:passed": 14,
+      "teardown:passed": 14
+    },
+    "failures": [],
+    "blocked_python_socket_connections": 0,
+    "log_warning_signals": [
+      "warnings summary"
+    ]
+  },
+  "pre_edit_red_runs": {
+    "impl-red-edit": {
+      "arguments": [
+        "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[edit-cancel-ordinary]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-red-edit\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 4.351,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-red-edit",
+      "recorder_sha256": "828e0bdf16eb547eba24fa193e11e7026696f986de78a5adfd84f4ed8e549ae5",
+      "log_sha256": "59ceb74dfba29e7f9c59cb93c00d66b6b68671ace3a1448005e6e5b777d724d4",
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[edit-cancel-ordinary]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-red-edit-to-edit": {
+      "arguments": [
+        "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[edit-cancel-edit]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-red-edit-to-edit\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 6.079,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-red-edit-to-edit",
+      "recorder_sha256": "9145d7389d8b9bbc2fa4c46613db7f4a25fc367df98519e7ed4b450db5054dbf",
+      "log_sha256": "eedb1e126b7bdbdbbf29bcee74a318c6dfee2fd68e38843a2a9e08efa17feccb",
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[edit-cancel-edit]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-red-late-error": {
+      "arguments": [
+        "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[button-error-ordinary]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-red-late-error\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 4.979,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-red-late-error",
+      "recorder_sha256": "3b088826c757aa47cd2132c11d175b4d57ed2f2fa15fd47213cf8b9d072e0613",
+      "log_sha256": "ef38a458ce3c242da0924dcce67d98f64f79a29afbe002f4c2ac89790f9ec0c8",
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_edited_request_ownership.py::test_superseded_cleanup_cannot_erase_replacement[button-error-ordinary]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-red-intent": {
+      "arguments": [
+        "tests/test_direct_intent_admission_ownership.py::test_cancelled_intent_releases_admission_after_owned_cleanup[False]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-red-intent\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 4.15,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-red-intent",
+      "recorder_sha256": "6370702dbbf4fab9f490228a9c9b8274053b52a1ea7597112fada841f7256805",
+      "log_sha256": "7fe149cf47004f32ee3424b4617a2fa9451b6d3adc7a2fa9f1f1e3518c36d220",
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_direct_intent_admission_ownership.py::test_cancelled_intent_releases_admission_after_owned_cleanup[False]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-red-intent-repeat": {
+      "arguments": [
+        "tests/test_direct_intent_admission_ownership.py::test_cancelled_intent_releases_admission_after_owned_cleanup[True]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-red-intent-repeat\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 5.15,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-red-intent-repeat",
+      "recorder_sha256": "247a3be7705fcd844fc151924dfcf12893f1c716cbd576c151bfd1cd71014e9a",
+      "log_sha256": "888ce901adf6fc128542a7ab02552491c04cdb317ee2449d7d354981b2da89d4",
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_direct_intent_admission_ownership.py::test_cancelled_intent_releases_admission_after_owned_cleanup[True]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-red-text": {
+      "arguments": [
+        "tests/test_edited_request_ownership.py::test_edited_text_is_request_scoped_after_every_exit[cancel]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-red-text\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 4.836,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-red-text",
+      "recorder_sha256": "c60ff9cd3e5d336acbb30514607e22ad39b3aa2d595baeab88bf50b23f6069e5",
+      "log_sha256": "4e959a2af0422df57a24ce78f5b8c20e0206d7a01c42a4877cf744ffe458037c",
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_edited_request_ownership.py::test_edited_text_is_request_scoped_after_every_exit[cancel]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-red-unstarted": {
+      "arguments": [
+        "tests/test_edited_request_ownership.py::test_worker_cancelled_before_first_step_releases_owned_resources[True]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-red-unstarted\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 4.866,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-red-unstarted",
+      "recorder_sha256": "7a07745e9aa3d572052cae9ef748bcf4a8cce87a6d63c426324245c143c7c351",
+      "log_sha256": "a9e022fedfc70cdd05160a382bc42536ffb8eed00ba80c36d64d31c1a348ef9f",
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_edited_request_ownership.py::test_worker_cancelled_before_first_step_releases_owned_resources[True]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    }
+  },
+  "review_fix_pre_change_red_runs": {
+    "impl-fix1-red-ordinary": {
+      "arguments": [
+        "tests/test_edited_request_ownership.py::test_worker_cancelled_before_first_step_releases_owned_resources[False]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-fix1-red-ordinary\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 8.415,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-fix1-red-ordinary",
+      "recorder_sha256": "65d44fab32f6054bb8a591ebe848b189114013caaafe7ee9442f3aaa7409102e",
+      "log_sha256": "582e5c480588b1f2b100ea401f2e58eeac2b9b6d37982aefa7d4d3f7d5dc68a9",
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_edited_request_ownership.py::test_worker_cancelled_before_first_step_releases_owned_resources[False]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-fix1-red-edited": {
+      "arguments": [
+        "tests/test_edited_request_ownership.py::test_worker_cancelled_before_first_step_releases_owned_resources[True]",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-fix1-red-edited\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 5.626,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-fix1-red-edited",
+      "recorder_sha256": "cc0212f655fbb97af1d19fb58a6876dfc7b9a23e30ee690c559a6a597408c627",
+      "log_sha256": "dcf1a1dccc4c4c452af76cb4e26b57b64f03a1e2d10792cb255e93a9eb2082c4",
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_edited_request_ownership.py::test_worker_cancelled_before_first_step_releases_owned_resources[True]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    }
+  },
+  "final_review_fix_pre_change_red_runs": {
+    "impl-finalfix-red-callback": {
+      "arguments": [
+        "tests/test_edited_request_ownership.py::test_completed_prestart_cleanup_cannot_stop_replacement_heartbeat",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-finalfix-red-callback\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 4.311,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-finalfix-red-callback",
+      "recorder_sha256": "d59d358dda28a9e87b1c783d1585626bc572c101f07206bc0e9f740da2385852",
+      "log_sha256": "594649fd216a437f938d56f4d60a7c205edf3e46152488d8e3eb4fed9ed0145b",
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_edited_request_ownership.py::test_completed_prestart_cleanup_cannot_stop_replacement_heartbeat",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    }
+  },
+  "initial_full_run": {
+    "arguments": [
+      "tests/",
+      "--ignore=tests/integration",
+      "-m",
+      "not integration",
+      "--override-ini=addopts=",
+      "--timeout=30",
+      "-q",
+      "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\offline-final\\focus-tmp",
+      "-x"
+    ],
+    "exit_code": 1,
+    "duration_seconds": 305.904,
+    "python": "3.14.3",
+    "versions": {
+      "pytest": "9.1.1",
+      "pytest-cov": "6.3.0",
+      "coverage": "7.15.4",
+      "pytest-asyncio": "1.4.0",
+      "pytest-timeout": "2.4.0",
+      "pytest-xdist": "3.8.0"
+    },
+    "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+    "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/offline-final",
+    "recorder_sha256": "e7d181b1d6492e9a32d06c3079e0d686899c87b1e70353282805f403ca30c017",
+    "log_sha256": "2da154d485830cc29e20e8fe384848b4930aabefd7257a311bb3454fb307762b",
+    "passing_cases": 2391,
+    "passing_browser_marked_cases": 72,
+    "deselected_cases": [
+      "tests/e2e/test_chat_happy_path.py::test_e2e_happy_path_conversation",
+      "tests/observability/test_collector_e2e.py::test_protected_datasource_requires_authentication",
+      "tests/observability/test_collector_e2e.py::test_stdout_event_cardinality_envelope_labels_and_large_payload_survive[gemaibotv2]",
+      "tests/observability/test_collector_e2e.py::test_stdout_event_cardinality_envelope_labels_and_large_payload_survive[ytdlbot]",
+      "tests/observability/test_collector_e2e.py::test_container_allowlist_excludes_private_other_sources_and_keeps_invalid_lines_scoped",
+      "tests/observability/test_collector_e2e.py::test_server_query_limits_are_enforced_through_authenticated_grafana_proxy",
+      "tests/observability/test_collector_e2e.py::test_collected_synthetic_stream_has_no_forbidden_fields_or_excluded_content"
+    ],
+    "phase_outcomes": {
+      "setup:passed": 2392,
+      "call:passed": 2391,
+      "teardown:passed": 2392,
+      "call:failed": 1
+    },
+    "failures": [
+      {
+        "nodeid": "tests/test_integration_flow.py::test_happy_path_text_message",
+        "when": "call",
+        "outcome": "failed"
+      }
+    ],
+    "blocked_python_socket_connections": 0,
+    "log_warning_signals": []
+  },
+  "initial_full_run_snapshot": {
+    "files": 813,
+    "unchanged_during_run": true,
+    "before_sha256": "7d7413b674d9f7582302f6c753f03f38c468be10cb203837a7453282f7ad039d",
+    "after_sha256": "7d7413b674d9f7582302f6c753f03f38c468be10cb203837a7453282f7ad039d"
+  },
+  "retained_intermediate_runs": {
+    "impl-green-initial": {
+      "arguments": [
+        "tests/test_edited_request_ownership.py",
+        "tests/test_direct_intent_admission_ownership.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-green-initial\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 5.209,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-green-initial",
+      "recorder_sha256": "1748ed1936ee3187b203e731d737fd2f4262dfac3f3762f33011112a22bfccfc",
+      "log_sha256": "83d4f67d86d876b6e4d3118342f67a5b60be0483a59fb7a9bc4aeeb8bec00e92",
+      "passing_cases": 22,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 22,
+        "call:passed": 22,
+        "teardown:passed": 22
+      },
+      "failures": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-green-neighbors-initial": {
+      "arguments": [
+        "tests/test_request_concurrency.py",
+        "tests/test_message_admission_failures.py",
+        "tests/test_long_wait_recovery.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-green-neighbors-initial\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 5.258,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-green-neighbors-initial",
+      "recorder_sha256": "255acc985e3e6d3a1984ec29452bb0369626394182043b0320359f0c9c45fe6e",
+      "log_sha256": "1aa6bb7e8391fe80d6f8bd2bbd67db963e8a7f5a95a83eaa88b859dca07b97fc",
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_request_concurrency.py::test_request_rejects_busy_user_then_accepts_after_cleanup[complete]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-green-controls": {
+      "arguments": [
+        "tests/test_edited_request_ownership.py",
+        "tests/test_direct_intent_admission_ownership.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-green-controls\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 5.873,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-green-controls",
+      "recorder_sha256": "36affc961d88669e85ede06184d8064ada6843483b64a15a4ecb889836992955",
+      "log_sha256": "f640223be7beb8ee8a9cc8c80e36a173fff3683439a873f041bcbfbfbf9b99f4",
+      "passing_cases": 16,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 17,
+        "call:passed": 16,
+        "teardown:passed": 17,
+        "call:failed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_edited_request_ownership.py::test_edited_placeholder_failure_releases_admission[error]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-green-scoped": {
+      "arguments": [
+        "tests/test_request_concurrency.py",
+        "tests/test_message_admission_failures.py",
+        "tests/test_long_wait_recovery.py",
+        "tests/test_edited_request_ownership.py",
+        "tests/test_direct_intent_admission_ownership.py",
+        "--cov=app.handlers.messages",
+        "--cov=app.state",
+        "--cov=app.utils.heartbeat",
+        "--cov=app.handlers.agent",
+        "--cov-branch",
+        "--cov-context=test",
+        "--cov-report=json:.superpowers/sdd/2026-10-15-message-ownership-followup/impl-green-scoped/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-green-scoped\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 10.064,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-green-scoped",
+      "recorder_sha256": "415e518e21ef52b73900cc4de2fca89916c391557d5e4255667475e572ef672f",
+      "log_sha256": "201daad5077a0fb072966c7d6c62ba10b4b8a43c185730307f5fa770e7a3dd1a",
+      "passing_cases": 0,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_request_concurrency.py::test_request_rejects_busy_user_then_accepts_after_cleanup[complete]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-green-handoff": {
+      "arguments": [
+        "tests/test_request_concurrency.py",
+        "tests/test_message_admission_failures.py",
+        "tests/test_long_wait_recovery.py",
+        "tests/test_edited_request_ownership.py",
+        "tests/test_direct_intent_admission_ownership.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-green-handoff\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 6.523,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-green-handoff",
+      "recorder_sha256": "af131a3cafd3989992d53594d6fbe86aab5e211efd6a49f19b15f1f9af657c92",
+      "log_sha256": "bd26c0d9fd86f600d13c12995d12b4c842d94e8c813d8c6e36a88cbd9bb5e1d6",
+      "passing_cases": 22,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 23,
+        "call:passed": 22,
+        "teardown:passed": 23,
+        "call:failed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_edited_request_ownership.py::test_edited_text_is_request_scoped_after_every_exit[success]",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-neighbors-message": {
+      "arguments": [
+        "tests/test_messages.py",
+        "tests/test_heartbeat.py",
+        "tests/test_user_state_locks.py",
+        "tests/test_state_lifecycle.py",
+        "tests/test_state_eviction_ownership.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-neighbors-message\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 12.897,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-neighbors-message",
+      "recorder_sha256": "66b6765a328d6610aa98da49008cf2cc484392f2327fc7c2f4d107e87b1b3746",
+      "log_sha256": "39f59f7ebc6922d8b8f73a7322d22d3f0db09495652fd176804ef75c9a48b81b",
+      "passing_cases": 4,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 5,
+        "call:passed": 4,
+        "teardown:passed": 5,
+        "call:failed": 1
+      },
+      "failures": [
+        {
+          "nodeid": "tests/test_messages.py::test_handle_request_text_message_happy_path",
+          "when": "call",
+          "outcome": "failed"
+        }
+      ],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": [
+        "was never awaited",
+        "RuntimeWarning",
+        "RuntimeWarning",
+        "was never awaited",
+        "RuntimeWarning",
+        "PytestUnraisableExceptionWarning",
+        "PytestUnraisableExceptionWarning",
+        "PytestUnraisableExceptionWarning",
+        "PytestUnraisableExceptionWarning",
+        "Task was destroyed"
+      ]
+    },
+    "impl-green-focused-final": {
+      "arguments": [
+        "tests/test_request_concurrency.py",
+        "tests/test_message_admission_failures.py",
+        "tests/test_long_wait_recovery.py",
+        "tests/test_edited_request_ownership.py",
+        "tests/test_direct_intent_admission_ownership.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-green-focused-final\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 9.341,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-green-focused-final",
+      "recorder_sha256": "c560b332032a196eb53f3524f8011b6fa1897ea8f98b1efb2aba1e5b58030f62",
+      "log_sha256": "18a789f70d51ba0ca169102f9607adc65151ce09dbae96bba046072bb3e15681",
+      "passing_cases": 43,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 43,
+        "call:passed": 43,
+        "teardown:passed": 43
+      },
+      "failures": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-green-scoped-final": {
+      "arguments": [
+        "tests/test_request_concurrency.py",
+        "tests/test_message_admission_failures.py",
+        "tests/test_long_wait_recovery.py",
+        "tests/test_edited_request_ownership.py",
+        "tests/test_direct_intent_admission_ownership.py",
+        "--cov=app.handlers.messages",
+        "--cov=app.state",
+        "--cov=app.utils.heartbeat",
+        "--cov=app.handlers.agent",
+        "--cov-branch",
+        "--cov-context=test",
+        "--cov-report=json:.superpowers/sdd/2026-10-15-message-ownership-followup/impl-green-scoped-final/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-green-scoped-final\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 11.234,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-green-scoped-final",
+      "recorder_sha256": "9526656399aca6a0d2e25fc307ebc67f77493f9571771331aaa6d2a9813436ca",
+      "log_sha256": "7f66c45b138abe58690159fc79db86099fb4b35829f2b35d88a1c69aa1af8875",
+      "passing_cases": 43,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 43,
+        "call:passed": 43,
+        "teardown:passed": 43
+      },
+      "failures": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-neighbors-state": {
+      "arguments": [
+        "tests/test_heartbeat.py",
+        "tests/test_user_state_locks.py",
+        "tests/test_state_lifecycle.py",
+        "tests/test_state_eviction_ownership.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-neighbors-state\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 2.315,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-neighbors-state",
+      "recorder_sha256": "25ac13e9206961e18f222d940f74581489b4ed733edb9b7227d948262574f772",
+      "log_sha256": "ce3f891dc2fb5904e6298aed786bff08fe21adc505ba77d8ee821089ee50de15",
+      "passing_cases": 33,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 33,
+        "call:passed": 33,
+        "teardown:passed": 33
+      },
+      "failures": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-neighbors-message-fixed": {
+      "arguments": [
+        "tests/test_messages.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-neighbors-message-fixed\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 20.991,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-neighbors-message-fixed",
+      "recorder_sha256": "ee10b7e85cb96cbe2dab8e80a6d470482aa580b675683c2385cf80c4b068afa2",
+      "log_sha256": "c0e8edd441921513b5ed6be2eff5b9ac9ace05447d1b7bbbd457dda17cd49c9a",
+      "passing_cases": 9,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 9,
+        "call:passed": 9,
+        "teardown:passed": 9
+      },
+      "failures": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-fix1-green-lifecycle": {
+      "arguments": [
+        "tests/test_edited_request_ownership.py::test_worker_cancelled_before_first_step_releases_owned_resources",
+        "tests/test_edited_request_ownership.py::test_edited_text_is_request_scoped_after_every_exit",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-fix1-green-lifecycle\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 4.733,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-fix1-green-lifecycle",
+      "recorder_sha256": "42f0c0ca6689e46d8c8e26422002ef971cead5093ec1999ddfba1c3393a1cbbf",
+      "log_sha256": "afbfa7b17ca19a897f7fb2df6a3d573d33703ac11f80d7d6319b0a36be29896f",
+      "passing_cases": 5,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 5,
+        "call:passed": 5,
+        "teardown:passed": 5
+      },
+      "failures": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-fix1-final-scoped": {
+      "arguments": [
+        "tests/test_request_concurrency.py",
+        "tests/test_message_admission_failures.py",
+        "tests/test_long_wait_recovery.py",
+        "tests/test_edited_request_ownership.py",
+        "tests/test_direct_intent_admission_ownership.py",
+        "--cov=app.handlers.messages",
+        "--cov=app.state",
+        "--cov=app.utils.heartbeat",
+        "--cov=app.handlers.agent",
+        "--cov-branch",
+        "--cov-context=test",
+        "--cov-report=json:.superpowers/sdd/2026-10-15-message-ownership-followup/impl-fix1-final-scoped/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-fix1-final-scoped\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 10.878,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-fix1-final-scoped",
+      "recorder_sha256": "d861391fef52a924128b27aa2d73d06a9e81796ce336b23114b82c71597079d1",
+      "log_sha256": "b9568f9a9add045d29063e6e3ea1a9c84dd01c1b37ecf5a19a28047be45d9c2c",
+      "passing_cases": 43,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 43,
+        "call:passed": 43,
+        "teardown:passed": 43
+      },
+      "failures": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-fix1-neighbors-message": {
+      "arguments": [
+        "tests/test_messages.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-fix1-neighbors-message\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 21.276,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-fix1-neighbors-message",
+      "recorder_sha256": "0ead7972020d5bf04014c5d80f0567f67b4fd3756d667ca0fe9e9ceca5e33cb4",
+      "log_sha256": "d5098110b3b064cb6d8b451e51cdd0f43b2d7e12564e76517ba97b15f0581f39",
+      "passing_cases": 9,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 9,
+        "call:passed": 9,
+        "teardown:passed": 9
+      },
+      "failures": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-fix1-neighbors-state": {
+      "arguments": [
+        "tests/test_heartbeat.py",
+        "tests/test_user_state_locks.py",
+        "tests/test_state_lifecycle.py",
+        "tests/test_state_eviction_ownership.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-fix1-neighbors-state\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 2.651,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-fix1-neighbors-state",
+      "recorder_sha256": "2a94b4ecb274997a0061df9643c2e0b442252095774d30d0b160df6fe77073da",
+      "log_sha256": "ea17693618a7f96d0b6cfdbb334f8df41f04820971e37f9fe8cb4a1c0ebd5f4c",
+      "passing_cases": 33,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 33,
+        "call:passed": 33,
+        "teardown:passed": 33
+      },
+      "failures": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    },
+    "impl-finalfix-green-callback": {
+      "arguments": [
+        "tests/test_edited_request_ownership.py::test_completed_prestart_cleanup_cannot_stop_replacement_heartbeat",
+        "tests/test_edited_request_ownership.py::test_cancelling_edit_admission_keeps_predecessor_cleanup_owned",
+        "tests/test_direct_intent_admission_ownership.py::test_cancelled_intent_releases_admission_after_owned_cleanup",
+        "tests/test_direct_intent_admission_ownership.py::test_intent_completion_racing_caller_cancellation_stays_owned",
+        "tests/test_direct_intent_admission_ownership.py::test_self_cancelled_intent_propagates_cancellation_after_cleanup",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-message-ownership-followup\\impl-finalfix-green-callback\\focus-tmp",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 5.255,
+      "python": "3.14.3",
+      "versions": {
+        "pytest": "9.1.1",
+        "pytest-cov": "6.3.0",
+        "coverage": "7.15.4",
+        "pytest-asyncio": "1.4.0",
+        "pytest-timeout": "2.4.0",
+        "pytest-xdist": "3.8.0"
+      },
+      "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+      "local_recorder_directory": ".superpowers/sdd/2026-10-15-message-ownership-followup/impl-finalfix-green-callback",
+      "recorder_sha256": "2930b5e24427f0c9c914a13abbe43a4a37f1eefb530f803b6280608d7e1ab9c1",
+      "log_sha256": "43740fe664a2a03b3e11be812d5e70ebca2b96573646894784dcd745b97837de",
+      "passing_cases": 7,
+      "passing_browser_marked_cases": 0,
+      "deselected_cases": [],
+      "phase_outcomes": {
+        "setup:passed": 7,
+        "call:passed": 7,
+        "teardown:passed": 7
+      },
+      "failures": [],
+      "blocked_python_socket_connections": 0,
+      "log_warning_signals": []
+    }
+  },
+  "initial_review_probe": {
+    "nodeid": "tests/test_edited_request_ownership.py::test_worker_cancelled_before_first_step_releases_owned_resources[True]",
+    "actual_process_exit_code": 1,
+    "pytest_call_summary": "1 passed",
+    "failure": "Unstarted request coroutine through real TaskManager.submit was not closed; unraisable warning at pytest unconfigure.",
+    "recorder_json": "not produced because unconfigure raised",
+    "copied_safe_log_sha256": "60f6c2cf12011c588f139749e90e64b1e4bb0edc445e16fec56c411dacc1f2f6",
+    "review_report": ".superpowers/sdd/2026-10-15-message-ownership-followup/task-1-review.md"
+  },
+  "final_source_review_probe": {
+    "actual_process_exit_code": 1,
+    "failure": "Already-completed predecessor callback removed replacement heartbeat.",
+    "probe_sha256": "5a496c7d13a00d0d223f0827e11952e3942096cf9ec8c6c3dc4e185440ed8a9c",
+    "output_sha256": "87d615760e396b69de93f2798292883c1280bbd235e1f6c3fed07a0fc7e7b95b",
+    "review_report": ".superpowers/sdd/2026-10-15-message-ownership-followup/final-review-source-findings.md"
+  },
+  "scoped_coverage": {
+    "impl-baseline": {
+      "sha256": "dc6418733e9ea30e9fb0095b9b64a6782c877607f0ddedcd14dfe7d249657137",
+      "metadata": {
+        "format": 3,
+        "version": "7.15.4",
+        "timestamp": "2026-10-15T21:26:52.109614",
+        "branch_coverage": true,
+        "show_contexts": false
+      },
+      "modules": {
+        "app/handlers/agent.py": {
+          "covered_lines": 12,
+          "num_statements": 65,
+          "percent_covered": 13.48314606741573,
+          "percent_covered_display": "13",
+          "missing_lines": 53,
+          "excluded_lines": 0,
+          "percent_statements_covered": 18.46153846153846,
+          "percent_statements_covered_display": "18",
+          "num_branches": 24,
+          "num_partial_branches": 0,
+          "covered_branches": 0,
+          "missing_branches": 24,
+          "percent_branches_covered": 0.0,
+          "percent_branches_covered_display": "0"
+        },
+        "app/handlers/messages.py": {
+          "covered_lines": 207,
+          "num_statements": 456,
+          "percent_covered": 44.23728813559322,
+          "percent_covered_display": "44",
+          "missing_lines": 249,
+          "excluded_lines": 0,
+          "percent_statements_covered": 45.39473684210526,
+          "percent_statements_covered_display": "45",
+          "num_branches": 134,
+          "num_partial_branches": 32,
+          "covered_branches": 54,
+          "missing_branches": 80,
+          "percent_branches_covered": 40.298507462686565,
+          "percent_branches_covered_display": "40"
+        },
+        "app/state.py": {
+          "covered_lines": 161,
+          "num_statements": 309,
+          "percent_covered": 49.56772334293948,
+          "percent_covered_display": "50",
+          "missing_lines": 148,
+          "excluded_lines": 0,
+          "percent_statements_covered": 52.103559870550164,
+          "percent_statements_covered_display": "52",
+          "num_branches": 38,
+          "num_partial_branches": 7,
+          "covered_branches": 11,
+          "missing_branches": 27,
+          "percent_branches_covered": 28.94736842105263,
+          "percent_branches_covered_display": "29"
+        },
+        "app/utils/heartbeat.py": {
+          "covered_lines": 35,
+          "num_statements": 38,
+          "percent_covered": 85.41666666666667,
+          "percent_covered_display": "85",
+          "missing_lines": 3,
+          "excluded_lines": 0,
+          "percent_statements_covered": 92.10526315789474,
+          "percent_statements_covered_display": "92",
+          "num_branches": 10,
+          "num_partial_branches": 4,
+          "covered_branches": 6,
+          "missing_branches": 4,
+          "percent_branches_covered": 60.0,
+          "percent_branches_covered_display": "60"
+        }
+      }
+    },
+    "impl-finalfix-scoped": {
+      "sha256": "f6a8fc068399e655f0468af93ff280bc95bdb44338b6e5e95f8880acc9523b07",
+      "metadata": {
+        "format": 3,
+        "version": "7.15.4",
+        "timestamp": "2026-10-15T22:06:02.263056",
+        "branch_coverage": true,
+        "show_contexts": false
+      },
+      "modules": {
+        "app/handlers/agent.py": {
+          "covered_lines": 34,
+          "num_statements": 65,
+          "percent_covered": 49.438202247191015,
+          "percent_covered_display": "49",
+          "missing_lines": 31,
+          "excluded_lines": 0,
+          "percent_statements_covered": 52.30769230769231,
+          "percent_statements_covered_display": "52",
+          "num_branches": 24,
+          "num_partial_branches": 8,
+          "covered_branches": 10,
+          "missing_branches": 14,
+          "percent_branches_covered": 41.666666666666664,
+          "percent_branches_covered_display": "42"
+        },
+        "app/handlers/messages.py": {
+          "covered_lines": 333,
+          "num_statements": 498,
+          "percent_covered": 64.51104100946372,
+          "percent_covered_display": "65",
+          "missing_lines": 165,
+          "excluded_lines": 0,
+          "percent_statements_covered": 66.86746987951807,
+          "percent_statements_covered_display": "67",
+          "num_branches": 136,
+          "num_partial_branches": 36,
+          "covered_branches": 76,
+          "missing_branches": 60,
+          "percent_branches_covered": 55.88235294117647,
+          "percent_branches_covered_display": "56"
+        },
+        "app/state.py": {
+          "covered_lines": 165,
+          "num_statements": 312,
+          "percent_covered": 50.28409090909091,
+          "percent_covered_display": "50",
+          "missing_lines": 147,
+          "excluded_lines": 0,
+          "percent_statements_covered": 52.88461538461539,
+          "percent_statements_covered_display": "53",
+          "num_branches": 40,
+          "num_partial_branches": 8,
+          "covered_branches": 12,
+          "missing_branches": 28,
+          "percent_branches_covered": 30.0,
+          "percent_branches_covered_display": "30"
+        },
+        "app/utils/heartbeat.py": {
+          "covered_lines": 35,
+          "num_statements": 38,
+          "percent_covered": 89.58333333333333,
+          "percent_covered_display": "90",
+          "missing_lines": 3,
+          "excluded_lines": 0,
+          "percent_statements_covered": 92.10526315789474,
+          "percent_statements_covered_display": "92",
+          "num_branches": 10,
+          "num_partial_branches": 2,
+          "covered_branches": 8,
+          "missing_branches": 2,
+          "percent_branches_covered": 80.0,
+          "percent_branches_covered_display": "80"
+        }
+      }
+    }
+  },
+  "coverage_limits": [
+    "Four selected modules and a focused test selection; no current whole-project coverage measurement.",
+    "Runtime source denominators differ between baseline and final.",
+    "Baseline no-sysmon-context instrumentation warning; final COVERAGE_CORE=ctrace run is warning-free.",
+    "No per-test context attribution claim is made from these JSON reports."
+  ],
+  "verification_snapshot": {
+    "files": 813,
+    "unchanged_during_full_run": true,
+    "before_sha256": "5d49240da51e100df4c5f1839a69bec426cd20c9c45e70860a32a24a4eda6ed7",
+    "after_sha256": "5d49240da51e100df4c5f1839a69bec426cd20c9c45e70860a32a24a4eda6ed7"
+  },
+  "entry_preservation": {
+    "initial_files": 811,
+    "existing_files_changed_this_turn": [
+      "app/handlers/messages.py",
+      "app/state.py",
+      "docs/README.md",
+      "docs/superpowers/plans/2026-10-15-message-ownership-followup.md",
+      "tests/test_integration_flow.py",
+      "tests/test_messages.py",
+      "tests/test_request_concurrency.py"
+    ],
+    "unchanged_entry_files": 804
+  },
+  "verified_source_sha256": {
+    "app/handlers/messages.py": "287247f6bd5a66c102cf66e90ea1600b60fe92adc453e46c39a03269f0ea1e6b",
+    "app/state.py": "e1d24377f79ada1117c9ea6c2c7fe31e21928f4e6f9e3c70c4ef626fbc0f4070",
+    "tests/test_messages.py": "3873dc4006816bc5f791a4f8c9f0a40910969c0b18b235c13ab64a78e34495aa",
+    "tests/test_request_concurrency.py": "991e5a28de6871bf14c6b8586bc7ad11f75ffc97826e611d3e28fdbe950f288d",
+    "tests/test_integration_flow.py": "37df505a6e49bd7a33b1d12cd3c6edb50940e1801929e1274671857496c42630",
+    "tests/test_edited_request_ownership.py": "e19369fcfc34fe3086ffa5b59b64c8f5e5f74e7e0f08e1376da89b1a5c22024d",
+    "tests/test_direct_intent_admission_ownership.py": "83bac5e9b08eff363dadffdf9b5df463955e5ff63425b55ac3ad796cda90285b"
+  },
+  "guard_limits": "Synthetic credentials, repository .env reads denied, integration targets unset, Python socket guard. This is not an OS network sandbox or live Telegram/provider/PostgreSQL/Redis evidence.",
+  "reviews": {
+    "task": {
+      "model": "gpt-6.1-sol",
+      "reasoning": "xhigh",
+      "initial_spec": "issues_found",
+      "initial_quality": "Needs fixes",
+      "initial_important_finding": "Production task-manager wrapper could leave an unstarted request coroutine unclosed.",
+      "scoped_fix_review": {
+        "model": "gpt-6.1-sol",
+        "reasoning": "high",
+        "finding": "addressed",
+        "new_breakage": "none"
+      },
+      "resolved_spec": "pass",
+      "resolved_quality": "pass"
+    },
+    "final": {
+      "model": "gpt-6.1-sol",
+      "reasoning": "xhigh",
+      "initial_important_finding": "Already-done predecessor resource callback could remove replacement heartbeat.",
+      "finding": "addressed",
+      "source_fix_gate": "pass",
+      "new_breakage": "none",
+      "artifact_status": "approved",
+      "open_critical_important_minor": 0
+    }
+  },
+  "checks": {
+    "ruff_check": "uv run --locked ruff check .: passed",
+    "ruff_format": "uv run --locked ruff format --check .: 736 files already formatted",
+    "mypy": "uv run --locked mypy app bot.py: success, 288 source files",
+    "environment_registry": "uv run --locked python -X utf8 scripts/check_env_registry.py: 111 names, 0 changes",
+    "encoding_links_whitespace": {
+      "encoding": "scripts/check_encoding.py passed",
+      "current_document_links": "scripts/check_docs_links.py passed",
+      "explicit_dated_document_links": "check_document API passed for dated report, appendix, plan and docs index",
+      "whitespace": "git diff --check passed"
+    }
+  }
+}

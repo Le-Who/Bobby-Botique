@@ -7,7 +7,7 @@ not acquire the global pool and does not call external services.
 """
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isfinite
 from typing import Any
 
@@ -315,7 +315,7 @@ async def _upsert_edges(
     if not prepared_edges:
         return (), 0
 
-    edge_snapshots: dict[int, _PreparedEdge] = {}
+    edge_ids: dict[tuple[int, int, str], int] = {}
     for edge in prepared_edges:
         for conflict in sorted(edge.close_conflicts, key=lambda item: (item.edge_id, item.predicate)):
             await conn.execute(
@@ -358,19 +358,29 @@ async def _upsert_edges(
         if not row:
             raise RuntimeError("graph edge upsert returned no id")
         edge_id = int(row["id"])
-        previous = edge_snapshots.get(edge_id)
-        if previous is None:
-            edge_snapshots[edge_id] = edge
-        else:
-            previous.weight = max(previous.weight, edge.weight)
-            previous.is_core = previous.is_core or edge.is_core
-            previous.source_memory_ids.update(edge.source_memory_ids)
+        edge_ids[edge.source_id, edge.target_id, edge.predicate] = edge_id
 
-    ordered_sources = sorted(
-        (edge_id, source_memory_id)
-        for edge_id, snapshot in edge_snapshots.items()
-        for source_memory_id in snapshot.source_memory_ids
-    )
+    # Aggregate attributes belong to the edge projection. Each provenance row
+    # retains only attributes supported by that memory, including after aliases
+    # resolve to the same edge. Otherwise deleting a stronger source cannot
+    # restore the surviving source's original weight/core status.
+    source_snapshots: dict[tuple[int, int], GraphEdgeCandidate] = {}
+    for candidate in candidates:
+        edge_id = edge_ids[node_ids[candidate.source_name], node_ids[candidate.target_name], candidate.predicate]
+        for source_memory_id in candidate.source_memory_ids:
+            snapshot_key = (edge_id, source_memory_id)
+            previous = source_snapshots.get(snapshot_key)
+            source_snapshots[snapshot_key] = (
+                candidate
+                if previous is None
+                else replace(
+                    previous,
+                    weight=max(previous.weight, candidate.weight),
+                    is_core=previous.is_core or candidate.is_core,
+                )
+            )
+
+    ordered_sources = sorted(source_snapshots)
     await conn.execute(
         """
         INSERT INTO memory_edge_sources
@@ -396,13 +406,13 @@ async def _upsert_edges(
         [key[0] for key in ordered_sources],
         [key[1] for key in ordered_sources],
         user_id,
-        [edge_snapshots[key[0]].predicate for key in ordered_sources],
-        [edge_snapshots[key[0]].predicate_embedding for key in ordered_sources],
-        [edge_snapshots[key[0]].weight for key in ordered_sources],
-        [edge_snapshots[key[0]].is_core for key in ordered_sources],
+        [source_snapshots[key].predicate for key in ordered_sources],
+        [_halfvec(source_snapshots[key].predicate_embedding) for key in ordered_sources],
+        [source_snapshots[key].weight for key in ordered_sources],
+        [source_snapshots[key].is_core for key in ordered_sources],
     )
 
-    affected_edge_ids = tuple(sorted(edge_snapshots))
+    affected_edge_ids = tuple(sorted(set(edge_ids.values())))
     await conn.execute(
         """
         WITH target_edges AS (

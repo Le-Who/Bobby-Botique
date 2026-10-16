@@ -93,6 +93,7 @@ class AIStreamCoordinator:
         mark_network_alive: LifecycleCallback = _mark_network_alive,
         clear_network_stall: LifecycleCallback = _clear_network_stall,
         on_first_text: LifecycleCallback | None = None,
+        on_before_terminal: LifecycleCallback | None = None,
         delayed_feedback: LifecycleCallback | None = None,
         feedback_delay: float = 5.0,
     ) -> None:
@@ -102,6 +103,7 @@ class AIStreamCoordinator:
         self._mark_alive = mark_network_alive
         self._clear_stall = clear_network_stall
         self._on_first_text = on_first_text
+        self._on_before_terminal = on_before_terminal
         self._delayed_feedback = delayed_feedback
         self._feedback_delay = feedback_delay
 
@@ -196,6 +198,7 @@ class AIStreamCoordinator:
                 voice_requested=voice_requested,
             )
             prepared = presentation.prepare(facts)
+            await _invoke(self._on_before_terminal)
 
             if isinstance(terminal, StreamDeferred):
                 displayed = "⏳ Серверы AI временно перегружены. Я отправлю ответ, как только они освободятся."

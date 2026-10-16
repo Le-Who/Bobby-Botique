@@ -202,28 +202,46 @@ async def cancel_long_wait_callback(update: Update, context: ContextTypes.DEFAUL
     expected = f"retry_wait:{message_id}"
     from app.utils.heartbeat import is_heartbeat_active
 
+    placeholder_owner = state.get_last_bot_message(user_id)
     if (
         query.data != expected
-        or state.get_last_bot_message(user_id) != (message_id, chat_id)
-        or not is_heartbeat_active(message_id)
+        or placeholder_owner != (message_id, chat_id)
+        or not is_heartbeat_active(message_id, chat_id=chat_id)
     ):
         await query.answer(t("processing.long_wait_finished", lang))
         return
-    if not state.cancel_active_task(user_id):
+    owner = state.get_active_task(user_id)
+    if owner is None or not state.cancel_active_task(user_id):
         await query.answer(t("processing.long_wait_finished", lang))
         return
 
     try:
         async with asyncio.timeout(5.0):
+            # A released lock can precede worker finally/resource callbacks.
+            completion: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+            owner.add_done_callback(lambda _owner: completion.set_result(None))
+            await asyncio.shield(completion)
             async with state.get_user_lock(user_id):
                 pass
     except TimeoutError:
         await query.answer(t("processing.long_wait_stopping", lang))
         return
 
+    def superseded() -> bool:
+        return (
+            state.get_active_task(user_id) not in (None, owner)
+            or state.get_last_bot_message(user_id) is not placeholder_owner
+        )
+
+    if superseded():
+        await query.answer(t("processing.long_wait_finished", lang))
+        return
+
     from app.errors import build_retry_and_roles_keyboard
 
     await query.answer(t("processing.long_wait_stopped", lang))
+    if superseded():
+        return
     await query.edit_message_text(
         t("processing.long_wait_retry_prompt", lang),
         reply_markup=build_retry_and_roles_keyboard(include_roles=False),

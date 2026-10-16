@@ -72,10 +72,8 @@ async def cancel_user_memory_tasks(user_id: int) -> int:
     tasks = [
         task for task in _inflight_memory_tasks_by_user.get(user_id, set()) if task is not current and not task.done()
     ]
-    for task in tasks:
-        task.cancel()
     if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await _cancel_and_await(tasks)
     return len(tasks)
 
 
@@ -108,16 +106,18 @@ async def heartbeat_save(
 
 
 async def _cancel_and_await(tasks: list[asyncio.Task], *, cancellation: asyncio.CancelledError | None = None) -> None:
-    """Retain shutdown ownership while children finish asynchronous cleanup."""
+    """Retain caller ownership while children finish asynchronous cleanup."""
     for task in tasks:
-        if not task.done():
+        # Another owner may already be awaiting this child's finalizer.
+        # A second cancellation would interrupt its asynchronous cleanup.
+        if not task.done() and task.cancelling() == 0:
             task.cancel()
     completion = asyncio.gather(*tasks, return_exceptions=True)
     while not completion.done():
         try:
             await asyncio.shield(completion)
         except asyncio.CancelledError as error:
-            # Further shutdown cancellation must not interrupt rollback/release
+            # Further caller cancellation must not interrupt rollback/release
             # in a child's finally. Propagate it after all children are done.
             cancellation = cancellation or error
     completion.result()

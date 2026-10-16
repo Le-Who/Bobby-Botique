@@ -5,6 +5,7 @@ Tests the complete path from incoming Telegram update through
 handle_request → process_long_request → AI response → database.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -80,19 +81,35 @@ def make_context():
 
 
 @pytest.fixture
-def run_background_sync():
-    """Fixture to capture background tasks submitted by messages.py."""
-    submitted = []
+async def run_background_sync():
+    """Capture real tasks so worker resource callbacks have their real lifecycle."""
+    submitted = {}
     with patch("app.handlers.messages.submit_task", new_callable=MagicMock) as mock_submit:
-        # Instead of scheduling it randomly, we just capture it in the mock
+
         def capture(coro, retry=0):
-            submitted.append(coro)
-            return None
+            original = coro
+            if coro.cr_code.co_name == "show_long_wait_retry":
+                coro.close()
+
+                async def completed_notice():
+                    pass
+
+                coro = completed_notice()
+            task = asyncio.get_running_loop().create_task(coro)
+            submitted[original] = task
+            return task
 
         mock_submit.side_effect = capture
-        yield mock_submit
-    for coro in submitted:
-        coro.close()
+        mock_submit.tasks_by_coroutine = submitted
+        try:
+            yield mock_submit
+        finally:
+            for task in submitted.values():
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*submitted.values(), return_exceptions=True)
+            for coro in submitted:
+                coro.close()
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
@@ -256,8 +273,7 @@ async def test_happy_path_text_message(run_background_sync):
                     break
             assert captured_coro is not None
 
-            # Explicitly execute the task synchronously to completion
-            await captured_coro
+            await run_background_sync.tasks_by_coroutine[captured_coro]
 
     # ── Assert ──
     # Placeholder was initially sent
@@ -348,7 +364,7 @@ async def test_agent_error_shows_retry_keyboard(run_background_sync):
         assert captured_coro is not None
 
         # Explicitly wait for the task to run and handle its own simulated crash
-        await captured_coro
+        await run_background_sync.tasks_by_coroutine[captured_coro]
 
     # ── Assert ──
     # The error handler in agent.process_long_request should catch this and update placeholder

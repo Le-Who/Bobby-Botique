@@ -1,0 +1,935 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "dated priority test coverage verification",
+  "date": "2026-10-15",
+  "verified_at_utc": "2026-10-15T18:06:33.668632+00:00",
+  "base_checkout": "68489459ecf7660eb2a23da474b52c430cb9be2f",
+  "working_tree_uncommitted": true,
+  "offline_run": {
+    "arguments": [
+      "tests/",
+      "--ignore=tests/integration",
+      "-m",
+      "not integration",
+      "--override-ini=addopts=",
+      "--timeout=30",
+      "-q",
+      "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\offline-confirmation\\focus-tmp",
+      "-x"
+    ],
+    "exit_code": 0,
+    "duration_seconds": 466.425,
+    "python": "3.14.3",
+    "versions": {
+      "pytest": "9.1.1",
+      "pytest-cov": "6.3.0",
+      "coverage": "7.15.4",
+      "pytest-asyncio": "1.4.0",
+      "pytest-timeout": "2.4.0",
+      "pytest-xdist": "3.8.0"
+    },
+    "passing_cases": 4612,
+    "passing_browser_marked_cases": 118,
+    "deselected_cases": [
+      "tests/e2e/test_chat_happy_path.py::test_e2e_happy_path_conversation",
+      "tests/observability/test_collector_e2e.py::test_protected_datasource_requires_authentication",
+      "tests/observability/test_collector_e2e.py::test_stdout_event_cardinality_envelope_labels_and_large_payload_survive[gemaibotv2]",
+      "tests/observability/test_collector_e2e.py::test_stdout_event_cardinality_envelope_labels_and_large_payload_survive[ytdlbot]",
+      "tests/observability/test_collector_e2e.py::test_container_allowlist_excludes_private_other_sources_and_keeps_invalid_lines_scoped",
+      "tests/observability/test_collector_e2e.py::test_server_query_limits_are_enforced_through_authenticated_grafana_proxy",
+      "tests/observability/test_collector_e2e.py::test_collected_synthetic_stream_has_no_forbidden_fields_or_excluded_content"
+    ],
+    "phase_outcomes": {
+      "setup:passed": 4612,
+      "call:passed": 4612,
+      "teardown:passed": 4612
+    },
+    "blocked_python_socket_connections": 0,
+    "environment": "synthetic credentials; repository .env unavailable; TEST_DATABASE_URL and TEST_REDIS_URL unset; Python socket.connect blocked",
+    "browser_required_flag_effective": false,
+    "browser_flag_note": "Dated offline runner clears GEMAIBOT_REQUIRE_BROWSER_TESTS; actual passed browser-marked cases establish execution."
+  },
+  "instrumented_coverage_run": {
+    "arguments": [
+      "tests/",
+      "--override-ini=addopts=",
+      "--timeout=30",
+      "-q",
+      "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\offline-final\\unit-tmp",
+      "--ignore=tests/integration",
+      "-m",
+      "not integration",
+      "--cov=app",
+      "--cov=bot",
+      "--cov-branch",
+      "--cov-context=test",
+      "--cov-report=json:E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\offline-final\\coverage.json",
+      "--cov-report="
+    ],
+    "exit_code": 1,
+    "duration_seconds": 729.301,
+    "phase_outcomes": {
+      "setup:passed": 4612,
+      "call:passed": 4611,
+      "teardown:passed": 4612,
+      "call:failed": 1
+    },
+    "failures": [
+      {
+        "nodeid": "tests/test_ci_workflow_config.py::test_browser_job_selection_matches_all_discovered_browser_modules",
+        "when": "call",
+        "outcome": "failed",
+        "duration": 25.15134
+      }
+    ],
+    "failure_reason": "Existing CI discovery test exhausted its shared 25-second subprocess collection deadline; the second collection received only 1.6315 seconds. No inventory mismatch or runtime assertion failed.",
+    "blocked_python_socket_connections": 0,
+    "all_new_cases_passed": true,
+    "separate_retry": "ci-selection-reproduce: 1 passed in 24.44s",
+    "coverage_scope": "Coverage is measured on the same stable source/test snapshot; its run has 4611 passes and the explicitly recorded CI discovery timeout."
+  },
+  "new_case_counts_by_module": {
+    "tests/test_long_read_visibility_contracts.py": 6,
+    "tests/test_memory_graph_source_attributes.py": 8,
+    "tests/test_memory_user_cancellation_ownership.py": 6,
+    "tests/test_message_admission_failures.py": 8
+  },
+  "new_passed_case_nodeids": [
+    "tests/test_long_read_visibility_contracts.py::test_cancelled_reader_link_send_stops_without_fallback_or_cold_mirror",
+    "tests/test_long_read_visibility_contracts.py::test_created_telegraph_page_with_invisible_link_still_delivers_full_text",
+    "tests/test_long_read_visibility_contracts.py::test_invisible_reader_link_can_recover_with_visible_telegraph_link",
+    "tests/test_long_read_visibility_contracts.py::test_invisible_reader_link_falls_through_to_full_text_without_mirror[reader-and-telegraph-to-split]",
+    "tests/test_long_read_visibility_contracts.py::test_invisible_reader_link_falls_through_to_full_text_without_mirror[reader-to-split]",
+    "tests/test_long_read_visibility_contracts.py::test_reader_cold_mirror_starts_only_after_its_link_is_visible",
+    "tests/test_memory_graph_source_attributes.py::test_duplicate_edge_keeps_each_sources_own_attributes[strong-first-exact]",
+    "tests/test_memory_graph_source_attributes.py::test_duplicate_edge_keeps_each_sources_own_attributes[strong-first-semantic-alias]",
+    "tests/test_memory_graph_source_attributes.py::test_duplicate_edge_keeps_each_sources_own_attributes[weak-first-exact]",
+    "tests/test_memory_graph_source_attributes.py::test_duplicate_edge_keeps_each_sources_own_attributes[weak-first-semantic-alias]",
+    "tests/test_memory_graph_source_attributes.py::test_overlapping_support_merges_only_attributes_for_the_shared_source[exact]",
+    "tests/test_memory_graph_source_attributes.py::test_overlapping_support_merges_only_attributes_for_the_shared_source[semantic-alias]",
+    "tests/test_memory_graph_source_attributes.py::test_same_source_duplicate_retains_max_weight_and_core_without_duplicate_rows[core-first]",
+    "tests/test_memory_graph_source_attributes.py::test_same_source_duplicate_retains_max_weight_and_core_without_duplicate_rows[weight-first]",
+    "tests/test_memory_user_cancellation_ownership.py::test_user_cancellation_awaits_cleanup_and_preserves_other_users[caller_cancel-cleanup_failure]",
+    "tests/test_memory_user_cancellation_ownership.py::test_user_cancellation_awaits_cleanup_and_preserves_other_users[caller_cancel-cleanup_success]",
+    "tests/test_memory_user_cancellation_ownership.py::test_user_cancellation_awaits_cleanup_and_preserves_other_users[ordinary-cleanup_failure]",
+    "tests/test_memory_user_cancellation_ownership.py::test_user_cancellation_awaits_cleanup_and_preserves_other_users[ordinary-cleanup_success]",
+    "tests/test_memory_user_cancellation_ownership.py::test_user_cancellation_awaits_cleanup_and_preserves_other_users[repeated_cancel-cleanup_failure]",
+    "tests/test_memory_user_cancellation_ownership.py::test_user_cancellation_awaits_cleanup_and_preserves_other_users[repeated_cancel-cleanup_success]",
+    "tests/test_message_admission_failures.py::test_failed_placeholder_releases_reservation_and_next_request_runs[cancel-draw]",
+    "tests/test_message_admission_failures.py::test_failed_placeholder_releases_reservation_and_next_request_runs[cancel-photo]",
+    "tests/test_message_admission_failures.py::test_failed_placeholder_releases_reservation_and_next_request_runs[cancel-text]",
+    "tests/test_message_admission_failures.py::test_failed_placeholder_releases_reservation_and_next_request_runs[cancel-voice]",
+    "tests/test_message_admission_failures.py::test_failed_placeholder_releases_reservation_and_next_request_runs[error-draw]",
+    "tests/test_message_admission_failures.py::test_failed_placeholder_releases_reservation_and_next_request_runs[error-photo]",
+    "tests/test_message_admission_failures.py::test_failed_placeholder_releases_reservation_and_next_request_runs[error-text]",
+    "tests/test_message_admission_failures.py::test_failed_placeholder_releases_reservation_and_next_request_runs[error-voice]"
+  ],
+  "offline_coverage_totals": {
+    "covered_lines": 31762,
+    "num_statements": 44647,
+    "percent_covered": 68.68254655695107,
+    "percent_covered_display": "69",
+    "missing_lines": 12885,
+    "excluded_lines": 68,
+    "percent_statements_covered": 71.14027818218469,
+    "percent_statements_covered_display": "71",
+    "num_branches": 13078,
+    "num_partial_branches": 2323,
+    "covered_branches": 7885,
+    "missing_branches": 5193,
+    "percent_branches_covered": 60.292093592292396,
+    "percent_branches_covered_display": "60"
+  },
+  "selected_source_coverage": {
+    "app/repos/memory_graph_writer.py": {
+      "covered_lines": 133,
+      "num_statements": 140,
+      "percent_covered": 92.10526315789474,
+      "percent_covered_display": "92",
+      "missing_lines": 7,
+      "excluded_lines": 0,
+      "percent_statements_covered": 95.0,
+      "percent_statements_covered_display": "95",
+      "num_branches": 50,
+      "num_partial_branches": 8,
+      "covered_branches": 42,
+      "missing_branches": 8,
+      "percent_branches_covered": 84.0,
+      "percent_branches_covered_display": "84"
+    },
+    "app/repos/memory_autosave.py": {
+      "covered_lines": 87,
+      "num_statements": 105,
+      "percent_covered": 79.69924812030075,
+      "percent_covered_display": "80",
+      "missing_lines": 18,
+      "excluded_lines": 2,
+      "percent_statements_covered": 82.85714285714286,
+      "percent_statements_covered_display": "83",
+      "num_branches": 28,
+      "num_partial_branches": 7,
+      "covered_branches": 19,
+      "missing_branches": 9,
+      "percent_branches_covered": 67.85714285714286,
+      "percent_branches_covered_display": "68"
+    },
+    "app/handlers/messages.py": {
+      "covered_lines": 279,
+      "num_statements": 456,
+      "percent_covered": 60.0,
+      "percent_covered_display": "60",
+      "missing_lines": 177,
+      "excluded_lines": 0,
+      "percent_statements_covered": 61.18421052631579,
+      "percent_statements_covered_display": "61",
+      "num_branches": 134,
+      "num_partial_branches": 27,
+      "covered_branches": 75,
+      "missing_branches": 59,
+      "percent_branches_covered": 55.97014925373134,
+      "percent_branches_covered_display": "56"
+    },
+    "app/response_delivery/renderer.py": {
+      "covered_lines": 266,
+      "num_statements": 311,
+      "percent_covered": 83.46666666666667,
+      "percent_covered_display": "83",
+      "missing_lines": 45,
+      "excluded_lines": 17,
+      "percent_statements_covered": 85.53054662379421,
+      "percent_statements_covered_display": "86",
+      "num_branches": 64,
+      "num_partial_branches": 13,
+      "covered_branches": 47,
+      "missing_branches": 17,
+      "percent_branches_covered": 73.4375,
+      "percent_branches_covered_display": "73"
+    }
+  },
+  "focused_graph_coverage": {
+    "graph-baseline": {
+      "covered_lines": 122,
+      "num_statements": 138,
+      "percent_covered": 83.87096774193549,
+      "percent_covered_display": "84",
+      "missing_lines": 16,
+      "excluded_lines": 0,
+      "percent_statements_covered": 88.40579710144928,
+      "percent_statements_covered_display": "88",
+      "num_branches": 48,
+      "num_partial_branches": 14,
+      "covered_branches": 34,
+      "missing_branches": 14,
+      "percent_branches_covered": 70.83333333333333,
+      "percent_branches_covered_display": "71"
+    },
+    "graph-green": {
+      "covered_lines": 131,
+      "num_statements": 140,
+      "percent_covered": 90.0,
+      "percent_covered_display": "90",
+      "missing_lines": 9,
+      "excluded_lines": 0,
+      "percent_statements_covered": 93.57142857142857,
+      "percent_statements_covered_display": "94",
+      "num_branches": 50,
+      "num_partial_branches": 10,
+      "covered_branches": 40,
+      "missing_branches": 10,
+      "percent_branches_covered": 80.0,
+      "percent_branches_covered_display": "80"
+    }
+  },
+  "focused_runs": {
+    "ci-selection-reproduce": {
+      "exit_code": 0,
+      "duration_seconds": 26.688,
+      "arguments": [
+        "tests/test_ci_workflow_config.py::test_browser_job_selection_matches_all_discovered_browser_modules",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\ci-selection-reproduce\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:passed": 1,
+        "teardown:passed": 1
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "delivery-baseline": {
+      "exit_code": 0,
+      "duration_seconds": 2.056,
+      "arguments": [
+        "tests/test_telegram_renderer.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\delivery-baseline\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 13,
+        "call:passed": 13,
+        "teardown:passed": 13
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "delivery-neighbors": {
+      "exit_code": 0,
+      "duration_seconds": 7.985,
+      "arguments": [
+        "tests/test_long_read_visibility_contracts.py",
+        "tests/test_telegram_renderer.py",
+        "tests/test_response_coordinator.py",
+        "tests/test_delivery_privacy_lifecycle.py",
+        "tests/observability/test_delivery_events.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\delivery-neighbors\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 38,
+        "call:passed": 38,
+        "teardown:passed": 38
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "delivery-new": {
+      "exit_code": 0,
+      "duration_seconds": 3.684,
+      "arguments": [
+        "tests/test_long_read_visibility_contracts.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\delivery-new\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 6,
+        "call:passed": 6,
+        "teardown:passed": 6
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "graph-baseline": {
+      "exit_code": 0,
+      "duration_seconds": 3.583,
+      "arguments": [
+        "tests/test_memory_graph_writer.py",
+        "--cov=app.repos.memory_graph_writer",
+        "--cov-branch",
+        "--cov-report=json:E:/Projects/gemaibotv2/.superpowers/sdd/2026-10-15-priority-coverage/graph-baseline/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\graph-baseline\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 10,
+        "call:passed": 10,
+        "teardown:passed": 10
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "graph-green": {
+      "exit_code": 0,
+      "duration_seconds": 2.835,
+      "arguments": [
+        "tests/test_memory_graph_writer.py",
+        "tests/test_memory_graph_source_attributes.py",
+        "--cov=app.repos.memory_graph_writer",
+        "--cov-branch",
+        "--cov-report=json:E:/Projects/gemaibotv2/.superpowers/sdd/2026-10-15-priority-coverage/graph-green/coverage.json",
+        "--cov-report=",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\graph-green\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 18,
+        "call:passed": 18,
+        "teardown:passed": 18
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "graph-neighbors": {
+      "exit_code": 4,
+      "duration_seconds": 1.364,
+      "arguments": [
+        "tests/test_memory_graph_writer.py",
+        "tests/test_memory_graph_source_attributes.py",
+        "tests/test_memory_consolidation_safety.py",
+        "tests/test_memory_extraction_provenance.py",
+        "tests/test_graph_connections.py",
+        "tests/observability/test_memory_events.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\graph-neighbors\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {},
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "graph-neighbors-corrected": {
+      "exit_code": 4,
+      "duration_seconds": 1.11,
+      "arguments": [
+        "tests/test_memory_graph_writer.py",
+        "tests/test_memory_graph_source_attributes.py",
+        "tests/test_memory_consolidation_safety.py",
+        "tests/test_memory_extraction_provenance.py",
+        "tests/observability/test_memory_events.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\graph-neighbors-corrected\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {},
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "graph-neighbors-final": {
+      "exit_code": 0,
+      "duration_seconds": 39.247,
+      "arguments": [
+        "tests/test_memory_graph_writer.py",
+        "tests/test_memory_graph_source_attributes.py",
+        "tests/test_memory_consolidation_safety.py",
+        "tests/test_memory_extraction_provenance.py",
+        "tests/observability/test_database_events.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\graph-neighbors-final\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 55,
+        "call:passed": 55,
+        "teardown:passed": 55
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "graph-red": {
+      "exit_code": 1,
+      "duration_seconds": 3.592,
+      "arguments": [
+        "tests/test_memory_graph_source_attributes.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\graph-red\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "ingress-baseline": {
+      "exit_code": 0,
+      "duration_seconds": 5.668,
+      "arguments": [
+        "tests/test_request_concurrency.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\ingress-baseline\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 3,
+        "call:passed": 3,
+        "teardown:passed": 3
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "ingress-final": {
+      "exit_code": 0,
+      "duration_seconds": 5.478,
+      "arguments": [
+        "tests/test_message_admission_failures.py",
+        "tests/test_request_concurrency.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\ingress-final\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 11,
+        "call:passed": 11,
+        "teardown:passed": 11
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "ingress-green": {
+      "exit_code": 0,
+      "duration_seconds": 4.688,
+      "arguments": [
+        "tests/test_message_admission_failures.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\ingress-green\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 8,
+        "call:passed": 8,
+        "teardown:passed": 8
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "ingress-neighbors": {
+      "exit_code": 0,
+      "duration_seconds": 22.508,
+      "arguments": [
+        "tests/test_message_admission_failures.py",
+        "tests/test_request_concurrency.py",
+        "tests/test_messages.py",
+        "tests/test_msg_voice_privacy.py",
+        "tests/test_voice_callback_lifecycle.py",
+        "tests/test_debounce_ownership.py",
+        "tests/test_update_processor.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\ingress-neighbors\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 83,
+        "call:passed": 83,
+        "teardown:passed": 83
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "ingress-red-cancel-draw": {
+      "exit_code": 1,
+      "duration_seconds": 8.134,
+      "arguments": [
+        "tests/test_message_admission_failures.py",
+        "-k",
+        "draw and cancel",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\ingress-red-cancel-draw\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "ingress-red-cancel-photo": {
+      "exit_code": 1,
+      "duration_seconds": 8.021,
+      "arguments": [
+        "tests/test_message_admission_failures.py",
+        "-k",
+        "photo and cancel",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\ingress-red-cancel-photo\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "ingress-red-cancel-text": {
+      "exit_code": 1,
+      "duration_seconds": 8.123,
+      "arguments": [
+        "tests/test_message_admission_failures.py",
+        "-k",
+        "text and cancel",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\ingress-red-cancel-text\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "ingress-red-cancel-voice": {
+      "exit_code": 1,
+      "duration_seconds": 7.677,
+      "arguments": [
+        "tests/test_message_admission_failures.py",
+        "-k",
+        "voice and cancel",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\ingress-red-cancel-voice\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "ingress-red-error-draw": {
+      "exit_code": 1,
+      "duration_seconds": 8.076,
+      "arguments": [
+        "tests/test_message_admission_failures.py",
+        "-k",
+        "draw and error",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\ingress-red-error-draw\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "ingress-red-error-photo": {
+      "exit_code": 1,
+      "duration_seconds": 7.903,
+      "arguments": [
+        "tests/test_message_admission_failures.py",
+        "-k",
+        "photo and error",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\ingress-red-error-photo\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "ingress-red-error-text": {
+      "exit_code": 1,
+      "duration_seconds": 8.192,
+      "arguments": [
+        "tests/test_message_admission_failures.py",
+        "-k",
+        "text and error",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\ingress-red-error-text\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "ingress-red-voice": {
+      "exit_code": 1,
+      "duration_seconds": 4.22,
+      "arguments": [
+        "tests/test_message_admission_failures.py",
+        "-k",
+        "voice",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\ingress-red-voice\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 1,
+        "call:failed": 1,
+        "teardown:passed": 1
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "memory-baseline": {
+      "exit_code": 0,
+      "duration_seconds": 6.127,
+      "arguments": [
+        "tests/test_memory_consent.py",
+        "tests/test_memory_shutdown_ownership.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\memory-baseline\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 19,
+        "call:passed": 19,
+        "teardown:passed": 19
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "memory-green": {
+      "exit_code": 0,
+      "duration_seconds": 4.228,
+      "arguments": [
+        "tests/test_memory_user_cancellation_ownership.py",
+        "tests/test_memory_consent.py",
+        "tests/test_memory_shutdown_ownership.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\memory-green\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 25,
+        "call:passed": 25,
+        "teardown:passed": 25
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "memory-neighbors": {
+      "exit_code": 0,
+      "duration_seconds": 8.648,
+      "arguments": [
+        "tests/test_memory_user_cancellation_ownership.py",
+        "tests/test_memory_consent.py",
+        "tests/test_memory_shutdown_ownership.py",
+        "tests/test_private_lease_cleanup.py",
+        "tests/test_private_data_leases.py",
+        "tests/test_account_erasure.py",
+        "tests/test_cb_navigation.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\memory-neighbors\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 57,
+        "call:passed": 57,
+        "teardown:passed": 57
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "memory-red": {
+      "exit_code": 1,
+      "duration_seconds": 2.639,
+      "arguments": [
+        "tests/test_memory_user_cancellation_ownership.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\memory-red\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 3,
+        "call:passed": 2,
+        "teardown:passed": 3,
+        "call:failed": 1
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "offline-collection": {
+      "exit_code": 0,
+      "duration_seconds": 10.035,
+      "arguments": [
+        "tests/",
+        "--ignore=tests/integration",
+        "-m",
+        "not integration",
+        "--collect-only",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\offline-collection\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {},
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "offline-confirmation": {
+      "exit_code": 0,
+      "duration_seconds": 466.425,
+      "arguments": [
+        "tests/",
+        "--ignore=tests/integration",
+        "-m",
+        "not integration",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\offline-confirmation\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 4612,
+        "call:passed": 4612,
+        "teardown:passed": 4612
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    },
+    "review-20261015-independent": {
+      "exit_code": 0,
+      "duration_seconds": 5.633,
+      "arguments": [
+        "tests/test_memory_graph_source_attributes.py",
+        "tests/test_memory_user_cancellation_ownership.py",
+        "tests/test_message_admission_failures.py",
+        "tests/test_long_read_visibility_contracts.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\.superpowers\\sdd\\2026-10-15-priority-coverage\\review-20261015-independent\\focus-tmp",
+        "-x"
+      ],
+      "phase_outcomes": {
+        "setup:passed": 28,
+        "call:passed": 28,
+        "teardown:passed": 28
+      },
+      "blocked_python_socket_connections": 0,
+      "collection_errors": []
+    }
+  },
+  "source_test_snapshot": {
+    "files": 756,
+    "before_sha256": "60eb81cbd5f29f71a0373e4e575b3da10af9cf6a27a50102f143354f68b1f4fa",
+    "after_sha256": "60eb81cbd5f29f71a0373e4e575b3da10af9cf6a27a50102f143354f68b1f4fa",
+    "differences": [],
+    "scope": "Application/test/config inputs and previous coverage/corpus artifacts selected by the retained snapshot recorder; excludes live secret files."
+  },
+  "changed_python_sha256": {
+    "app/handlers/messages.py": "af93021eab03842404d70b813c91141f40d788408b07b92fd47f0905efd61fb9",
+    "app/repos/memory_autosave.py": "601f3346165edeca531c7332570a36a7c9386fec2e2c2c8d2a919a5ad2d7509c",
+    "app/repos/memory_graph_writer.py": "8e6eea7fb9f43d28604ad26ab32e98c34a242c748cf1d0faa0fffbb5e3d37649",
+    "tests/test_long_read_visibility_contracts.py": "1454e5b9f4cd94605a954ff5ec01665f8b3388ada5e68c85ed64e1f321cb847f",
+    "tests/test_memory_graph_source_attributes.py": "b613a250539a107619cbffee26f41620441a93787cba3b7a0842687c42a7246f",
+    "tests/test_memory_user_cancellation_ownership.py": "85fe2adcd61c8d81e08914877f070b2055f9f8c96398a42b69c5c591455faab6",
+    "tests/test_message_admission_failures.py": "6158ba77617487bc20cb06f55f889491cf8d264e577025f9f534b63e3efe7eb4"
+  },
+  "raw_evidence_sha256": {
+    "ci-selection-reproduce/focus-evidence.json": "46a63a81d02daa698b48e59f411ef90372cd5c44211f0a76a04484b05f6f6455",
+    "delivery-baseline/focus-evidence.json": "f096fd2e0b85c2222eeeafcb6c18b4e79988500018c0c9acc32749e5d8fd631f",
+    "delivery-neighbors/focus-evidence.json": "ce314c1a72d05bed4193981d1d85373648ddda337e1b0742c8146686394230bc",
+    "delivery-new/focus-evidence.json": "2ff4b1d831cfe73dbd6948e483810ddf2e723e1606619c0b05e29057e6366a87",
+    "graph-baseline/focus-evidence.json": "88b20875dade7f88a7218cd4b0f01d171a3c3f8bea9b30e76be37778c57e0bb2",
+    "graph-green/focus-evidence.json": "b3d27be5988852e29e0cf40893521408c588e43b128e42acb7d883284e65723d",
+    "graph-neighbors/focus-evidence.json": "36f3f100d1bfb64befaa8fac4f7edc54afcf8a268c8743651c9fb31805200e66",
+    "graph-neighbors-corrected/focus-evidence.json": "15028048adbbbdcf91948fb89e87926157f5696cf373ed44e4d29b34e1b80aac",
+    "graph-neighbors-final/focus-evidence.json": "96a2cd074d3498582178a21ad34d487f669c25a51271d7db6cf9c509c915a6f4",
+    "graph-red/focus-evidence.json": "6c1e027752cb649dde888a8df4e1a16f19e6ffbc0dc148b21a778c254880ea45",
+    "ingress-baseline/focus-evidence.json": "5b37241a2392c0696a6165370e240c23f28c958fd95946b7385211ab9932e710",
+    "ingress-final/focus-evidence.json": "998b7a38b3362ae53fada2de878ae29c93ccc0969e5ff73c6323d92c2c5efa72",
+    "ingress-green/focus-evidence.json": "0c2948eee13fe53d82cabded9cf8cef2d7942b5fb41c602bda935b163374df30",
+    "ingress-neighbors/focus-evidence.json": "0229739c5841b106221dad3f4590edb04b6f4c421fce3810af20dd17eac0cbb3",
+    "ingress-red-cancel-draw/focus-evidence.json": "53171ae417af4098afb6d5929771648d32fb1e4c77ff3751ee21a82fded398a1",
+    "ingress-red-cancel-photo/focus-evidence.json": "577d05063fc51cd29c7bf59f91ef303f3bf98b631ea9d63926bdc468d45ec469",
+    "ingress-red-cancel-text/focus-evidence.json": "8014773869eb67df5fa63a5cc997a700e07823e5bde0896ae9fed94009385e8c",
+    "ingress-red-cancel-voice/focus-evidence.json": "77097f470971bc0ee580310e611b6f1bd1a0358ba1f98e2bd4aecd58b88e589d",
+    "ingress-red-error-draw/focus-evidence.json": "bfaf80cfbfb0353cac37b8d25aa31b91112400dd51f93ba2fb5da908f76da64a",
+    "ingress-red-error-photo/focus-evidence.json": "2fd048e3b376eefafa5352207b4b99eda8630665757cbb428773a6f8dab3d88f",
+    "ingress-red-error-text/focus-evidence.json": "89da26163ca023810d3e7910aa46c5bb4ae07226027470d478b062a760843cee",
+    "ingress-red-voice/focus-evidence.json": "228f20b28508c375e9d734a3931f4b4b24317c028216c9a8fd5abcad3913261d",
+    "memory-baseline/focus-evidence.json": "cfd030f97e7c8a870f95eb233c11017c76c3a225b0c16b776cb9700ca66a720f",
+    "memory-green/focus-evidence.json": "cccd704cedc5c775e6d6886c9ec92e31dbaf25acd4b8ff5543f33c02bc397400",
+    "memory-neighbors/focus-evidence.json": "700a3fc70955a3b57ecf672f667111bfd371774ff892fea76cf57746dccdef3a",
+    "memory-red/focus-evidence.json": "756d9b31cb6f6151d01f990eb2e107b1566ed77d1a77f2bbf7d31a198cc275ec",
+    "offline-collection/focus-evidence.json": "3ce4e37cb27e11680a8a8dd60edd4399a83960460ac9af2cc8ff8d94917e8608",
+    "offline-confirmation/focus-evidence.json": "e6bee66b0d4bd81ab2ed2ee01adc1a3f3d321daeff4adaeba4ae3086d48427c8",
+    "review-20261015-independent/focus-evidence.json": "cb9b614a2e172cd14fdb6c97db5150192bd00865900563b1933d3be93ecf8a84",
+    "offline-final/unit-evidence.json": "656c1a8f73f761d58cc8c17f48601c8566640d426d3d19dfaf84b25661c19e06",
+    "offline-final/coverage.json": "ede44067c27999d6eea7c276d80b52008582a5d6253c9c1d20b90af5dd0af9f0",
+    "verified-inputs-before.json": "60eb81cbd5f29f71a0373e4e575b3da10af9cf6a27a50102f143354f68b1f4fa",
+    "verified-inputs-after.json": "60eb81cbd5f29f71a0373e4e575b3da10af9cf6a27a50102f143354f68b1f4fa"
+  },
+  "independent_review": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "xhigh",
+    "verdict": "APPROVE",
+    "critical": 0,
+    "important": 0,
+    "minor": 0,
+    "independent_run": "review-20261015-independent/focus-evidence.json",
+    "passing_new_cases": 28
+  },
+  "gates": {
+    "ruff_check": "PASS: uv run --locked ruff check .",
+    "ruff_format": "PASS: uv run --locked ruff format --check .; 734 Python files",
+    "mypy": "PASS: uv run --locked mypy app bot.py; 288 source files",
+    "environment_registry": "PASS: 111 names; 0 changes",
+    "documentation_and_diff": {
+      "utf8": "PASS: 81 Markdown files",
+      "current_document_links": "PASS: 32 Markdown documents; 0 errors",
+      "explicit_new_document_links": "PASS: 4 Markdown documents; 0 errors, via check_document API",
+      "diff": "PASS: git diff --check"
+    }
+  },
+  "limits": [
+    "Offline Python tests and synthetic external I/O; no live Telegram/provider/Telegraph result.",
+    "PostgreSQL/Redis/collector integration cases were not selected or executed in this follow-up.",
+    "Graph tests verify actual Python-to-SQL source payloads; database trigger execution and real deletion recomposition need disposable PostgreSQL checks.",
+    "Historical coverage metrics use different code/test snapshots; no same-snapshot overall percentage gain is claimed.",
+    "The instrumented coverage run has one recorded CI subprocess timeout. The separate final whole-suite confirmation runs without coverage and preserves the existing limits and selector.",
+    "Two preliminary graph neighbor selections named nonexistent modules and collected no cases (exit 4); graph-neighbors-final is the corrected passing selection.",
+    "Delayed edited-request supersession and pre-placeholder direct-intent cancellation remain separate identified follow-ups."
+  ]
+}

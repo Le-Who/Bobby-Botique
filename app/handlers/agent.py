@@ -52,7 +52,7 @@ from app.handlers.ai_search import (  # noqa: F401
     _handle_research_agent,
 )
 from app.repos.chats import get_user_chat
-from app.utils.heartbeat import stop_heartbeat
+from app.utils.heartbeat import retire_heartbeat, stop_heartbeat
 
 # ── Orchestration (stays here — thin dispatcher) ─────────────────────────────
 
@@ -180,7 +180,10 @@ async def process_long_request(
             from app.errors import build_retry_and_roles_keyboard, user_friendly_error
 
             friendly = user_friendly_error(e)
-            stop_heartbeat(placeholder_message.message_id)
+            await retire_heartbeat(
+                placeholder_message.message_id,
+                chat_id=getattr(placeholder_message, "chat_id", None),
+            )
             await placeholder_message.edit_text(friendly, reply_markup=build_retry_and_roles_keyboard())
         except Exception as inner_e:
             logging.error("Could not edit placeholder message: %s", inner_e)

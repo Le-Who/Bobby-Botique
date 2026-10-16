@@ -70,7 +70,8 @@ async def request_boundary(monkeypatch):
         return task
 
     def register_task(uid, task):
-        registered.append(task)
+        if task is not asyncio.current_task():
+            registered.append(task)
         register(uid, task)
 
     monkeypatch.setattr(messages, "submit_task", submit)

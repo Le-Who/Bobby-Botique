@@ -207,7 +207,7 @@ async def delete_all_user_documents(user_id: int) -> int:
 
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logger.error("Error deleting all documents: %s", e, exc_info=True)
-        return 0
+        raise
 
 
 async def cleanup_old_documents(days_old: int = 3) -> int:
