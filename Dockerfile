@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Install the exact production graph from the committed lockfile.
-RUN python -m pip install --no-cache-dir "uv==0.12.6"
+RUN python -m pip install --no-cache-dir "uv==0.12.18"
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project --link-mode copy
 

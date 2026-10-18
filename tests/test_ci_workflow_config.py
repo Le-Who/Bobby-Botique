@@ -45,7 +45,7 @@ def test_ci_uses_exact_uv_and_the_committed_lock_in_every_python_job() -> None:
     python_jobs = {name: body for name, body in _jobs(workflow).items() if "uses: actions/setup-python@" in body}
     assert python_jobs
     for name, body in python_jobs.items():
-        assert 'python -m pip install "uv==0.12.6"' in body, name
+        assert 'python -m pip install "uv==0.12.18"' in body, name
         assert "uv sync --locked" in body, name
     assert "-r requirements.txt" not in workflow
     assert "requirements-dev.txt" not in workflow

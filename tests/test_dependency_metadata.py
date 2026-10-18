@@ -82,6 +82,16 @@ def test_direct_dependency_names_are_unique_across_scopes() -> None:
     assert set(production).isdisjoint(development)
 
 
+def test_direct_dependency_names_are_canonical_for_dependabot_replacement() -> None:
+    metadata = _metadata()
+    requirements = metadata["project"]["dependencies"] + metadata["dependency-groups"]["dev"]
+
+    # Dependabot's uv manifest replacer matches canonical names case-sensitively.
+    for item in requirements:
+        name = Requirement(item).name
+        assert name == canonicalize_name(name), f"Dependabot cannot reliably replace {name!r} in pyproject.toml"
+
+
 def test_frontier_trial_dependencies_use_the_validated_major_ranges() -> None:
     metadata = _metadata()
     requirements = {Requirement(item).name: Requirement(item) for item in metadata["project"]["dependencies"]}
@@ -101,7 +111,7 @@ def test_uv_and_frontier_policy_are_explicit() -> None:
     metadata = _metadata()
 
     assert metadata["tool"]["uv"]["package"] is False
-    assert metadata["tool"]["uv"]["required-version"] == "==0.12.6"
+    assert metadata["tool"]["uv"]["required-version"] == "==0.12.18"
     assert metadata["tool"]["dependency-frontier"] == {
         "python-version": "3.14",
         "production-platform": "x86_64-manylinux_2_28",

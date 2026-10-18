@@ -153,7 +153,7 @@ Public Telegraph copies and shared report links require their own privacy handli
 
 ## Build, CI and deployment
 
-`pyproject.toml` requires Python `>=3.14,<3.15` and uv 0.12.6; `uv.lock` fixes the
+`pyproject.toml` requires Python `>=3.14,<3.15` and uv 0.12.18; `uv.lock` fixes the
 graph. The production Dockerfile uses a digest-pinned Python 3.14 slim image,
 locked non-dev dependencies, ffmpeg and a non-root application user.
 

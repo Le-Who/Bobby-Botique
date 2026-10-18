@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install pinned uv
-        run: python -m pip install "uv==0.12.6"
+        run: python -m pip install "uv==0.12.18"
       - name: Sync locked dependencies
         run: uv sync --locked --link-mode copy
       - name: Documentation encoding integrity
@@ -47,7 +47,7 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install pinned uv
-        run: python -m pip install "uv==0.12.6"
+        run: python -m pip install "uv==0.12.18"
       - name: Sync locked dependencies
         run: uv sync --locked --link-mode copy
       - name: Mypy
@@ -72,7 +72,7 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install pinned uv
-        run: python -m pip install "uv==0.12.6"
+        run: python -m pip install "uv==0.12.18"
       - name: Sync locked dependencies
         run: uv sync --locked --link-mode copy
       - name: Run unit and E2E tests
@@ -123,7 +123,7 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install pinned uv
-        run: python -m pip install "uv==0.12.6"
+        run: python -m pip install "uv==0.12.18"
       - name: Sync locked dependencies
         run: uv sync --locked --link-mode copy
       - name: Require isolated test services
@@ -157,7 +157,7 @@ jobs:
           cache: npm
           cache-dependency-path: tests/browser/package-lock.json
       - name: Install pinned uv
-        run: python -m pip install "uv==0.12.6"
+        run: python -m pip install "uv==0.12.18"
       - name: Sync locked Python dependencies
         run: uv sync --locked --link-mode copy
       - name: Install locked browser dependencies
@@ -207,7 +207,7 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install pinned uv
-        run: python -m pip install "uv==0.12.6"
+        run: python -m pip install "uv==0.12.18"
       - name: Sync locked dependencies
         run: uv sync --locked --link-mode copy
       - name: Export exact production graph
@@ -251,7 +251,7 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install pinned uv
-        run: python -m pip install "uv==0.12.6"
+        run: python -m pip install "uv==0.12.18"
       - name: Sync locked dependencies
         run: uv sync --locked --link-mode copy
       - name: Validate Compose, Alloy, Loki, and Docker API proxy

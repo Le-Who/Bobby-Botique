@@ -432,17 +432,18 @@ def test_audit_project_is_read_only_and_writes_reproducible_artifacts(tmp_path: 
     assert (project / "uv.lock").read_bytes() == original_lock
 
 
-def test_audit_project_rejects_a_mismatched_uv_version_before_resolution(tmp_path: Path) -> None:
+@pytest.mark.parametrize("uv_version", ["0.11.0", "0.12.6"])
+def test_audit_project_rejects_a_mismatched_uv_version_before_resolution(tmp_path: Path, uv_version: str) -> None:
     pyproject = ROOT / "pyproject.toml"
     commands: list[list[str]] = []
 
-    with pytest.raises(RuntimeError, match="requires uv 0.12.6"):
+    with pytest.raises(RuntimeError, match="requires uv 0.12.18"):
         audit_project(
             pyproject_path=pyproject,
             output_dir=tmp_path,
             cutoff="2026-08-22T10:30:00Z",
             base_sha="abc123",
-            uv_version="0.11.0",
+            uv_version=uv_version,
             runner=lambda command, cwd: commands.append(command),
         )
 
