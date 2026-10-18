@@ -42,6 +42,7 @@ from app.errors import (
     extract_error_code,
     strip_error_tag,
     tag_error,
+    user_friendly_error,
 )
 
 # ─── tag_error / extract_error_code round-trip ───────────────────────────────
@@ -181,6 +182,15 @@ def test_classify_error_subclass_uses_mro_walk():
 
     # Assert
     assert code == ErrorCode.QUOTA_EXCEEDED
+
+
+@pytest.mark.parametrize("exception_type", [TimeoutError, type("ProviderTimeout", (TimeoutError,), {})])
+def test_empty_timeout_exception_retains_timeout_classification(exception_type):
+    error = exception_type()
+
+    assert str(error) == ""
+    assert classify_error_from_exception(error) == ErrorCode.TIMEOUT
+    assert extract_error_code(user_friendly_error(error)) == ErrorCode.TIMEOUT
 
 
 # ─── classify_error_from_exception — status code path ────────────────────────

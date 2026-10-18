@@ -5,7 +5,10 @@ updates:
     directory: "/"
     schedule:
       interval: "cron"
-      cronjob: "every 2 weeks"
+      # Fugit's weekday modulo preserves exact fortnightly gaps across months.
+      # https://github.com/dependabot/dependabot-core/issues/12246
+      cronjob: "0 8 * * mon%2"
+      timezone: "UTC"
     cooldown:
       default-days: 7
     versioning-strategy: increase-if-necessary
@@ -34,7 +37,8 @@ updates:
     directory: "/"
     schedule:
       interval: "cron"
-      cronjob: "every 2 weeks"
+      cronjob: "0 8 * * mon%2"
+      timezone: "UTC"
     cooldown:
       default-days: 7
     rebase-strategy: auto

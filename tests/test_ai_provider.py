@@ -2,10 +2,15 @@
 Tests for the AI provider abstraction layer.
 """
 
+import asyncio
+import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.circuit_breaker import CircuitBreaker
+from app.errors import ErrorCode, extract_error_code
 from app.providers import (
     AIResponse,
     BaseAIProvider,
@@ -15,6 +20,123 @@ from app.providers import (
     is_openrouter_model,
 )
 from app.providers.gemini import _gemini_clients_cache
+from app.utils.api_logger import APILogger
+
+
+@pytest.fixture
+async def stalled_gemini_attempt(monkeypatch):
+    started = asyncio.Event()
+    drained = asyncio.Event()
+
+    async def stalled_call(**kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            drained.set()
+
+    client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=stalled_call)))
+    monkeypatch.setattr("app.providers.gemini.get_cached_genai_client", lambda key: client)
+    monkeypatch.setattr("app.providers.gemini.api_logger", APILogger())
+    monkeypatch.setattr("app.providers.gemini.metrics_collector", AsyncMock())
+    breaker = CircuitBreaker("gemini-timeout-test")
+    monkeypatch.setattr("app.resilience_policy.get_circuit_breaker", lambda name: breaker)
+    try:
+        yield SimpleNamespace(provider=GeminiProvider("dummy-provider-key-CANC"), started=started, drained=drained)
+    finally:
+        await breaker.shutdown()
+
+
+@pytest.mark.parametrize("cause", ["outer_timeout", "caller_cancellation"])
+async def test_gemini_cancelled_sdk_attempt_has_one_honest_terminal(stalled_gemini_attempt, caplog, cause):
+    attempt = stalled_gemini_attempt
+    with caplog.at_level(logging.INFO, logger="api_logger"):
+        task = asyncio.create_task(
+            attempt.provider.get_response(
+                history=[{"role": "user", "parts": ["synthetic request"]}],
+                model_name="gemini-3.5-flash",
+                max_retries=1,
+                timeout=0.05 if cause == "outer_timeout" else 10.0,
+            )
+        )
+        try:
+            await asyncio.wait_for(attempt.started.wait(), timeout=1.0)
+            if cause == "caller_cancellation":
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                response = await task
+                assert response.success is False
+                assert extract_error_code(response.text) == ErrorCode.TIMEOUT
+        finally:
+            if not task.done():
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+    assert attempt.drained.is_set()
+    events = [record for record in caplog.records if record.name == "api_logger"]
+    assert [record._event_name for record in events] == ["api.request_started", "api.request_finished"]
+    started, terminal = events
+    assert terminal.outcome == "cancelled"
+    assert terminal.levelno == logging.INFO
+    assert terminal.attempt_id == started.attempt_id
+    assert terminal.key_suffix == started.key_suffix == "CANC"
+    assert terminal.key_fingerprint == started.key_fingerprint
+    assert terminal.duration_ms >= 0
+
+
+async def test_gemini_sdk_timeout_keeps_one_failed_terminal(stalled_gemini_attempt, monkeypatch, caplog):
+    async def sdk_timeout(**kwargs):
+        raise TimeoutError()
+
+    monkeypatch.setattr(stalled_gemini_attempt.provider._client.aio.models, "generate_content", sdk_timeout)
+    with caplog.at_level(logging.INFO, logger="api_logger"):
+        response = await stalled_gemini_attempt.provider.get_response(
+            history=[{"role": "user", "parts": ["synthetic request"]}],
+            model_name="gemini-3.5-flash",
+            max_retries=1,
+            timeout=10.0,
+        )
+
+    assert response.success is False
+    assert extract_error_code(response.text) == ErrorCode.TIMEOUT
+    events = [record for record in caplog.records if record.name == "api_logger"]
+    terminals = [record for record in events if record._event_name == "api.request_finished"]
+    assert len(terminals) == 1
+    assert terminals[0].outcome == "failed"
+    assert terminals[0].attempt_id == events[0].attempt_id
+
+
+async def test_gemini_cancellation_before_request_does_not_fabricate_terminal(
+    stalled_gemini_attempt, monkeypatch, caplog
+):
+    preparing = asyncio.Event()
+
+    async def stalled_preparation(*args):
+        preparing.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("app.providers.gemini.metrics_collector.record_api_call", stalled_preparation)
+    with caplog.at_level(logging.INFO, logger="api_logger"):
+        task = asyncio.create_task(
+            stalled_gemini_attempt.provider.get_response(
+                history=[{"role": "user", "parts": ["synthetic request"]}],
+                model_name="gemini-3.5-flash",
+                max_retries=1,
+                timeout=10.0,
+            )
+        )
+        try:
+            await asyncio.wait_for(preparing.wait(), timeout=1.0)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    assert not stalled_gemini_attempt.started.is_set()
+    assert not [record for record in caplog.records if record.name == "api_logger"]
 
 
 class TestAIResponse:

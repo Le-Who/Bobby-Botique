@@ -111,6 +111,7 @@ class APILogger:
         start_time: APICallTiming | float,
         *,
         success: bool = True,
+        cancelled: bool = False,
         error_message: str | None = None,
         **fields: Any,
     ) -> float:
@@ -134,15 +135,15 @@ class APILogger:
             "api": api,
             "attempt_id": attempt_id,
             "duration_ms": round(duration * 1000, 2),
-            "outcome": "succeeded" if success else "failed",
+            "outcome": "cancelled" if cancelled else ("succeeded" if success else "failed"),
             "error_message": sanitized_error,
             "legacy_timing": legacy_timing,
             **safe_fields,
             **identity,
         }
-        log_method = self.logger.info if success else self.logger.error
+        log_method = self.logger.info if success or cancelled else self.logger.error
         log_method(
-            "API request completed" if success else "API request failed",
+            "API request cancelled" if cancelled else ("API request completed" if success else "API request failed"),
             extra=extra,
             stacklevel=2,
         )

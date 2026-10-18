@@ -369,6 +369,7 @@ NETWORK_ERROR_MSG = tag_error(ErrorCode.NETWORK, "🌐 Ошибка сети. П
 
 # Exception type → ErrorCode mapping (O(1) classification)
 _EXCEPTION_TYPE_MAP: dict[type, ErrorCode] = {
+    TimeoutError: ErrorCode.TIMEOUT,
     DatabaseConnectionError: ErrorCode.TIMEOUT,
     DatabaseRateLimitError: ErrorCode.RATE_LIMIT,
     DatabaseQueryError: ErrorCode.PROCESSING,

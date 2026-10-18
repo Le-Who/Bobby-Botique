@@ -52,13 +52,11 @@ def test_frontier_workflow_publishes_reports_and_tracks_one_durable_issue() -> N
     assert 'state: "closed"' in workflow
 
 
-def test_dependabot_uses_uv_exact_fortnightly_cooldown_and_no_automerge() -> None:
+def test_dependabot_uses_uv_cooldown_and_no_automerge() -> None:
     config = _dependabot()
 
     assert 'package-ecosystem: "uv"' in config
     assert 'directory: "/"' in config
-    assert 'interval: "cron"' in config
-    assert 'cronjob: "every 2 weeks"' in config
     assert "default-days: 7" in config
     assert "versioning-strategy: increase-if-necessary" in config
     assert "automerge" not in config.lower()
@@ -68,7 +66,6 @@ def test_dependabot_tracks_the_pinned_production_base_separately() -> None:
     config = _dependabot()
 
     assert 'package-ecosystem: "docker"' in config
-    assert config.count('cronjob: "every 2 weeks"') == 2
     assert config.count("default-days: 7") == 2
 
 

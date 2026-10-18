@@ -567,6 +567,17 @@ class GeminiProvider(BaseAIProvider):
                 model=model_name,
             )
 
+        except asyncio.CancelledError:
+            if start_time is not None:
+                api_logger.log_response(
+                    "gemini",
+                    start_time,
+                    cancelled=True,
+                    model=model_name,
+                    response_length=0,
+                )
+            raise
+
         except TimeoutError as error:
             api_logger.log_error(
                 "gemini",

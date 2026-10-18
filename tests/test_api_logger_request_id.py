@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import time
 from unittest.mock import MagicMock
+
+import pytest
 
 from app.utils.api_logger import APICallTiming, APILogger
 
@@ -70,6 +73,26 @@ def test_legacy_epoch_float_is_explicitly_marked():
     assert event["legacy_timing"] is True
     assert event["outcome"] == "failed"
     assert event["error_message"] == "timeout"
+
+
+@pytest.mark.parametrize("success", [True, False])
+def test_cancelled_response_preserves_attempt_key_and_timing_at_info(caplog, success):
+    api_logger = APILogger()
+    secret = "provider-secret-CANC"
+    with caplog.at_level(logging.INFO, logger="api_logger"):
+        timing = api_logger.log_request("gemini", api_key=secret, model="gemini-3.5-flash")
+        duration = api_logger.log_response("gemini", timing, success=success, cancelled=True, model="gemini-3.5-flash")
+
+    started, terminal = caplog.records
+    assert terminal._event_name == "api.request_finished"
+    assert terminal.outcome == "cancelled"
+    assert terminal.levelno == logging.INFO
+    assert terminal.attempt_id == started.attempt_id
+    assert terminal.key_suffix == started.key_suffix == "CANC"
+    assert terminal.key_fingerprint == started.key_fingerprint
+    assert terminal.duration_ms >= 0
+    assert duration >= 0
+    assert secret not in repr(terminal.__dict__)
 
 
 def test_log_error_keeps_traceback_and_key_identity_without_raw_key():
