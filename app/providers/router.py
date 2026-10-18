@@ -1470,12 +1470,6 @@ class ProviderRouter:
 
         return None
 
-    async def get_key_stats(self) -> list[dict[str, Any]]:
-        """Return health stats for all tracked keys (for diagnostics)."""
-        from app.repos.keys import get_key_status_manager
-
-        return await get_key_status_manager().get_all_statuses()
-
 
 # Module-level singleton
 _provider_router: ProviderRouter | None = None

@@ -1,7 +1,7 @@
 # ruff: noqa: E402
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -63,21 +63,10 @@ async def test_docx_magic_bytes_validation():
 
     processor = DocumentProcessor()
 
-    # Mock internal methods
-    processor._write_temp_file_sync = MagicMock(return_value="/tmp/fake.docx")
-    processor._process_word_sync = MagicMock(return_value={"content": "fake content"})
-    processor._save_document_content = AsyncMock()
-    processor._check_document_limit = AsyncMock(return_value=True)
-    processor._calculate_file_hash = MagicMock(return_value="hash")
-    processor._check_duplicate_file = AsyncMock(return_value=None)
-    processor._cleanup_oldest_documents = AsyncMock()
-
     # Invalid content
     invalid_content = b"this is not a zip file"
 
-    result = await processor._process_word_unified(
-        file_data=invalid_content, filename="test.docx", user_id=123, file_hash="hash"
-    )
+    result = await processor._process_word_unified(file_data=invalid_content, filename="test.docx")
 
     assert "error" in result
     assert result["error"] == "Invalid Word document format. File must be a valid .docx file."

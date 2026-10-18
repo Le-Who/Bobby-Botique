@@ -17,13 +17,12 @@ We parse all variants and return raw audio bytes ready for Telegram ``send_audio
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import httpx

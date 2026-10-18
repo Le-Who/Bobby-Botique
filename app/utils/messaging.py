@@ -113,25 +113,3 @@ async def send_long_message(
 
         is_first_part = False
         await asyncio.sleep(0.3)
-
-
-async def send_formatted_message(message: Message, text: str, parse_mode: str = "HTML"):
-    """Wrapper for sending formatted messages."""
-    stop_heartbeat(message.message_id)
-    try:
-        formatted, mode = format_text(text, parse_mode=parse_mode)
-        await message.reply_text(formatted, parse_mode=mode)
-    except TelegramError as e:
-        logging.error("Error sending formatted message: %s", e, exc_info=True)
-        await message.reply_text(strip_formatting(text))
-
-
-async def edit_formatted_message(message: Message, text: str, parse_mode: str = "HTML"):
-    """Wrapper for editing formatted messages."""
-    stop_heartbeat(message.message_id)
-    try:
-        formatted, mode = format_text(text, parse_mode=parse_mode)
-        await message.edit_text(formatted, parse_mode=mode)
-    except TelegramError as e:
-        logging.error("Error editing formatted message: %s", e, exc_info=True)
-        await message.edit_text(strip_formatting(text))

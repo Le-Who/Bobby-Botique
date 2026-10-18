@@ -2,11 +2,38 @@
 
 import asyncio
 import contextlib
+import inspect
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.utils.background_tasks import TaskManager, cancel_background_task, start_background_task
+
+
+@pytest.fixture
+def job_events():
+    from app.observability.context import current_context
+
+    captured = []
+
+    class CaptureJobs(logging.Handler):
+        def emit(self, record):
+            event = getattr(record, "_event_name", "")
+            if event.startswith("job."):
+                captured.append((event, record, current_context()))
+
+    logger = logging.getLogger("app.observability")
+    previous_level = logger.level
+    handler = CaptureJobs()
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        yield captured
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+
 
 # ── start_background_task ─────────────────────────────────────────────────────
 
@@ -198,6 +225,140 @@ async def test_taskmanager_submit_fire_and_forget():
 
 
 @pytest.mark.asyncio
+async def test_taskmanager_closes_coroutine_cancelled_before_start():
+    tm = TaskManager()
+    started = False
+
+    async def work():
+        nonlocal started
+        started = True
+
+    coro = work()
+    task = tm.submit(coro)
+    task.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert started is False
+        assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
+    finally:
+        coro.close()
+
+
+@pytest.mark.asyncio
+async def test_taskmanager_does_not_invoke_factory_cancelled_before_start():
+    tm = TaskManager()
+    invoked = False
+
+    async def work():
+        pass
+
+    def factory():
+        nonlocal invoked
+        invoked = True
+        return work()
+
+    task = tm.submit_retryable(factory)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert invoked is False
+
+
+@pytest.mark.asyncio
+async def test_taskmanager_prestart_cancellation_emits_correlated_terminal(job_events):
+    from app.observability.context import request_scope
+
+    tm = TaskManager()
+
+    async def work():
+        pytest.fail("Cancelled job must not start")
+
+    with request_scope(request_id="a" * 32, user_id=42, chat_id=43):
+        task = tm.submit_retryable(work, operation="test.prestart")
+        task.cancel()
+
+    with request_scope(request_id="b" * 32, user_id=52, chat_id=53):
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert [event for event, _, _ in job_events] == ["job.enqueued", "job.finished"]
+    _, enqueued, _ = job_events[0]
+    _, finished, context = job_events[-1]
+    assert finished.outcome == "cancelled"
+    assert finished.attempts == 0
+    assert finished.job_id == enqueued.job_id == context.task_id
+    assert context.execution_id
+    assert context.trace_id == context.request_id == "a" * 32
+    assert (context.user_id, context.chat_id) == (42, 43)
+    assert context.operation == finished.operation == "test.prestart"
+
+
+@pytest.mark.asyncio
+async def test_taskmanager_backoff_cancellation_emits_one_correlated_terminal(job_events):
+    from app.observability.context import request_scope
+
+    tm = TaskManager()
+    failed = asyncio.Event()
+    invocations = 0
+
+    async def work():
+        failed.set()
+        raise RuntimeError("retry me")
+
+    def factory():
+        nonlocal invocations
+        invocations += 1
+        return work()
+
+    with request_scope(request_id="c" * 32, user_id=42):
+        task = tm.submit_retryable(factory, operation="test.backoff")
+    await failed.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert invocations == 1
+    assert [event for event, _, _ in job_events] == [
+        "job.enqueued",
+        "job.started",
+        "job.attempt_failed",
+        "job.retry_scheduled",
+        "job.finished",
+    ]
+    _, started, started_context = job_events[1]
+    _, finished, context = job_events[-1]
+    assert finished.outcome == "cancelled"
+    assert finished.attempts == 1
+    assert finished.job_id == started.job_id == context.task_id
+    assert context.execution_id == started_context.execution_id
+    assert context.trace_id == context.request_id == "c" * 32
+    assert context.operation == finished.operation == "test.backoff"
+
+
+@pytest.mark.asyncio
+async def test_taskmanager_failure_callback_cancellation_keeps_failed_terminal(job_events):
+    tm = TaskManager()
+
+    async def work():
+        raise RuntimeError("job failed")
+
+    def on_error(_error, _description):
+        raise asyncio.CancelledError
+
+    tm.register_error_callback(on_error)
+    task = tm.submit_retryable(work, retry=0)
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    terminals = [record for event, record, _ in job_events if event == "job.finished"]
+    assert len(terminals) == 1
+    assert terminals[0].outcome == "failed"
+
+
+@pytest.mark.asyncio
 async def test_taskmanager_adds_named_execution_context():
     from app.observability.context import current_context, request_scope
 
@@ -220,7 +381,7 @@ async def test_taskmanager_adds_named_execution_context():
 
 
 @pytest.mark.asyncio
-async def test_taskmanager_drain_awaits_cancelled_task_cleanup():
+async def test_taskmanager_drain_awaits_cancelled_task_cleanup(job_events):
     tm = TaskManager()
     running = asyncio.Event()
     cleanup_started = asyncio.Event()
@@ -246,6 +407,10 @@ async def test_taskmanager_drain_awaits_cancelled_task_cleanup():
         assert cleanup_finished.is_set()
         assert task.done()
         assert not tm._tasks
+        assert [event for event, _, _ in job_events] == ["job.enqueued", "job.started", "job.finished"]
+        assert job_events[-1][1].outcome == "cancelled"
+        assert job_events[-1][1].attempts == 1
+        assert job_events[-1][2].execution_id == job_events[1][2].execution_id
     finally:
         if not task.done():
             task.cancel()

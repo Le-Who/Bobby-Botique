@@ -6,6 +6,7 @@ mode interaction, and document-context Q&A.
 """
 
 import logging
+from time import monotonic
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -15,6 +16,49 @@ from app.i18n import t
 from app.metrics import metrics_collector
 from app.repos.chats import get_user_chat
 from app.utils.formatting import TelegramFormatter
+
+_DUPLICATE_UPLOAD_KEY = "document_duplicate_upload"
+_DUPLICATE_UPLOAD_TTL = 10 * 60
+
+
+def clear_pending_document_upload(context) -> None:
+    """Discard the short-lived upload confirmation on document navigation."""
+    if context.user_data is not None:
+        context.user_data.pop(_DUPLICATE_UPLOAD_KEY, None)
+
+
+def _pending_document_upload(context, user_id):
+    pending = context.user_data.get(_DUPLICATE_UPLOAD_KEY) if context.user_data is not None else None
+    if (
+        not isinstance(pending, dict)
+        or pending.get("user_id") != user_id
+        or not isinstance(pending.get("created_at"), (int, float))
+        or not isinstance(pending.get("confirmed"), bool)
+        or not isinstance(pending.get("file_unique_id"), str)
+        or not pending["file_unique_id"]
+        or not isinstance(pending.get("message_id"), int)
+        or not isinstance(pending.get("chat_id"), int)
+        or not 0 <= monotonic() - pending["created_at"] <= _DUPLICATE_UPLOAD_TTL
+    ):
+        clear_pending_document_upload(context)
+        return None
+    return pending
+
+
+def confirm_pending_document_upload(query, context, user_id) -> bool:
+    """Authorize a single resubmission from its actual duplicate-response button."""
+    pending = _pending_document_upload(context, user_id)
+    if (
+        pending is None
+        or pending["confirmed"]
+        or query.message is None
+        or pending["message_id"] != query.message.message_id
+        or pending["chat_id"] != query.message.chat_id
+    ):
+        clear_pending_document_upload(context)
+        return False
+    pending["confirmed"] = True
+    return True
 
 
 async def handle_document_mode_interaction(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
@@ -92,6 +136,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     document = update.message.document
+    pending = _pending_document_upload(context, user_id)
+    skip_duplicate_check = bool(
+        pending and pending["confirmed"] and pending["file_unique_id"] == document.file_unique_id
+    )
+    # A confirmation is consumed by one upload attempt, including rejection or
+    # a different file. A later retry must return through duplicate confirmation.
+    clear_pending_document_upload(context)
 
     # Dynamic file size guard: 2 GB with Local Bot API, 50 MB via cloud
     _max_file_size = (
@@ -126,6 +177,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 document.file_name or f"document.{file_ext}",
                 user_id,
                 is_path=True,
+                skip_duplicate_check=skip_duplicate_check,
             )
         else:
             # Cloud mode: download to tempfile
@@ -139,6 +191,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     document.file_name or f"document.{file_ext}",
                     user_id,
                     is_path=True,
+                    skip_duplicate_check=skip_duplicate_check,
                 )
             finally:
                 if os.path.exists(tmp_path):
@@ -184,6 +237,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     parse_mode=parse_mode,
                     reply_markup=InlineKeyboardMarkup(keyboard),
                 )
+                if context.user_data is not None:
+                    context.user_data[_DUPLICATE_UPLOAD_KEY] = {
+                        "user_id": user_id,
+                        "file_unique_id": document.file_unique_id,
+                        "message_id": processing_msg.message_id,
+                        "chat_id": processing_msg.chat_id,
+                        "created_at": monotonic(),
+                        "confirmed": False,
+                    }
                 return
             else:
                 logging.warning("Document processing error: %s", result["error"])

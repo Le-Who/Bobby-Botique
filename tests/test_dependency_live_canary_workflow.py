@@ -1,6 +1,13 @@
 """Security contracts for the protected manual dependency live canary."""
 
+import json
+import shlex
 from pathlib import Path
+
+import pytest
+import yaml
+
+from scripts import dependency_environment_check
 
 WORKFLOW_PATH = Path(".github/workflows/dependency-live-canary.yml")
 
@@ -42,6 +49,37 @@ def test_candidate_lock_is_validated_without_credentials_before_protected_job() 
     assert validation_job.count("uv sync --locked --no-build --link-mode copy") == 2
     assert "baseline/.venv/bin/python baseline/scripts/dependency_environment_check.py" in validation_job
     assert "candidate/.venv/bin/python baseline/scripts/dependency_environment_check.py" in validation_job
+
+
+@pytest.mark.parametrize("job_name", ["validate-lock", "canary"])
+def test_installed_canary_commands_require_dev_dependencies(job_name, tmp_path, monkeypatch, capsys) -> None:
+    """Execute the checker arguments selected by each real installation step."""
+    lock_path = tmp_path / "uv.lock"
+    lock_path.write_text(
+        '[[package]]\nname = "sample-app"\nversion = "0"\nsource = { virtual = "." }\n'
+        '[package.dev-dependencies]\ndev = [{ name = "required-dev-tool" }]\n'
+        '[[package]]\nname = "required-dev-tool"\nversion = "1"\n'
+        'source = { registry = "https://pypi.org/simple" }\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dependency_environment_check, "_installed_versions", dict)
+    workflow = yaml.safe_load(_workflow())
+    commands = [
+        shlex.split(line)
+        for step in workflow["jobs"][job_name]["steps"]
+        for line in step.get("run", "").splitlines()
+        if "dependency_environment_check.py" in line and "--lock-only" not in line
+    ]
+
+    assert len(commands) == 2
+    for command in commands:
+        arguments = command[2:]
+        arguments[arguments.index("--lock") + 1] = str(lock_path)
+        assert dependency_environment_check.main(arguments) == 1
+        assert json.loads(capsys.readouterr().out) == {
+            "status": "failed",
+            "errors": ["required-dev-tool: direct development dependency is not installed"],
+        }
 
 
 def test_protected_candidate_install_has_no_credentials_or_secrets_and_uses_trusted_script() -> None:

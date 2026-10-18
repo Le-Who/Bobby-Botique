@@ -161,9 +161,30 @@ class TaskManager:
         from app.runtime_settings.lifecycle import detached_settings_context
 
         ctx = detached_settings_context()
+        execution_id = uuid.uuid4().hex
+        started_ns = time.monotonic_ns()
+        wrapper_started = False
+        attempts_started = 0
+        terminal_emitted = False
+
+        def _emit_cancelled() -> None:
+            if terminal_emitted:
+                return  # A cancelled error callback must not replace a recorded failure.
+            emit(
+                "job.finished",
+                level="warning",
+                operation=operation_name,
+                job_id=task_id,
+                task_name=coro_name,
+                outcome="cancelled",
+                attempts=attempts_started,
+                duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+                **safe_metadata,
+            )
 
         async def _wrapper():
-            execution_id = uuid.uuid4().hex
+            nonlocal started_ns, wrapper_started, attempts_started, terminal_emitted
+            wrapper_started = True
             started_ns = time.monotonic_ns()
             with restore_job_context(portable_context, task_id=task_id, execution_id=execution_id):
                 replace_current_context(operation=operation_name)
@@ -176,94 +197,102 @@ class TaskManager:
                     **safe_metadata,
                 )
                 attempts = 0
-                while attempts <= retry:
-                    try:
-                        target = coro_factory() if coro_factory else coro
-                        # Note: bare coroutines can only be awaited once, but retry is 0 for them.
-                        await target  # type: ignore[misc]
-                        emit(
-                            "job.finished",
-                            operation=operation_name,
-                            job_id=task_id,
-                            task_name=coro_name,
-                            outcome="succeeded",
-                            attempts=attempts + 1,
-                            duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
-                            **safe_metadata,
-                        )
-                        return
-                    except asyncio.CancelledError:
-                        emit(
-                            "job.finished",
-                            level="warning",
-                            operation=operation_name,
-                            job_id=task_id,
-                            task_name=coro_name,
-                            outcome="cancelled",
-                            attempts=attempts + 1,
-                            duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
-                            **safe_metadata,
-                        )
-                        raise
-                    except Exception as e:
-                        attempts += 1
-                        error_id = record_exception(
-                            "job.attempt_failed",
-                            e,
-                            operation=operation_name,
-                            fields={
-                                "task_name": coro_name,
-                                "attempt": attempts,
-                                "max_attempts": retry + 1,
-                                **safe_metadata,
-                            },
-                        )
-                        if attempts <= retry:
-                            delay_seconds = 2**attempts
-                            emit(
-                                "job.retry_scheduled",
-                                level="warning",
-                                operation=operation_name,
-                                job_id=task_id,
-                                task_name=coro_name,
-                                attempt=attempts,
-                                delay_seconds=delay_seconds,
-                                error_id=error_id,
-                            )
-                            await asyncio.sleep(delay_seconds)
-                        else:
+                try:
+                    while attempts <= retry:
+                        try:
+                            attempts_started += 1
+                            target = coro_factory() if coro_factory else coro
+                            # Note: bare coroutines can only be awaited once, but retry is 0 for them.
+                            await target  # type: ignore[misc]
                             emit(
                                 "job.finished",
-                                level="error",
                                 operation=operation_name,
                                 job_id=task_id,
                                 task_name=coro_name,
-                                outcome="failed",
-                                attempts=attempts,
-                                error_id=error_id,
+                                outcome="succeeded",
+                                attempts=attempts + 1,
                                 duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
                                 **safe_metadata,
                             )
-                            if self._error_callback:
-                                try:
-                                    res = self._error_callback(e, f"Task {coro_name}")
-                                    # Execute asynchronously if it's a coroutine
-                                    if asyncio.iscoroutine(res):
-                                        cb_task = asyncio.create_task(res)
-                                        self._tasks.add(cb_task)
-                                        cb_task.add_done_callback(self._tasks.discard)
-                                except Exception as cb_err:
-                                    record_exception(
-                                        "job.error_callback_failed",
-                                        cb_err,
-                                        operation=operation_name,
-                                        fields={"original_error_id": error_id},
-                                    )
+                            terminal_emitted = True
+                            return
+                        except Exception as e:
+                            attempts += 1
+                            error_id = record_exception(
+                                "job.attempt_failed",
+                                e,
+                                operation=operation_name,
+                                fields={
+                                    "task_name": coro_name,
+                                    "attempt": attempts,
+                                    "max_attempts": retry + 1,
+                                    **safe_metadata,
+                                },
+                            )
+                            if attempts <= retry:
+                                delay_seconds = 2**attempts
+                                emit(
+                                    "job.retry_scheduled",
+                                    level="warning",
+                                    operation=operation_name,
+                                    job_id=task_id,
+                                    task_name=coro_name,
+                                    attempt=attempts,
+                                    delay_seconds=delay_seconds,
+                                    error_id=error_id,
+                                )
+                                await asyncio.sleep(delay_seconds)
+                            else:
+                                emit(
+                                    "job.finished",
+                                    level="error",
+                                    operation=operation_name,
+                                    job_id=task_id,
+                                    task_name=coro_name,
+                                    outcome="failed",
+                                    attempts=attempts,
+                                    error_id=error_id,
+                                    duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+                                    **safe_metadata,
+                                )
+                                terminal_emitted = True
+                                if self._error_callback:
+                                    try:
+                                        res = self._error_callback(e, f"Task {coro_name}")
+                                        # Execute asynchronously if it's a coroutine
+                                        if asyncio.iscoroutine(res):
+                                            cb_task = asyncio.create_task(res)
+                                            self._tasks.add(cb_task)
+                                            cb_task.add_done_callback(self._tasks.discard)
+                                    except Exception as cb_err:
+                                        record_exception(
+                                            "job.error_callback_failed",
+                                            cb_err,
+                                            operation=operation_name,
+                                            fields={"original_error_id": error_id},
+                                        )
+
+                except asyncio.CancelledError:
+                    _emit_cancelled()
+                    raise
 
         # Run wrapper within the captured context snapshot for trace propagation
         task = ctx.run(asyncio.create_task, _wrapper(), name=f"background:{coro_name}")
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+
+        def _discard_finished(done: asyncio.Task) -> None:
+            self._tasks.discard(done)
+            # Cancellation can finish the wrapper before its first instruction,
+            # leaving an accepted bare coroutine unawaited. The completed owner
+            # can safely close it; already-awaited coroutines are closed already.
+            if coro is not None:
+                coro.close()
+            if done.cancelled() and not wrapper_started:
+                with restore_job_context(portable_context, task_id=task_id, execution_id=execution_id):
+                    replace_current_context(operation=operation_name)
+                    _emit_cancelled()
+
+        task.add_done_callback(_discard_finished)
         return task
 
     async def drain(self, timeout: float = 10.0, cancel_timeout: float = 1.0) -> bool:

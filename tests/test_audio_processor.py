@@ -103,15 +103,3 @@ class TestMultimodalProcessorConstants:
 
         result = await summarize_document_text("short", "fake-key")
         assert result is None
-
-
-class TestBackwardCompatImports:
-    """Verify backward-compat shim in audio_processor.py works."""
-
-    def test_audio_processor_exports_transcribe_voice(self):
-        from app.utils.audio_processor import transcribe_voice  # noqa: F401
-
-    def test_audio_processor_exports_constants(self):
-        from app.utils.audio_processor import THINKING_CONFIG  # noqa: F401
-
-        assert "high" in str(THINKING_CONFIG.thinking_level).lower()

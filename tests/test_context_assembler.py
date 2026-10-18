@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from types import MappingProxyType
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -26,7 +27,6 @@ from app.context_assembler import (
     ContextAssembler,
     TokenBudget,
     get_assembler,
-    should_summarize,
 )
 from app.prompt_registry import estimate_tokens_cyrillic
 
@@ -39,6 +39,16 @@ def allow_summary_private_data_lease():
 
     with patch("app.repos.memory_consent.private_data_lease", allowed_lease):
         yield
+
+
+@pytest.fixture(autouse=True)
+def isolated_summary_settings(monkeypatch):
+    from app.runtime_settings.store import SettingsSnapshot
+
+    monkeypatch.setattr("app.runtime_settings.lifecycle.refresh_runtime_settings", AsyncMock())
+    monkeypatch.setattr(
+        "app.runtime_settings.store.get_snapshot", AsyncMock(return_value=SettingsSnapshot(0, MappingProxyType({})))
+    )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -520,9 +530,12 @@ class TestLLMSummarizationScheduling:
                 callback,
                 expected_epoch=7,
             )
-            await asyncio.wait_for(provider_started.wait(), timeout=2)
-            await cancel_user_summarization_tasks(9_003)
-            await asyncio.sleep(0)
+            try:
+                await asyncio.wait_for(provider_started.wait(), timeout=2)
+                await cancel_user_summarization_tasks(9_003)
+                await asyncio.sleep(0)
+            finally:
+                await cancel_user_summarization_tasks(9_003)
 
         assert task.cancelled()
         assert len(provider_calls) == 1
@@ -629,33 +642,6 @@ class TestAudit:
         result1 = self.assembler.assemble(history=[], user_message="Hi", system_instruction="S")
         result2 = self.assembler.assemble(history=[], user_message="Bye", system_instruction="S")
         assert result1.audit_hash != result2.audit_hash
-
-
-# ── should_summarize ──────────────────────────────────────────────────────────
-
-
-class TestShouldSummarize:
-    def test_empty_history(self):
-        should, reason = should_summarize([])
-        assert not should
-
-    def test_small_history(self):
-        history = make_history(5, msg_size=20)
-        should, reason = should_summarize(history)
-        assert not should
-
-    def test_many_messages_triggers(self):
-        history = make_history(60, msg_size=20)  # Over 50 message soft limit
-        should, reason = should_summarize(history)
-        assert should
-        assert "50" in reason
-
-    def test_high_tokens_triggers(self):
-        # Create messages with lots of text
-        history = make_history(10, msg_size=50000)
-        should, reason = should_summarize(history, token_budget=10000)
-        assert should
-        assert "token" in reason.lower() or "Token" in reason
 
 
 # ── TokenBudget in assembled result ───────────────────────────────────────────

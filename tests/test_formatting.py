@@ -1,6 +1,5 @@
 """
-Tests for app.utils.formatting — TelegramFormatter, escape_format_chars,
-format_key_for_display, strip_markdown.
+Tests for app.utils.formatting — TelegramFormatter and format_key_for_display.
 
 Rewritten from unittest.TestCase to pure pytest (AAA).
 Each test covers exactly one observable behavior.
@@ -8,9 +7,7 @@ Each test covers exactly one observable behavior.
 
 from app.utils.formatting import (
     TelegramFormatter,
-    escape_format_chars,
     format_key_for_display,
-    strip_markdown,
 )
 
 # ─── TelegramFormatter.format_text ───────────────────────────────────────────
@@ -114,26 +111,6 @@ def test_preserve_formatting_false_strips_all_tags():
     assert mode is None
 
 
-# ─── strip_markdown ───────────────────────────────────────────────────────────
-
-
-def test_strip_markdown_removes_html_tags_leaving_text():
-    """HTML tags must be stripped, leaving only the text content."""
-    # Arrange
-    text = "Hello <b>bold</b> world"
-
-    # Act
-    result = strip_markdown(text)
-
-    # Assert
-    assert result == "Hello bold world"
-
-
-def test_strip_markdown_empty_string_returns_empty():
-    # Arrange / Act / Assert
-    assert strip_markdown("") == ""
-
-
 # ─── format_key_for_display ──────────────────────────────────────────────────
 
 
@@ -168,36 +145,3 @@ def test_format_key_for_display_none_returns_invalid():
 
     # Assert
     assert result == "Invalid Key"
-
-
-# ─── escape_format_chars ─────────────────────────────────────────────────────
-
-
-def test_escape_format_chars_doubles_curly_braces():
-    """Curly braces must be doubled to prevent str.format() expansion."""
-    # Arrange
-    text = "Hello {world}"
-
-    # Act
-    result = escape_format_chars(text)
-
-    # Assert
-    assert result == "Hello {{world}}"
-
-
-def test_escape_format_chars_no_braces_returns_unchanged():
-    """Text without braces must be returned unchanged."""
-    # Arrange
-    text = "No braces"
-
-    # Act
-    result = escape_format_chars(text)
-
-    # Assert
-    assert result == "No braces"
-
-
-def test_escape_format_chars_none_returns_none():
-    """None input must be returned as-is (falsy pass-through)."""
-    # Arrange / Act / Assert
-    assert escape_format_chars(None) is None

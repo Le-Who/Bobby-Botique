@@ -14,8 +14,6 @@ from io import BytesIO
 import asyncpg
 import geonamescache
 import httpx
-import msgspec
-import orjson
 import pypdf
 import pytest
 import structlog
@@ -34,6 +32,7 @@ from app.natal.calculator import calculate_chart
 from app.natal.models import BirthInput, ResolvedBirthData, TimePrecision
 from app.providers.stream_types import GenerationRequest, PromptRole, PromptTurn, TextPart
 from app.providers.typed_payloads import gemini_contents
+from app.utils.json_compat import json as runtime_json
 from app.utils.logging_config import configure_structlog_pipeline
 
 
@@ -220,16 +219,17 @@ def test_crypto_document_and_image_round_trips() -> None:
         assert image.getpixel((0, 0)) == (10, 20, 30)
 
 
-def test_orjson_and_msgspec_typed_serialization_contract() -> None:
-    class Payload(msgspec.Struct):
-        name: str
-        count: int
+def test_runtime_json_preserves_text_and_redis_byte_serialization_contract() -> None:
+    payload = {"name": "граница", 7: {"count": 2}}
 
-    raw = orjson.dumps({"name": "граница", "count": 2}, option=orjson.OPT_SORT_KEYS)
-    decoded = msgspec.json.decode(raw, type=Payload)
+    text = runtime_json.dumps(payload, sort_keys=True)
+    raw = runtime_json.dumps_bytes(payload)
 
-    assert decoded == Payload(name="граница", count=2)
-    assert orjson.loads(msgspec.json.encode(decoded)) == {"name": "граница", "count": 2}
+    assert isinstance(text, str)
+    assert text == '{"7":{"count":2},"name":"граница"}'
+    assert isinstance(raw, bytes)
+    assert json.loads(raw) == {"name": "граница", "7": {"count": 2}}
+    assert runtime_json.loads(memoryview(raw)) == {"name": "граница", "7": {"count": 2}}
 
 
 @pytest.mark.asyncio

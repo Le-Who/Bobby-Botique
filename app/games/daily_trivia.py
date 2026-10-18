@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import random
 import time
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.config import GEMINI_ECONOMY_MODEL, GEMINI_PRIMARY_FALLBACK_MODEL, normalize_gemini_runtime_model
@@ -19,23 +19,10 @@ from app.utils.json_compat import json
 logger = logging.getLogger(__name__)
 
 TRIVIA_MODEL = GEMINI_ECONOMY_MODEL
-MAX_TIME_PER_QUESTION_MS = 15000
-BASE_CORRECT_POINTS = 200
-MAX_SPEED_BONUS = 100
 GENERATION_ATTEMPTS = 3
 TRIVIA_RETRY_MODEL = "gemini-3.6-flash"
 PREPARATION_RETRY_COOLDOWN_SECONDS = 3 * 60 * 60
 _preparation_cooldowns: dict[date, float] = {}
-
-
-def calculate_question_score(is_correct: bool, elapsed_ms: int) -> int:
-    if not is_correct:
-        return 0
-    score = BASE_CORRECT_POINTS
-    if elapsed_ms < MAX_TIME_PER_QUESTION_MS and elapsed_ms >= 0:
-        ratio = (MAX_TIME_PER_QUESTION_MS - elapsed_ms) / MAX_TIME_PER_QUESTION_MS
-        score += int(MAX_SPEED_BONUS * ratio)
-    return score
 
 
 def shuffle_options_and_update_correct_index(questions_raw: list[dict[str, Any]]) -> list[repo.TriviaQuestion]:
@@ -276,84 +263,6 @@ async def _prepare_daily_puzzle(puzzle_date: date, *, force: bool, mode: str) ->
             )
     assert last_conflict is not None
     raise last_conflict
-
-
-def _get_fallback_questions() -> list[repo.TriviaQuestion]:
-    """Fallback static trivia set in case LLM is completely unreachable."""
-    fallbacks = [
-        {
-            "id": 1,
-            "topic": "Астрономия",
-            "question": "Какая планета Солнечной системы имеет самый короткий день (оборот вокруг своей оси)?",
-            "options": ["Юпитер", "Венера", "Марс", "Меркурий"],
-            "correct_index": 0,
-            "explanation": "Юпитер совершает полный оборот вокруг своей оси всего за 9 часов и 55 минут. Из-за столь быстрого вращения планета заметно сплюснута у полюсов.",
-        },
-        {
-            "id": 2,
-            "topic": "История",
-            "question": "Какое из этих древних сооружений было построено раньше остальных?",
-            "options": ["Пирамида Хеопса", "Великая Китайская стена", "Колизей в Риме", "Мачу-Пикчу"],
-            "correct_index": 0,
-            "explanation": "Пирамида Хеопса была построена около 2560 года до н.э., то есть более чем на 2000 лет раньше Колизея и Великой Китайской стены.",
-        },
-        {
-            "id": 3,
-            "topic": "Биология",
-            "question": "Какое млекопитающее имеет самое высокое кровяное давление?",
-            "options": ["Жираф", "Синий кит", "Африканский слон", "Гепард"],
-            "correct_index": 0,
-            "explanation": "Из-за длинной шеи сердцу жирафа требуется качать кровь на высоту до 2 метров до мозга. Его кровяное давление достигает 280/180 мм рт. ст., что вдвое выше человеческой нормы.",
-        },
-        {
-            "id": 4,
-            "topic": "География",
-            "question": "Какое государство не имеет официальной столицы?",
-            "options": ["Науру", "Монако", "Лихтенштейн", "Исландия"],
-            "correct_index": 0,
-            "explanation": "У тихоокеанского государства Науру нет официально закрепленной столицы. Органы власти расположены в округе Ярен.",
-        },
-        {
-            "id": 5,
-            "topic": "Искусство",
-            "question": "Кто из знаменитых художников написал картину «Девочка с персиками»?",
-            "options": ["Валентин Серов", "Илья Репин", "Иван Шишкин", "Карл Брюллов"],
-            "correct_index": 0,
-            "explanation": "Валентин Серов написал «Девочку с персиками» в 1887 году, когда ему было всего 22 года. На картине изображена 12-летняя Вера Мамонтова.",
-        },
-    ]
-    return shuffle_options_and_update_correct_index(fallbacks)
-
-
-def _get_fallback_super_questions() -> list[repo.TriviaQuestion]:
-    """Fallback static super trivia set in case LLM is completely unreachable."""
-    fallbacks = [
-        {
-            "id": 1,
-            "topic": "Квантовая физика",
-            "question": "Какой ученый впервые предсказал существование антиматерии на основе математического уравнения?",
-            "options": ["Поль Дирак", "Вернер Гейзенберг", "Эрвин Шрёдингер", "Ричард Фейнман"],
-            "correct_index": 0,
-            "explanation": "В 1928 году Поль Дирак вывел уравнение, объединившее квантовую механику и специальную теорию относительности, которое предсказывало существование позитрона.",
-        },
-        {
-            "id": 2,
-            "topic": "Древняя история",
-            "question": "Какая из этих древних цивилизаций использовала систему счисления с основанием 60?",
-            "options": ["Шумеры", "Древние египтяне", "Майя", "Хетты"],
-            "correct_index": 0,
-            "explanation": "Шумеры и вавилоняне использовали шестидесятеричную систему счисления, благодаря которой мы до сих пор делим час на 60 минут, а круг — на 360 градусов.",
-        },
-        {
-            "id": 3,
-            "topic": "Лингвистика",
-            "question": "Какой язык считается единственным сохранившимся доиндоевропейским языком Западной Европы?",
-            "options": ["Баскский", "Ирландский", "Албанский", "Мальтийский"],
-            "correct_index": 0,
-            "explanation": "Баскский язык (эускара) является изолированным языком и существовал в Европе еще до прихода индоевропейских племен.",
-        },
-    ]
-    return shuffle_options_and_update_correct_index(fallbacks)
 
 
 async def ensure_prepared_puzzles(

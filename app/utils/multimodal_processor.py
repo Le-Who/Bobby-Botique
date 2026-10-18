@@ -351,7 +351,6 @@ async def _classify_intent_with_fallback(
 
     Returns the first non-empty response, or None if all models fail.
     """
-    from app.providers.base import get_provider_for_model, is_opencode_model
 
     policy = await resolve_process("media.intent", tuple(_INTENT_MODEL_CHAIN))
     try:

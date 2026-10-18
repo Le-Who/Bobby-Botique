@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import threading
 
 import pytest
@@ -13,7 +12,6 @@ from app.request_context import (
     set_request_id,
     set_user_context,
 )
-from app.utils.logging_config import RequestContextFilter
 
 
 @pytest.fixture(autouse=True)
@@ -92,25 +90,6 @@ def test_request_id_is_not_inherited_by_new_thread():
     assert result["request_id"] is None
 
 
-def test_request_context_filter_injects_request_id_into_log_record():
-    filter_ = RequestContextFilter()
-    set_request_id("log-rid")
-    record = logging.LogRecord(
-        name="test-logger",
-        level=logging.INFO,
-        pathname=__file__,
-        lineno=1,
-        msg="hello",
-        args=(),
-        exc_info=None,
-    )
-
-    accepted = filter_.filter(record)
-
-    assert accepted is True
-    assert record.request_id == "log-rid"
-
-
 # ── user context tests ──────────────────────────────────────────────────
 
 
@@ -164,43 +143,3 @@ async def test_create_task_inherits_user_context():
     assert child_uid == 99
     assert child_cid == 999
     assert get_user_id() == 0
-
-
-def test_context_filter_injects_user_and_chat_id():
-    filter_ = RequestContextFilter()
-    set_request_id("rid-ctx")
-    set_user_context(user_id=42, chat_id=100)
-
-    record = logging.LogRecord(
-        name="test-logger",
-        level=logging.INFO,
-        pathname=__file__,
-        lineno=1,
-        msg="hello",
-        args=(),
-        exc_info=None,
-    )
-
-    filter_.filter(record)
-
-    assert record.request_id == "rid-ctx"
-    assert record.user_id == 42
-    assert record.chat_id == 100
-
-
-def test_context_filter_injects_none_when_no_context():
-    filter_ = RequestContextFilter()
-    record = logging.LogRecord(
-        name="test-logger",
-        level=logging.INFO,
-        pathname=__file__,
-        lineno=1,
-        msg="hello",
-        args=(),
-        exc_info=None,
-    )
-
-    filter_.filter(record)
-
-    assert record.user_id is None
-    assert record.chat_id is None

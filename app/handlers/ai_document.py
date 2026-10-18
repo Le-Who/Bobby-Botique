@@ -10,7 +10,7 @@ from app.config import settings
 from app.database import ChatState
 from app.i18n import t
 from app.metrics import metrics_collector
-from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
+from app.prompt_registry import register_controlled_text, render_prompt_text
 from app.repos.chats import ensure_chat_generation
 from app.utils.heartbeat import stop_heartbeat
 from app.utils.stage_indicators import STAGES_DOCUMENT, update_stage

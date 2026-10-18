@@ -1,21 +1,17 @@
 """
-Documents package — file processing, parsing, and persistence.
+Document storage and hashing operations.
 
-Re-exports everything for backward compatibility with::
-
-    from app.document_processor import document_processor, process_uploaded_document, ...
+Upload orchestration and its handler-facing facade live in
+``app.document_processor``.
 """
 
 from app.documents.parsers import (  # noqa: F401
     MAX_DOCUMENT_TEXT_LENGTH,
     calculate_file_hash_sync,
-    write_temp_file_sync,
 )
 from app.documents.repository import (  # noqa: F401
-    check_document_limit,
     check_duplicate_file,
     cleanup_old_documents,
-    cleanup_oldest_documents,
     delete_all_user_documents,
     delete_document,
     get_document_by_id,

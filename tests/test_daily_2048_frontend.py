@@ -93,6 +93,30 @@ const payload = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
         moves: index + 1, merge_score: 4, final_score: 0, elapsed_ms: 100, ...extra
       });
     };
+    const holdAnimations = async selector => {
+      await page.evaluate(selector => {
+        const seen = new WeakSet();
+        window.heldAnimations = [];
+        const observer = new MutationObserver(() => {
+          for (const element of document.querySelectorAll(selector)) {
+            for (const animation of element.getAnimations()) {
+              if (seen.has(animation)) continue;
+              seen.add(animation);
+              // Control actual browser timelines, retaining their finish/cancel promises.
+              animation.pause();
+              animation.currentTime = 0;
+              window.heldAnimations.push(animation);
+            }
+          }
+        });
+        observer.observe(document.querySelector('#tiles'), { attributes:true, childList:true, subtree:true });
+        window.releaseAnimations = () => {
+          observer.disconnect();
+          window.heldAnimations.filter(animation => animation.playState === 'paused')
+            .forEach(animation => animation.play());
+        };
+      }, selector);
+    };
 """
     harness += scenario
     harness += r"""
@@ -151,19 +175,31 @@ def test_unranked_recovery_win_keeps_completion_visible_and_allows_practice():
 def test_tiles_keep_identity_and_both_merge_sources_slide_before_value_changes():
     _run_browser(
         r"""
-    await page.evaluate(() => { window.originalTiles = [...document.querySelectorAll('#tiles .tile')]; });
+    await page.evaluate(() => {
+      window.originalTiles = [...document.querySelectorAll('#tiles .tile')];
+      document.addEventListener('keydown', () => {
+        window.slideAnimations = window.originalTiles.flatMap(tile => tile.getAnimations());
+        window.movingSourcesAnimate = window.originalTiles.slice(1).every(tile =>
+          window.slideAnimations.some(animation => animation.effect.target === tile));
+        // Hold the real slide while Playwright inspects its source and midpoint.
+        window.slideAnimations.forEach(animation => { animation.pause(); animation.currentTime = 0; });
+      }, { once: true });
+    });
     await page.keyboard.press('ArrowLeft');
+    assert.equal(await page.evaluate(() => window.slideAnimations.length > 0 && window.movingSourcesAnimate), true,
+      'both moving source tiles must have real slide animations');
     assert.equal(await page.evaluate(() => window.originalTiles.every(tile => tile.isConnected)), true,
       'a slide must move the existing tiles instead of replacing the board');
     assert.deepEqual(await page.evaluate(() => window.originalTiles.map(tile => tile.textContent)), ['2','2','4'],
       'merge values must change only after the two sources meet');
-    await page.waitForTimeout(60);
+    await page.evaluate(() => window.slideAnimations.forEach(animation => {
+      animation.currentTime = animation.effect.getTiming().duration / 2;
+    }));
     const mid = await page.evaluate(() => window.originalTiles.map(tile => tile.getBoundingClientRect().x));
     assert.ok(mid[1] > mid[0] && mid[2] > mid[1], 'both source tiles must be visible during sliding');
     await page.evaluate(async () => {
-      const animations = [...document.querySelectorAll('#tiles .tile')]
-        .flatMap(tile => tile.getAnimations());
-      await Promise.all(animations.map(animation => animation.finished));
+      window.slideAnimations.forEach(animation => animation.play());
+      await Promise.all(window.slideAnimations.map(animation => animation.finished));
     });
     await page.waitForFunction(() => document.querySelectorAll('#tiles .tile').length === 2);
     assert.equal(await page.evaluate(() => window.originalTiles[2].isConnected), true,
@@ -182,15 +218,19 @@ def test_tiles_keep_identity_and_both_merge_sources_slide_before_value_changes()
 def test_spawn_stays_centred_in_its_cell_during_appearance():
     _run_browser(
         r"""
+    await holdAnimations('#tiles .tile.spawn .tile-face');
     await page.keyboard.press('ArrowLeft');
     await page.waitForTimeout(240);
     await ack(0, [[4,4,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,2]],
       { spawned: { x:3,y:3,value:2 } });
     const offsets = await page.evaluate(async () => {
       const tile = document.querySelector('#tiles .tile.spawn');
+      const animation = window.heldAnimations.find(animation => animation.effect.target === tile?.firstElementChild);
+      if (!animation) throw new Error('spawn feedback must exist during sampling');
       const cell = document.querySelectorAll('.grid .cell')[15].getBoundingClientRect();
       const offsets = [];
       for (let frame = 0; frame < 8; frame++) {
+        animation.currentTime = animation.effect.getTiming().duration * (frame + 1) / 9;
         await new Promise(requestAnimationFrame);
         const glyph = tile.querySelector('span').getBoundingClientRect();
         offsets.push(Math.hypot(glyph.x + glyph.width/2 - cell.x - cell.width/2,
@@ -208,6 +248,7 @@ def test_spawn_stays_centred_in_its_cell_during_appearance():
 def test_merge_feedback_stays_centred_at_the_board_edge():
     _run_browser(
         r"""
+    await holdAnimations('#tiles .tile.merged .tile-face');
     await page.evaluate(state => window.sockets[0].receive(state), {
       ...initial, seq:2, board:[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,2,2,0]]
     });
@@ -215,9 +256,12 @@ def test_merge_feedback_stays_centred_at_the_board_edge():
     await page.waitForFunction(() => document.querySelector('#tiles .tile')?.textContent === '4');
     const offsets = await page.evaluate(async () => {
       const tile = document.querySelector('#tiles .tile');
+      const animation = window.heldAnimations.find(animation => animation.effect.target === tile.firstElementChild);
+      if (!animation) throw new Error('merge feedback must exist during sampling');
       const cell = document.querySelectorAll('.grid .cell')[15].getBoundingClientRect();
       const offsets = [];
       for (let frame = 0; frame < 8; frame++) {
+        animation.currentTime = animation.effect.getTiming().duration * (frame + 1) / 9;
         await new Promise(requestAnimationFrame);
         const glyph = tile.querySelector('span').getBoundingClientRect();
         offsets.push(Math.hypot(glyph.x + glyph.width/2 - cell.x - cell.width/2,
@@ -235,6 +279,7 @@ def test_merge_feedback_stays_centred_at_the_board_edge():
 def test_server_spawn_can_appear_while_a_queued_move_starts():
     _run_browser(
         r"""
+    await holdAnimations('#tiles .tile.spawn .tile-face');
     await page.evaluate(() => {
       new MutationObserver(records => {
         for (const record of records) for (const node of record.addedNodes) {
@@ -248,8 +293,11 @@ def test_server_spawn_can_appear_while_a_queued_move_starts():
       { spawned: { x:3,y:3,value:2 } });
     await page.waitForFunction(() => window.newSpawn?.isConnected);
     const opacities = await page.evaluate(async () => {
+      const animation = window.heldAnimations.find(animation => animation.effect.target === window.newSpawn.firstElementChild);
+      if (!animation || animation.playState !== 'paused') throw new Error('queued slide must preserve spawn feedback');
       const opacities = [];
       for (let frame = 0; frame < 8; frame++) {
+        animation.currentTime = animation.effect.getTiming().duration * (frame + 1) / 9;
         await new Promise(requestAnimationFrame);
         opacities.push(Number(getComputedStyle(window.newSpawn).opacity) *
           Number(getComputedStyle(window.newSpawn.firstElementChild).opacity));
@@ -396,6 +444,7 @@ def test_input_queue_is_bounded_and_a_cancelled_pointer_never_moves():
 def test_finish_waits_for_the_winning_merge_before_covering_the_board():
     _run_browser(
         r"""
+    await holdAnimations('#tiles .tile, #tiles .tile-face');
     await page.evaluate(state => window.sockets[0].receive(state), {
       ...initial, seq:2, board:[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,1024,1024,0]]
     });
@@ -406,9 +455,16 @@ def test_finish_waits_for_the_winning_merge_before_covering_the_board():
     });
     assert.equal(await page.locator('#overlay').isVisible(), false,
       'the result must not cover the winning tiles before they meet');
+    await page.evaluate(() => {
+      const slides = window.heldAnimations.filter(animation =>
+        animation.effect.target.matches('.tile') && animation.playState === 'paused');
+      if (!slides.length) throw new Error('the winning merge must have real slide animations');
+      slides.forEach(animation => animation.finish());
+    });
     await page.waitForFunction(() => [...document.querySelectorAll('#tiles .tile')].some(tile => tile.textContent === '2048'));
     assert.equal(await page.locator('#overlay').isVisible(), false,
       'the merged target needs a short visible emphasis before the result');
+    await page.evaluate(() => window.releaseAnimations());
     await page.waitForFunction(() => document.querySelector('#overlay').classList.contains('visible'));
     assert.equal(await page.locator('#tiles').evaluate(tiles => tiles.getAnimations({subtree:true}).some(
       animation => animation.playState === 'running')), false, 'the result follows actual completion of tile feedback');
@@ -422,6 +478,7 @@ def test_finish_waits_for_the_winning_merge_before_covering_the_board():
 def test_a_new_snapshot_cancels_a_result_waiting_for_visual_completion():
     _run_browser(
         r"""
+    await holdAnimations('#tiles .tile-face');
     await page.evaluate(state => window.sockets[0].receive(state), {
       ...initial, seq:2, board:[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,1024,1024,0]]
     });
@@ -430,8 +487,13 @@ def test_a_new_snapshot_cancels_a_result_waiting_for_visual_completion():
       seq:3, spawned:{x:2,y:3,value:2}, status:'won', daily2048_completed:true, game_over:true
     });
     await page.waitForFunction(() => [...document.querySelectorAll('#tiles .tile')].some(tile => tile.textContent === '2048'));
+    assert.equal(await page.locator('#overlay').isVisible(), false,
+      'the fresh snapshot must interrupt a result still waiting for feedback');
+    assert.equal(await page.evaluate(() => window.heldAnimations.some(animation => animation.playState === 'paused')), true);
     const resumed = {...initial, seq:4, moves:7, board:[[32,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,16]]};
     await page.evaluate(state => window.sockets[0].receive(state), resumed);
+    assert.equal(await page.evaluate(() => window.heldAnimations.every(animation => animation.playState === 'idle')), true,
+      'the fresh snapshot must cancel the old feedback timelines');
     await page.waitForTimeout(320);
     assert.equal(await page.locator('#overlay').isVisible(), false, 'an old result must not cover the fresh snapshot');
     assert.equal(await page.locator('#app').evaluate(element => element.inert), false);
@@ -551,15 +613,26 @@ def test_directional_slide_places_each_merge_in_the_correct_cell(direction, expe
 def test_merge_feedback_survives_the_completion_of_a_fast_following_slide():
     _run_browser(
         r"""
+    await holdAnimations('#tiles .tile, #tiles .tile-face');
     await page.evaluate(() => { window.mergeSurvivor = document.querySelector('#tiles .tile'); });
     await page.keyboard.press('ArrowLeft');
     await page.keyboard.press('ArrowDown');
     await ack(0, [[4,4,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,2]], { spawned: { x: 3, y: 3, value: 2 } });
+    await page.evaluate(() => window.heldAnimations.filter(animation =>
+      animation.effect.target.matches('.tile') && animation.playState === 'paused')
+      .forEach(animation => animation.finish()));
     await page.waitForFunction(() => window.mergeSurvivor.textContent === '4');
-    await page.waitForFunction(() => window.mergeSurvivor.getAnimations().some(animation => animation.playState === 'running'));
-    await page.waitForFunction(() => window.mergeSurvivor.getAnimations().every(animation => animation.playState !== 'running'));
-    assert.equal(await page.evaluate(() => window.mergeSurvivor.firstElementChild.getAnimations().some(
-      animation => animation.playState === 'running')), true,
+    await page.waitForFunction(() => window.mergeSurvivor.getAnimations().some(animation => animation.playState === 'paused'));
+    const survives = await page.evaluate(async () => {
+      const slides = window.heldAnimations.filter(animation =>
+        animation.effect.target.matches('.tile') && animation.playState === 'paused');
+      slides.forEach(animation => animation.finish());
+      await Promise.all(slides.map(animation => animation.finished));
+      const feedback = window.mergeSurvivor.firstElementChild.getAnimations();
+      feedback.forEach(animation => animation.play());
+      return feedback.some(animation => animation.playState === 'running');
+    });
+    assert.equal(survives, true,
       'finishing the queued slide must preserve independent merge feedback on the same tile');
 """
     )
@@ -627,15 +700,28 @@ def test_fast_confirmed_moves_have_bounded_visible_catchup_then_resume_normal_sl
     });
     assert.equal((await moves()).length, 24, 'network dispatch must stay immediate during catchup');
     assert.deepEqual(visibleBoard, fixtures.at(-1).board, 'visible tiles must catch up within a bounded animation window');
-    await page.evaluate(() => { window.afterCatchupTiles = [...document.querySelectorAll('#tiles .tile')]; });
+    await page.evaluate(() => {
+      const originalTiles = [...document.querySelectorAll('#tiles .tile')];
+      // Observe in the input event: browser round trips can outlast a normal slide.
+      document.addEventListener('keydown', () => {
+        const animations = [...document.querySelectorAll('#tiles .tile')].flatMap(tile => tile.getAnimations());
+        window.resumedMotion = {
+          preservesTiles: originalTiles.every(tile => tile.isConnected),
+          runningRates: animations.filter(animation => animation.playState === 'running')
+            .map(animation => animation.playbackRate)
+        };
+      });
+    });
     for (const key of ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown']) {
       await page.keyboard.press(key);
       if ((await moves()).length > 24) break;
     }
-    assert.equal(await page.evaluate(() => window.afterCatchupTiles.every(tile => tile.isConnected)), true);
-    assert.equal(await page.locator('#tiles .tile').evaluateAll(tiles => tiles.some(
-      tile => tile.getAnimations().some(animation => animation.playState === 'running'))), true,
+    const resumed = await page.evaluate(() => window.resumedMotion);
+    assert.equal(resumed.preservesTiles, true);
+    assert.ok(resumed.runningRates.length > 0,
       'ordinary input must still animate after the burst');
+    assert.ok(resumed.runningRates.every(rate => rate === 1),
+      'ordinary input must return to the normal slide speed after catchup');
 """
     )
 

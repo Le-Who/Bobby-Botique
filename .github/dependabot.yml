@@ -24,7 +24,6 @@ updates:
           - "asyncpg"
           - "httpx"
           - "hypercorn"
-          - "msgspec"
           - "quart"
           - "ruff"
         update-types:

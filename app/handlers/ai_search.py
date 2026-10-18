@@ -19,7 +19,6 @@ from app.observability.events import emit
 _bg_tasks: set[asyncio.Task[Any]] = set()  # Prevent task garbage collection (RUF006)
 
 from app.config import get_primary_provider
-from app.errors import _TAG_PREFIX, is_error_message
 from app.handlers.ai_core import (
     _get_ai_response_with_routing,
     handle_ai_response_error,
@@ -29,7 +28,6 @@ from app.prompt_registry import get_prompt_text, get_registry, register_controll
 from app.providers.base import is_opencode_model
 from app.repos.chats import ensure_chat_generation, get_user_chat, update_user_chat
 from app.utils.heartbeat import retire_heartbeat
-from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import (
     STAGES_SEARCH_QUICK,
     update_stage,

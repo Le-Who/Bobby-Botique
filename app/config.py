@@ -212,18 +212,6 @@ def _load_available_models(
     return valid
 
 
-def _filter_current_gemini_models(models: list[str], *, include_defaults: bool = True) -> list[str]:
-    """Backward-compatible Gemini normalization without a version allowlist."""
-    result = [model for model in _dedupe_models(models) if is_gemini_chat_model_id(model)]
-    seen = set(result)
-    if include_defaults:
-        for model in DEFAULT_GEMINI_MODELS:
-            if model not in seen:
-                result.append(model)
-                seen.add(model)
-    return result
-
-
 def normalize_gemini_chat_model(model_name: str | None, fallback: str = GEMINI_PRIMARY_MODEL) -> str:
     normalized = resolve_gemini_model_alias(model_name)
     if (

@@ -5,7 +5,7 @@ Provides:
 - setup_detailed_logging() for initial configuration
 - get_logger() helper for module-specific loggers
 - timed_operation() for async performance tracking
-- Bridge for legacy RequestContextvars to structlog formatting
+- One bounded pipeline for application and third-party log records
 """
 
 import asyncio
@@ -31,7 +31,6 @@ except ImportError:
 from app.observability.config import LoggingSettings
 from app.observability.events import emit, record_exception
 from app.observability.writer import BoundedLogWriter, BoundedQueueHandler
-from app.request_context import get_chat_id, get_request_id, get_user_id
 
 _LOGGING_LIFECYCLE_LOCK = threading.RLock()
 _ACTIVE_WRITER: BoundedLogWriter | None = None
@@ -45,17 +44,6 @@ _PREVIOUS_THREAD_EXCEPTHOOK = threading.excepthook
 # =============================================================================
 # STRUCTLOG PIPELINE
 # =============================================================================
-
-
-def bridge_legacy_contextvars(logger, method_name, event_dict):
-    """Bridge legacy thread-local context variables into structlog."""
-    if req_id := get_request_id():
-        event_dict["request_id"] = req_id
-    if user_id := get_user_id():
-        event_dict["user_id"] = user_id
-    if chat_id := get_chat_id():
-        event_dict["chat_id"] = chat_id
-    return event_dict
 
 
 def configure_structlog_pipeline(
@@ -99,48 +87,12 @@ def configure_structlog_pipeline(
 
 
 # =============================================================================
-# REQUEST CONTEXT FILTER
 # =============================================================================
-
-
-class RequestContextFilter(logging.Filter):
-    """Logging filter that injects request/user context into every log record.
-
-    Reads from the asyncio context-var store set by ``set_request_id`` /
-    ``set_user_context`` and stamps each record with:
-      - ``record.request_id``
-      - ``record.user_id``
-      - ``record.chat_id``
-
-    Attach to any ``logging.Handler`` to get automatic correlation IDs in all
-    log lines without changing call-sites.
-    """
-
-    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
-        record.request_id = get_request_id()
-        record.user_id = get_user_id()
-        record.chat_id = get_chat_id()
-        return True
-
-
-# Fallback basic formatter if structlog is missing
-class FallbackFormatter(logging.Formatter):
-    def format(self, record):
-        return super().format(record)
 
 
 # =============================================================================
 # SETUP FUNCTIONS
 # =============================================================================
-
-
-def _is_production_environment() -> bool:
-    """Detect if we're running in a production container environment."""
-    indicators = ("DYNO", "RENDER", "RAILWAY_ENVIRONMENT", "FLY_APP_NAME")
-    if any(os.environ.get(k) for k in indicators):
-        return True
-    hostname = os.environ.get("HOSTNAME", "")
-    return bool(os.environ.get("PORT") and len(hostname) >= 12 and hostname.isalnum())
 
 
 def _setup_logger(logger_name: str, level: int) -> None:
@@ -540,24 +492,3 @@ def timed_operation(operation_name: str = ""):
         return wrapper
 
     return decorator
-
-
-# Legacy compatibility functions
-def setup_api_logger(level: int, enable_structured_logging: bool = False) -> None:
-    pass
-
-
-def setup_telegram_logger(level: int, enable_structured_logging: bool = False) -> None:
-    pass
-
-
-def setup_database_logger(level: int, enable_structured_logging: bool = False) -> None:
-    pass
-
-
-def is_pretty_logging() -> bool:
-    return os.environ.get("LOG_PRETTY", "").lower() in ("1", "true", "yes")
-
-
-def log_api_summary() -> None:
-    logging.info("API logging active — Gemini, Tavily, Telegram request/response + error tracing")

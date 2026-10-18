@@ -1,0 +1,380 @@
+{
+  "date": "2026-10-18",
+  "base_commit": "31ac7ce67544a95d580a4d896a719e1badfd70cb",
+  "scope": "Uncommitted local priority test coverage, two runtime fixes, CI selector test correction",
+  "python": "3.14.3",
+  "tool_versions": {
+    "pytest": "9.1.1",
+    "pytest-cov": "6.3.0",
+    "coverage": "7.15.4",
+    "pytest-asyncio": "1.4.0",
+    "pytest-timeout": "2.4.0",
+    "pytest-xdist": "3.8.0"
+  },
+  "uv": "0.12.6",
+  "source_sha256": {
+    "app/handlers/messages.py": "24b37667950583c2394eea1ece43c8b6aea48ae9f87f411f15fd2891eec65e9c",
+    "app/repos/conversations.py": "3e0e666a1ba062870db0e924cd43845c7e8202fdaf5828ab8fafdd7edd053567",
+    "tests/test_save_conversation.py": "fcadcc1cac1462153e772df87570efd5a3a4557c1e7e15771fa107332800368a",
+    "tests/test_conversation_save_atomicity.py": "86d7d96e70fd279b6c4fcc56d6b6016a2e855daed8f5d2bf8699f5fb0de839ad",
+    "tests/test_message_network_stall_admission.py": "ee2b532279f06d802b103eefc7b5b356821e54ec499752406d69e34e3de33162",
+    "tests/test_ci_workflow_config.py": "f4908d7440cd8f1b20a264a13898ffd3225a880b76f166425bdf7fb67027f94c"
+  },
+  "new_cases": {
+    "tests/test_conversation_save_atomicity.py": [
+      "tests/test_conversation_save_atomicity.py::test_command_does_not_announce_or_count_save_before_transaction_exit",
+      "tests/test_conversation_save_atomicity.py::test_failed_transcript_save_returns_failure_and_restores_existing_rows[InterfaceError]",
+      "tests/test_conversation_save_atomicity.py::test_failed_transcript_save_returns_failure_and_restores_existing_rows[PostgresError]",
+      "tests/test_conversation_save_atomicity.py::test_save_cancellation_rolls_back_and_propagates_before_releasing_connection[commit]",
+      "tests/test_conversation_save_atomicity.py::test_save_cancellation_rolls_back_and_propagates_before_releasing_connection[procedure]",
+      "tests/test_conversation_save_atomicity.py::test_save_command_reports_real_repository_outcome[None]",
+      "tests/test_conversation_save_atomicity.py::test_save_command_reports_real_repository_outcome[commit]",
+      "tests/test_conversation_save_atomicity.py::test_save_command_reports_real_repository_outcome[commit_ack]",
+      "tests/test_conversation_save_atomicity.py::test_save_command_reports_real_repository_outcome[procedure]",
+      "tests/test_conversation_save_atomicity.py::test_save_driver_failure_never_leaves_partial_rows[InterfaceError-commit]",
+      "tests/test_conversation_save_atomicity.py::test_save_driver_failure_never_leaves_partial_rows[InterfaceError-insert]",
+      "tests/test_conversation_save_atomicity.py::test_save_driver_failure_never_leaves_partial_rows[PostgresError-commit]",
+      "tests/test_conversation_save_atomicity.py::test_save_driver_failure_never_leaves_partial_rows[PostgresError-insert]",
+      "tests/test_conversation_save_atomicity.py::test_success_returns_id_only_after_commit_and_preserves_owner_and_metadata[empty]",
+      "tests/test_conversation_save_atomicity.py::test_success_returns_id_only_after_commit_and_preserves_owner_and_metadata[transcript]"
+    ],
+    "tests/test_message_network_stall_admission.py": [
+      "tests/test_message_network_stall_admission.py::test_cancelled_recheck_leaves_old_cleanup_owned_until_later_retry[photo]",
+      "tests/test_message_network_stall_admission.py::test_cancelled_recheck_leaves_old_cleanup_owned_until_later_retry[text]",
+      "tests/test_message_network_stall_admission.py::test_delayed_stall_cleanup_rejects_retries_and_other_user_progresses[photo]",
+      "tests/test_message_network_stall_admission.py::test_delayed_stall_cleanup_rejects_retries_and_other_user_progresses[text]",
+      "tests/test_message_network_stall_admission.py::test_healthy_request_keeps_owner_and_busy_rejects_new_message[at_threshold]",
+      "tests/test_message_network_stall_admission.py::test_healthy_request_keeps_owner_and_busy_rejects_new_message[receiving]",
+      "tests/test_message_network_stall_admission.py::test_healthy_request_keeps_owner_and_busy_rejects_new_message[under_threshold]",
+      "tests/test_message_network_stall_admission.py::test_healthy_request_keeps_owner_and_busy_rejects_new_message[unmarked]",
+      "tests/test_message_network_stall_admission.py::test_quick_stall_cleanup_allows_replacement_after_retirement[photo-photo]",
+      "tests/test_message_network_stall_admission.py::test_quick_stall_cleanup_allows_replacement_after_retirement[photo-text]",
+      "tests/test_message_network_stall_admission.py::test_quick_stall_cleanup_allows_replacement_after_retirement[text-photo]",
+      "tests/test_message_network_stall_admission.py::test_quick_stall_cleanup_allows_replacement_after_retirement[text-text]",
+      "tests/test_message_network_stall_admission.py::test_second_stall_recheck_cannot_displace_a_new_admission_owner[photo]",
+      "tests/test_message_network_stall_admission.py::test_second_stall_recheck_cannot_displace_a_new_admission_owner[text]",
+      "tests/test_message_network_stall_admission.py::test_stall_retry_keeps_busy_reservation_while_notice_retires[photo]",
+      "tests/test_message_network_stall_admission.py::test_stall_retry_keeps_busy_reservation_while_notice_retires[text]"
+    ]
+  },
+  "new_case_count": 31,
+  "final_passing_calls": 4787,
+  "final_browser_passing_calls": 118,
+  "focused_distinct_passing_calls": 194,
+  "all_focused_cases_in_final_passed": true,
+  "runs": {
+    "save-red": {
+      "exit_code": 1,
+      "arguments": [
+        "tests/test_conversation_save_atomicity.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=C:\\Users\\user\\AppData\\Local\\Temp\\gemaibot-conversation-save-red-20261018\\focus-tmp",
+        "-x"
+      ],
+      "duration_seconds": 13.496,
+      "phase_counts": {
+        "call:failed": 1,
+        "setup:passed": 1,
+        "teardown:passed": 1
+      },
+      "deselected": 0,
+      "collection_errors": 0,
+      "blocked_python_socket_connections": 0,
+      "raw_evidence_path": "verification/2026-10-18-priority/save-red/focus-evidence.json",
+      "raw_evidence_sha256": "d785f1d8731069fb9c699e9dc9cad3f877bf2a7efd79ceba22335de4740e6f2c",
+      "raw_log_sha256": "ba306aaebaf9fec1946b1f2cd155c99434c8ba1038bad5113ea21a8c39ecc769"
+    },
+    "save-green": {
+      "exit_code": 0,
+      "arguments": [
+        "tests/test_conversation_save_atomicity.py",
+        "tests/test_save_conversation.py",
+        "tests/test_repos_conversations.py",
+        "tests/test_integration_flows.py",
+        "tests/test_cmd_conversations.py",
+        "tests/test_repo_conversations.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=C:\\Users\\user\\AppData\\Local\\Temp\\gemaibot-conversation-save-final-20261018\\focus-tmp",
+        "-x"
+      ],
+      "duration_seconds": 18.922,
+      "phase_counts": {
+        "call:passed": 62,
+        "setup:passed": 62,
+        "teardown:passed": 62
+      },
+      "deselected": 0,
+      "collection_errors": 0,
+      "blocked_python_socket_connections": 0,
+      "raw_evidence_path": "verification/2026-10-18-priority/save-green/focus-evidence.json",
+      "raw_evidence_sha256": "690544c76fdd20e1dfb4abed9455c2d07bf899e5d14f8b008c24e20b266d9b05",
+      "raw_log_sha256": "801ba2137eaa2ddec3d8bfb4748b0cfe9e05c104780e972ba438fa27e755961b"
+    },
+    "network-red": {
+      "exit_code": 1,
+      "arguments": [
+        "tests/test_message_network_stall_admission.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\verification\\2026-10-18-priority\\network-red\\focus-tmp",
+        "-x"
+      ],
+      "duration_seconds": 13.72,
+      "phase_counts": {
+        "call:failed": 1,
+        "setup:passed": 1,
+        "teardown:passed": 1
+      },
+      "deselected": 0,
+      "collection_errors": 0,
+      "blocked_python_socket_connections": 0,
+      "raw_evidence_path": "verification/2026-10-18-priority/network-red/focus-evidence.json",
+      "raw_evidence_sha256": "605c4ac560f473315e945c2eb06b7c561840653e8c498d6a8b2ec9cf9afbe79f",
+      "raw_log_sha256": "4ac09d40898c62b1550365d720733df816ef126757594cd52f164a2ead1b75f0"
+    },
+    "network-green": {
+      "exit_code": 0,
+      "arguments": [
+        "tests/test_message_network_stall_admission.py",
+        "tests/test_message_admission_failures.py",
+        "tests/test_direct_intent_admission_ownership.py",
+        "tests/test_edited_request_ownership.py",
+        "tests/test_long_wait_notice_ownership.py",
+        "tests/test_voice_callback_admission.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\verification\\2026-10-18-priority\\network-green\\focus-tmp",
+        "-x"
+      ],
+      "duration_seconds": 39.387,
+      "phase_counts": {
+        "call:passed": 121,
+        "setup:passed": 121,
+        "teardown:passed": 121
+      },
+      "deselected": 0,
+      "collection_errors": 0,
+      "blocked_python_socket_connections": 0,
+      "raw_evidence_path": "verification/2026-10-18-priority/network-green/focus-evidence.json",
+      "raw_evidence_sha256": "9e1f2be657345903b22fa298b8cdc82a884db1fc7e507cdbd91f844201714946",
+      "raw_log_sha256": "aca477941ed6f64be619728bb48ae34101a1569ac4cd0218a14d55c0072b776f"
+    },
+    "ci-green": {
+      "exit_code": 0,
+      "arguments": [
+        "tests/test_ci_workflow_config.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=C:\\Users\\user\\AppData\\Local\\Temp\\gemaibot-ci-discovery-green-20261018\\focus-tmp",
+        "-x"
+      ],
+      "duration_seconds": 12.904,
+      "phase_counts": {
+        "call:passed": 11,
+        "setup:passed": 11,
+        "teardown:passed": 11
+      },
+      "deselected": 0,
+      "collection_errors": 0,
+      "blocked_python_socket_connections": 0,
+      "raw_evidence_path": "verification/2026-10-18-priority/ci-green/focus-evidence.json",
+      "raw_evidence_sha256": "1bb562e141e36855c2df49ad7dc06b3c89701c7643a342ffab4afeb3002d6d91",
+      "raw_log_sha256": "1915a5c7e33d4b68d96fc4a5bd3508314d4f8d9e61819908da4799bb36caf5e8"
+    },
+    "review-save": {
+      "exit_code": 0,
+      "arguments": [
+        "tests/test_conversation_save_atomicity.py",
+        "tests/test_save_conversation.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\verification\\2026-10-18-priority\\review-save\\focus-tmp",
+        "-x"
+      ],
+      "duration_seconds": 14.784,
+      "phase_counts": {
+        "call:passed": 21,
+        "setup:passed": 21,
+        "teardown:passed": 21
+      },
+      "deselected": 0,
+      "collection_errors": 0,
+      "blocked_python_socket_connections": 0,
+      "raw_evidence_path": "verification/2026-10-18-priority/review-save/focus-evidence.json",
+      "raw_evidence_sha256": "5411315e7113ee3cc6070e7ffd141c8dd51cce8c5c5d17889c849993c4c3409c",
+      "raw_log_sha256": "4499dcce194a351d534d3a3838b374ac9db3d9e416715e5069d52833cc45799f"
+    },
+    "review-network": {
+      "exit_code": 0,
+      "arguments": [
+        "tests/test_message_network_stall_admission.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\verification\\2026-10-18-priority\\review-network\\focus-tmp",
+        "-x"
+      ],
+      "duration_seconds": 25.332,
+      "phase_counts": {
+        "call:passed": 16,
+        "setup:passed": 16,
+        "teardown:passed": 16
+      },
+      "deselected": 0,
+      "collection_errors": 0,
+      "blocked_python_socket_connections": 0,
+      "raw_evidence_path": "verification/2026-10-18-priority/review-network/focus-evidence.json",
+      "raw_evidence_sha256": "1a720cbe329aa7e9d59ef4135ab7b6731269420c1dfe15380b760ec0bfd1f820",
+      "raw_log_sha256": "c9714230bbd679ed15662836d4bcab9f100fbd22c34a79faa1ec3fd9737da3c6"
+    },
+    "review-ci": {
+      "exit_code": 0,
+      "arguments": [
+        "tests/test_ci_workflow_config.py",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\verification\\2026-10-18-priority\\review-ci\\focus-tmp",
+        "-x"
+      ],
+      "duration_seconds": 15.571,
+      "phase_counts": {
+        "call:passed": 11,
+        "setup:passed": 11,
+        "teardown:passed": 11
+      },
+      "deselected": 0,
+      "collection_errors": 0,
+      "blocked_python_socket_connections": 0,
+      "raw_evidence_path": "verification/2026-10-18-priority/review-ci/focus-evidence.json",
+      "raw_evidence_sha256": "f7c63ace01857cdcc42318e132416132e5a7000e4413604db1593be7ca8a7e0c",
+      "raw_log_sha256": "db1b8dae59860f4f8d7a426288d9b8c887ff70f8aea63e81223eea83fe92a886"
+    },
+    "full": {
+      "exit_code": 1,
+      "arguments": [
+        "tests/",
+        "--ignore=tests/integration",
+        "-m",
+        "not integration",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\verification\\2026-10-18-priority\\full\\focus-tmp",
+        "-x"
+      ],
+      "duration_seconds": 190.433,
+      "phase_counts": {
+        "call:failed": 1,
+        "call:passed": 704,
+        "setup:passed": 705,
+        "teardown:passed": 705
+      },
+      "deselected": 7,
+      "collection_errors": 0,
+      "blocked_python_socket_connections": 0,
+      "raw_evidence_path": "verification/2026-10-18-priority/full/focus-evidence.json",
+      "raw_evidence_sha256": "a4c21390e949ecddee7ebca3af49c24c908f7d4f31bc246708f3fb6e76fcf762",
+      "raw_log_sha256": "87065f5aa394ebb56dfe6680c50da01cce8f2062df199c44eb5865a5a5c393e0"
+    },
+    "full-final": {
+      "exit_code": 0,
+      "arguments": [
+        "tests/",
+        "--ignore=tests/integration",
+        "-m",
+        "not integration",
+        "--override-ini=addopts=",
+        "--timeout=30",
+        "-q",
+        "--basetemp=E:\\Projects\\gemaibotv2\\verification\\2026-10-18-priority\\full-final\\focus-tmp",
+        "-x"
+      ],
+      "duration_seconds": 647.118,
+      "phase_counts": {
+        "call:passed": 4787,
+        "setup:passed": 4787,
+        "teardown:passed": 4787
+      },
+      "deselected": 7,
+      "collection_errors": 0,
+      "blocked_python_socket_connections": 0,
+      "raw_evidence_path": "verification/2026-10-18-priority/full-final/focus-evidence.json",
+      "raw_evidence_sha256": "8a4916939bb35dd7188c38346d4d618d16530183625fb9b0f770bca8e95228ae",
+      "raw_log_sha256": "1bda1f8cde01325d8d325bf6e97be1bf2015dd1ad8abf38c1a8a8e3edc3f4d0b"
+    }
+  },
+  "ci_selector_mutations": [
+    {
+      "mutation": "fixed_file",
+      "outcome": "expected assertion",
+      "message": "omitted=['tests/future/test_unfamiliar_feature.py::test_new_feature[first]', 'tests/future/test_unfamiliar_feature.py::test_new_feature[second]', 'tests/test_compatibility_miniapp.py::TestCompatibility::test_form'], extra=[]"
+    },
+    {
+      "mutation": "missing_marker",
+      "outcome": "expected assertion",
+      "message": "omitted=[], extra=['tests/future/test_unfamiliar_feature.py::test_plain', 'tests/future/test_unfamiliar_feature.py::test_service', 'tests/test_compatibility_miniapp.py::test_non_browser_helper']"
+    },
+    {
+      "blocked_python_socket_connections": 0
+    }
+  ],
+  "global_checks": [
+    {
+      "command": "uv run --locked ruff check .",
+      "exit_code": 0,
+      "result": "All checks passed!"
+    },
+    {
+      "command": "uv run --locked ruff format --check .",
+      "exit_code": 0,
+      "result": "742 files already formatted"
+    },
+    {
+      "command": "uv run --locked mypy app bot.py",
+      "exit_code": 0,
+      "result": "Success: no issues found in 288 source files"
+    },
+    {
+      "command": "python -X utf8 scripts/check_env_registry.py",
+      "exit_code": 0,
+      "result": "PASS: 111 environment names; 0 changes"
+    },
+    {
+      "command": "python -X utf8 scripts/check_encoding.py",
+      "exit_code": 0,
+      "result": "PASS: encoding integrity (91 Markdown files)"
+    },
+    {
+      "command": "python -X utf8 scripts/check_docs_links.py",
+      "exit_code": 0,
+      "result": "PASS: 35 Markdown documents; 0 link errors"
+    },
+    {
+      "command": "scripts.check_docs_links.check_document for both changed Markdown files",
+      "exit_code": 0,
+      "result": "PASS: changed Markdown source/target links"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors"
+    }
+  ],
+  "review": "gpt-6.1-sol xhigh; no open actionable findings; report fake-boundary wording corrected",
+  "evidence_limits": [
+    "Synthetic database driver models normal rollback and lost COMMIT acknowledgement separately; no live PostgreSQL guarantees.",
+    "CI selector unit test uses controlled corpus; actual full-run browser-marked results are counted separately.",
+    "Offline recorder guards Python socket connections and repository .env access in its own process, not at OS level.",
+    "Raw recorders remain local under ignored verification/; exploratory aborted CI wrappers are excluded from proof.",
+    "No global coverage percentage remeasurement, live provider/Telegram/PostgreSQL/Redis calls, migrations, deployment or git publication."
+  ]
+}

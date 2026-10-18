@@ -14,7 +14,6 @@ while maximizing information density in the LLM's context window.
 
 import html
 import logging
-from typing import Any
 
 from app.prompt_registry import estimate_tokens_cyrillic
 from app.repos.memory_config import (

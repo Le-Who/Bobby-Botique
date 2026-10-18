@@ -71,6 +71,7 @@ neither authorizes execution now nor proves a feature is missing.
 | 2026-10-15 edited-request and direct-intent ownership | [Dated follow-up](message-ownership-followup-2026-10-15.md) and [evidence appendix](test-coverage/2026-10-15-message-ownership/README.md); 30 new cases, predecessor drain, request-scoped edited input, pre-placeholder intent cancellation and real task-manager coroutine closure; 4642 passing offline cases |
 | 2026-10-15 next priority coverage | [Dated report](test-coverage-next-priority-2026-10-15.md) and [evidence appendix](test-coverage/2026-10-15-next-priority/README.md); 72 new cases for concurrent memory cancellation and long-wait notice handoff, 4714 passing offline cases |
 | 2026-10-16 voice admission and document outcomes | [Dated report](test-coverage-admission-document-2026-10-16.md) and [evidence appendix](test-coverage/2026-10-16-admission-document/README.md); 42 new cases for pre-lock voice admission and real bulk-delete error outcomes, 4756 passing offline cases |
+| 2026-10-18 conversation save and stalled-request admission | [Dated report](test-coverage-priority-2026-10-18.md) and [compact evidence](test-coverage/2026-10-18-priority/evidence.json); 31 new cases for atomic conversation save and network-stall admission ownership, an executable controlled-corpus CI selector check, 4787 passing offline cases |
 
 [CHANGELOG.md](../CHANGELOG.md), [maintainer queue](MAINTAINER_QUEUE.md) and
 `.jules/` journals are historical evidence. Old performance figures and broad

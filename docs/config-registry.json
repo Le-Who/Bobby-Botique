@@ -236,7 +236,6 @@
   "HOSTNAME": {
     "readers": [
       "app/observability/pipeline.py",
-      "app/utils/logging_config.py",
       "bot.py"
     ],
     "deploy": false,
@@ -566,8 +565,7 @@
   },
   "PORT": {
     "readers": [
-      "app/config.py",
-      "app/utils/logging_config.py"
+      "app/config.py"
     ],
     "deploy": true,
     "compose": true

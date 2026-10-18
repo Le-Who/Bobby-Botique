@@ -6,17 +6,9 @@ from database persistence and orchestration.
 """
 
 import hashlib
-import tempfile
 
 # Maximum characters to extract from a document to prevent OOM
 MAX_DOCUMENT_TEXT_LENGTH = 100000
-
-
-def write_temp_file_sync(file_data: bytes, suffix: str) -> str:
-    """Write data to a temp file and return its path (sync, thread-safe)."""
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-        temp_file.write(file_data)
-        return temp_file.name
 
 
 def calculate_file_hash_sync(file_path_or_data: str | bytes) -> str:

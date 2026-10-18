@@ -15,6 +15,7 @@ from app.document_processor import (
     get_user_documents,
 )
 from app.handlers import menus
+from app.handlers.msg_document import clear_pending_document_upload, confirm_pending_document_upload
 from app.i18n import t
 from app.state import clear_document_state, get_selected_document_id, set_document_mode
 from app.utils.formatting import TelegramFormatter
@@ -118,6 +119,9 @@ async def _handle_document_use_existing(query, context, user_id):
 
 
 async def _handle_document_force_upload(query, context, user_id):
+    if not confirm_pending_document_upload(query, context, user_id):
+        await _handle_document_upload_new(query, context, user_id)
+        return
     text = "📄 *Загрузите файл как новый документ*\n\nОтправьте файл еще раз, и он будет сохранен как новый документ."
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     await query.edit_message_text(
@@ -257,6 +261,9 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     action = parts[1]
     user_id = query.from_user.id
+
+    if action != "force_upload":
+        clear_pending_document_upload(context)
 
     if action in {"use_existing", "select", "delete_document"}:
         if len(parts) != 3 or not parts[2].isascii() or not parts[2].isdigit() or int(parts[2]) <= 0:

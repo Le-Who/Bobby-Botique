@@ -6,7 +6,7 @@ The heavy lifting is delegated to submodules:
 - ``app.documents.repository``: async database CRUD and stats
 
 This file keeps the ``DocumentProcessor`` class (orchestrator + PDF/DOCX
-parsing), the singleton instance, and backward-compatible facade functions.
+parsing), the singleton instance, and handler-facing facade functions.
 """
 
 import asyncio
@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import asyncpg
 import pypdf
 from docx import Document as DocxDocument
 
@@ -23,23 +24,18 @@ from app.documents.parsers import (
     MAX_DOCUMENT_TEXT_LENGTH,  # noqa: F401 — re-exported
     calculate_file_hash_sync,
 )
-from app.documents.repository import (
-    check_document_limit,
-    check_duplicate_file,
-    cleanup_oldest_documents,
-    save_document_content,
-)
+from app.documents.repository import check_duplicate_file, save_document_content
 from app.metrics import metrics_collector
 
-# Verify document processing libraries are available
-try:
-    import pypdf as _pypdf_check  # noqa: F811,F401
-    from docx import Document as _docx_check  # noqa: F811,F401
 
-    DOCUMENT_SUPPORT = True
-except ImportError:
-    DOCUMENT_SUPPORT = False
-    logging.warning("Document processing libraries not installed. Document support disabled.")
+def _duplicate_result(filename: str, duplicate: dict[str, Any]) -> dict[str, Any]:
+    created_date = duplicate["created_at"]
+    date_str = created_date.strftime("%Y-%m-%d") if hasattr(created_date, "strftime") else str(created_date)[:10]
+    return {
+        "error": "duplicate",
+        "message": f"Файл '{filename}' уже был загружен ранее как '{duplicate['filename']}' ({date_str})",
+        "duplicate_info": duplicate,
+    }
 
 
 class DocumentProcessor:
@@ -50,11 +46,10 @@ class DocumentProcessor:
         self.max_file_size = 10 * 1024 * 1024  # 10MB for free tier
         self.max_pages = 50
 
-    async def process_document(self, file_data, filename: str, user_id: int, is_path: bool = False) -> dict[str, Any]:
+    async def process_document(
+        self, file_data, filename: str, user_id: int, is_path: bool = False, *, skip_duplicate_check: bool = False
+    ) -> dict[str, Any]:
         """Process a document and return extracted text."""
-        if not DOCUMENT_SUPPORT:
-            return {"error": "Document processing is not available"}
-
         try:
             # Check file size
             if is_path:
@@ -71,77 +66,35 @@ class DocumentProcessor:
             if file_ext not in self.supported_formats:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
-            # Check document limit
-            if not await check_document_limit(user_id):
-                await cleanup_oldest_documents(user_id, 4)
-                logging.info(
-                    "Document limit exceeded for user %s, removed oldest document",
-                    user_id,
-                )
-
             # Hash + duplicate check
             loop = asyncio.get_running_loop()
             file_hash = await loop.run_in_executor(None, calculate_file_hash_sync, file_data)
-            duplicate = await check_duplicate_file(user_id, file_hash, filename)
+            duplicate = None if skip_duplicate_check else await check_duplicate_file(user_id, file_hash, filename)
 
             if duplicate:
-                created_date = duplicate["created_at"]
-                if hasattr(created_date, "strftime"):
-                    date_str = created_date.strftime("%Y-%m-%d")
-                else:
-                    date_str = str(created_date)[:10]
-
-                return {
-                    "error": "duplicate",
-                    "message": f"Файл '{filename}' уже был загружен ранее как '{duplicate['filename']}' ({date_str})",
-                    "duplicate_info": duplicate,
-                }
+                return _duplicate_result(filename, duplicate)
 
             # Dispatch to format-specific parser
             if file_ext == ".pdf":
-                return await self._process_pdf_unified(file_data, filename, user_id, file_hash, is_path=is_path)
-            elif file_ext in [".docx", ".doc"]:
-                return await self._process_word_unified(file_data, filename, user_id, file_hash, is_path=is_path)
+                result = await self._process_pdf_unified(file_data, filename, is_path=is_path)
             else:
-                return {"error": f"Unsupported file format: {file_ext}"}
+                result = await self._process_word_unified(file_data, filename, is_path=is_path)
+            if result.get("error"):
+                return result
+            duplicate = await save_document_content(
+                user_id,
+                filename,
+                result["content"],
+                result["pages"],
+                file_hash,
+                skip_duplicate_check=skip_duplicate_check,
+            )
+            return _duplicate_result(filename, duplicate) if duplicate else result
 
-        except (ValueError, UnicodeDecodeError, OSError) as e:
-            logging.error("Error processing document %s: %s", filename, e, exc_info=True)
-            await metrics_collector.record_error("document_processing", str(e))
-            return {"error": f"Error processing document: {str(e)}"}
-
-    async def process_document_force(
-        self, file_data, filename: str, user_id: int, is_path: bool = False
-    ) -> dict[str, Any]:
-        """Process a document, ignoring duplicates."""
-        if not DOCUMENT_SUPPORT:
-            return {"error": "Document processing is not available"}
-
-        try:
-            if is_path:
-                import os
-
-                file_size = os.path.getsize(file_data)
-            else:
-                file_size = len(file_data)
-
-            if file_size > self.max_file_size:
-                return {"error": f"File too large. Maximum size is {self.max_file_size // (1024 * 1024)}MB"}
-
-            file_ext = Path(filename).suffix.lower()
-            if file_ext not in self.supported_formats:
-                return {"error": f"Unsupported file format: {file_ext}"}
-
-            loop = asyncio.get_running_loop()
-            file_hash = await loop.run_in_executor(None, calculate_file_hash_sync, file_data)
-
-            if file_ext == ".pdf":
-                return await self._process_pdf_unified(file_data, filename, user_id, file_hash, is_path=is_path)
-            elif file_ext in [".docx", ".doc"]:
-                return await self._process_word_unified(file_data, filename, user_id, file_hash, is_path=is_path)
-            else:
-                return {"error": f"Unsupported file format: {file_ext}"}
-
+        except (asyncpg.PostgresError, asyncpg.InterfaceError, TimeoutError) as e:
+            logging.error("Error saving uploaded document for user %s: %s", user_id, type(e).__name__)
+            await metrics_collector.record_error("document_storage", type(e).__name__)
+            return {"error": "storage_error"}
         except (ValueError, UnicodeDecodeError, OSError) as e:
             logging.error("Error processing document %s: %s", filename, e, exc_info=True)
             await metrics_collector.record_error("document_processing", str(e))
@@ -245,11 +198,9 @@ class DocumentProcessor:
         self,
         file_data,
         filename: str,
-        user_id: int,
-        file_hash: str,
         is_path: bool = False,
     ) -> dict[str, Any]:
-        """Process a PDF document (bytes or path)."""
+        """Parse a PDF document (bytes or path), without changing storage."""
         try:
             if not is_path and not file_data.startswith(b"%PDF"):
                 logging.warning("Invalid PDF format for %s", filename)
@@ -267,8 +218,6 @@ class DocumentProcessor:
 
             full_text = result["content"]
             pages_count = result["pages"]
-
-            await save_document_content(user_id, filename, full_text, pages_count, file_hash)
 
             return {
                 "success": True,
@@ -290,11 +239,9 @@ class DocumentProcessor:
         self,
         file_data,
         filename: str,
-        user_id: int,
-        file_hash: str,
         is_path: bool = False,
     ) -> dict[str, Any]:
-        """Process a Word document (bytes or path)."""
+        """Parse a Word document (bytes or path), without changing storage."""
         if not is_path and not file_data.startswith(b"\x50\x4b\x03\x04"):
             logging.warning("Invalid DOCX format for %s: Missing ZIP header", filename)
             return {"error": "Invalid Word document format. File must be a valid .docx file."}
@@ -309,10 +256,6 @@ class DocumentProcessor:
                 logging.error("Error processing Word document %s: %s", filename, result["error"])
                 return {"error": f"Error processing Word document: {result['error']}"}
 
-            full_text = result["content"]
-
-            await save_document_content(user_id, filename, full_text, 1, file_hash)
-
             result["filename"] = filename
             return result
 
@@ -321,10 +264,7 @@ class DocumentProcessor:
             await metrics_collector.record_error("word_processing", str(e))
             return {"error": f"Error processing Word document: {str(e)}"}
 
-    # ── Delegated repository methods (backward compat for external callers) ──
-
-    async def _cleanup_oldest_documents(self, user_id, keep_count=4):
-        return await cleanup_oldest_documents(user_id, keep_count)
+    # ── Repository methods used by handlers and scheduled maintenance ──────
 
     async def get_document_by_id(self, document_id, user_id):
         from app.documents.repository import get_document_by_id
@@ -372,20 +312,17 @@ document_processor = DocumentProcessor()
 
 
 # ============================================================================
-# FACADE FUNCTIONS (backward compatibility)
+# FACADE FUNCTIONS
 # ============================================================================
 
 
-async def process_uploaded_document(file_data, filename: str, user_id: int, is_path: bool = False) -> dict[str, Any]:
-    """Process an uploaded document."""
-    return await document_processor.process_document(file_data, filename, user_id, is_path)
-
-
-async def process_uploaded_document_force(
-    file_data, filename: str, user_id: int, is_path: bool = False
+async def process_uploaded_document(
+    file_data, filename: str, user_id: int, is_path: bool = False, *, skip_duplicate_check: bool = False
 ) -> dict[str, Any]:
-    """Process an uploaded document, ignoring duplicates."""
-    return await document_processor.process_document_force(file_data, filename, user_id, is_path)
+    """Process an uploaded document."""
+    return await document_processor.process_document(
+        file_data, filename, user_id, is_path, skip_duplicate_check=skip_duplicate_check
+    )
 
 
 async def get_user_documents(user_id: int) -> list[dict[str, Any]]:

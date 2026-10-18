@@ -162,10 +162,9 @@ async def daily_trivia_command(update: Update, context: ContextTypes.DEFAULT_TYP
     # prompt so that send_trivia_result_message can keep it up to date.
     result = await trivia_repo.get_result_if_exists(user_id, today)
     if result is not None and result.status == "completed":
-        from app.games.daily_trivia_telegram import _send_result_photo, render_result_body
+        from app.games.daily_trivia_telegram import render_result_body
 
         text, keyboard = await render_result_body(user_id, today)
-        from telegram import InputMediaPhoto
 
         from app.games import cover_photo as _cover_photo
 

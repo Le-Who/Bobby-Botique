@@ -2,7 +2,6 @@
 Command to initiate a Tarot session.
 """
 
-import logging
 import time
 
 from telegram import ReplyKeyboardMarkup, Update
@@ -11,7 +10,7 @@ from telegram.ext import ContextTypes
 from app.handlers.tarot_chat import TAROT_END_SESSION_TEXT
 from app.i18n import detect_language, t
 from app.state import ensure_state_loaded, set_tarot_mode, set_tarot_session
-from app.tarot import SpreadType, draw_cards
+from app.tarot import SpreadType
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
 

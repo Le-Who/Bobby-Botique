@@ -21,7 +21,6 @@ from app.database import (
     reconnect_database,
     set_user_context,
 )
-from app.utils.json_compat import json
 
 
 def is_admin(user_id: int) -> bool:

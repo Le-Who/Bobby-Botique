@@ -6,23 +6,11 @@ from app.utils.text_format import (
 )
 
 
-def escape_format_chars(text: str) -> str:
-    """Экранирует фигурные скобки { и } для безопасного форматирования строк Python"""
-    if not text:
-        return text
-    return text.replace("{", "{{").replace("}", "}}")
-
-
 def format_key_for_display(api_key: str) -> str:
     """Formats an API key for safe display."""
     if not isinstance(api_key, str) or len(api_key) < 10:
         return "Invalid Key"
     return f"{api_key[:5]}...{api_key[-4:]}"
-
-
-def strip_markdown(text: str) -> str:
-    """Removes all formatting from the text."""
-    return new_strip_formatting(text)
 
 
 class TelegramFormatter:

@@ -1,13 +1,11 @@
 """Tests for app.documents.repository — database CRUD operations."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.documents.repository import (
-    check_document_limit,
     check_duplicate_file,
-    cleanup_oldest_documents,
     delete_all_user_documents,
     delete_document,
     get_document_stats,
@@ -53,39 +51,6 @@ class TestCheckDuplicateFile:
         assert result is None
 
 
-# ── check_document_limit ─────────────────────────────────────────────────────
-
-
-class TestCheckDocumentLimit:
-    @pytest.mark.asyncio
-    @patch("app.documents.repository.settings")
-    @patch("app.documents.repository.database")
-    async def test_under_limit_returns_true(self, mock_db, mock_settings):
-        mock_settings.MAX_DOCUMENTS_PER_USER = 5
-        mock_db.db_query = AsyncMock(return_value=[{"doc_count": 3}])
-        result = await check_document_limit(1)
-        assert result is True
-
-    @pytest.mark.asyncio
-    @patch("app.documents.repository.settings")
-    @patch("app.documents.repository.database")
-    async def test_at_limit_returns_false(self, mock_db, mock_settings):
-        mock_settings.MAX_DOCUMENTS_PER_USER = 5
-        mock_db.db_query = AsyncMock(return_value=[{"doc_count": 5}])
-        result = await check_document_limit(1)
-        assert result is False
-
-    @pytest.mark.asyncio
-    @patch("app.documents.repository.settings")
-    @patch("app.documents.repository.database")
-    async def test_error_allows_upload(self, mock_db, mock_settings):
-        import asyncpg
-
-        mock_db.db_query = AsyncMock(side_effect=asyncpg.InterfaceError("timeout"))
-        result = await check_document_limit(1)
-        assert result is True  # Permissive default
-
-
 # ── save_document_content ────────────────────────────────────────────────────
 
 
@@ -94,9 +59,15 @@ class TestSaveDocumentContent:
     @patch("app.documents.repository.database")
     async def test_inserts_with_correct_params(self, mock_db):
         mock_db.db_query = AsyncMock(return_value=None)
+        mock_db.set_user_context = AsyncMock()
+        mock_db.clear_user_context = AsyncMock()
+        conn = MagicMock()
+        conn.execute = AsyncMock()
+        mock_db.db_manager.pool.acquire.return_value.__aenter__.return_value = conn
         await save_document_content(1, "test.pdf", "content here", 5, "hash123")
-        mock_db.db_query.assert_called_once()
-        args = mock_db.db_query.call_args[0]
+        args = next(
+            call.args for call in mock_db.db_query.await_args_list if "INSERT INTO user_documents" in call.args[0]
+        )
         assert "INSERT INTO user_documents" in args[0]
         assert args[1] == (
             1,
@@ -106,25 +77,6 @@ class TestSaveDocumentContent:
             len("content here"),
             "hash123",
         )
-
-
-# ── cleanup_oldest_documents ─────────────────────────────────────────────────
-
-
-class TestCleanupOldestDocuments:
-    @pytest.mark.asyncio
-    @patch("app.documents.repository.database")
-    async def test_returns_deleted_count(self, mock_db):
-        mock_db.db_query = AsyncMock(return_value=[{"id": 1}, {"id": 2}])
-        count = await cleanup_oldest_documents(user_id=1, keep_count=3)
-        assert count == 2
-
-    @pytest.mark.asyncio
-    @patch("app.documents.repository.database")
-    async def test_returns_zero_on_no_deletions(self, mock_db):
-        mock_db.db_query = AsyncMock(return_value=None)
-        count = await cleanup_oldest_documents(user_id=1, keep_count=5)
-        assert count == 0
 
 
 # ── delete_document ──────────────────────────────────────────────────────────

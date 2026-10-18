@@ -80,5 +80,5 @@ def test_dependabot_groups_only_post_one_minor_patch_updates() -> None:
     assert '- "minor"' in group
     assert '- "patch"' in group
     assert '- "major"' not in group
-    for pre_one_dependency in ("asyncpg", "httpx", "hypercorn", "msgspec", "quart", "ruff"):
+    for pre_one_dependency in ("asyncpg", "httpx", "hypercorn", "quart", "ruff"):
         assert f'- "{pre_one_dependency}"' in group

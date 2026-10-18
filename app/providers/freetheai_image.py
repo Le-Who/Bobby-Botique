@@ -12,7 +12,6 @@ Response may contain either ``b64_json`` or ``url`` — both are handled.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import logging

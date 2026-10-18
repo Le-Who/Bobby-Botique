@@ -41,11 +41,8 @@ async def next_turn():
     await asyncio.sleep(0)
 
 
-@pytest.mark.parametrize("legacy", [False, True], ids=["message", "legacy"])
-async def test_cancelled_owner_removes_only_its_slot_and_awaits_timer(slots, legacy):
-    owner = asyncio.create_task(
-        debounce.debounce_text_message(11, "first") if legacy else debounce.debounce_message(11, message("first"))
-    )
+async def test_cancelled_owner_removes_only_its_slot_and_awaits_timer(slots):
+    owner = asyncio.create_task(debounce.debounce_message(11, message("first")))
     try:
         await next_turn()
         if owner.done():

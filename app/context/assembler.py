@@ -23,7 +23,6 @@ from .token_budget import (
     DEFAULT_TOKEN_BUDGET,
     LLM_SUMMARY_TOKEN_THRESHOLD,
     MIN_HISTORY_MESSAGES,
-    RESPONSE_RESERVE,
     SUMMARY_BUDGET,
     AssembledContext,
     TokenBudget,
@@ -359,46 +358,6 @@ class ContextAssembler:
         for msg in history:
             content += f"|{msg.get('role', '')}:{self._extract_text(msg)}"
         return hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
-
-
-# ============================================================================
-# CONVENIENCE FUNCTIONS
-# ============================================================================
-
-
-def should_summarize(
-    history: list[dict[str, Any]],
-    token_budget: int = DEFAULT_TOKEN_BUDGET,
-    system_prompt_tokens: int = 0,
-) -> tuple[bool, str]:
-    """Check if history needs summarization.
-
-    Returns:
-        (should_summarize, reason)
-    """
-    if not history:
-        return False, ""
-
-    # Count tokens in history
-    total_tokens = sum(estimate_tokens_cyrillic(_extract_msg_text(msg)) for msg in history)
-
-    available = token_budget - system_prompt_tokens - RESPONSE_RESERVE
-    threshold = int(available * 0.8)  # Trigger at 80% utilization
-
-    if total_tokens > threshold:
-        return (
-            True,
-            f"History tokens ({total_tokens}) exceed 80% of available ({threshold})",
-        )
-
-    if len(history) > 50:
-        return True, f"Message count ({len(history)}) exceeds soft limit (50)"
-
-    return False, ""
-
-
-# Use the shared implementation from summarizer
-_extract_msg_text = extract_text
 
 
 # Singleton assembler instance

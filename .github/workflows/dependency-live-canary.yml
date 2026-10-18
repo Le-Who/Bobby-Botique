@@ -95,8 +95,8 @@ jobs:
           python baseline/scripts/dependency_environment_check.py --lock candidate/uv.lock --lock-only
           (cd baseline && uv sync --locked --no-build --link-mode copy)
           (cd candidate && uv sync --locked --no-build --link-mode copy)
-          baseline/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock baseline/uv.lock
-          candidate/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock candidate/uv.lock
+          baseline/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock baseline/uv.lock --include-dev
+          candidate/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock candidate/uv.lock --include-dev
 
   canary:
     name: Compare baseline and candidate live contracts
@@ -145,8 +145,8 @@ jobs:
           python baseline/scripts/dependency_environment_check.py --lock candidate/uv.lock --lock-only
           (cd baseline && uv sync --locked --no-build --link-mode copy)
           (cd candidate && uv sync --locked --no-build --link-mode copy)
-          baseline/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock baseline/uv.lock
-          candidate/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock candidate/uv.lock
+          baseline/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock baseline/uv.lock --include-dev
+          candidate/.venv/bin/python baseline/scripts/dependency_environment_check.py --lock candidate/uv.lock --include-dev
       - name: Run controlled baseline and candidate probes
         id: canary
         env:

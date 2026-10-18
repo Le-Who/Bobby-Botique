@@ -8,6 +8,27 @@ from app.database import ChatState
 from app.repos import conversations as conv_repo
 
 
+@pytest.fixture(autouse=True)
+def save_pool_boundary(monkeypatch):
+    conn, manager = _pool_boundary()
+    monkeypatch.setattr(conv_repo, "db_manager", manager)
+    return conn
+
+
+def _pool_boundary():
+    conn = MagicMock()
+    transaction = MagicMock()
+    transaction.__aenter__ = AsyncMock(return_value=None)
+    transaction.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction.return_value = transaction
+    acquire = MagicMock()
+    acquire.__aenter__ = AsyncMock(return_value=conn)
+    acquire.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire.return_value = acquire
+    return conn, SimpleNamespace(pool=pool, is_connected=True)
+
+
 @pytest.fixture
 def mock_chat_state():
     return ChatState(
@@ -154,14 +175,14 @@ async def test_save_conversation_procedure_failure(mock_chat_state):
 
         result = await conv_repo.save_conversation(user_id, title)
 
-        assert result == expected_conv_id
+        assert result is None
 
         # Verify db_query called twice
         assert mock_db_query.call_count == 2
 
         # Verify error was logged
         mock_logging_error.assert_called_once()
-        assert "Error saving conversation messages via Procedure" in mock_logging_error.call_args[0][0]
+        assert "Error in save_conversation" in mock_logging_error.call_args[0][0]
 
 
 @pytest.mark.asyncio

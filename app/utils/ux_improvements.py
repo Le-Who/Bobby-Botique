@@ -41,7 +41,6 @@ EFFECT_THUMBSUP = "5107584321108051014"  # 👍
 
 # ── Reaction Emoji Constants ──────────────────────────────────────────────────
 REACTION_SEARCH = "🔍"  # searching / thinking
-REACTION_BRAIN = "🧠"  # synthesizing
 REACTION_LIGHTNING = "⚡"  # done fast
 REACTION_WARNING = "⚠️"  # error / interruption
 REACTION_EYES = "👀"  # reading / processing
@@ -81,30 +80,9 @@ async def set_message_reaction(
         logger.debug("set_message_reaction(%s) failed (non-critical): %s", emoji, exc)
 
 
-async def clear_message_reaction(
-    bot: Bot,
-    chat_id: int,
-    message_id: int,
-) -> None:
-    """Remove all reactions from a message (pass empty list)."""
-    try:
-        await bot.set_message_reaction(
-            chat_id=chat_id,
-            message_id=message_id,
-            reaction=[],
-        )
-    except Exception as exc:
-        logger.debug("clear_message_reaction failed (non-critical): %s", exc)
-
-
 async def set_thinking_reaction(bot: Bot, chat_id: int, message_id: int) -> None:
     """Put 🔍 on the user's message while the bot is working."""
     await set_message_reaction(bot, chat_id, message_id, REACTION_SEARCH)
-
-
-async def set_synthesizing_reaction(bot: Bot, chat_id: int, message_id: int) -> None:
-    """Put 🧠 on the user's message while the LLM is synthesizing."""
-    await set_message_reaction(bot, chat_id, message_id, REACTION_BRAIN)
 
 
 async def set_done_reaction(bot: Bot, chat_id: int, message_id: int) -> None:
@@ -125,9 +103,6 @@ async def set_error_reaction(bot: Bot, chat_id: int, message_id: int) -> None:
 _EXPANDABLE_OPEN = "<blockquote expandable>"
 _EXPANDABLE_CLOSE = "</blockquote>"
 
-# Threshold: responses longer than this (in chars) get wrapped.
-LONG_RESPONSE_THRESHOLD = 1800
-
 
 def wrap_in_expandable_blockquote(content: str, *, label: str | None = None) -> str:
     """Wrap *content* in a Telegram HTML expandable blockquote.
@@ -147,48 +122,6 @@ def wrap_in_expandable_blockquote(content: str, *, label: str | None = None) -> 
         result += f"<b>{html.escape(label)}</b>\n"
     result += f"{_EXPANDABLE_OPEN}{body}{_EXPANDABLE_CLOSE}"
     return result
-
-
-def maybe_wrap_long_response(
-    html_text: str,
-    *,
-    threshold: int = LONG_RESPONSE_THRESHOLD,
-    summary_chars: int = 600,
-) -> str:
-    """If *html_text* exceeds *threshold* chars, split it into a visible summary
-    + an expandable blockquote containing the rest.
-
-    The visible part ends at the last paragraph break before *summary_chars*.
-    The remainder is placed in an expandable blockquote.
-
-    If text is short enough, returns it unchanged.
-    """
-    if len(html_text) <= threshold:
-        return html_text
-
-    # Find a natural split point near summary_chars
-    split_at = summary_chars
-    for sep in ["\n\n", "\n", ". "]:
-        idx = html_text.rfind(sep, 0, summary_chars)
-        if idx > 0:
-            split_at = idx + len(sep)
-            break
-
-    visible = html_text[:split_at].rstrip()
-    rest = html_text[split_at:].lstrip()
-
-    if not rest:
-        return html_text  # Nothing to collapse
-
-    collapsed = wrap_in_expandable_blockquote(rest)
-    return f"{visible}\n\n{collapsed}"
-
-
-def wrap_partial_response(html_text: str) -> str:
-    """Wrap an interrupted/partial response in an expandable blockquote
-    with a localized '[Частичный ответ]' label.
-    """
-    return wrap_in_expandable_blockquote(html_text, label="Частичный ответ / Сбой сети")
 
 
 # ── tg-time HTML tag ──────────────────────────────────────────────────────────

@@ -216,6 +216,9 @@ async def help_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def open_documents_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Opens documents menu from start menu button."""
+    from app.handlers.msg_document import clear_pending_document_upload
+
+    clear_pending_document_upload(context)
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id

@@ -23,7 +23,6 @@ EXPECTED_PRODUCTION = {
     "google-genai",
     "httpx",
     "hypercorn",
-    "msgspec",
     "orjson",
     "pillow",
     "psutil",

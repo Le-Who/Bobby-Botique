@@ -384,7 +384,7 @@ async def health_check_endpoint():
 
         health = {
             "status": overall,
-            "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
             "service": "gemaibotv2",
             "services": {
                 "bot": "running",
@@ -486,7 +486,7 @@ async def api_overview():
 
     return jsonify(
         {
-            "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
             "system": system,
             "metrics": metrics,
             "summarization": summarization,
@@ -531,7 +531,7 @@ async def api_keys():
 
         return jsonify(
             {
-                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
                 "key_usage": key_stats,
                 "tavily_usage": tavily_stats,
                 "active_keys": active_keys,
@@ -561,7 +561,7 @@ async def api_errors():
         summary = await metrics_collector.get_metrics_summary()
         return jsonify(
             {
-                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
                 "error_count": summary.get("error_count", 0),
                 "error_rate": summary.get("error_rate_percent", 0),
                 "recent_errors": summary.get("recent_errors", []),
@@ -584,7 +584,7 @@ async def api_cache():
 
         return jsonify(
             {
-                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
                 "redis": ml_stats.get("redis", {}),
                 "multi_layer": ml_stats,
             }
@@ -605,7 +605,7 @@ async def api_queue():
         stats = await task_queue.get_queue_stats()
         return jsonify(
             {
-                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
                 "queue": stats,
             }
         )
@@ -623,7 +623,7 @@ async def api_database():
         db_metrics = await get_supabase_metrics()
         return jsonify(
             {
-                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
                 "database": db_metrics,
             }
         )
@@ -646,7 +646,7 @@ async def api_circuit_breakers():
 
         return jsonify(
             {
-                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
                 "circuit_breakers": breakers,
             }
         )
@@ -666,7 +666,7 @@ async def api_memory():
         stats = get_memory_stats()
         return jsonify(
             {
-                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
                 "memory": stats,
             }
         )
@@ -909,7 +909,7 @@ async def api_key_health():
 
         return jsonify(
             {
-                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
                 "keys": summary,
             }
         )
@@ -937,7 +937,7 @@ async def api_events():
             try:
                 # Lightweight metrics snapshot
                 payload = {
-                    "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                    "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
                     "system": {
                         "cpu_percent": psutil.cpu_percent(interval=0),
                         "memory_percent": psutil.virtual_memory().percent,
@@ -2302,8 +2302,6 @@ async def api_admin_broadcast_offer_history():
       limit       – 1..200 (default 50)
       offset      – pagination offset (default 0)
     """
-    from app.repos.horoscope_subscriptions import get_horoscope_subscription
-    from app.repos.tarot_daily_subscriptions import get_tarot_subscription
 
     channel = request.args.get("channel", "all").strip()
     status_filter = request.args.get("status", "").strip()

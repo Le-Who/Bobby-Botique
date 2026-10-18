@@ -6,10 +6,8 @@ from typing import Any
 
 from app.config import (
     CURRENT_GEMINI_MODELS,
-    GEMINI_ECONOMY_MODEL,
     GEMINI_GROUNDING_FALLBACK_MODEL,
     GEMINI_GROUNDING_MODEL,
-    GEMINI_PRIMARY_MODEL,
     get_freetheai_keys,
     get_opencode_keys,
     get_openrouter_keys,

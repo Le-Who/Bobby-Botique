@@ -640,8 +640,9 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     )
                     # Brief yield for the cancelled task's finally-block to release user_lock
                     await asyncio.sleep(0.15)
-                    # Re-check: lock should be released now
-                    if state.get_user_lock(user_id).locked():
+                    # Cleanup can retain admission after releasing the lock
+                    # while it retires a notice, or a newer request can own it.
+                    if user_state.is_processing or state.get_user_lock(user_id).locked():
                         await _send_busy_ephemeral(update)
                         return
                 else:

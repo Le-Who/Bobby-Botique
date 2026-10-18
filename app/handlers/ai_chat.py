@@ -535,14 +535,10 @@ async def _handle_regular_chat(
 
     from app.errors import build_retry_and_roles_keyboard
     from app.providers.request_factory import generation_request_from_history
-    from app.providers.stream_types import StreamCompleted, Workload
+    from app.providers.stream_types import Workload
     from app.response_delivery.delivery import (
         TelegramTarget,
         get_telegram_response_delivery,
-    )
-    from app.response_delivery.outcomes import (
-        CompleteDelivery,
-        PartialDelivery,
     )
     from app.response_delivery.presentation import ChatPresentation
 

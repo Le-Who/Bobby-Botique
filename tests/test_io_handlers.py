@@ -16,27 +16,20 @@ async def test_process_pdf_downloads_to_drive(mock_process_path, tmp_path):
     temp_path = tmp_path / "test.pdf"
     temp_path.touch()
 
-    mock_process_path.return_value = "Extracted PDF content"
+    mock_process_path.return_value = {"error": "synthetic PDF parse failure"}
 
     processor = DocumentProcessor()
-    with (
-        patch(
-            "app.document_processor.check_document_limit",
-            new_callable=AsyncMock,
-            return_value=True,
-        ),
-        patch(
-            "app.document_processor.check_duplicate_file",
-            new_callable=AsyncMock,
-            return_value=None,
-        ),
+    with patch(
+        "app.document_processor.check_duplicate_file",
+        new_callable=AsyncMock,
+        return_value=None,
     ):
         result = await processor.process_document(str(temp_path), "test.pdf", 1, is_path=True)
 
     mock_process_path.assert_called_once()
     args, _ = mock_process_path.call_args
     assert args[0] == str(temp_path)
-    assert result == "Extracted PDF content"
+    assert result == {"error": "synthetic PDF parse failure"}
 
 
 @pytest.mark.asyncio
@@ -47,27 +40,20 @@ async def test_process_word_downloads_to_drive(mock_process_path, tmp_path):
     temp_path = tmp_path / "test.docx"
     temp_path.touch()
 
-    mock_process_path.return_value = "Extracted DOCX content"
+    mock_process_path.return_value = {"error": "synthetic DOCX parse failure"}
 
     processor = DocumentProcessor()
-    with (
-        patch(
-            "app.document_processor.check_document_limit",
-            new_callable=AsyncMock,
-            return_value=True,
-        ),
-        patch(
-            "app.document_processor.check_duplicate_file",
-            new_callable=AsyncMock,
-            return_value=None,
-        ),
+    with patch(
+        "app.document_processor.check_duplicate_file",
+        new_callable=AsyncMock,
+        return_value=None,
     ):
         result = await processor.process_document(str(temp_path), "test.docx", 1, is_path=True)
 
     mock_process_path.assert_called_once()
     args, _ = mock_process_path.call_args
     assert args[0] == str(temp_path)
-    assert result == "Extracted DOCX content"
+    assert result == {"error": "synthetic DOCX parse failure"}
 
 
 @pytest.mark.asyncio

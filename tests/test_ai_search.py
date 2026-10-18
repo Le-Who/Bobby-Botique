@@ -202,7 +202,6 @@ async def test_qna_search_typed_failure_does_not_duplicate_delivery():
             "app.response_delivery.delivery.get_telegram_response_delivery",
             return_value=delivery,
         ),
-        patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock) as mock_send,
         patch("app.handlers.ai_search.get_registry") as mock_get_registry,
     ):
         mock_metrics.record_search_query = AsyncMock()
@@ -221,7 +220,8 @@ async def test_qna_search_typed_failure_does_not_duplicate_delivery():
 
     assert result is None
     delivery.stream.assert_awaited_once()
-    mock_send.assert_not_awaited()
+    placeholder.edit_text.assert_not_awaited()
+    placeholder.reply_text.assert_not_awaited()
 
 
 # ── Research agent — search fails ─────────────────────────────────────────────
@@ -345,7 +345,6 @@ async def test_research_agent_uses_unified_completed_response_delivery():
             return_value=delivery,
         ),
         patch("app.cache.store_long_message", new_callable=AsyncMock) as store_long,
-        patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock) as send_long,
         patch("app.handlers.ai_search.update_user_chat", new_callable=AsyncMock),
     ):
         mock_metrics.record_search_query = AsyncMock()
@@ -362,7 +361,8 @@ async def test_research_agent_uses_unified_completed_response_delivery():
     completed = delivery.deliver.await_args.args[1]
     assert completed == CompletedResponse(final_answer)
     store_long.assert_not_awaited()
-    send_long.assert_not_awaited()
+    placeholder.edit_text.assert_not_awaited()
+    placeholder.reply_text.assert_not_awaited()
 
 
 async def test_research_fallback_shares_budget_and_displays_limit_reason():

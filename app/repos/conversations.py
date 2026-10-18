@@ -73,21 +73,26 @@ async def save_conversation(
         chat_state = await get_user_chat(user_id)
         if not chat_state:
             return None
-        result = await db_query(
-            """INSERT INTO public.conversations (user_id, title, role_type, role_id, summary, token_budget, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP) RETURNING id""",
-            (user_id, title, role_type, role_id, None, chat_state.token_count),
-        )
-        conv_id = result[0]["id"] if result else None
-        if conv_id and chat_state.history:
-            try:
-                await db_query("CALL save_chat_to_conversation($1, $2)", (user_id, conv_id))
-            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-                logging.error(
-                    "Error saving conversation messages via Procedure: %s",
-                    e,
-                    exc_info=True,
+        if not db_manager.is_connected:
+            await reconnect_database()
+
+        # The header and transcript are one save. A supplied connection keeps
+        # failed statements out of the pooled query helper's independent retries.
+        async with db_manager.pool.acquire() as conn, conn.transaction():
+            result = await db_query(
+                """INSERT INTO public.conversations (user_id, title, role_type, role_id, summary, token_budget, created_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP) RETURNING id""",
+                (user_id, title, role_type, role_id, None, chat_state.token_count),
+                conn=conn,
+            )
+            conv_id = result[0]["id"] if result else None
+            if conv_id and chat_state.history:
+                await db_query(
+                    "CALL save_chat_to_conversation($1, $2)",
+                    (user_id, conv_id),
+                    conn=conn,
                 )
+        # Transaction exit can fail too; success is visible only after it returns.
         return conv_id
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.error("Error in save_conversation: %s", e, exc_info=True)

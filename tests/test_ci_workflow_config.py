@@ -6,7 +6,6 @@ import re
 import shlex
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import yaml
@@ -104,13 +103,42 @@ def test_ci_requires_locked_browser_tests_with_chromium() -> None:
     assert "continue-on-error" not in browser_job
 
 
-def test_browser_job_selection_matches_all_discovered_browser_modules(tmp_path) -> None:
-    """Compare real pytest discovery with the effective workflow selector."""
+def test_browser_job_discovers_new_nested_and_parametrized_browser_cases(tmp_path) -> None:
+    """Execute the workflow selector on a controlled corpus with literal nodeids.
+
+    The required CI browser job separately discovers and runs the real corpus.
+    This contract must not import that entire corpus twice within a unit test.
+    """
     job = yaml.safe_load(_workflow())["jobs"]["test-browser"]
     run = next(step["run"] for step in job["steps"] if step.get("name") == "Run required browser regressions")
     command = shlex.split(run)
     assert command[:4] == ["uv", "run", "--locked", "pytest"]
-    deadline = time.monotonic() + 25
+    (tmp_path / "pytest.ini").write_text(Path("pytest.ini").read_text(encoding="utf-8"), encoding="utf-8")
+    sources = {
+        "tests/test_natal_web_report.py": (
+            "import pytest\npytestmark = pytest.mark.browser\ndef test_report(): pass\n"
+        ),
+        "tests/test_compatibility_miniapp.py": (
+            "import pytest\n"
+            "@pytest.mark.browser\n"
+            "class TestCompatibility:\n"
+            "    def test_form(self): pass\n"
+            "def test_non_browser_helper(): pass\n"
+        ),
+        "tests/future/test_unfamiliar_feature.py": (
+            "import pytest\n"
+            "@pytest.mark.browser\n"
+            "@pytest.mark.parametrize('mode', ['first', 'second'])\n"
+            "def test_new_feature(mode): pass\n"
+            "def test_plain(): pass\n"
+            "@pytest.mark.integration\n"
+            "def test_service(): pass\n"
+        ),
+    }
+    for relative_path, source in sources.items():
+        target = tmp_path / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
     (tmp_path / "ci_browser_inventory.py").write_text(
         "import json, os\n"
         "from pathlib import Path\n"
@@ -125,26 +153,25 @@ def test_browser_job_selection_matches_all_discovered_browser_modules(tmp_path) 
         "GEMAIBOT_REQUIRE_BROWSER_TESTS": "1",
         "PYTHONPATH": str(tmp_path) + os.pathsep + os.environ.get("PYTHONPATH", ""),
     }
-    inventories = iter([tmp_path / "reference.json", tmp_path / "effective.json"])
-
-    def discovered(arguments: list[str]) -> set[str]:
-        inventory = next(inventories)
-        result = subprocess.run(
-            [sys.executable, "-m", "pytest", *arguments, "--collect-only", "-q", "-p", "ci_browser_inventory"],
-            capture_output=True,
-            encoding="utf-8",
-            timeout=max(1, deadline - time.monotonic()),
-            env={**environment, "GEMAIBOT_BROWSER_INVENTORY": str(inventory)},
-            check=False,
-        )
-        assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
-        return set(json.loads(inventory.read_text(encoding="utf-8")))
-
-    reference = discovered(["tests/", "-m", "browser", "-n", "0", "--override-ini=addopts=", "--timeout=30"])
-    effective = discovered(command[4:])
-    assert reference, "a missing browser inventory must not pass the CI selection contract"
-    assert effective == reference, f"omitted={sorted(reference - effective)}, extra={sorted(effective - reference)}"
-    assert {node.split("::", 1)[0] for node in effective} == {node.split("::", 1)[0] for node in reference}
+    inventory = tmp_path / "effective.json"
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", *command[4:], "--collect-only", "-q", "-p", "ci_browser_inventory"],
+        cwd=tmp_path,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=25,
+        env={**environment, "GEMAIBOT_BROWSER_INVENTORY": str(inventory)},
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
+    effective = set(json.loads(inventory.read_text(encoding="utf-8")))
+    expected = {
+        "tests/test_natal_web_report.py::test_report",
+        "tests/test_compatibility_miniapp.py::TestCompatibility::test_form",
+        "tests/future/test_unfamiliar_feature.py::test_new_feature[first]",
+        "tests/future/test_unfamiliar_feature.py::test_new_feature[second]",
+    }
+    assert effective == expected, f"omitted={sorted(expected - effective)}, extra={sorted(effective - expected)}"
 
 
 def test_ci_gates_application_types_and_production_dependencies() -> None:

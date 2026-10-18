@@ -429,12 +429,6 @@ def _fallback_sections(chart: ChartData) -> list[ReportSection]:
     return sections
 
 
-def _planet_fact(planet, unavailable: str) -> str:
-    if planet is None:
-        return unavailable
-    return f"{unavailable}\n\n{planet.label}: {planet.sign} {planet.degree_in_sign:.1f}°."
-
-
 def _title_hints_for_chart(chart: ChartData) -> list[str]:
     hints = ["Краткое резюме — главные темы карты"]
     hints.extend(f"{title} — practical section id `{section_id}`" for section_id, title in _PRACTICAL_SECTION_HINTS)
@@ -444,10 +438,6 @@ def _title_hints_for_chart(chart: ChartData) -> list[str]:
     if chart.houses or chart.input_quality.houses_available:
         hints.append("Дома — сферы жизни")
     return hints
-
-
-def _point_title(point_key: str, fallback_label: str) -> str:
-    return _POINT_TITLE_HINTS.get(point_key.lower(), fallback_label)
 
 
 def _point_meaning_for_prompt(point_key: str) -> str:
@@ -511,13 +501,6 @@ def _planet_mentions_any_sign_alias(
             if re.search(rf"\b(?:в|во)\s+(?:знаке\s+)?{sign}\b", context):
                 return True
     return False
-
-
-def _quality_note(chart: ChartData) -> str:
-    if not chart.input_quality.warnings:
-        return ""
-    warnings = "\n".join(f"- {_redact_raw_birth_data(warning)}" for warning in chart.input_quality.warnings)
-    return f"\n\nПредупреждения качества:\n{warnings}"
 
 
 def _chart_for_prompt(chart: ChartData) -> ChartData:

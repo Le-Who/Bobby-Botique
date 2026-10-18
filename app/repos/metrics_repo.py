@@ -22,21 +22,6 @@ from app.database import (
 from app.utils.time import get_pacific_tz
 
 
-async def optimize_database_connections() -> bool:
-    if not db_manager.pool:
-        return False
-    try:
-        async with db_manager.pool.acquire() as conn:
-            await conn.execute(
-                "SET statement_timeout = '60s'; "
-                "SET idle_in_transaction_session_timeout = '30s'; "
-                "SET lock_timeout = '30s';"
-            )
-        return True
-    except asyncpg.PostgresError, asyncpg.InterfaceError:
-        return False
-
-
 async def get_supabase_metrics() -> dict[str, Any]:
     if not db_manager.pool:
         return {"status": "disconnected", "pool_size": 0, "active_connections": 0}

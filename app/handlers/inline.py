@@ -55,7 +55,7 @@ from telegram.ext import ContextTypes
 
 from app.cache import get_inline_context, store_inline_context
 from app.config import GEMINI_GROUNDING_FALLBACK_MODEL, GEMINI_GROUNDING_MODEL, settings
-from app.errors import classify_key_error, is_error_message, is_key_related_error, is_retryable_error
+from app.errors import is_error_message
 from app.i18n import t
 from app.metrics import metrics_collector
 from app.observability.content import content_fields

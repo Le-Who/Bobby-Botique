@@ -7,7 +7,6 @@ import tempfile
 from app.documents.parsers import (
     MAX_DOCUMENT_TEXT_LENGTH,
     calculate_file_hash_sync,
-    write_temp_file_sync,
 )
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -16,43 +15,6 @@ from app.documents.parsers import (
 class TestConstants:
     def test_max_document_text_length(self):
         assert MAX_DOCUMENT_TEXT_LENGTH == 100_000
-
-
-# ── write_temp_file_sync ──────────────────────────────────────────────────────
-
-
-class TestWriteTempFileSync:
-    def test_creates_file_with_correct_content(self):
-        data = b"Hello, World!"
-        path = write_temp_file_sync(data, ".txt")
-        try:
-            assert os.path.exists(path)
-            with open(path, "rb") as f:
-                assert f.read() == data
-        finally:
-            os.unlink(path)
-
-    def test_creates_file_with_correct_suffix(self):
-        path = write_temp_file_sync(b"test", ".pdf")
-        try:
-            assert path.endswith(".pdf")
-        finally:
-            os.unlink(path)
-
-    def test_empty_data(self):
-        path = write_temp_file_sync(b"", ".bin")
-        try:
-            assert os.path.getsize(path) == 0
-        finally:
-            os.unlink(path)
-
-    def test_large_data(self):
-        data = b"x" * (1024 * 1024)  # 1MB
-        path = write_temp_file_sync(data, ".dat")
-        try:
-            assert os.path.getsize(path) == 1024 * 1024
-        finally:
-            os.unlink(path)
 
 
 # ── calculate_file_hash_sync ──────────────────────────────────────────────────

@@ -11,7 +11,6 @@ Re-exports everything for backward compatibility with::
 from app.context.assembler import (  # noqa: F401
     ContextAssembler,
     get_assembler,
-    should_summarize,
 )
 
 # --- Summarizer ---

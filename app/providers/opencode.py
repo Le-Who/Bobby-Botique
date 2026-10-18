@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-import time
 from typing import Any
 
 import httpx
