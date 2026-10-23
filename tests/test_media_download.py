@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import socket
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -24,6 +25,47 @@ class _ChunkStream(httpx.AsyncByteStream):
 
 def _public_resolver() -> AsyncMock:
     return AsyncMock(return_value=("93.184.216.34",))
+
+
+@pytest.mark.asyncio
+async def test_system_resolver_preserves_distinct_ipv4_and_ipv6_addresses(monkeypatch) -> None:
+    import asyncio
+
+    from app.utils.media_download import _resolve_host
+
+    answers = [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+        (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:2800:220:1::1", 443, 0, 0)),
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+    ]
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", AsyncMock(return_value=answers))
+    assert await _resolve_host("media.example", 443) == ("93.184.216.34", "2606:2800:220:1::1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sockaddr", [(0x5DB8D822, 443), (), None])
+async def test_system_resolver_rejects_malformed_address_before_transport(monkeypatch, sockaddr) -> None:
+    import asyncio
+
+    from app.utils.media_download import MediaDownloadError, download_media
+
+    answers = [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", sockaddr),
+    ]
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", AsyncMock(return_value=answers))
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, headers={"content-type": "image/png"}, content=b"data")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(MediaDownloadError, match="dns_error"):
+            await download_media(
+                "https://media.example/image.png", allowed_mime_types={"image/png"}, max_bytes=4, client=client
+            )
+    assert requests == []
 
 
 @pytest.mark.asyncio

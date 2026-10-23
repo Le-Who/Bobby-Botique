@@ -64,10 +64,15 @@ async def _resolve_host(hostname: str, port: int) -> Sequence[str]:
     except OSError:
         raise MediaDownloadError("dns_error") from None
 
-    addresses = tuple(dict.fromkeys(result[4][0] for result in results if result[4]))
+    addresses: list[str] = []
+    for result in results:
+        sockaddr = result[4]
+        if not isinstance(sockaddr, tuple) or not sockaddr or not isinstance(sockaddr[0], str):
+            raise MediaDownloadError("dns_error")
+        addresses.append(sockaddr[0])
     if not addresses:
         raise MediaDownloadError("dns_error")
-    return addresses
+    return tuple(dict.fromkeys(addresses))
 
 
 def _is_forbidden_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
