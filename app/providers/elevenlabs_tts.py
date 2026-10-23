@@ -25,6 +25,8 @@ from typing import Final
 import httpx
 
 from app.observability.workload_events import start_workload_attempt
+from app.runtime_settings.audio import get_config
+from app.runtime_settings.lifecycle import runtime_settings_scope
 
 # ─── Public exceptions ────────────────────────────────────────────────────────
 
@@ -54,18 +56,6 @@ _OUTPUT_FORMAT: Final = "pcm_24000"
 # non-English languages (Russian, Ukrainian, etc.).  Available on all tiers.
 _DEFAULT_MODEL: Final = "eleven_multilingual_v2"
 _FLASH_MODEL: Final = "eleven_flash_v2_5"
-
-# Voice settings tuned for a warm assistant delivery (Siri/Alexa parity).
-# stability=0.50      — golden mean: expressive yet never erratic on long RU text
-# similarity_boost=0.80 — strong voice identity without amplifying EL artefacts
-# style=0.25          — light stylisation (v2+ models only)
-# use_speaker_boost=True — final clarity post-processing
-_DEFAULT_VOICE_SETTINGS: Final = {
-    "stability": 0.50,
-    "similarity_boost": 0.80,
-    "style": 0.25,
-    "use_speaker_boost": True,
-}
 
 # HTTP timeouts: connect fast, allow up to 90 s for speech generation.
 _HTTP_TIMEOUT: Final = httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=5.0)
@@ -115,6 +105,7 @@ def _clean_text_for_elevenlabs(text: str) -> str:
 # ─── Core generation ─────────────────────────────────────────────────────────
 
 
+@runtime_settings_scope()
 async def generate_speech_elevenlabs(
     text: str,
     api_key: str,
@@ -163,15 +154,16 @@ async def generate_speech_elevenlabs(
         has_next_context=next_text is not None,
     )
 
+    audio_config = await get_config("elevenlabs")
     endpoint = _TTS_ENDPOINT.format(voice_id=voice_id)
     payload: dict[str, object] = {
         "text": text,
         "model_id": model_id,
-        "voice_settings": _DEFAULT_VOICE_SETTINGS,
+        "voice_settings": audio_config["voice_settings"],
         # Text normalisation: let EL convert dates / numbers to natural speech.
         # Our _clean_text_for_speech() already strips code blocks, so the risk of
         # misreading inline code is negligible.
-        "apply_text_normalization": "on",
+        "apply_text_normalization": audio_config["apply_text_normalization"],
     }
     # Request Stitching: only include when non-None to avoid sending empty strings
     # that could confuse the model into producing extra breath/pause artefacts.

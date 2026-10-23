@@ -764,7 +764,7 @@ async def _complete_regular_chat_response(
             chat_id=chat_id,
             reply_to_message_id=final_ref.message_id,
             response_text=response_text,
-            voice=chat_state.voice_id or "Aoede",
+            voice=chat_state.voice_id or "",
             tts_temperature=chat_state.tts_temperature,
             source_key=build_voice_source_key("chat_tts", chat_id, final_ref.message_id),
             expected_epoch=request_epoch,

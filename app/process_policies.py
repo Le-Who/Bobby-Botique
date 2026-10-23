@@ -152,7 +152,7 @@ PROCESSES: dict[str, ProcessSpec] = {
         "gemini-3.1-flash-tts-preview",
         ("audio_output",),
         True,
-        note="Gemini-цепочка после ElevenLabs, если он настроен.",
+        note="Цепочка моделей Gemini TTS. Порядок провайдеров задаёт tts.delivery; голоса и параметры — раздел «Голоса и TTS».",
     ),
     "asr": ProcessSpec("Распознавание речи: Gemini", "Аудио", "", "gemini-3.1-flash-lite", ("audio_input",), True),
     "image.gemini": ProcessSpec(

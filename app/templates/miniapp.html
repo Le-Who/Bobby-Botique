@@ -1111,15 +1111,32 @@ function renderSettings(d, r, v) {
   syncTtsTempControls(settingsData.tts_temperature);
   
   // Voices
-  let vHtml = '';
-  (v.voices || []).forEach(voice => {
-    let isActive = settingsData.voice_id === voice.id || (!settingsData.voice_id && voice.name.includes("Charlotte"));
-    vHtml += `<div class="setting-row" onclick="setVoice('${voice.id}')">
-      <div class="setting-label">${esc(voice.name)}</div>
-      <div class="setting-val">${isActive ? '✓' : ''}</div>
-    </div>`;
+  const voices = v.voices || [];
+  if (!voices.some(voice => voice.id === settingsData.voice_id)) settingsData.voice_id = null;
+  const activeVoice = settingsData.voice_id || v.default_voice;
+  const voiceList = document.getElementById('settings-voices-list');
+  voiceList.replaceChildren();
+  voices.forEach(voice => {
+    const row = document.createElement('div');
+    row.className = 'setting-row';
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    const label = document.createElement('div');
+    label.className = 'setting-label';
+    label.textContent = voice.name;
+    const selected = document.createElement('div');
+    selected.className = 'setting-val';
+    selected.textContent = voice.id === activeVoice ? '✓' : '';
+    row.append(label, selected);
+    row.addEventListener('click', () => setVoice(voice.id, row));
+    row.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        setVoice(voice.id, row);
+      }
+    });
+    voiceList.appendChild(row);
   });
-  document.getElementById('settings-voices-list').innerHTML = vHtml;
 }
 
 async function loadSettings() {
@@ -1249,12 +1266,12 @@ function setRole(prompt, el) {
   markDirty();
 }
 
-function setVoice(vid) {
+function setVoice(vid, row) {
   if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
   settingsData.voice_id = vid;
   const rows = document.querySelectorAll('#settings-voices-list .setting-row');
   rows.forEach(r => r.querySelector('.setting-val').textContent = '');
-  event.currentTarget.querySelector('.setting-val').textContent = '✓';
+  row.querySelector('.setting-val').textContent = '✓';
   markDirty();
 }
 
