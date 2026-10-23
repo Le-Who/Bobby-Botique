@@ -7,10 +7,10 @@ This guide owns reproducible setup, checks and service isolation; the
 
 ## Reproducible setup
 
-The project requires Python `>=3.14,<3.15` and uv `==0.12.18`:
+The project requires Python `>=3.14,<3.15` and uv `==0.13.5`:
 
 ```bash
-python -m pip install "uv==0.12.18"
+python -m pip install "uv==0.13.5"
 uv --version
 uv sync --locked
 ```

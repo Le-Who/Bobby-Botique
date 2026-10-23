@@ -684,7 +684,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                                 chat_id=chat_id,
                                 reply_to_message_id=direct_reply.message_id,
                                 response_text=intent_result.text,
-                                voice=chat_state.voice_id or "Aoede",
+                                voice=chat_state.voice_id or "",
                                 tts_temperature=chat_state.tts_temperature,
                                 source_key=build_voice_source_key(
                                     "direct_intent_tts", chat_id, direct_reply.message_id
