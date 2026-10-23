@@ -153,6 +153,70 @@ async def test_limit_override_none_survives_cache_and_reset_restores_prior_limit
 
 
 @pytest.mark.asyncio
+async def test_limit_inventory_batches_cold_models_and_preserves_precedence(controls, monkeypatch):
+    from app.repos import keys
+
+    backend, settings = controls
+    settings.AVAILABLE_MODELS = ["gemini-db-a", "gemini-db-b", "gemini-env", "gemini-cache", "gemini-admin"]
+    settings.DAILY_LIMITS = {"gemini-env": 30, "gemini-admin": 50}
+    backend.values["model_limit:gemini-admin"] = None
+    monkeypatch.setattr(keys.db_manager, "_model_config_cache", {"gemini-cache": None})
+    monkeypatch.setattr("app.process_policies.PROCESSES", {})
+    reads = []
+
+    async def query(sql, params):
+        reads.append(params)
+        rows = [{"model_name": "gemini-db-a", "daily_limit": 21}, {"model_name": "gemini-db-b", "daily_limit": 22}]
+        return rows if isinstance(params[0], list) else [row for row in rows if row["model_name"] == params[0]]
+
+    monkeypatch.setattr(keys, "db_query", query)
+
+    rows = await models.list_limits()
+
+    assert {row["model"]: row["limit"] for row in rows} == {
+        "gemini-admin": None,
+        "gemini-cache": None,
+        "gemini-db-a": 21,
+        "gemini-db-b": 22,
+        "gemini-env": 30,
+    }
+    assert len(reads) == 1, "A cold inventory must use one quota query, regardless of model count"
+
+
+@pytest.mark.asyncio
+async def test_limit_inventory_reuses_process_rows_with_inherited_baseline(controls, monkeypatch):
+    from app.repos import keys
+
+    backend, settings = controls
+    settings.AVAILABLE_MODELS = []
+    settings.DAILY_LIMITS = {}
+    monkeypatch.setattr(keys.db_manager, "_model_config_cache", {"gemini-selected": 10, "gemini-inherited": 20})
+
+    async def unexpected_baseline(process_id):
+        raise AssertionError("The process inventory already resolved this baseline")
+
+    monkeypatch.setattr("app.process_policies.baseline_models", unexpected_baseline)
+
+    rows = await models.list_limits(
+        snapshot=await backend.get_snapshot(),
+        processes=[
+            {
+                "models": ["gemini-selected"],
+                "baseline_models": ["gemini-inherited"],
+                "inherit_user_model": True,
+                "capabilities": ["text"],
+            },
+            {"models": ["gemini-test-live"], "capabilities": ["live"]},
+        ],
+    )
+
+    assert [(row["model"], row["limit"]) for row in rows] == [
+        ("gemini-inherited", 20),
+        ("gemini-selected", 10),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_telegram_add_uses_same_catalog_key(controls, monkeypatch):
     from app.repos import models_repo
 

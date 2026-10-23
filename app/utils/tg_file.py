@@ -8,6 +8,7 @@ In cloud mode (default): falls back to the standard download_as_bytearray()
 network call via api.telegram.org.
 """
 
+import asyncio
 import logging
 from pathlib import Path, PurePosixPath
 
@@ -35,6 +36,20 @@ def _extract_local_path(file_path: str) -> str | None:
     return None
 
 
+def _read_local_file(local_path: Path) -> bytes | None:
+    """Read a shared-volume file off-loop and cap bytes even if it grows."""
+    if not local_path.is_file():
+        return None
+    if local_path.stat().st_size > MAX_TELEGRAM_FILE_BYTES:
+        raise ValueError("Telegram file is too large")
+    with local_path.open("rb") as source:
+        content = source.read(MAX_TELEGRAM_FILE_BYTES + 1)
+    if len(content) > MAX_TELEGRAM_FILE_BYTES:
+        raise ValueError("Telegram file is too large")
+    logging.debug("get_file_bytes: local read (%d bytes)", len(content))
+    return content
+
+
 async def get_file_bytes(bot: Bot, tg_file: File) -> bytes:
     """Return raw bytes for a Telegram File object.
 
@@ -55,13 +70,11 @@ async def get_file_bytes(bot: Bot, tg_file: File) -> bytes:
     if getattr(bot, "local_mode", False) and tg_file.file_path:
         local_path_str = _extract_local_path(tg_file.file_path)
         if local_path_str:
-            local_path = Path(local_path_str)
-            if local_path.is_file():
-                size = local_path.stat().st_size
-                if size > MAX_TELEGRAM_FILE_BYTES:
-                    raise ValueError("Telegram file is too large")
-                logging.debug("get_file_bytes: local read (%d bytes)", size)
-                return local_path.read_bytes()
+            # Shared-volume metadata and reads can stall on disk; keep that
+            # latency out of the event loop serving all Telegram/web requests.
+            content = await asyncio.to_thread(_read_local_file, Path(local_path_str))
+            if content is not None:
+                return content
 
             # Volume not mounted in this container — fetch from local Bot API server via HTTP.
             # PTB's base_file_url in local_mode = "http://tg-api:8081/file/bot{TOKEN}"

@@ -27,18 +27,18 @@ async def get_supabase_metrics() -> dict[str, Any]:
         return {"status": "disconnected", "pool_size": 0, "active_connections": 0}
     try:
         pool = db_manager.pool
-        pool_size = getattr(pool, "_size", 0)
-        free_size = getattr(pool, "_free_size", 0)
+        pool_size = pool.get_size()
+        free_size = pool.get_idle_size()
         pool_stats = {
             "status": "connected" if not db_manager._is_pool_closed() else "closed",
             "pool_size": pool_size,
             "free_size": free_size,
             "active_connections": pool_size - free_size,
         }
-        start_time = time.time()
+        start_time = time.monotonic()
         async with pool.acquire() as conn:
             await conn.execute("SELECT 1")
-            response_time = time.time() - start_time
+            response_time = time.monotonic() - start_time
             pool_stats.update(
                 {
                     "response_time_ms": round(response_time * 1000, 2),
@@ -46,10 +46,10 @@ async def get_supabase_metrics() -> dict[str, Any]:
                 }
             )
         return pool_stats
-    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
+    except asyncpg.PostgresError, asyncpg.InterfaceError:
         return {
             "status": "error",
-            "error": str(e),
+            "error": "database_unavailable",
             "pool_size": 0,
             "active_connections": 0,
         }
@@ -212,20 +212,29 @@ async def get_gemini_key_usage_stats(
         if override_key in snapshot.values:
             limit = validate_limit(actual_model, snapshot.values[override_key])
             source = "admin"
+        elif actual_model in db_manager._model_config_cache:
+            limit = db_manager._model_config_cache[actual_model]
+            source = "database/env"
         else:
-            limit = db_manager._model_config_cache.get(actual_model, row.get("daily_limit"))
+            limit = row.get("daily_limit")
             if limit is None:
                 limit = getattr(settings, "DAILY_LIMITS", {}).get(actual_model)
             source = "database/env"
         limit = limit or None
         used = row.get("request_count") or 0
+        admission_limit = max(1, int(limit * settings.LIMIT_THRESHOLD_PERCENT)) if limit else None
         row.update(
             model_name=actual_model,
             daily_limit=limit,
             usage_percent=used / limit * 100 if limit else 0,
-            is_available=limit is None or used < max(1, int(limit * settings.LIMIT_THRESHOLD_PERCENT)),
+            is_available=admission_limit is None or used < admission_limit,
+            admission_limit=admission_limit,
             limit_source=source,
             availability_scope="local_rpd",
+            usage_date=today_pacific.isoformat(),
+            usage_timezone="America/Los_Angeles",
+            settings_revision=snapshot.revision,
+            settings_degraded=snapshot.degraded,
         )
         rows.append(row)
     return rows

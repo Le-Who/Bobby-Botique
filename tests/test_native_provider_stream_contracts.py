@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from app.errors import ErrorCode, extract_error_code
+from app.metrics import MetricsCollector
 from app.providers import gemini, openrouter
 from app.providers.base import get_provider_for_model
 from app.providers.stream_types import (
@@ -109,9 +110,12 @@ def install_native(monkeypatch, kind, items, *, block=False):
         "gemini": "gemini-3.5-flash",
         "openrouter": "org/model",
         "opencode": "opencode-go/minimax-m2.7",
+        "opencode_chat": "opencode-go/glm-5",
+        "freetheai": "cat/unlisted-chat-model",
+        "vertex": "gemini-3.1-flash-lite",
     }
     model = models[kind]
-    if kind == "gemini":
+    if kind in {"gemini", "vertex"}:
         stream = NativeStream(items, block=block)
 
         async def generate_content_stream(**_kwargs):
@@ -121,12 +125,102 @@ def install_native(monkeypatch, kind, items, *, block=False):
             aio=SimpleNamespace(models=SimpleNamespace(generate_content_stream=generate_content_stream))
         )
         monkeypatch.setattr(gemini, "get_cached_genai_client", lambda _key: client)
-        provider = get_provider_for_model(model, "synthetic-native-key")
+        monkeypatch.setattr(gemini, "get_vertex_client", lambda: client)
+        provider = get_provider_for_model(model, "vertex" if kind == "vertex" else "synthetic-native-key")
     else:
         stream = HttpStream(items, block=block)
         monkeypatch.setattr(openrouter, "_openrouter_http_client", stream)
         provider = get_provider_for_model(model, "synthetic-native-key")
     return provider, stream, request_for(model), model
+
+
+def drain_metrics(collector):
+    while not collector._events_queue.empty():
+        collector._process_event(collector._events_queue.get_nowait())
+        collector._events_queue.task_done()
+
+
+@pytest.mark.parametrize("kind", ["gemini", "vertex", "openrouter", "opencode", "opencode_chat", "freetheai"])
+@pytest.mark.parametrize("outcome", ["success", "failure", "cancellation"])
+async def test_native_attempt_metrics_count_transport_once_even_on_failure_or_cancellation(monkeypatch, kind, outcome):
+    collector = MetricsCollector()
+    monkeypatch.setattr(gemini, "metrics_collector", collector)
+    monkeypatch.setattr(openrouter, "metrics_collector", collector)
+    sdk = kind in {"gemini", "vertex"}
+    items = [sdk_chunk("answer")] if sdk else text_frame(kind, "answer")
+    if outcome == "failure":
+        items = [httpx.ReadError("synthetic transport failure")]
+    elif outcome == "cancellation":
+        items = []
+    provider, stream, request, model = install_native(monkeypatch, kind, items, block=outcome == "cancellation")
+
+    async def consume():
+        return [event async for event in provider.stream(request, model_name=model)]
+
+    if outcome == "cancellation":
+        task = asyncio.create_task(consume())
+        waiting = stream.waiting if sdk else stream.lines.waiting
+        try:
+            await asyncio.wait_for(waiting.wait(), 2)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    else:
+        events = await consume()
+        assert isinstance(events[-1], StreamCompleted if outcome == "success" else StreamFailed)
+
+    drain_metrics(collector)
+    assert collector.metrics.api_calls == {provider.provider_name: 1}
+    assert collector.metrics.model_usage == {model: 1}
+    assert len(collector.api_event_log) == 1
+    assert dict(collector._user_daily) == {}
+    assert stream.closed is True
+
+
+@pytest.mark.parametrize("kind", ["gemini", "vertex", "openrouter", "opencode", "opencode_chat", "freetheai"])
+@pytest.mark.parametrize("valid", [True, False], ids=["transport-attempt", "local-rejection"])
+async def test_legacy_metrics_use_actual_provider_and_exclude_local_rejections(monkeypatch, kind, valid):
+    collector = MetricsCollector()
+    monkeypatch.setattr(gemini, "metrics_collector", collector)
+    monkeypatch.setattr(openrouter, "metrics_collector", collector)
+    provider, _stream, _request, model = install_native(monkeypatch, kind, [])
+    transport_calls = []
+
+    async def generate_content(**kwargs):
+        transport_calls.append(model)
+        return SimpleNamespace(text="answer", usage_metadata=SimpleNamespace(total_token_count=3))
+
+    provider._client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_content)))
+
+    class Transport:
+        async def post(self, url, **kwargs):
+            transport_calls.append(model)
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": "answer"}}],
+                    "content": [{"type": "text", "text": "answer"}],
+                    "usage": {"total_tokens": 3, "input_tokens": 1, "output_tokens": 2},
+                },
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr(openrouter, "_openrouter_http_client", Transport())
+    response = await provider._execute_request(
+        history=[{"role": "user", "parts": ["hello"] if valid else []}],
+        model_name=model,
+        system_instruction=None,
+        user_id=None,
+        chat_id=None,
+        timeout=1,
+    )
+
+    drain_metrics(collector)
+    assert response.success is valid
+    assert transport_calls == ([model] if valid else [])
+    assert collector.metrics.api_calls == ({provider.provider_name: 1} if valid else {})
+    assert collector.metrics.model_usage == ({model: 1} if valid else {})
 
 
 @pytest.mark.asyncio

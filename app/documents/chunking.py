@@ -12,16 +12,18 @@ Three strategies:
   and returns the best chunks that fit within the token budget.
 """
 
+import math
 import re
 from dataclasses import dataclass
 
 # Approximate characters per token for mixed Cyrillic/Latin text
 _CHARS_PER_TOKEN = 3.5
+_QUERY_WORD_RE = re.compile(r"\w{3,}")
 
 
 def _estimate_tokens(text: str) -> int:
     """Fast token estimate without calling a tokenizer."""
-    return int(len(text) / _CHARS_PER_TOKEN)
+    return math.ceil(len(text) / _CHARS_PER_TOKEN)
 
 
 # ── Recursive chunking ──────────────────────────────────────────────────
@@ -36,6 +38,10 @@ def recursive_chunk(
 
     Returns chunks with ~15% overlap for context continuity.
     """
+    if max_tokens <= 0:
+        raise ValueError("max_tokens must be positive")
+    if not 0 <= overlap_ratio < 1:
+        raise ValueError("overlap_ratio must be between 0 (inclusive) and 1 (exclusive)")
     if not text or not text.strip():
         return []
 
@@ -149,16 +155,14 @@ def hierarchical_chunk(
 
 def _score_chunk(chunk: str, query: str) -> float:
     """Simple keyword overlap score. Returns 0.0 to 1.0."""
-    if not query or not query.strip():
-        return 0.5  # No query → equal relevance for all chunks
+    return _score_chunk_words(chunk, set(_QUERY_WORD_RE.findall(query.lower())))
 
-    # Normalize
-    chunk_lower = chunk.lower()
-    query_words = set(re.findall(r"\w{3,}", query.lower()))  # 3+ char words
 
+def _score_chunk_words(chunk: str, query_words: set[str]) -> float:
     if not query_words:
         return 0.5
 
+    chunk_lower = chunk.lower()
     # Count matches
     matches = sum(1 for w in query_words if w in chunk_lower)
     return matches / len(query_words)
@@ -178,6 +182,10 @@ def chunk_for_context(
     For short documents (< max_context_tokens), returns the full text.
     For long documents, uses hierarchical chunking + relevance scoring.
     """
+    if max_context_tokens < 0:
+        raise ValueError("max_context_tokens must not be negative")
+    if max_context_tokens == 0:
+        return ""
     if not text or not text.strip():
         return ""
 
@@ -197,13 +205,15 @@ def chunk_for_context(
         return text[:max_chars].strip()
 
     # Score each parent by best child score
+    # Normalize once per request instead of reparsing the query for every child.
+    query_words = set(_QUERY_WORD_RE.findall(query.lower()))
     scored: list[tuple[float, HierarchicalChunk]] = []
     for hc in h_chunks:
         if not query:
             # No query: use sequential order (score by position, first chunks higher)
             scored.append((0.5, hc))
         else:
-            best_child_score = max(_score_chunk(c, query) for c in hc.children) if hc.children else 0.0
+            best_child_score = max(_score_chunk_words(c, query_words) for c in hc.children) if hc.children else 0.0
             scored.append((best_child_score, hc))
 
     # Sort by score (highest first), then original order for ties
@@ -216,10 +226,17 @@ def chunk_for_context(
 
     for _score, hc in scored:
         parent_len = len(hc.parent)
-        if chars_used + parent_len + 10 > max_chars:  # +10 for separator
-            break
+        separator_len = 2 if selected else 0
+        if chars_used + parent_len + separator_len > max_chars:
+            if not selected:
+                # Preserve the strongest match when even it needs truncation;
+                # an unrelated short tail must not displace it entirely.
+                selected.append(hc.parent[:max_chars])
+                break
+            # A smaller later chunk may still fit the remaining context budget.
+            continue
         selected.append(hc.parent)
-        chars_used += parent_len + 2  # \n\n separator
+        chars_used += parent_len + separator_len
 
     if not selected:
         # At least include a truncated version of the top chunk

@@ -671,6 +671,8 @@ async def api_memory():
 # BATCH DASHBOARD ENDPOINT — 1 RTT instead of 8
 # =============================================================================
 
+_DASHBOARD_SOURCE_TIMEOUT = 5.0
+
 
 def _sample_system_metrics() -> dict:
     """Sample CPU and host I/O in a worker, away from the HTTP event loop."""
@@ -689,13 +691,21 @@ def _sample_system_metrics() -> dict:
 async def _safe_fetch(name: str, coro):
     """Run a coroutine and return (name, result) or (name, error_dict)."""
     try:
-        return name, await coro
+        # One stalled dependency must not hide healthy sections or leave work
+        # running after the browser's ten-second request deadline.
+        async with asyncio.timeout(_DASHBOARD_SOURCE_TIMEOUT):
+            return name, await coro
+    except TimeoutError:
+        logging.warning("Dashboard batch: %s timed out", name)
+        return name, {"error": "source_timeout"}
     except Exception as e:
-        logging.warning("Dashboard batch: %s failed: %s", name, e)
-        return name, {"error": str(e)}
+        logging.warning("Dashboard batch: %s failed (%s)", name, type(e).__name__)
+        return name, {"error": "source_unavailable"}
 
 
 def _dashboard_source(raw: dict, name: str, default):
+    if name not in raw:
+        return default, False, "source_unavailable"
     value = raw.get(name, default)
     if isinstance(value, dict) and value.get("error"):
         return default, False, str(value["error"])
@@ -779,8 +789,10 @@ def _assemble_dashboard_snapshot(
             "services": {
                 "database": db_metrics.get(
                     "status", "connected" if database.is_database_connected() else "disconnected"
-                ),
-                "redis": "connected" if redis_available and redis_ping else "disconnected",
+                )
+                if db_available
+                else "unknown",
+                "redis": ("connected" if redis_ping else "disconnected") if redis_available else "unknown",
                 "bot": "running",
             },
         },
@@ -908,8 +920,8 @@ async def api_key_health():
             }
         )
     except Exception as e:
-        logging.warning("Key health endpoint error: %s", e)
-        return jsonify({"error": str(e)}), 500
+        logging.warning("Key health endpoint error (%s)", type(e).__name__)
+        return jsonify({"error": "source_unavailable"}), 500
 
 
 # ── SSE live updates ─────────────────────────────────────────────────────────
@@ -936,10 +948,9 @@ async def api_events():
                         "cpu_percent": psutil.cpu_percent(interval=0),
                         "memory_percent": psutil.virtual_memory().percent,
                     },
-                    "services": {
-                        "database": "connected" if database.is_database_connected() else "disconnected",
-                    },
                 }
+                # The canonical snapshot owns probed service health. A local
+                # open pool is not evidence that SELECT 1 or a provider works.
 
                 # Queue stats (cheap)
                 try:
@@ -966,8 +977,8 @@ async def api_events():
 
                 yield f"data: {json.dumps(payload)}\n\n"
             except Exception as e:
-                logging.warning("SSE event generation error: %s", e)
-                yield f'data: {{"error": "{e}"}}\n\n'
+                logging.warning("SSE event generation error (%s)", type(e).__name__)
+                yield f"data: {json.dumps({'error': 'source_unavailable'})}\n\n"
 
             await asyncio.sleep(5)
 

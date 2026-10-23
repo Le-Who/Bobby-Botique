@@ -100,6 +100,9 @@ class FakeAgentRequestUseCase:
             raise response
         return response
 
+    async def resolve_exact_ai_request(self, model_name: str, *, excluded_key_hashes: set[str] | None = None):
+        return await self.resolve_ai_request(model_name, excluded_key_hashes=excluded_key_hashes)
+
     async def increment_key_usage(self, key_hash: str, model_name: str, use_openrouter: bool = False) -> None:
         self.usages_incremented.append(key_hash)
 
@@ -113,6 +116,52 @@ def _typed_request(model: str = "gemini-3.5-flash") -> GenerationRequest:
         models=(model,),
         turns=(PromptTurn(PromptRole.USER, (TextPart("hi"),)),),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "disposition,category",
+    [(KeyDisposition.EXHAUSTED, "quota"), (KeyDisposition.INVALID, "permanent")],
+)
+async def test_key_race_persists_known_loser_failure_when_sibling_succeeds(disposition, category):
+    model = "gemini-3.5-flash"
+    status = FakeKeyStatusManager()
+    use_case = FakeAgentRequestUseCase(
+        [({"api_key": key, "key_hash": key}, model, None) for key in ("failed", "winner")], []
+    )
+    failed = asyncio.Event()
+
+    class Provider:
+        provider_name = "gemini"
+
+        def __init__(self, key):
+            self.key = key
+
+        async def stream(self, request, *, model_name):
+            if self.key == "failed":
+                yield StreamFailed(
+                    code=ErrorCode.QUOTA_EXCEEDED,
+                    phase=FailurePhase.BEFORE_TEXT,
+                    retry=RetryDisposition.TRY_NEXT_KEY,
+                    key=disposition,
+                    diagnostic="synthetic known key failure",
+                )
+                failed.set()
+            else:
+                await failed.wait()
+                yield TextDelta("winner answer")
+                yield _completion(model_name, 7)
+
+    with (
+        patch("app.agent_use_cases.AgentRequestUseCase", return_value=use_case),
+        patch("app.repos.keys.get_key_status_manager", return_value=status),
+        patch("app.providers.base.get_provider_for_model", side_effect=lambda model, key: Provider(key)),
+    ):
+        events = [event async for event in ProviderRouter().stream(_typed_request())]
+
+    assert events == [TextDelta("winner answer"), _completion(model, 7)]
+    assert status.suspended_keys == {"failed": {"category": category, "error_text": "synthetic known key failure"}}
+    assert status.successful_keys == ["winner"]
 
 
 def _completion(model: str, total: int) -> StreamCompleted:

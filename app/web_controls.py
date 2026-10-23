@@ -195,15 +195,17 @@ def register_controls(app, require_auth) -> None:
             await asyncio.to_thread(load_controlled_prompts)
             snapshot, history = await get_state(force=True)
             async with runtime_settings_scope(snapshot):
+                catalogs = await models.list_catalogs(snapshot=snapshot)
+                processes = await list_processes()
                 return jsonify(
                     revision=snapshot.revision,
                     degraded=snapshot.degraded,
                     csrf_token=_csrf(),
-                    processes=await list_processes(),
+                    processes=processes,
                     prompts=await prompts.list_prompts(),
-                    catalogs=await models.list_catalogs(snapshot=snapshot),
+                    catalogs=catalogs,
                     audio=await audio.list_audio_configs(snapshot=snapshot),
-                    limits=await models.list_limits(snapshot=snapshot),
+                    limits=await models.list_limits(snapshot=snapshot, processes=processes),
                     commands=command_alias_inventory(bot_instance.get_application(), snapshot),
                     history=[
                         {**row, "created_at": row.get("at"), "changed_key": ", ".join(row.get("changed_keys", []))}

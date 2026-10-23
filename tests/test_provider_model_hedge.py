@@ -51,6 +51,9 @@ class ModelKeys:
             return None, None, "all_exhausted"
         return {"api_key": key_hash, "key_hash": key_hash}, preferred_model, None
 
+    async def resolve_exact_ai_request(self, preferred_model, *, excluded_key_hashes):
+        return await self.resolve_ai_request(preferred_model, excluded_key_hashes=excluded_key_hashes)
+
     async def reserve_key_usage(self, key_hash, model_name, _use_openrouter):
         return True
 
@@ -265,6 +268,9 @@ async def test_key_race_first_text_deadline_does_not_reset_after_one_key_fails(m
                 if key not in excluded_key_hashes:
                     return {"api_key": key, "key_hash": key}, preferred_model, None
             return None, None, "all_exhausted"
+
+        async def resolve_exact_ai_request(self, preferred_model, *, excluded_key_hashes):
+            return await self.resolve_ai_request(preferred_model, excluded_key_hashes=excluded_key_hashes)
 
         async def reserve_key_usage(self, key_hash, model_name, _use_openrouter):
             return True

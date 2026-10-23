@@ -840,3 +840,13 @@ body {
   .card-value, .card-bar-fill { transition: none; }
 }
 
+.provider-intro { display:flex; justify-content:space-between; align-items:center; gap:1.5rem; margin-bottom:1.5rem; }
+.provider-intro h1 { font-size:1.65rem; margin-bottom:.5rem; }
+.provider-intro p { font-size:.85rem; line-height:1.6; color:var(--text-muted); max-width:65ch; }
+.provider-intro a { color:#67d4e8; font-size:.85rem; }
+.provider-reset { padding:.8rem 1.2rem; }
+.provider-reset-items { display:flex; justify-content:space-between; gap:1rem; flex-wrap:wrap; font-size:.78rem; line-height:1.6; }
+.tag-neutral { background:#94a3b81a; color:#c1cddd; }
+.section-description { max-width:80ch; margin:0 0 1rem; color:var(--text-muted); font-size:.85rem; line-height:1.65; }
+@media (max-width:560px) { .provider-intro { align-items:start; flex-direction:column; gap:.75rem; } }
+

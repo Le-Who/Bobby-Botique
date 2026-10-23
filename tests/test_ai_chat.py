@@ -162,6 +162,35 @@ async def test_successful_chat_response_appended_to_history(mock_boundaries):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("succeeded", [True, False])
+async def test_chat_completion_credits_only_a_visible_user_model_response(mock_boundaries, monkeypatch, succeeded):
+    from datetime import date
+
+    from app import metrics
+    from tests.test_metrics_accounting import drain_events
+
+    collector = metrics.MetricsCollector()
+    monkeypatch.setattr(metrics, "metrics_collector", collector)
+    await collector.record_api_call("gemini", "gemini-3.1-flash-lite")
+    if not succeeded:
+        mock_boundaries["delivery"].stream.return_value = FailedDelivery(
+            error_code=ErrorCode.EMPTY_RESPONSE, displayed_text="No response", receipt=_receipt()
+        )
+    placeholder = make_telegram_message(user_id=123)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
+
+    await _handle_regular_chat(placeholder, 123, "Hi", make_chat_state(ltm_enabled=False))
+    drain_events(collector)
+
+    assert collector.metrics.api_calls == {"gemini": 1}
+    assert collector.metrics.model_usage == {"gemini-3.1-flash-lite": 1}
+    user = collector._user_daily[date.today().isoformat()][123]
+    assert user["model_usage"] == ({"gemini-3.1-flash-lite": 1} if succeeded else {})
+    assert user["request_count"] == 0, "The message owner records per-user requests"
+
+
+@pytest.mark.asyncio
 async def test_chat_keeps_private_lease_through_post_stream_side_effects(mock_boundaries):
     """Derived private output must remain leased through voice and persistence."""
     placeholder = make_telegram_message(user_id=123)

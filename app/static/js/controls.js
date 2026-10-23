@@ -897,6 +897,7 @@
     });
     renderHistory(Array.isArray(data.history) ? data.history : []);
     renderCommands();
+    document.dispatchEvent(new CustomEvent("controls:snapshot", { detail: data }));
     filterCards("process");
     filterCards("prompt");
     if (focusedCard && focusIndex >= 0) {
@@ -928,6 +929,10 @@
   byId("command-kind").addEventListener("change", () => filterCards("command"));
 
   byId("refresh").addEventListener("click", load);
+  document.addEventListener("controls:request-snapshot", () => {
+    const data = drafts.getSnapshot();
+    if (data) document.dispatchEvent(new CustomEvent("controls:snapshot", { detail: data }));
+  });
   window.addEventListener("beforeunload", event => {
     if (!drafts.count() && !busy && !needsRefresh) return;
     event.preventDefault();

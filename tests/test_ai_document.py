@@ -1,6 +1,7 @@
 """Tests for app.handlers.ai_document — document question handling."""
 
 from contextlib import asynccontextmanager
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,6 +9,7 @@ import pytest
 
 import app.config as config
 from app.errors import ErrorCode
+from app.metrics import MetricsCollector
 from app.providers.stream_types import (
     FinishReason,
     GroundingReport,
@@ -22,6 +24,7 @@ from app.response_delivery.renderer import (
     DeliveryReceipt,
     TelegramMessageRef,
 )
+from tests.test_metrics_accounting import drain_events
 
 
 def _receipt() -> DeliveryReceipt:
@@ -260,7 +263,7 @@ async def test_document_question_holds_exact_epoch_lease_through_private_deliver
         ),
         patch("app.handlers.ai_document.metrics_collector") as mock_metrics,
     ):
-        mock_metrics.record_api_call = AsyncMock()
+        mock_metrics.record_model_response = AsyncMock()
 
         from app.handlers.ai_document import _handle_document_question
 
@@ -333,6 +336,8 @@ async def test_document_question_success():
     """Successfully answers through the typed response-delivery boundary."""
     placeholder = make_placeholder()
     chat_state = make_chat_state()
+    collector = MetricsCollector()
+    await collector.record_api_call("gemini", "gemini-3.1-flash-lite")
     delivery = MagicMock()
     delivery.stream = AsyncMock(
         return_value=CompleteDelivery(
@@ -360,10 +365,8 @@ async def test_document_question_success():
             "app.response_delivery.delivery.get_telegram_response_delivery",
             return_value=delivery,
         ),
-        patch("app.handlers.ai_document.metrics_collector") as mock_metrics,
+        patch("app.handlers.ai_document.metrics_collector", collector),
     ):
-        mock_metrics.record_api_call = AsyncMock()
-
         from app.handlers.ai_document import _handle_document_question
 
         await _handle_document_question(placeholder, 123, "What is Python?", chat_state)
@@ -380,7 +383,10 @@ async def test_document_question_success():
         "🎭 Выбрать роль ИИ",
         "✨ Начать новую тему",
     ]
-    mock_metrics.record_api_call.assert_awaited_once_with("document_question", "gemini-3.1-flash-lite")
+    drain_events(collector)
+    assert collector.metrics.api_calls == {"gemini": 1}
+    assert collector.metrics.model_usage == {"gemini-3.1-flash-lite": 1}
+    assert collector._user_daily[date.today().isoformat()][123]["model_usage"] == {"gemini-3.1-flash-lite": 1}
 
 
 # ── No documents uploaded ─────────────────────────────────────────────────────
@@ -486,6 +492,8 @@ async def test_document_question_records_actual_routed_model():
     """Metrics use the exact model reported by the typed route terminal."""
     placeholder = make_placeholder()
     chat_state = make_chat_state()
+    collector = MetricsCollector()
+    await collector.record_api_call("opencode", "opencode-go/qwen3.5-plus")
 
     delivery = MagicMock()
     delivery.stream = AsyncMock(
@@ -514,15 +522,16 @@ async def test_document_question_records_actual_routed_model():
             "app.response_delivery.delivery.get_telegram_response_delivery",
             return_value=delivery,
         ),
-        patch("app.handlers.ai_document.metrics_collector") as mock_metrics,
+        patch("app.handlers.ai_document.metrics_collector", collector),
     ):
-        mock_metrics.record_api_call = AsyncMock()
-
         from app.handlers.ai_document import _handle_document_question
 
         await _handle_document_question(placeholder, 123, "Question", chat_state)
 
-    mock_metrics.record_api_call.assert_awaited_once_with("document_question", "opencode-go/qwen3.5-plus")
+    drain_events(collector)
+    assert collector.metrics.api_calls == {"opencode": 1}
+    assert collector.metrics.model_usage == {"opencode-go/qwen3.5-plus": 1}
+    assert collector._user_daily[date.today().isoformat()][123]["model_usage"] == {"opencode-go/qwen3.5-plus": 1}
 
 
 # ── Exception during processing ───────────────────────────────────────────────

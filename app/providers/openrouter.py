@@ -125,6 +125,7 @@ class OpenRouterProvider(BaseAIProvider):
         text_buffer = VisibleTextBuffer()
 
         try:
+            await metrics_collector.record_api_call(self.provider_name, model_name)
             async with client.stream(
                 "POST",
                 self._get_url(),
@@ -346,7 +347,6 @@ class OpenRouterProvider(BaseAIProvider):
         start_time = None
 
         try:
-            await metrics_collector.record_api_call("openrouter", model_name)
             start_time = api_logger.log_request(
                 self.provider_name,
                 model=model_name,
@@ -387,6 +387,7 @@ class OpenRouterProvider(BaseAIProvider):
             try:
                 if _openrouter_http_client is None:
                     raise RuntimeError("OpenRouter HTTP client not initialized")
+                await metrics_collector.record_api_call(self.provider_name, model_name)
                 response = await asyncio.wait_for(
                     _openrouter_http_client.post(url, json=payload, headers=headers),
                     timeout=90.0,

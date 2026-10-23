@@ -3,6 +3,8 @@ import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+import httpx
+
 from app.circuit_breaker import get_circuit_breaker
 
 
@@ -36,11 +38,22 @@ def is_transient_error(error_text: str) -> bool:
 # Exception types that are always retryable regardless of their str() representation.
 # asyncio.TimeoutError is critical: str(asyncio.TimeoutError()) == "" (empty string),
 # so is_transient_error(str(e)) silently returns False, bypassing all retries.
-_RETRYABLE_TYPES = (asyncio.TimeoutError, TimeoutError, ConnectionError)
+_RETRYABLE_TYPES = (
+    TimeoutError,
+    ConnectionError,
+    httpx.TimeoutException,
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+)
+_RETRYABLE_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 
 
 def is_retryable_exception(exc: Exception) -> bool:
     """Type-aware retryability check: known transient types + text scan."""
+    # Status is authoritative: transient words in a 400/401 body must not
+    # cause extra requests, while an empty 502 message must still be retried.
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in _RETRYABLE_HTTP_STATUSES
     if isinstance(exc, _RETRYABLE_TYPES):
         return True
     return is_transient_error(str(exc))

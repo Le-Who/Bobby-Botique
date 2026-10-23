@@ -45,6 +45,11 @@ async def test_stats_use_runtime_override_including_unlimited(monkeypatch, limit
     assert row["usage_percent"] == (0 if limit is None else count / limit * 100)
     assert row["limit_source"] == "admin"
     assert row["availability_scope"] == "local_rpd"
+    assert row["admission_limit"] == (None if limit is None else max(1, int(limit * 0.95)))
+    assert row["settings_revision"] == 2
+    assert row["settings_degraded"] is False
+    assert row["usage_timezone"] == "America/Los_Angeles"
+    assert row["usage_date"]
 
 
 @pytest.mark.asyncio
@@ -62,3 +67,27 @@ async def test_stats_include_internal_model_outside_public_catalog(monkeypatch):
     sql, params = query.await_args.args
     assert "gemini-internal-new" in params[2]
     assert "UNION" in sql and "usage_date = $2" in sql
+
+
+@pytest.mark.asyncio
+async def test_stats_preserve_cached_unlimited_admission_after_env_change(monkeypatch):
+    from app.repos import keys
+
+    monkeypatch.setattr(store, "get_snapshot", AsyncMock(return_value=store.SettingsSnapshot(3, MappingProxyType({}))))
+    settings = SimpleNamespace(
+        AVAILABLE_MODELS=["gemini-test"], DAILY_LIMITS={"gemini-test": 10}, LIMIT_THRESHOLD_PERCENT=0.95
+    )
+    monkeypatch.setattr(metrics_repo, "settings", settings)
+    monkeypatch.setattr(keys, "settings", settings)
+    monkeypatch.setattr(metrics_repo.db_manager, "_model_config_cache", {"gemini-test": None})
+    monkeypatch.setattr(
+        metrics_repo,
+        "db_query",
+        AsyncMock(return_value=[{"model_name": "gemini-test", "daily_limit": 10, "request_count": 20}]),
+    )
+
+    row = (await metrics_repo.get_gemini_key_usage_stats())[0]
+
+    assert await keys.get_model_daily_limit("gemini-test", snapshot=await store.get_snapshot()) is None
+    assert row["daily_limit"] is None
+    assert row["is_available"] is True

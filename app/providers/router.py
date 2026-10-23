@@ -951,9 +951,11 @@ class ProviderRouter:
 
                 for _race_idx in range(2):
                     excluded = failed_keys | {key["key_hash"] for key in keys_to_race}
-                    if not request.allow_model_fallback:
+                    # A companion key must belong to the first key's model. Expanding
+                    # fallback here both discards usable routes and duplicates hedge lanes.
+                    if resolved_model is not None or not enable_model_fallback or not request.allow_model_fallback:
                         key_data, model_used, resolution_status = await use_case.resolve_exact_ai_request(
-                            preferred_model, excluded_key_hashes=excluded
+                            resolved_model or preferred_model, excluded_key_hashes=excluded
                         )
                     else:
                         key_data, model_used, resolution_status = await use_case.resolve_ai_request(
@@ -1259,6 +1261,11 @@ class ProviderRouter:
                     for index, task in enumerate(tasks):
                         if index != winner_idx:
                             task.cancel()
+                    # A sibling's success does not repair a key that already
+                    # reported a failure. Cancelled lanes without one stay healthy.
+                    for index, terminal in pre_text_terminals.items():
+                        if isinstance(terminal, StreamFailed):
+                            await _record_failure(keys_to_race[index], model_used, terminal)
                     winner_key = keys_to_race[winner_idx]
                     await _record_success(winner_key, model_used)
                     yield first_delta

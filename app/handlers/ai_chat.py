@@ -705,19 +705,10 @@ async def _complete_regular_chat_response(
     actual_model = route.actual_model if route is not None else model_used
 
     from app.metrics import metrics_collector as _mc
-    from app.providers.base import is_freetheai_model, is_opencode_model, is_openrouter_model
 
-    _chat_provider = (
-        "opencode_chat"
-        if is_opencode_model(actual_model or "")
-        else "freetheai_chat"
-        if is_freetheai_model(actual_model or "")
-        else "openrouter_chat"
-        if is_openrouter_model(actual_model or "")
-        else "gemini_chat"
-    )
     response_text = outcome.content_text if isinstance(outcome, (CompleteDelivery, PartialDelivery)) else ""
-    await _mc.record_api_call(_chat_provider, actual_model, user_id=user_id)
+    if response_text:
+        await _mc.record_model_response(actual_model, user_id=user_id)
     await _mc.record_request(
         "chat",
         time.monotonic() - stream_started_at,

@@ -213,7 +213,7 @@ async def _handle_document_question_leased(
             route = getattr(metadata, "route", None)
             if route is not None:
                 model_used = route.actual_model
-            await metrics_collector.record_api_call("document_question", model_used)
+            await metrics_collector.record_model_response(model_used, user_id=user_id)
     except Exception as e:
         logging.error("Error processing document question: %s", e, exc_info=True)
         try:

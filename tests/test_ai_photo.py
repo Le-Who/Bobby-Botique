@@ -93,11 +93,19 @@ def make_chat_state():
 
 
 @pytest.mark.asyncio
-async def test_handle_photo_success():
+async def test_handle_photo_success(monkeypatch):
     """Successfully processes a photo through typed response delivery."""
     placeholder = make_placeholder()
     original = make_original_message(caption="What is this?")
     chat_state = make_chat_state()
+    from datetime import date
+
+    from app import metrics
+    from tests.test_metrics_accounting import drain_events
+
+    collector = metrics.MetricsCollector()
+    monkeypatch.setattr(metrics, "metrics_collector", collector)
+    await collector.record_api_call("gemini", "gemini-3.1-flash-lite")
     delivery = MagicMock()
     delivery.stream = AsyncMock(
         return_value=CompleteDelivery(
@@ -130,6 +138,13 @@ async def test_handle_photo_success():
     presentation = delivery.stream.await_args.kwargs["presentation"]
     labels = [button.text for row in presentation.actions.inline_keyboard for button in row]
     assert labels == ["🎭 Выбрать роль ИИ", "✨ Начать новую тему"]
+    drain_events(collector)
+    assert collector.metrics.api_calls == {"gemini": 1}
+    assert collector.metrics.model_usage == {"gemini-3.1-flash-lite": 1}
+    assert collector._user_daily[date.today().isoformat()][123] == {
+        "request_count": 0,
+        "model_usage": {"gemini-3.1-flash-lite": 1},
+    }
 
 
 # ── Empty AI response ────────────────────────────────────────────────────────

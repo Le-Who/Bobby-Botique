@@ -249,12 +249,13 @@ async def test_generate_and_edit_inline_includes_inline_context_in_history(monke
         captured["system_instruction"] = kwargs["system_instruction"]
         return "новый ответ", [], "gemini-3.1-flash-lite"
 
-    class FakeMetrics:
-        async def record_api_call(self, *args, **kwargs):
-            return None
+    from datetime import date
 
-        async def record_request(self, *args, **kwargs):
-            return None
+    from app.metrics import MetricsCollector
+    from tests.test_metrics_accounting import drain_events
+
+    collector = MetricsCollector()
+    await collector.record_api_call("gemini", "gemini-3.1-flash-lite")
 
     class FakeLogger:
         def log_request(self, *args, **kwargs):
@@ -274,7 +275,7 @@ async def test_generate_and_edit_inline_includes_inline_context_in_history(monke
     monkeypatch.setattr(inline, "_should_use_inline_web_search", lambda _query: search_enabled)
     monkeypatch.setattr(inline, "get_inline_model", _async_return("gemini-3.1-flash-lite"))
     monkeypatch.setattr(inline, "_generate_inline_answer", fake_generate_inline_answer)
-    monkeypatch.setattr(inline, "metrics_collector", FakeMetrics())
+    monkeypatch.setattr(inline, "metrics_collector", collector)
     monkeypatch.setattr(inline, "api_logger", FakeLogger())
     monkeypatch.setattr(inline, "store_inline_context", _async_return(True))
     monkeypatch.setattr(inline.uuid, "uuid4", lambda: SimpleNamespace(hex="fedcba98765432100000"))
@@ -309,6 +310,13 @@ async def test_generate_and_edit_inline_includes_inline_context_in_history(monke
     assert "новый ответ" in captured["edit_kwargs"]["text"]
     assert "Edited tab instructions" in captured["system_instruction"]
     assert ("Edited search on" if search_enabled else "Edited search off") in captured["system_instruction"]
+    drain_events(collector)
+    assert collector.metrics.api_calls == {"gemini": 1}
+    assert collector.metrics.model_usage == {"gemini-3.1-flash-lite": 1}
+    assert collector._user_daily[date.today().isoformat()][42] == {
+        "request_count": 1,
+        "model_usage": {"gemini-3.1-flash-lite": 1},
+    }
 
 
 def test_select_inline_generation_model_uses_lite_for_simple_query():

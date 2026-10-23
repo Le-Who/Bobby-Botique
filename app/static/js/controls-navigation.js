@@ -12,6 +12,8 @@
     ['prompt-search', 'prompt'],
     ['command-search', 'command'],
     ['command-kind', 'command_kind'],
+    ['diagnostics-search', 'model'],
+    ['diagnostics-filter', 'model_status'],
   ];
 
   function showSection({ focus = false } = {}) {
@@ -23,6 +25,7 @@
       else link.removeAttribute('aria-current');
     }
     picker.value = id;
+    document.dispatchEvent(new CustomEvent('controls:sectionchange', { detail: id }));
     if (focus) {
       const heading = document.getElementById(id).querySelector('h2');
       heading.tabIndex = -1;

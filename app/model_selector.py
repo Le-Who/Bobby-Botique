@@ -16,7 +16,7 @@ Design rules:
 import re
 from dataclasses import dataclass
 
-from app.config import DEFAULT_GEMINI_MODELS, settings
+from app.config import CURRENT_GEMINI_MODELS, DEFAULT_GEMINI_MODELS, settings
 
 
 @dataclass
@@ -30,27 +30,15 @@ class SelectionResult:
 
 # ── Model tier ranking (higher = more capable) ──────────────────────────────
 
-# Order matters: first match wins within _find_model.
-# Models are ranked roughly by capability tier.
-_MODEL_TIER = {
-    # Gemini tiers
-    "3.5-flash": 5,  # stable primary
-    "3.1-flash-lite": 4,  # fast economy model
-    # Opencode Go tiers (relative to each other) — canonical model list only
-    "minimax-m2.7": 5,  # flagship
-    "kimi-k2.5": 5,  # flagship alternative
-    "minimax-m2.5": 4,  # better performance
-    "qwen3.6-plus": 4,  # research-grade
-    "qwen3.5-plus": 3,  # standard
-    "mimo-v2-omni": 2,  # vision specialist
-    "big-pickle": 2,  # lightweight
-}
+# Known application model families only; unknown IDs cannot justify an upgrade.
+_MODEL_TIER = {model: 4 if "flash-lite" in model else 5 for model in CURRENT_GEMINI_MODELS}
 
 
 def _get_tier(model_name: str) -> int:
     """Get capability tier for a model. Higher = more capable."""
     name = model_name.lower()
-    # Check from most specific to least specific
+    if name in _MODEL_TIER:
+        return _MODEL_TIER[name]
     if "flash-lite" in name:
         if "3.1-flash-lite" in name:
             return 4
@@ -95,7 +83,7 @@ _CREATIVE_PATTERNS = re.compile(
 # Performance: single shared tuple used by all three _find_model() calls in
 # select_model(). Eliminates 3 separate 3-element list allocations per call
 # and gives the preference order a single source of truth.
-_UPGRADE_PREFERENCE: tuple[str, ...] = ("3.5-flash", "3.1-flash-lite")
+_UPGRADE_PREFERENCE: tuple[str, ...] = CURRENT_GEMINI_MODELS
 
 
 def select_model(
@@ -123,6 +111,8 @@ def select_model(
     if current_model and (
         is_openrouter_model(current_model) or is_opencode_model(current_model) or is_freetheai_model(current_model)
     ):
+        return None
+    if current_model and current_model.lower() not in _MODEL_TIER:
         return None
 
     current_tier = _get_tier(current_model) if current_model else 0
@@ -174,7 +164,10 @@ def _find_model(available: list | tuple, preferences: list[str] | tuple[str, ...
     Checks preferences in priority order, then available models in config order.
     """
     for pref in preferences:
+        preferred_name = pref.lower()
+        if not preferred_name.startswith("gemini-"):
+            preferred_name = f"gemini-{preferred_name}"
         for model in available:
-            if pref in model.lower():
+            if model.lower() == preferred_name:
                 return model
     return None

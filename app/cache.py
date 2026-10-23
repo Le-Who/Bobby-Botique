@@ -81,10 +81,16 @@ async def shutdown_redis() -> None:
             redis_client = None
 
 
-def _generate_cache_key(query: str, search_type: str) -> str:
+def _generate_cache_key(query: str, search_type: str, *, max_results: int = 5) -> str:
     """Generates a cache key for the request."""
     normalized_query = " ".join(query.lower().split())
-    key_data = f"{search_type}:{normalized_query}"
+    # Result limits are part of the request: a cached one-row search cannot
+    # satisfy a later five-row search. Keep the existing qna identity.
+    key_data = (
+        f"{search_type}:max_results={max_results}:{normalized_query}"
+        if search_type == "search"
+        else f"{search_type}:{normalized_query}"
+    )
     return hashlib.sha256(key_data.encode()).hexdigest()
 
 
@@ -186,10 +192,10 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
     raise RedisConnectionError(f"Redis operation failed after {max_retries} attempts: {last_error}")
 
 
-async def get_cached_search_result(query: str, search_type: str) -> dict[str, Any] | None:
+async def get_cached_search_result(query: str, search_type: str, *, max_results: int = 5) -> dict[str, Any] | None:
     """Gets the search result from the multi-layer cache (Memory -> Redis)."""
     try:
-        return await get_cached_search_result_ml(query, search_type)
+        return await get_cached_search_result_ml(query, search_type, max_results=max_results)
     except Exception as e:
         logging.warning(
             "Search cache read failed",
@@ -205,10 +211,10 @@ async def get_cached_search_result(query: str, search_type: str) -> dict[str, An
         return None
 
 
-async def cache_search_result(query: str, search_type: str, result: dict[str, Any]) -> None:
+async def cache_search_result(query: str, search_type: str, result: dict[str, Any], *, max_results: int = 5) -> None:
     """Saves the search result to the multi-layer cache (Memory + Redis)."""
     try:
-        await cache_search_result_ml(query, search_type, result)
+        await cache_search_result_ml(query, search_type, result, max_results=max_results)
     except Exception as e:
         logging.warning(
             "Search cache write failed",
@@ -232,8 +238,9 @@ async def get_cache_stats() -> dict[str, Any]:
         info = await _redis_operation_with_retry(redis_client.info)
 
         # redis-py .info() returns a dict — access keys directly
-        db0 = info.get("db0", {})
-        total_keys = db0.get("keys", 0) if isinstance(db0, dict) else str(db0)
+        selected_db = redis_client.connection_pool.connection_kwargs.get("db", 0)
+        db_info = info.get(f"db{selected_db}", {})
+        total_keys = db_info.get("keys", 0) if isinstance(db_info, dict) else 0
 
         return {
             "total_keys": total_keys,
@@ -244,11 +251,11 @@ async def get_cache_stats() -> dict[str, Any]:
         }
 
     except RedisConnectionError as e:
-        logging.warning("Redis stats unavailable: %s", e)
-        return {"error": f"Redis connection issue: {e}"}
+        logging.warning("Redis stats unavailable (error_type=%s)", type(e).__name__)
+        return {"error": "Redis connection issue"}
     except RedisError as e:
-        logging.error("Error getting Redis stats: %s", e, exc_info=True)
-        return {"error": str(e)}
+        logging.error("Error getting Redis stats (error_type=%s)", type(e).__name__, exc_info=True)
+        return {"error": "Redis stats unavailable"}
 
 
 async def clear_cache() -> None:
@@ -433,15 +440,15 @@ class MultiLayerCache:
 multi_layer_cache = MultiLayerCache()
 
 
-async def get_cached_search_result_ml(query: str, search_type: str) -> dict[str, Any] | None:
+async def get_cached_search_result_ml(query: str, search_type: str, *, max_results: int = 5) -> dict[str, Any] | None:
     """Gets search result using multi-layer cache"""
-    cache_key = _generate_cache_key(query, search_type)
+    cache_key = _generate_cache_key(query, search_type, max_results=max_results)
     return await multi_layer_cache.get(cache_key, search_type)
 
 
-async def cache_search_result_ml(query: str, search_type: str, result: dict[str, Any]):
+async def cache_search_result_ml(query: str, search_type: str, result: dict[str, Any], *, max_results: int = 5):
     """Saves search result using multi-layer cache"""
-    cache_key = _generate_cache_key(query, search_type)
+    cache_key = _generate_cache_key(query, search_type, max_results=max_results)
     await multi_layer_cache.set(cache_key, search_type, result)
 
 

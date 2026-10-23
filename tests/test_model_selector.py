@@ -1,8 +1,29 @@
 """Tests for app.model_selector — smart model auto-selection heuristics."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.model_selector import SelectionResult, _find_model, _get_tier, select_model
+
+
+@pytest.mark.parametrize(
+    "available,current,expected",
+    [
+        (["gemini-3.6-flash", "gemini-3.5-flash-lite"], "gemini-3.5-flash-lite", "gemini-3.6-flash"),
+        (["gemini-3.5-flash", "gemini-3.6-flash"], "gemini-3.6-flash", None),
+        (["gemini-3.5-flash-lite", "gemini-3.5-flash"], "gemini-3.1-flash-lite", "gemini-3.5-flash"),
+        (["gemini-3.5-flash"], "gemini-9.0-custom", None),
+    ],
+    ids=["current-primary-upgrade", "preserve-current-primary", "flash-is-not-lite", "unknown-current-tier"],
+)
+def test_upgrade_hints_respect_current_routes_and_distinct_model_families(monkeypatch, available, current, expected):
+    monkeypatch.setattr("app.model_selector.settings", SimpleNamespace(AVAILABLE_MODELS=available))
+
+    result = select_model("debug this code", current_model=current)
+
+    assert (result.model if result else None) == expected
+
 
 # ── _get_tier ────────────────────────────────────────────────────────────────
 

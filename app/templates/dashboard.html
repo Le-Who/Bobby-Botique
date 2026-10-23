@@ -12,7 +12,7 @@
     />
     <link
       rel="stylesheet"
-      href="{{ url_for('static', filename='css/style.css', v='dashboard-20261002-2') }}"
+      href="{{ url_for('static', filename='css/style.css', v='dashboard-20261023-3') }}"
     />
   </head>
   <body>
@@ -26,6 +26,7 @@
         <span class="topbar-dot" id="live-dot" data-state="unavailable"></span>
         <span class="topbar-live" id="live-status" data-state="unavailable" role="status">CONNECTING</span>
         <a href="/controls" class="topbar-nav" title="Управление моделями и промптами">Управление</a>
+        <a href="/controls#diagnostics" class="topbar-nav">Диагностика моделей</a>
         <a href="/controls#commands" class="topbar-nav" title="Команды и текстовые алиасы бота">Команды</a>
         <a href="/admin_daily" class="topbar-nav" title="Daily Admin Center">Daily Admin</a>
         <a href="{{ url_for('logout') }}" class="topbar-logout" title="Sign out"
@@ -146,10 +147,12 @@
       <!-- TAB: AI Providers -->
       <div class="tab-panel" id="panel-providers" role="tabpanel" aria-labelledby="tab-providers" tabindex="0" hidden>
 
+      <div class="provider-intro"><div><h1>Provider usage</h1><p>Local counters and recorded key failures. These counters do not verify provider access.</p></div><a href="/controls#diagnostics">Модели, маршруты и причины ограничений</a></div>
+
       <!-- Reset Time Info -->
       <section class="dash-section">
-        <div class="card" style="padding: 0.6rem 1.2rem;">
-          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem;">
+        <div class="card provider-reset">
+          <div class="provider-reset-items">
             <span style="color: var(--text-muted);">🔄 Gemini daily limits reset: <span class="mono" id="reset-time" style="color: var(--accent);">—</span></span>
             <span style="color: var(--text-muted);">📊 Tavily monthly credit limit: <span class="mono" id="tavily-limit" style="color: var(--accent);">—</span></span>
           </div>
@@ -170,7 +173,7 @@
                     <th>Model</th>
                     <th>Key</th>
                     <th>Used</th>
-                    <th>Limit</th>
+                    <th>Daily / admission limit</th>
                     <th>%</th>
                     <th>Local RPD status</th>
                   </tr>
@@ -472,6 +475,9 @@
       function setDot(id, status) {
         const el = $(id);
         el.className = "dot";
+        el.setAttribute("role", "img");
+        el.setAttribute("aria-label", status || "Unknown service status");
+        el.title = status || "Unknown service status";
         if (
           status === "connected" ||
           status === "running" ||
@@ -572,8 +578,8 @@
           "Updated: " + new Date().toLocaleTimeString();
 
         // Sparklines
-        cpuHistory.push(cpu);
-        memHistory.push(memory);
+        if (Number.isFinite(s.cpu_percent)) cpuHistory.push(cpu);
+        if (Number.isFinite(s.memory_percent)) memHistory.push(memory);
         if (cpuHistory.length > MAX_SPARK) cpuHistory.shift();
         if (memHistory.length > MAX_SPARK) memHistory.shift();
         renderSparkline($("spark-cpu"), cpuHistory, "#4ade80");
@@ -604,24 +610,27 @@
               // Status logic: meaningful labels
               let statusCls, statusTxt;
               if (limit == null) {
-                statusCls = "tag-warn";
-                statusTxt = "∞ No Limit";
+                statusCls = "tag-neutral";
+                statusTxt = "No local limit";
               } else if (used >= limit) {
                 statusCls = "tag-err";
                 statusTxt = "✗ Exhausted";
-              } else if (!r.is_available) {
+              } else if (r.is_available === false) {
                 statusCls = "tag-warn";
-                statusTxt = "⚠ Near Limit";
+                statusTxt = "Blocked at local threshold";
+              } else if (r.is_available !== true) {
+                statusCls = "tag-neutral";
+                statusTxt = "Unknown";
               } else {
                 statusCls = "tag-ok";
-                statusTxt = "✓ Available";
+                statusTxt = "Local RPD admits";
               }
               return `<tr>
                   <td class="mono">${escapeHtml(r.model_name || "—")}</td>
                   <td class="mono dim">${escapeHtml(r.api_key_preview || r.key_hash?.substring(0, 10) || "—")}</td>
                   <td class="mono">${used}</td>
-                  <td class="mono">${limit ?? "∞"}</td>
-                  <td class="mono">${limit != null ? pct + "%" : "—"}</td>
+                  <td class="mono">${limit ?? "∞"}${r.admission_limit != null ? ` / ${escapeHtml(r.admission_limit)}` : ""}</td>
+                  <td class="mono">${limit != null && r.usage_percent != null ? pct + "%" : "—"}</td>
                   <td><span class="tag ${statusCls}">${statusTxt}</span></td>
               </tr>`;
             })
@@ -679,6 +688,10 @@
       function renderCircuitBreakers(d) {
         if (!d) return;
         const list = $("cb-list");
+        if (d.circuit_breakers?.available === false) {
+          list.innerHTML = '<div class="empty-state">Circuit breaker metrics unavailable</div>';
+          return;
+        }
         const cbs = d.circuit_breakers?.items || {};
         const names = Object.keys(cbs);
 
@@ -714,6 +727,7 @@
         if (db.available === false) {
           $("db-status").textContent = "Unavailable";
           $("db-status").className = "sl-val val-err";
+          ["db-pool", "db-active", "db-free", "db-latency"].forEach(id => { $(id).textContent = "—"; });
           return;
         }
         $("db-status").textContent = db.status || "—";
@@ -741,7 +755,12 @@
 
       function renderCache(cache) {
         if (!cache) return;
-        $("c-mem-hits").textContent = cache.available === false ? "Unavailable" : cache.memory_items ?? "—";
+        if (cache.available === false) {
+          $("c-mem-hits").textContent = "Unavailable";
+          ["c-redis-hits", "c-misses", "c-mem-items"].forEach(id => { $(id).textContent = "—"; });
+          return;
+        }
+        $("c-mem-hits").textContent = cache.memory_items ?? "—";
         $("c-redis-hits").textContent = cache.memory_capacity ?? "—";
         $("c-misses").textContent = cache.memory_utilization_percent != null
           ? Number(cache.memory_utilization_percent).toFixed(1) + "%" : "—";
@@ -800,7 +819,7 @@
 
         const recent = d.recent || [];
         if (recent.length === 0) {
-          logEl.innerHTML = '<div class="empty-state">No recent errors \u2014 all systems normal</div>';
+          logEl.innerHTML = '<div class="empty-state">No recent errors recorded by this process</div>';
           return;
         }
         logEl.innerHTML = recent.slice(0, 30).map(err => {
@@ -838,7 +857,8 @@
         tbody.innerHTML = keys.map(k => {
           const statusCls = ['healthy', 'active'].includes(k.status) ? 'tag-ok' : k.status === 'suspended' ? 'tag-warn' : 'tag-err';
           const statusTxt = (k.status || 'unknown').toUpperCase();
-          const suspendedUntil = k.suspended_until ? new Date(k.suspended_until).toLocaleString() : '—';
+          const suspendedUntil = k.suspended_until
+            ? `${k.suspension_expired ? 'Expired: ' : ''}${new Date(k.suspended_until).toLocaleString()}` : '—';
           return `<tr>
             <td class="mono dim">${escapeHtml(k.key || k.key_preview || k.key_hash?.substring(0, 10) || '—')}</td>
             <td class="mono">${escapeHtml(k.model || k.model_name || '—')}</td>
@@ -879,10 +899,8 @@
               }
             }
 
-            // Update services
-            if (d.services) {
-              if (d.services.database) setDot('svc-db', d.services.database);
-            }
+            // Probed service health belongs to the canonical snapshot. A
+            // legacy SSE pool-presence hint cannot establish connectivity.
 
             // Update queue (if visible)
             if (d.queue) {

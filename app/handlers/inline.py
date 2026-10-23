@@ -1852,7 +1852,8 @@ async def _generate_and_edit_inline(
         )
 
     # Record metrics (we're already in a background task — awaiting is safe)
-    await metrics_collector.record_api_call("gemini_inline", _response_model, user_id=user_id)
+    if _gen_success:
+        await metrics_collector.record_model_response(_response_model, user_id=user_id)
     await metrics_collector.record_request(
         "inline",
         response_time=time.monotonic() - _gen_start,

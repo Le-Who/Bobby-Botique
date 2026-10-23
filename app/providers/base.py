@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from google.genai import types
+from httpx import HTTPStatusError
 
 from app.errors import user_friendly_error
 from app.providers.stream_types import GenerationEvent, GenerationRequest
@@ -155,6 +156,8 @@ class BaseAIProvider(ABC):
             from app.resilience_policy import is_retryable_exception
 
             def custom_is_retryable(e: Exception) -> bool:
+                if isinstance(e, HTTPStatusError):
+                    return is_retryable_exception(e)
                 if is_retryable_exception(e):
                     return True
                 return self._is_transient_error(str(e))

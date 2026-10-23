@@ -52,6 +52,15 @@ def _make_use_case(resolve_side_effects: list, response_side_effects: list):
     """Build a mock AgentRequestUseCase with controlled side-effects."""
     uc = MagicMock()
     uc.resolve_ai_request = AsyncMock(side_effect=resolve_side_effects)
+
+    async def resolve_exact(preferred_model, *, excluded_key_hashes=None):
+        result = await uc.resolve_ai_request(preferred_model, excluded_key_hashes=excluded_key_hashes)
+        key, model, _status = result
+        assert not key or model == preferred_model, "Exact resolution cannot switch models"
+        return result
+
+    # Both selectors consume the same ordered pool; companions stay on-model.
+    uc.resolve_exact_ai_request = AsyncMock(side_effect=resolve_exact)
     uc.get_ai_response = AsyncMock(side_effect=response_side_effects)
     uc.increment_key_usage = AsyncMock()
     uc.reserve_key_usage = AsyncMock(return_value=True)

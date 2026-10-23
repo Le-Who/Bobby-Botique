@@ -195,23 +195,14 @@ class DatabaseManager:
 
                 pool_stats = {}
                 try:
-                    if hasattr(self.pool, "_minsize"):
-                        pool_stats["min_size"] = self.pool._minsize
-                    if hasattr(self.pool, "_maxsize"):
-                        pool_stats["max_size"] = self.pool._maxsize
-                    if hasattr(self.pool, "_size"):
-                        pool_stats["size"] = self.pool._size
-                    if hasattr(self.pool, "_free_size"):
-                        pool_stats["free_size"] = self.pool._free_size
-
-                    if "size" in pool_stats and "free_size" in pool_stats:
-                        pool_stats["in_use"] = pool_stats["size"] - pool_stats["free_size"]
-                        if "max_size" in pool_stats and pool_stats["max_size"] > 0:
-                            pool_stats["utilization"] = (
-                                (pool_stats["size"] - pool_stats["free_size"]) / pool_stats["max_size"] * 100
-                            )
-                        else:
-                            pool_stats["utilization"] = 0
+                    pool_stats["min_size"] = self.pool.get_min_size()
+                    pool_stats["max_size"] = self.pool.get_max_size()
+                    pool_stats["size"] = self.pool.get_size()
+                    pool_stats["free_size"] = self.pool.get_idle_size()
+                    pool_stats["in_use"] = pool_stats["size"] - pool_stats["free_size"]
+                    pool_stats["utilization"] = (
+                        pool_stats["in_use"] / pool_stats["max_size"] * 100 if pool_stats["max_size"] > 0 else 0
+                    )
                 except AttributeError as e:
                     pool_stats["error"] = str(e)
 

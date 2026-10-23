@@ -234,7 +234,7 @@ async def _process_ai_vision(
 
         from app.metrics import metrics_collector as _mc
 
-        await _mc.record_api_call("gemini_vision", model_used, user_id=user_id)
+        await _mc.record_model_response(model_used, user_id=user_id)
         await _mc.record_request("photo", time.monotonic() - _vision_t0, success=True)
 
     return outcome

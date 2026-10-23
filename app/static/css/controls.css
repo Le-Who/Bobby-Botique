@@ -59,7 +59,31 @@ input,select{min-height:44px}
 .voice-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
 .voice-actions .check{margin-right:auto}
 .section-heading a{color:var(--accent)}
+.diagnostics-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:20px 0 12px}
+.diagnostics-status{font-size:13px;line-height:1.5;margin:0;max-width:65ch}
+.diagnostics-scope{font-size:13px;color:var(--muted);line-height:1.7;max-width:80ch;padding-left:14px;border-left:2px solid var(--line)}
+.diagnostics-scope summary{cursor:pointer;min-height:32px;color:var(--accent)}.diagnostics-scope p{margin:8px 0 0}
+.diagnostics-summary{display:flex;flex-wrap:wrap;gap:10px 24px;border-block:1px solid var(--line);padding:14px 0;margin:20px 0;font-size:13px;color:var(--muted)}
+.diagnostic-card{box-shadow:none;border-top-width:1px}
+.diagnostic-model{overflow-wrap:anywhere;font:600 17px/1.5 Consolas,monospace}
+.diagnostic-state{flex-shrink:0;font-size:12px;color:var(--muted);padding-top:3px}
+.diagnostic-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin:20px 0 16px}
+.diagnostic-metrics dt{font-size:12px;color:var(--muted);margin-bottom:6px}
+.diagnostic-metrics dd{font-size:20px;line-height:1.35;margin:0;font-weight:600}
+.diagnostic-metrics p{margin:5px 0 0;line-height:1.5}
+.diagnostic-provider{font-size:12px;line-height:1.6;color:var(--muted);margin:0 0 16px}
+.diagnostic-details{border-top:1px solid var(--line);padding-top:14px;font-size:13px}
+.diagnostic-details summary{cursor:pointer;color:var(--accent);min-height:32px}
+.diagnostic-details h4{font-size:13px;margin:20px 0 12px}
+.diagnostic-routes{padding-left:20px;display:grid;gap:8px}.diagnostic-routes a{color:var(--accent)}
+.diagnostic-key{padding:14px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.diagnostic-key p{margin:5px 0 0;font-size:13px;line-height:1.6}
+.diagnostic-error{color:#ffb4bf}.diagnostic-guidance{color:#efc18f;line-height:1.7;margin:16px 0 0}
+.warning{color:#efc18f}
+@media(max-width:950px){.diagnostic-metrics{grid-template-columns:1fr;gap:14px}.diagnostic-metrics>div{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px}.diagnostic-metrics p{grid-column:1/-1;margin:0}.diagnostic-metrics dt{margin:0}.diagnostic-metrics dd{font-size:18px}}
 @media(max-width:650px){
+  .diagnostics-toolbar{align-items:stretch;flex-direction:column;gap:10px}
+  .diagnostic-state{flex-shrink:1}
   .audio-parameters,.voice-fields{grid-template-columns:1fr}
   .voice-row{padding:10px 12px 14px}
   .voice-actions .check{flex-basis:100%;margin:0 0 6px}

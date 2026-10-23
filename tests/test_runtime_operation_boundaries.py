@@ -31,6 +31,8 @@ def _policy(*models):
 @pytest.fixture(autouse=True)
 def isolated_runtime(monkeypatch):
     """No snapshot refresh may load database settings in these offline tests."""
+    # Preserve the startup/refresh registration step before requests pin prompts.
+    lifecycle.load_controlled_prompts()
     monkeypatch.setattr(lifecycle, "refresh_runtime_settings", AsyncMock())
     monkeypatch.setattr(store, "get_snapshot", AsyncMock(return_value=SettingsSnapshot(0, {})))
     monkeypatch.setattr("app.state._schedule_persist", lambda state: None)

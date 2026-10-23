@@ -25,6 +25,7 @@ from app.database import (
     reconnect_database,
     set_user_context,
 )
+from app.observability.redaction import sanitize_event
 from app.utils.time import get_pacific_tz
 
 _SAFE_TABLE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -264,6 +265,40 @@ async def get_model_daily_limit(model_name: str, *, snapshot=None) -> int | None
         logging.warning("Failed to fetch limit for %s: %s", model_name, e)
         # Fallback to config even on DB error
         return settings.DAILY_LIMITS.get(model_name)
+
+
+async def get_model_daily_limits(model_names: list[str], *, snapshot=None) -> dict[str, int | None]:
+    """Read an inventory in one query, with the runtime reader's precedence."""
+    from app.runtime_settings import models as runtime_models
+
+    snapshot = snapshot if snapshot is not None else await runtime_models.get_snapshot()
+    limits: dict[str, int | None] = {}
+    missing = []
+    for model in dict.fromkeys(model_names):
+        override = f"model_limit:{model}"
+        if override in snapshot.values:
+            limits[model] = runtime_models.validate_limit(model, snapshot.values[override])
+        elif model in db_manager._model_config_cache:
+            limits[model] = db_manager._model_config_cache[model]
+        else:
+            missing.append(model)
+    if missing:
+        try:
+            # The controls inventory previously issued a serial query per cold
+            # model. Batch only misses, retaining explicit null overrides/cache.
+            rows = await db_query(
+                "SELECT model_name, daily_limit FROM public.model_configuration WHERE model_name = ANY($1::text[])",
+                (missing,),
+            )
+            stored = {row["model_name"]: row["daily_limit"] for row in rows}
+            for model in missing:
+                limit = stored.get(model)
+                limits[model] = settings.DAILY_LIMITS.get(model) if limit is None else limit
+                db_manager._model_config_cache[model] = limits[model]
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as error:
+            logging.warning("Failed to fetch model limit inventory (%s)", type(error).__name__)
+            limits.update((model, settings.DAILY_LIMITS.get(model)) for model in missing)
+    return limits
 
 
 async def invalidate_model_limit_cache(model_name: str) -> None:
@@ -558,25 +593,44 @@ class KeyStatusManager:
     async def get_health_summary(self, conn=None) -> dict[str, Any]:
         """Return a summary of key health for observability dashboard."""
         statuses = await self.get_all_statuses(conn=conn)
-        active = sum(1 for s in statuses if s["status"] == "active")
-        suspended = sum(1 for s in statuses if s["status"] == "suspended")
+        now = datetime.now(UTC_TZ)
+        rows: list[dict[str, Any]] = []
+        active = suspended = 0
+        for status in statuses:
+            until = status.get("suspended_until")
+            expired = status["status"] == "suspended" and until is not None and until < now
+            effective = "active" if expired else status["status"]
+            active += effective == "active"
+            suspended += effective == "suspended"
+            if len(rows) >= 20:
+                continue
+            rows.append(
+                {
+                    "key": status["key_hash"][:8] + "…",
+                    "key_hash": status["key_hash"],
+                    "model": status["model_name"],
+                    "status": effective,
+                    "recorded_status": status["status"],
+                    "suspension_expired": expired,
+                    "failures": status.get("failure_count", 0),
+                    "suspended_until": until.isoformat() if until else None,
+                    # Historical rows may predate credential scrubbing. Mask
+                    # the complete message before the UI's display truncation.
+                    "last_error": str(sanitize_event({"message": status.get("last_error") or ""})["message"])[:100],
+                }
+            )
+        # Admission permits an expired cooldown even before a later successful
+        # call rewrites the historical row. Counts describe key/model pairs.
         total_failures = sum(s.get("failure_count", 0) for s in statuses)
         return {
             "total_keys_tracked": len(statuses),
+            "total_key_model_pairs": len(statuses),
+            "scope": "key_model_pairs",
+            "truncated": len(statuses) > 20,
             "active": active,
             "suspended": suspended,
             "total_failures": total_failures,
-            "keys": [
-                {
-                    "key": s["key_hash"][:8] + "…",
-                    "model": s["model_name"],
-                    "status": s["status"],
-                    "failures": s.get("failure_count", 0),
-                    "suspended_until": s["suspended_until"].isoformat() if s.get("suspended_until") else None,
-                    "last_error": (s.get("last_error") or "")[:100],
-                }
-                for s in statuses[:20]  # Cap at 20 for dashboard
-            ],
+            "keys": rows,
         }
 
 

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 from typing import Any
 
 import httpx
@@ -71,8 +72,12 @@ async def tavily_search_agent(
     if chat_id is not None and not isinstance(chat_id, int):
         raise ValueError("chat_id must be an integer")
 
+    if isinstance(max_results, bool) or not isinstance(max_results, int) or max_results <= 0:
+        raise ValueError("max_results must be a positive integer")
+
     # Check cache before performing search
-    cached_result = await get_cached_search_result(query, search_type)
+    cache_options = {"max_results": max_results} if search_type == "search" else {}
+    cached_result = await get_cached_search_result(query, search_type, **cache_options)
     if cached_result:
         logging.info("Cache hit for Tavily search (type=%s)", search_type)
         return cached_result
@@ -121,7 +126,7 @@ async def tavily_search_agent(
             result = {"type": "search", "results": data.get("results", [])}
 
         # Cache the result
-        await cache_search_result(query, search_type, result)
+        await cache_search_result(query, search_type, result, **cache_options)
 
         # Log successful Tavily API response
         results = result.get("results", [])
@@ -183,10 +188,13 @@ async def parallel_search(
         List of result dictionaries containing url, title, content (snippet), and score.
         If an error occurs for a query, it is logged and skipped.
     """
-    if not queries:
+    if isinstance(max_results, bool) or not isinstance(max_results, int) or max_results < 0:
+        raise ValueError("max_results must be a non-negative integer")
+    if not queries or max_results == 0:
         return []
 
-    # Run all searches in parallel
+    # Deduplicate before starting work: simultaneous identical queries all
+    # miss the cache and otherwise spend separate provider requests/credits.
     tasks = [
         tavily_search_agent(
             query=q,
@@ -195,7 +203,7 @@ async def parallel_search(
             chat_id=chat_id,
             max_results=5,  # Get top 5 per query to ensure diversity before dedupping
         )
-        for q in queries
+        for q in dict.fromkeys(q for q in queries if isinstance(q, str) and q.strip())
     ]
 
     results_list: list[Any] = await asyncio.gather(*tasks, return_exceptions=True)
@@ -209,19 +217,25 @@ async def parallel_search(
             logging.error("Parallel search task failed (error_type=%s)", type(result).__name__)
             continue
 
-        if isinstance(result, dict) and "error" not in result and "results" in result:
+        if isinstance(result, dict) and "error" not in result and isinstance(result.get("results"), list):
             for item in result["results"]:
                 if not isinstance(item, dict):
                     continue
                 url = item.get("url")
                 if url and isinstance(url, str) and url not in seen_urls:
+                    try:
+                        score = float(item.get("score", 0.0))
+                    except TypeError, ValueError, OverflowError:
+                        score = 0.0
+                    if not math.isfinite(score):
+                        score = 0.0
                     seen_urls.add(url)
                     merged_results.append(
                         {
                             "url": url,
                             "title": str(item.get("title", "")),
                             "snippet": str(item.get("content", "")),
-                            "score": float(item.get("score", 0.0)),
+                            "score": score,
                             "published_date": str(item.get("published_date", "")),
                         }
                     )

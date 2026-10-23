@@ -7,6 +7,7 @@ admin overrides, including an empty catalog or a ``None`` local RPD limit.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from app.runtime_settings.store import (
@@ -139,10 +140,12 @@ async def list_catalogs(*, snapshot: SettingsSnapshot | None = None) -> list[dic
     ]
 
 
-async def list_limits(*, snapshot: SettingsSnapshot | None = None) -> list[dict[str, Any]]:
+async def list_limits(
+    *, snapshot: SettingsSnapshot | None = None, processes: Sequence[Mapping[str, Any]] | None = None
+) -> list[dict[str, Any]]:
     from app.config import settings
     from app.process_policies import PROCESSES, baseline_models, resolve_policy_value
-    from app.repos.keys import get_model_daily_limit
+    from app.repos.keys import get_model_daily_limits
     from app.runtime_settings.lifecycle import runtime_settings_scope
 
     snapshot = snapshot if snapshot is not None else await get_snapshot()
@@ -150,13 +153,24 @@ async def list_limits(*, snapshot: SettingsSnapshot | None = None) -> list[dict[
     models.update(key.removeprefix("model_limit:") for key in snapshot.values if key.startswith("model_limit:"))
     # Routes can use a model absent from both the public selector and DAILY_LIMITS.
     # Resolve against the same snapshot that supplies the displayed quota value.
-    async with runtime_settings_scope(snapshot):
-        for process_id, spec in PROCESSES.items():
-            if set(spec.capabilities) & {"embedding", "image_output", "live", "provider_order", "music"}:
+    excluded_capabilities = {"embedding", "image_output", "live", "provider_order", "music"}
+    if processes is not None:
+        # GET already resolved dynamic baselines for its process inventory.
+        # Reuse those rows so both sections agree without repeating DB reads.
+        for process in processes:
+            if set(process.get("capabilities", ())) & excluded_capabilities:
                 continue
-            raw = snapshot.values.get(f"process:{process_id}")
-            baseline = await baseline_models(process_id) if raw is None or raw.get("inherit_user_model") else ()
-            models.update(resolve_policy_value(process_id, raw, baseline, revision=snapshot.revision).models)
+            models.update(process.get("models", ()))
+            if process.get("inherit_user_model"):
+                models.update(process.get("baseline_models", ())[:1])
+    else:
+        async with runtime_settings_scope(snapshot):
+            for process_id, spec in PROCESSES.items():
+                if set(spec.capabilities) & excluded_capabilities:
+                    continue
+                raw = snapshot.values.get(f"process:{process_id}")
+                baseline = await baseline_models(process_id) if raw is None or raw.get("inherit_user_model") else ()
+                models.update(resolve_policy_value(process_id, raw, baseline, revision=snapshot.revision).models)
     supported = []
     for model in models:
         try:
@@ -164,10 +178,11 @@ async def list_limits(*, snapshot: SettingsSnapshot | None = None) -> list[dict[
         except ValueError:
             continue
         supported.append(model)
+    limits = await get_model_daily_limits(supported, snapshot=snapshot)
     return [
         {
             "model": model,
-            "limit": await get_model_daily_limit(model, snapshot=snapshot),
+            "limit": limits[model],
             "source": "admin" if f"model_limit:{model}" in snapshot.values else "database/env",
             "scope": "gemini_key_rpd",
             "note": (

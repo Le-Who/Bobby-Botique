@@ -114,6 +114,7 @@ class OpencodeGoProvider(OpenRouterProvider):
         text_buffer = VisibleTextBuffer()
 
         try:
+            await openrouter_provider.metrics_collector.record_api_call(self.provider_name, model_name)
             async with client.stream(
                 "POST",
                 self._get_url_for_model(model_name),
@@ -518,7 +519,6 @@ class OpencodeGoProvider(OpenRouterProvider):
 
         start_time = None
         try:
-            await openrouter_provider.metrics_collector.record_api_call("opencode", model_name)
             start_time = openrouter_provider.api_logger.log_request(
                 "opencode",
                 model=model_name,
@@ -547,6 +547,7 @@ class OpencodeGoProvider(OpenRouterProvider):
                 client = openrouter_provider._openrouter_http_client
                 if client is None:
                     raise RuntimeError("OpenRouter HTTP client not initialized")
+                await openrouter_provider.metrics_collector.record_api_call(self.provider_name, model_name)
                 response = await asyncio.wait_for(
                     client.post(url, json=payload, headers=headers),
                     timeout=90.0,

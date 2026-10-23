@@ -117,7 +117,13 @@ class AgentRequestUseCase:
         if is_freetheai_model(preferred_model):
             return await self._resolve_freetheai_request(preferred_model, excluded_key_hashes)
         if "/" in preferred_model:
-            return await self._resolve_openrouter_request(preferred_model, excluded_key_hashes)
+            return await self._resolve_key_generic(
+                preferred_model,
+                get_available_openrouter_key,
+                [],
+                excluded_key_hashes,
+                provider_name="OpenRouter",
+            )
         return await self._resolve_key_generic(
             preferred_model,
             get_available_gemini_key,

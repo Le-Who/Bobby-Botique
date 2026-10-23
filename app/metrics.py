@@ -136,6 +136,14 @@ class MetricsCollector:
             if uid:
                 self._user_daily[today][uid]["request_count"] += 1
 
+        elif event_type == "model_response":
+            # Delivery credits the winning model to its user; providers own
+            # attempt counters, including retries and cancelled racing lanes.
+            uid = event["user_id"]
+            model = event["model"]
+            usage = self._user_daily[today][uid]["model_usage"]
+            usage[model] = usage.get(model, 0) + 1
+
         elif event_type == "api_call":
             api_name = event["api_name"]
             model = event["model"]
@@ -542,6 +550,11 @@ class MetricsCollector:
                 "user_id": user_id,
             }
         )
+
+    async def record_model_response(self, model: str | None, *, user_id: int | None) -> None:
+        """Attribute a visible response without inventing another API attempt."""
+        if user_id and model:
+            self._events_queue.put_nowait({"type": "model_response", "model": model, "user_id": user_id})
 
     async def record_api_call(
         self,

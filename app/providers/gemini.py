@@ -347,6 +347,8 @@ class GeminiProvider(BaseAIProvider):
         text_buffer = VisibleTextBuffer()
 
         try:
+            # Count only attempts that reach the SDK, including cancelled race lanes.
+            await metrics_collector.record_api_call(self.provider_name, model_name)
             response_stream = await asyncio.wait_for(
                 self._client.aio.models.generate_content_stream(
                     model=model_name,
@@ -474,7 +476,6 @@ class GeminiProvider(BaseAIProvider):
         start_time = None
 
         try:
-            await metrics_collector.record_api_call("gemini", model_name)
             # Compute metrics
             try:
                 prompt_length = sum(
@@ -490,14 +491,6 @@ class GeminiProvider(BaseAIProvider):
                 logging.warning("Metrics calc error: %s", e)
                 prompt_length = 0
                 has_images = False
-
-            start_time = api_logger.log_request(
-                "gemini",
-                model=model_name,
-                api_key=self._client_api_key,
-                prompt_length=prompt_length,
-                has_images=has_images,
-            )
 
             client = self._client
 
@@ -527,6 +520,15 @@ class GeminiProvider(BaseAIProvider):
                 except (TypeError, ValueError) as e:
                     logging.warning("Failed to set system_instruction: %s", e)
 
+            # Local content/config validation does not consume a provider attempt.
+            await metrics_collector.record_api_call(self.provider_name, model_name)
+            start_time = api_logger.log_request(
+                "gemini",
+                model=model_name,
+                api_key=self._client_api_key,
+                prompt_length=prompt_length,
+                has_images=has_images,
+            )
             # Native async call — properly supports CancelledError
             response = await asyncio.wait_for(
                 client.aio.models.generate_content(
