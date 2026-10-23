@@ -13,12 +13,13 @@ Key design decisions:
     On 401/403 (key invalid) or 429 (quota/rate) the caller tries the next key.
   - Text cleaning: strips Markdown/code/URLs but does NOT inject Director's Notes
     (ElevenLabs would read them aloud — they are plain text to the model).
-  - Chunking: a conservative local 4500-byte UTF-8 budget. Provider character
-    limits vary by model; this is not a universal ElevenLabs API limit.
+  - Chunking: only when a transcript exceeds the selected model's character
+    limit. Replies within that limit use one coherent generation.
 """
 
 import asyncio
 import logging
+import re
 from typing import Final
 
 import httpx
@@ -66,8 +67,18 @@ _FLASH_MODEL: Final = "eleven_flash_v2_5"
 # HTTP timeouts: connect fast, allow up to 90 s for speech generation.
 _HTTP_TIMEOUT: Final = httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=5.0)
 
-# Conservative local budget; model maximum_text_length_per_request is in characters.
-ELEVENLABS_CHUNK_MAX_BYTES: Final = 4500
+# Documented model limits count characters, not UTF-8 bytes.
+_MODEL_CHARACTER_LIMITS: Final = {
+    "eleven_multilingual_v2": 10000,
+    "eleven_multilingual_v1": 10000,
+    "eleven_monolingual_v1": 10000,
+    "eleven_flash_v2_5": 40000,
+    "eleven_turbo_v2_5": 40000,
+    "eleven_flash_v2": 30000,
+    "eleven_turbo_v2": 30000,
+    "eleven_v3": 5000,
+    "eleven_v4": 10000,
+}
 _STITCH_CONTEXT_CHARS: Final = 500
 _VOICE_CATALOG_MAX_BYTES: Final = 1024 * 1024
 
@@ -261,6 +272,7 @@ async def generate_speech_elevenlabs(
     return audio_bytes
 
 
+@runtime_settings_scope()
 async def generate_speech_with_key_rotation(
     text_chunks: list[str],
     api_keys: list[str],
@@ -270,11 +282,23 @@ async def generate_speech_with_key_rotation(
     timeout: float = 90.0,
     on_chunk_complete=None,
 ) -> list[bytes] | None:
+    from app.process_policies import resolve_process
     from app.runtime_settings.result_execution import run_result_process
 
+    policy = await resolve_process("tts.elevenlabs", (model_id,))
+    models = policy.models if policy.explicit else (model_id,)
+    chunk_count = (
+        max(len(split_transcript(text_chunks[0], model)) for model in models)
+        if len(text_chunks) == 1
+        else len(text_chunks)
+    )
+
     async def execute(candidate: str, explicit: bool) -> list[bytes] | None:
+        # Production passes a single whole transcript. Recalculate for every
+        # selected model: its fallback can have a different hard input limit.
+        chunks = split_transcript(text_chunks[0], candidate) if len(text_chunks) == 1 else text_chunks
         return await _generate_message_with_key_rotation(
-            text_chunks,
+            chunks,
             api_keys,
             voice_id=voice_id,
             model_id=candidate,
@@ -287,9 +311,25 @@ async def generate_speech_with_key_rotation(
         model_id,
         execute,
         success=bool,
-        timeout=timeout * max(1, len(text_chunks)) * max(1, len(api_keys)),
+        timeout=timeout * max(1, chunk_count) * max(1, len(api_keys)),
         on_timeout=lambda: None,
     )
+
+
+def split_transcript(text: str, model: str) -> list[str]:
+    """Split only at a known model character limit, preserving all text."""
+    limit = _MODEL_CHARACTER_LIMITS.get(model)
+    remaining = text.strip()
+    chunks = []
+    while limit is not None and len(remaining) > limit:
+        prefix = remaining[:limit]
+        boundaries = list(re.finditer(r"[.!?…](?=\s)|\s+", prefix))
+        end = boundaries[-1].end() if boundaries else limit
+        chunks.append(remaining[:end].strip())
+        remaining = remaining[end:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
 
 
 async def _generate_message_with_key_rotation(

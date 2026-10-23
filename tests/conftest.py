@@ -20,6 +20,7 @@ _SAFE_TEST_ENV = {
     "WEBHOOK_URL": "",
     "TELEGRAM_LOCAL_SERVER_URL": "",
     "GEMINI_API_KEYS": "dummy-gemini-key-for-tests",
+    "GEMINI_TTS_RPM_PER_KEY": "3",
     "TAVILY_API_KEYS": "dummy-tavily-key-for-tests",
     "OPENROUTER_API_KEYS": "dummy-openrouter-key-for-tests",
     "OPENCODE_API_KEYS": "dummy-opencode-key-for-tests",
@@ -195,9 +196,11 @@ def _clear_global_caches():
     """
     from app.config import _invalidate_primary_provider_cache
     from app.database import db_manager
+    from app.providers.tts_quota import tts_minute_quota
 
     def _clear():
         _invalidate_primary_provider_cache()
+        tts_minute_quota._local.clear()
         if hasattr(db_manager, "_active_keys_cache"):
             db_manager._active_keys_cache.clear()
         if hasattr(db_manager, "_model_config_cache"):

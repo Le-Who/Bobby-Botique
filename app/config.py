@@ -11,7 +11,7 @@ from datetime import UTC
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.utils.json_compat import json
 from app.webhook_security import validate_webhook_secret_token
@@ -445,6 +445,7 @@ class Settings(BaseModel):
     LIMIT_THRESHOLD_PERCENT: float = 0.95
     # DAILY_LIMITS загружается from env переменной DAILY_LIMITS to formatе JSON
     DAILY_LIMITS: dict[str, int] = dict.fromkeys(DEFAULT_GEMINI_MODELS, DEFAULT_DAILY_LIMIT_PER_MODEL)
+    GEMINI_TTS_RPM_PER_KEY: int = Field(default=3, ge=1)
     ALERT_COOLDOWN_SECONDS: int = 3600
     MAX_DOCUMENTS_PER_USER: int = 5
     MAX_CONCURRENT_HEAVY_REQUESTS: int = 4
@@ -622,6 +623,7 @@ def load_settings() -> Settings:
             "FREETHEAI_DEFAULT_MODEL": freetheai_default_model,
             "PRIMARY_PROVIDER": os.getenv("PRIMARY_PROVIDER", "opencode").strip().lower(),
             "DAILY_LIMITS": _load_daily_limits(),
+            "GEMINI_TTS_RPM_PER_KEY": int(os.getenv("GEMINI_TTS_RPM_PER_KEY") or "3"),
             "MAX_CONCURRENT_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_HEAVY_REQUESTS", "4")),
             "MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS", "1")),
             "LRU_STATE_CACHE_SIZE": int(os.getenv("LRU_STATE_CACHE_SIZE", "1000")),

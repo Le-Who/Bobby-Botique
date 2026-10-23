@@ -110,6 +110,21 @@ class TestInvalidateKeyCache:
 
 class TestGetAvailableGeminiKey:
     @pytest.mark.asyncio
+    async def test_fresh_tts_selection_bypasses_chat_cache(self, mock_deps):
+        from app.repos.keys import get_available_gemini_key
+
+        cached = {"key_hash": "busy", "api_key": "fake-busy"}
+        mock_deps["mgr"]._active_keys_cache = {"test-model": cached}
+        with patch(
+            "app.repos.keys._get_fresh_available_key",
+            new_callable=AsyncMock,
+            return_value={"key_hash": "less-used", "api_key": "fake-fresh"},
+        ):
+            result = await get_available_gemini_key("test-model", use_cache=False)
+        assert result["key_hash"] == "less-used"
+        assert mock_deps["mgr"]._active_keys_cache["test-model"] is cached
+
+    @pytest.mark.asyncio
     async def test_returns_cached_key(self, mock_deps):
         from app.repos.keys import get_available_gemini_key
 

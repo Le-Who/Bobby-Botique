@@ -226,6 +226,13 @@
     "deploy": false,
     "compose": false
   },
+  "GEMINI_TTS_RPM_PER_KEY": {
+    "readers": [
+      "app/config.py"
+    ],
+    "deploy": true,
+    "compose": false
+  },
   "GOOGLE_APPLICATION_CREDENTIALS": {
     "readers": [
       "app/providers/gemini.py"

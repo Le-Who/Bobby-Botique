@@ -188,7 +188,7 @@ async def test_status_creation_serialized_and_terminal_state_never_regresses(man
 
 
 @pytest.mark.asyncio
-async def test_gemini_request_limit_counts_each_hedged_key(monkeypatch):
+async def test_gemini_request_limit_counts_each_provider_call(monkeypatch):
     inflight = 0
     maximum = 0
     saturated, release = asyncio.Event(), asyncio.Event()
@@ -554,7 +554,7 @@ async def test_concurrent_purge_does_not_cancel_child_cleanup_twice(manager):
 
 
 @pytest.mark.asyncio
-async def test_contract_failure_abandons_model_without_racing_more_keys(monkeypatch):
+async def test_contract_failure_abandons_model_without_spending_more_keys(monkeypatch):
     from app.providers.tts_audio import TTSRequestError
 
     requests = []
@@ -573,7 +573,7 @@ async def test_contract_failure_abandons_model_without_racing_more_keys(monkeypa
     monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: SimpleNamespace(suspend_key=AsyncMock()))
     monkeypatch.setattr("app.providers.tts.generate_speech", generate)
     assert await voice_engine._generate_single_chunk_gemini("safe", "Aoede", set()) is None
-    assert requests == ["a", "b"]
+    assert requests == ["a"]
 
 
 @pytest.mark.asyncio

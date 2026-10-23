@@ -1,4 +1,4 @@
-"""TTS key races own and await every SDK task on success and cancellation."""
+"""Sequential TTS attempts own SDK cleanup and the complete-message deadline."""
 
 import asyncio
 from types import SimpleNamespace
@@ -9,7 +9,7 @@ import pytest
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel_parent", [False, True])
-async def test_tts_race_awaits_losing_sdk_cleanup(monkeypatch, cancel_parent):
+async def test_tts_attempt_finishes_sdk_cleanup(monkeypatch, cancel_parent):
     from app import voice_engine
 
     monkeypatch.setattr(
@@ -27,7 +27,8 @@ async def test_tts_race_awaits_losing_sdk_cleanup(monkeypatch, cancel_parent):
 
     async def generate(text, key, **kwargs):
         if key == "first" and not cancel_parent:
-            await started.wait()
+            started.set()
+            stopped.set()
             return b"pcm"
         try:
             started.set()

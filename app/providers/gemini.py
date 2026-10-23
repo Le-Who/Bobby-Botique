@@ -67,16 +67,31 @@ def _optional_int_attribute(source: Any, name: str) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def get_cached_genai_client(api_key: str) -> genai.Client:
+def get_cached_genai_client(api_key: str, *, single_attempt: bool = False) -> genai.Client:
     """Return a cached genai.Client for the given API key, creating one if needed."""
-    if api_key not in _gemini_clients_cache:
+    cache_key = (api_key, "single_attempt") if single_attempt else api_key
+    if cache_key not in _gemini_clients_cache:
         client_kwargs: dict[str, Any] = {"api_key": api_key}
         http_opts: dict[str, Any] = {"timeout": 90_000}
+        if single_attempt:
+            # Interactions otherwise retries 429/5xx below caller-owned quota
+            # admission and key rotation. Each TTS reservation buys one HTTP call.
+            http_opts["retry_options"] = types.HttpRetryOptions(attempts=1)
         client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]
         client = genai.Client(**client_kwargs)  # type: ignore[arg-type]
+        if single_attempt:
+            # The pinned SDK normalizes attempts=0 to1 during construction,
+            # then Interactions interprets 1 as one *retry*. Configure its
+            # generated transport explicitly; real-SDK tests cover this seam.
+            client.aio.interactions.sdk_configuration.retry_config = None
         _gemini_clients_by_id[id(client)] = client
-        _gemini_clients_cache[api_key] = client
-    return _gemini_clients_cache[api_key]
+        _gemini_clients_cache[cache_key] = client
+    return _gemini_clients_cache[cache_key]
+
+
+def get_single_attempt_genai_client(api_key: str) -> genai.Client:
+    """TTS transport; shares shutdown ownership without changing chat retries."""
+    return get_cached_genai_client(api_key, single_attempt=True)
 
 
 async def close_cached_genai_clients() -> None:

@@ -15,10 +15,11 @@ from typing import Any
 
 from google.genai import types
 
+from app.errors import classify_key_error
 from app.observability.workload_events import start_workload_attempt
 from app.process_policies import TTS_DEFAULT_MODELS
 from app.prompt_registry import get_prompt_text, register_controlled_text
-from app.providers.gemini import get_cached_genai_client
+from app.providers.gemini import get_single_attempt_genai_client as get_cached_genai_client
 from app.providers.tts_audio import (
     MAX_TTS_AUDIO_BYTES,
     TTSContractError,
@@ -26,6 +27,7 @@ from app.providers.tts_audio import (
     TTSRequestError,
     normalize_tts_audio,
 )
+from app.providers.tts_quota import tts_minute_quota
 from app.runtime_settings.audio import get_config, resolve_voice
 from app.runtime_settings.lifecycle import runtime_settings_scope
 
@@ -35,12 +37,18 @@ TTS_MODEL = TTS_DEFAULT_MODELS[0]
 class TTSAdmissionRejected(RuntimeError):
     """Local quota is exhausted or unconfirmed; no provider request was sent."""
 
+    def __init__(self, message: str, *, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
 
 TTS_FALLBACK_MODEL = TTS_DEFAULT_MODELS[1]
 
-# A conservative local bound, not the API's token limit. This leaves ample
-# space below 8,192 input tokens even for edited pronunciation/voice prompts.
-_MAX_TTS_INPUT_BYTES = 7500
+# Bound retained input locally; the provider enforces its model token limit.
+# A byte limit is not a tokenizer: Russian transcripts must not inherit the
+# former 7,500-byte chunk guard. Keep edited delivery directions bounded.
+_MAX_TTS_INPUT_BYTES = 64 * 1024
+_MAX_TTS_DIRECTION_BYTES = 7500
 
 # Available voices and their personalities:
 #   Aoede  — Breezy, natural (smooth conversational narration)
@@ -280,6 +288,7 @@ async def generate_speech(
     if not text or not text.strip():
         return None
 
+    deadline = asyncio.get_running_loop().time() + timeout
     audio_config = await get_config("gemini")
     voice = resolve_voice(audio_config, voice)
     voice_config = next(row for row in audio_config["voices"] if row["id"] == voice)
@@ -297,17 +306,47 @@ async def generate_speech(
     else:
         base_prompt, pacing_tag = _get_steerable_tts_prompt(user_temp, voice_prompt)
         direction = f"{base_prompt}{pacing_tag}"
-    if len((direction + clean).encode("utf-8")) > _MAX_TTS_INPUT_BYTES:
+    if (
+        len(direction.encode("utf-8")) > _MAX_TTS_DIRECTION_BYTES
+        or len((direction + clean).encode("utf-8")) > _MAX_TTS_INPUT_BYTES
+    ):
         raise TTSRequestError("input_too_large")
 
+    from app.config import settings
     from app.repos.keys import reserve_gemini_key_usage
 
+    # Construct local SDK state before reserving a request that could be sent.
+    client = get_cached_genai_client(api_key)
+    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    scope = f"{key_hash}:{model_name}"
     try:
-        admitted = await reserve_gemini_key_usage(hashlib.sha256(api_key.encode()).hexdigest(), model_name)
+        async with asyncio.timeout_at(deadline):
+            minute, retry_after = await tts_minute_quota.reserve(
+                scope,
+                settings.GEMINI_TTS_RPM_PER_KEY,
+                pending_for=max(0.0, deadline - asyncio.get_running_loop().time()),
+            )
     except Exception as error:
         raise TTSAdmissionRejected("TTS quota admission unconfirmed") from error
-    if not admitted:
-        raise TTSAdmissionRejected("TTS local quota exhausted")
+    if minute is None:
+        raise TTSAdmissionRejected("TTS local minute quota exhausted", retry_after=retry_after)
+
+    try:
+        try:
+            async with asyncio.timeout_at(deadline):
+                admitted = await reserve_gemini_key_usage(key_hash, model_name)
+        except Exception as error:
+            raise TTSAdmissionRejected("TTS quota admission unconfirmed") from error
+        if not admitted:
+            raise TTSAdmissionRejected("TTS local daily quota exhausted")
+        try:
+            async with asyncio.timeout_at(deadline):
+                await tts_minute_quota.commit(scope, minute)
+        except Exception as error:
+            raise TTSAdmissionRejected("TTS minute dispatch admission unconfirmed") from error
+    except BaseException:
+        await tts_minute_quota.release_unsent(scope, minute)
+        raise
 
     attempt = start_workload_attempt(
         workload="tts",
@@ -321,8 +360,7 @@ async def generate_speech(
     )
 
     try:
-        async with asyncio.timeout(timeout):
-            client = get_cached_genai_client(api_key)
+        async with asyncio.timeout_at(deadline):
             if current_tts:
                 speech: dict[str, str] = {"voice": voice}
                 if language_code:
@@ -352,6 +390,7 @@ async def generate_speech(
                 audio = _interaction_audio(response)
             else:
                 config = types.GenerateContentConfig(
+                    http_options=types.HttpOptions(retry_options=types.HttpRetryOptions(attempts=1)),
                     temperature=max(user_temp, 0.5),
                     max_output_tokens=audio_config["max_output_tokens"],
                     response_modalities=["AUDIO"],
@@ -379,6 +418,15 @@ async def generate_speech(
         raise
     except Exception as error:
         attempt.fail(error, reason_code="timeout" if isinstance(error, TimeoutError) else "provider_error")
-        if getattr(error, "code", None) in (400, 404, 422) or getattr(error, "status_code", None) in (400, 404, 422):
+        rejected_request = getattr(error, "code", None) in (400, 404, 422) or getattr(error, "status_code", None) in (
+            400,
+            404,
+            422,
+        )
+        evidence = str(error).lower()
+        project_failure = classify_key_error(evidence) == "permanent" or any(
+            marker in evidence for marker in ("api key not valid", "failed_precondition")
+        )
+        if rejected_request and not project_failure:
             raise TTSRequestError("unsupported_tts_request") from error
         raise

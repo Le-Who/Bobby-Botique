@@ -170,6 +170,9 @@ class DailyKeyManager:
             query = f"""
                 SELECT ak.key_hash, ak.api_key
                 FROM {self.keys_table} ak
+                LEFT JOIN {self.usage_table} ku
+                    ON ak.key_hash = ku.key_hash
+                    AND ku.model_name = $1 AND ku.usage_date = $3
                 LEFT JOIN key_model_status kms
                     ON ak.key_hash = kms.key_hash AND kms.model_name = $1
                 WHERE ak.key_hash != ALL($2)
@@ -178,9 +181,10 @@ class DailyKeyManager:
                       OR kms.suspended_until < NOW()
                   )
                 ORDER BY
-                    CASE WHEN COALESCE(kms.status, 'active') = 'active' THEN 0 ELSE 1 END
+                    CASE WHEN COALESCE(kms.status, 'active') = 'active' THEN 0 ELSE 1 END,
+                    COALESCE(ku.request_count, 0) ASC
             """
-            keys = await db_query(query, (model_name, excluded), conn=conn)
+            keys = await db_query(query, (model_name, excluded, today), conn=conn)
             for row in keys:
                 try:
                     return {
@@ -337,9 +341,11 @@ async def invalidate_key_cache(model_name: str | None = None) -> None:
 async def get_available_gemini_key(
     model_name: str,
     excluded_hashes: set[str] | None = None,
+    *,
+    use_cache: bool = True,
 ) -> dict[str, Any] | None:
     # When exclusions are requested, skip cache (caller wants a *different* key)
-    if not excluded_hashes:
+    if use_cache and not excluded_hashes:
         cached_key = None
         if model_name in db_manager._active_keys_cache:
             cached_key = db_manager._active_keys_cache[model_name]
@@ -358,7 +364,7 @@ async def get_available_gemini_key(
                 conn=conn,
             )
 
-            if new_key and not excluded_hashes:
+            if new_key and use_cache and not excluded_hashes:
                 db_manager._active_keys_cache[model_name] = new_key
 
             return new_key

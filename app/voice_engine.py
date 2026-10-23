@@ -24,12 +24,9 @@ from app.utils.background_tasks import try_submit_task
 logger = logging.getLogger(__name__)
 
 ELEVENLABS_TTS_CONCURRENCY = 2
-# Counts actual requests, including both keys in every hedged chunk.
+# Counts actual provider requests; TTS never races duplicate generations.
 GEMINI_TTS_CONCURRENCY = 3
 _HEARTBEAT_INTERVAL_S = 4.0
-# Maximum chunks to generate in parallel within a single TTS job.
-# Lower = fewer RPD consumed per job (2 × 2 key-racing = 4 RPD vs. old 8).
-_MAX_PARALLEL_CHUNKS = 2
 _GEMINI_PLAN_TIMEOUT_FACTOR = 2.0
 _MAX_USER_JOBS = 8
 _MAX_JOBS = 128
@@ -96,92 +93,61 @@ async def _generate_single_chunk_gemini(
     language_code: str | None = None,
     request_semaphore: asyncio.Semaphore | None = None,
 ) -> bytes | None:
-    """Generate PCM audio for one chunk via Gemini TTS with key racing."""
+    """Synthesize once, trying other keys only after a rejected/failed attempt."""
     from app.errors import classify_key_error
     from app.providers.tts import TTSAdmissionRejected, generate_speech
     from app.providers.tts_audio import TTSContractError
     from app.repos.keys import get_available_gemini_key, get_key_status_manager
 
     status_mgr = get_key_status_manager()
-
-    async def _tts_race_call(key_data: dict[str, Any]) -> bytes | None:
-        async with request_semaphore if request_semaphore is not None else contextlib.nullcontext():
-            pcm = await generate_speech(
-                text_chunk,
-                key_data["api_key"],
-                voice=voice,
-                tts_temperature=tts_temperature,
-                timeout=timeout,
-                model_name=model_name,
-                language_code=language_code,
-            )
-        if not pcm:
-            raise ValueError("TTS provider returned empty audio buffer")
-        return pcm
-
-    for pair_attempt in range(2):
-        key_a = await get_available_gemini_key(model_name, excluded_hashes=failed_keys)
-        if not key_a:
-            break
-
-        failed_keys.add(key_a["key_hash"])
-        key_b = await get_available_gemini_key(model_name, excluded_hashes=failed_keys)
-        failed_keys.discard(key_a["key_hash"])
-
-        keys_to_race = [key_a] + ([key_b] if key_b else [])
-
-        def _suppress(task: asyncio.Task[Any]) -> None:
-            try:
-                task.exception()
-            except asyncio.CancelledError, Exception:
-                pass
-
-        tasks = {asyncio.create_task(_tts_race_call(key_data)): key_data for key_data in keys_to_race}
-        for task in tasks:
-            task.add_done_callback(_suppress)
-
-        winner_pcm: bytes | None = None
-        pending = set(tasks)
+    minute_retries: dict[str, float] = {}
+    while True:
+        # Fresh usage ordering spreads jobs across the pool, including when a
+        # model has no local daily cap. Never pin TTS to the chat key cache.
+        key_data = await get_available_gemini_key(model_name, excluded_hashes=failed_keys, use_cache=False)
+        if not key_data:
+            if not minute_retries:
+                return None
+            # Every remaining key is temporarily full: wait for the earliest
+            # minute window under the owning whole-message deadline.
+            await asyncio.sleep(max(0.01, min(minute_retries.values()) - time.monotonic()))
+            failed_keys.difference_update(minute_retries)
+            minute_retries.clear()
+            continue
+        key_hash = key_data["key_hash"]
+        if key_hash in failed_keys:
+            return None
+        failed_keys.add(key_hash)
         try:
-            while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    key_data = tasks[task]
-                    try:
-                        exc = task.exception()
-                    except asyncio.CancelledError:
-                        exc = asyncio.CancelledError("TTS task was cancelled")
-
-                    if exc is None and winner_pcm is None:
-                        winner_pcm = task.result()
-                        break
-
-                    if isinstance(exc, TTSContractError):
-                        return None
-                    if isinstance(exc, TTSAdmissionRejected):
-                        failed_keys.add(key_data["key_hash"])
-                        continue
-                    if exc is not None and not isinstance(exc, asyncio.CancelledError):
-                        with contextlib.suppress(Exception):
-                            err_cat = classify_key_error(str(exc))
-                            await status_mgr.suspend_key(key_data["key_hash"], model_name, err_cat, type(exc).__name__)
-                        failed_keys.add(key_data["key_hash"])
-
-                if winner_pcm is not None:
-                    break
-
-        finally:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-        if winner_pcm is not None:
-            return winner_pcm
-
-        logger.warning("TTS Race: all %d key(s) in pair %d failed", len(keys_to_race), pair_attempt + 1)
-
-    return None
+            async with request_semaphore if request_semaphore is not None else contextlib.nullcontext():
+                pcm = await generate_speech(
+                    text_chunk,
+                    key_data["api_key"],
+                    voice=voice,
+                    tts_temperature=tts_temperature,
+                    timeout=timeout,
+                    model_name=model_name,
+                    language_code=language_code,
+                )
+            if not pcm:
+                return None
+            return pcm
+        except TTSContractError:
+            # The transcript/output is independent of credentials. Advance the
+            # complete-message model plan without spending another key.
+            return None
+        except TTSAdmissionRejected as error:
+            if error.retry_after is not None:
+                minute_retries[key_hash] = time.monotonic() + error.retry_after
+        except Exception as error:
+            with contextlib.suppress(Exception):
+                category = classify_key_error(str(error))
+                if getattr(error, "code", None) == 429 or getattr(error, "status_code", None) == 429:
+                    # "Quota exceeded" also describes RPM. Only explicit daily
+                    # evidence may suspend a key until the next Pacific day.
+                    evidence = str(error).lower().replace("_", "").replace(" ", "")
+                    category = "quota" if "perday" in evidence or "dailylimit" in evidence else "rate_limit"
+                await status_mgr.suspend_key(key_hash, model_name, category, type(error).__name__)
 
 
 async def _run_gemini_pipeline(
@@ -196,62 +162,32 @@ async def _run_gemini_pipeline(
     require_complete: bool = False,
     request_semaphore: asyncio.Semaphore | None = None,
 ) -> list[bytes] | None:
-    """Run the full Gemini TTS pipeline across all chunks.
-
-    Generates up to _MAX_PARALLEL_CHUNKS chunks concurrently via asyncio.gather
-    to reduce total latency.  Each chunk still uses internal key-racing.
-    """
+    """Collect complete audio; production supplies one whole transcript."""
     from app.providers.tts_audio import MAX_TTS_AUDIO_BYTES
-    from app.utils.audio import trim_trailing_silence
 
-    total = len(chunks)
     pcm_parts: list[bytes] = []
-    completed_count = 0
-
-    for batch_start in range(0, total, _MAX_PARALLEL_CHUNKS):
-        batch = chunks[batch_start : batch_start + _MAX_PARALLEL_CHUNKS]
-        # Each task gets its own failed_keys set so key-racing is independent.
-        coros = [
-            _generate_single_chunk_gemini(
-                chunk,
-                voice,
-                set(),  # independent failed_keys per chunk
-                timeout=adaptive_timeout,
-                tts_temperature=tts_temperature,
-                model_name=model_name,
-                language_code=language_code,
-                request_semaphore=request_semaphore,
-            )
-            for chunk in batch
-        ]
-        results = await asyncio.gather(*coros, return_exceptions=True)
-
-        for i, result in enumerate(results):
-            global_idx = batch_start + i
-            if isinstance(result, BaseException) or result is None:
-                if require_complete:
-                    logger.warning("Configured Gemini TTS message incomplete; advancing the whole-message plan")
-                    return None
-                if global_idx == 0:
-                    logger.warning("Gemini TTS: first chunk failed, aborting")
-                else:
-                    logger.warning(
-                        "Gemini TTS: chunk %d/%d failed, sending partial audio",
-                        global_idx + 1,
-                        total,
-                    )
-                # Stop collecting — return what we have so far
-                return pcm_parts if pcm_parts else None
-
-            pcm_parts.append(trim_trailing_silence(result))
-            if sum(map(len, pcm_parts)) > MAX_TTS_AUDIO_BYTES:
-                logger.warning("Gemini TTS message exceeds the audio size budget; advancing model plan")
-                return None
-            completed_count += 1
-            if on_chunk_complete:
-                await on_chunk_complete(completed_count, total)
-
-    return pcm_parts if pcm_parts else None
+    audio_size = 0
+    for transcript in chunks:
+        result = await _generate_single_chunk_gemini(
+            transcript,
+            voice,
+            set(),
+            timeout=adaptive_timeout,
+            tts_temperature=tts_temperature,
+            model_name=model_name,
+            language_code=language_code,
+            request_semaphore=request_semaphore,
+        )
+        if not result:
+            return None
+        audio_size += len(result)
+        if audio_size > MAX_TTS_AUDIO_BYTES:
+            logger.warning("Gemini TTS message exceeds the audio size budget; advancing model plan")
+            return None
+        pcm_parts.append(result)
+        if on_chunk_complete:
+            await on_chunk_complete(len(pcm_parts), len(chunks))
+    return pcm_parts or None
 
 
 class VoiceReplyManager:
@@ -545,10 +481,9 @@ class VoiceReplyManager:
             from app.config import settings
             from app.i18n import detect_language
             from app.providers.elevenlabs_tts import (
-                ELEVENLABS_CHUNK_MAX_BYTES,
                 generate_speech_with_key_rotation,
             )
-            from app.providers.tts import _chunk_text_by_sentences, _clean_text_for_speech
+            from app.providers.tts import _clean_text_for_speech
             from app.runtime_settings.audio import get_config, resolve_voice
             from app.utils.audio import crossfade_pcm_chunks, pcm_to_ogg_opus
 
@@ -577,7 +512,7 @@ class VoiceReplyManager:
             for provider_index, provider in enumerate(delivery.models):
                 if provider == "elevenlabs" and el_keys:
                     el_voice_id = resolve_voice(await get_config("elevenlabs"), job.voice)
-                    el_chunks = _chunk_text_by_sentences(clean_text, max_bytes=ELEVENLABS_CHUNK_MAX_BYTES)
+                    el_chunks = [clean_text]
                     el_timeout = min(90.0, max(30.0, len(clean_text) / 50.0 + 15.0))
                     await self._set_status(
                         job,
@@ -599,7 +534,7 @@ class VoiceReplyManager:
                         )
 
                 if provider == "gemini":
-                    gemini_chunks = _chunk_text_by_sentences(clean_text, max_bytes=800)
+                    gemini_chunks = [clean_text]
                     gemini_voice = resolve_voice(await get_config("gemini"), job.voice)
                     gemini_timeout = min(120.0, max(40.0, len(clean_text) / 40.0 + 40.0))
 
@@ -607,8 +542,7 @@ class VoiceReplyManager:
                     model_plan = policy.models if policy.explicit else TTS_DEFAULT_MODELS
                     # A shared deadline covers the complete model plan; each
                     # actual key request acquires the semaphore independently.
-                    batches = max(1, (len(gemini_chunks) + _MAX_PARALLEL_CHUNKS - 1) // _MAX_PARALLEL_CHUNKS)
-                    plan_timeout = gemini_timeout * batches * _GEMINI_PLAN_TIMEOUT_FACTOR
+                    plan_timeout = gemini_timeout * _GEMINI_PLAN_TIMEOUT_FACTOR
                     try:
                         async with asyncio.timeout(plan_timeout):
                             for model_index, model_name in enumerate(model_plan):
@@ -646,7 +580,7 @@ class VoiceReplyManager:
                 return None
 
             await self._set_status(job, status="encoding", detail="Упаковываю аудио…")
-            pcm_audio = crossfade_pcm_chunks(pcm_parts)
+            pcm_audio = pcm_parts[0] if len(pcm_parts) == 1 else crossfade_pcm_chunks(pcm_parts)
             ogg_bytes = await pcm_to_ogg_opus(pcm_audio)
             return ogg_bytes
         except (OSError, TimeoutError, ValueError, RuntimeError) as exc:

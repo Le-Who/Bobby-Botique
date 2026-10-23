@@ -436,7 +436,7 @@ provider-routed chat/search and specialized research execution have distinct pat
 
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
-| `DAILY_LIMITS` | ⚙️ | JSON model-to-limit map or comma-separated `model:limit` entries | Model-specific map in `app/config.py`; generic fallback `19` | Per-user daily request caps by model name. Requests beyond the limit receive a "quota exceeded" reply. Tracked in the DB with reset at midnight UTC. The TTS model `gemini-2.5-flash-preview-tts` can be included with a separate limit. |
+| `DAILY_LIMITS` | ⚙️ | JSON model-to-limit map or comma-separated `model:limit` entries | Model-specific map in `app/config.py` | Local Gemini RPD budgets per key and model, reserved atomically in PostgreSQL before dispatch, including TTS. Reset at midnight Pacific Time. Admin model-limit overrides take precedence; models without a configured cap still accumulate usage. |
 | `MAX_CONCURRENT_HEAVY_REQUESTS` | ⚙️ | `4`—`32` | `4` | Global asyncio semaphore limiting simultaneously active LLM/TTS requests. Backed by Redis for multi-replica safety. Tune against measured load, provider quota and memory limits. |
 | `MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS` | ⚙️ | `1`—`8` | `1` | Separate semaphore for agentic research (`??`) sessions. These are memory-intensive due to iterative context accumulation. Tune against measured resource use. |
 | `LRU_STATE_CACHE_SIZE` | ⚙️ | `1000`—`50000` | `1000` | Maximum number of `UserState` objects held in the in-process LRU cache. Tune from measured state size and cache misses. |
@@ -466,15 +466,33 @@ provider-routed chat/search and specialized research execution have distinct pat
 | `ELEVENLABS_API_KEYS` | ⚙️ | `sk_abc,sk_xyz` | `[]` | Comma-separated outbound TTS keys, tried in order; failed/exhausted keys are skipped for remaining chunks of that synthesis. If the pipeline cannot finish, the voice engine can fall back to Gemini TTS for the entire response. Provider-side quotas are not defined by this repository. |
 | `ELEVENLABS_VOICE_ID` | ⚙️ | `XB0fDUnXU5powFXDhCwa` | `XB0fDUnXU5powFXDhCwa` | Baseline ElevenLabs voice; the admin catalog and an active user preference take precedence. Default is Charlotte. Browse voices at [elevenlabs.io/voice-library](https://elevenlabs.io/voice-library). |
 | `ELEVENLABS_MODEL` | ⚙️ | `eleven_multilingual_v2` | `eleven_multilingual_v2` | Model passed to the ElevenLabs synthesis path. |
+| `GEMINI_TTS_RPM_PER_KEY` | ⚙️ | Positive integer | `3` | Local rolling 60-second TTS request budget per key and model. Redis coordinates replicas; without Redis the window is process-local. Set against the independent projects' AI Studio quotas. Forwarded by the VPS workflow; restart required. |
 
 The admin dashboard's **Voices and TTS** section (`/controls#audio`) manages voice
 IDs, names, ordering, defaults, Gemini voice prompts and synthesis parameters.
 The Mini App and voice engine consume the same catalogs. Model chains and provider
 order remain in **Model routes**, and shared pronunciation/style/pacing prompts
 remain in **Prompts**. The default Gemini TTS chain is
-`gemini-3.1-flash-tts-preview` → `gemini-2.5-flash-preview-tts`; admin policies can
+`gemini-3.8-flash-lite-tts` → `gemini-3.8-flash-tts`; admin policies can
 override it. See [voice controls and model inventory](docs/runtime-controls.md#голосовые-сообщения-и-tts)
 for parameters, precedence and the separate ASR and Live boundaries.
+
+Gemini TTS sends the whole cleaned reply in one generation, with sequential key
+rotation and no duplicate key races. Input/output token limits still apply;
+incomplete audio is discarded before trying the next configured model/provider.
+ElevenLabs also sends a whole transcript when it fits the selected model, splitting
+only at known model character limits (10,000 for Multilingual v2, 40,000 for Flash
+v2.5). Separate requests can differ in prosody; those necessary long-form joins
+retain neighbouring text context. Gemini input is bounded locally at 64 KiB UTF-8
+including directions; the provider enforces its token limit.
+
+RPM admission precedes atomic RPD admission. An unsent minute reservation is
+refunded; dispatched requests retain RPM/RPD usage on errors and cancellation.
+SDK retries are disabled for TTS so each reservation covers one HTTP attempt.
+Keys are chosen from fresh least-used ordering, with exhausted keys skipped across
+the whole pool. If all usable keys are minute-limited, the job waits under its
+deadline. RPD values come from configured model budgets, not automatic discovery
+of provider account limits; missing caps rely on provider quota errors and rotation.
 
 These tables cover supported operator settings, not every environment read in the
 repository. A runtime setting is not automatically forwarded by the VPS workflow:

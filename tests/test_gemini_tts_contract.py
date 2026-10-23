@@ -150,11 +150,20 @@ async def test_legacy_audio_parts_are_all_normalized_and_kept_in_order(isolated_
 
 
 @pytest.mark.asyncio
-async def test_credentials_error_reaches_key_owner_unchanged(isolated_speech, monkeypatch):
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        (400, "API_KEY_INVALID"),
+        (401, "API_KEY_INVALID"),
+        (400, "API key not valid"),
+        (400, "FAILED_PRECONDITION: free tier unavailable"),
+    ],
+)
+async def test_credentials_error_reaches_key_owner_unchanged(isolated_speech, monkeypatch, status, message):
     from google.genai.errors import ClientError
 
     tts, attempt = isolated_speech
-    error = ClientError(401, {"error": {"message": "API key invalid", "status": "UNAUTHENTICATED"}})
+    error = ClientError(status, {"error": {"message": message, "status": "INVALID_ARGUMENT"}})
     monkeypatch.setattr(
         tts,
         "get_cached_genai_client",
@@ -346,3 +355,128 @@ async def test_legacy_voice_level_is_used_unless_user_overrides_it(isolated_spee
         == PCM
     )
     assert seen[0]["config"].temperature == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "provider_error", "cancelled"])
+async def test_sent_tts_requests_keep_minute_and_daily_usage(isolated_speech, monkeypatch, outcome):
+    import asyncio
+
+    from app.config import settings
+
+    tts, _ = isolated_speech
+    monkeypatch.setattr(settings, "GEMINI_TTS_RPM_PER_KEY", 1)
+    daily = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", daily)
+    sent = []
+
+    async def synthesize(**kwargs):
+        sent.append(kwargs["input"][0]["content"][0]["text"])
+        if outcome == "provider_error":
+            raise OSError("offline")
+        if outcome == "cancelled":
+            raise asyncio.CancelledError
+        return SimpleNamespace(
+            status="completed",
+            errors=None,
+            steps=[
+                SimpleNamespace(
+                    type="model_output",
+                    content=[SimpleNamespace(type="audio", mime_type="audio/l16", data=base64.b64encode(PCM).decode())],
+                )
+            ],
+        )
+
+    monkeypatch.setattr(
+        tts,
+        "get_cached_genai_client",
+        lambda _: SimpleNamespace(aio=SimpleNamespace(interactions=SimpleNamespace(create=synthesize))),
+    )
+    if outcome == "success":
+        assert await tts.generate_speech("Whole transcript.", "key") == PCM
+    else:
+        with pytest.raises(OSError if outcome == "provider_error" else asyncio.CancelledError):
+            await tts.generate_speech("Whole transcript.", "key")
+    with pytest.raises(tts.TTSAdmissionRejected) as rejected:
+        await tts.generate_speech("Whole transcript.", "key")
+    assert rejected.value.retry_after is not None and 0 < rejected.value.retry_after <= 60
+    assert sent == ["Whole transcript."]
+    daily.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refusal", [False, OSError("database unavailable"), "cancelled"])
+async def test_unsent_daily_refusal_refunds_minute_slot(isolated_speech, monkeypatch, refusal):
+    import asyncio
+
+    from app.config import settings
+
+    tts, _ = isolated_speech
+    monkeypatch.setattr(settings, "GEMINI_TTS_RPM_PER_KEY", 1)
+    daily = AsyncMock(side_effect=[asyncio.CancelledError() if refusal == "cancelled" else refusal, True])
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", daily)
+    response = SimpleNamespace(
+        status="completed",
+        errors=None,
+        steps=[
+            SimpleNamespace(
+                type="model_output",
+                content=[SimpleNamespace(type="audio", mime_type="audio/l16", data=base64.b64encode(PCM).decode())],
+            )
+        ],
+    )
+    sdk = AsyncMock(return_value=response)
+    monkeypatch.setattr(
+        tts,
+        "get_cached_genai_client",
+        lambda _: SimpleNamespace(aio=SimpleNamespace(interactions=SimpleNamespace(create=sdk))),
+    )
+    with pytest.raises(asyncio.CancelledError if refusal == "cancelled" else tts.TTSAdmissionRejected):
+        await tts.generate_speech("Whole transcript.", "key")
+    assert await tts.generate_speech("Whole transcript.", "key") == PCM
+    sdk.assert_awaited_once()
+    assert daily.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [0, 429, 503])
+@pytest.mark.parametrize("model", ["gemini-3.8-flash-lite-tts", "gemini-3.1-flash-tts-preview"])
+async def test_sdk_never_retries_beneath_tts_quota_accounting(isolated_speech, monkeypatch, status, model):
+    from app.providers import gemini
+
+    tts, _ = isolated_speech
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        if status == 0:
+            raise httpx.ReadError("offline connection closed", request=request)
+        code = (
+            ("RESOURCE_EXHAUSTED" if status == 429 else "UNAVAILABLE")
+            if "/interactions" in request.url.path
+            else status
+        )
+        return httpx.Response(status, json={"error": {"code": code, "message": "offline failure"}})
+
+    original_client = genai.Client
+    clients = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as transport:
+
+        def client_factory(**kwargs):
+            options = kwargs["http_options"].model_copy(update={"httpx_async_client": transport})
+            client = original_client(api_key=kwargs["api_key"], http_options=options)
+            clients.append(client)
+            return client
+
+        monkeypatch.setattr(gemini.genai, "Client", client_factory)
+        monkeypatch.setattr(gemini, "_gemini_clients_cache", {})
+        try:
+            with pytest.raises(Exception) as caught:
+                await tts.generate_speech("Whole transcript.", "single-attempt-key", model_name=model)
+            if status:
+                assert (getattr(caught.value, "status_code", None) or getattr(caught.value, "code", None)) == status
+        finally:
+            for client in clients:
+                await client.aio.aclose()
+                client.close()
+    assert len(requests) == 1
