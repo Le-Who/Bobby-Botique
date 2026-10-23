@@ -221,7 +221,9 @@ async def _get_live_model_cooldown_reason() -> str:
     if not redis_client:
         return ""
     reason = await redis_client.get("live_model_cooldown")
-    return reason.decode("utf-8") if reason else ""
+    if isinstance(reason, bytes):
+        return reason.decode("utf-8")
+    return reason or ""
 
 
 async def _mark_live_model_cooldown(seconds: int, reason: str) -> int:
