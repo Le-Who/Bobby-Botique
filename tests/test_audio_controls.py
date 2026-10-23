@@ -8,6 +8,17 @@ import pytest
 from app.runtime_settings import lifecycle, store
 
 
+@pytest.mark.parametrize("configured", ["", " ", "\t\n"])
+def test_empty_optional_elevenlabs_voice_uses_valid_baseline(monkeypatch, configured):
+    from app.config import settings
+    from app.runtime_settings import audio
+
+    monkeypatch.setattr(settings, "ELEVENLABS_VOICE_ID", configured)
+    config = audio.validate_config("elevenlabs", audio.baseline_config("elevenlabs"))
+    assert config["default_voice"] == "XB0fDUnXU5powFXDhCwa"
+    assert len(config["voices"]) == 7
+
+
 @pytest.fixture
 def audio_runtime(monkeypatch):
     from tests.test_runtime_settings_store import Database

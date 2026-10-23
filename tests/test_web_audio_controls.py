@@ -55,6 +55,18 @@ async def admin_client():
 
 
 @pytest.mark.asyncio
+async def test_empty_optional_voice_does_not_break_controls_inventory(audio_backend, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "ELEVENLABS_VOICE_ID", "")
+    client = await admin_client()
+    response = await client.get("/api/admin/controls")
+    assert response.status_code == 200
+    inventory = await response.get_json()
+    assert [row["id"] for row in inventory["audio"]] == ["gemini", "elevenlabs"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider,value", [("gemini", GEMINI), ("elevenlabs", ELEVENLABS)])
 async def test_audio_save_get_conflict_reset_and_restore(audio_backend, provider, value):
     database, backend = audio_backend
