@@ -228,6 +228,13 @@ async def _cleanup_application_resources(
 ):
     """Run the existing cleanup order; the caller owns any cancellation deferral."""
 
+    try:
+        from app.voice_engine import get_voice_reply_manager
+
+        await get_voice_reply_manager().close()
+    except Exception as cleanup_error:
+        logging.warning("Cleanup error (voice queue): %s", cleanup_error)
+
     # Send shutdown alert to admin
     try:
         from app.admin_alerts import alert_admin_shutdown
@@ -356,6 +363,15 @@ async def run_bot_with_retry():
     webhook_admission = None
 
     try:
+        from app.voice_engine import get_voice_reply_manager
+
+        if shutdown_event.is_set():
+            return
+        await get_voice_reply_manager().start()
+        if shutdown_event.is_set():
+            await get_voice_reply_manager().close()
+            return
+
         from telegram.request import HTTPXRequest
 
         custom_request = HTTPXRequest(
@@ -812,6 +828,13 @@ async def run_bot_and_server():
         logging.info("Starting graceful shutdown...")
 
         try:
+            from app.voice_engine import get_voice_reply_manager
+
+            await get_voice_reply_manager().close()
+        except Exception as e:
+            logging.error("Error closing voice reply queue: %s", e)
+
+        try:
             from app.utils.background_tasks import get_task_manager
 
             drained = await get_task_manager().drain(timeout=10.0)
@@ -829,6 +852,13 @@ async def run_bot_and_server():
                 task.cancel()
 
         await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+
+        try:
+            from app.providers import close_http_clients
+
+            await close_http_clients()
+        except Exception as e:
+            logging.error("Error closing provider clients: %s", e)
 
         # Resource cleanup (task queue, metrics, DB) is handled by main()'s
         # finally-block to avoid double-free.

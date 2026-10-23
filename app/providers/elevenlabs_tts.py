@@ -10,12 +10,11 @@ Key design decisions:
   - Output format: pcm_24000 — byte-identical to Gemini TTS output so the
     shared ffmpeg transcoding pipeline (pcm_to_ogg_opus) needs zero changes.
   - Key rotation: simple sequential iteration over the ELEVENLABS_API_KEYS pool.
-    On 401/422 (key invalid) or 429 (quota/rate) the caller tries the next key.
+    On 401/403 (key invalid) or 429 (quota/rate) the caller tries the next key.
   - Text cleaning: strips Markdown/code/URLs but does NOT inject Director's Notes
     (ElevenLabs would read them aloud — they are plain text to the model).
-  - Chunking: ElevenLabs v1 text-to-speech accepts up to 5000 bytes. We reuse
-    the existing _chunk_text_by_sentences() from providers/tts.py with a 4500-byte
-    limit to stay clear of the cap.
+  - Chunking: a conservative local 4500-byte UTF-8 budget. Provider character
+    limits vary by model; this is not a universal ElevenLabs API limit.
 """
 
 import asyncio
@@ -25,6 +24,13 @@ from typing import Final
 import httpx
 
 from app.observability.workload_events import start_workload_attempt
+from app.providers.tts_audio import (
+    MAX_TTS_AUDIO_BYTES,
+    TTSContractError,
+    TTSOutputError,
+    TTSRequestError,
+    normalize_tts_audio,
+)
 from app.runtime_settings.audio import get_config
 from app.runtime_settings.lifecycle import runtime_settings_scope
 
@@ -45,7 +51,7 @@ class ElevenLabsAPIError(Exception):
 # ─── Constants ───────────────────────────────────────────────────────────────
 
 _BASE_URL: Final = "https://api.elevenlabs.io"
-_TTS_ENDPOINT: Final = "/v1/text-to-speech/{voice_id}"
+_TTS_ENDPOINT: Final = "/v1/text-to-speech/{voice_id}/stream"
 
 # PCM 24kHz — matches Gemini TTS output format exactly.
 # This eliminates all audio-format concerns when concatenating chunks or
@@ -60,9 +66,10 @@ _FLASH_MODEL: Final = "eleven_flash_v2_5"
 # HTTP timeouts: connect fast, allow up to 90 s for speech generation.
 _HTTP_TIMEOUT: Final = httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=5.0)
 
-# Max bytes per chunk for ElevenLabs (their limit is 5000 bytes; we leave
-# 500 bytes of headroom for any overhead added by the JSON request envelope).
+# Conservative local budget; model maximum_text_length_per_request is in characters.
 ELEVENLABS_CHUNK_MAX_BYTES: Final = 4500
+_STITCH_CONTEXT_CHARS: Final = 500
+_VOICE_CATALOG_MAX_BYTES: Final = 1024 * 1024
 
 
 # ─── Shared async HTTP client ─────────────────────────────────────────────────
@@ -83,6 +90,42 @@ def _get_client() -> httpx.AsyncClient:
             headers={"Content-Type": "application/json", "Accept": "application/octet-stream"},
         )
     return _http_client
+
+
+async def close_elevenlabs_client() -> None:
+    """Release the provider-owned pool after voice jobs have stopped."""
+    global _http_client
+    client, _http_client = _http_client, None
+    if client is not None:
+        await client.aclose()
+
+
+async def _read_bounded(response: httpx.Response, maximum: int) -> bytes:
+    # Request identity encoding and reject a compressed response: decoding an
+    # untrusted compressed chunk before checking size could allocate far more
+    # than the audio limit. Identity chunks otherwise retain no full body.
+    if response.headers.get("content-encoding", "identity").lower() != "identity":
+        raise TTSOutputError("unsupported_content_encoding")
+    length = response.headers.get("content-length")
+    if length is not None:
+        try:
+            declared = int(length)
+        except ValueError as error:
+            raise TTSOutputError("invalid_content_length") from error
+        if declared < 0:
+            raise TTSOutputError("invalid_content_length")
+        if declared > maximum:
+            raise TTSOutputError("audio_too_large")
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in response.aiter_bytes(chunk_size=16384):
+        size += len(chunk)
+        if size > maximum:
+            raise TTSOutputError("audio_too_large")
+        chunks.append(chunk)
+    if length is not None and size != declared:
+        raise TTSOutputError("truncated_http_body")
+    return b"".join(chunks)
 
 
 # ─── Text normalisation ───────────────────────────────────────────────────────
@@ -132,12 +175,13 @@ async def generate_speech_elevenlabs(
                        utterance.
 
     Returns:
-        Raw PCM 24kHz 16-bit mono bytes, or None if the API returned no audio.
+        Validated PCM 24kHz 16-bit mono bytes, or None for empty input.
 
     Raises:
         ElevenLabsQuotaError: On HTTP 401 (key invalid / expired) or 429 (quota).
-        ElevenLabsAPIError:   On non-retryable HTTP errors (4xx/5xx excl. quota).
-        RuntimeError:         On network/timeout errors (caller should rotate key).
+        ElevenLabsAPIError:   On unexpected HTTP/server errors.
+        TTSContractError:     On an invalid request or incompatible/incomplete audio.
+        TimeoutError:         On the absolute request deadline; transport errors retain their type.
     """
     if not text or not text.strip():
         return None
@@ -154,80 +198,58 @@ async def generate_speech_elevenlabs(
         has_next_context=next_text is not None,
     )
 
-    audio_config = await get_config("elevenlabs")
-    endpoint = _TTS_ENDPOINT.format(voice_id=voice_id)
-    payload: dict[str, object] = {
-        "text": text,
-        "model_id": model_id,
-        "voice_settings": audio_config["voice_settings"],
-        # Text normalisation: let EL convert dates / numbers to natural speech.
-        # Our _clean_text_for_speech() already strips code blocks, so the risk of
-        # misreading inline code is negligible.
-        "apply_text_normalization": audio_config["apply_text_normalization"],
-    }
-    # Request Stitching: only include when non-None to avoid sending empty strings
-    # that could confuse the model into producing extra breath/pause artefacts.
-    if previous_text:
-        payload["previous_text"] = previous_text
-    if next_text:
-        payload["next_text"] = next_text
-
-    client = _get_client()
+    reason = "transport_error"
+    status_code: int | None = None
     try:
-        response = await asyncio.wait_for(
-            client.post(
-                endpoint,
+        async with asyncio.timeout(timeout):
+            audio_config = await get_config("elevenlabs")
+            payload: dict[str, object] = {
+                "text": text,
+                "model_id": model_id,
+                "voice_settings": audio_config["voice_settings"],
+                "apply_text_normalization": audio_config["apply_text_normalization"],
+            }
+            if previous_text:
+                payload["previous_text"] = previous_text[-_STITCH_CONTEXT_CHARS:]
+            if next_text:
+                payload["next_text"] = next_text[:_STITCH_CONTEXT_CHARS]
+            async with _get_client().stream(
+                "POST",
+                _TTS_ENDPOINT.format(voice_id=voice_id),
                 json=payload,
                 params={"output_format": _OUTPUT_FORMAT},
-                headers={"xi-api-key": api_key},
-            ),
-            timeout=timeout,
-        )
+                headers={"xi-api-key": api_key, "Accept-Encoding": "identity"},
+            ) as response:
+                status_code = response.status_code
+                # No upstream error body is needed for classification. Do not
+                # read it at all; the context closes the stream on every exit.
+                if status_code in (401, 403, 429):
+                    reason = "rate_limited" if status_code == 429 else "auth_error"
+                    raise ElevenLabsQuotaError(f"HTTP {status_code}")
+                if 400 <= status_code < 500:
+                    raise TTSRequestError("provider_request_rejected")
+                if status_code != 200:
+                    reason = "http_error"
+                    raise ElevenLabsAPIError(f"HTTP {status_code}")
+                audio_bytes = normalize_tts_audio(
+                    await _read_bounded(response, MAX_TTS_AUDIO_BYTES),
+                    response.headers.get("content-type"),
+                    allow_octet_stream=True,
+                    max_bytes=MAX_TTS_AUDIO_BYTES,
+                )
+    except asyncio.CancelledError:
+        attempt.finish(outcome="cancelled", level="warning", reason_code="cancelled")
+        raise
     except TimeoutError as exc:
         logging.warning("ElevenLabs TTS request timed out after %.0fs", timeout)
         attempt.fail(exc, reason_code="timeout")
         raise
-    except Exception as exc:
-        attempt.fail(exc, reason_code="transport_error")
+    except TTSContractError as exc:
+        attempt.fail(exc, reason_code=exc.reason_code, status_code=status_code)
         raise
-
-    if response.status_code in (401, 403):
-        # Key is invalid, banned, or subscription lapsed.
-        logging.warning(
-            "ElevenLabs key rejected (HTTP %d): quota/auth failure",
-            response.status_code,
-        )
-        quota_error = ElevenLabsQuotaError(f"Key rejected: HTTP {response.status_code}")
-        attempt.fail(quota_error, reason_code="auth_error", status_code=response.status_code)
-        raise quota_error
-
-    if response.status_code == 429:
-        # Rate-limited or character quota exhausted.
-        logging.warning("ElevenLabs rate/quota limit hit (HTTP 429)")
-        quota_error = ElevenLabsQuotaError("ElevenLabs quota or rate limit exceeded")
-        attempt.fail(quota_error, reason_code="rate_limited", status_code=429)
-        raise quota_error
-
-    if response.status_code != 200:
-        # Non-recoverable server error — don't rotate key, just fail.
-        logging.error("ElevenLabs unexpected HTTP %d", response.status_code)
-        api_error = ElevenLabsAPIError(f"HTTP {response.status_code}")
-        attempt.fail(api_error, reason_code="http_error", status_code=response.status_code)
-        raise api_error
-
-    audio_bytes = response.content
-    if not audio_bytes or len(audio_bytes) < 100:
-        logging.warning(
-            "ElevenLabs returned suspiciously small audio (%d bytes)",
-            len(audio_bytes) if audio_bytes else 0,
-        )
-        attempt.finish(
-            outcome="failed",
-            level="warning",
-            reason_code="empty_audio",
-            output_bytes=len(audio_bytes) if audio_bytes else 0,
-        )
-        return None
+    except Exception as exc:
+        attempt.fail(exc, reason_code=reason, status_code=status_code)
+        raise
 
     logging.info(
         "ElevenLabs TTS: voice=%s, text_len=%d, pcm_bytes=%d",
@@ -308,6 +330,7 @@ async def _generate_message_with_key_rotation(
     non_empty: list[tuple[int, str]] = [(i, c) for i, c in enumerate(text_chunks) if c.strip()]
 
     pcm_parts: list[bytes] = []
+    audio_size = 0
     exhausted_keys: set[str] = set()
 
     for pos, (original_idx, chunk) in enumerate(non_empty):
@@ -345,6 +368,12 @@ async def _generate_message_with_key_rotation(
                     chunk_success = True
                     break
 
+            except TTSContractError as error:
+                # Invalid payload/audio is independent of the selected key.
+                # Advance the whole-message model/provider plan immediately.
+                logging.warning("ElevenLabs message contract failed: %s", error.reason_code)
+                return None
+
             except ElevenLabsQuotaError:
                 logging.warning(
                     "ElevenLabs key quota exhausted (chunk %d/%d), rotating key",
@@ -378,6 +407,10 @@ async def _generate_message_with_key_rotation(
             return None  # Signal: fall back to Gemini
 
         if chunk_pcm:
+            audio_size += len(chunk_pcm)
+            if audio_size > MAX_TTS_AUDIO_BYTES:
+                logging.warning("ElevenLabs message exceeded its aggregate audio bound")
+                return None
             pcm_parts.append(chunk_pcm)
             if on_chunk_complete is not None:
                 await on_chunk_complete(pos + 1, len(non_empty))
@@ -403,40 +436,36 @@ async def fetch_voices(api_key: str, *, timeout: float = 10.0) -> list[dict]:
         api_key=api_key,
         origin="elevenlabs_voice_catalog",
     )
-    client = _get_client()
+    reason = "request_failed"
     try:
-        response = await asyncio.wait_for(
-            client.get(
+        async with asyncio.timeout(timeout):
+            async with _get_client().stream(
+                "GET",
                 "/v1/voices",
-                headers={"xi-api-key": api_key, "Accept": "application/json"},
-            ),
-            timeout=timeout,
-        )
-    except Exception as exc:
-        logging.warning("Failed to fetch ElevenLabs voices (%s)", type(exc).__name__)
-        attempt.fail(exc, reason_code="request_failed")
-        return []
+                headers={"xi-api-key": api_key, "Accept": "application/json", "Accept-Encoding": "identity"},
+            ) as response:
+                status_code = response.status_code
+                body = await _read_bounded(response, _VOICE_CATALOG_MAX_BYTES) if status_code == 200 else b""
+        # Closing the response is part of the attempt; cancellation during
+        # close must not produce a second terminal after an HTTP failure.
+        if status_code != 200:
+            attempt.finish(outcome="failed", level="warning", reason_code="http_error", status_code=status_code)
+            return []
+        reason = "invalid_response"
+        from app.utils.json_compat import json
 
-    if response.status_code != 200:
-        logging.warning("ElevenLabs voices API returned HTTP %d", response.status_code)
-        attempt.finish(
-            outcome="failed",
-            level="warning",
-            reason_code="http_error",
-            status_code=response.status_code,
-        )
-        return []
-
-    try:
-        data = response.json()
+        data = json.loads(body)
         if not isinstance(data, dict):
             raise TypeError("ElevenLabs voices response must be an object")
         voices_list = data.get("voices", [])
         if not isinstance(voices_list, list):
             raise TypeError("ElevenLabs voices field must be a list")
+    except asyncio.CancelledError:
+        attempt.finish(outcome="cancelled", level="warning", reason_code="cancelled")
+        raise
     except Exception as exc:
-        logging.warning("Failed to parse ElevenLabs voices JSON (%s)", type(exc).__name__)
-        attempt.fail(exc, reason_code="invalid_response")
+        logging.warning("Failed to fetch ElevenLabs voices (%s)", type(exc).__name__)
+        attempt.fail(exc, reason_code=reason)
         return []
 
     result = []

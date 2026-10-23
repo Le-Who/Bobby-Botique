@@ -5,6 +5,9 @@ Re-exports all public symbols for convenient imports:
     from app.providers import AIResponse, GeminiProvider, ProviderRouter, ...
 """
 
+import asyncio
+import logging
+
 from app.providers.base import (
     AIResponse,
     BaseAIProvider,
@@ -14,11 +17,27 @@ from app.providers.base import (
     is_opencode_model,
     is_openrouter_model,
 )
+from app.providers.elevenlabs_tts import close_elevenlabs_client
 from app.providers.freetheai import FreeTheAIProvider
-from app.providers.gemini import GeminiProvider
+from app.providers.gemini import GeminiProvider, close_cached_genai_clients
 from app.providers.opencode import OpencodeGoProvider
-from app.providers.openrouter import OpenRouterProvider, close_http_clients
+from app.providers.openrouter import OpenRouterProvider
+from app.providers.openrouter import close_http_clients as _close_openrouter_http_clients
 from app.providers.router import ProviderRouter, get_ai_response, get_provider_router
+
+
+async def close_http_clients() -> None:
+    """Close provider pools independently once their request owners are drained."""
+    results = await asyncio.gather(
+        _close_openrouter_http_clients(),
+        close_cached_genai_clients(),
+        close_elevenlabs_client(),
+        return_exceptions=True,
+    )
+    for result in results:
+        if isinstance(result, BaseException):
+            logging.warning("Provider transport cleanup failed")
+
 
 __all__ = [
     "AIResponse",

@@ -122,8 +122,10 @@ async def test_explicit_tts_models_share_whole_message_deadline(monkeypatch):
 
     monkeypatch.setattr(voice_engine, "resolve_process", resolve)
     monkeypatch.setattr(voice_engine, "_run_gemini_pipeline", synthesize)
+    manager = voice_engine.VoiceReplyManager()
+    manager._set_status = AsyncMock()
     async with runtime_settings_scope(SettingsSnapshot(1, MappingProxyType({}))):
-        task = asyncio.create_task(voice_engine.VoiceReplyManager()._pregenerate_audio(job))
+        task = asyncio.create_task(manager._pregenerate_audio(job))
         try:
             await asyncio.wait_for(reserve_started.wait(), 1)
             assert len(timeouts) == 1

@@ -82,7 +82,7 @@ async def test_tts_explicit_models_keep_elevenlabs_priority_and_gemini_order(mon
         if process_id == "tts.delivery":
             return ResolvedPolicy(baseline)
         assert process_id == "tts"
-        assert baseline == ("gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts")
+        assert baseline == ("gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts")
         return ResolvedPolicy(("gemini-admin-a-tts", "gemini-admin-b-tts"), "sequential", True, 7)
 
     async def gemini(chunks, voice, timeout, **kwargs):

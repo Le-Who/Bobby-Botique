@@ -9,6 +9,8 @@ from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any
 
+TTS_DEFAULT_MODELS = ("gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts")
+
 
 @dataclass(frozen=True, slots=True)
 class ProcessSpec:
@@ -149,7 +151,7 @@ PROCESSES: dict[str, ProcessSpec] = {
         "Озвучивание ответа: Gemini",
         "Аудио",
         "",
-        "gemini-3.1-flash-tts-preview",
+        TTS_DEFAULT_MODELS[0],
         ("audio_output",),
         True,
         note="Цепочка моделей Gemini TTS. Порядок провайдеров задаёт tts.delivery; голоса и параметры — раздел «Голоса и TTS».",
@@ -398,7 +400,7 @@ async def baseline_models(process_id: str) -> tuple[str, ...]:
     spec = PROCESSES[process_id]
     primary = getattr(settings, spec.setting, spec.fallback) if spec.setting else spec.fallback
     if process_id == "tts":
-        return (primary, "gemini-2.5-flash-preview-tts")
+        return TTS_DEFAULT_MODELS
     if process_id == "tts.elevenlabs":
         return (settings.ELEVENLABS_MODEL,)
     if process_id == "tts.delivery":

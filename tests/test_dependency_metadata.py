@@ -98,8 +98,8 @@ def test_frontier_trial_dependencies_use_the_validated_major_ranges() -> None:
 
     google_range = requirements["google-genai"].specifier
     structlog_range = requirements["structlog"].specifier
-    assert Version("2.19.0") in google_range
-    assert Version("2.18.99") not in google_range
+    assert Version("2.25.0") in google_range  # First SDK supporting current TTS speech metadata.
+    assert Version("2.24.99") not in google_range
     assert Version("3.0.0") not in google_range
     assert Version("26.1.0") in structlog_range
     assert Version("26.0.99") not in structlog_range

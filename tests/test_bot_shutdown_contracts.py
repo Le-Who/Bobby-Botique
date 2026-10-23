@@ -8,7 +8,9 @@ import pytest
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.mark.parametrize("fault", ["alert", "memory", "queue", "updater", "application", "http", "redis", "images"])
+@pytest.mark.parametrize(
+    "fault", ["voice", "alert", "memory", "queue", "updater", "application", "http", "redis", "images"]
+)
 async def test_application_cleanup_contains_faults_and_preserves_resource_order(monkeypatch, fault):
     import bot
 
@@ -26,6 +28,7 @@ async def test_application_cleanup_contains_faults_and_preserves_resource_order(
     application = SimpleNamespace(
         updater=SimpleNamespace(stop=action("updater")), _initialized=True, stop=action("application")
     )
+    monkeypatch.setattr("app.voice_engine.get_voice_reply_manager", lambda: SimpleNamespace(close=action("voice")))
     for target, name in (
         ("app.admin_alerts.alert_admin_shutdown", "alert"),
         ("app.repos.memory_autosave.drain_pending_memory_writes", "memory"),
@@ -48,6 +51,7 @@ async def test_application_cleanup_contains_faults_and_preserves_resource_order(
     monkeypatch.setattr("app.utils.image_utils.shutdown_image_pool", images)
     await bot._cleanup_application(application, reason="contract fault")
     want = [
+        "voice",
         "alert",
         "memory",
         "compact",
@@ -212,6 +216,8 @@ async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup
     tasks = []
     release = asyncio.Event()
     cleanup_started = asyncio.Event()
+    voice_closed = asyncio.Event()
+    clients_closed = asyncio.Event()
 
     async def child(name):
         tasks.append(asyncio.current_task())
@@ -231,6 +237,7 @@ async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup
         raise RuntimeError("synthetic bot failure")
 
     async def drain(**kwargs):
+        assert voice_closed.is_set(), "TTS admission must stop before draining tracked tasks"
         assert kwargs == {"timeout": 10.0}
         if drain_outcome == "fault":
             raise RuntimeError("synthetic background drain fault")
@@ -243,6 +250,18 @@ async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup
     monkeypatch.setattr(bot, "bot_watchdog", lambda task: child("watchdog"))
     monkeypatch.setattr(bot, "serve", lambda *args, **kwargs: child("server"))
     monkeypatch.setattr("app.utils.background_tasks.get_task_manager", lambda: SimpleNamespace(drain=drain))
+
+    async def close_voice():
+        voice_closed.set()
+
+    monkeypatch.setattr("app.voice_engine.get_voice_reply_manager", lambda: SimpleNamespace(close=close_voice))
+
+    async def close_clients():
+        assert voice_closed.is_set()
+        assert all(task.done() for task in tasks)
+        clients_closed.set()
+
+    monkeypatch.setattr("app.providers.close_http_clients", close_clients)
     owner = asyncio.create_task(bot.run_bot_and_server())
     try:
         await bot_failed.wait()
@@ -263,6 +282,8 @@ async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup
                 await asyncio.wait_for(owner, 1)
         else:
             await asyncio.wait_for(owner, 1)
+        assert voice_closed.is_set()
+        assert clients_closed.is_set()
         assert finished == ({"monitor", "watchdog", "server"} if web and not server_fault else {"monitor", "watchdog"})
         assert all(task.done() for task in tasks)
         assert sum(isinstance(task.exception(), RuntimeError) for task in tasks if not task.cancelled()) == (
