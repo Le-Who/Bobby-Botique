@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.errors import ErrorCode
-from app.response_delivery.outcomes import CompleteDelivery, FailedDelivery
+from app.providers.stream_types import FailurePhase, KeyDisposition, RetryDisposition, StreamFailed
+from app.response_delivery.outcomes import CompleteDelivery, FailedDelivery, PartialDelivery
 from app.response_delivery.renderer import (
     DeliveryKind,
     DeliveryReceipt,
@@ -185,8 +186,12 @@ async def test_handle_photo_empty_response():
 
 
 @pytest.mark.asyncio
-async def test_handle_photo_ai_error():
+@pytest.mark.parametrize("partial", [False, True])
+async def test_handle_photo_ai_error(partial):
     """Typed provider failure is already displayed and does not mutate history."""
+    from app.utils.metrics_middleware import consume_operation_failure
+
+    consume_operation_failure()
     placeholder = make_placeholder()
     original = make_original_message()
     chat_state = make_chat_state()
@@ -198,11 +203,26 @@ async def test_handle_photo_ai_error():
             receipt=_receipt(),
         )
     )
+    if partial:
+        delivery.stream.return_value = PartialDelivery(
+            content_text="Partial image analysis",
+            displayed_text="Partial image analysis",
+            terminal=StreamFailed(
+                ErrorCode.NETWORK,
+                FailurePhase.AFTER_TEXT,
+                RetryDisposition.RETRY_LATER,
+                KeyDisposition.UNCHANGED,
+                "synthetic interruption",
+            ),
+            voice_requested=False,
+            receipt=_receipt(),
+        )
 
     with (
         patch("app.handlers.ai_photo.update_stage", new_callable=AsyncMock),
         patch("app.handlers.ai_photo.get_file_bytes", new_callable=AsyncMock, return_value=b"image"),
         patch("app.handlers.ai_photo.save_image_as_bytes", new_callable=AsyncMock, return_value=b"compressed"),
+        patch("app.handlers.ai_photo.update_user_chat", new_callable=AsyncMock),
         patch(
             "app.response_delivery.delivery.get_telegram_response_delivery",
             return_value=delivery,
@@ -212,7 +232,8 @@ async def test_handle_photo_ai_error():
 
         await _handle_photo(placeholder, original, chat_state)
 
-    assert len(chat_state.history) == 0
+    assert len(chat_state.history) == (2 if partial else 0)
+    assert consume_operation_failure() is True
 
 
 # ── Exception during download ────────────────────────────────────────────────
@@ -221,6 +242,9 @@ async def test_handle_photo_ai_error():
 @pytest.mark.asyncio
 async def test_handle_photo_download_exception():
     """Handles exception during photo download gracefully."""
+    from app.utils.metrics_middleware import consume_operation_failure
+
+    consume_operation_failure()
     placeholder = make_placeholder()
     original = make_original_message()
     chat_state = make_chat_state()
@@ -235,6 +259,7 @@ async def test_handle_photo_download_exception():
     placeholder.edit_text.assert_awaited_once()
     text = placeholder.edit_text.call_args[0][0]
     assert "ошибка" in text.lower()
+    assert consume_operation_failure() is True
 
 
 # ── Exception during processing with edit fallback ────────────────────────────

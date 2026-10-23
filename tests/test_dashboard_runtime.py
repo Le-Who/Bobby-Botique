@@ -21,6 +21,8 @@ async def test_sse_uses_actual_process_queue_and_metrics_counters(monkeypatch):
     collector = MetricsCollector()
     collector.metrics.request_count = 123
     collector.metrics.error_count = 17
+    traffic = {"timezone": "Europe/Kyiv", "periods": {"today": {"user_requests": 4, "api_attempts": 9}}}
+    monkeypatch.setattr(collector, "get_traffic_summary", AsyncMock(return_value=traffic))
     monkeypatch.setattr(metrics, "metrics_collector", collector)
     monkeypatch.setattr(task_queue, "get_queue_stats", AsyncMock(return_value={"pending_tasks": 7, "running_tasks": 3}))
     monkeypatch.setattr(web.database, "is_database_connected", lambda: True)
@@ -35,7 +37,8 @@ async def test_sse_uses_actual_process_queue_and_metrics_counters(monkeypatch):
 
     payload = json.loads(event.removeprefix("data: ").strip())
     assert payload["queue"] == {"pending": 7, "processing": 3}
-    assert payload["metrics"] == {"total_requests": 123, "error_count": 17}
+    assert payload["metrics"] == {"total_requests": 123, "error_count": 17, "traffic": traffic}
+    collector.get_traffic_summary.assert_awaited_once_with()
     assert "services" not in payload, "An open pool cannot override the snapshot's failed database probe"
 
 

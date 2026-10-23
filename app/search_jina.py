@@ -85,6 +85,7 @@ async def search_jina(query: str, timeout: float = _DEFAULT_TIMEOUT) -> JinaSear
 
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            attempt.record_dispatch()
             resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             content = resp.text[:_MAX_RESULT_CHARS]
@@ -141,6 +142,7 @@ async def read_jina_page(url: str, timeout: float = _DEFAULT_TIMEOUT) -> str:
 
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            attempt.record_dispatch()
             resp = await client.get(reader_url, headers=headers)
             resp.raise_for_status()
             content = resp.text[:_MAX_RESULT_CHARS]

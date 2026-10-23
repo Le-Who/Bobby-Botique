@@ -34,6 +34,7 @@ from app.repos.chats import get_user_chat
 from app.request_context import ensure_request_id as set_request_id
 from app.request_context import set_user_context
 from app.runtime_settings.additional_prompts import render_additional_prompt
+from app.utils.metrics_middleware import MetricsMiddleware
 
 _CODE_BLOCK_STRIP_RE = re.compile(r"```.*?```", flags=re.DOTALL)
 
@@ -103,7 +104,11 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
             try:
                 from app.adapters.concurrency import ultra_heavy_semaphore
 
-                async with ultra_heavy_semaphore, user_lock:
+                async with (
+                    ultra_heavy_semaphore,
+                    user_lock,
+                    MetricsMiddleware("complex_search_callback", user_id=user_id),
+                ):
                     await task_to_run
             except Exception as e:
                 logging.error("complex_search task failed: %s", e, exc_info=True)
@@ -170,14 +175,15 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                         get_user_chat(user_id), detect_tts_intent(user_text=user_message)
                     )
 
-                    await agent._handle_regular_chat(
-                        placeholder_message,  # type: ignore[arg-type]  # MaybeInaccessibleMessage
-                        user_id,
-                        user_message,
-                        chat_state,
-                        model_override=model_override,
-                        reply_with_voice=voice_decision.explicit_tts,
-                    )
+                    async with MetricsMiddleware("fallback_callback", user_id=user_id):
+                        await agent._handle_regular_chat(
+                            placeholder_message,  # type: ignore[arg-type]  # MaybeInaccessibleMessage
+                            user_id,
+                            user_message,
+                            chat_state,
+                            model_override=model_override,
+                            reply_with_voice=voice_decision.explicit_tts,
+                        )
         except Exception as e:
             logging.error("fallback task failed: %s", e, exc_info=True)
             with contextlib.suppress(Exception):
@@ -291,7 +297,7 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     async def _retry_wrapper() -> None:
         try:
-            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock, MetricsMiddleware("retry_last_callback", user_id=user_id):
                 await _handle_regular_chat(placeholder_message, user_id, last_text, chat_state)
         except Exception as e:
             logging.error("retry_last_callback failed: %s", e, exc_info=True)
@@ -453,12 +459,13 @@ async def continue_stream_callback(update: Update, context: ContextTypes.DEFAULT
                     _chat_state.history.append({"role": "model", "parts": [_clean_partial]})
                 submit_task(role_conv_metrics.record_stream_recovery())
 
-                await _handle_regular_chat(
-                    placeholder_message,
-                    user_id,
-                    _continuation_prompt,
-                    _chat_state,
-                )
+                async with MetricsMiddleware("continue_stream_callback", user_id=user_id):
+                    await _handle_regular_chat(
+                        placeholder_message,
+                        user_id,
+                        _continuation_prompt,
+                        _chat_state,
+                    )
         except Exception as e:
             logging.error("continue_stream_callback failed: %s", e, exc_info=True)
             try:

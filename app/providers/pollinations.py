@@ -237,6 +237,7 @@ class PollinationsProvider:
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
+                attempt.record_dispatch()
                 resp = await client.post(url, data=data, files=files, headers=headers)
 
             if 200 <= resp.status_code < 300:
@@ -345,6 +346,7 @@ class PollinationsProvider:
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
+                attempt.record_dispatch()
                 resp = await client.post(url, json=payload, headers=headers)
 
             if resp.status_code == 402:
@@ -430,6 +432,7 @@ class PollinationsProvider:
         try:
             request_url = str(httpx.URL(url, params=params))
             async with httpx.AsyncClient(headers={"Authorization": f"Bearer {api_key}"}) as client:
+                attempt.record_dispatch()
                 image_bytes = await download_media(
                     request_url,
                     allowed_mime_types=IMAGE_MIME_TYPES,

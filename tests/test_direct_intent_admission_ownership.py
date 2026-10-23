@@ -112,6 +112,23 @@ async def test_intent_success_and_fallback_semantics_remain(monkeypatch, ownersh
     assert not heartbeat._HEARTBEAT_EVENTS and not heartbeat._HEARTBEAT_TASKS
 
 
+async def test_direct_intent_counts_once_without_a_chat_stage(monkeypatch, ownership):
+    from app.metrics import MetricsCollector
+
+    collector = MetricsCollector()
+    monkeypatch.setattr(messages, "metrics_collector", collector)
+    monkeypatch.setattr(
+        "app.intent_router.try_direct_intent",
+        AsyncMock(return_value=SimpleNamespace(handled=True, text="Synthetic direct card")),
+    )
+    await ownership.launch(ownership.update("synthetic weather question"))
+    await settle()
+    collector._drain_events()
+    assert collector.metrics.request_count == 1
+    assert collector.metrics.api_calls == {}
+    assert sum(day[11]["request_count"] for day in collector._user_daily.values()) == 1
+
+
 async def test_edit_drains_normal_intent_admission_before_starting_new_work(monkeypatch, ownership):
     started, cleanup_started, release_cleanup, cleanup_complete = (asyncio.Event() for _ in range(4))
     replacement_started = asyncio.Event()

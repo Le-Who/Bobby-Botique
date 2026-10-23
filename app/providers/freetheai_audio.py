@@ -243,6 +243,7 @@ class FreeTheAIAudioProvider:
         t0 = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=_AUDIO_TIMEOUT) as client:
+                attempt.record_dispatch()
                 response = await client.post(_FTA_CHAT_URL, json=payload, headers=headers)
 
             elapsed = time.monotonic() - t0

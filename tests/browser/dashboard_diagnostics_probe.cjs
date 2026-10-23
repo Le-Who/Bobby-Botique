@@ -17,6 +17,9 @@ process.stdin.on('end', async () => {
     // only after the canonical failed-probe snapshot has rendered.
     let releaseEvents;
     const eventsReady = new Promise(resolve => { releaseEvents = resolve; });
+    let releaseCanonicalEvents;
+    const canonicalEventsReady = new Promise(resolve => { releaseCanonicalEvents = resolve; });
+    let firstEvent = true;
     let dashboardReads = 0, failDashboard = false;
     const usage = {
       available: true, rows: [
@@ -34,7 +37,12 @@ process.stdin.on('end', async () => {
     const snapshot = {
       overview: { system: { cpu_percent: 22, memory_percent: 33, disk_percent: 44 },
         services: { database: 'connected', redis: 'connected', bot: 'running' },
-        metrics: { total_requests: 12, average_response_time_ms: 150, error_count: 0,
+        metrics: { total_requests: 12000, traffic: { timezone: 'Europe/Kyiv', periods: {
+          today: { start: '2026-10-23T00:00:00+03:00', end: '2026-10-23T14:30:00+03:00', user_requests: 4, api_attempts: 11, available: true },
+          last_7_days: { start: '2026-10-17T00:00:00+03:00', end: '2026-10-23T14:30:00+03:00', user_requests: 24, api_attempts: 61, available: true,
+            complete: false, coverage: 'partial', observed_start: '2026-10-22T10:15:00+03:00', reason: 'API recording started during this period <img src=x onerror=alert(1)>' },
+          last_30_days: { start: '2026-09-24T00:00:00+03:00', end: '2026-10-23T14:30:00+03:00', user_requests: 104, api_attempts: 311, available: true },
+        } }, average_response_time_ms: 150, error_count: 0,
           error_rate_percent: 0, cache_hit_rate_percent: 25 }, summarization: {} },
       providers: { gemini: usage, tavily: { available: true, rows: [
         { key_hash: 'tavily-normal', api_key_preview: 'normal***', credit_usage: 0, credit_limit: 1000,
@@ -69,8 +77,18 @@ process.stdin.on('end', async () => {
     await page.route('**/*', async route => {
       const url = new URL(route.request().url());
       if (url.pathname === '/api/events') {
+        if (!firstEvent) {
+          await canonicalEventsReady;
+          return route.fulfill({ contentType: 'text/event-stream', body: 'retry: 60000\ndata: ' + JSON.stringify({
+            metrics: { traffic: { ...snapshot.overview.metrics.traffic, periods: {
+              ...snapshot.overview.metrics.traffic.periods,
+              last_7_days: { ...snapshot.overview.metrics.traffic.periods.last_7_days, user_requests: 25, api_attempts: 62 },
+            } } },
+          }) + '\n\n' });
+        }
+        firstEvent = false;
         await eventsReady;
-        return route.fulfill({ contentType: 'text/event-stream', body: 'retry: 60000\ndata: ' + JSON.stringify({
+        return route.fulfill({ contentType: 'text/event-stream', body: 'retry: 10\ndata: ' + JSON.stringify({
           services: { database: 'connected' }, metrics: { total_requests: 19 }, queue: { pending: 3, processing: 2 },
         }) + '\n\n' });
       }
@@ -89,6 +107,19 @@ process.stdin.on('end', async () => {
     if (data.surface === 'dashboard') {
       await page.goto('http://gemaibot.test/');
       await page.locator('#live-status').filter({ hasText: 'LIVE' }).waitFor();
+      assert.equal(await page.locator('#req-count').textContent(), '4', 'User requests come only from the selected calendar period');
+      assert.equal(await page.locator('#api-attempt-count').textContent(), '11');
+      assert.match(await page.locator('#traffic-range').textContent(), /23 Oct 2026.*Kyiv/);
+      await page.getByLabel('Traffic period').selectOption('last_7_days');
+      assert.equal(await page.locator('#req-count').textContent(), '24');
+      assert.equal(await page.locator('#api-attempt-count').textContent(), '61');
+      assert.match(await page.locator('#traffic-range').textContent(), /17 Oct 2026/);
+      assert.match(await page.locator('#traffic-note').textContent(), /Partial API coverage.*22 Oct 2026.*10:15.*Kyiv/);
+      assert.equal(await page.locator('#traffic-note img').count(), 0);
+      await page.getByLabel('Traffic period').selectOption('last_30_days');
+      assert.equal(await page.locator('#req-count').textContent(), '104');
+      assert.equal(await page.locator('#api-attempt-count').textContent(), '311');
+      await page.getByLabel('Traffic period').selectOption('last_7_days');
       assert.equal(await page.locator('#db-pool').textContent(), '5');
       snapshot.infrastructure.database = { available: false };
       snapshot.infrastructure.cache = { available: false };
@@ -100,19 +131,79 @@ process.stdin.on('end', async () => {
       assert.equal(await page.evaluate(() => cpuHistory.length), 1, 'Missing CPU readings must never become zero samples');
       assert.equal(await page.locator('#svc-db').evaluate(element => element.classList.contains('dot-warn')), true);
       releaseEvents();
-      await page.locator('#req-count').filter({ hasText: /^19$/ }).waitFor();
-      assert.equal(await page.locator('#req-count').textContent(), '19', 'SSE still updates real-time counters');
+      await page.locator('#q-running').filter({ hasText: /^2$/ }).waitFor({ state: 'attached' });
+      assert.equal(await page.locator('#req-count').textContent(), '24', 'Legacy SSE totals never overwrite period counters');
+      assert.equal(await page.locator('#traffic-period').inputValue(), 'last_7_days');
+      releaseCanonicalEvents();
+      await page.locator('#req-count').filter({ hasText: /^25$/ }).waitFor();
+      assert.equal(await page.locator('#api-attempt-count').textContent(), '62', 'Canonical SSE preserves selected period');
       assert.equal(await page.locator('#q-running').textContent(), '2');
       assert.equal(await page.locator('#svc-db').evaluate(element => element.classList.contains('dot-warn')), true,
         'Pool-only SSE messages must not overwrite canonical probed database health');
       await page.locator('#tab-providers').click();
-      const limited = page.locator('#key-tbody tr').filter({ hasText: 'two***' });
+      const groups = page.locator('#gemini-models details');
+      assert.equal(await groups.count(), 3, 'Each exact model ID has one group');
+      assert.equal(await page.locator('#gemini-models details[open]').count(), 0, 'Models start collapsed');
+      const fixture = page.locator('#gemini-models details[data-model="gemini-fixture"]');
+      assert.match(await fixture.locator('summary').innerText(), /2 keys/);
+      assert.match(await fixture.locator('summary').innerText(), /155/);
+      await fixture.locator('summary').focus();
+      await page.keyboard.press('Enter');
+      assert.equal(await fixture.getAttribute('open'), '');
+      const limited = fixture.locator('tr').filter({ hasText: 'two***' });
       assert.match(await limited.innerText(), /80/);
       assert.doesNotMatch(await limited.innerText(), /Available|Exhausted/);
       assert.match(await limited.innerText(), /Blocked|threshold/i);
-      const unlimited = page.locator('#key-tbody tr').filter({ hasText: 'gemini-unlimited' });
+      const unlimited = page.locator('#gemini-models details[data-model="gemini-unlimited"]');
+      await unlimited.locator('summary').click();
       assert.match(await unlimited.innerText(), /No local limit/i);
-      assert.equal(await page.locator('#key-tbody img').count(), 0);
+      assert.equal(await page.locator('#gemini-models img').count(), 0);
+      await page.getByLabel('Search models or masked keys').fill('two***');
+      assert.equal(await page.locator('#gemini-models details:visible').count(), 1);
+      assert.match(await fixture.locator('summary').innerText(), /2 keys/, 'Search retains complete model totals');
+      assert.equal(await fixture.locator('tbody tr:visible').count(), 1, 'Masked key search isolates matching key rows');
+      await page.getByLabel('Sort models').selectOption('used');
+      await page.evaluate(() => refreshAll());
+      assert.equal(await page.getByLabel('Search models or masked keys').inputValue(), 'two***');
+      assert.equal(await page.getByLabel('Sort models').inputValue(), 'used');
+      assert.equal(await fixture.getAttribute('open'), '');
+      await page.getByLabel('Search models or masked keys').fill('no-match');
+      assert.match(await page.locator('#keys-empty').innerText(), /No models or masked keys match/i);
+      await page.getByLabel('Search models or masked keys').fill('');
+      assert.equal(await unlimited.getAttribute('open'), '', 'Filtered-out groups retain expansion state');
+      assert.equal(await groups.first().getAttribute('data-model'), 'gemini-fixture', 'Usage sort is descending');
+      await page.getByLabel('Sort models').selectOption('pressure');
+      assert.equal(await groups.first().getAttribute('data-model'), '<img src=x onerror=alert(1)>', 'Pressure uses per-key admission limits');
+      await page.getByRole('button', { name: 'Collapse all models' }).click();
+      assert.equal(await page.locator('#gemini-models details[open]').count(), 0);
+      await page.getByRole('button', { name: 'Expand all models' }).click();
+      assert.equal(await page.locator('#gemini-models details[open]').count(), 3);
+      usage.rows.push(
+        { model_name: 'gemini-fixture-preview', api_key_preview: 'preview***', request_count: 7, daily_limit: null, admission_limit: null, is_available: true },
+        { model_name: 'gemini-unknown', api_key_preview: '<img src=x onerror=alert(1)>', request_count: '<img src=x onerror=alert(1)>', daily_limit: 'invalid', is_available: true },
+      );
+      await page.evaluate(() => refreshAll());
+      assert.equal(await groups.count(), 5, 'Related model IDs never merge');
+      const unknown = page.locator('#gemini-models details[data-model="gemini-unknown"]');
+      assert.equal(await unknown.getAttribute('open'), null, 'New models remain collapsed during refresh');
+      await unknown.locator('summary').click();
+      assert.match(await unknown.locator('summary').innerText(), /Usage unknown/, 'Missing usage never presents a zero total');
+      assert.match(await unknown.innerText(), /Unknown/);
+      assert.equal(await unknown.locator('tbody td').nth(1).textContent(), '—', 'Invalid usage never becomes zero or markup');
+      assert.equal(await page.locator('#gemini-models img').count(), 0);
+      snapshot.overview.metrics.traffic.periods.last_7_days.available = false;
+      await page.evaluate(() => refreshAll());
+      assert.equal(await page.locator('#req-count').textContent(), 'Unavailable');
+      assert.equal(await page.locator('#api-attempt-count').textContent(), 'Unavailable');
+      snapshot.overview.metrics.traffic.periods.last_7_days.available = true;
+      snapshot.overview.metrics.traffic.periods.today.user_requests = 0;
+      snapshot.overview.metrics.traffic.periods.today.api_attempts = 0;
+      await page.evaluate(() => refreshAll());
+      await page.locator('#tab-overview').click();
+      await page.getByLabel('Traffic period').selectOption('today');
+      assert.equal(await page.locator('#req-count').textContent(), '0', 'Measured zero is distinct from unavailable');
+      await page.getByLabel('Traffic period').selectOption('last_7_days');
+      await page.locator('#tab-providers').click();
       const tavilyRow = name => page.locator('#tavily-tbody tr').filter({
         has: page.getByRole('cell', { name: `${name}***`, exact: true }),
       });
@@ -135,7 +226,19 @@ process.stdin.on('end', async () => {
       failDashboard = true;
       await page.evaluate(() => refreshAll());
       assert.equal(await page.locator('#live-status').textContent(), 'STALE');
+      failDashboard = false;
+      snapshot.providers.gemini = { available: false, rows: [] };
+      delete snapshot.overview.metrics.traffic;
+      await page.evaluate(() => refreshAll());
+      assert.equal(await page.locator('#req-count').textContent(), 'Unavailable', 'Missing traffic never falls back to legacy totals');
+      assert.equal(await page.locator('#api-attempt-count').textContent(), 'Unavailable');
       await page.locator('#tab-providers').click();
+      assert.match(await page.locator('#keys-empty').innerText(), /Gemini metrics unavailable/);
+      snapshot.providers.gemini = { available: true, rows: [] };
+      await page.evaluate(() => refreshAll());
+      assert.match(await page.locator('#keys-empty').innerText(), /No Gemini keys configured/);
+      snapshot.providers.gemini = usage;
+      await page.evaluate(() => refreshAll());
       await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
       await page.screenshot({ path: path.join(data.screenshots, 'dashboard-desktop.png'), fullPage: true });
     } else {
@@ -187,7 +290,7 @@ process.stdin.on('end', async () => {
       assert.match(await page.locator('#diagnostics-summary').innerText(), /ревизия 3/);
       assert.match(await page.locator('#diagnostics-status').innerText(), /хранилище настроек недоступно/);
     }
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 375, height: 844 });
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await page.screenshot({ path: path.join(data.screenshots, `${data.surface}-mobile.png`), fullPage: true });

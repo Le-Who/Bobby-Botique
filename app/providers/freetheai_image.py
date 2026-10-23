@@ -219,6 +219,7 @@ class FreeTheAIImageProvider:
         t0 = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=_FTA_IMAGE_TIMEOUT) as client:
+                attempt.record_dispatch()
                 response = await client.post(endpoint_url, json=payload, headers=headers)
 
             elapsed = time.monotonic() - t0

@@ -17,6 +17,7 @@ import re
 
 import httpx
 
+from app.metrics import metrics_collector
 from app.observability.workload_events import start_workload_attempt
 from app.runtime_settings.additional_prompts import render_additional_prompt
 
@@ -438,6 +439,7 @@ async def _fetch_weatherapi(api_key: str, city: str) -> IntentResult | None:
         origin="intent_router",
     )
     try:
+        attempt.record_dispatch()
         resp = await _get_http().get(
             "https://api.weatherapi.com/v1/current.json",
             params={"key": api_key, "q": city, "lang": "ru", "aqi": "no"},
@@ -512,6 +514,7 @@ async def _fetch_open_meteo(city_candidate: str) -> IntentResult | None:
     city_name, lat, lon = geo
 
     try:
+        await metrics_collector.record_api_call("open_meteo")
         resp = await _get_http().get(
             "https://api.open-meteo.com/v1/forecast",
             params={
@@ -554,6 +557,7 @@ async def _geocode_city_open_meteo(candidate: str) -> tuple[str, float, float] |
     if len(candidate) < 3:
         return None
     try:
+        await metrics_collector.record_api_call("open_meteo_geocoding")
         resp = await _get_http().get(
             "https://geocoding-api.open-meteo.com/v1/search",
             params={"name": candidate, "count": 1, "language": "ru", "format": "json"},
@@ -622,6 +626,7 @@ async def _handle_currency(text: str) -> IntentResult | None:
 async def _handle_crypto(coingecko_id: str, text: str) -> IntentResult | None:
     """Fetch crypto price (USD + RUB) from CoinGecko Demo API (keyless, 30rpm)."""
     try:
+        await metrics_collector.record_api_call("coingecko")
         resp = await _get_http().get(
             "https://api.coingecko.com/api/v3/simple/price",
             params={
@@ -709,6 +714,7 @@ async def _fetch_exchangerate_api(
         target_currency=target,
     )
     try:
+        attempt.record_dispatch()
         resp = await _get_http().get(
             f"https://v6.exchangerate-api.com/v6/{api_key}/pair/{base}/{target}",
         )
@@ -758,6 +764,7 @@ async def _fetch_exchangerate_api(
 async def _fetch_frankfurter(base: str, target: str, amount: float = 1.0) -> IntentResult | None:
     """Fetch rate from Frankfurter (ECB data, fallback for EU pairs)."""
     try:
+        await metrics_collector.record_api_call("frankfurter")
         resp = await _get_http().get(
             "https://api.frankfurter.dev/v1/latest",
             params={"from": base, "to": target},

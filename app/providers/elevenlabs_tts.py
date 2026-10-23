@@ -224,6 +224,7 @@ async def generate_speech_elevenlabs(
                 payload["previous_text"] = previous_text[-_STITCH_CONTEXT_CHARS:]
             if next_text:
                 payload["next_text"] = next_text[:_STITCH_CONTEXT_CHARS]
+            attempt.record_dispatch()
             async with _get_client().stream(
                 "POST",
                 _TTS_ENDPOINT.format(voice_id=voice_id),
@@ -479,6 +480,7 @@ async def fetch_voices(api_key: str, *, timeout: float = 10.0) -> list[dict]:
     reason = "request_failed"
     try:
         async with asyncio.timeout(timeout):
+            attempt.record_dispatch()
             async with _get_client().stream(
                 "GET",
                 "/v1/voices",

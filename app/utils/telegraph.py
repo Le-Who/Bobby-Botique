@@ -69,6 +69,7 @@ async def _ensure_account() -> str:
     )
     try:
         async with httpx.AsyncClient(timeout=10) as client:
+            attempt.record_dispatch()
             resp = await client.post(
                 f"{_TELEGRAPH_API}/createAccount",
                 json={
@@ -209,6 +210,7 @@ async def create_telegraph_page(title: str, markdown_content: str) -> str | None
         )
         try:
             async with httpx.AsyncClient(timeout=15) as client:
+                attempt.record_dispatch()
                 resp = await client.post(
                     f"{_TELEGRAPH_API}/createPage",
                     json={

@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.observability.events import emit, record_exception
 from app.observability.redaction import provider_key_fields
@@ -23,6 +23,20 @@ class WorkloadAttempt:
     key_present: bool
     key_suffix: str | None
     key_fingerprint: str | None
+    _dispatched: bool = field(default=False, compare=False, repr=False)
+
+    def record_dispatch(self) -> None:
+        """Count this scope once, immediately before its actual SDK/HTTP call.
+
+        Lifecycle scopes may start before local admission/configuration, so a
+        scope start alone is not evidence that an outbound call was dispatched.
+        """
+        if self._dispatched:
+            return
+        from app.metrics import metrics_collector
+
+        metrics_collector.enqueue_api_call(self.provider, self.model)
+        object.__setattr__(self, "_dispatched", True)
 
     def fields(self) -> dict[str, JsonValue]:
         return {
@@ -124,6 +138,7 @@ async def observe_workload_call[T](
         **fields,
     )
     try:
+        attempt.record_dispatch()
         result = await awaitable
     except asyncio.CancelledError:
         attempt.finish(outcome="cancelled", level="warning", reason_code="cancelled")

@@ -34,6 +34,7 @@ from telegram.ext import ContextTypes
 
 from app.handlers.callbacks import _BUSY_TOAST, _is_user_busy
 from app.providers.imagen_provider import SUPPORTED_ASPECT_RATIOS
+from app.utils.metrics_middleware import MetricsMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -270,14 +271,15 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 async with get_user_lock(user_id):
                     from app.handlers.cmd_image import _run_generation
 
-                    await _run_generation(
-                        update=update,
-                        context=context,
-                        prompt=current_prompt,
-                        model=state.get("model", settings.POLLINATIONS_DEFAULT_IMAGE_MODEL),
-                        aspect_ratio=state.get("aspect_ratio", "1:1"),
-                        enhance=state.get("enhance_prompt", True),
-                    )
+                    async with MetricsMiddleware("draw_execute", user_id=user_id) as operation:
+                        operation.success = await _run_generation(
+                            update=update,
+                            context=context,
+                            prompt=current_prompt,
+                            model=state.get("model", settings.POLLINATIONS_DEFAULT_IMAGE_MODEL),
+                            aspect_ratio=state.get("aspect_ratio", "1:1"),
+                            enhance=state.get("enhance_prompt", True),
+                        )
             finally:
                 user_state.is_processing = False
 
@@ -307,14 +309,15 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 async with get_user_lock(user_id):
                     from app.handlers.cmd_image import _run_generation
 
-                    await _run_generation(
-                        update=update,
-                        context=context,
-                        prompt=current_prompt,
-                        model=state.get("model", "flux"),
-                        aspect_ratio=state.get("aspect_ratio", "1:1"),
-                        enhance=state.get("enhance_prompt", True),
-                    )
+                    async with MetricsMiddleware("draw_regen", user_id=user_id) as operation:
+                        operation.success = await _run_generation(
+                            update=update,
+                            context=context,
+                            prompt=current_prompt,
+                            model=state.get("model", "flux"),
+                            aspect_ratio=state.get("aspect_ratio", "1:1"),
+                            enhance=state.get("enhance_prompt", True),
+                        )
             finally:
                 user_state.is_processing = False
 

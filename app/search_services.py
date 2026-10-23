@@ -36,6 +36,7 @@ async def _tavily_api_call(payload: dict[str, Any]) -> dict[str, Any]:
         if request_id:
             headers["X-Request-ID"] = request_id
 
+        await metrics_collector.record_api_call("tavily")
         response = await http_client.post("https://api.tavily.com/search", json=payload, headers=headers or None)
         response.raise_for_status()
         return response.json()
@@ -101,7 +102,6 @@ async def tavily_search_agent(
 
     # Record search metrics
     await metrics_collector.record_search_query()
-    await metrics_collector.record_api_call("tavily", search_type)
 
     payload = {"api_key": api_key, "query": query}
     cost = 0

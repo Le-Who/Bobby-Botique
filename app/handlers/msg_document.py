@@ -287,7 +287,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         from app.state import set_document_mode
 
         set_document_mode(user_id, True)
-        await metrics_collector.record_api_call("document_processing")
 
         # ── Store document summary in long-term memory (background) ──
         doc_content = result.get("content", "")

@@ -280,6 +280,7 @@ async def check_single_provider_health(provider: str) -> bool | None:
     try:
         async with httpx.AsyncClient(timeout=6.0) as client:
             url = template.format(key=key)
+            attempt.record_dispatch()
             resp = await client.get(url)
             healthy = resp.status_code == 200
             attempt.finish(

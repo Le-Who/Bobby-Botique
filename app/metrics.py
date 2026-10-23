@@ -3,9 +3,10 @@ import contextlib
 import hashlib
 import logging
 import time
+import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from app import database as db
@@ -55,6 +56,13 @@ class MetricsCollector:
         self._save_interval = 300  # Save каждые 5 минут
         self._bg_save_task = None
         self._lock = asyncio.Lock()  # Protects daily_metrics reset in _save_metrics_to_db
+        # Serializes DB reads with flushes across the snapshot/reset/write gap.
+        self._flush_lock = asyncio.Lock()
+        self._api_daily: dict[str, int] = defaultdict(int)
+        self._api_flushed: dict[str, int] = defaultdict(int)
+        self._traffic_instance = uuid.uuid4()
+        self._traffic_started_at = datetime.now(time_utils.get_kyiv_tz())
+        self._traffic_epoch_pending = False
 
     async def _event_processor(self):
         """Background task to process events and periodically save metrics"""
@@ -113,7 +121,7 @@ class MetricsCollector:
 
     def _process_event(self, event: dict[str, Any]):
         """Обрабатывает одно событие метрики и обновляет локальные словари без блокировок"""
-        today = date.today().isoformat()
+        today = event.get("metric_date") or datetime.now(time_utils.get_kyiv_tz()).date().isoformat()
         event_type = event.get("type")
 
         if event_type == "request":
@@ -147,6 +155,7 @@ class MetricsCollector:
         elif event_type == "api_call":
             api_name = event["api_name"]
             model = event["model"]
+            self._api_daily[today] += 1
 
             self.metrics.api_calls[api_name] = self.metrics.api_calls.get(api_name, 0) + 1
             self.daily_metrics[today].api_calls[api_name] = self.daily_metrics[today].api_calls.get(api_name, 0) + 1
@@ -203,9 +212,137 @@ class MetricsCollector:
 
     async def _save_metrics_to_db(self):
         """Flush pending days, including the interval spanning midnight."""
-        days = sorted(set(self.daily_metrics) | set(self._user_daily) | {date.today().isoformat()})
-        for day in days:
-            await self._save_metrics_day(date.fromisoformat(day))
+        async with self._flush_lock:
+            await self._activate_traffic_epoch()
+            self._drain_events()
+            days = sorted(set(self.daily_metrics) | set(self._user_daily) | {date.today().isoformat()})
+            for day in days:
+                await self._save_metrics_day(date.fromisoformat(day))
+            await self._save_traffic_to_db()
+
+    def _drain_events(self) -> None:
+        while not self._events_queue.empty():
+            event = self._events_queue.get_nowait()
+            try:
+                self._process_event(event)
+            finally:
+                self._events_queue.task_done()
+
+    async def _save_traffic_to_db(self) -> None:
+        """Flush only newly dispatched attempts; legacy API maps are never input."""
+        for day, count in list(self._api_daily.items()):
+            if not count:
+                continue
+            if count == self._api_flushed[day]:
+                continue
+            try:
+                await db.db_query(
+                    """
+                    INSERT INTO traffic_daily (metric_date, source_id, api_attempts)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (metric_date, source_id) DO UPDATE SET
+                        api_attempts = GREATEST(traffic_daily.api_attempts, EXCLUDED.api_attempts)
+                    """,
+                    (date.fromisoformat(day), self._traffic_instance, count),
+                )
+                self._api_flushed[day] = count
+            except (Exception, asyncio.CancelledError) as error:
+                if isinstance(error, asyncio.CancelledError):
+                    raise
+                logging.warning("Traffic flush failed (error_type=%s)", type(error).__name__)
+
+    async def get_traffic_summary(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """Read calendar traffic without mixing persisted and in-flight deltas.
+
+        API coverage begins on the first activation of the owned transport
+        instrumentation. Historical logical API maps cannot fill that gap.
+        """
+        tz = time_utils.get_kyiv_tz()
+        current = (now or datetime.now(tz)).astimezone(tz)
+        starts = {
+            name: datetime.combine(current.date() - timedelta(days=days - 1), datetime.min.time(), tzinfo=tz)
+            for name, days in (("today", 1), ("last_7_days", 7), ("last_30_days", 30))
+        }
+        periods: dict[str, dict[str, Any]] = {
+            name: {
+                "start": start.isoformat(),
+                "end": current.isoformat(),
+                "user_requests": None,
+                "api_attempts": None,
+                "available": False,
+                "complete": False,
+                "coverage": "unavailable",
+                "observed_start": None,
+                "reason": "Traffic database is unavailable.",
+            }
+            for name, start in starts.items()
+        }
+        traffic = {"timezone": "Europe/Kyiv", "periods": periods}
+        if not db.db_manager.is_connected:
+            return traffic
+        try:
+            async with self._flush_lock:
+                rows = await db.db_query(
+                    """
+                    SELECT days.metric_date::date AS metric_date,
+                           COALESCE(users.user_requests, 0) AS user_requests,
+                           COALESCE(attempts.api_attempts, 0) AS api_attempts,
+                           COALESCE(attempts.own_api_attempts, 0) AS own_api_attempts,
+                           (SELECT started_at FROM traffic_accounting_epoch WHERE singleton = TRUE) AS coverage_start
+                    FROM generate_series($1::date, $2::date, INTERVAL '1 day') AS days(metric_date)
+                    LEFT JOIN (
+                        SELECT metric_date, SUM(request_count) AS user_requests
+                        FROM user_metrics WHERE metric_date BETWEEN $1 AND $2 AND request_count > 0
+                        GROUP BY metric_date
+                    ) AS users ON users.metric_date = days.metric_date::date
+                    LEFT JOIN (
+                        SELECT metric_date, SUM(api_attempts) AS api_attempts,
+                               COALESCE(SUM(api_attempts) FILTER (WHERE source_id = $3), 0) AS own_api_attempts
+                        FROM traffic_daily WHERE metric_date BETWEEN $1 AND $2 GROUP BY metric_date
+                    ) AS attempts ON attempts.metric_date = days.metric_date::date
+                    """,
+                    (starts["last_30_days"].date(), current.date(), self._traffic_instance),
+                )
+                if not rows or rows[0].get("coverage_start") is None:
+                    for period in periods.values():
+                        period["reason"] = "Traffic accounting has not been activated."
+                    return traffic
+                coverage_start = rows[0]["coverage_start"].astimezone(tz)
+                # New events can arrive during the query, but no flush can commit
+                # them while this lock is held. Include them once as pending.
+                self._drain_events()
+                for name, start in starts.items():
+                    first_day, last_day = start.date().isoformat(), current.date().isoformat()
+                    user_pending = sum(
+                        data["request_count"]
+                        for day, users in self._user_daily.items()
+                        if first_day <= day <= last_day
+                        for data in users.values()
+                    )
+                    selected = [row for row in rows if start.date() <= row["metric_date"] <= current.date()]
+                    own_saved = {
+                        row["metric_date"].isoformat(): int(row.get("own_api_attempts", 0)) for row in selected
+                    }
+                    api_pending = sum(
+                        max(0, count - own_saved.get(day, 0))
+                        for day, count in self._api_daily.items()
+                        if first_day <= day <= last_day
+                    )
+                    complete = coverage_start <= start
+                    periods[name].update(
+                        user_requests=sum(int(row["user_requests"]) for row in selected) + user_pending,
+                        api_attempts=sum(int(row["api_attempts"]) for row in selected) + api_pending,
+                        available=True,
+                        complete=complete,
+                        coverage="complete" if complete else "partial",
+                        observed_start=max(start, coverage_start).isoformat(),
+                        reason=None
+                        if complete
+                        else "API attempts are measured only since accounting activation; earlier attempts are unknown.",
+                    )
+        except Exception as error:
+            logging.warning("Traffic snapshot unavailable (error_type=%s)", type(error).__name__)
+        return traffic
 
     async def _save_metrics_day(self, metric_date: date):
         """Сохраняет текущие метрики в базу данных (Non-blocking).
@@ -541,20 +678,37 @@ class MetricsCollector:
         success: bool = True,
         user_id: int | None = None,
     ):
-        """Записывает метрики запроса (Fast in-memory update)"""
+        """Record one admitted user operation at its ingress owner.
+
+        Internal stages have no actor and must never inflate user traffic.
+        """
+        if user_id is None:
+            return
+        from app.utils.metrics_middleware import consume_operation_failure
+
+        failed = consume_operation_failure()
+        success = success and not failed
         self._events_queue.put_nowait(
             {
                 "type": "request",
                 "response_time": response_time,
                 "success": success,
                 "user_id": user_id,
+                "metric_date": datetime.now(time_utils.get_kyiv_tz()).date().isoformat(),
             }
         )
 
     async def record_model_response(self, model: str | None, *, user_id: int | None) -> None:
         """Attribute a visible response without inventing another API attempt."""
         if user_id and model:
-            self._events_queue.put_nowait({"type": "model_response", "model": model, "user_id": user_id})
+            self._events_queue.put_nowait(
+                {
+                    "type": "model_response",
+                    "model": model,
+                    "user_id": user_id,
+                    "metric_date": datetime.now(time_utils.get_kyiv_tz()).date().isoformat(),
+                }
+            )
 
     async def record_api_call(
         self,
@@ -563,15 +717,27 @@ class MetricsCollector:
         request_id: str | None = None,
         user_id: int | None = None,
     ):
-        """Записывает вызов API"""
+        """Record one dispatched provider attempt, before awaiting transport."""
+        self.enqueue_api_call(api_name, model, request_id, user_id)
+
+    def enqueue_api_call(
+        self,
+        api_name: str,
+        model: str | None = None,
+        request_id: str | None = None,
+        user_id: int | None = None,
+    ) -> None:
+        """Nonblocking boundary shared by sync workload hooks and async adapters."""
         current_request_id = request_id or get_request_id()
+        now = datetime.now(time_utils.get_kyiv_tz())
         self._events_queue.put_nowait(
             {
                 "type": "api_call",
                 "api_name": api_name,
                 "model": model,
                 "request_id": current_request_id,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": now.isoformat(),
+                "metric_date": now.date().isoformat(),
                 "user_id": user_id,
             }
         )
@@ -656,6 +822,7 @@ class MetricsCollector:
             "recent_errors": recent_errors,
             "recent_api_events": list(self.api_event_log)[-20:],
             "daily_metrics": daily_summary,
+            "traffic": await self.get_traffic_summary(),
         }
 
         logging.debug(
@@ -667,11 +834,28 @@ class MetricsCollector:
 
     async def initialize(self):
         """Инициализирует систему метрик"""
+        self._traffic_epoch_pending = True
+        await self._activate_traffic_epoch()
         await self._load_metrics_from_db()
-        # Start background processor
+        # Start background processor even while the database is recovering.
         if not self._bg_save_task:
             self._bg_save_task = asyncio.create_task(self._event_processor())
             logging.info("Metrics event processor task started")
+
+    async def _activate_traffic_epoch(self) -> None:
+        if not self._traffic_epoch_pending or not db.db_manager.is_connected:
+            return
+        try:
+            await db.db_query(
+                """
+                INSERT INTO traffic_accounting_epoch (singleton, started_at) VALUES (TRUE, $1)
+                ON CONFLICT (singleton) DO NOTHING
+                """,
+                (self._traffic_started_at,),
+            )
+            self._traffic_epoch_pending = False
+        except Exception as error:
+            logging.warning("Traffic epoch activation deferred (error_type=%s)", type(error).__name__)
 
     async def cleanup(self):
         """Очищает ресурсы и сохраняет метрики"""

@@ -340,7 +340,6 @@ async def _race_generate(
 
     from app.agent_use_cases import AgentRequestUseCase
     from app.errors import classify_key_error, extract_retry_after_seconds
-    from app.metrics import metrics_collector
     from app.providers.gemini import get_cached_genai_client
     from app.repos.keys import get_key_status_manager
 
@@ -414,9 +413,6 @@ async def _race_generate(
             )
             submit_task(_suspend_key_safe(key_hash, model, category, err_text[:500]))
             return None
-        finally:
-            # Record every LLM call attempt in metrics (success OR failure)
-            await metrics_collector.record_api_call("gemini_judge", model=model)
 
     async def _run_race(
         key_pairs: list[tuple[str, str]], model: str, timeout: float = _LLM_TIMEOUT_S
@@ -1140,15 +1136,11 @@ async def judge_guess(
         Damerau-Levenshtein → Cache → Race×3 LLM → judge_unavailable
     """
     from app.games.judgement_cache import cache_judgement, get_cached_judgement
-    from app.metrics import metrics_collector
-
-    t0 = time.monotonic()
 
     # 1. Local exact / near-match (<1ms, no I/O)
     local = _local_check(target, guess)
     if local:
         j = GuessJudgement(status="hot", score=1.0, hint="Угадано! 🎉")
-        await metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
         return "exact_match", j
 
     from app.games.daily_ai import get_daily_text_model_for
@@ -1170,10 +1162,8 @@ async def judge_guess(
 
         # Retroactive fix for already cached hot synonyms:
         if cached.score >= 0.92:
-            await metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
             return "exact_match", cached
 
-        await metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
         return cached.status, cached
 
     # 3. Configured model plan / Auto race, with a bounded retry of the same guess.
@@ -1185,8 +1175,6 @@ async def judge_guess(
         topic_id=topic_id,
         sense_context=sense_context,
     )
-
-    elapsed = time.monotonic() - t0
 
     # 4. LLM unavailable — deliberately NO character-similarity fallback.
     #    String metrics (Levenshtein, SequenceMatcher) measure orthographic
@@ -1200,7 +1188,6 @@ async def judge_guess(
             score=0.0,
             hint="🤔 Крокодил задумался... Попытка не засчитана!",
         )
-        await metrics_collector.record_request("judge", elapsed, success=False)
         return "judge_unavailable", sentinel
 
     status_str: str = result.status
@@ -1222,5 +1209,4 @@ async def judge_guess(
         )
     )
 
-    await metrics_collector.record_request("judge", elapsed, success=True)
     return status_str, result

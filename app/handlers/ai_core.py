@@ -43,6 +43,9 @@ async def handle_ai_response_error(response_text: str, placeholder_message: Mess
 
     if not response_text or not is_error_message(response_text):
         return False
+    from app.utils.metrics_middleware import mark_operation_failed
+
+    mark_operation_failed()
 
     # Execute дополнительные действия before обработкой ошибки (наonмер, очистка истории)
     if on_error_callback:

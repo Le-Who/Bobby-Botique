@@ -365,6 +365,7 @@ async def generate_speech(
                 speech: dict[str, str] = {"voice": voice}
                 if language_code:
                     speech["language"] = language_code
+                attempt.record_dispatch()
                 response = await client.aio.interactions.create(
                     model=model_name,
                     input=[
@@ -401,6 +402,7 @@ async def generate_speech(
                         language_code=language_code,
                     ),
                 )
+                attempt.record_dispatch()
                 legacy_response = await client.aio.models.generate_content(
                     model=model_name,
                     contents=f"{direction} {clean}",

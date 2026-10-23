@@ -381,6 +381,7 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             origin="admin_list_models",
         )
         try:
+            attempt.record_dispatch()
             remote_models = await asyncio.to_thread(lambda: list(client.models.list()))
         except Exception as error:
             attempt.fail(error)
@@ -979,6 +980,7 @@ async def _check_single_gemini_key(client: httpx.AsyncClient, key_hash: str, api
         origin="admin_check_gemini_keys",
     )
     try:
+        attempt.record_dispatch()
         resp = await client.get(url)
         attempt.finish(
             outcome="succeeded" if resp.status_code == 200 else "remote_error",

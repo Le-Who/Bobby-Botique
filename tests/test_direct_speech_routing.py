@@ -7,6 +7,7 @@ import pytest
 
 from app import state
 from app.handlers import agent
+from app.metrics import MetricsCollector
 from app.middleware.debounce import DebounceResult
 from tests import test_edited_request_ownership as support
 
@@ -142,6 +143,24 @@ async def test_missing_source_asks_without_model_call(ownership, speech):
     update.effective_message.reply_text.assert_awaited_once()
     speech.enqueue.assert_not_awaited()
     speech.generate.assert_not_awaited()
+
+
+@pytest.mark.parametrize("edited", [False, True])
+@pytest.mark.parametrize("outcome", ["queued", "clarify", "rejected"])
+async def test_direct_speech_counts_one_user_operation(monkeypatch, ownership, speech, edited, outcome):
+    collector = MetricsCollector()
+    monkeypatch.setattr("app.handlers.msg_speech.metrics_collector", collector)
+    if outcome == "rejected":
+        speech.enqueue.return_value = SimpleNamespace(queued=False, deduped=False, reason_code="capacity")
+    text = "Озвучь этот текст" if outcome == "clarify" else "Озвучь: Точный текст"
+    update = ownership.update(text, edited=edited)
+    update.effective_message.message_id = 9
+    await ownership.launch(update)
+    collector._drain_events()
+    assert collector.metrics.request_count == 1
+    assert collector.metrics.error_count == int(outcome == "rejected")
+    assert collector.metrics.api_calls == {}
+    assert sum(day[11]["request_count"] for day in collector._user_daily.values()) == 1
 
 
 @pytest.mark.parametrize("reason", ["capacity", "stale_epoch", "text_too_large"])

@@ -164,7 +164,7 @@ async def test_successful_chat_response_appended_to_history(mock_boundaries):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("succeeded", [True, False])
 async def test_chat_completion_credits_only_a_visible_user_model_response(mock_boundaries, monkeypatch, succeeded):
-    from datetime import date
+    from datetime import datetime
 
     from app import metrics
     from tests.test_metrics_accounting import drain_events
@@ -185,9 +185,13 @@ async def test_chat_completion_credits_only_a_visible_user_model_response(mock_b
 
     assert collector.metrics.api_calls == {"gemini": 1}
     assert collector.metrics.model_usage == {"gemini-3.1-flash-lite": 1}
-    user = collector._user_daily[date.today().isoformat()][123]
+    user = collector._user_daily[datetime.now(metrics.time_utils.get_kyiv_tz()).date().isoformat()][123]
     assert user["model_usage"] == ({"gemini-3.1-flash-lite": 1} if succeeded else {})
     assert user["request_count"] == 0, "The message owner records per-user requests"
+    await collector.record_request("handle_message", 1, user_id=123)
+    drain_events(collector)
+    assert collector.metrics.request_count == 1
+    assert collector.metrics.error_count == int(not succeeded)
 
 
 @pytest.mark.asyncio
@@ -480,6 +484,9 @@ async def test_interrupted_chat_delegates_recovery_keyboard_to_stream(mock_bound
     assert interrupted_markup is not None
     callback_data = [button.callback_data for row in interrupted_markup.inline_keyboard for button in row]
     assert callback_data == ["continue_stream", "retry_last"]
+    from app.utils.metrics_middleware import consume_operation_failure
+
+    assert consume_operation_failure() is True
 
 
 @pytest.mark.asyncio

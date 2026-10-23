@@ -63,6 +63,7 @@ from app.prompt_registry import get_prompt_text, register_controlled_text, rende
 from app.repos.settings_repo import get_global_setting
 from app.tarot import SpreadType
 from app.utils.api_logger import api_logger
+from app.utils.metrics_middleware import MetricsMiddleware
 from app.utils.text_format import markdown_to_html, strip_formatting
 
 register_controlled_text(
@@ -1092,6 +1093,20 @@ async def _generate_and_swap_media(
     user_id: int | None,
     enhance_prompt: bool = False,
 ) -> None:
+    """Own one admitted inline image operation through generation and delivery."""
+    async with MetricsMiddleware("inline_image", user_id=user_id) as operation:
+        operation.success = await _generate_and_swap_media_impl(
+            bot, inline_message_id, prompt, model, enhance_prompt=enhance_prompt
+        )
+
+
+async def _generate_and_swap_media_impl(
+    bot,
+    inline_message_id: str,
+    prompt: str,
+    model: str,
+    enhance_prompt: bool = False,
+) -> bool:
     """Generate an image via Pollinations and swap the inline placeholder photo.
 
     Flow:
@@ -1150,8 +1165,7 @@ async def _generate_and_swap_media(
                     inline_message_id=inline_message_id,
                     caption="❌ Не удалось загрузить изображение. Попробуйте снова.",
                 )
-            await metrics_collector.record_api_call("pollinations_inline", model, user_id=user_id)
-            return
+            return False
 
         # ── Step 2: Swap placeholder using the minted file_id ─────────────
         try:
@@ -1174,6 +1188,7 @@ async def _generate_and_swap_media(
                     **content_fields("image_prompt", prompt, sensitive=True, subsystem="inline"),
                 },
             )
+            return True
         except Exception as edit_err:
             logging.error("Inline image: edit_message_media failed: %s", edit_err)
             with contextlib.suppress(Exception):
@@ -1202,8 +1217,7 @@ async def _generate_and_swap_media(
                 ),
                 parse_mode="HTML",
             )
-
-    await metrics_collector.record_api_call("pollinations_inline", model, user_id=user_id)
+    return False
 
 
 # ── Board initialisation (async) ──────────────────────────────────────────────

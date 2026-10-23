@@ -850,3 +850,57 @@ body {
 .section-description { max-width:80ch; margin:0 0 1rem; color:var(--text-muted); font-size:.85rem; line-height:1.65; }
 @media (max-width:560px) { .provider-intro { align-items:start; flex-direction:column; gap:.75rem; } }
 
+/* Calendar workload and model/key drill-down share the dashboard's existing tokens. */
+.section-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: .6rem; }
+.section-toolbar .section-title { margin-bottom: 0; }
+.traffic-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.traffic-note { margin-top: .75rem; margin-bottom: 0; }
+.traffic-note[data-coverage="partial"] { color: #fcd68b; }
+.dashboard-field { display: flex; flex-direction: column; gap: .4rem; color: var(--text-muted); font-size: .8rem; min-width: 0; }
+.dashboard-field input, .dashboard-field select, .model-actions button {
+  min-height: 44px; border: 1px solid var(--border-hover); border-radius: 6px;
+  background: var(--bg-surface); color: var(--text); font: inherit; padding: .6rem .7rem;
+}
+.dashboard-field select { max-width: 100%; }
+.dashboard-field input::placeholder { color: var(--text-dim); }
+.dashboard-field input:focus-visible, .dashboard-field select:focus-visible,
+.model-actions button:focus-visible, .model-group summary:focus-visible, .model-group .key-table-wrap:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 3px;
+}
+.model-actions button { cursor: pointer; font-size: .78rem; }
+.model-actions button:hover { border-color: var(--accent); }
+.model-actions button:disabled { opacity: .5; cursor: default; }
+.card-row.provider-layout { grid-template-columns: minmax(0, 1fr); }
+.provider-layout > .card { min-width: 0; }
+.model-controls { display: flex; flex-wrap: wrap; gap: .9rem; margin: 1rem 0 .7rem; }
+.model-search { flex: 1 1 16rem; }
+.model-actions { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .7rem; margin-bottom: .8rem; }
+.model-actions p { color: var(--text-muted); font-size: .8rem; }
+.model-actions > div { display: flex; flex-wrap: wrap; gap: .5rem; }
+.model-group { border-top: 1px solid var(--border-hover); }
+.model-group:last-child { border-bottom: 1px solid var(--border-hover); }
+.model-group summary { cursor: pointer; padding: 1rem .4rem; line-height: 1.6; min-height: 44px; }
+.model-group summary:hover { background: var(--surface-hover); }
+.model-group summary::marker { color: var(--accent); }
+.model-name { overflow-wrap: anywhere; font-size: .88rem; font-weight: 500; }
+.model-totals { float: right; padding-left: 1rem; font-size: .85rem; color: var(--text-muted); }
+.model-totals strong { color: var(--text); font-weight: 600; }
+.model-quota { display: block; margin-left: 1rem; font-size: .78rem; color: var(--text-muted); }
+.model-key-content { padding: 0 .4rem 1rem; }
+.model-key-caption { color: var(--text-muted); font-size: .78rem; line-height: 1.6; }
+.model-group .key-table { min-width: 660px; font-size: .82rem; }
+.model-group .key-table th { text-transform: none; letter-spacing: normal; font-size: .78rem; }
+.model-group .key-table th, .model-group .key-table td { padding: .7rem .6rem; }
+.model-group .tag { font-size: .73rem; letter-spacing: normal; }
+#keys-empty[hidden] { display: none; }
+@media (max-width: 560px) {
+  .section-toolbar { align-items: stretch; flex-direction: column; }
+  .traffic-cards { grid-template-columns: minmax(0, 1fr); }
+  .model-controls { flex-direction: column; }
+  .model-search { flex-basis: auto; }
+  .model-actions > div { width: 100%; }
+  .model-actions button { flex: 1 1 7rem; }
+  .model-totals { float: none; display: block; padding-left: 1rem; }
+  .model-group summary { padding-right: 0; }
+}
+

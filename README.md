@@ -750,6 +750,14 @@ Administrative and developer commands are deliberately excluded from `app/bot_co
 - `GET /api/key-health` — Per-key health diagnostics: status, failure count, suspension info. Auth required.
 - `GET /api/events` — Authenticated Server-Sent Events stream (5s interval) for real-time CPU, memory, queue, and request metrics. Service-health probe results come from `/api/dashboard`.
 
+The dashboard separates completed user operations from recorded outbound API
+attempts. Select today, the last 7 or the last 30 calendar days in Europe/Kyiv;
+the panel shows exact boundaries and marks API periods preceding instrumentation
+as partial. Gemini model groups start collapsed, support model/masked-key search
+and sorting, and show per-key local RPD usage when expanded. These quotas retain
+Pacific Time day boundaries. See [metrics and dashboard](docs/metrics-and-dashboard.md)
+for counter ownership, historical limits, recovery and performance metric scopes.
+
 ## Main User Flows
 
 - Start with `/help` for the current categorized RU/EN public catalog.

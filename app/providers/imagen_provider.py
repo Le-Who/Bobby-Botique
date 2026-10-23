@@ -24,7 +24,7 @@ from app.config import (
 )
 from app.observability.workload_events import start_workload_attempt
 from app.process_policies import resolve_process
-from app.providers.gemini import get_cached_genai_client
+from app.providers.gemini import get_single_attempt_genai_client as get_cached_genai_client
 
 if TYPE_CHECKING:
     pass
@@ -411,6 +411,7 @@ class ImagenProvider:
             client = get_cached_genai_client(selected_key)
 
             try:
+                workload_attempt.record_dispatch()
                 response = await asyncio.wait_for(
                     client.aio.interactions.create(
                         model=model,

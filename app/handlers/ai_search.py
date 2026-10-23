@@ -28,6 +28,7 @@ from app.prompt_registry import get_prompt_text, get_registry, register_controll
 from app.providers.base import is_opencode_model
 from app.repos.chats import ensure_chat_generation, get_user_chat, update_user_chat
 from app.utils.heartbeat import retire_heartbeat
+from app.utils.metrics_middleware import mark_operation_failed
 from app.utils.stage_indicators import (
     STAGES_SEARCH_QUICK,
     update_stage,
@@ -215,7 +216,10 @@ async def _handle_qna_search_leased_impl(
         ),
     )
     if isinstance(outcome, (CompleteDelivery, PartialDelivery)):
+        if isinstance(outcome, PartialDelivery):
+            mark_operation_failed()
         return outcome.content_text
+    mark_operation_failed()
     return None
 
 
@@ -329,6 +333,7 @@ async def _handle_research_agent_leased_impl(
                 model_used = fallback_model
                 break
     if not key_data:
+        mark_operation_failed()
         try:
             from app.errors import build_retry_and_roles_keyboard
 
@@ -421,7 +426,6 @@ async def _handle_research_agent_leased_impl(
                     _cm: str = _current_model,
                 ) -> None:
                     await increment_gemini_key_usage(_kh, _cm)
-                    await metrics_collector.record_api_call("gemini_agentic", model=_cm, user_id=trace_user_id)
 
                 assert key_data is not None
 
@@ -483,6 +487,7 @@ async def _handle_research_agent_leased_impl(
                         continue
 
                     # Last model also failed — show error to user
+                    mark_operation_failed()
                     try:
                         await placeholder_message.edit_text(
                             "❌ Внутренняя ошибка при проведении глубокого исследования. "
@@ -526,7 +531,7 @@ async def _handle_research_agent_leased_impl(
         )
         from app.response_delivery.presentation import FixedPresentation
 
-        await get_telegram_response_delivery().deliver(
+        delivery = await get_telegram_response_delivery().deliver(
             TelegramTarget(
                 placeholder_message=placeholder_message,
                 bot=placeholder_message.get_bot(),
@@ -544,6 +549,10 @@ async def _handle_research_agent_leased_impl(
                 ),
             ),
         )
+        from app.response_delivery.outcomes import FailedDelivery, PartialDelivery
+
+        if isinstance(delivery, (FailedDelivery, PartialDelivery)):
+            mark_operation_failed()
 
         # ── Auto TTS for research results (fire-and-forget) ──────────
         if len(final_answer) > 200:
@@ -588,6 +597,7 @@ async def _handle_research_agent_leased_impl(
         await update_user_chat(user_id, chat_state, expected_epoch=_expected_epoch)
     else:
         # Agent failed to get an answer or returned an explicit error
+        mark_operation_failed()
         error_msg = final_answer if final_answer else "Не удалось сформировать ответ."
         try:
             from app.errors import build_retry_and_roles_keyboard
@@ -675,9 +685,11 @@ async def _handle_complex_agent_search_leased_impl(
 
     # Check ошибки от роутера
     if await handle_ai_response_error(search_query, placeholder_message):
+        mark_operation_failed()
         return
 
     if not search_query:
+        mark_operation_failed()
         try:
             await placeholder_message.edit_text("Не удалось проанализировать изображение для поиска.")
         except (BadRequest, NetworkError) as edit_error:

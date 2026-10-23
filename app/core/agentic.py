@@ -648,6 +648,7 @@ class AgenticSearch:
         )
         try:
             async with asyncio.timeout(remaining) as timeout:
+                attempt.record_dispatch()
                 response = await self.client.aio.models.generate_content(
                     model=self.model_name,
                     contents=contents,

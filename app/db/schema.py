@@ -22,6 +22,8 @@ EXPECTED_TABLES = frozenset(
         "api_keys",
         "key_usage",
         "metrics",
+        "traffic_daily",
+        "traffic_accounting_epoch",
         "crocodile_daily_days",
         "crocodile_daily_puzzles",
         "crocodile_daily_preferences",
@@ -86,6 +88,8 @@ EXPECTED_TABLES = frozenset(
 # Critical column-level contract for tables whose runtime shape cannot be
 # inferred safely from table existence alone.
 EXPECTED_COLUMNS = {
+    "traffic_daily": frozenset({"metric_date", "source_id", "api_attempts"}),
+    "traffic_accounting_epoch": frozenset({"singleton", "started_at"}),
     "crocodile_daily_preferences": frozenset({"user_id", "daily_game"}),
     "chats": frozenset(
         {

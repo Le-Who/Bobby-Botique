@@ -3046,6 +3046,7 @@ async def _handle_live_session(
         transport_backend,
     )
     try:
+        live_attempt.record_dispatch()
         async with client.aio.live.connect(model=model_name, config=live_config) as session:
             await websocket.send_json({"type": "connected"})
             if resumption_token:

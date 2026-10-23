@@ -375,6 +375,7 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
         )
         try:
             client = get_cached_genai_client(selected_key)
+            override_attempt.record_dispatch()
             response = await client.aio.models.generate_content(
                 model=model,
                 contents=prompt,
@@ -419,7 +420,9 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
                 max_facts=MAX_PERSONA_FACTS,
                 memories_text=memories_text,
             )
-            response = await get_cached_genai_client(selected_key).aio.models.generate_content(
+            client = get_cached_genai_client(selected_key)
+            fallback_attempt.record_dispatch()
+            response = await client.aio.models.generate_content(
                 model=model,
                 contents=fallback_prompt,
                 config=build_generate_content_config(model, temperature=0.1, max_output_tokens=1024),
@@ -462,6 +465,7 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
     )
     try:
         client = get_cached_genai_client(api_key)
+        request_attempt.record_dispatch()
         response = await client.aio.models.generate_content(
             model=_CONSOLIDATION_MODEL,
             contents=prompt,
@@ -532,6 +536,7 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
                 max_facts=MAX_PERSONA_FACTS,
                 memories_text=memories_text,
             )
+            fallback_attempt.record_dispatch()
             response = await client.aio.models.generate_content(
                 model=_CONSOLIDATION_MODEL,
                 contents=fallback_prompt,

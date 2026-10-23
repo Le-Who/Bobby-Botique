@@ -344,7 +344,6 @@ async def _translate_to_english(prompt: str, user_id: int | None = None) -> str:
     from app.runtime_settings.gemini_execution import run_gemini_override
 
     async def execute(model: str, key: str) -> str:
-        await metrics_collector.record_api_call("gemini_img_translate", model=model, user_id=user_id)
         response = await observe_workload_call(
             get_cached_genai_client(key).aio.models.generate_content(
                 model=model,
@@ -519,7 +518,7 @@ async def _run_generation(
     model: str,
     aspect_ratio: str,
     enhance: bool = True,
-) -> None:
+) -> bool:
     """
     Execute image generation and post the result.
 
@@ -662,6 +661,7 @@ async def _run_generation(
                 aspect_ratio,
                 translated,
             )
+            return True
         except Exception as send_err:
             logger.error("Failed to send generated image: %s", send_err)
             try:
@@ -670,10 +670,16 @@ async def _run_generation(
                 )
             except Exception:
                 pass
-        return
+        from app.utils.metrics_middleware import mark_operation_failed
+
+        mark_operation_failed()
+        return False
 
     # ── Error ─────────────────────────────────────────────────────────────
     err = error_message or "unknown"
+    from app.utils.metrics_middleware import mark_operation_failed
+
+    mark_operation_failed()
     text = _error_text(err)
 
     retry_keyboard = InlineKeyboardMarkup(
@@ -686,6 +692,7 @@ async def _run_generation(
             text.replace("*", "").replace("`", "").replace("_", ""),
             reply_markup=retry_keyboard,
         )
+    return False
 
 
 def _error_text(err: str) -> str:

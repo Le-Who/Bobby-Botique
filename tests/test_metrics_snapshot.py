@@ -7,10 +7,12 @@ Validates that:
 """
 
 import asyncio
-from datetime import date
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+from app.utils import time as time_utils
 
 
 @pytest.fixture
@@ -30,7 +32,7 @@ class TestMetricsSnapshotAtomicity:
     @pytest.mark.asyncio
     async def test_events_during_db_write_are_preserved(self, metrics_collector):
         """Core race condition test: events arriving during DB I/O must survive."""
-        today = date.today().isoformat()
+        today = datetime.now(time_utils.get_kyiv_tz()).date().isoformat()
 
         # Pre-populate: 5 requests exist before save
         metrics_collector.daily_metrics[today].request_count = 5
@@ -75,7 +77,7 @@ class TestMetricsSnapshotAtomicity:
     @pytest.mark.asyncio
     async def test_db_failure_compensates(self, metrics_collector):
         """If DB write fails, snapshot values must be re-added to live counters."""
-        today = date.today().isoformat()
+        today = datetime.now(time_utils.get_kyiv_tz()).date().isoformat()
 
         metrics_collector.daily_metrics[today].request_count = 10
         metrics_collector.daily_metrics[today].error_count = 2
@@ -97,7 +99,7 @@ class TestMetricsSnapshotAtomicity:
     @pytest.mark.asyncio
     async def test_per_user_metrics_atomically_snapshotted(self, metrics_collector):
         """Per-user metrics must be snapshotted and reset together with daily metrics."""
-        today = date.today().isoformat()
+        today = datetime.now(time_utils.get_kyiv_tz()).date().isoformat()
 
         # Set up per-user data
         metrics_collector._user_daily[today][42]["request_count"] = 8
@@ -124,7 +126,7 @@ class TestMetricsSnapshotAtomicity:
     @pytest.mark.asyncio
     async def test_queued_metrics_never_recreate_erased_user(self, metrics_collector):
         """A pre-erasure snapshot may flush later but must not recreate users."""
-        today = date.today().isoformat()
+        today = datetime.now(time_utils.get_kyiv_tz()).date().isoformat()
         metrics_collector._user_daily[today][404]["request_count"] = 1
         metrics_collector.daily_metrics[today].request_count = 1
 
@@ -143,7 +145,7 @@ class TestMetricsSnapshotAtomicity:
     @pytest.mark.asyncio
     async def test_per_user_db_failure_compensates(self, metrics_collector):
         """Per-user metrics must be restored on DB write failure."""
-        today = date.today().isoformat()
+        today = datetime.now(time_utils.get_kyiv_tz()).date().isoformat()
 
         metrics_collector._user_daily[today][99]["request_count"] = 5
         metrics_collector._user_daily[today][99]["model_usage"]["flash"] = 3
@@ -176,7 +178,7 @@ class TestMetricsSnapshotAtomicity:
 
     @pytest.mark.asyncio
     async def test_api_only_interval_is_persisted(self, metrics_collector):
-        today = date.today().isoformat()
+        today = datetime.now(time_utils.get_kyiv_tz()).date().isoformat()
         metrics_collector._process_event(
             {
                 "type": "api_call",
@@ -193,14 +195,15 @@ class TestMetricsSnapshotAtomicity:
             patch("app.repos.analytics.record_daily_activity", new_callable=AsyncMock),
         ):
             await metrics_collector._save_metrics_to_db()
-        assert query.await_count == 1
-        assert query.await_args.args[1][7] == {"gemini": 1}
-        assert execute_many.await_args.args[1] == [(42, date.today(), 0, {"flash": 1})]
+        assert query.await_count == 2
+        assert query.await_args_list[0].args[1][7] == {"gemini": 1}
+        assert query.await_args_list[1].args[1][2] == 1
+        assert execute_many.await_args.args[1] == [(42, datetime.now(time_utils.get_kyiv_tz()).date(), 0, {"flash": 1})]
         assert metrics_collector._user_daily[today][42]["model_usage"] == {}
 
     @pytest.mark.asyncio
     async def test_cache_only_failed_interval_is_restored(self, metrics_collector):
-        today = date.today().isoformat()
+        today = datetime.now(time_utils.get_kyiv_tz()).date().isoformat()
         metrics_collector.daily_metrics[today].cache_hits = 3
         with patch("app.metrics.db.db_query", side_effect=RuntimeError("offline")):
             await metrics_collector._save_metrics_to_db()
@@ -208,7 +211,7 @@ class TestMetricsSnapshotAtomicity:
 
     @pytest.mark.asyncio
     async def test_daily_summary_survives_successful_flush(self, metrics_collector):
-        today = date.today().isoformat()
+        today = datetime.now(time_utils.get_kyiv_tz()).date().isoformat()
         metrics_collector.daily_metrics[today].request_count = 5
         metrics_collector.daily_metrics[today].total_response_time = 10.0
         with patch("app.metrics.db.db_query", new_callable=AsyncMock):
@@ -222,7 +225,7 @@ class TestMetricsSnapshotAtomicity:
     async def test_previous_day_pending_metrics_are_saved(self, metrics_collector):
         from datetime import timedelta
 
-        previous_day = date.today() - timedelta(days=1)
+        previous_day = datetime.now(time_utils.get_kyiv_tz()).date() - timedelta(days=1)
         day_key = previous_day.isoformat()
         metrics_collector.daily_metrics[day_key].request_count = 2
         metrics_collector._user_daily[day_key][42]["request_count"] = 2
@@ -237,7 +240,7 @@ class TestMetricsSnapshotAtomicity:
 
     @pytest.mark.asyncio
     async def test_loaded_metrics_are_not_persisted_as_new_events(self, metrics_collector):
-        today = date.today()
+        today = datetime.now(time_utils.get_kyiv_tz()).date()
         loaded = {
             "metric_date": today,
             "request_count": 10,
@@ -276,7 +279,7 @@ class TestMetricsSnapshotAtomicity:
 
     @pytest.mark.asyncio
     async def test_cancelled_flush_restores_pending_counters(self, metrics_collector):
-        today = date.today().isoformat()
+        today = datetime.now(time_utils.get_kyiv_tz()).date().isoformat()
         metrics_collector.daily_metrics[today].request_count = 2
         started = asyncio.Event()
 
@@ -295,7 +298,7 @@ class TestMetricsSnapshotAtomicity:
     @pytest.mark.asyncio
     async def test_zero_requests_skips_db_write(self, metrics_collector):
         """If no requests accumulated, DB write should be skipped entirely."""
-        today = date.today().isoformat()
+        today = datetime.now(time_utils.get_kyiv_tz()).date().isoformat()
         metrics_collector.daily_metrics[today].request_count = 0
 
         with patch("app.metrics.db.db_query", new_callable=AsyncMock) as mock_query:

@@ -12,7 +12,7 @@
     />
     <link
       rel="stylesheet"
-      href="{{ url_for('static', filename='css/style.css', v='dashboard-20261023-3') }}"
+      href="{{ url_for('static', filename='css/style.css', v='dashboard-20261023-4') }}"
     />
   </head>
   <body>
@@ -93,18 +93,41 @@
             </div>
           </div>
         </div>
+      <section class="dash-section" aria-labelledby="traffic-heading">
+        <div class="section-toolbar">
+          <h2 class="section-title" id="traffic-heading">Workload</h2>
+          <label class="dashboard-field" for="traffic-period">Traffic period
+            <select id="traffic-period">
+              <option value="today">Today · Kyiv</option>
+              <option value="last_7_days">Last 7 calendar days · Kyiv</option>
+              <option value="last_30_days">Last 30 calendar days · Kyiv</option>
+            </select>
+          </label>
+        </div>
+        <p class="section-description" id="traffic-range">Waiting for calendar period data · Kyiv (Europe/Kyiv)</p>
+        <div class="card-row traffic-cards" aria-live="polite">
+          <div class="card">
+            <div class="card-label">User requests</div>
+            <div class="card-value mono" id="req-count">—</div>
+            <div class="card-sub">Completed user operations, counted once</div>
+          </div>
+          <div class="card">
+            <div class="card-label">API attempts</div>
+            <div class="card-value mono" id="api-attempt-count">—</div>
+            <div class="card-sub">Recorded provider calls, including retries and failures</div>
+          </div>
+        </div>
+        <p class="section-description traffic-note" id="traffic-note">Historical API coverage depends on recorded instrumentation.</p>
+      </section>
       <!-- ROW 2: Performance Metrics -->
       <section class="dash-section">
         <h2 class="section-title">Performance</h2>
-        <div class="card-row quad">
-          <div class="card">
-            <div class="card-label">Requests</div>
-            <div class="card-value mono" id="req-count">—</div>
-            <div class="card-sub" id="req-sub"></div>
-          </div>
+        <p class="section-description">Independent of the workload period above. Error and cache rates combine the history loaded at startup (previous 30 days) with this process's new events.</p>
+        <div class="card-row triple">
           <div class="card">
             <div class="card-label">Avg Response</div>
             <div class="card-value mono" id="avg-resp">—</div>
+            <div class="card-sub">Last 1,000 completed operations in this process</div>
           </div>
           <div class="card">
             <div class="card-label">Error Rate</div>
@@ -163,25 +186,30 @@
       <section class="dash-section">
         <h2 class="section-title">Gemini API Keys</h2>
         <p class="section-description">Локальный RPD бота на модель и ключ. Доступность по этому счётчику не подтверждает доступ к модели у провайдера; состояние ключей показано отдельно.</p>
-        <div class="card-row two-col">
+        <div class="card-row provider-layout">
           <div class="card card-wide">
-            <div class="card-label">API Key Usage (Today)</div>
-            <div class="key-table-wrap">
-              <table class="key-table" id="key-table">
-                <thead>
-                  <tr>
-                    <th>Model</th>
-                    <th>Key</th>
-                    <th>Used</th>
-                    <th>Daily / admission limit</th>
-                    <th>%</th>
-                    <th>Local RPD status</th>
-                  </tr>
-                </thead>
-                <tbody id="key-tbody"></tbody>
-              </table>
-              <div class="empty-state" id="keys-empty">No key usage data</div>
+            <div class="card-label">API Key Usage · Pacific quota day</div>
+            <div class="model-controls">
+              <label class="dashboard-field model-search" for="model-search">Search models or masked keys
+                <input id="model-search" type="search" placeholder="Model ID or masked key" autocomplete="off" />
+              </label>
+              <label class="dashboard-field" for="model-sort">Sort models
+                <select id="model-sort">
+                  <option value="name">Model name</option>
+                  <option value="used">Most used</option>
+                  <option value="pressure">Highest local quota pressure</option>
+                </select>
+              </label>
             </div>
+            <div class="model-actions">
+              <p id="model-results" role="status"></p>
+              <div>
+                <button type="button" id="models-expand">Expand all models</button>
+                <button type="button" id="models-collapse">Collapse all models</button>
+              </div>
+            </div>
+            <div id="gemini-models" class="model-groups"></div>
+            <div class="empty-state" id="keys-empty" role="status">Waiting for Gemini usage data</div>
           </div>
           <div class="card">
             <div class="card-label">Circuit Breakers</div>
@@ -508,6 +536,45 @@
       // Data loaders
       // =====================================================================
 
+      let trafficSnapshot = null;
+      function renderTraffic(traffic) {
+        trafficSnapshot = traffic;
+        const period = traffic?.periods?.[$("traffic-period").value];
+        const validCount = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
+        const available = traffic?.timezone === "Europe/Kyiv" && period?.available === true;
+        $("req-count").textContent = available && validCount(period.user_requests)
+          ? period.user_requests.toLocaleString() : "Unavailable";
+        $("api-attempt-count").textContent = available && validCount(period.api_attempts)
+          ? period.api_attempts.toLocaleString() : "Unavailable";
+        const start = new Date(period?.start);
+        const end = new Date(period?.end);
+        const format = new Intl.DateTimeFormat("en-GB", {
+          timeZone: "Europe/Kyiv", day: "2-digit", month: "short", year: "numeric",
+          hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+        });
+        if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())) {
+          $("traffic-range").textContent = `${format.format(start)} – ${format.format(end)} · Kyiv (Europe/Kyiv)`;
+        } else {
+          $("traffic-range").textContent = "Calendar period data unavailable · Kyiv (Europe/Kyiv)";
+        }
+        const note = $("traffic-note");
+        note.dataset.coverage = period?.coverage || "unknown";
+        if (!available) {
+          note.textContent = "Traffic data unavailable. " + (period?.reason || "The selected calendar period could not be measured.");
+        } else if (period.complete === false || period.coverage === "partial") {
+          const observed = period.observed_start ? new Date(period.observed_start) : null;
+          note.dataset.coverage = "partial";
+          note.textContent = "Partial API coverage: measured "
+            + (observed && Number.isFinite(observed.getTime()) ? `since ${format.format(observed)} · Kyiv. ` : "for part of this period. ")
+            + "Earlier API attempts are not included. " + (period.reason || "");
+        } else if (period.complete === true || period.coverage === "complete") {
+          note.textContent = "API attempts recorded for the full selected period, including retries and failed calls.";
+        } else {
+          note.textContent = "Historical API coverage is unknown; these are recorded attempts, including retries and failed calls.";
+        }
+      }
+      $("traffic-period").addEventListener("change", () => renderTraffic(trafficSnapshot));
+
       function renderOverview(d) {
         if (!d) return;
         const s = d.system;
@@ -533,8 +600,8 @@
 
         // Metrics
         const m = d.metrics;
+        renderTraffic(m?.traffic);
         if (m && d.metrics_available !== false) {
-          $("req-count").textContent = (m.total_requests || 0).toLocaleString();
           const avgMs = m.average_response_time_ms || 0;
           $("avg-resp").textContent = avgMs ? avgMs.toFixed(0) + "ms" : "—";
           const errRate = m.error_rate_percent || 0;
@@ -547,7 +614,6 @@
             (typeof cacheRate === "number" ? cacheRate.toFixed(1) : cacheRate) +
             "%";
         } else {
-          $("req-count").textContent = "Unavailable";
           $("avg-resp").textContent = "—";
           $("error-rate").textContent = "—";
           $("error-count-sub").textContent = "Metrics unavailable";
@@ -586,56 +652,117 @@
         renderSparkline($("spark-mem"), memHistory, "#60a5fa");
       }
 
+      const modelOpenState = new Map();
+      let geminiSnapshot = null;
+      function quotaNumber(value) {
+        if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) return null;
+        const number = Number(value);
+        return Number.isFinite(number) && number >= 0 ? number : null;
+      }
+      function keyQuota(row) {
+        const used = quotaNumber(row.request_count);
+        const limit = quotaNumber(row.daily_limit);
+        const admission = quotaNumber(row.admission_limit);
+        let status = "Unknown", tone = "tag-neutral";
+        if (used !== null && row.daily_limit === null) status = "No local limit";
+        else if (used !== null && limit !== null) {
+          if (used >= limit) { status = "Local RPD exhausted"; tone = "tag-err"; }
+          else if (row.is_available === false) { status = "Blocked at local threshold"; tone = "tag-warn"; }
+          else if (row.is_available === true) { status = "Local RPD admits"; tone = "tag-ok"; }
+        }
+        const pressure = used !== null && admission !== null
+          ? admission > 0 ? used / admission : Infinity : -1;
+        return { used, limit, admission, status, tone, pressure };
+      }
+      function maskedKey(row) {
+        return String(row.api_key_preview || row.key_hash?.substring(0, 10) || "—");
+      }
+      function renderGemini(gemini) {
+        geminiSnapshot = gemini;
+        const list = $("gemini-models");
+        const focusedModel = list.contains(document.activeElement)
+          ? document.activeElement.closest("details")?.dataset.model : null;
+        list.querySelectorAll("details").forEach(detail => modelOpenState.set(detail.dataset.model, detail.open));
+        const rows = gemini?.available === false ? [] : gemini?.rows || [];
+        const groups = new Map();
+        rows.forEach(row => {
+          const name = String(row.model_name ?? "Unknown model");
+          if (!groups.has(name)) groups.set(name, []);
+          groups.get(name).push(row);
+        });
+        const query = $("model-search").value.trim().toLocaleLowerCase();
+        const models = [...groups].map(([name, keys]) => {
+          const quotas = keys.map(keyQuota);
+          return { name, keys, quotas,
+            used: quotas.reduce((sum, quota) => sum + (quota.used ?? 0), 0),
+            unknownUsage: quotas.some(quota => quota.used === null),
+            knownUsage: quotas.some(quota => quota.used !== null),
+            pressure: Math.max(...quotas.map(quota => quota.pressure)),
+          };
+        }).filter(model => !query || model.name.toLocaleLowerCase().includes(query)
+          || model.keys.some(key => maskedKey(key).toLocaleLowerCase().includes(query)));
+        models.sort((a, b) => {
+          const sort = $("model-sort").value;
+          if (sort === "used" && a.used !== b.used) return b.used - a.used;
+          if (sort === "pressure" && a.pressure !== b.pressure) return a.pressure > b.pressure ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+        $("model-results").textContent = `${models.length} of ${groups.size} models`;
+        $("models-expand").disabled = models.length === 0;
+        $("models-collapse").disabled = models.length === 0;
+        const empty = $("keys-empty");
+        empty.hidden = models.length > 0;
+        empty.textContent = gemini?.available === false || !gemini ? "Gemini metrics unavailable"
+          : rows.length === 0 ? "No Gemini keys configured" : "No models or masked keys match your search";
+        list.innerHTML = models.map(model => {
+          const admitted = model.quotas.filter((quota, index) => model.keys[index].is_available === true
+            && quota.used !== null && (model.keys[index].daily_limit === null || quota.limit !== null)).length;
+          const pressure = model.pressure < 0 ? "Admission pressure unknown"
+            : model.pressure === Infinity ? "Zero local admission limit"
+            : `Highest admission use ${(model.pressure * 100).toFixed(1)}%`;
+          const noLimit = model.keys.every(key => key.daily_limit === null);
+          const unknownStatus = model.quotas.filter(quota => quota.status === "Unknown").length;
+          const localStatus = noLimit ? "No local limit" : `${admitted} / ${model.keys.length} keys admit locally${unknownStatus ? ` · ${unknownStatus} unknown` : ""}`;
+          const usage = !model.knownUsage ? "Usage unknown" : `${model.used.toLocaleString()} used${model.unknownUsage ? " + unknown usage" : ""}`;
+          const selectedKeys = model.name.toLocaleLowerCase().includes(query) ? model.keys
+            : model.keys.filter(key => maskedKey(key).toLocaleLowerCase().includes(query));
+          return `<details class="model-group" data-model="${escapeHtml(model.name)}"${modelOpenState.get(model.name) ? " open" : ""}>
+            <summary><span class="model-name mono">${escapeHtml(model.name)}</span>
+              <span class="model-totals">${model.keys.length} ${model.keys.length === 1 ? "key" : "keys"} · <strong>${usage}</strong></span>
+              <span class="model-quota">${localStatus} · ${pressure}</span></summary>
+            <div class="model-key-content"><p class="model-key-caption">Pacific quota day. Daily limit / local admission threshold, per key. ${selectedKeys.length} of ${model.keys.length} keys shown.</p>
+              <div class="key-table-wrap" tabindex="0" role="region" aria-label="${escapeHtml(model.name)} key usage">
+                <table class="key-table"><thead><tr><th scope="col">Key</th><th scope="col">Used</th><th scope="col">Daily / admission limit</th><th scope="col">Daily %</th><th scope="col">Local RPD status</th></tr></thead>
+                  <tbody>${selectedKeys.map(key => {
+                    const quota = keyQuota(key);
+                    const pct = quota.used !== null && quota.limit > 0 ? (quota.used / quota.limit * 100).toFixed(1) + "%" : "—";
+                    const limit = key.daily_limit === null ? "∞" : quota.limit ?? "Unknown";
+                    return `<tr><td class="mono dim">${escapeHtml(maskedKey(key))}</td>
+                      <td class="mono">${quota.used ?? "—"}</td>
+                      <td class="mono">${limit} / ${quota.admission ?? (key.daily_limit === null ? "∞" : "Unknown")}</td>
+                      <td class="mono">${pct}</td><td><span class="tag ${quota.tone}">${quota.status}</span></td></tr>`;
+                  }).join("")}</tbody></table>
+              </div></div></details>`;
+        }).join("");
+        if (focusedModel !== null) {
+          [...list.querySelectorAll("details")].find(detail => detail.dataset.model === focusedModel)
+            ?.querySelector("summary").focus({ preventScroll: true });
+        }
+      }
+      $("model-search").addEventListener("input", () => renderGemini(geminiSnapshot));
+      $("model-sort").addEventListener("change", () => renderGemini(geminiSnapshot));
+      function setModelsOpen(open) {
+        $("gemini-models").querySelectorAll("details").forEach(detail => {
+          detail.open = open;
+          modelOpenState.set(detail.dataset.model, open);
+        });
+      }
+      $("models-expand").addEventListener("click", () => setModelsOpen(true));
+      $("models-collapse").addEventListener("click", () => setModelsOpen(false));
+
       function renderProviders(d) {
         if (!d) return;
-        // --- Gemini keys ---
-        const tbody = $("key-tbody");
-        const empty = $("keys-empty");
-        const rows = d.gemini?.rows || [];
-
-        if (rows.length === 0) {
-          tbody.innerHTML = "";
-          empty.textContent = d.gemini?.available === false ? "Gemini metrics unavailable" : "No Gemini keys configured";
-          empty.style.display = "block";
-        } else {
-          empty.style.display = "none";
-          tbody.innerHTML = rows
-            .map((r) => {
-              const limit = r.daily_limit;
-              const used = r.request_count ?? 0;
-              const pct =
-                r.usage_percent != null
-                  ? Number(r.usage_percent).toFixed(1)
-                  : "—";
-              // Status logic: meaningful labels
-              let statusCls, statusTxt;
-              if (limit == null) {
-                statusCls = "tag-neutral";
-                statusTxt = "No local limit";
-              } else if (used >= limit) {
-                statusCls = "tag-err";
-                statusTxt = "✗ Exhausted";
-              } else if (r.is_available === false) {
-                statusCls = "tag-warn";
-                statusTxt = "Blocked at local threshold";
-              } else if (r.is_available !== true) {
-                statusCls = "tag-neutral";
-                statusTxt = "Unknown";
-              } else {
-                statusCls = "tag-ok";
-                statusTxt = "Local RPD admits";
-              }
-              return `<tr>
-                  <td class="mono">${escapeHtml(r.model_name || "—")}</td>
-                  <td class="mono dim">${escapeHtml(r.api_key_preview || r.key_hash?.substring(0, 10) || "—")}</td>
-                  <td class="mono">${used}</td>
-                  <td class="mono">${limit ?? "∞"}${r.admission_limit != null ? ` / ${escapeHtml(r.admission_limit)}` : ""}</td>
-                  <td class="mono">${limit != null && r.usage_percent != null ? pct + "%" : "—"}</td>
-                  <td><span class="tag ${statusCls}">${statusTxt}</span></td>
-              </tr>`;
-            })
-            .join("");
-        }
+        renderGemini(d.gemini);
 
         // --- Tavily keys ---
         const tBody = $("tavily-tbody");
@@ -919,12 +1046,9 @@
               $('q-running').textContent = d.queue.processing ?? '—';
             }
 
-            // Update request metrics
-            if (d.metrics) {
-              if (d.metrics.total_requests != null) {
-                $('req-count').textContent = d.metrics.total_requests.toLocaleString();
-              }
-            }
+            // Calendar traffic belongs to the canonical snapshot. Legacy SSE
+            // totals mix scopes and must never overwrite selected-period counts.
+            if (d.metrics?.traffic) renderTraffic(d.metrics.traffic);
 
             // Partial SSE updates cannot establish a fresh complete snapshot.
             updateDashboardFreshness();

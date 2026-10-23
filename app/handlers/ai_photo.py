@@ -30,6 +30,7 @@ from app.prompt_registry import get_prompt_text, get_registry, register_controll
 from app.repos.chats import ensure_chat_generation, get_user_chat, update_user_chat
 from app.utils.heartbeat import stop_heartbeat
 from app.utils.image_utils import TaggedImage, save_image_as_bytes
+from app.utils.metrics_middleware import mark_operation_failed
 from app.utils.stage_indicators import STAGES_PHOTO, update_stage
 from app.utils.tg_file import get_file_bytes
 from app.utils.vision_intent import classify_vision_intent
@@ -189,7 +190,6 @@ async def _process_ai_vision(
             raw_model = default_model
 
     history = [{"role": "user", "parts": parts}]
-    _vision_t0 = time.monotonic()
 
     from app.providers.request_factory import generation_request_from_history
     from app.providers.stream_types import Workload
@@ -226,6 +226,8 @@ async def _process_ai_vision(
         ),
     )
     if isinstance(outcome, (CompleteDelivery, PartialDelivery)):
+        if isinstance(outcome, PartialDelivery):
+            mark_operation_failed()
         model_used = raw_model
         metadata = outcome.completion if isinstance(outcome, CompleteDelivery) else outcome.terminal
         route = getattr(metadata, "route", None)
@@ -235,7 +237,8 @@ async def _process_ai_vision(
         from app.metrics import metrics_collector as _mc
 
         await _mc.record_model_response(model_used, user_id=user_id)
-        await _mc.record_request("photo", time.monotonic() - _vision_t0, success=True)
+    else:
+        mark_operation_failed()
 
     return outcome
 
@@ -357,6 +360,7 @@ async def _handle_photo_leased_impl(
             submit_memory_task(user_id, _bg_photo_ltm, retry=2)
 
     except Exception as e:
+        mark_operation_failed()
         logging.error("Error processing photo: %s", e, exc_info=True)
         try:
             await placeholder_message.edit_text("❌ Произошла ошибка при обработке изображения.")
@@ -530,6 +534,7 @@ async def _handle_media_group_photos_leased_impl(
         images = await _download_images_concurrently(messages, placeholder=placeholder_message)
 
         if not images:
+            mark_operation_failed()
             await placeholder_message.edit_text("❌ Не удалось загрузить ни одного изображения из группы.")
             return
 
@@ -571,11 +576,13 @@ async def _handle_media_group_photos_leased_impl(
         from app.response_delivery.outcomes import CompleteDelivery, PartialDelivery
 
         if not isinstance(outcome, (CompleteDelivery, PartialDelivery)):
+            mark_operation_failed()
             return
 
         logging.info("✅ Группа из %s изображений обработана успешно", image_count)
 
     except Exception as e:
+        mark_operation_failed()
         logging.error("Error processing media group photos: %s", e, exc_info=True)
         try:
             await placeholder_message.edit_text("❌ Произошла ошибка при обработке группы изображений.")
@@ -644,6 +651,7 @@ async def _handle_complex_media_group_search_leased_impl(
         )
 
         if not images:
+            mark_operation_failed()
             await placeholder_message.edit_text("❌ Не удалось загрузить ни одного изображения для анализа.")
             return
 
@@ -674,9 +682,11 @@ async def _handle_complex_media_group_search_leased_impl(
 
         # Check ошибки от роутера
         if await handle_ai_response_error(search_query, placeholder_message):
+            mark_operation_failed()
             return
 
         if not search_query:
+            mark_operation_failed()
             try:
                 await placeholder_message.edit_text("Не удалось проанализировать группу изображений для поиска.")
             except Exception as edit_error:
@@ -707,6 +717,7 @@ async def _handle_complex_media_group_search_leased_impl(
         logging.info("✅ Группа из %s изображений проанализирована для поиска", image_count)
 
     except Exception as e:
+        mark_operation_failed()
         logging.error("Error processing complex media group search: %s", e, exc_info=True)
         try:
             await placeholder_message.edit_text("❌ Произошла ошибка при анализе группы изображений.")

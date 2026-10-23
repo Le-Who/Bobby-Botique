@@ -150,6 +150,7 @@ async def expand_query_with_llm(query: str, api_key: str) -> str:
         )
         try:
             client = get_cached_genai_client(selected_key)
+            request_attempt.record_dispatch()
             response = await client.aio.models.generate_content(
                 model=model,
                 contents=prompt,
@@ -199,6 +200,7 @@ async def expand_query_with_llm(query: str, api_key: str) -> str:
         from google.genai import types as _types
 
         client = get_cached_genai_client(api_key)
+        attempt.record_dispatch()
         resp = await asyncio.wait_for(
             client.aio.models.generate_content(
                 model=QUERY_EXPANSION_MODEL,
@@ -275,6 +277,7 @@ async def _get_embedding(
         )
         try:
             client = get_cached_genai_client(current_key)  # Reuse cached client (HTTP/2 multiplexing)
+            request_attempt.record_dispatch()
             result = await client.aio.models.embed_content(
                 model=EMBEDDING_MODEL,
                 contents=payload,

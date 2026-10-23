@@ -8,7 +8,8 @@ import pytest
 
 from app.core.agentic import AgenticResult
 from app.errors import ErrorCode
-from app.response_delivery.outcomes import CompleteDelivery, FailedDelivery
+from app.providers.stream_types import FailurePhase, KeyDisposition, RetryDisposition, StreamFailed
+from app.response_delivery.outcomes import CompleteDelivery, FailedDelivery, PartialDelivery
 from app.response_delivery.renderer import (
     DeliveryKind,
     DeliveryReceipt,
@@ -180,8 +181,12 @@ async def test_qna_search_opencode_path():
 
 
 @pytest.mark.asyncio
-async def test_qna_search_typed_failure_does_not_duplicate_delivery():
+@pytest.mark.parametrize("partial", [False, True])
+async def test_qna_search_typed_failure_does_not_duplicate_delivery(partial):
     """Delivery owns the rendered failure; the handler must not send it again."""
+    from app.utils.metrics_middleware import consume_operation_failure
+
+    consume_operation_failure()
     placeholder = make_placeholder()
     placeholder.get_bot.return_value = MagicMock()
     placeholder.chat.type = "private"
@@ -194,8 +199,23 @@ async def test_qna_search_typed_failure_does_not_duplicate_delivery():
             receipt=_receipt(),
         )
     )
+    if partial:
+        delivery.stream.return_value = PartialDelivery(
+            content_text="Partial search answer",
+            displayed_text="Partial search answer",
+            terminal=StreamFailed(
+                ErrorCode.NETWORK,
+                FailurePhase.AFTER_TEXT,
+                RetryDisposition.RETRY_LATER,
+                KeyDisposition.UNCHANGED,
+                "synthetic interruption",
+            ),
+            voice_requested=False,
+            receipt=_receipt(),
+        )
 
     with (
+        patch("app.handlers.ai_search.get_primary_provider", return_value="gemini"),
         patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
         patch("app.handlers.ai_search.update_stage", new_callable=AsyncMock),
         patch(
@@ -218,10 +238,11 @@ async def test_qna_search_typed_failure_does_not_duplicate_delivery():
             user_id=123,
         )
 
-    assert result is None
+    assert result == ("Partial search answer" if partial else None)
     delivery.stream.assert_awaited_once()
     placeholder.edit_text.assert_not_awaited()
     placeholder.reply_text.assert_not_awaited()
+    assert consume_operation_failure() is True
 
 
 # ── Research agent — search fails ─────────────────────────────────────────────
@@ -323,9 +344,13 @@ async def test_research_agent_tavily_error():
 
 
 @pytest.mark.asyncio
-async def test_research_agent_uses_unified_completed_response_delivery():
+@pytest.mark.parametrize("partial", [False, True])
+async def test_research_agent_uses_unified_completed_response_delivery(partial):
     """AgenticSearch must not own a second Long Read implementation."""
     from app.response_delivery.delivery import CompletedResponse
+    from app.utils.metrics_middleware import consume_operation_failure
+
+    consume_operation_failure()
 
     placeholder = make_placeholder()
     placeholder.message_id = 99
@@ -334,6 +359,20 @@ async def test_research_agent_uses_unified_completed_response_delivery():
     final_answer = "A" * 4200
     delivery = MagicMock()
     delivery.deliver = AsyncMock()
+    if partial:
+        delivery.deliver.return_value = PartialDelivery(
+            content_text="Partial research answer",
+            displayed_text="Partial research answer",
+            terminal=StreamFailed(
+                ErrorCode.NETWORK,
+                FailurePhase.AFTER_TEXT,
+                RetryDisposition.RETRY_LATER,
+                KeyDisposition.UNCHANGED,
+                "synthetic interruption",
+            ),
+            voice_requested=False,
+            receipt=_receipt(),
+        )
 
     with (
         patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
@@ -358,6 +397,7 @@ async def test_research_agent_uses_unified_completed_response_delivery():
         await _handle_research_agent(placeholder, 123, "Query", chat_state)
 
     delivery.deliver.assert_awaited_once()
+    assert consume_operation_failure() is partial
     completed = delivery.deliver.await_args.args[1]
     assert completed == CompletedResponse(final_answer)
     store_long.assert_not_awaited()

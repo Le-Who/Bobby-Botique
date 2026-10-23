@@ -175,6 +175,9 @@ async def process_long_request(
                 )
 
     except Exception as e:
+        from app.utils.metrics_middleware import mark_operation_failed
+
+        mark_operation_failed()
         logging.error("Error in background task dispatcher: %s", e, exc_info=True)
         try:
             from app.errors import build_retry_and_roles_keyboard, user_friendly_error

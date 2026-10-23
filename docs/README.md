@@ -18,6 +18,7 @@ journals and test/deploy reports are not current instructions.
 | [Architecture](ARCHITECTURE.md) | Source-backed ownership boundaries and rationale |
 | [Runtime controls](runtime-controls.md) | Model/prompt editor, revision semantics, quota boundaries, queue cutover and embedding migration procedure |
 | [Voice and TTS](voice-and-tts.md) | Direct recitation, reply/forward sources, clarification, generated voice replies and speech quality limits |
+| [Metrics and dashboard](metrics-and-dashboard.md) | User operations versus dispatched API attempts, Kyiv calendar periods, historical coverage, persistence and collapsible model/key usage |
 | [Security policy](../SECURITY.md) | Reporting route and implementation limits |
 | [Roadmap](../ROADMAP.md) | Functional bot deliveries, user scenarios, priorities, code boundaries and acceptance criteria; proposed work |
 | [Revisions review](revisions-review-2026-09-29.md) | Decisions on supplied consoles/patches, actual bot changes and verification boundaries |

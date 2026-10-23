@@ -763,6 +763,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             logging.debug("Direct intent TTS skipped: %s", tts_err)
                     state.set_last_sent_message(user_id, message_text)
                     logging.info("Intent direct routing handled for user %s", user_id)
+                    elapsed = api_logger.log_response("telegram", start_time, method="handle_message")
+                    await metrics_collector.record_request("handle_message", elapsed, success=True, user_id=user_id)
                     _release_admission(user_id, admission_owner)
                     return
                 elif intent_result and not intent_result.handled and intent_result.context_data:

@@ -313,6 +313,9 @@ async def _handle_regular_chat(
         key_data, model_used, resolution = await _resolve_ai_request(model_for_this_request)
 
     if resolution in ("all_exhausted", "decryption_failed"):
+        from app.utils.metrics_middleware import mark_operation_failed
+
+        mark_operation_failed()
         result = classify_resolution(resolution, model_for_this_request)
         try:
             await _retire_placeholder_notice(placeholder_message)
@@ -600,6 +603,9 @@ async def _handle_regular_chat(
         )
 
     if not lease_current:
+        from app.utils.metrics_middleware import mark_operation_failed
+
+        mark_operation_failed()
         await provider_lease.aclose()
         chat_state.history = history_before_request
         chat_state.context_summary = existing_summary
@@ -694,6 +700,7 @@ async def _complete_regular_chat_response(
     from app.context.summarizer import schedule_llm_summarization
     from app.providers.stream_types import StreamCompleted
     from app.response_delivery.outcomes import CompleteDelivery, PartialDelivery
+    from app.utils.metrics_middleware import mark_operation_failed
 
     terminal = (
         outcome.completion
@@ -708,15 +715,13 @@ async def _complete_regular_chat_response(
     from app.metrics import metrics_collector as _mc
 
     response_text = outcome.content_text if isinstance(outcome, (CompleteDelivery, PartialDelivery)) else ""
+    if isinstance(outcome, PartialDelivery):
+        mark_operation_failed()
     if response_text:
         await _mc.record_model_response(actual_model, user_id=user_id)
-    await _mc.record_request(
-        "chat",
-        time.monotonic() - stream_started_at,
-        success=bool(response_text),
-    )
 
     if not response_text:
+        mark_operation_failed()
         chat_state.history = history_before_request
         chat_state.context_summary = existing_summary
         await update_user_chat(user_id, chat_state, expected_epoch=request_epoch)

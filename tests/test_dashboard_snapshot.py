@@ -71,6 +71,7 @@ def test_dashboard_snapshot_has_canonical_sections_and_fields():
         "error_count": 3,
         "error_rate_percent": 25,
         "cache_hit_rate_percent": 80,
+        "traffic": None,
     }
     assert snapshot["providers"]["gemini"]["rows"][0]["request_count"] == 0
     assert snapshot["infrastructure"]["cache"]["memory_items"] == 2

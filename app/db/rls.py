@@ -119,6 +119,8 @@ RLS_CONFIG = {
     "openrouter_api_keys": [{"name": "openrouter_api_keys_policy", "template": RLS_POLICY_ADMIN}],
     "openrouter_key_usage": [{"name": "openrouter_key_usage_policy", "template": RLS_POLICY_ADMIN}],
     "metrics": [{"name": "metrics_policy", "template": RLS_POLICY_ADMIN}],
+    "traffic_daily": [{"name": "traffic_daily_policy", "template": RLS_POLICY_ADMIN}],
+    "traffic_accounting_epoch": [{"name": "traffic_accounting_epoch_policy", "template": RLS_POLICY_ADMIN}],
     "error_logs": [{"name": "error_logs_policy", "template": RLS_POLICY_ADMIN}],
     "model_configuration": [{"name": "model_configuration_policy", "template": RLS_POLICY_ADMIN}],
     "long_term_memory": [{"name": "memory_user_isolation", "template": RLS_POLICY_USER}],

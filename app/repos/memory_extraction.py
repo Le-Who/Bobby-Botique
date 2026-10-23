@@ -168,6 +168,7 @@ async def extract_graph_structured(
                     thinking_level=GRAPH_EXTRACTION_THINKING_LEVEL,  # type: ignore[arg-type]
                 )
             client = get_cached_genai_client(selected_key)
+            request_attempt.record_dispatch()
             response = await client.aio.models.generate_content(
                 model=model,
                 contents=prompt,
@@ -250,6 +251,7 @@ async def extract_graph_structured(
                     thinking_level=GRAPH_EXTRACTION_THINKING_LEVEL,  # type: ignore[arg-type]
                 )
 
+            request_attempt.record_dispatch()
             response = await client.aio.models.generate_content(
                 model=GRAPH_EXTRACTION_MODEL,
                 contents=prompt,
@@ -844,6 +846,7 @@ async def _resolve_ambiguous_conflict(
         )
         try:
             client = get_cached_genai_client(selected_key)
+            override_attempt.record_dispatch()
             response = await client.aio.models.generate_content(
                 model=model,
                 contents=prompt,
@@ -887,6 +890,7 @@ async def _resolve_ambiguous_conflict(
     )
     try:
         client = get_cached_genai_client(api_key)
+        request_attempt.record_dispatch()
         response = await client.aio.models.generate_content(
             model=get_taxonomy_model(),
             contents=prompt,

@@ -29,6 +29,7 @@ from app.observability.content import content_fields
 from app.repos.chats import get_user_chat, update_user_chat
 from app.repos.memory_autosave import submit_memory_task
 from app.repos.memory_consent import capture_epoch
+from app.utils.metrics_middleware import mark_operation_failed
 from app.utils.tg_file import get_file_bytes
 
 # Overall timeout for the entire voice processing pipeline (download + transcribe + UI).
@@ -132,12 +133,12 @@ async def _process_voice_pipeline_leased_impl(
     memory_epoch: int | None = None,
 ) -> None:
     """Core voice pipeline: download → transcribe → show UI / auto-route."""
-    _t0 = time.monotonic()
     # 1. Download OGG bytes from Telegram
     voice_file = await voice.get_file()
     voice_bytes = await get_file_bytes(context.bot, voice_file)
 
     if not voice_bytes:
+        mark_operation_failed()
         await placeholder.edit_text(t("voice.download_failed", lang))
         return
 
@@ -147,6 +148,7 @@ async def _process_voice_pipeline_leased_impl(
     transcript, intent, ai_draw_prompt = await transcribe_voice(voice_bytes, mime_type="audio/ogg")
 
     if not transcript:
+        mark_operation_failed()
         await placeholder.edit_text(t("voice.transcription_failed", lang))
         return
 
@@ -293,12 +295,6 @@ async def _process_voice_pipeline_leased_impl(
         intent,
         bool(attached_image),
     )
-
-    # ── Metrics ───────────────────────────────────────────────────
-    from app.metrics import metrics_collector as _mc
-
-    await _mc.record_api_call("gemini_transcribe", user_id=user_id)
-    await _mc.record_request("voice", time.monotonic() - _t0, success=bool(transcript))
 
 
 def _should_auto_route(transcript: str) -> bool:

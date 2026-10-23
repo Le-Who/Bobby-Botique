@@ -30,6 +30,7 @@ from app.i18n import t
 from app.repos.chats import get_user_chat
 from app.request_context import ensure_request_id as set_request_id
 from app.request_context import set_user_context
+from app.utils.metrics_middleware import MetricsMiddleware
 
 
 @dataclass(eq=False)
@@ -351,14 +352,15 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
                 # with voice if the user specifically asked for it (parsed intent).
                 # This flag is per-request and NOT persisted.
                 reply_with_voice = pending.get("reply_with_voice", False)
-                await _handle_regular_chat(
-                    new_placeholder,  # type: ignore[arg-type]
-                    user_id,
-                    transcript,
-                    chat_state,
-                    reply_with_voice=reply_with_voice,
-                    user_parts=parts,
-                )
+                async with MetricsMiddleware("voice_confirm", user_id=user_id):
+                    await _handle_regular_chat(
+                        new_placeholder,  # type: ignore[arg-type]
+                        user_id,
+                        transcript,
+                        chat_state,
+                        reply_with_voice=reply_with_voice,
+                        user_parts=parts,
+                    )
         except Exception as e:
             logging.error("voice:confirm task failed: %s", e, exc_info=True)
             with contextlib.suppress(Exception):
@@ -446,12 +448,13 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
                         "parts": [f"🔍 {_t('voice.history_marker', lang)}\n{transcript}"],
                     }
                 )
-                await _handle_research_agent(
-                    new_placeholder,
-                    user_id,
-                    transcript,
-                    chat_state,
-                )
+                async with MetricsMiddleware("voice_deep_search", user_id=user_id):
+                    await _handle_research_agent(
+                        new_placeholder,
+                        user_id,
+                        transcript,
+                        chat_state,
+                    )
         except Exception as e:
             logging.error("voice:deep_search task failed: %s", e, exc_info=True)
             with contextlib.suppress(Exception):

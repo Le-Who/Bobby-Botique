@@ -725,6 +725,7 @@ def _normalize_dashboard_metrics(raw: dict) -> dict:
         "error_count": int(raw.get("error_count", 0) or 0),
         "error_rate_percent": float(raw.get("error_rate_percent", raw.get("error_rate", 0)) or 0),
         "cache_hit_rate_percent": float(raw.get("cache_hit_rate_percent", raw.get("cache_hit_rate", 0)) or 0),
+        "traffic": raw.get("traffic"),
     }
 
 
@@ -975,6 +976,7 @@ async def api_events():
                     payload["metrics"] = {
                         "total_requests": mc.metrics.request_count,
                         "error_count": mc.metrics.error_count,
+                        "traffic": await mc.get_traffic_summary(),
                     }
                 except Exception:
                     pass

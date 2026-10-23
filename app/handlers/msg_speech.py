@@ -1,11 +1,13 @@
 """Direct text-to-speech ingress; the voice queue owns synthesis and delivery."""
 
 import logging
+import time
 
 from telegram import Message, Update
 from telegram.ext import ContextTypes
 
 from app.i18n import detect_language, t
+from app.metrics import metrics_collector
 from app.middleware.debounce import DebounceResult
 from app.voice_intent import SpeechRequestIntent, build_voice_source_key, resolve_speech_request
 
@@ -37,6 +39,25 @@ async def handle_speech_request(
     update: Update, context: ContextTypes.DEFAULT_TYPE, request: SpeechRequestIntent
 ) -> None:
     """Enqueue the exact source or ask for it; never fall back to generated text."""
+    user = update.effective_user
+    assert user is not None
+    started = time.monotonic()
+    try:
+        success = await _enqueue_speech_request(update, context, request)
+    except Exception:
+        await metrics_collector.record_request(
+            "direct_speech", time.monotonic() - started, success=False, user_id=user.id
+        )
+        raise
+    await metrics_collector.record_request(
+        "direct_speech", time.monotonic() - started, success=success, user_id=user.id
+    )
+
+
+async def _enqueue_speech_request(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, request: SpeechRequestIntent
+) -> bool:
+    """Return admission outcome; cancelled submissions are not completed requests."""
     from app.repos.chats import get_user_chat
     from app.voice_engine import fire_voice_reply
 
@@ -47,7 +68,7 @@ async def handle_speech_request(
     lang = detect_language(message.text)
     if request.action == "clarify":
         await message.reply_text(t("speech.clarify", lang))
-        return
+        return True
     try:
         chat_state = await get_user_chat(user.id)
         result = await fire_voice_reply(
@@ -62,7 +83,7 @@ async def handle_speech_request(
             expected_epoch=chat_state.memory_epoch,
         )
         if result.queued or result.deduped:
-            return
+            return True
         key = {
             "capacity": "speech.capacity",
             "user_capacity": "speech.capacity",
@@ -73,3 +94,4 @@ async def handle_speech_request(
         logger.exception("Direct speech enqueue failed")
         key = "speech.unavailable"
     await message.reply_text(t(key, lang))
+    return False

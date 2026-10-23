@@ -15,6 +15,8 @@ import logging
 from telegram import Message, Update
 from telegram.ext import ContextTypes
 
+from app.utils.metrics_middleware import MetricsMiddleware
+
 
 async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle smart suggestion button press.
@@ -99,7 +101,8 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             async with get_user_lock(user.id):
                 from app.handlers.agent import process_long_request
 
-                await process_long_request(placeholder_message, update, context, text_override=suggestion_text)
+                async with MetricsMiddleware("suggestion_callback", user_id=user.id):
+                    await process_long_request(placeholder_message, update, context, text_override=suggestion_text)
         except Exception as _e:
             logging.error("Smart suggestion error: %s", _e, exc_info=True)
             try:
@@ -217,7 +220,8 @@ async def _route_research(msg: Message, user_id: int) -> None:
             return
 
         status_msg = await msg.reply_text("🔬 Запускаю глубокий анализ...")
-        await _handle_research_agent(status_msg, user_id, last_user_msg, chat_state)
+        async with MetricsMiddleware("research_callback", user_id=user_id):
+            await _handle_research_agent(status_msg, user_id, last_user_msg, chat_state)
     except Exception as e:
         logging.warning("Intent route:research failed: %s", e)
         await msg.reply_text("❌ Ошибка при запуске анализа.")
