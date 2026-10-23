@@ -9,13 +9,21 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
     page.setDefaultTimeout(4000);
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.route('**/*', route => {
+    const initialConnectionMode = payload.terminal && payload.terminal !== 'model_unavailable'
+      ? 'vertex_internet' : 'standard';
+    let releaseSettings;
+    const settingsGate = new Promise(resolve => { releaseSettings = resolve; });
+    if (!payload.defer_settings) releaseSettings();
+    await page.route('**/*', async route => {
       const url = new URL(route.request().url());
       if (url.hostname === 'live.test' && url.pathname === '/webapp/live') {
         return route.fulfill({ body: payload.html, contentType: 'text/html' });
       }
       if (url.pathname.endsWith('/live-settings')) {
-        return route.fulfill({ json: { live_settings: {}, connection_modes: [], voices: [], thinking_levels: [] } });
+        await settingsGate;
+        return route.fulfill({ json: { live_settings: { live_connection_mode: initialConnectionMode }, connection_modes: [
+          { id: 'standard', label: 'Standard' }, { id: 'vertex_internet', label: 'Internet' },
+        ], voices: [], thinking_presets: [] } });
       }
       return route.fulfill({ body: '', contentType: 'application/javascript' });
     });
@@ -26,7 +34,7 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
       class Socket {
         static OPEN = 1; static CONNECTING = 0;
         readyState = 1; sent = []; closeCount = 0;
-        constructor() { metrics.sockets.push(this); queueMicrotask(() => this.onopen?.()); }
+        constructor(url) { this.url = url; metrics.sockets.push(this); queueMicrotask(() => this.onopen?.()); }
         send(data) { this.sent.push(JSON.parse(data)); }
         close() { this.readyState = 3; this.closeCount++; this.onclose?.({ code: 1000 }); }
         receive(data) { this.onmessage?.({ data: JSON.stringify(data) }); }
@@ -89,9 +97,13 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
       socketClosed: metrics.sockets.map(s => s.closeCount),
       events: metrics.sockets.flatMap(s => s.sent.map(m => m.type)),
     }));
-    if (payload.terminal && payload.terminal !== 'model_unavailable') {
-      await page.evaluate(() => { liveSettings.live_connection_mode = 'vertex_internet'; });
+    if (payload.defer_settings) {
+      assert.equal(await page.locator('[data-live-connection-mode]').count(), 0,
+        'the late-settings case must reach the page before settings are applied');
+      releaseSettings();
     }
+    // Wait for the rendered API settings before choosing the transport.
+    await page.locator(`[data-live-connection-mode="${initialConnectionMode}"].active`).waitFor({ state: 'attached' });
     await start();
     if (['permission_denied', 'context_failure', 'worklet_failure'].includes(payload.scenario)) {
       await page.waitForFunction(() => document.getElementById('error-bar').classList.contains('show'));
@@ -128,18 +140,25 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
       const isWorklet = payload.scenario === 'terminal_pending_worklet';
       if (isWorklet) await page.waitForFunction(() => pendingModules.length === 1);
       const fallsBack = payload.terminal !== 'model_unavailable';
-      await page.evaluate(({ reason, fallsBack }) => {
+      const terminalTarget = await page.evaluate(({ reason, fallsBack }) => {
         if (fallsBack) {
           // A proactive reconnect can begin while the previous mic request is pending.
           plannedReconnect = true;
           metrics.sockets.at(-1).close();
         }
-        metrics.sockets.at(-1).receive({
+        const socket = metrics.sockets.at(-1);
+        const target = { path: new URL(socket.url).pathname, established: liveSessionEstablished };
+        socket.receive({
           type: reason === 'connect_failed' ? 'error' : 'fatal',
           reason,
           message: 'Synthetic terminal event',
         });
+        return target;
       }, { reason: payload.terminal, fallsBack });
+      assert.equal(terminalTarget.path, fallsBack ? '/webapp/live-vertex/ws' : '/webapp/live/ws',
+        'the terminal event must target the configured transport');
+      if (fallsBack) assert.equal(terminalTarget.established, false,
+        'fallback must be exercised before the replacement connection is established');
       let value = await state();
       assert.equal(value.label, 'Начать запись', 'terminal event must invalidate the pending owner');
       if (fallsBack) {

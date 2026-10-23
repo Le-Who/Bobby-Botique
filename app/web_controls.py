@@ -19,7 +19,7 @@ from app.command_aliases import (
     validate_aliases,
 )
 from app.process_policies import PROCESSES, baseline_models, list_processes, resolve_policy_value, validate_policy
-from app.runtime_settings import models, prompts
+from app.runtime_settings import audio, models, prompts
 from app.runtime_settings.store import (
     RevisionConflict,
     get_state,
@@ -93,6 +93,11 @@ def _validated(data: dict[str, Any]) -> tuple[str, str, Any]:
         models.validate_model_id(identity)
         if not data.get("reset"):
             value = models.validate_limit(identity, value)
+    elif section == "audio":
+        if identity not in audio.PROVIDERS:
+            raise KeyError(identity)
+        if not data.get("reset"):
+            value = audio.validate_config(identity, value)
     elif section == "command":
         value = validate_aliases(bot_instance.get_application(), identity, [] if data.get("reset") else value)
     else:
@@ -169,6 +174,7 @@ def register_controls(app, require_auth) -> None:
                     processes=await list_processes(),
                     prompts=await prompts.list_prompts(),
                     catalogs=await models.list_catalogs(snapshot=snapshot),
+                    audio=await audio.list_audio_configs(snapshot=snapshot),
                     limits=await models.list_limits(snapshot=snapshot),
                     commands=command_alias_inventory(bot_instance.get_application(), snapshot),
                     history=[
@@ -197,6 +203,12 @@ def register_controls(app, require_auth) -> None:
                     await models.reset_limit(identity, **options)
                     if data.get("reset")
                     else await models.save_limit(identity, value, **options)
+                )
+            elif section == "audio":
+                snapshot = (
+                    await audio.reset_config(identity, **options)
+                    if data.get("reset")
+                    else await audio.save_config(identity, value, **options)
                 )
             elif section == "command":
                 snapshot = (

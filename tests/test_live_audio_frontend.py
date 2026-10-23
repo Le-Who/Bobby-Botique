@@ -11,7 +11,7 @@ import pytest
 pytestmark = pytest.mark.browser
 
 
-def _run_lifecycle(scenario: str, terminal: str | None = None) -> None:
+def _run_lifecycle(scenario: str, terminal: str | None = None, *, defer_settings: bool = False) -> None:
     node = shutil.which("node")
     if node is None:
         if os.getenv("GEMAIBOT_REQUIRE_BROWSER_TESTS") == "1":
@@ -24,6 +24,7 @@ def _run_lifecycle(scenario: str, terminal: str | None = None) -> None:
             {
                 "scenario": scenario,
                 "terminal": terminal,
+                "defer_settings": defer_settings,
                 "html": (root / "app/templates/live_audio.html").read_text(encoding="utf-8"),
             }
         ),
@@ -60,3 +61,8 @@ def test_previous_pending_capture_cannot_overwrite_a_new_recording():
 @pytest.mark.parametrize("terminal", ["model_unavailable", "misconfigured", "server_capacity", "connect_failed"])
 def test_terminal_or_fallback_event_cancels_the_pending_capture_before_late_resolution(phase, terminal):
     _run_lifecycle(f"terminal_pending_{phase}", terminal)
+
+
+@pytest.mark.parametrize("phase", ["permission", "worklet"])
+def test_fallback_cancels_pending_capture_when_startup_settings_arrive_after_navigation(phase):
+    _run_lifecycle(f"terminal_pending_{phase}", "connect_failed", defer_settings=True)
