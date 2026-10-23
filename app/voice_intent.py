@@ -6,13 +6,149 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from app.config import settings
 from app.process_policies import execute_text_process
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
 
 logger = logging.getLogger(__name__)
+
+# Direct recitation is distinct from generating an answer in voice. Parse only
+# authored command boundaries; forwarded text and the transcript remain data.
+_POLITE = r"(?:пожалуйста[,\s]+|please[,\s]+)?"
+_RECITE = r"(?:озвуч(?:ь|ьте|ить)|прочита(?:й|йте|ть)\s+вслух|зачита(?:й|йте|ть)|read\s+aloud|voice\s+it)"
+_RECITE_START = re.compile(rf"^\s*{_POLITE}(?:(?:можешь|можете)\s+{_POLITE})?{_RECITE}\b", re.IGNORECASE)
+_REFERENCE = (
+    r"(?:(?:этот|этот\s+самый|этот\s+же|данный|следующий|мой|твой|последний|предыдущий|"
+    r"пересланный|пересланное|это|эти|эти\s+пересланные)\s+)?"
+    r"(?:текст|ответ|сообщение|сообщения|сообщение\s+выше)|это|его|её|их|вслух|"
+    r"this\s+text|this\s+message|it"
+)
+_REFERENCE_FULL = re.compile(rf"^(?:{_REFERENCE})$", re.IGNORECASE)
+_TEXT_LABEL = re.compile(r"^(?:(?:этот|данный|следующий)\s+)?текст\b[\s:—-]*", re.IGNORECASE)
+_RECITE_END = re.compile(
+    rf"(?:\n+|(?<=[.!?])\s+){_POLITE}{_RECITE}(?:\s+(?:{_REFERENCE}))?"
+    r"(?:[,\s]+(?:пожалуйста|please))?[.!?\s]*$",
+    re.IGNORECASE,
+)
+_POLITE_END = re.compile(r"[,\s]+(?:пожалуйста|please)[.!?\s]*$", re.IGNORECASE)
+_GENERATE_START = re.compile(
+    rf"^\s*{_POLITE}(?:напиши|сочини|придумай|составь|переведи|сократи|исправь|объясни|расскажи|ответь|"
+    r"write|create|compose|translate|summarize|explain|answer)\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class SpeechRequestIntent:
+    """An exact transcript, a source clarification, or ordinary chat routing."""
+
+    action: Literal["none", "speak", "clarify"] = "none"
+    text: str = ""
+    source: str = ""
+
+
+def _unquote_transcript(text: str) -> str:
+    text = text.strip()
+    if len(text) >= 2 and (text[0], text[-1]) in (("«", "»"), ('"', '"'), ("“", "”")):
+        return text[1:-1]
+    return text
+
+
+def resolve_speech_request(
+    *,
+    user_texts: list[str],
+    reply_texts: list[str] | None = None,
+    forwarded_texts: list[str] | None = None,
+) -> SpeechRequestIntent:
+    """Resolve explicit recitation locally, preserving case and source order.
+
+    Callers must supply only authored text in user_texts. A request to write or
+    answer something stays with chat; a missing/competing source asks the user.
+    """
+    commands: list[str] = []
+    bodies: list[str] = []
+    implicit_bodies: list[str] = []
+    explicit_inline = False
+    for text in user_texts:
+        start = _RECITE_START.match(text)
+        if start:
+            remainder = text[start.end() :].strip().lstrip(", ")
+            remainder = re.sub(r"^(?:пожалуйста|please)\b[,\s]*", "", remainder, flags=re.IGNORECASE)
+            # Delimiters explicitly mark data, even when it consists of a
+            # reference word or an instruction. Never normalize that payload.
+            labelled = re.match(rf"^(?:{_REFERENCE})\s*:\s*", remainder, re.IGNORECASE)
+            if remainder.startswith(":") or labelled:
+                body = remainder[labelled.end() :] if labelled else remainder[1:].strip()
+                if not body.strip():
+                    return SpeechRequestIntent("clarify")
+                bodies.append(_unquote_transcript(body))
+                commands.append("inline")
+                explicit_inline = True
+                continue
+            reference = _POLITE_END.sub("", remainder).strip(" .!?:;")
+            if not remainder or _REFERENCE_FULL.fullmatch(reference):
+                commands.append(reference)
+                continue
+            # "Озвучь ответ про X" still requires producing that answer.
+            if re.match(r"^(?:ответ|рассказ|историю|сказку|шутку|колыбельную)\b", reference, re.IGNORECASE):
+                commands.append("generation")
+                continue
+            if re.match(
+                r"^(?:свой|своё|свое|мой\b|твой\b|последн|предыдущ|переслан|что\b|что-|как\b|"
+                r"текст\s+(?:выше|голосом)|этот\b|это\b|его\b|её\b|их\b|my\b|your\b|this\b|that\b|"
+                r"the\s+(?:last|previous|above)\b)",
+                reference,
+                re.IGNORECASE,
+            ):
+                commands.append("unresolved")
+                continue
+            # An explicit delimiter/quote or text body supplies the transcript.
+            body = _TEXT_LABEL.sub("", remainder).lstrip(" :\n")
+            bodies.append(_unquote_transcript(body))
+            commands.append("inline")
+            explicit_inline = True
+            continue
+        end = _RECITE_END.search(text)
+        if end:
+            body = text[: end.start()].strip()
+            bodies.append(body)
+            implicit_bodies.append(body)
+            commands.append("inline")
+        else:
+            bodies.append(text)
+            implicit_bodies.append(text)
+
+    if not commands:
+        return SpeechRequestIntent()
+    reference = " ".join(commands).lower()
+    if explicit_inline:
+        if "переслан" in reference or "generation" in commands or "unresolved" in commands:
+            return SpeechRequestIntent("clarify")
+        return SpeechRequestIntent("speak", "\n\n".join(body for body in bodies if body.strip()), "inline")
+    if "generation" in commands or any(_GENERATE_START.match(body) for body in implicit_bodies):
+        return SpeechRequestIntent()
+    if "unresolved" in commands:
+        return SpeechRequestIntent("clarify")
+    bodies = [body for body in bodies if body.strip()]
+    replies = list(dict.fromkeys(text for text in (reply_texts or []) if text.strip()))
+    forwards = [text for text in (forwarded_texts or []) if text.strip()]
+    if "переслан" in reference:
+        return (
+            SpeechRequestIntent("speak", "\n\n".join(forwards), "forwarded")
+            if forwards
+            else SpeechRequestIntent("clarify")
+        )
+    candidates = sum(bool(source) for source in (bodies, replies, forwards))
+    if candidates != 1 or len(replies) > 1:
+        return SpeechRequestIntent("clarify")
+    if bodies:
+        return SpeechRequestIntent("speak", "\n\n".join(bodies), "inline")
+    if replies:
+        return SpeechRequestIntent("speak", replies[0], "reply")
+    return SpeechRequestIntent("speak", "\n\n".join(forwards), "forwarded")
+
 
 _EXPLICIT_TRIGGER_PATTERNS = [
     r"\bозвучь\b",

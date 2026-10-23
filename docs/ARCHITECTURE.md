@@ -2,7 +2,9 @@
 
 Baseline review: checkout `f44541a7` on 2026-09-20. Runtime/error/shutdown corrections
 were reviewed on 2026-10-23 against `25e25897` and the changes documented in the
-[runtime audit](runtime-audit-2026-10-23.md). This describes implementation,
+[runtime audit](runtime-audit-2026-10-23.md). Later updates cover request cancellation,
+state persistence, CI/deploy gates, whole-message TTS and
+[direct speech requests](voice-and-tts.md). This describes implementation,
 not a claim that a particular VPS or provider has been tested today.
 
 ## Runtime and request ownership
@@ -55,6 +57,7 @@ Telegram update → bot.py / handlers → context + provider routing
 | Commands and intent | `app/bot_commands.py`: public menu/help; `app/handlers/`: behavior; `app/intent_router.py`: deterministic weather/currency/crypto dispatch |
 | Providers | `app/providers/router.py`: chat routing, keys and fallback. Interactive Gemini chat hedges up to two model lanes after a short delay; each lane retains its key race, and the first visible text wins. `stream_types.py`, `request_factory.py`, `typed_payloads.py`: typed contract and payload translation |
 | Delivery | `app/response_delivery/`: coordination, presentation, progressive rendering, final outcome and action ownership |
+| Speech | `app/voice_intent.py`: deterministic supplied-text selection versus generated voice replies; `app/handlers/msg_speech.py`: direct enqueue/clarification; `app/voice_engine.py`: bounded private queue, synthesis and voice delivery |
 | Research | `app/core/agentic.py`, `app/search_services.py`, `app/search_jina.py`: bounded research/tool execution |
 | Context | `app/context/`, `app/prompt_registry.py`: history, budgets, summaries and prompt templates |
 | Documents | `app/documents/`, `app/document_processor.py`: extraction, chunking, persistence and Q&A |
@@ -73,6 +76,12 @@ Avoid static file-size/module-count maps: they drift without helping identify ow
 Chat providers include Gemini, Opencode, OpenRouter and FreeTheAI. The provider
 router is not a universal superclass/factory for every image, audio or game API.
 Image providers, Gemini embeddings, TTS and Live Audio have specialized interfaces.
+Direct recitation bypasses chat context assembly, intent classifiers and text
+generation. It preserves the selected text until the shared formatting cleanup,
+then Gemini synthesizes the whole transcript once per attempt. Key/model retries
+are sequential; ElevenLabs splits only beyond its model's text limit. TTS has
+independent RPM/RPD admission and does not inherit chat key racing. See
+[runtime voice controls](runtime-controls.md#голосовые-сообщения-и-tts).
 An explicit Crocodile text-model selection uses `google-genai` inside the game
 boundary for both ordinary and daily games; auto mode retains its existing lanes.
 See [Crocodile operations](pollinations-daily-croc.md).

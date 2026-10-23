@@ -1,7 +1,9 @@
 # Documentation index
 
-Reviewed 2026-09-20 against checkout `f44541a7`. Read current references first;
-historical plans, journals and test/deploy reports are not current instructions.
+Initial documentation audit: 2026-09-20 against checkout `f44541a7`; current
+references are maintained with subsequent changes, including the 2026-10-23
+runtime, CI and speech updates. Read current references first; historical plans,
+journals and test/deploy reports are not current instructions.
 
 ## Current references
 
@@ -15,6 +17,7 @@ historical plans, journals and test/deploy reports are not current instructions.
 | [GLOSSARY.md](../GLOSSARY.md) | Domain vocabulary: delivery, state, consent, provenance and model roles |
 | [Architecture](ARCHITECTURE.md) | Source-backed ownership boundaries and rationale |
 | [Runtime controls](runtime-controls.md) | Model/prompt editor, revision semantics, quota boundaries, queue cutover and embedding migration procedure |
+| [Voice and TTS](voice-and-tts.md) | Direct recitation, reply/forward sources, clarification, generated voice replies and speech quality limits |
 | [Security policy](../SECURITY.md) | Reporting route and implementation limits |
 | [Roadmap](../ROADMAP.md) | Functional bot deliveries, user scenarios, priorities, code boundaries and acceptance criteria; proposed work |
 | [Revisions review](revisions-review-2026-09-29.md) | Decisions on supplied consoles/patches, actual bot changes and verification boundaries |

@@ -1579,6 +1579,22 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "⚠️ Ответ прерван",
         "en": "⚠️ Response interrupted",
     },
+    "speech.clarify": {
+        "ru": "Какой текст озвучить? Пришлите «Озвучь: ваш текст», ответьте на нужное сообщение или перешлите его вместе с просьбой озвучить.",
+        "en": "Which text should I read aloud? Send ‘Read aloud: your text’, reply to the source message, or forward it together with your request.",
+    },
+    "speech.capacity": {
+        "ru": "⏳ Очередь озвучки заполнена. Дождитесь завершения текущих заданий и попробуйте снова.",
+        "en": "⏳ The speech queue is full. Wait for the current jobs to finish and try again.",
+    },
+    "speech.too_large": {
+        "ru": "❌ Текст слишком длинный для озвучки. Пришлите более короткий фрагмент.",
+        "en": "❌ This text is too long to read aloud. Send a shorter passage.",
+    },
+    "speech.unavailable": {
+        "ru": "❌ Озвучка сейчас недоступна. Попробуйте ещё раз.",
+        "en": "❌ Speech is currently unavailable. Please try again.",
+    },
     # ── Expandable blockquote labels ─────────────────────────────────────
     "blockquote.partial_label": {
         "ru": "Частичный ответ / Сбой сети",

@@ -477,6 +477,14 @@ remain in **Prompts**. The default Gemini TTS chain is
 override it. See [voice controls and model inventory](docs/runtime-controls.md#голосовые-сообщения-и-tts)
 for parameters, precedence and the separate ASR and Live boundaries.
 
+Explicit recitation such as `Озвучь: ваш текст` or `Read aloud: your text`
+goes straight to the speech queue without a text-model call or a text echo.
+Replying `Озвучь это сообщение` selects the replied-to text/caption. A forwarded
+message plus an authored recitation request in the same batch selects its raw
+text. Missing or competing sources produce a clarification. Requests to generate
+an answer and speak it retain the chat route. See the
+[speech request guide](docs/voice-and-tts.md) for examples and limits.
+
 Gemini TTS sends the whole cleaned reply in one generation, with sequential key
 rotation and no duplicate key races. Input/output token limits still apply;
 incomplete audio is discarded before trying the next configured model/provider.

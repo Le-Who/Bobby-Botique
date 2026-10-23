@@ -532,15 +532,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if await handle_document_mode_interaction(update, context, user_id):
             return
 
-        # ── 6b. Natal chart intent ───────────────────────────────────────────
-        if effective_msg.text and update.effective_chat.type == "private":
-            from app.handlers.natal_chart import natal_command
-            from app.natal.intent import is_natal_chart_request
-
-            if is_natal_chart_request(message_text, bot_username=context.bot.username):
-                await natal_command(update, context)
-                return
-
         # ── 7. Save last user input for retry button ─────────────────────────
         try:
             from app.state import set_last_sent_message
@@ -584,6 +575,38 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     context.user_data.pop("_fwd_photos", None)
             else:
                 fwd_photos = []
+
+        from app.handlers.msg_speech import handle_speech_request, speech_request_for_message
+
+        if effective_msg.text and not is_photo:
+            speech_request = speech_request_for_message(effective_msg, debounce_result)
+            if speech_request.action != "none":
+                user_state = state.get_user_state(user_id)
+                if user_state.is_processing or state.get_user_lock(user_id).locked():
+                    await _send_busy_ephemeral(update)
+                    return
+                speech_owner = asyncio.current_task()
+                assert speech_owner is not None
+                user_state.is_processing = True
+                state.register_active_task(user_id, speech_owner)
+                try:
+                    await handle_speech_request(update, context, speech_request)
+                finally:
+                    _release_admission(user_id, speech_owner)
+                return
+
+        # Resolve speech before topic-based intents so its transcript stays data.
+        if (
+            effective_msg.text
+            and update.effective_chat.type == "private"
+            and not (debounce_result and debounce_result.has_forwarded_content)
+        ):
+            from app.handlers.natal_chart import natal_command
+            from app.natal.intent import is_natal_chart_request
+
+            if is_natal_chart_request(message_text, bot_username=context.bot.username):
+                await natal_command(update, context)
+                return
 
         from app.voice_intent import detect_tts_intent
 
@@ -914,6 +937,13 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
         # this admission owner in turn before reusing the same placeholder.
         if previous_owner is not None and previous_owner is not admission_owner:
             await _cancel_and_drain(previous_owner)
+
+        from app.handlers.msg_speech import handle_speech_request, speech_request_for_message
+
+        speech_request = speech_request_for_message(edited_msg)
+        if speech_request.action != "none":
+            await handle_speech_request(update, context, speech_request)
+            return
 
         # ── Find or create the placeholder ───────────────────────────────────
         last = state.get_last_bot_message(user_id)
