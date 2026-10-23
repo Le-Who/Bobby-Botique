@@ -24,6 +24,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -62,7 +63,7 @@ _LYRIA_COOLDOWN = timedelta(seconds=60)
 
 # Pattern to detect audio URLs in the response text
 _AUDIO_URL_RE = re.compile(
-    r'https?://[^\s"\'<>]+\.(?:mp3|wav|ogg|m4a|flac|webm|opus)',
+    r'https?://[^\s"\'<>]+\.(?:mp3|wav|ogg|m4a|flac|webm|opus)(?:[?#][^\s"\'<>()]*)?',
     re.IGNORECASE,
 )
 # Pattern to detect base64 audio data
@@ -315,7 +316,7 @@ class FreeTheAIAudioProvider:
                     )
 
                     # Detect mime type from URL
-                    url_lower = audio_url.lower()
+                    url_lower = urlsplit(audio_url).path.lower()
                     if url_lower.endswith(".wav"):
                         mime_type = "audio/wav"
                     elif url_lower.endswith((".ogg", ".opus")):

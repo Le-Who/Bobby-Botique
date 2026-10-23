@@ -51,6 +51,8 @@ class CircuitBreaker:
 
         # State management
         self._state = CircuitState.CLOSED
+        self._generation = 0
+        self._stats_generation = 0
         self._failure_count = 0
         self._last_failure_time = 0.0
         self._last_success_time = time.time()
@@ -92,6 +94,10 @@ class CircuitBreaker:
             Exception: Original exception from function execution
         """
         async with self._lock:
+            if self.get_state() == CircuitState.HALF_OPEN:
+                raise CircuitBreakerOpenError(
+                    f"Circuit Breaker '{self.name}' is HALF_OPEN and probe already in flight."
+                )
             # Check if circuit is open
             if self._state == CircuitState.OPEN:
                 if self._should_attempt_reset():
@@ -110,44 +116,61 @@ class CircuitBreaker:
                     )
 
             self._total_requests += 1
+            generation = self._generation
+            stats_generation = self._stats_generation
 
         # Execute function outside lock to allow concurrency
         try:
             result = await func(*args, **kwargs)
-        except Exception as e:
+        except (Exception, asyncio.CancelledError) as e:
             # Reacquire lock to record failure
             async with self._lock:
+                expected_failure = (
+                    isinstance(e, Exception)
+                    and not isinstance(e, self.config.ignored_exceptions)
+                    and isinstance(e, self.config.expected_exception)
+                )
+                if expected_failure and stats_generation == self._stats_generation:
+                    self._total_failures += 1
+                # Calls admitted before a transition or manual reset cannot
+                # change the state now owned by a newer recovery attempt.
+                if generation != self._generation:
+                    raise
                 self._half_open_probe_active = False
-                if isinstance(e, self.config.ignored_exceptions):
-                    raise
-                if isinstance(e, self.config.expected_exception):
+                if expected_failure and isinstance(e, Exception):
                     await self._on_failure(e)
-                    raise
                 else:
-                    logging.warning(
-                        "Circuit Breaker '%s' received unexpected exception: %s",
-                        self.name,
-                        e,
-                    )
-                    raise
+                    if self._state == CircuitState.HALF_OPEN:
+                        # Cancellation and local admission failures say nothing
+                        # about provider recovery. Retain the previous cooldown.
+                        await self._set_state(CircuitState.OPEN)
+                    if not isinstance(e, (asyncio.CancelledError, *self.config.ignored_exceptions)):
+                        logging.warning(
+                            "Circuit Breaker '%s' received unexpected exception: %s",
+                            self.name,
+                            e,
+                        )
+                raise
 
         # Reacquire lock to record success
         async with self._lock:
+            if stats_generation == self._stats_generation:
+                self._last_success_time = time.time()
+                self._total_successes += 1
+            if generation != self._generation:
+                return result
             self._half_open_probe_active = False
             if self._state == CircuitState.HALF_OPEN:
                 await self._set_state(CircuitState.CLOSED)
                 logging.info("Circuit Breaker '%s' recovered, moved to CLOSED state", self.name)
 
             self._failure_count = 0
-            self._last_success_time = time.time()
-            self._total_successes += 1
 
         return result
 
     async def _on_failure(self, exception: Exception) -> None:
         """Handles function execution failure."""
         self._failure_count += 1
-        self._total_failures += 1
         self._last_failure_time = time.time()
 
         logging.warning(
@@ -173,6 +196,7 @@ class CircuitBreaker:
         self._state = new_state
 
         if old_state != new_state:
+            self._generation += 1
             logging.info(
                 "Circuit Breaker '%s' state changed: %s -> %s",
                 self.name,
@@ -256,6 +280,8 @@ class CircuitBreaker:
     async def force_open(self) -> None:
         """Forces circuit breaker to open state."""
         async with self._lock:
+            self._generation += 1
+            self._half_open_probe_active = False
             await self._set_state(CircuitState.OPEN)
             self._failure_count = self.config.failure_threshold
             self._last_failure_time = time.time()
@@ -263,12 +289,17 @@ class CircuitBreaker:
     async def force_close(self) -> None:
         """Forces circuit breaker to closed state."""
         async with self._lock:
+            self._generation += 1
+            self._half_open_probe_active = False
             await self._set_state(CircuitState.CLOSED)
             self._failure_count = 0
 
     async def reset(self) -> None:
         """Resets circuit breaker to initial state."""
         async with self._lock:
+            self._generation += 1
+            self._stats_generation += 1
+            self._half_open_probe_active = False
             await self._set_state(CircuitState.CLOSED)
             self._failure_count = 0
             self._last_failure_time = 0.0

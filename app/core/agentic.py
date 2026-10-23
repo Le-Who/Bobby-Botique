@@ -1001,7 +1001,10 @@ class AgenticSearch:
                 else:
                     # No function calls - this means the model decided to answer directly as text
                     logger.info("Agent provided direct text answer without using conclude_research.")
-                    direct_text = str(parts[0].text) if parts and parts[0].text else "❌ Отсутствует текст в ответе."
+                    direct_text = (
+                        "".join(part.text for part in parts if isinstance(part.text, str) and part.thought is not True)
+                        or "❌ Отсутствует текст в ответе."
+                    )
 
                     # Improvement 3: Citation validation (log-only)
                     unknown_citations = _validate_citations(direct_text, seen_urls)

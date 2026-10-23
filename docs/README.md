@@ -74,6 +74,7 @@ neither authorizes execution now nor proves a feature is missing.
 | 2026-10-18 conversation save and stalled-request admission | [Dated report](test-coverage-priority-2026-10-18.md) and [compact evidence](test-coverage/2026-10-18-priority/evidence.json); 31 new cases for atomic conversation save and network-stall admission ownership, an executable controlled-corpus CI selector check, 4787 passing offline cases |
 | 2026-10-23 prompts, TTS and runtime audit | [Prompt inventory](prompt-quality-audit-2026-10-23.md) and [runtime audit](runtime-audit-2026-10-23.md); current Google API contracts, voice profiles, request/error/shutdown ownership, cache/metrics/documents and dashboard corrections; offline evidence and explicit live-service limits |
 | 2026-10-23 latency and dashboard follow-up | [Performance and diagnostics audit](performance-dashboard-audit-2026-10-23.md); exact model/key races, HTTP retries, result-budget cache identity, document retrieval, truthful local model diagnostics, batched limits and offline browser evidence |
+| 2026-10-23 codebase audit and corrections | [Codebase audit](codebase-audit-2026-10-23.md); parallel runtime/data/web review, reproduced corrections, independent review and final local verification boundaries |
 
 [CHANGELOG.md](../CHANGELOG.md), [maintainer queue](MAINTAINER_QUEUE.md) and
 `.jules/` journals are historical evidence. Old performance figures and broad

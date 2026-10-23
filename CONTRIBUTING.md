@@ -56,14 +56,14 @@ connection skip when their explicitly isolated service is missing.
 
 ## Browser regressions
 
-The five natal report browser cases require Node.js 24 and the exact Playwright
+Browser regressions require Node.js 24 and the exact Playwright
 version in `tests/browser/package-lock.json`. Install and run them from the
 repository root:
 
 ```bash
 npm --prefix tests/browser ci --ignore-scripts
 node tests/browser/node_modules/playwright/cli.js install --with-deps chromium
-GEMAIBOT_REQUIRE_BROWSER_TESTS=1 uv run --locked pytest tests/test_natal_web_report.py -m browser -n 0 --override-ini="addopts=" --timeout=30
+GEMAIBOT_REQUIRE_BROWSER_TESTS=1 uv run --locked pytest tests/ -m browser -n 0 --override-ini="addopts=" --timeout=30
 ```
 
 In PowerShell, set `$env:GEMAIBOT_REQUIRE_BROWSER_TESTS = "1"` before the pytest

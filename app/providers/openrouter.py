@@ -146,6 +146,36 @@ class OpenRouterProvider(BaseAIProvider):
                     except json.JSONDecodeError:
                         continue
 
+                    if "error" in data:
+                        error = data["error"]
+                        status = error.get("code") if isinstance(error, dict) else None
+                        status = status if isinstance(status, int) and not isinstance(status, bool) else 0
+                        code = classify_error_from_status_code(status)
+                        retry = RetryDisposition.TRY_NEXT_KEY
+                        key = KeyDisposition.TRANSIENT_FAILURE
+                        if status == 429:
+                            key = KeyDisposition.RATE_LIMITED
+                        elif self._is_model_access_denied(status, str(error)):
+                            code = ErrorCode.INVALID_REQUEST
+                            key = KeyDisposition.UNCHANGED
+                            retry = RetryDisposition.TRY_NEXT_MODEL
+                        elif status in {401, 403}:
+                            key = KeyDisposition.INVALID
+                        elif status == 402:
+                            key = KeyDisposition.EXHAUSTED
+                        elif status == 400:
+                            key = KeyDisposition.UNCHANGED
+                            retry = RetryDisposition.DO_NOT_RETRY
+                        yield StreamFailed(
+                            code=code,
+                            phase=FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT,
+                            retry=RetryDisposition.DO_NOT_RETRY if text_emitted else retry,
+                            key=KeyDisposition.UNCHANGED if text_emitted else key,
+                            diagnostic=f"OpenAI-compatible SSE error; status={status or 'unknown'}",
+                            route=route,
+                        )
+                        return
+
                     native_usage = data.get("usage")
                     if isinstance(native_usage, dict):
                         usage = TokenUsage(

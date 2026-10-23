@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from telegram import InlineKeyboardMarkup, ReplyKeyboardRemove
+from telegram.error import BadRequest
 
 from app import state
 from app.handlers import messages, tarot_chat
@@ -270,3 +271,48 @@ async def test_idle_tarot_continue_choice_processes_pending_text_in_tarot_mode()
     update.callback_query.answer.assert_awaited_once()
     update.callback_query.edit_message_text.assert_awaited_once_with("🔮 Продолжаю сеанс Таро...")
     router.get_response.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_long_tarot_response_delivers_all_chunks_with_keyboard_on_last():
+    from app.utils.text_format import strip_formatting
+
+    user_id = 222005
+    state.set_tarot_session(
+        user_id,
+        {
+            "drawn_cards": [],
+            "history": [],
+            "waiting_for_question": False,
+            "last_activity_at": 2000.0,
+        },
+    )
+    update = DummyUpdate("Расскажи подробнее", user_id=user_id)
+    response = "**Совет карты**\n" + "Сохраняйте спокойствие и обдумайте следующий шаг.\n" * 160
+    delivered = []
+
+    async def reply(text, **kwargs):
+        if len(text) > 4096:
+            raise BadRequest("Message is too long")
+        delivered.append((text, kwargs))
+        return MagicMock(delete=AsyncMock())
+
+    update.message.reply_text.side_effect = reply
+    with (
+        patch("app.utils.decorators.is_authorized", new=AsyncMock(return_value=True)),
+        patch("app.handlers.tarot_chat.time.time", return_value=2000.0),
+        patch("app.handlers.tarot_chat.get_provider_router", return_value=MagicMock()),
+        patch("app.process_policies.execute_text_process", new=AsyncMock(return_value=(response, 10))),
+    ):
+        await tarot_chat.handle_tarot_message(update, DummyContext())
+
+    chunks = delivered[1:]  # The first reply is the waiting status.
+    received_text = "".join(strip_formatting(text) for text, _kwargs in chunks)
+    expected = "Совет карты\n" + "Сохраняйте спокойствие и обдумайте следующий шаг.\n" * 160
+    assert "".join(received_text.split()) == "".join(expected.split())
+    assert len(chunks) > 1
+    assert all(kwargs.get("reply_markup") is None for _text, kwargs in chunks[:-1])
+    keyboard = chunks[-1][1]["reply_markup"]
+    assert keyboard.keyboard[-1][0].text == tarot_chat.TAROT_END_SESSION_TEXT
+    session = state.get_tarot_session(user_id)
+    assert session["history"][-1] == {"role": "model", "parts": [response]}

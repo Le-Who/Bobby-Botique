@@ -7,6 +7,7 @@ import re
 import threading
 from collections import deque
 from collections.abc import Mapping
+from itertools import islice
 from typing import Any, cast
 
 from app.observability.schema import JsonValue
@@ -14,6 +15,7 @@ from app.observability.schema import JsonValue
 REDACTED = "[redacted]"
 MAX_STRING_CHARS = 2048
 MAX_COLLECTION_ITEMS = 32
+MAX_EVENT_FIELDS = 128
 MAX_DEPTH = 5
 MAX_REGISTERED_SECRETS = 1024
 
@@ -21,8 +23,8 @@ _KNOWN_SECRETS: set[str] = set()
 _SECRET_ORDER: deque[str] = deque()
 _SECRET_LOCK = threading.Lock()
 _CREDENTIAL_PATTERN = re.compile(r"(?i)(?:bearer\s+)?(?:sk[-_]|AIza|synthetic-provider-key-)[A-Za-z0-9_.-]{8,}")
-_AUTH_PATTERN = re.compile(r"(?i)(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+")
-_URL_CREDENTIAL_PATTERN = re.compile(r"(?i)(https?://)([^/@\s:]+):([^/@\s]+)@")
+_AUTH_PATTERN = re.compile(r"(?i)(authorization\s*[:=]\s*)[^\r\n]+")
+_URL_CREDENTIAL_PATTERN = re.compile(r"(?i)(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*://)[^/@\s:]*:[^/@\s]+@")
 _QUERY_SECRET_PATTERN = re.compile(r"(?i)([?&](?:token|key|secret|password|signature)=)[^&#\s]+")
 _TELEGRAM_BOT_TOKEN_PATTERN = re.compile(r"(?<!\d)\d{6,12}:[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])")
 
@@ -155,7 +157,8 @@ def _convert(
         mapping = cast(dict[object, object], value)
         seen.add(identity)
         try:
-            items = list(mapping.items())[:MAX_COLLECTION_ITEMS]
+            field_limit = MAX_EVENT_FIELDS if depth == 0 else MAX_COLLECTION_ITEMS
+            items = list(islice(mapping.items(), field_limit))
             mapping_result: dict[str, JsonValue] = {
                 (key if isinstance(key, str) else f"<{type(key).__name__}>"): _convert(
                     item,
@@ -176,7 +179,7 @@ def _convert(
         collection = cast(list[object] | tuple[object, ...] | set[object] | frozenset[object], value)
         seen.add(identity)
         try:
-            collection_items = list(collection)[:MAX_COLLECTION_ITEMS]
+            collection_items = list(islice(collection, MAX_COLLECTION_ITEMS))
             list_result: list[JsonValue] = [
                 _convert(item, field_name=field_name, suffixes=suffixes, depth=depth + 1, seen=seen)
                 for item in collection_items

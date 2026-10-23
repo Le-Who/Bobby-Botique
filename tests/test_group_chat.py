@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -9,6 +9,10 @@ from app.group_chat import GroupChat, GroupChatManager
 def group_chat_manager(monkeypatch):
     # Reset singleton instance
     monkeypatch.setattr(GroupChatManager, "_instance", None)
+    database_manager = MagicMock(is_connected=True)
+    connection = MagicMock()
+    database_manager.pool.acquire.return_value.__aenter__.return_value = connection
+    monkeypatch.setattr("app.database.db_manager", database_manager)
     manager = GroupChatManager()
     return manager
 

@@ -45,6 +45,7 @@ import asyncio
 import logging
 import math
 import re
+from contextlib import suppress
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
@@ -503,7 +504,7 @@ async def _send_typing_heartbeat(chat_id: int, bot, stop_event: asyncio.Event) -
         except Exception:
             pass
         try:
-            await asyncio.wait_for(asyncio.shield(stop_event.wait()), timeout=4.5)
+            await asyncio.wait_for(stop_event.wait(), timeout=4.5)
         except TimeoutError:
             pass
 
@@ -549,9 +550,17 @@ async def _run_generation(
             return await _translate_to_english(prompt, user_id=user_id)
         return prompt
 
-    api_prompt, placeholder = await asyncio.gather(
-        _do_translate(), message.reply_text("🎨 Рисую... это займёт несколько секунд.")
+    preparation_tasks = (
+        asyncio.create_task(_do_translate()),
+        asyncio.create_task(message.reply_text("🎨 Рисую... это займёт несколько секунд.")),
     )
+    try:
+        api_prompt, placeholder = await asyncio.gather(*preparation_tasks)
+    finally:
+        for task in preparation_tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*preparation_tasks, return_exceptions=True)
     translated = api_prompt != prompt
 
     stop_event = asyncio.Event()
@@ -608,6 +617,8 @@ async def _run_generation(
     finally:
         stop_event.set()
         heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
 
     state = _get_draw_state(context)
     keyboard = _build_main_menu(state)

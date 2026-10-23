@@ -79,10 +79,12 @@ quart_app.secret_key = os.urandom(32)  # Secure fallback — overridden at start
 @quart_app.before_serving
 async def _init_secret_key():
     """Compute session secret_key at startup when ADMIN_SECRET is definitely available."""
-    admin_secret = _get_admin_secret() or ""
-    quart_app.secret_key = hashlib.sha256(f"gemaibotv2-session-{admin_secret}".encode()).hexdigest()
-    if not admin_secret:
-        logging.warning("ADMIN_SECRET is empty — session secret_key is weak")
+    admin_secret = _get_admin_secret()
+    if admin_secret:
+        quart_app.secret_key = hashlib.sha256(f"gemaibotv2-session-{admin_secret}".encode()).hexdigest()
+    else:
+        quart_app.secret_key = os.urandom(32)
+        logging.warning("ADMIN_SECRET is empty — dashboard password and session authentication are disabled")
 
 
 # Session configuration
@@ -245,12 +247,12 @@ async def finish_observability_request(error: BaseException | None) -> None:
 
 def _is_authenticated():
     """Check if current request has a valid session, header token, or Telegram admin initData."""
+    expected = _get_admin_secret()
     # Check session cookie first
-    if session.get("authenticated"):
+    if expected and session.get("authenticated"):
         return True
     # Fallback: check X-Auth-Token header (for API/monitoring tools)
     token = request.headers.get("X-Auth-Token")
-    expected = _get_admin_secret()
     if token and expected and hmac.compare_digest(token.encode("utf-8"), expected.encode("utf-8")):
         return True
     # Fallback: check Authorization header for Telegram WebApp initData (tma <initData>)
@@ -656,7 +658,7 @@ async def api_memory():
     try:
         from app.memory_manager import get_memory_stats
 
-        stats = get_memory_stats()
+        stats = await asyncio.to_thread(get_memory_stats)
         return jsonify(
             {
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),

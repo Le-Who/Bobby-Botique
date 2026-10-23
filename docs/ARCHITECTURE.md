@@ -126,6 +126,14 @@ webhook stop operations retain cancellation ownership. State timers submit to
 the tracked task manager; capacity rejection retains their marker and retries
 admission so final cleanup can still persist the latest state.
 
+The process memory monitor is shared by startup, dashboard statistics and
+shutdown. Its periodic psutil sampling and the memory API sample in worker
+threads so CPU measurement does not pause the Telegram/HTTP event loop.
+An in-memory queue retry that cannot regain capacity becomes a terminal failed
+task with a capacity event; it is never advertised as a scheduled retry without
+a queue entry. These paths were regression-tested in the
+[codebase audit](codebase-audit-2026-10-23.md).
+
 ## Long-term memory
 
 Private LTM is in `app/repos/memory*.py`, with pgvector `halfvec(768)`, hybrid
@@ -182,8 +190,11 @@ CI also validates the pinned private log-search stack and starts it to check
 Grafana health/authentication and Alloy/Loki readiness. Deployment recreates that
 independent stack on configuration changes, waits for health, verifies the same
 endpoints and synchronizes Grafana's admin password with the persisted secret
-before replacing the bot. These checks do not assert that a synthetic bot event
-has travelled through Docker → Alloy → Loki → Grafana search.
+before replacing the bot. Health/auth probes are distinct from ingestion:
+the CI observability job additionally sends synthetic Docker stdout events
+through Alloy/Loki and checks cardinality, filtering, privacy and query limits
+through the authenticated Grafana datasource proxy. These disposable-stack
+checks do not establish ingestion on a deployed VPS.
 
 The VPS workflow defines `tg-api`, `tg-bot` and `tg-media-cleanup`; database/Redis
 are supplied separately. The root Compose file is a legacy single-bot local

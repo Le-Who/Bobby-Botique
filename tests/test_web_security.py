@@ -91,6 +91,29 @@ async def test_header_auth_still_works(client):
 
 
 @pytest.mark.asyncio
+async def test_memory_api_samples_process_statistics_off_the_http_event_loop(client, monkeypatch):
+    import threading
+
+    from app import memory_manager
+
+    event_loop_thread = threading.get_ident()
+    sampled_threads = []
+
+    def sample_stats():
+        sampled_threads.append(threading.get_ident())
+        return {"memory_mb": 42.5}
+
+    monkeypatch.setattr(memory_manager, "get_memory_stats", sample_stats)
+
+    response = await client.get("/api/memory", headers={"X-Auth-Token": "test_token"})
+
+    assert response.status_code == 200
+    assert (await response.get_json())["memory"] == {"memory_mb": 42.5}
+    assert len(sampled_threads) == 1
+    assert sampled_threads[0] != event_loop_thread
+
+
+@pytest.mark.asyncio
 async def test_invalid_header_token_redirects(client):
     """Test that invalid token falls through to redirect."""
     headers = {"X-Auth-Token": "wrong_token"}

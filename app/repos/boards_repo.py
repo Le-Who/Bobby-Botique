@@ -178,7 +178,7 @@ async def add_entry(
              WHERE id = $1 AND NOT closed
             RETURNING entries, entries_since_last_synthesis
             """,
-            (board_id, json.dumps([entry])),  # append single element
+            (board_id, [entry]),  # the connection's JSONB codec encodes the array
         )
         if not rows:
             return None

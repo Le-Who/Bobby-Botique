@@ -1494,7 +1494,7 @@ const BroadcastModule = (() => {
           const lastSent = r.last_sent
             ? new Date(r.last_sent).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
             : null;
-          const nameStr = r.display_name || '';
+          const nameStr = escapeHtml(r.display_name || '');
           const hourStr = r.preferred_hour != null ? String(r.preferred_hour).padStart(2,'0') + ':00' : '—';
           const tzStr = r.timezone || '—';
           return `<tr class="${rowCls}">
@@ -1575,7 +1575,7 @@ const BroadcastModule = (() => {
           const subBadge = r.is_subscribed
             ? '<span class="badge-status badge-status-yes">✦ подписан</span>'
             : '<span class="badge-status badge-status-no">— нет</span>';
-          const nameStr = r.display_name || '';
+          const nameStr = escapeHtml(r.display_name || '');
           const rowCls = r.is_subscribed ? '' : 'row-inactive';
           return `<tr class="${rowCls}" data-uid="${r.user_id}" data-channel="${r.channel}">
             <td style="text-align:center;padding:9px 8px;"><input type="checkbox" class="offer-row-chk" value="${r.user_id}"></td>

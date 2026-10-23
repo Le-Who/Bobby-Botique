@@ -614,8 +614,21 @@ class TaskQueue:
             try:
                 await asyncio.wait_for(self._fallback_queue.put((-task.priority.value, task.id)), timeout=2.0)
                 self._work_available.set()  # Wake workers for retry
-            except Exception:
-                pass
+            except TimeoutError:
+                # All workers can fail while new arrivals fill the queue.
+                # Waiting forever deadlocks those workers; silently dropping
+                # the retry leaves a PENDING task with no queue entry.
+                task.status = TaskStatus.FAILED
+                task.completed_at = datetime.now(tz=UTC)
+                emit(
+                    "job.capacity_rejected",
+                    level="warning",
+                    operation="job.retry",
+                    job_id=task.id,
+                    task_type=task.task_type,
+                    reason_code="fallback_queue_timeout",
+                    backend="memory",
+                )
 
     async def _worker(self, worker_name: str):
         """Worker that processes tasks from Redis or fallback queue.
@@ -743,7 +756,9 @@ class TaskQueue:
 
                             if task.retry_count < task.max_retries:
                                 await self._nack_task(task, original_json)
-                                retry_disposition = "scheduled"
+                                retry_disposition = (
+                                    "capacity_rejected" if task.status == TaskStatus.FAILED else "scheduled"
+                                )
                             else:
                                 task.status = TaskStatus.FAILED
                                 task.completed_at = datetime.now(tz=UTC)

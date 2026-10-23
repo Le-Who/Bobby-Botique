@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator, Callable, Iterable
 from contextlib import aclosing
 from enum import StrEnum
 from typing import Any, cast
+from weakref import WeakValueDictionary
 
 import httpx
 from cachetools import LRUCache
@@ -50,6 +51,9 @@ from app.utils.image_utils import TaggedImage, save_image_as_bytes
 # Global cache for genai.Client instances to reuse connection pools (TLS/TCP)
 # Key: API Key (string), Value: genai.Client
 _gemini_clients_cache: LRUCache = LRUCache(maxsize=50)
+# Eviction must not close a client still borrowed by an active request. Keep
+# weak shutdown ownership without extending that client's normal SDK lifetime.
+_gemini_clients_by_id: WeakValueDictionary[int, genai.Client] = WeakValueDictionary()
 
 
 class GeminiModelValidationStatus(StrEnum):
@@ -69,14 +73,32 @@ def get_cached_genai_client(api_key: str) -> genai.Client:
         client_kwargs: dict[str, Any] = {"api_key": api_key}
         http_opts: dict[str, Any] = {"timeout": 90_000}
         client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]
-        _gemini_clients_cache[api_key] = genai.Client(**client_kwargs)  # type: ignore[arg-type]
+        client = genai.Client(**client_kwargs)  # type: ignore[arg-type]
+        _gemini_clients_by_id[id(client)] = client
+        _gemini_clients_cache[api_key] = client
     return _gemini_clients_cache[api_key]
 
 
 async def close_cached_genai_clients() -> None:
     """Drain both SDK transports after callers have stopped issuing requests."""
-    clients = list(_gemini_clients_cache.values())
+    global _vertex_client, _vertex_live_client
+    global _vertex_client_initialized, _vertex_live_client_initialized, _vertex_disabled_until_monotonic
+
+    clients = {
+        id(client): client
+        for client in (
+            *_gemini_clients_cache.values(),
+            *_gemini_clients_by_id.values(),
+            _vertex_client,
+            _vertex_live_client,
+        )
+        if client is not None
+    }
     _gemini_clients_cache.clear()
+    _gemini_clients_by_id.clear()
+    _vertex_client = _vertex_live_client = None
+    _vertex_client_initialized = _vertex_live_client_initialized = False
+    _vertex_disabled_until_monotonic = 0.0
 
     async def close_client(client: genai.Client) -> None:
         try:
@@ -89,7 +111,7 @@ async def close_cached_genai_clients() -> None:
             except Exception:
                 logging.warning("Gemini sync transport cleanup failed")
 
-    await asyncio.gather(*(close_client(client) for client in clients))
+    await asyncio.gather(*(close_client(client) for client in clients.values()))
 
 
 async def validate_gemini_chat_model_capability(

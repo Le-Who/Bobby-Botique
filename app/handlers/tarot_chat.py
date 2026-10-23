@@ -26,6 +26,7 @@ from app.state import clear_tarot_session, ensure_state_loaded, get_tarot_sessio
 from app.tarot import SpreadType, draw_cards
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
+from app.utils.text_format import split_text_safe
 
 TAROT_END_SESSION_TEXT = "🛑 Завершить сеанс Таро"
 TAROT_COMPATIBILITY_QUESTION_TEXT = "🔮 Сделать расклад на совместимость"
@@ -233,16 +234,21 @@ async def handle_tarot_message(update: Update, context: ContextTypes.DEFAULT_TYP
             chat_id=chat_id,
         )
 
-        history.append({"role": "model", "parts": [response_text]})
-        set_tarot_session(user_id, session)
-
         formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
         try:
             await status_msg.delete()
         except Exception:
             pass
         reply_markup = ReplyKeyboardMarkup(keyboard_full, resize_keyboard=True)
-        await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
+        chunks = split_text_safe(formatted_text)
+        for index, chunk in enumerate(chunks):
+            await update.message.reply_text(
+                chunk,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup if index == len(chunks) - 1 else None,
+            )
+        history.append({"role": "model", "parts": [response_text]})
+        set_tarot_session(user_id, session)
     except Exception as e:
         logging.error("Tarot processing error: %s", e)
         try:

@@ -33,6 +33,10 @@ Preferred reporting path:
 - Webhook secrets are optional, validated by `app/webhook_security.py` and
   compared in constant time. `/metrics` is unauthenticated in application code;
   deployments can restrict scraping at the reverse proxy.
+- Dashboard password/session authentication requires a configured `ADMIN_SECRET`.
+  Without it, that login path is disabled and session signing uses a random
+  fallback; the separately verified Telegram administrator identity path remains
+  available. This behavior was regression-tested in the 2026-10-23 codebase audit.
 
 ## High-Risk Areas
 

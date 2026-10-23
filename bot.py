@@ -1022,9 +1022,10 @@ async def main():
             logging.error(f"Database initialization failed: {e}")
 
         try:
-            from app.memory_manager import MemoryManager
+            from app.memory_manager import memory_manager as shared_memory_manager
 
-            memory_manager = MemoryManager()
+            memory_manager = shared_memory_manager
+            memory_manager.start()
             logging.info("Memory manager initialized")
 
             # Register image cache clearing as a memory-pressure callback

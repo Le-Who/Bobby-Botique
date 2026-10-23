@@ -10,6 +10,7 @@ Validates:
 """
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
@@ -188,7 +189,14 @@ async def test_lease_loss_cancels_redis_handlers_but_preserves_local_work(monkey
 
 
 @pytest.mark.asyncio
-async def test_cancel_running_job_stops_handler_and_keeps_worker_available():
+async def test_cancel_running_job_stops_handler_and_keeps_worker_available(monkeypatch):
+    @asynccontextmanager
+    async def settings_scope():
+        # This unit contract owns queue cancellation, not control-store I/O.
+        # A cold refresh otherwise waits for the unavailable test database.
+        yield
+
+    monkeypatch.setattr("app.runtime_settings.lifecycle.runtime_settings_scope", settings_scope)
     queue = TaskQueue(max_workers=1)
     started = asyncio.Event()
     stopped = asyncio.Event()

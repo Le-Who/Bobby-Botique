@@ -109,17 +109,20 @@ class GroupChatManager:
                 if chat_id in self.active_groups:
                     return False
 
-                # Create группу в базе данных
-                await db.db_query(
-                    "INSERT INTO group_chats (chat_id, title, admin_user_id) VALUES ($1, $2, $3)",
-                    (chat_id, title, admin_user_id),
-                )
-
-                # Add администратора как участника
-                await db.db_query(
-                    "INSERT INTO group_members (chat_id, user_id, is_admin) VALUES ($1, $2, TRUE)",
-                    (chat_id, admin_user_id),
-                )
+                if not db.db_manager.is_connected:
+                    await db.reconnect_database()
+                # The group and its first member are one durable registration.
+                async with db.db_manager.pool.acquire() as conn, conn.transaction():
+                    await db.db_query(
+                        "INSERT INTO group_chats (chat_id, title, admin_user_id, member_count) VALUES ($1, $2, $3, 1)",
+                        (chat_id, title, admin_user_id),
+                        conn=conn,
+                    )
+                    await db.db_query(
+                        "INSERT INTO group_members (chat_id, user_id, is_admin) VALUES ($1, $2, TRUE)",
+                        (chat_id, admin_user_id),
+                        conn=conn,
+                    )
 
                 # Create объект groups
                 group = GroupChat(
@@ -155,18 +158,21 @@ class GroupChatManager:
                 return False
 
             async with self._lock:
-                # Add в базу данных — RETURNING confirms actual insert
-                result = await db.db_query(
-                    "INSERT INTO group_members (chat_id, user_id) VALUES ($1, $2) ON CONFLICT (chat_id, user_id) DO NOTHING RETURNING user_id",
-                    (chat_id, user_id),
-                )
-
-                if result:
-                    # Атомарно обновляем количество участников
-                    await db.db_query(
-                        "UPDATE group_chats SET member_count = member_count + 1 WHERE chat_id = $1",
-                        (chat_id,),
+                if not db.db_manager.is_connected:
+                    await db.reconnect_database()
+                async with db.db_manager.pool.acquire() as conn, conn.transaction():
+                    # RETURNING distinguishes a new member from a duplicate.
+                    result = await db.db_query(
+                        "INSERT INTO group_members (chat_id, user_id) VALUES ($1, $2) ON CONFLICT (chat_id, user_id) DO NOTHING RETURNING user_id",
+                        (chat_id, user_id),
+                        conn=conn,
                     )
+                    if result:
+                        await db.db_query(
+                            "UPDATE group_chats SET member_count = member_count + 1 WHERE chat_id = $1",
+                            (chat_id,),
+                            conn=conn,
+                        )
 
                 # Update в памяти
                 self.user_groups[user_id].add(chat_id)
@@ -186,21 +192,24 @@ class GroupChatManager:
                 return False
 
             async with self._lock:
-                # Delete from базы данных
-                await db.db_query(
-                    "DELETE FROM group_members WHERE chat_id = $1 AND user_id = $2",
-                    (chat_id, user_id),
-                )
-
-                # Атомарно обновляем количество участников
-                await db.db_query(
-                    "UPDATE group_chats SET member_count = member_count - 1 WHERE chat_id = $1 AND member_count > 0",
-                    (chat_id,),
-                )
+                if not db.db_manager.is_connected:
+                    await db.reconnect_database()
+                async with db.db_manager.pool.acquire() as conn, conn.transaction():
+                    removed = await db.db_query(
+                        "DELETE FROM group_members WHERE chat_id = $1 AND user_id = $2 RETURNING user_id",
+                        (chat_id, user_id),
+                        conn=conn,
+                    )
+                    if removed:
+                        await db.db_query(
+                            "UPDATE group_chats SET member_count = member_count - 1 WHERE chat_id = $1 AND member_count > 0",
+                            (chat_id,),
+                            conn=conn,
+                        )
 
                 # Update в памяти
                 self.user_groups[user_id].discard(chat_id)
-                if chat_id in self.active_groups:
+                if removed and chat_id in self.active_groups:
                     self.active_groups[chat_id].member_count = max(0, self.active_groups[chat_id].member_count - 1)
 
                 return True

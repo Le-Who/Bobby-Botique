@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import tracemalloc
+
+import pytest
 
 from app.observability.redaction import provider_key_fields, register_sensitive_credential, sanitize_event
 
@@ -90,3 +93,45 @@ def test_unknown_telegram_bot_token_and_api_path_are_scrubbed_without_registrati
     assert token not in wire
     assert "api.telegram.org/bot[redacted]/getMe" in sanitized["message"]
     assert sanitized["detail"] == "[redacted]"
+
+
+@pytest.mark.parametrize("scheme", ["postgresql", "postgresql+asyncpg", "redis", "rediss", "mysql"])
+def test_connection_uri_credentials_are_scrubbed_in_protected_content(scheme):
+    """Database/cache credentials must not survive in ordinary logged text."""
+    uri = f"{scheme}://synthetic_user:synthetic_uri_password@db.example.test:5432/private"
+
+    sanitized = sanitize_event({"content_text": f"Connection failed for {uri}"})
+
+    assert sanitized["content_text"] == f"Connection failed for {scheme}://[redacted]@db.example.test:5432/private"
+
+
+@pytest.mark.parametrize("scheme", ["Basic", "tma", "Digest"])
+def test_authorization_header_scrubs_credentials_for_every_authentication_scheme(scheme):
+    credential = "synthetic-authorization-payload-123456789"
+
+    sanitized = sanitize_event({"content_text": f"Authorization: {scheme} {credential}"})
+
+    assert credential not in json.dumps(sanitized)
+    assert "[redacted]" in sanitized["content_text"]
+
+
+@pytest.mark.parametrize("container_kind", ["mapping", "list"])
+def test_sanitizing_large_container_keeps_temporary_memory_bounded(container_kind):
+    """A bounded event must not copy every untrusted item before selecting its prefix."""
+    value = {str(index): None for index in range(100_000)} if container_kind == "mapping" else [None] * 100_000
+    tracing_started = not tracemalloc.is_tracing()
+    if tracing_started:
+        tracemalloc.start()
+    try:
+        baseline, _ = tracemalloc.get_traced_memory()
+        tracemalloc.reset_peak()
+
+        sanitized = sanitize_event({"payload": value})
+
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        if tracing_started:
+            tracemalloc.stop()
+
+    assert len(sanitized["payload"]) <= 33
+    assert peak - baseline < 256_000

@@ -203,3 +203,34 @@ async def test_valid_admin_auth_methods_still_allow_controls_write(admin_client,
     assert response.status_code == 200
     assert await response.get_json() == {"revision": 1}
     effects["set_value"].assert_awaited_once_with("process:chat", POLICY, expected_revision=0, actor="admin")
+
+
+@pytest.mark.asyncio
+async def test_missing_admin_secret_rejects_forged_public_fallback_session(admin_client, monkeypatch):
+    """An unset optional dashboard secret must never allow a predictable signed cookie."""
+    from itsdangerous import URLSafeTimedSerializer
+    from quart.sessions import session_json_serializer
+
+    from app import web
+
+    client, effects = admin_client
+    monkeypatch.setattr(web, "settings", web.settings.model_copy(update={"ADMIN_SECRET": None}))
+    monkeypatch.delenv("ADMIN_SECRET", raising=False)
+    monkeypatch.setitem(web.quart_app.config, "SECRET_KEY", web.quart_app.secret_key)
+    await web._init_secret_key()
+    public_key = hashlib.sha256(b"gemaibotv2-session-").hexdigest()
+    cookie = URLSafeTimedSerializer(
+        public_key,
+        salt="cookie-session",
+        serializer=session_json_serializer,
+        signer_kwargs={"key_derivation": "hmac", "digest_method": hashlib.sha1},
+    ).dumps({"authenticated": True, "controls_csrf": "forged-csrf"})
+
+    response = await client.get(
+        "/controls",
+        scope_base={"headers": [(b"host", b"localhost"), (b"cookie", f"gembot_session={cookie}".encode("ascii"))]},
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/login")
+    assert_no_mutation(effects)

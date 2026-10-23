@@ -86,7 +86,9 @@ class MemoryManager:
     async def _check_memory_usage(self):
         """Checks current memory usage and triggers cleanup if needed."""
         try:
-            memory_info = self._get_memory_info()
+            # psutil's CPU sample waits for an interval. Keep that wait and
+            # process/host inspection outside the shared Telegram/HTTP loop.
+            memory_info = await asyncio.to_thread(self._get_memory_info)
             if "error" in memory_info:
                 logging.warning("Memory info error: %s", memory_info["error"])
                 return

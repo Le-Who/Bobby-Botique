@@ -5,6 +5,7 @@ AI Chat handler — regular conversational chat with context management.
 import asyncio
 import logging
 import time
+from contextlib import suppress
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -859,6 +860,7 @@ async def _handle_lyria_audio(
     from io import BytesIO
 
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.helpers import escape_markdown
 
     from app.providers.freetheai_audio import LYRIA_MODEL_LABELS, get_lyria_provider
 
@@ -885,7 +887,7 @@ async def _handle_lyria_audio(
             except Exception:
                 pass
             try:
-                await asyncio.wait_for(asyncio.shield(stop_event.wait()), timeout=4.5)
+                await asyncio.wait_for(stop_event.wait(), timeout=4.5)
             except TimeoutError:
                 pass
 
@@ -897,6 +899,8 @@ async def _handle_lyria_audio(
     finally:
         stop_event.set()
         heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
 
     await _retire_placeholder_notice(placeholder_message)
     if result.success and result.audio_bytes:
@@ -918,17 +922,14 @@ async def _handle_lyria_audio(
         short_prompt = user_message[:200].strip()
         if len(user_message) > 200:
             short_prompt += "..."
+        short_prompt = escape_markdown(short_prompt)
         caption = f"🎵 *{short_prompt}*\n_{model_label}_"
         if result.text_content:
             # Include any text (e.g. lyrics) in caption, truncated
             text_preview = result.text_content[:300].strip()
             if len(result.text_content) > 300:
                 text_preview += "..."
-            caption += f"\n\n{text_preview}"
-
-        # Escape markdown characters
-        for ch in ("*", "_", "`", "["):
-            short_prompt = short_prompt.replace(ch, f"\\{ch}")
+            caption += f"\n\n{escape_markdown(text_preview)}"
 
         try:
             await placeholder_message.reply_audio(

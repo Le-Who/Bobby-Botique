@@ -245,3 +245,70 @@ def test_event_budget_keeps_json_valid_and_root_cause_fields(monkeypatch):
     assert event["event_truncated"] is True
     assert event["error_id"] == "e" * 32
     assert event["key_suffix"] == "ABCD"
+
+
+def test_provider_attempt_keeps_selected_key_and_retry_identity_after_envelope_creation():
+    """The envelope must not consume the collection budget and discard required attempt fields."""
+    event = _run_probe(
+        """
+        from app.utils.logging_config import setup_detailed_logging
+        from app.providers import router
+        from app.observability.provider_events import start_provider_attempt
+
+        setup_detailed_logging(enable_structured_logging=True)
+        start_provider_attempt(
+            provider="gemini", requested_model="requested-test", actual_model="actual-test",
+            api_key="synthetic-provider-key-WXYZ", attempt_number=2, max_attempts=3,
+            race_id="synthetic-race", key_source="repository",
+        )
+        """
+    )[-1]
+
+    assert event["event"] == "provider.attempt_started"
+    assert event["key_suffix"] == "WXYZ"
+    assert len(event["key_fingerprint"]) == 16
+    assert event["attempt_number"] == 2
+    assert event["max_attempts"] == 3
+    assert event["race_id"] == "synthetic-race"
+    assert event["key_source"] == "repository"
+
+
+def test_provider_terminal_keeps_key_identity_and_failure_details_in_serialized_output():
+    event = _run_probe(
+        """
+        import asyncio
+        from app.utils.logging_config import setup_detailed_logging
+        from app.providers import router
+        from app.errors import ErrorCode
+        from app.providers.stream_types import StreamFailed, FailurePhase, RetryDisposition, KeyDisposition
+        from app.observability.provider_events import observe_provider_stream
+
+        setup_detailed_logging(enable_structured_logging=True)
+
+        async def source():
+            yield StreamFailed(
+                code=ErrorCode.TIMEOUT, phase=FailurePhase.BEFORE_TEXT,
+                retry=RetryDisposition.TRY_NEXT_KEY, key=KeyDisposition.TRANSIENT_FAILURE,
+                diagnostic="synthetic timeout", error_id="e" * 32,
+            )
+
+        async def main():
+            async for _ in observe_provider_stream(
+                source(), provider="gemini", requested_model="requested-test", actual_model="actual-test",
+                api_key="synthetic-provider-key-WXYZ", attempt_number=2, max_attempts=3,
+                race_id="synthetic-race", key_source="repository",
+            ):
+                pass
+
+        asyncio.run(main())
+        """
+    )[-1]
+
+    assert event["event"] == "provider.attempt_finished"
+    assert event["outcome"] == "failed"
+    assert event["key_suffix"] == "WXYZ"
+    assert event["key_source"] == "repository"
+    assert event["reason_code"] == "TIMEOUT"
+    assert event["retry_disposition"] == "try_next_key"
+    assert event["key_disposition"] == "transient_failure"
+    assert event["error_id"] == "e" * 32

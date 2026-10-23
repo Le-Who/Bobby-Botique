@@ -85,30 +85,30 @@ async def upsert_tarot_subscription(
     ``is_subscribed=True`` and no other args creates the row with defaults if
     it doesn't exist yet.
     """
-    sets: list[str] = []
+    insert_columns = ["user_id"]
+    update_sets: list[str] = []
     params: list = [user_id]
-    idx = 2
 
     if is_subscribed is not None:
-        sets.append(f"is_subscribed = ${idx}")
+        insert_columns.append("is_subscribed")
+        update_sets.append("is_subscribed = EXCLUDED.is_subscribed")
         params.append(is_subscribed)
-        idx += 1
 
     if timezone is not None:
-        sets.append(f"timezone = ${idx}")
+        insert_columns.append("timezone")
+        update_sets.append("timezone = EXCLUDED.timezone")
         params.append(timezone)
-        idx += 1
 
     if preferred_local_hour is not None:
-        sets.append(f"preferred_local_hour = ${idx}")
+        insert_columns.append("preferred_local_hour")
+        update_sets.append("preferred_local_hour = EXCLUDED.preferred_local_hour")
         params.append(preferred_local_hour)
-        idx += 1
-
-    sets.append("updated_at = NOW()")
 
     try:
-        if len(sets) == 1:
-            # Only updated_at — just ensure row exists
+        columns_sql = ", ".join(insert_columns)
+        values_sql = ", ".join(f"${index}" for index in range(1, len(params) + 1))
+        if not update_sets:
+            # No preferences supplied — just ensure the row exists.
             await db_query(
                 f"""
                 INSERT INTO {TABLE} (user_id)
@@ -118,11 +118,11 @@ async def upsert_tarot_subscription(
                 (user_id,),
             )
         else:
-            set_clause = ", ".join(sets)
+            set_clause = ", ".join([*update_sets, "updated_at = NOW()"])
             await db_query(
                 f"""
-                INSERT INTO {TABLE} (user_id)
-                VALUES ($1)
+                INSERT INTO {TABLE} ({columns_sql})
+                VALUES ({values_sql})
                 ON CONFLICT (user_id) DO UPDATE SET {set_clause}
                 """,
                 tuple(params),

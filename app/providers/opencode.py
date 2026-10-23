@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+from contextlib import aclosing
 from typing import Any
 
 import httpx
@@ -61,8 +62,9 @@ class OpencodeGoProvider(OpenRouterProvider):
 
     async def stream(self, request: GenerationRequest, *, model_name: str):
         if not self._uses_messages_transport(model_name):
-            async for event in super().stream(request, model_name=model_name):
-                yield event
+            async with aclosing(super().stream(request, model_name=model_name)) as events:
+                async for event in events:
+                    yield event
             return
 
         route = RouteUsed(

@@ -624,7 +624,7 @@ def _validate_graph_provenance(
         or not raw_facts
         or len(raw_facts) > MAX_PERSONA_FACTS
         or not isinstance(entities, list)
-        or any(not isinstance(entity, dict) for entity in entities)
+        or any(not isinstance(entity, dict) or not isinstance(entity.get("name", ""), str) for entity in entities)
         or not isinstance(relations, list)
     ):
         return None
@@ -649,7 +649,9 @@ def _validate_graph_provenance(
 
     validated_relations: list[dict[str, Any]] = []
     for relation in relations:
-        if not isinstance(relation, dict):
+        if not isinstance(relation, dict) or any(
+            not isinstance(relation.get(field, ""), str) for field in ("from", "to", "predicate")
+        ):
             return None
         support_indexes = relation.get("support_fact_indexes")
         if not isinstance(support_indexes, list) or not support_indexes:

@@ -643,6 +643,16 @@ async def test_consolidation_rechecks_snapshot_after_extraction_before_embedding
 @pytest.mark.parametrize(
     "graph",
     [
+        {
+            "facts": [_fact("fact one", 1)],
+            "entities": [{"name": None, "type": "person"}],
+            "relations": [],
+        },
+        {
+            "facts": [_fact("fact one", 1)],
+            "entities": [{"name": "Alice", "type": "person"}],
+            "relations": [{"from": ["Alice"], "to": "Alice", "support_fact_indexes": [0]}],
+        },
         {"facts": [{"text": "fact one"}], "entities": [], "relations": []},
         {"facts": [_fact("fact one", 999)], "entities": [], "relations": []},
         {
