@@ -63,6 +63,9 @@ The [changelog](CHANGELOG.md) records history, not a current runtime specificati
   game in chat shows the player's current result and leaderboard. The admin
   choice remains the default and is prepared seven days ahead, while the other
   games are prepared for today and tomorrow.
+  Trivia saves answers in order and calculates ranked scores on the server from
+  the game's pinned question revision. Reopening an unfinished trivia game
+  restores the saved question and score; repeated submissions do not add points.
 - Scheduled briefings, reminders, tarot and horoscopes. Horoscope settings
   provide on-demand today/tomorrow readings.
 - Feature-gated natal reports with local city lookup, PyEphem planet calculations,
@@ -526,7 +529,27 @@ docker compose -f docker-compose.yml up -d
 
 **Production VPS (application containers plus private log-search stack via GitHub Actions CI/CD):**
 
-The canonical deployment is automated by `.github/workflows/deploy.yml`. It starts only after a successful completed `CI` run for `vps_testai`, checks out `workflow_run.head_sha`, builds that exact SHA-tagged image in GHCR, and then SSH-deploys 3 containers:
+The canonical deployment is automated by `.github/workflows/deploy.yml`. It starts
+after a successful completed `CI` run for a push to this repository's `vps_testai`
+branch. Before checkout, and again before preparing SSH secrets, it verifies that
+`workflow_run.head_sha` is still the current branch tip. PR runs, foreign source
+repositories and reruns of superseded commits cannot authorize deployment. It
+builds that exact SHA-tagged image in GHCR and then SSH-deploys the application
+containers.
+
+`CI` requires lint/format and documentation checks, Mypy, unit/E2E tests, isolated
+PostgreSQL/Redis migration and integration tests, Chromium regressions, and a
+production-image build/smoke. These jobs run independently; Python dependencies
+use a lockfile-keyed uv cache, and image builds share a BuildKit cache with deploy.
+The separate `CI Advisory` workflow runs on the same pushes and PRs. It retains
+the production dependency audit, SBOM/license artifacts and disposable private
+log-stack checks. Its failures remain visible and require investigation, but its
+completion and result do not block application deployment. Dependency inventories
+are generated before vulnerability auditing and uploaded even when that audit
+fails. Deploy-time migration, readiness, authentication and health gates remain
+mandatory.
+
+The application deployment contains:
 
 1. **`tg-api`** — Local Telegram Bot API Server (`aiogram/telegram-bot-api:latest`). Requires `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from [my.telegram.org](https://my.telegram.org). Before starting or reusing the local API server, each deployment runs `scripts/release_cloud_bot_api.py`; the script safely releases any cloud Bot API session without relying on a stale host marker.
 2. **`tg-bot`** — The Python bot container. Connected to `tg-api` via `TELEGRAM_LOCAL_SERVER_URL=http://tg-api:8081/bot`. Mounts the shared volume `tg-api-data` at `/var/lib/telegram-bot-api` for zero-copy file access.

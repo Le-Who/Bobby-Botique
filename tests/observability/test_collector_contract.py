@@ -209,7 +209,7 @@ def test_grafana_is_locked_down_and_dashboard_queries_are_bounded():
 
 def test_ci_validates_vendor_configs_with_the_same_pinned_images():
     compose = _load_yaml("compose.yml")
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/ci-advisory.yml").read_text(encoding="utf-8")
 
     assert "docker compose -f ops/observability/compose.yml config --quiet" in workflow
     assert "validate --stability.level=experimental" in workflow
@@ -229,7 +229,7 @@ def test_ci_validates_vendor_configs_with_the_same_pinned_images():
 def test_ci_grafana_secret_allows_the_host_probe_and_container_but_no_other_users():
     """Catch root-only host access or loss of Grafana's group access to the shared secret."""
     compose = _load_yaml("compose.yml")
-    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci-advisory.yml").read_text(encoding="utf-8"))
     steps = workflow["jobs"]["observability-config"]["steps"]
     run = next(step["run"] for step in steps if "docker compose" in step.get("run", ""))
     grafana = compose["services"]["grafana"]
@@ -264,7 +264,7 @@ def test_ci_grafana_secret_allows_the_host_probe_and_container_but_no_other_user
 
 def test_ci_checks_host_secret_readability_before_starting_docker():
     """Catch permission failures before pulling or starting the disposable stack."""
-    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci-advisory.yml").read_text(encoding="utf-8"))
     steps = workflow["jobs"]["observability-config"]["steps"]
     run = next(step["run"] for step in steps if "docker compose" in step.get("run", ""))
     secret = re.search(r"--password-file\s+(\S+)", run).group(1)

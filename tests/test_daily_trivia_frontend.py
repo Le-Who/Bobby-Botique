@@ -314,3 +314,45 @@ def test_trivia_completed_in_another_window_uses_saved_result():
     assert.equal(submissions.length, 1);
     assert.equal(todayRequests, 2);
     """)
+
+
+@pytest.mark.browser
+def test_trivia_reopens_at_the_next_saved_main_question():
+    _run_browser(r"""
+    payload.data.user_result = {
+      status: 'active', current_question: 2, final_score: 500, correct_count: 2,
+      answers: [0, 1].map(question_index => ({ question_index, selected_index: 0, is_correct: true }))
+    };
+    await page.reload();
+    await page.locator('#optionsGrid button').first().waitFor();
+    assert.match(await page.locator('#qCounter').innerText(), /3\/5/);
+    assert.match(await page.locator('#scoreBadge').innerText(), /500/);
+    await page.locator('#optionsGrid button').first().click();
+    await page.waitForFunction(() => !document.querySelector('#nextBtn').disabled);
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0].body.question_index, 2);
+    assert.equal(submissions[0].body.revision_id, 42);
+    """)
+
+
+@pytest.mark.browser
+def test_trivia_reopens_supergame_without_resetting_saved_delta():
+    _run_browser(r"""
+    payload.data.user_result = {
+      status: 'completed', current_question: 5, final_score: 1000, correct_count: 4,
+      answers: [0, 1, 2, 3, 4].map(question_index => ({ question_index, selected_index: 0, is_correct: true }))
+    };
+    payload.data.user_super_result = {
+      status: 'active', delta_score: 500, correct_count: 1,
+      answers: [{question_index: 0, selected_index: 0, is_correct: true}]
+    };
+    await page.reload();
+    await page.locator('#superStartBtn').click();
+    assert.match(await page.locator('#qCounter').innerText(), /2\/3/);
+    assert.match(await page.locator('#scoreBadge').innerText(), /1000 \(\+500\)/);
+    await page.locator('#superOptionsGrid button').first().click();
+    await page.waitForFunction(() => !document.querySelector('#superNextBtn').disabled);
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0].body.question_index, 1);
+    assert.equal(submissions[0].body.revision_id, 42);
+    """)

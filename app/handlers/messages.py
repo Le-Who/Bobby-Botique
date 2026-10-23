@@ -49,7 +49,7 @@ from app.request_context import set_user_context
 from app.security import check_user_rate_limit
 from app.tracing import bind_request_span
 from app.utils.api_logger import api_logger
-from app.utils.background_tasks import submit_task
+from app.utils.background_tasks import submit_task, try_submit_task
 from app.utils.heartbeat import (
     register_heartbeat,
     register_wait_notice,
@@ -214,9 +214,33 @@ def _request_cleanup(user_id: int, placeholder_message, done_event: asyncio.Even
     return finish
 
 
-def _submit_request_worker(user_id: int, coroutine, finish_request: Callable[[asyncio.Task], None]) -> None:
-    """Own the input coroutine even if the task manager never enters it."""
-    task = submit_task(coroutine)
+async def _submit_request_worker(
+    user_id: int,
+    coroutine,
+    finish_request: Callable[[asyncio.Task], None],
+    *,
+    placeholder_message,
+    done_event: asyncio.Event,
+    lang: str = "ru",
+    retry_text: bool = False,
+) -> None:
+    """Explicitly reject mandatory work instead of accepting a no-op task."""
+    task = try_submit_task(coroutine)
+    if task is None:
+        owner = asyncio.current_task()
+        assert owner is not None
+        state.register_active_task(user_id, owner)
+        try:
+            await retire_heartbeat(placeholder_message.message_id, event=done_event)
+            from app.errors import build_retry_and_roles_keyboard
+
+            await placeholder_message.edit_text(
+                t("role.server_overloaded", lang),
+                reply_markup=build_retry_and_roles_keyboard(include_roles=False) if retry_text else None,
+            )
+        finally:
+            finish_request(owner)
+        return
     state.register_active_task(user_id, task)
 
     def completed(owner: asyncio.Task) -> None:
@@ -403,6 +427,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             done_event = asyncio.Event()
             register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
+            state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
+            finish_request = _request_cleanup(user_id, placeholder_message, done_event)
 
             async def voice_task_wrapper() -> None:
                 try:
@@ -453,13 +479,20 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         user_id=user_id,
                     )
                 finally:
-                    user_state = state.get_user_state(user_id)
-                    user_state.is_processing = False
-                    unregister_heartbeat(placeholder_message.message_id)
-                    if not done_event.is_set():
-                        stop_heartbeat(placeholder_message.message_id)
+                    try:
+                        await retire_heartbeat(placeholder_message.message_id, event=done_event)
+                    finally:
+                        owner = asyncio.current_task()
+                        assert owner is not None
+                        finish_request(owner)
 
-            submit_task(voice_task_wrapper())
+            await _submit_request_worker(
+                user_id,
+                voice_task_wrapper(),
+                finish_request,
+                placeholder_message=placeholder_message,
+                done_event=done_event,
+            )
             return
 
         # ── 5. State-machine dispatchers (role/rename flows) ─────────────────
@@ -583,6 +616,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 user_state.is_processing = False
                 raise
 
+            done_event = asyncio.Event()
+            state.set_last_bot_message(user_id, draw_placeholder.message_id, chat_id)
+            finish_request = _request_cleanup(user_id, draw_placeholder, done_event)
+
             async def _draw_task_wrapper(
                 _prompt=_draw_prompt,
                 _ph=draw_placeholder,
@@ -619,10 +656,18 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     )
                     await metrics_collector.record_request("handle_message", elapsed, success=False, user_id=_uid)
                 finally:
-                    _us = state.get_user_state(_uid)
-                    _us.is_processing = False
+                    owner = asyncio.current_task()
+                    assert owner is not None
+                    finish_request(owner)
 
-            submit_task(_draw_task_wrapper())
+            await _submit_request_worker(
+                user_id,
+                _draw_task_wrapper(),
+                finish_request,
+                placeholder_message=draw_placeholder,
+                done_event=done_event,
+                lang=detect_language(message_text),
+            )
             return
 
         # ── 8. Create placeholder & heartbeat, then process AI request ───────
@@ -804,7 +849,15 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     assert owner is not None
                     finish_request(owner)
 
-        _submit_request_worker(user_id, task_wrapper(), finish_request)
+        await _submit_request_worker(
+            user_id,
+            task_wrapper(),
+            finish_request,
+            placeholder_message=placeholder_message,
+            done_event=done_event,
+            lang=detect_language(message_text),
+            retry_text=not is_photo,
+        )
 
 
 async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -938,7 +991,15 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
                     assert owner is not None
                     finish_request(owner)
 
-        _submit_request_worker(user_id, edit_task_wrapper(), finish_request)
+        await _submit_request_worker(
+            user_id,
+            edit_task_wrapper(),
+            finish_request,
+            placeholder_message=placeholder_message,
+            done_event=done_event,
+            lang=detect_language(new_text),
+            retry_text=True,
+        )
     finally:
         _release_admission(user_id, admission_owner)
 

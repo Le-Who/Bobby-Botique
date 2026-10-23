@@ -75,6 +75,7 @@ async def request_boundary(monkeypatch):
         register(uid, task)
 
     monkeypatch.setattr(messages, "submit_task", submit)
+    monkeypatch.setattr(messages, "try_submit_task", submit)
     monkeypatch.setattr(state, "register_active_task", register_task)
     state.clear_network_stall(user_id)
     state.clear_active_task(user_id)

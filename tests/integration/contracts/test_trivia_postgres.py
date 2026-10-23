@@ -217,3 +217,111 @@ async def test_super_completion_score_failure_rolls_back_finished_transition(db_
     super_row = await db_conn.fetchrow("SELECT status,delta_score,finished_at,answers FROM daily_trivia_super_results")
     assert tuple(super_row) == ("active", 0, None, [])
     assert await db_conn.fetchval("SELECT final_score FROM daily_trivia_results") == 100
+
+
+async def test_answer_submission_keeps_pinned_questions_after_republication(db_conn):
+    await db_conn.execute("INSERT INTO users(user_id) VALUES(81001)")
+    original = await publish("original")
+    await trivia.get_or_create_result(81001, DAY)
+    replacement_main = [
+        trivia.TriviaQuestion(**{**question.__dict__, "correct_index": 1})
+        for question in questions("replacement main", 5)
+    ]
+    await trivia.publish_revision(
+        DAY, replacement_main, questions("replacement super", 3), expected_revision=1, actor="replacement"
+    )
+    accepted = await trivia.submit_answer(81001, DAY, question_index=0, selected_index=0, elapsed_ms=7500)
+    assert accepted.result.puzzle_revision_id == original.published_revision_id
+    assert accepted.result.final_score == 250
+    assert accepted.result.answers[0]["is_correct"] is True
+    displayed = await trivia.get_result_puzzle(accepted.result, DAY)
+    assert displayed.questions[0].question == "original main question 1?"
+
+
+async def test_concurrent_answer_replay_counts_once_and_completed_main_never_reopens(db_conn):
+    await db_conn.execute("INSERT INTO users(user_id) VALUES(81001)")
+    await publish("original")
+    barrier = asyncio.Barrier(2)
+
+    async def answer_first():
+        await barrier.wait()
+        return await trivia.submit_answer(81001, DAY, question_index=0, selected_index=0, elapsed_ms=7500)
+
+    replies = await asyncio.gather(answer_first(), answer_first())
+    assert sorted(reply.applied for reply in replies) == [False, True]
+    first = await trivia.get_result_if_exists(81001, DAY)
+    assert first.correct_count == 1 and first.final_score == 250 and len(first.answers) == 1
+    with pytest.raises(trivia.TriviaSubmissionError, match="answer_out_of_order"):
+        await trivia.submit_answer(81001, DAY, question_index=4, selected_index=0, elapsed_ms=7500)
+    for index in range(1, 5):
+        await trivia.submit_answer(81001, DAY, question_index=index, selected_index=0, elapsed_ms=7500)
+    late = await trivia.submit_answer(81001, DAY, question_index=3, selected_index=1, elapsed_ms=1)
+    assert late.already_completed and not late.applied
+    final = await trivia.get_result_if_exists(81001, DAY)
+    assert final.status == "completed" and final.current_question == 5
+    assert final.correct_count == 5 and final.final_score == 1250 and len(final.answers) == 5
+    assert await db_conn.fetchval("SELECT jsonb_typeof(answers) FROM daily_trivia_results") == "array"
+
+
+async def test_invalid_first_answer_rolls_back_creation_of_ranked_result(db_conn):
+    await db_conn.execute("INSERT INTO users(user_id) VALUES(81001)")
+    await publish("original")
+    with pytest.raises(trivia.TriviaSubmissionError, match="invalid_answer_index"):
+        await trivia.submit_answer(81001, DAY, question_index=0, selected_index=99, elapsed_ms=1)
+    assert await trivia.get_result_if_exists(81001, DAY) is None
+
+
+async def test_authoritative_super_completion_is_atomic_and_replay_safe(db_conn):
+    await db_conn.execute("INSERT INTO users(user_id) VALUES(81001)")
+    await publish("original")
+    for index in range(5):
+        await trivia.submit_answer(81001, DAY, question_index=index, selected_index=0, elapsed_ms=7500)
+    for index in range(2):
+        await trivia.submit_answer(81001, DAY, question_index=index, selected_index=0, elapsed_ms=7500, is_super=True)
+    await db_conn.execute("""
+        CREATE FUNCTION reject_new_contract_score() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'controlled authoritative score failure'; END $$;
+        CREATE TRIGGER reject_new_contract_score BEFORE UPDATE ON daily_trivia_results
+        FOR EACH ROW EXECUTE FUNCTION reject_new_contract_score();
+    """)
+    with pytest.raises(asyncpg.RaiseError, match="controlled authoritative score failure"):
+        await trivia.submit_answer(81001, DAY, question_index=2, selected_index=0, elapsed_ms=7500, is_super=True)
+    partial = await trivia.get_super_result_if_exists(81001, DAY)
+    assert partial.status == "active" and partial.delta_score == 1000 and len(partial.answers) == 2
+    assert (await trivia.get_result_if_exists(81001, DAY)).final_score == 1250
+    await db_conn.execute("DROP TRIGGER reject_new_contract_score ON daily_trivia_results")
+    barrier = asyncio.Barrier(2)
+
+    async def finish():
+        await barrier.wait()
+        return await trivia.submit_answer(
+            81001, DAY, question_index=2, selected_index=0, elapsed_ms=7500, is_super=True
+        )
+
+    replies = await asyncio.gather(finish(), finish())
+    assert sorted(reply.applied for reply in replies) == [False, True]
+    final = await trivia.get_result_if_exists(81001, DAY)
+    assert final.final_score == 2750 and final.super_delta == 1500 and final.super_correct == 3
+    assert await db_conn.fetchval("SELECT jsonb_typeof(answers) FROM daily_trivia_super_results") == "array"
+
+
+async def test_legacy_completed_main_starts_super_on_legacy_snapshot(db_conn):
+    await db_conn.execute("INSERT INTO users(user_id) VALUES(81001)")
+    original = await publish("original")
+    await trivia.get_or_create_result(81001, DAY)
+    await db_conn.execute("UPDATE daily_trivia_puzzle_revisions SET actor='legacy_import'")
+    await db_conn.execute(
+        "UPDATE daily_trivia_results SET status='completed', puzzle_revision_id=NULL, final_score=1000"
+    )
+    await publish("replacement", expected_revision=1)
+    accepted = await trivia.submit_answer(
+        81001,
+        DAY,
+        question_index=0,
+        selected_index=0,
+        elapsed_ms=7500,
+        puzzle_revision_id=original.published_revision_id,
+        is_super=True,
+    )
+    assert accepted.result.puzzle_revision_id == original.published_revision_id
+    assert accepted.result.delta_score == 500

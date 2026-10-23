@@ -4,7 +4,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, cast
 
 from app import database as db
 from app.games.trivia_similarity import FactIdentity
@@ -82,6 +82,210 @@ class RevisionConflictError(RuntimeError):
         self.expected = expected
         self.actual = actual
         super().__init__(f"Puzzle revision changed: expected {expected}, actual {actual}")
+
+
+class TriviaSubmissionError(ValueError):
+    def __init__(self, code: str, *, status: int = 400):
+        self.code = code
+        self.status = status
+        super().__init__(code)
+
+
+@dataclass(frozen=True)
+class TriviaAnswerSubmission:
+    result: DailyTriviaResult | DailySuperResult
+    applied: bool
+    already_completed: bool = False
+
+
+def validate_answer_input(
+    question_index: object,
+    selected_index: object,
+    elapsed_ms: object,
+    puzzle_revision_id: object = None,
+) -> tuple[int, int, int, int | None]:
+    for value in (question_index, selected_index, elapsed_ms):
+        if type(value) is not int or value < 0:
+            raise TriviaSubmissionError("invalid_answer_input")
+    if (
+        cast(int, question_index) > 2**31 - 1
+        or cast(int, selected_index) > 2**31 - 1
+        or cast(int, elapsed_ms) > 86_400_000
+    ):
+        raise TriviaSubmissionError("invalid_answer_input")
+    if puzzle_revision_id is not None and (type(puzzle_revision_id) is not int or not 0 < puzzle_revision_id < 2**63):
+        raise TriviaSubmissionError("invalid_revision_id")
+    return (
+        cast(int, question_index),
+        cast(int, selected_index),
+        cast(int, elapsed_ms),
+        cast(int | None, puzzle_revision_id),
+    )
+
+
+async def submit_answer(
+    user_id: int,
+    puzzle_date: date,
+    *,
+    question_index: int,
+    selected_index: int,
+    elapsed_ms: int,
+    puzzle_revision_id: int | None = None,
+    is_super: bool = False,
+    conn=None,
+) -> TriviaAnswerSubmission:
+    """Score and append one ordered answer under the player's main-result lock.
+
+    Main then super is the common lock order. No provider or delivery calls run
+    in this transaction, and a super completion updates both rows atomically.
+    """
+    validate_answer_input(question_index, selected_index, elapsed_ms, puzzle_revision_id)
+    if conn is not None:
+        async with conn.transaction():
+            return await _submit_answer_on_conn(
+                conn, user_id, puzzle_date, question_index, selected_index, elapsed_ms, puzzle_revision_id, is_super
+            )
+    if not db.db_manager.pool:
+        raise RuntimeError("Database pool is required for atomic Daily Trivia submission")
+    async with db.db_manager.pool.acquire() as acquired, acquired.transaction():
+        return await _submit_answer_on_conn(
+            acquired, user_id, puzzle_date, question_index, selected_index, elapsed_ms, puzzle_revision_id, is_super
+        )
+
+
+async def _submit_answer_on_conn(
+    conn,
+    user_id: int,
+    puzzle_date: date,
+    question_index: int,
+    selected_index: int,
+    elapsed_ms: int,
+    puzzle_revision_id: int | None,
+    is_super: bool,
+) -> TriviaAnswerSubmission:
+    main_sql = "SELECT * FROM public.daily_trivia_results WHERE user_id = $1 AND puzzle_date = $2 FOR UPDATE"
+    main_row = await conn.fetchrow(main_sql, user_id, puzzle_date)
+    if main_row is None and not is_super:
+        if await get_puzzle(puzzle_date, conn=conn) is None:
+            raise TriviaSubmissionError("puzzle_unavailable", status=409)
+        await get_or_create_result(user_id, puzzle_date, puzzle_revision_id=puzzle_revision_id, conn=conn)
+        main_row = await conn.fetchrow(main_sql, user_id, puzzle_date)
+    if main_row is None:
+        raise TriviaSubmissionError("main_game_not_completed", status=409)
+    main = _row_to_result(main_row)
+    result: DailyTriviaResult | DailySuperResult = main
+    if is_super:
+        if main.status != "completed":
+            raise TriviaSubmissionError("main_game_not_completed", status=409)
+        super_revision_id = main.puzzle_revision_id
+        if super_revision_id is None:
+            legacy_puzzle = await get_result_puzzle(main, puzzle_date, conn=conn)
+            if legacy_puzzle is None:
+                raise TriviaSubmissionError("puzzle_unavailable", status=409)
+            super_revision_id = legacy_puzzle.published_revision_id
+        await get_or_create_super_result(user_id, puzzle_date, puzzle_revision_id=super_revision_id, conn=conn)
+        row = await conn.fetchrow(
+            "SELECT * FROM public.daily_trivia_super_results WHERE user_id = $1 AND puzzle_date = $2 FOR UPDATE",
+            user_id,
+            puzzle_date,
+        )
+        result = _row_to_super_result(row)
+    if result.status == "completed" or result.finished_at is not None:
+        return TriviaAnswerSubmission(result, applied=False, already_completed=True)
+
+    revision_id = result.puzzle_revision_id or (main.puzzle_revision_id if is_super else None)
+    if puzzle_revision_id is not None and revision_id is not None and puzzle_revision_id != revision_id:
+        raise TriviaSubmissionError("revision_conflict", status=409)
+    snapshot_owner = main if is_super and result.puzzle_revision_id is None else result
+    puzzle = await get_result_puzzle(snapshot_owner, puzzle_date, conn=conn)
+    if puzzle is None or puzzle.puzzle_date != puzzle_date:
+        raise TriviaSubmissionError("puzzle_unavailable", status=409)
+    if puzzle_revision_id is not None and puzzle.published_revision_id != puzzle_revision_id:
+        raise TriviaSubmissionError("revision_conflict", status=409)
+    questions = puzzle.super_questions if is_super else puzzle.questions
+    if question_index >= len(questions) or selected_index >= len(questions[question_index].options):
+        raise TriviaSubmissionError("invalid_answer_index")
+    next_question = result.current_question if isinstance(result, DailyTriviaResult) else len(result.answers)
+    if question_index < next_question:
+        previous = next((answer for answer in result.answers if answer.get("question_index") == question_index), None)
+        if previous is not None and previous.get("selected_index") == selected_index:
+            return TriviaAnswerSubmission(result, applied=False)
+        raise TriviaSubmissionError("answer_conflict", status=409)
+    if question_index != next_question:
+        raise TriviaSubmissionError("answer_out_of_order", status=409)
+
+    is_correct = selected_index == questions[question_index].correct_index
+    base_score = 200 + (int(100 * ((15_000 - elapsed_ms) / 15_000)) if elapsed_ms < 15_000 else 0)
+    answer = {
+        "question_index": question_index,
+        "selected_index": selected_index,
+        "is_correct": is_correct,
+        "elapsed_ms": elapsed_ms,
+    }
+    answers = [*result.answers, answer]
+    finished = question_index + 1 == len(questions)
+    status = "completed" if finished else "active"
+    if isinstance(result, DailySuperResult):
+        delta = base_score * (2 if is_correct else -2)
+        answer["delta_score"] = delta
+        row = await conn.fetchrow(
+            """
+            UPDATE public.daily_trivia_super_results
+            SET delta_score = $3, correct_count = $4, elapsed_ms = $5,
+                answers = $6::jsonb, status = $7,
+                finished_at = CASE WHEN $8::boolean THEN NOW() ELSE finished_at END,
+                puzzle_revision_id = COALESCE(puzzle_revision_id, $9)
+            WHERE user_id = $1 AND puzzle_date = $2
+            RETURNING *
+            """,
+            user_id,
+            puzzle_date,
+            result.delta_score + delta,
+            result.correct_count + int(is_correct),
+            result.elapsed_ms + elapsed_ms,
+            answers,
+            status,
+            finished,
+            puzzle.published_revision_id,
+        )
+        updated = _row_to_super_result(row)
+        if finished:
+            await conn.fetchrow(
+                """
+                UPDATE public.daily_trivia_results
+                SET final_score = GREATEST(0, final_score + $3),
+                    super_delta = $3, super_correct = $4, updated_at = NOW()
+                WHERE user_id = $1 AND puzzle_date = $2
+                RETURNING *
+                """,
+                user_id,
+                puzzle_date,
+                updated.delta_score,
+                updated.correct_count,
+            )
+        return TriviaAnswerSubmission(updated, applied=True)
+    row = await conn.fetchrow(
+        """
+        UPDATE public.daily_trivia_results
+        SET current_question = $3, correct_count = $4, final_score = $5,
+            elapsed_ms = $6, answers = $7::jsonb, status = $8,
+            finished_at = CASE WHEN $9::boolean THEN NOW() ELSE finished_at END,
+            puzzle_revision_id = COALESCE(puzzle_revision_id, $10), updated_at = NOW()
+        WHERE user_id = $1 AND puzzle_date = $2
+        RETURNING *
+        """,
+        user_id,
+        puzzle_date,
+        question_index + 1,
+        result.correct_count + int(is_correct),
+        result.final_score + (base_score if is_correct else 0),
+        result.elapsed_ms + elapsed_ms,
+        answers,
+        status,
+        finished,
+        puzzle.published_revision_id,
+    )
+    return TriviaAnswerSubmission(_row_to_result(row), applied=True)
 
 
 def _row_get(row: Any, key: str, default: Any = None) -> Any:
@@ -301,6 +505,28 @@ async def get_puzzle_revision(revision_id: int, *, conn=None) -> DailyTriviaPuzz
         revision=int(_row_get(head, "revision_no", 0) or 0),
         published_revision_id=int(_row_get(head, "revision_id")),
     )
+
+
+async def get_result_puzzle(
+    result: DailyTriviaResult | DailySuperResult | None, puzzle_date: date, *, conn=None
+) -> DailyTriviaPuzzle | None:
+    """Resolve the same immutable question set for display and submission."""
+    revision_id = result.puzzle_revision_id if result is not None else None
+    if result is not None and revision_id is None:
+        # Migration 065 intentionally leaves pre-existing results unpinned.
+        rows = await db.db_query(
+            """
+            SELECT revision_id FROM public.daily_trivia_puzzle_revisions
+            WHERE puzzle_date = $1 AND actor = 'legacy_import'
+            ORDER BY revision_no LIMIT 1
+            """,
+            (puzzle_date,),
+            conn=conn,
+        )
+        revision_id = int(rows[0]["revision_id"]) if rows else None
+    if revision_id is not None:
+        return await get_puzzle_revision(revision_id, conn=conn)
+    return await get_puzzle(puzzle_date, conn=conn)
 
 
 async def save_puzzle(

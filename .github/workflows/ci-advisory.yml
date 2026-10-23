@@ -1,0 +1,147 @@
+name: CI Advisory
+
+on:
+  push:
+    branches: [vps_testai, main, TEST_gemaibotv2]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-advisory-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-audit:
+    name: Audit Production Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Set up pinned uv with dependency cache
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.13.5"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Sync locked dependencies
+        run: uv sync --locked --link-mode copy
+      - name: Export exact production graph
+        run: |
+          mkdir -p .pytest_tmp
+          uv export --locked --no-dev --no-hashes --no-header --no-annotate --no-emit-project \
+            --output-file .pytest_tmp/production-requirements.txt
+      - name: Generate CycloneDX production SBOM
+        run: >-
+          uv --quiet export --locked --no-dev
+          --format cyclonedx1.5
+          --output-file .pytest_tmp/sbom.cdx.json
+      - name: Generate policy-aware license inventory
+        run: >-
+          uv run --locked python scripts/dependency_license_inventory.py
+          --sbom .pytest_tmp/sbom.cdx.json
+          --output .pytest_tmp/licenses.json
+      - name: Audit exact production graph
+        run: >-
+          uv run --locked pip-audit
+          -r .pytest_tmp/production-requirements.txt
+          --progress-spinner off
+      - name: Upload production dependency evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-dependency-evidence-${{ github.sha }}
+          path: |
+            .pytest_tmp/production-requirements.txt
+            .pytest_tmp/sbom.cdx.json
+            .pytest_tmp/licenses.json
+          if-no-files-found: error
+          retention-days: 30
+
+  observability-config:
+    name: Validate Log Viewer Configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Set up pinned uv with dependency cache
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.13.5"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Sync locked dependencies
+        run: uv sync --locked --link-mode copy
+      - name: Validate Compose, Alloy, Loki, and Docker API proxy
+        run: |
+          mkdir -p ops/observability/secrets
+          printf '%s\n' 'ci-only-not-a-production-secret' > ops/observability/secrets/grafana_admin_password
+          # The host probe reads as the runner; Grafana (472:0) reads through group 0.
+          sudo chown "$(id -u):0" ops/observability/secrets/grafana_admin_password
+          sudo chmod 0640 ops/observability/secrets/grafana_admin_password
+          test -r ops/observability/secrets/grafana_admin_password
+          DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock)"
+          export DOCKER_SOCKET_GID
+          docker compose -f ops/observability/compose.yml config --quiet
+
+          docker run --rm \
+            -v "$PWD/ops/observability/config.alloy:/etc/alloy/config.alloy:ro" \
+            grafana/alloy:v1.18.0@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308 \
+            validate --stability.level=experimental /etc/alloy/config.alloy
+
+          docker run --rm \
+            -v "$PWD/ops/observability/loki.yaml:/etc/loki/loki.yaml:ro" \
+            grafana/loki:3.7.4@sha256:87f0a067673756a3cede1bcbf0c74875f7df9b09fddb53e399d0c576f756cfcc \
+            -config.file=/etc/loki/loki.yaml -verify-config
+
+          docker run --rm \
+            -v "$PWD/ops/observability/docker-api-proxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro" \
+            haproxy:3.2.6-alpine@sha256:3a819392f5a6af2a9203d1c63ff0feba74f0c940623a558511be06d7d85e361c \
+            haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
+
+          cleanup_observability() {
+            result=$?
+            trap - EXIT
+            if [ "$result" -ne 0 ]; then
+              docker compose -f ops/observability/compose.yml ps || true
+              docker compose -f ops/observability/compose.yml logs \
+                --tail=100 --no-color docker-proxy alloy loki grafana || true
+            fi
+            docker compose -f ops/observability/compose.yml down -v --remove-orphans
+            exit "$result"
+          }
+          trap cleanup_observability EXIT
+          docker compose -f ops/observability/compose.yml up -d --wait --wait-timeout 90
+          echo "Checking Grafana host endpoint"
+          curl -fsS http://127.0.0.1:3000/api/health >/dev/null
+          curl -fsS --user 'admin:ci-only-not-a-production-secret' \
+            http://127.0.0.1:3000/api/user >/dev/null
+          echo "Checking Alloy internal endpoint"
+          docker compose -f ops/observability/compose.yml exec -T grafana \
+            curl -fsS http://alloy:12345/-/ready >/dev/null
+          echo "Checking Loki internal endpoint"
+          docker compose -f ops/observability/compose.yml exec -T grafana \
+            curl -fsS http://loki:3100/ready >/dev/null
+
+          uv run --locked python scripts/generate_observability_private_probe.py \
+            --output .pytest_tmp/observability-private-event.json
+          uv run --locked python scripts/check_observability_stack.py \
+            --ephemeral --grafana-url http://127.0.0.1:3000 \
+            --password-file ops/observability/secrets/grafana_admin_password \
+            --private-event-file .pytest_tmp/observability-private-event.json \
+            --output .pytest_tmp/observability-probe
+          export PYTHON_DOTENV_DISABLED=1
+          export GEMAIBOT_REQUIRE_OBSERVABILITY_TESTS=1
+          export GEMAIBOT_OBSERVABILITY_IS_EPHEMERAL=1
+          export TEST_GRAFANA_URL=http://127.0.0.1:3000
+          export TEST_GRAFANA_PASSWORD_FILE=ops/observability/secrets/grafana_admin_password
+          export TEST_OBSERVABILITY_MANIFEST=.pytest_tmp/observability-probe/manifest.json
+          uv run --locked pytest tests/observability/test_collector_e2e.py \
+            -m integration -n 0 --override-ini="addopts=" --timeout=30 -v

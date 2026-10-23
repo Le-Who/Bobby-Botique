@@ -142,6 +142,7 @@ async def network_flow(monkeypatch):
         return task
 
     monkeypatch.setattr(messages, "submit_task", submit)
+    monkeypatch.setattr(messages, "try_submit_task", submit)
     register = messages.register_heartbeat
 
     def register_heartbeat(mid, event, chat):

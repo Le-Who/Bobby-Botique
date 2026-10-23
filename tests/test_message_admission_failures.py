@@ -58,6 +58,7 @@ async def admission(monkeypatch):
     monkeypatch.setattr(heartbeat, "_HEARTBEAT_TASKS", {})
     manager = TaskManager()
     monkeypatch.setattr(messages, "submit_task", manager.submit)
+    monkeypatch.setattr(messages, "try_submit_task", manager.try_submit)
     monkeypatch.setattr(debounce, "submit_task", manager.submit)
     owners = []
     calls = []
@@ -122,7 +123,7 @@ async def admission(monkeypatch):
         return owner
 
     try:
-        yield SimpleNamespace(uid=uid, launch=launch, calls=calls, started=started, release=release)
+        yield SimpleNamespace(uid=uid, launch=launch, calls=calls, started=started, release=release, manager=manager)
     finally:
         release.set()
         for owner in owners:

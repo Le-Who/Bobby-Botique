@@ -1714,8 +1714,8 @@ async def api_miniapp_trivia_today():
     from app.games.daily_trivia import prepare_daily_puzzle
     from app.repos.crocodile_daily import today_puzzle_date
     from app.repos.daily_trivia import (
-        get_puzzle_revision,
         get_result_if_exists,
+        get_result_puzzle,
         get_super_result_if_exists,
     )
 
@@ -1730,9 +1730,10 @@ async def api_miniapp_trivia_today():
         return auth_error
     if uid > 0:
         result = await get_result_if_exists(uid, today)
-        if result is not None and result.status == "completed":
+        if result is not None:
             user_result = {
-                "status": "completed",
+                "status": result.status,
+                "current_question": result.current_question,
                 "final_score": result.final_score,
                 "correct_count": result.correct_count,
                 "elapsed_ms": result.elapsed_ms,
@@ -1741,25 +1742,23 @@ async def api_miniapp_trivia_today():
                 "super_correct": result.super_correct,
             }
         super_res = await get_super_result_if_exists(uid, today)
-        if super_res is not None and super_res.status == "completed":
+        if super_res is not None:
             user_super_result = {
-                "status": "completed",
+                "status": super_res.status,
                 "delta_score": super_res.delta_score,
                 "correct_count": super_res.correct_count,
                 "elapsed_ms": super_res.elapsed_ms,
                 "answers": super_res.answers or [],
             }
 
-    pinned_revision_id = (
-        result.puzzle_revision_id
-        if result is not None and result.puzzle_revision_id is not None
-        else super_res.puzzle_revision_id
-        if super_res is not None and super_res.puzzle_revision_id is not None
-        else None
+    snapshot_owner = result or super_res
+    puzzle = (
+        await get_result_puzzle(snapshot_owner, today)
+        if snapshot_owner is not None
+        else await prepare_daily_puzzle(today)
     )
-    puzzle = await get_puzzle_revision(pinned_revision_id) if pinned_revision_id else None
     if puzzle is None:
-        puzzle = await prepare_daily_puzzle(today)
+        return jsonify({"error": "puzzle_unavailable"}), 409
 
     return jsonify(
         {
@@ -1795,156 +1794,67 @@ async def api_miniapp_trivia_today():
 
 @miniapp_blueprint.route("/api/miniapp/trivia/submit_answer", methods=["POST"])
 async def api_miniapp_trivia_submit_answer():
-    from quart import jsonify, request
-
-    from app.repos.crocodile_daily import today_puzzle_date
-    from app.repos.daily_trivia import get_or_create_result, update_result_answer
-
-    data = await request.get_json() or {}
-    q_idx = int(data.get("question_index", 0))
-    selected_idx = int(data.get("selected_index", 0))
-    is_correct = bool(data.get("is_correct", False))
-    elapsed_ms = int(data.get("elapsed_ms", 0))
-    total_score = int(data.get("total_score", 0))
-    puzzle_revision_id = int(data["revision_id"]) if data.get("revision_id") is not None else None
-
-    user_id, auth_error = await _resolve_authorized_legacy_miniapp_user(request.headers.get("X-TG-INIT-DATA", ""))
-    if auth_error is not None:
-        return auth_error
-
-    if user_id > 0:
-        today = today_puzzle_date()
-        result = await get_or_create_result(
-            user_id,
-            today,
-            puzzle_revision_id=puzzle_revision_id,
-        )
-
-        # Guard: game already completed — ignore further submissions.
-        if result.status == "completed":
-            return jsonify({"success": True, "already_completed": True})
-
-        new_answers = list(result.answers)
-        new_answers.append(
-            {
-                "question_index": q_idx,
-                "selected_index": selected_idx,
-                "is_correct": is_correct,
-                "elapsed_ms": elapsed_ms,
-            }
-        )
-        correct_count = result.correct_count + (1 if is_correct else 0)
-        is_finished = q_idx >= 4
-        status = "completed" if is_finished else "active"
-
-        await update_result_answer(
-            user_id,
-            today,
-            current_question=q_idx + 1,
-            correct_count=correct_count,
-            final_score=total_score,
-            elapsed_ms=result.elapsed_ms + elapsed_ms,
-            answers=new_answers,
-            status=status,
-            finished=is_finished,
-        )
-
-        if is_finished:
-            try:
-                from app.bot_instance import get_bot
-                from app.games.daily_trivia_telegram import send_trivia_result_message
-
-                bot = get_bot()
-                if bot:
-                    await send_trivia_result_message(bot, user_id, today)
-            except Exception as exc:
-                import logging as _logging
-
-                _logging.getLogger(__name__).warning("trivia: result message failed user=%s: %s", user_id, exc)
-
-    return jsonify({"success": True})
+    return await _submit_trivia_answer(is_super=False)
 
 
 @miniapp_blueprint.route("/api/miniapp/trivia/submit_super_answer", methods=["POST"])
 async def api_miniapp_trivia_submit_super_answer():
-    from quart import jsonify, request
+    return await _submit_trivia_answer(is_super=True)
 
+
+async def _submit_trivia_answer(*, is_super: bool):
     from app.repos.crocodile_daily import today_puzzle_date
-    from app.repos.daily_trivia import (
-        get_or_create_super_result,
-        get_result_if_exists,
-        update_super_result_answer,
-    )
-
-    data = await request.get_json() or {}
-    q_idx = int(data.get("question_index", 0))
-    selected_idx = int(data.get("selected_index", 0))
-    is_correct = bool(data.get("is_correct", False))
-    elapsed_ms = int(data.get("elapsed_ms", 0))
-    base_question_score = int(data.get("base_score", 0))
-    puzzle_revision_id = int(data["revision_id"]) if data.get("revision_id") is not None else None
+    from app.repos.daily_trivia import TriviaSubmissionError, submit_answer, validate_answer_input
 
     user_id, auth_error = await _resolve_authorized_legacy_miniapp_user(request.headers.get("X-TG-INIT-DATA", ""))
     if auth_error is not None:
         return auth_error
+    data = await request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "invalid_answer_input"}), 400
+    question_index = data.get("question_index")
+    selected_index = data.get("selected_index")
+    elapsed_ms = data.get("elapsed_ms")
+    revision_id = data.get("revision_id")
+    try:
+        question_index, selected_index, elapsed_ms, revision_id = validate_answer_input(
+            question_index, selected_index, elapsed_ms, revision_id
+        )
+    except TriviaSubmissionError as exc:
+        return jsonify({"success": False, "error": exc.code}), exc.status
+    if not user_id:
+        # Public practice remains playable, without saving a ranked result.
+        return jsonify({"success": True})
 
-    if user_id > 0:
-        today = today_puzzle_date()
-        main_result = await get_result_if_exists(user_id, today)
-        if main_result is None or main_result.status != "completed":
-            return jsonify({"success": False, "error": "Main game not completed"})
-
-        super_result = await get_or_create_super_result(
+    today = today_puzzle_date()
+    try:
+        submission = await submit_answer(
             user_id,
             today,
-            puzzle_revision_id=puzzle_revision_id,
+            question_index=question_index,
+            selected_index=selected_index,
+            elapsed_ms=elapsed_ms,
+            puzzle_revision_id=revision_id,
+            is_super=is_super,
         )
-        if super_result.status == "completed":
-            return jsonify({"success": True, "already_completed": True})
+    except TriviaSubmissionError as exc:
+        return jsonify({"success": False, "error": exc.code}), exc.status
+    if submission.applied and submission.result.status == "completed":
+        try:
+            from app.games.daily_trivia_telegram import send_trivia_result_message
 
-        q_delta = (base_question_score * 2) if is_correct else (-base_question_score * 2)
-
-        new_answers = list(super_result.answers)
-        new_answers.append(
-            {
-                "question_index": q_idx,
-                "selected_index": selected_idx,
-                "is_correct": is_correct,
-                "elapsed_ms": elapsed_ms,
-                "delta_score": q_delta,
-            }
-        )
-
-        new_delta = super_result.delta_score + q_delta
-        correct_count = super_result.correct_count + (1 if is_correct else 0)
-        is_finished = q_idx >= 2
-        status = "completed" if is_finished else "active"
-
-        await update_super_result_answer(
-            user_id,
-            today,
-            delta_score=new_delta,
-            correct_count=correct_count,
-            elapsed_ms=super_result.elapsed_ms + elapsed_ms,
-            answers=new_answers,
-            status=status,
-            finished=is_finished,
-        )
-
-        if is_finished:
-            try:
-                from app.bot_instance import get_bot
-                from app.games.daily_trivia_telegram import send_trivia_result_message
-
-                bot = get_bot()
-                if bot:
-                    await send_trivia_result_message(bot, user_id, today)
-            except Exception as exc:
-                import logging as _logging
-
-                _logging.getLogger(__name__).warning("super trivia: result message failed user=%s: %s", user_id, exc)
-
-    return jsonify({"success": True})
+            bot = get_bot()
+            if bot:
+                await send_trivia_result_message(bot, user_id, today)
+        except Exception as exc:
+            logger.warning("trivia: result message failed user=%s type=%s", user_id, type(exc).__name__)
+    return jsonify(
+        {
+            "success": True,
+            "already_completed": submission.already_completed,
+            "already_answered": not submission.applied and not submission.already_completed,
+        }
+    )
 
 
 @miniapp_blueprint.route("/admin_dailycroc")

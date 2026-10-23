@@ -312,18 +312,47 @@ def register(application: Application) -> None:
 
 
 async def _cancel_generation_callback(update, context) -> None:
-    """Handle the '❌ Отменить' button pressed during slow API response."""
+    """Cancel only the owner of the matching, still-pending reply."""
+    from app.handlers.messages import _cancel_and_drain, _release_admission
+    from app.i18n import t
+    from app.utils.heartbeat import is_heartbeat_active
+
     query = update.callback_query
-    await query.answer("Запрос отменён.")
+    if not query or not update.effective_user or not query.message:
+        return
     user_id = update.effective_user.id
+    language_code = getattr(getattr(query, "from_user", None), "language_code", "") or ""
+    lang = "en" if language_code.lower().startswith("en") else "ru"
+    coordinates = (query.message.message_id, getattr(getattr(query.message, "chat", None), "id", None))
+    owner = state.get_active_task(user_id)
+    if (
+        owner is None
+        or owner.done()
+        or state.get_last_bot_message(user_id) != coordinates
+        or not is_heartbeat_active(coordinates[0], chat_id=coordinates[1])
+    ):
+        await query.answer(t("processing.long_wait_finished", lang))
+        return
 
-    was_cancelled = state.cancel_active_task(user_id)
-    if was_cancelled:
-        import logging
+    await query.answer(t("processing.long_wait_stopping", lang))
+    if (
+        state.get_active_task(user_id) is not owner
+        or owner.done()
+        or state.get_last_bot_message(user_id) != coordinates
+        or not is_heartbeat_active(coordinates[0], chat_id=coordinates[1])
+    ):
+        return
 
-        logging.info("User %s cancelled generation via inline button", user_id)
-
+    admission_owner = asyncio.current_task()
+    assert admission_owner is not None
+    state.register_active_task(user_id, admission_owner)
     try:
-        await query.edit_message_text("❌ Запрос отменён.")
-    except Exception:
-        pass
+        await _cancel_and_drain(owner)
+        if state.get_active_task(user_id) is not admission_owner or state.get_last_bot_message(user_id) != coordinates:
+            return
+        try:
+            await query.edit_message_text(t("processing.long_wait_stopped", lang))
+        except Exception:
+            pass
+    finally:
+        _release_admission(user_id, admission_owner)

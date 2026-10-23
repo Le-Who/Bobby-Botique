@@ -97,7 +97,9 @@ def document_state(chat):
 
 
 def state_snapshot(chat):
-    return deepcopy({name: getattr(chat, name) for name in chat.__slots__ if name not in {"__weakref__", "lock"}})
+    return deepcopy(
+        {name: getattr(chat, name) for name in chat.__slots__ if name not in {"__weakref__", "lock", "_persist_lock"}}
+    )
 
 
 @pytest.fixture

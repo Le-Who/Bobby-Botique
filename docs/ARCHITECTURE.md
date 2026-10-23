@@ -31,6 +31,14 @@ Redis acknowledgements are outside this cooperative cancellation guarantee.
 See the [dated verification report](webhook-admission-ownership-2026-10-10.md)
 for tested scenarios and evidence limits.
 
+Required text/photo/edit/voice/draw workers use bounded task admission. Capacity
+rejection produces a visible overload result and retires the placeholder's
+heartbeat and admission; optional typing/cleanup work remains best effort.
+The stop callback checks the active owner, message/chat identity and pending
+heartbeat before cancellation, rechecks ownership after network waits, and drains
+the cancelled worker before changing its reply. A superseding request retains
+its own admission and final output.
+
 ```text
 Telegram update → bot.py / handlers → context + provider routing
                                       ↓ typed generation events
@@ -107,7 +115,10 @@ the last message. See [ADR 0001](adr/0001-single-owner-ai-response-delivery.md).
 ## State and background work
 
 `UserState` is a process-local LRU with PostgreSQL-backed persisted fields, a local
-async lock and debounced persistence. Active tasks and last-message references
+request lock and debounced persistence. A separate per-state persistence lock
+serializes snapshots and their writes, including database retries, so an older
+write cannot overwrite a newer snapshot. Queued writes recheck account-erasure
+invalidation after acquiring that lock. Active tasks and last-message references
 are process-local. Redis holds selected caches, distributed semaphores, deferred
 work and game state; it does not replicate all Python state. Multi-replica safety
 must be evaluated per subsystem.
@@ -133,6 +144,13 @@ An in-memory queue retry that cannot regain capacity becomes a terminal failed
 task with a capacity event; it is never advertised as a scheduled retry without
 a queue entry. These paths were regression-tested in the
 [codebase audit](codebase-audit-2026-10-23.md).
+
+Daily Trivia submissions evaluate the selected answer and score against the
+result's pinned question revision. Main and super-game writes share a consistent
+main-row-first lock order inside a short transaction; a super completion updates
+both result rows atomically. Repeated answers are idempotent, skipped/conflicting
+answers are rejected, and the Mini App restores active progress with the same
+question snapshot. Telegram result notifications run after the write commits.
 
 ## Long-term memory
 
@@ -179,16 +197,26 @@ Public Telegraph copies and shared report links require their own privacy handli
 graph. The production Dockerfile uses a digest-pinned Python 3.14 slim image,
 locked non-dev dependencies, ffmpeg and a non-root application user.
 
-`.github/workflows/ci.yml` defines lint/format, Mypy, unit/E2E, serial PostgreSQL
-integration, offline container smoke and production dependency audit/SBOM/license
-evidence. CI cancels superseded runs. Deployment serializes transitions with
-`cancel-in-progress: false`, builds the successful CI SHA and runs migration and
-health gates. Dependency-only rollback has a restricted eligibility check; it is
-not a general code/schema rollback or proof of functional provider correctness.
+`.github/workflows/ci.yml` defines the required lint/format/documentation, Mypy,
+unit/E2E, serial PostgreSQL/Redis integration, Chromium and offline production
+container checks. Independent jobs run in parallel, dependencies use a
+lockfile-keyed uv cache, and CI/deploy image builds share a BuildKit cache.
+Unit/E2E excludes browser-marked tests, which the Chromium suite requires.
+`ci-advisory.yml` runs on the same pushes and PRs and retains production
+dependency audit/SBOM/license evidence and private-stack validation. Advisory
+failures remain visible without delaying
+or blocking application deployment; inventories are uploaded even if the audit
+fails. Both CI workflows cancel superseded runs. Deployment serializes transitions
+with `cancel-in-progress: false`, accepts successful CI only from a same-repository
+push to `vps_testai`, and verifies the source SHA against the current branch tip
+before checkout and again before preparing SSH secrets. It builds that exact SHA
+and runs migration and health gates. Dependency-only rollback has a restricted
+eligibility check; it is not a general code/schema rollback or proof of functional
+provider correctness.
 
-CI also validates the pinned private log-search stack and starts it to check
-Grafana health/authentication and Alloy/Loki readiness. Deployment recreates that
-independent stack on configuration changes, waits for health, verifies the same
+The advisory workflow validates the pinned private log-search stack and starts it
+to check Grafana health/authentication and Alloy/Loki readiness. Deployment
+recreates that independent stack on configuration changes, waits for health, verifies the same
 endpoints and synchronizes Grafana's admin password with the persisted secret
 before replacing the bot. Health/auth probes are distinct from ingestion:
 the CI observability job additionally sends synthetic Docker stdout events

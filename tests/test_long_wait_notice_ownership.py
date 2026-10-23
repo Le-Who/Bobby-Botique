@@ -257,6 +257,7 @@ async def request_flow(monkeypatch):
         return task
 
     monkeypatch.setattr(messages, "submit_task", submit)
+    monkeypatch.setattr(messages, "try_submit_task", submit)
     context = SimpleNamespace(user_data={}, bot=SimpleNamespace(username="synthetic_bot"))
 
     async def edit_message_text(**kwargs):

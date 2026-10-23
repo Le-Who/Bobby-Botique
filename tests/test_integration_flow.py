@@ -84,7 +84,10 @@ def make_context():
 async def run_background_sync():
     """Capture real tasks so worker resource callbacks have their real lifecycle."""
     submitted = {}
-    with patch("app.handlers.messages.submit_task", new_callable=MagicMock) as mock_submit:
+    with (
+        patch("app.handlers.messages.submit_task", new_callable=MagicMock) as mock_submit,
+        patch("app.handlers.messages.try_submit_task", side_effect=lambda coro: mock_submit(coro)),
+    ):
 
         def capture(coro, retry=0):
             original = coro

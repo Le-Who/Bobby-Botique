@@ -86,6 +86,7 @@ async def test_e2e_happy_path_conversation(db_conn_with_key, force_test_db_conn)
         patch("app.providers.get_provider_router", return_value=fake_router),
         patch("app.repos.memory.get_cached_genai_client", return_value=memory_client),
         patch("app.handlers.messages.submit_task", task_manager.submit),
+        patch("app.handlers.messages.try_submit_task", task_manager.try_submit),
         patch("app.repos.memory_autosave.submit_memory_task"),
         patch("app.state._schedule_persist"),
         patch("app.adapters.concurrency.heavy_request_semaphore", local_sem),

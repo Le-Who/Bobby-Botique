@@ -343,6 +343,12 @@
           if (!loaded) throw new Error('Completed result could not be confirmed');
           return;
         }
+        if (data.already_answered) {
+          const loaded = await defInit();
+          if (!loaded) throw new Error('Saved answer could not be confirmed');
+          if (superGame && userSuperResult?.status === 'active') startSuperGame();
+          return;
+        }
         answerSaved = true;
         status.dataset.state = 'saved';
         status.innerText = savesToAccount ? 'Ответ сохранён' : 'Ответ принят · результат вне Telegram не сохраняется';
@@ -422,7 +428,7 @@
         superPlayerAnswers = new Array(superQuestions.length).fill(null);
 
         userSuperResult = data.user_super_result || null;
-        if (userSuperResult && userSuperResult.status === 'completed') {
+        if (userSuperResult) {
           superDeltaScore = userSuperResult.delta_score || 0;
           superCorrectCount = userSuperResult.correct_count || 0;
           if (Array.isArray(userSuperResult.answers)) {
@@ -438,7 +444,7 @@
           }
         }
 
-        if (data.user_result && data.user_result.status === 'completed') {
+        if (data.user_result) {
           const r = data.user_result;
           totalScore = r.final_score || 0;
           correctCount = r.correct_count || 0;
@@ -455,10 +461,18 @@
             });
           }
 
-          showFinishScreen(true /* alreadyDone */);
-          return true;
+          if (r.status === 'completed') {
+            showFinishScreen(true /* alreadyDone */);
+            return true;
+          }
+          currentIdx = r.current_question || 0;
+        } else {
+          currentIdx = 0;
+          totalScore = 0;
+          correctCount = 0;
         }
 
+        document.getElementById('scoreBadge').innerText = `⭐ ${totalScore}`;
         renderQuestion();
         return true;
       } catch (e) {
@@ -597,9 +611,10 @@
       if (userSuperResult && userSuperResult.status === 'completed') return;
       document.getElementById('finishView').style.display = 'none';
       document.getElementById('superView').style.display = 'block';
-      currentSuperIdx = 0;
-      superDeltaScore = 0;
-      superCorrectCount = 0;
+      const resume = userSuperResult && userSuperResult.status === 'active';
+      currentSuperIdx = resume && Array.isArray(userSuperResult.answers) ? userSuperResult.answers.length : 0;
+      superDeltaScore = resume ? userSuperResult.delta_score || 0 : 0;
+      superCorrectCount = resume ? userSuperResult.correct_count || 0 : 0;
       updateSuperScoreBadge();
       renderSuperQuestion();
       window.scrollTo({ top: 0, behavior: scrollBehavior });

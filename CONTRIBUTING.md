@@ -15,6 +15,9 @@ uv --version
 uv sync --locked
 ```
 
+Full verification also requires Node.js 24: deployment workflow contract tests
+execute the actual JavaScript source guards. Browser-specific setup is below.
+
 `pyproject.toml` is the editable manifest; `uv.lock` fixes exact versions.
 Do not update the dependency graph as a side effect of unrelated work.
 The bot reads process environment; for local execution with an untracked `.env`:
@@ -41,12 +44,14 @@ the CI-aligned local gates are:
 uv run --locked ruff check .
 uv run --locked ruff format --check .
 uv run --locked mypy app bot.py
-uv run --locked pytest tests/ --ignore=tests/integration -m "not integration" --override-ini="addopts=" --timeout=30
+uv run --locked pytest tests/ --ignore=tests/integration -m "not integration and not browser" --override-ini="addopts=" --timeout=30
 ```
 
 `pytest.ini` defaults to `-n auto --dist=loadgroup --basetemp=.pytest_tmp --timeout=30`.
 The commands above clear `addopts` to run serially without reusing that fixed
-temporary directory and retain the per-test timeout explicitly. Do not use
+temporary directory and retain the per-test timeout explicitly. Browser cases
+run in the dedicated Chromium suite below; non-browser helpers in the same
+modules remain in the unit/E2E suite. Do not use
 `-m unit` as a synonym for all non-integration tests: marker coverage differs.
 
 Runtime warnings and unraisable exceptions fail tests. Fix the owning task or
@@ -141,12 +146,22 @@ the default repository-wide scan. Ruff hooks can auto-fix Python files, so use
 the locked `ruff check` and `ruff format --check` commands for read-only review.
 Local hook installation is not shared by cloning.
 
-CI also builds/smokes the production image and produces dependency audit,
-SBOM and license inventory evidence. These are distinct from local unit checks.
-The observability job validates pinned Compose/Alloy/Loki/HAProxy configuration
+The required `CI` workflow also builds/smokes the production image. It runs
+lint, types, unit/E2E, integration, browser and image jobs independently and
+retains locked installation with a uv dependency cache. The unit/E2E selector
+excludes browser-marked cases, which the dedicated Chromium job runs with its
+prerequisites installed.
+
+The separate `CI Advisory` workflow runs on the same pushes and PRs, producing
+dependency audit, SBOM and license inventory evidence. Inventories are generated
+before the vulnerability audit and uploaded even if that audit fails. Its
+observability job validates pinned Compose/Alloy/Loki/HAProxy configuration
 and starts the private stack to check readiness and Grafana authentication.
 It also verifies end-to-end ingestion of synthetic bot events through the stdout
 collector pipeline, including filtering, privacy and query-limit checks.
+Advisory failures remain visible, but neither advisory completion nor success
+is a deploy prerequisite. All jobs retain strict failure reporting; deploy-time
+migration, readiness, authentication and health checks still block a bad release.
 Live canary/deployment actions need dedicated credentials and explicit operational
 scope; see [dependency maintenance](README.md#dependency-maintenance).
 

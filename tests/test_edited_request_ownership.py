@@ -101,6 +101,7 @@ async def ownership(monkeypatch):
         return task
 
     monkeypatch.setattr(messages, "submit_task", submit)
+    monkeypatch.setattr(messages, "try_submit_task", submit)
     contexts = {}
     placeholders = {}
 

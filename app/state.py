@@ -31,6 +31,7 @@ class UserState:
 
     Runtime-only fields (not persisted):
       - lock: asyncio.Lock
+      - _persist_lock: serializes snapshots and their database writes
       - last_document_message_id: Telegram message ID
       - _loaded_from_db: whether DB state has been loaded
       - _dirty: whether state needs to be saved
@@ -39,6 +40,7 @@ class UserState:
     __slots__ = (
         "__weakref__",
         "lock",
+        "_persist_lock",
         # Persisted fields
         "document_mode",
         "selected_document_id",
@@ -67,6 +69,7 @@ class UserState:
 
     def __init__(self, user_id: int = 0):
         self.lock = _UserStateLock(self)
+        self._persist_lock = asyncio.Lock()
         self._user_id = user_id
         # Persisted fields
         self.document_mode = False
@@ -240,49 +243,52 @@ async def _ensure_loaded(state: UserState) -> UserState:
 
 async def _persist(state: UserState) -> None:
     """Save state to DB. Fire-and-forget style (errors are logged, not raised)."""
-    if state._user_id == 0:
-        return
+    # Snapshot only after the preceding write (including its retries) finishes.
+    # The request lock stays independent so handlers can mutate state during I/O.
+    async with state._persist_lock:
+        if state._user_id == 0:
+            return
 
-    started_ns = time.monotonic_ns()
-    try:
-        from app.repos.users import save_user_state
+        started_ns = time.monotonic_ns()
+        try:
+            from app.repos.users import save_user_state
 
-        await save_user_state(
-            user_id=state._user_id,
-            document_mode=state.document_mode,
-            selected_document_id=state.selected_document_id,
-            awaiting_custom_role_input=state.awaiting_custom_role_input,
-            generated_role=state.generated_role,
-            last_custom_role_prompt=state.last_custom_role_prompt,
-            generating_custom_role=state.generating_custom_role,
-            last_sent_message_text=state.last_sent_message_text,
-            awaiting_manual_role_title=state.awaiting_manual_role_title,
-            awaiting_manual_role_prompt=state.awaiting_manual_role_prompt,
-            manual_role_title=state.manual_role_title,
-            manual_role_prompt=state.manual_role_prompt,
-            role_diaries=state.role_diaries,
-            tarot_mode=state.tarot_mode,
-            tarot_session=state.tarot_session,
-        )
-        emit(
-            "state.persistence_finished",
-            level="debug",
-            operation="state.persist",
-            outcome="succeeded",
-            actor_user_id=state._user_id,
-            duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
-        )
-    except Exception as e:
-        record_exception(
-            "state.persistence_failed",
-            e,
-            operation="state.persist",
-            level="warning",
-            fields={
-                "actor_user_id": state._user_id,
-                "duration_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
-            },
-        )
+            await save_user_state(
+                user_id=state._user_id,
+                document_mode=state.document_mode,
+                selected_document_id=state.selected_document_id,
+                awaiting_custom_role_input=state.awaiting_custom_role_input,
+                generated_role=state.generated_role,
+                last_custom_role_prompt=state.last_custom_role_prompt,
+                generating_custom_role=state.generating_custom_role,
+                last_sent_message_text=state.last_sent_message_text,
+                awaiting_manual_role_title=state.awaiting_manual_role_title,
+                awaiting_manual_role_prompt=state.awaiting_manual_role_prompt,
+                manual_role_title=state.manual_role_title,
+                manual_role_prompt=state.manual_role_prompt,
+                role_diaries=state.role_diaries,
+                tarot_mode=state.tarot_mode,
+                tarot_session=state.tarot_session,
+            )
+            emit(
+                "state.persistence_finished",
+                level="debug",
+                operation="state.persist",
+                outcome="succeeded",
+                actor_user_id=state._user_id,
+                duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+            )
+        except Exception as e:
+            record_exception(
+                "state.persistence_failed",
+                e,
+                operation="state.persist",
+                level="warning",
+                fields={
+                    "actor_user_id": state._user_id,
+                    "duration_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
+                },
+            )
 
 
 _PERSIST_DEBOUNCE_SEC = 0.3  # 300ms debounce window
@@ -293,9 +299,9 @@ def _schedule_persist(state: UserState) -> None:
     """Schedule a debounced persistence task on the running event loop.
 
     If called multiple times for the same user within ``_PERSIST_DEBOUNCE_SEC``,
-    only the last call actually triggers a DB write. This eliminates race
-    conditions where rapid sequential mutations could cause stale state to
-    be written after newer state.
+    only the last timer submits a DB write. Already-started writes are ordered
+    by the state's separate persistence lock, so an older snapshot cannot
+    overwrite a newer one after a slow write or retry.
     """
 
     if state._user_id == 0:

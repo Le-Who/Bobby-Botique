@@ -238,7 +238,8 @@ async def test_handle_request_text_message_happy_path(monkeypatch):
         patch("app.handlers.messages.logging.info") as mock_log_info,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.messages.asyncio.create_task") as mock_create_task,
-        patch("app.handlers.messages.submit_task", side_effect=capture_submit) as mock_submit,
+        patch("app.handlers.messages.submit_task", side_effect=capture_submit),
+        patch("app.handlers.messages.try_submit_task", side_effect=capture_submit) as mock_submit,
         patch("app.middleware.debounce.debounce_message", side_effect=_debounce_passthrough),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
@@ -318,6 +319,7 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
         patch("app.handlers.messages.asyncio.create_task") as mock_create_task,
         patch("app.handlers.messages.submit_task", side_effect=capture_submit),
+        patch("app.handlers.messages.try_submit_task", side_effect=capture_submit),
         patch("app.handlers.messages.metrics_collector", AsyncMock()),
         # Prevent xdist cross-test contamination: dedup uses module-level dict
         # shared across tests on the same worker. Without this mock, an earlier
@@ -392,6 +394,7 @@ async def test_handle_request_photo_message():
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
         patch("app.handlers.messages.asyncio.create_task", side_effect=mock_create_task),
         patch("app.handlers.messages.submit_task", side_effect=capture_submit),
+        patch("app.handlers.messages.try_submit_task", side_effect=capture_submit),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -500,6 +503,7 @@ async def test_handle_request_exception_handling():
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
         patch("app.handlers.messages.asyncio.create_task", side_effect=mock_create_task),
         patch("app.handlers.messages.submit_task", side_effect=capture_submit),
+        patch("app.handlers.messages.try_submit_task", side_effect=capture_submit),
         patch("app.middleware.debounce.debounce_message", side_effect=_debounce_passthrough),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
