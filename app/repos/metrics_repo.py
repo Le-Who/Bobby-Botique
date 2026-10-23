@@ -57,6 +57,9 @@ async def get_supabase_metrics() -> dict[str, Any]:
 
 async def get_tavily_key_usage_stats() -> list[dict[str, Any]]:
     """Get monthly credit usage stats for all Tavily API keys."""
+    from app.repos.keys import get_tavily_credit_policy
+
+    policy = get_tavily_credit_policy()
     current_month = datetime.now(UTC_TZ).strftime("%Y-%m")
     query = """
         SELECT
@@ -65,13 +68,11 @@ async def get_tavily_key_usage_stats() -> list[dict[str, Any]]:
             COALESCE(ku.credit_usage, 0) as credit_usage,
             $1::int as credit_limit,
             CASE
-                WHEN $1::int = 0 THEN 0
+                WHEN $1::int = 0 THEN NULL
                 ELSE (COALESCE(ku.credit_usage, 0)::float / $1::int * 100)
             END as usage_percent,
-            CASE
-                WHEN $1::int = 0 THEN true
-                ELSE COALESCE(ku.credit_usage, 0) < ($1::int * $2)
-            END as is_available
+            $1::int * $2::double precision as admission_limit,
+            COALESCE(ku.credit_usage, 0) < ($1::int * $2::double precision) as is_available
         FROM tavily_api_keys ak
         LEFT JOIN tavily_key_usage ku ON ak.key_hash = ku.key_hash
             AND ku.usage_month = $3
@@ -80,8 +81,10 @@ async def get_tavily_key_usage_stats() -> list[dict[str, Any]]:
     return await db_query(
         query,
         (
-            settings.TAVILY_MONTHLY_CREDIT_LIMIT,
-            settings.TAVILY_LIMIT_THRESHOLD_PERCENT,
+            # The monthly manager is created at startup; settings reload does
+            # not replace it. Display the configuration its reader enforces.
+            policy["credit_limit"],
+            policy["threshold_percent"],
             current_month,
         ),
     )

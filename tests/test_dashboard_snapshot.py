@@ -79,7 +79,12 @@ def test_dashboard_snapshot_has_canonical_sections_and_fields():
 
 
 def test_dashboard_snapshot_survives_uninitialized_settings(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.repos import keys
+
     monkeypatch.setattr(web, "settings", None)
+    monkeypatch.setattr(keys, "_tavily_km", SimpleNamespace(credit_limit=1000, threshold_percent=0.97))
 
     snapshot = web._assemble_dashboard_snapshot(
         {
@@ -92,7 +97,7 @@ def test_dashboard_snapshot_survives_uninitialized_settings(monkeypatch):
     )
 
     assert snapshot["providers"]["gemini"]["available"] is False
-    assert snapshot["providers"]["reset_info"]["tavily_credit_limit"] is None
+    assert snapshot["providers"]["reset_info"]["tavily_credit_limit"] == 1000
     assert snapshot["errors"]["available"] is False
 
 

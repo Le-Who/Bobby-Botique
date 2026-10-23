@@ -203,9 +203,9 @@
                 <tr>
                   <th>Key</th>
                   <th>Credits Used</th>
-                  <th>Limit</th>
+                  <th>Monthly / admission limit</th>
                   <th>%</th>
-                  <th>Status</th>
+                  <th>Local credit status</th>
                 </tr>
               </thead>
               <tbody id="tavily-tbody"></tbody>
@@ -648,28 +648,39 @@
           tEmpty.style.display = "block";
         } else {
           tEmpty.style.display = "none";
+          const creditNumber = value => {
+            if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) return null;
+            const parsed = Number(value);
+            return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+          };
           tBody.innerHTML = tRows
             .map((r) => {
-              const used = r.credit_usage ?? 0;
-              const limit = r.credit_limit ?? 0;
-              const pct = r.usage_percent != null
-                ? Number(r.usage_percent).toFixed(1) : "0.0";
+              const used = creditNumber(r.credit_usage);
+              const limit = creditNumber(r.credit_limit);
+              const admission = creditNumber(r.admission_limit);
+              const known = used !== null && limit !== null;
+              const percent = known && limit > 0
+                ? creditNumber(r.usage_percent) ?? used / limit * 100 : null;
+              const pct = percent !== null ? percent.toFixed(1) + "%" : "—";
               let statusCls, statusTxt;
-              if (used >= limit) {
+              if (!known || typeof r.is_available !== "boolean") {
+                statusCls = "tag-neutral";
+                statusTxt = "Unknown";
+              } else if (r.is_available) {
+                statusCls = "tag-ok";
+                statusTxt = "Local credits admit";
+              } else if (used >= limit) {
                 statusCls = "tag-err";
                 statusTxt = "✗ Exhausted";
-              } else if (!r.is_available) {
-                statusCls = "tag-warn";
-                statusTxt = "⚠ Near Limit";
               } else {
-                statusCls = "tag-ok";
-                statusTxt = "✓ Available";
+                statusCls = "tag-warn";
+                statusTxt = "Blocked at local threshold";
               }
               return `<tr>
                   <td class="mono dim">${escapeHtml(r.api_key_preview || "—")}</td>
-                  <td class="mono">${used}</td>
-                  <td class="mono">${limit}</td>
-                  <td class="mono">${pct}%</td>
+                  <td class="mono">${used ?? "—"}</td>
+                  <td class="mono">${limit ?? "—"}${admission !== null ? ` / ${admission}` : ""}</td>
+                  <td class="mono">${pct}</td>
                   <td><span class="tag ${statusCls}">${statusTxt}</span></td>
               </tr>`;
             })

@@ -699,7 +699,7 @@ Administrative and developer commands are deliberately excluded from `app/bot_co
 - `GET /api/dashboard` — Aggregated batch endpoint (replaces 8 individual fetches with 1 RTT). Auth required.
 - `GET /api/overview`, `/api/keys`, `/api/errors`, `/api/cache`, `/api/queue`, `/api/database`, `/api/circuit-breakers`, `/api/memory` — Individual JSON data endpoints for dashboard charts (requires auth cookie or `X-Auth-Token` header).
 - `GET /api/key-health` — Per-key health diagnostics: status, failure count, suspension info. Auth required.
-- `GET /api/events` — Authenticated Server-Sent Events stream (5s interval) for real-time CPU, memory, DB, queue, and request metrics.
+- `GET /api/events` — Authenticated Server-Sent Events stream (5s interval) for real-time CPU, memory, queue, and request metrics. Service-health probe results come from `/api/dashboard`.
 
 ## Main User Flows
 

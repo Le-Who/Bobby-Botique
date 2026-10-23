@@ -723,6 +723,11 @@ _tavily_km = MonthlyKeyManager(
 )
 
 
+def get_tavily_credit_policy() -> dict[str, float]:
+    """Read the startup-owned monthly limit and admission fraction for display."""
+    return {"credit_limit": _tavily_km.credit_limit, "threshold_percent": _tavily_km.threshold_percent}
+
+
 async def get_available_tavily_key() -> dict[str, Any] | None:
     return await _tavily_km.get_available_key()
 

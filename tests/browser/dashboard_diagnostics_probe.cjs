@@ -36,7 +36,21 @@ process.stdin.on('end', async () => {
         services: { database: 'connected', redis: 'connected', bot: 'running' },
         metrics: { total_requests: 12, average_response_time_ms: 150, error_count: 0,
           error_rate_percent: 0, cache_hit_rate_percent: 25 }, summarization: {} },
-      providers: { gemini: usage, tavily: { available: true, rows: [] },
+      providers: { gemini: usage, tavily: { available: true, rows: [
+        { key_hash: 'tavily-normal', api_key_preview: 'normal***', credit_usage: 0, credit_limit: 1000,
+          admission_limit: 970, usage_percent: 0, is_available: true },
+        { key_hash: 'tavily-threshold', api_key_preview: 'threshold***', credit_usage: 970, credit_limit: 1000,
+          admission_limit: 970, usage_percent: 97, is_available: false },
+        { key_hash: 'tavily-zero-threshold', api_key_preview: 'zero-threshold***', credit_usage: 0, credit_limit: 1000,
+          admission_limit: 0, usage_percent: 0, is_available: false },
+        { key_hash: 'tavily-exhausted', api_key_preview: 'exhausted***', credit_usage: 1000, credit_limit: 1000,
+          admission_limit: 970, usage_percent: 100, is_available: false },
+        { key_hash: 'tavily-unknown', api_key_preview: 'unknown***', credit_usage: 0, credit_limit: 1000, usage_percent: 0 },
+        { key_hash: 'tavily-missing', api_key_preview: 'missing***', credit_usage: null, credit_limit: null,
+          usage_percent: null, is_available: true },
+        { key_hash: 'tavily-invalid', api_key_preview: 'invalid***', credit_usage: '<img src=x onerror=alert(1)>',
+          credit_limit: 'invalid', usage_percent: 'not-a-number', is_available: true },
+      ] },
         circuit_breakers: { available: true, items: {} }, key_health: { available: true, truncated: false, rows: [
           { key_hash: 'hash-one', key: 'one***', model: 'gemini-fixture', status: 'suspended',
             failures: 2, suspended_until: '2099-01-01T00:00:00Z', last_error: 'Synthetic rate limit' },
@@ -99,6 +113,23 @@ process.stdin.on('end', async () => {
       const unlimited = page.locator('#key-tbody tr').filter({ hasText: 'gemini-unlimited' });
       assert.match(await unlimited.innerText(), /No local limit/i);
       assert.equal(await page.locator('#key-tbody img').count(), 0);
+      const tavilyRow = name => page.locator('#tavily-tbody tr').filter({
+        has: page.getByRole('cell', { name: `${name}***`, exact: true }),
+      });
+      assert.match(await tavilyRow('zero-threshold').innerText(), /Blocked at local threshold/i);
+      assert.doesNotMatch(await tavilyRow('zero-threshold').innerText(), /Near Limit|Available|Exhausted/i);
+      assert.match(await tavilyRow('normal').innerText(), /Local credits admit/i);
+      assert.match(await tavilyRow('threshold').innerText(), /Blocked at local threshold/i);
+      assert.match(await tavilyRow('exhausted').innerText(), /Exhausted/i);
+      assert.match(await tavilyRow('unknown').innerText(), /Unknown/i);
+      for (const name of ['missing', 'invalid']) {
+        const row = tavilyRow(name);
+        assert.match(await row.innerText(), /Unknown/i);
+        assert.equal(await row.locator('td').nth(1).innerText(), '—');
+        assert.equal(await row.locator('td').nth(2).innerText(), '—');
+        assert.equal(await row.locator('td').nth(3).innerText(), '—');
+        assert.equal(await row.locator('img').count(), 0);
+      }
       await page.locator('#tab-errors').click();
       assert.doesNotMatch(await page.locator('#error-log').innerText(), /all systems normal/i);
       failDashboard = true;

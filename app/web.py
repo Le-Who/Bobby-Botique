@@ -497,6 +497,7 @@ async def api_overview():
 async def api_keys():
     """API key usage statistics for all models."""
     try:
+        from app.repos.keys import get_tavily_credit_policy
         from app.utils.time import get_kyiv_reset_time
 
         key_stats = await get_gemini_key_usage_stats()
@@ -533,7 +534,7 @@ async def api_keys():
                 },
                 "reset_info": {
                     "gemini_resets": get_kyiv_reset_time(),
-                    "tavily_credit_limit": getattr(settings, "TAVILY_MONTHLY_CREDIT_LIMIT", None),
+                    "tavily_credit_limit": get_tavily_credit_policy()["credit_limit"],
                 },
             }
         )
@@ -774,6 +775,7 @@ def _assemble_dashboard_snapshot(
         "execution_scope": queue_raw.get("execution_scope", "process"),
     }
 
+    from app.repos.keys import get_tavily_credit_policy
     from app.utils.time import get_kyiv_reset_time
 
     return {
@@ -801,7 +803,7 @@ def _assemble_dashboard_snapshot(
             "tavily": {"available": tavily_available, "error": tavily_error, "rows": tavily_rows},
             "reset_info": {
                 "gemini_resets": get_kyiv_reset_time(),
-                "tavily_credit_limit": getattr(settings, "TAVILY_MONTHLY_CREDIT_LIMIT", None),
+                "tavily_credit_limit": get_tavily_credit_policy()["credit_limit"],
             },
             "circuit_breakers": {"available": True, "items": circuit_breakers},
             "key_health": {
