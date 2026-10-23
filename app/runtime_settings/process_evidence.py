@@ -89,9 +89,10 @@ PROCESS_EVIDENCE: dict[str, ProcessEvidence] = {
     ),
     "tts.delivery": _row(
         "Порядок провайдеров аудио",
-        "Выбор последовательности ElevenLabs и Gemini для полного голосового ответа.",
+        "Последовательность ElevenLabs и Gemini для полного ответа и выбор провайдера каталога голосов Mini App.",
         _AUDIO,
         ("app/voice_engine.py", "VoiceReplyManager._pregenerate_audio"),
+        ("app/runtime_settings/audio.py", "user_voice_catalog"),
     ),
     "asr.delivery": _row(
         "Порядок провайдеров распознавания",

@@ -44,6 +44,7 @@ from app.repos import crocodile_daily as daily_delivery_repo
 from app.repos import daily_2048 as daily_2048_repo
 from app.request_context import set_user_context
 from app.runtime_settings import media_prompts as _media_prompts  # noqa: F401 — registers Live prompts
+from app.runtime_settings.audio import user_voice_catalog, valid_user_voice
 from app.runtime_settings.lifecycle import runtime_settings_scope
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
@@ -1039,6 +1040,7 @@ async def api_get_settings(user_id: int):
 @miniapp_blueprint.route("/api/settings", methods=["PATCH"])
 @require_webapp_auth
 @require_authorized_webapp_user
+@runtime_settings_scope()
 async def api_update_settings(user_id: int):
     """Update chat settings (partial update)."""
     try:
@@ -1049,6 +1051,10 @@ async def api_update_settings(user_id: int):
             return jsonify({"error": "no_chat"}), 404
 
         body = await request.get_json(silent=True) or {}
+        if "voice_id" in body and body["voice_id"] is not None:
+            voice_id = body["voice_id"]
+            if not isinstance(voice_id, str) or not await valid_user_voice(voice_id):
+                return jsonify({"error": "invalid_voice_id"}), 400
         changed = False
         requested_ltm_enabled: bool | None = None
 
@@ -1114,10 +1120,8 @@ async def api_update_settings(user_id: int):
 
         # Voice ID
         if "voice_id" in body:
-            vid = body["voice_id"]
-            if vid is None or isinstance(vid, str):
-                chat_state.voice_id = vid
-                changed = True
+            chat_state.voice_id = body["voice_id"]
+            changed = True
 
         if requested_ltm_enabled is not None:
             # Consent is its own atomic write.  A stale full ChatState save
@@ -1198,78 +1202,13 @@ async def api_delete_role(user_id: int, role_id: int):
         return jsonify({"error": "internal_error"}), 500
 
 
-_voices_cache: list[dict] | None = None
-_voices_cache_ts: float = 0.0
-_VOICES_CACHE_TTL: float = 300.0
-
-
 @miniapp_blueprint.route("/api/voices", methods=["GET"])
 @require_webapp_auth
 @require_authorized_webapp_user
+@runtime_settings_scope()
 async def api_get_voices(user_id: int):
-    """Provide a list of curated voices depending on available provider."""
-    import time
-
-    from app.config import settings
-
-    lang = "ru"
-
-    if settings.ELEVENLABS_API_KEYS:
-        global _voices_cache, _voices_cache_ts
-        now = time.time()
-
-        # Check cache
-        if _voices_cache is not None and (now - _voices_cache_ts < _VOICES_CACHE_TTL):
-            return jsonify({"voices": _voices_cache})
-
-        from app.providers.elevenlabs_tts import fetch_voices
-
-        # Use first key for checking available voices (readonly query)
-        api_key = settings.ELEVENLABS_API_KEYS[0]
-        dynamic_voices = await fetch_voices(api_key)
-
-        if dynamic_voices:
-            # Map into the structure expected by the Mini App
-            voices = []
-            for v in dynamic_voices:
-                name = v["name"]
-                # Append accent label or similar if present in labels for clarity
-                accent = v.get("labels", {}).get("accent")
-                if accent:
-                    name = f"{name} ({accent.title()})"
-                voices.append({"id": v["id"], "name": name})
-            _voices_cache = voices
-            _voices_cache_ts = now
-            return jsonify({"voices": voices})
-
-        # Fallback to static ElevenLabs list on API failure
-        logger.warning("ElevenLabs voices API failed or returned empty. Falling back to static curated list.")
-        # Clear cache so next request tries again
-        _voices_cache = None
-        _voices_cache_ts = 0.0
-
-        voices = [
-            {"id": "XB0fDUnXU5powFXDhCwa", "name": f"Charlotte ({t('miniapp.voice_tag.conversational', lang)})"},
-            {"id": "21m00Tcm4TlvDq8ikWAM", "name": f"Rachel ({t('miniapp.voice_tag.calm', lang)})"},
-            {"id": "pNInz6obpgDQGcFmaJgB", "name": f"Adam ({t('miniapp.voice_tag.deep', lang)})"},
-            {"id": "ErXwobaYiN019PkySvjV", "name": f"Antoni ({t('miniapp.voice_tag.friendly', lang)})"},
-            {"id": "nPczCjzI2devNBz1zQrb", "name": f"Brian ({t('miniapp.voice_tag.professional', lang)})"},
-            {"id": "TX3LPaxmHKxFdv7VOQHJ", "name": f"Liam ({t('miniapp.voice_tag.energetic', lang)})"},
-            {"id": "EXAVITQu4vr4xnSDxMaL", "name": f"Bella ({t('miniapp.voice_tag.soft', lang)})"},
-        ]
-    else:
-        # Gemini static voices
-        voices = [
-            {"id": "Aoede", "name": f"Aoede ({t('miniapp.voice_tag.natural_breezy', lang)})"},
-            {"id": "Kore", "name": f"Kore ({t('miniapp.voice_tag.confident_energetic', lang)})"},
-            {"id": "Puck", "name": f"Puck ({t('miniapp.voice_tag.upbeat_male', lang)})"},
-            {"id": "Charon", "name": f"Charon ({t('miniapp.voice_tag.professional', lang)})"},
-            {"id": "Leda", "name": f"Leda ({t('miniapp.voice_tag.light_youthful', lang)})"},
-            {"id": "Orus", "name": f"Orus ({t('miniapp.voice_tag.deep_authoritative', lang)})"},
-            {"id": "Zephyr", "name": f"Zephyr ({t('miniapp.voice_tag.clear_cheerful', lang)})"},
-            {"id": "Rasalgethi", "name": f"Rasalgethi ({t('miniapp.voice_tag.informative', lang)})"},
-        ]
-    return jsonify({"voices": voices})
+    """Return the active administrator-managed TTS catalog and default voice."""
+    return jsonify(await user_voice_catalog())
 
 
 @miniapp_blueprint.route("/api/live-settings", methods=["GET"])

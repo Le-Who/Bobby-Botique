@@ -111,7 +111,7 @@ def test_uv_and_frontier_policy_are_explicit() -> None:
     metadata = _metadata()
 
     assert metadata["tool"]["uv"]["package"] is False
-    assert metadata["tool"]["uv"]["required-version"] == "==0.12.18"
+    assert metadata["tool"]["uv"]["required-version"] == "==0.13.5"
     assert metadata["tool"]["dependency-frontier"] == {
         "python-version": "3.14",
         "production-platform": "x86_64-manylinux_2_28",

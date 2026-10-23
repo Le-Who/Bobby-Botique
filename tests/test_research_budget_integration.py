@@ -67,7 +67,9 @@ async def test_hanging_synthesis_is_cancelled_at_total_deadline(observed_timeout
     started = asyncio.Event()
     cancelled = asyncio.Event()
     timeouts, delays = observed_timeouts
-    now = [asyncio.get_running_loop().time()]
+    # Budget time is controlled independently from the real asyncio timeout clock.
+    # An exact origin keeps advancing by 30 seconds free of host-uptime rounding.
+    now = [0.0]
 
     async def generate(**kwargs):
         if kwargs["config"].tools:
