@@ -70,7 +70,8 @@ async def test_controls_conflict_does_not_claim_success():
 
 
 @pytest.mark.asyncio
-async def test_chunked_oversized_mutation_is_rejected_before_write():
+@pytest.mark.parametrize("chunk_sizes", [(300_001,), (150_000, 150_001)], ids=["single", "cumulative"])
+async def test_chunked_oversized_mutation_is_rejected_before_write(chunk_sizes):
     from app.web import quart_app
 
     client = quart_app.test_client()
@@ -82,7 +83,8 @@ async def test_chunked_oversized_mutation_is_rejected_before_write():
             method="POST",
             headers={"X-CSRF-Token": "test-csrf", "Content-Type": "application/json"},
         ) as connection:
-            await connection.send(b" " * 300_001)
+            for size in chunk_sizes:
+                await connection.send(b" " * size)
             # Reject an oversized stream without waiting for its end.
             await asyncio.wait_for(connection.receive(), timeout=1)
             await connection.send_complete()

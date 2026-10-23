@@ -6,10 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from quart.testing.connections import WebsocketDisconnectError
 
 from app.web import quart_app
 from app.web_miniapp import require_authorized_webapp_user
+from tests.asgi_websocket import websocket_close_event
 from tests.factories import make_valid_init_data
 
 _BOT_TOKEN = "test-token"
@@ -419,10 +419,8 @@ async def test_websocket_authorization_fails_closed_before_private_work(
             side_effect=RuntimeError("private work must not run"),
         ) as private_work,
     ):
-        with pytest.raises(WebsocketDisconnectError) as disconnected:
-            async with quart_app.test_client().websocket(url) as ws:
-                await ws.receive()
+        closed = await websocket_close_event(quart_app, url)
 
-    assert disconnected.value.args == (4003,)
+    assert closed["code"] == 4003
     is_authorized.assert_awaited_once_with(777)
     private_work.assert_not_awaited()

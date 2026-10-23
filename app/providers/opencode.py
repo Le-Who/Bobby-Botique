@@ -739,7 +739,8 @@ class OpencodeGoProvider(OpenRouterProvider):
                     task_type=part.task_type,
                 )
         elif isinstance(part, (bytes, bytearray, Image.Image)):
-            img_bytes = await save_image_as_bytes(part)
+            image_data = bytes(part) if isinstance(part, bytearray) else part
+            img_bytes = await save_image_as_bytes(image_data)
 
         if not img_bytes:
             return None
