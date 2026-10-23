@@ -41,7 +41,7 @@ async def webhook_client(monkeypatch):
 
     monkeypatch.setenv("WEBHOOK_URL", "https://webhook.example.test")
     monkeypatch.setattr(bot, "quart_app", test_app)
-    monkeypatch.setattr(bot, "shutdown_event", SimpleNamespace(wait=wait_for_shutdown))
+    monkeypatch.setattr(bot, "shutdown_event", SimpleNamespace(wait=wait_for_shutdown, is_set=shutdown.is_set))
     monkeypatch.setattr(
         bot,
         "settings",

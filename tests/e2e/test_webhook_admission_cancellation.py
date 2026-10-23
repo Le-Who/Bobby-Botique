@@ -117,7 +117,7 @@ async def webhook_lifecycle(monkeypatch, request):
     application.stop = stop
     monkeypatch.setenv("WEBHOOK_URL", "https://webhook.example.test")
     monkeypatch.setattr(bot, "quart_app", app)
-    monkeypatch.setattr(bot, "shutdown_event", SimpleNamespace(wait=wait_for_shutdown))
+    monkeypatch.setattr(bot, "shutdown_event", SimpleNamespace(wait=wait_for_shutdown, is_set=control.shutdown.is_set))
     monkeypatch.setattr(
         bot,
         "settings",

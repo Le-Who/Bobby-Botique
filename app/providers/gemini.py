@@ -73,6 +73,25 @@ def get_cached_genai_client(api_key: str) -> genai.Client:
     return _gemini_clients_cache[api_key]
 
 
+async def close_cached_genai_clients() -> None:
+    """Drain both SDK transports after callers have stopped issuing requests."""
+    clients = list(_gemini_clients_cache.values())
+    _gemini_clients_cache.clear()
+
+    async def close_client(client: genai.Client) -> None:
+        try:
+            await client.aio.aclose()
+        except Exception:
+            logging.warning("Gemini async transport cleanup failed")
+        finally:
+            try:
+                client.close()
+            except Exception:
+                logging.warning("Gemini sync transport cleanup failed")
+
+    await asyncio.gather(*(close_client(client) for client in clients))
+
+
 async def validate_gemini_chat_model_capability(
     model_name: str,
     *,

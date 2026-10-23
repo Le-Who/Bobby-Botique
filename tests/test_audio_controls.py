@@ -114,7 +114,12 @@ async def test_gemini_payload_uses_pinned_voice_prompt_and_admin_parameters(audi
         return SimpleNamespace(
             candidates=[
                 SimpleNamespace(
-                    content=SimpleNamespace(parts=[SimpleNamespace(inline_data=SimpleNamespace(data=b"pcm"))])
+                    finish_reason="STOP",
+                    content=SimpleNamespace(
+                        parts=[
+                            SimpleNamespace(inline_data=SimpleNamespace(data=b"pc", mime_type="audio/l16;rate=24000"))
+                        ]
+                    ),
                 )
             ]
         )
@@ -129,7 +134,12 @@ async def test_gemini_payload_uses_pinned_voice_prompt_and_admin_parameters(audi
         changed = gemini_config()
         changed["voices"][0]["prompt"] = "Do not use this later revision."
         await audio.save_config("gemini", changed, expected_revision=1, actor="admin")
-        assert await tts.generate_speech("Текст.", "fake-key", voice="FutureLongVoiceName") == b"pcm"
+        assert (
+            await tts.generate_speech(
+                "Текст.", "fake-key", voice="FutureLongVoiceName", model_name="gemini-3.1-flash-tts-preview"
+            )
+            == b"pc"
+        )
     payload = sent[0]
     assert "Speak softly." in payload["contents"]
     assert "Do not use this later revision." not in payload["contents"]
@@ -150,19 +160,26 @@ async def test_elevenlabs_payload_uses_admin_voice_parameters(audio_runtime, mon
     await audio.save_config("elevenlabs", config, expected_revision=0, actor="admin")
     sent = []
 
-    async def post(endpoint, **kwargs):
-        sent.append((endpoint, kwargs))
-        return SimpleNamespace(status_code=200, content=b"p" * 150)
+    import json
 
-    monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: SimpleNamespace(post=post))
-    assert await elevenlabs_tts.generate_speech_elevenlabs("Hello", "fake-key", voice_id=config["default_voice"])
-    assert sent[0][1]["json"]["voice_settings"] == {
+    import httpx
+
+    def respond(request):
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, content=b"p" * 150, headers={"Content-Type": "audio/pcm;rate=24000"})
+
+    async with httpx.AsyncClient(
+        base_url="https://api.elevenlabs.io", transport=httpx.MockTransport(respond)
+    ) as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        assert await elevenlabs_tts.generate_speech_elevenlabs("Hello", "fake-key", voice_id=config["default_voice"])
+    assert sent[0]["voice_settings"] == {
         "stability": 0.1,
         "similarity_boost": 0.6,
         "style": 0.9,
         "use_speaker_boost": False,
     }
-    assert sent[0][1]["json"]["apply_text_normalization"] == "off"
+    assert sent[0]["apply_text_normalization"] == "off"
 
 
 @pytest.mark.asyncio
@@ -193,5 +210,7 @@ async def test_generation_uses_catalog_membership_and_fallback_default(audio_run
     monkeypatch.setattr("app.utils.audio.crossfade_pcm_chunks", lambda _: b"pcm")
     monkeypatch.setattr("app.utils.audio.pcm_to_ogg_opus", AsyncMock(return_value=b"ogg"))
     job = SimpleNamespace(response_text="Hello.", voice="short", tts_temperature=None)
-    assert await voice_engine.VoiceReplyManager()._pregenerate_audio(job) == b"ogg"
+    manager = voice_engine.VoiceReplyManager()
+    monkeypatch.setattr(manager, "_set_status", AsyncMock())
+    assert await manager._pregenerate_audio(job) == b"ogg"
     assert calls == [("elevenlabs", "short"), ("gemini", "FutureLongVoiceName")]

@@ -121,6 +121,7 @@ async def test_read_aloud_button_uses_admin_default_without_user_preference(monk
     from app.runtime_settings.store import SettingsSnapshot
 
     manager = voice_engine.VoiceReplyManager()
+    monkeypatch.setattr(manager, "_set_status", AsyncMock())
     sent_voices = []
     generated = []
 
@@ -130,7 +131,7 @@ async def test_read_aloud_button_uses_admin_default_without_user_preference(monk
 
     async def enqueue(**kwargs):
         generated.append(await manager._pregenerate_audio(SimpleNamespace(**kwargs)))
-        return SimpleNamespace(deduped=False)
+        return SimpleNamespace(deduped=False, queued=True, reason_code=None)
 
     monkeypatch.setattr(voice_engine, "_voice_reply_manager", SimpleNamespace(enqueue=enqueue))
     monkeypatch.setattr(voice_engine, "_run_gemini_pipeline", synthesize)

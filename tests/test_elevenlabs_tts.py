@@ -1,6 +1,7 @@
 # /tests/test_elevenlabs_tts.py
 """Unit tests for the ElevenLabs TTS provider HTTP layer, key rotation router, and voice fetcher."""
 
+import asyncio
 import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,225 +17,280 @@ from app.providers.elevenlabs_tts import (
     generate_speech_with_key_rotation,
 )
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Group 1: generate_speech_elevenlabs — HTTP layer
-# ──────────────────────────────────────────────────────────────────────────────
+
+class TrackedStream(httpx.AsyncByteStream):
+    def __init__(self, chunks=(), *, wait_after_chunks=False):
+        self.chunks = chunks
+        self.wait_after_chunks = wait_after_chunks
+        self.reads = 0
+        self.closed = False
+        self.waiting = asyncio.Event()
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            self.reads += 1
+            yield chunk
+        if self.wait_after_chunks:
+            self.waiting.set()
+            await asyncio.Event().wait()
+
+    async def aclose(self):
+        self.closed = True
 
 
 @pytest.mark.asyncio
-async def test_generate_speech_elevenlabs_empty_string():
-    res = await generate_speech_elevenlabs("", "api_key", voice_id="voice")
-    assert res is None
+@pytest.mark.parametrize(
+    ("mime", "body"),
+    [("application/json", b'{"error":"' + b"x" * 150 + b'"}'), ("audio/pcm", b"x" * 151)],
+)
+async def test_successful_http_response_must_satisfy_pcm_contract(monkeypatch, mime, body):
+    from app.providers.tts_audio import TTSOutputError
+
+    async def handler(request):
+        return httpx.Response(200, headers={"content-type": mime}, content=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        with pytest.raises(TTSOutputError):
+            await generate_speech_elevenlabs("Hello", "fake-key", voice_id="voice")
 
 
 @pytest.mark.asyncio
-async def test_generate_speech_elevenlabs_whitespace():
-    res = await generate_speech_elevenlabs("   \n ", "api_key", voice_id="voice")
-    assert res is None
+async def test_audio_read_stops_at_bound_and_closes_stream(monkeypatch):
+    from app.providers.tts_audio import TTSOutputError
+
+    stream = TrackedStream([b"x" * 16384, b"y" * 16384, b"never-read"])
+
+    async def handler(request):
+        return httpx.Response(200, headers={"content-type": "audio/pcm"}, stream=stream)
+
+    monkeypatch.setattr(elevenlabs_tts, "MAX_TTS_AUDIO_BYTES", 16384, raising=False)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        with pytest.raises(TTSOutputError, match="audio_too_large"):
+            await generate_speech_elevenlabs("Hello", "fake-key", voice_id="voice")
+    assert stream.reads == 2
+    assert stream.closed
 
 
 @pytest.mark.asyncio
-async def test_generate_speech_elevenlabs_success():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.content = b"a" * 150
+@pytest.mark.parametrize("catalog", [False, True])
+async def test_cancelled_request_finishes_attempt_and_closes_stream(monkeypatch, catalog):
+    stream = TrackedStream(wait_after_chunks=True)
+    events = []
+    monkeypatch.setattr(
+        "app.observability.workload_events.emit", lambda event, **fields: events.append((event, fields))
+    )
 
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_resp)
+    async def handler(request):
+        return httpx.Response(200, stream=stream)
 
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        res = await generate_speech_elevenlabs("Hello", "key", voice_id="voice")
-        assert res == b"a" * 150
-
-
-@pytest.mark.asyncio
-async def test_generate_speech_elevenlabs_too_small():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.content = b"a" * 50
-
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_resp)
-
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        res = await generate_speech_elevenlabs("Hello", "key", voice_id="voice")
-        assert res is None
-
-
-@pytest.mark.asyncio
-async def test_generate_speech_elevenlabs_401():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 401
-
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_resp)
-
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        with pytest.raises(ElevenLabsQuotaError):
-            await generate_speech_elevenlabs("Hello", "key", voice_id="voice")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        coroutine = (
+            elevenlabs_tts.fetch_voices("fake-key")
+            if catalog
+            else generate_speech_elevenlabs("Hello", "fake-key", voice_id="voice")
+        )
+        task = asyncio.create_task(coroutine)
+        await asyncio.wait_for(stream.waiting.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    terminals = [fields for event, fields in events if event == "workload.attempt_finished"]
+    assert [row["outcome"] for row in terminals] == ["cancelled"]
+    assert stream.closed
 
 
 @pytest.mark.asyncio
-async def test_generate_speech_elevenlabs_403():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 403
+async def test_absolute_deadline_covers_reading_entire_body(monkeypatch):
+    stream = TrackedStream([b"\x01\x00" * 100], wait_after_chunks=True)
+    events = []
+    monkeypatch.setattr(
+        "app.observability.workload_events.emit", lambda event, **fields: events.append((event, fields))
+    )
 
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_resp)
+    async def handler(request):
+        return httpx.Response(200, headers={"content-type": "audio/pcm"}, stream=stream)
 
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        with pytest.raises(ElevenLabsQuotaError):
-            await generate_speech_elevenlabs("Hello", "key", voice_id="voice")
-
-
-@pytest.mark.asyncio
-async def test_generate_speech_elevenlabs_429():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 429
-
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_resp)
-
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        with pytest.raises(ElevenLabsQuotaError):
-            await generate_speech_elevenlabs("Hello", "key", voice_id="voice")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        with pytest.raises(TimeoutError):
+            await generate_speech_elevenlabs("Hello", "fake-key", voice_id="voice", timeout=0.01)
+    terminals = [fields for event, fields in events if event == "workload.attempt_finished"]
+    assert len(terminals) == 1
+    assert terminals[0]["reason_code"] == "timeout"
+    assert stream.closed
 
 
 @pytest.mark.asyncio
-async def test_generate_speech_elevenlabs_500():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 500
-    mock_resp.text = "Internal Server Error"
+async def test_stitching_keeps_only_nearest_bounded_context(monkeypatch):
+    sent = []
 
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_resp)
+    async def handler(request):
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, content=b"\x01\x00" * 100)
 
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        with pytest.raises(ElevenLabsAPIError):
-            await generate_speech_elevenlabs("Hello", "key", voice_id="voice")
-
-
-@pytest.mark.asyncio
-async def test_generate_speech_error_does_not_log_upstream_body(caplog):
-    upstream_secret = "elevenlabs-upstream-secret-42c1"
-    mock_resp = MagicMock(status_code=500, text=upstream_secret, content=b"")
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_resp)
-
-    with (
-        patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client),
-        caplog.at_level(logging.INFO),
-        pytest.raises(ElevenLabsAPIError) as error,
-    ):
-        await generate_speech_elevenlabs("Hello", "key", voice_id="voice")
-
-    assert upstream_secret not in caplog.text
-    assert upstream_secret not in str(error.value)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        await generate_speech_elevenlabs(
+            "Hello", "fake-key", voice_id="voice", previous_text="a" * 1000 + "tail", next_text="head" + "b" * 1000
+        )
+    assert sent[0]["previous_text"] == "a" * 496 + "tail"
+    assert sent[0]["next_text"] == "head" + "b" * 496
 
 
 @pytest.mark.asyncio
-async def test_fetch_voices_transport_error_is_sanitized(caplog):
-    upstream_secret = "elevenlabs-transport-secret-4f10"
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(side_effect=RuntimeError(upstream_secret))
-
-    with (
-        patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client),
-        caplog.at_level(logging.INFO),
-    ):
-        result = await elevenlabs_tts.fetch_voices("key")
-
-    assert result == []
-    assert upstream_secret not in caplog.text
+async def test_close_client_closes_and_clears_owned_pool(monkeypatch):
+    client = httpx.AsyncClient()
+    monkeypatch.setattr(elevenlabs_tts, "_http_client", client)
+    await elevenlabs_tts.close_elevenlabs_client()
+    assert client.is_closed
+    assert elevenlabs_tts._http_client is None
+    await elevenlabs_tts.close_elevenlabs_client()
 
 
 @pytest.mark.asyncio
-async def test_fetch_voices_invalid_shape_finishes_attempt():
-    mock_resp = MagicMock(status_code=200)
-    mock_resp.json.return_value = ["unexpected"]
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_resp)
-    attempt = MagicMock()
+async def test_complete_message_has_aggregate_audio_bound(monkeypatch):
+    async def handler(request):
+        return httpx.Response(200, content=b"\x01\x00" * 100)
 
-    with (
-        patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client),
-        patch("app.providers.elevenlabs_tts.start_workload_attempt", return_value=attempt),
-    ):
-        result = await elevenlabs_tts.fetch_voices("fake-key-1234")
-
-    assert result == []
-    attempt.fail.assert_called_once()
-    assert attempt.fail.call_args.kwargs["reason_code"] == "invalid_response"
+    monkeypatch.setattr(elevenlabs_tts, "MAX_TTS_AUDIO_BYTES", 300)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        assert await generate_speech_with_key_rotation(["one", "two"], ["fake-key"], voice_id="voice") is None
 
 
 @pytest.mark.asyncio
-async def test_generate_speech_elevenlabs_previous_text():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.content = b"a" * 150
+async def test_request_deadline_and_terminal_cover_configuration(monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        "app.observability.workload_events.emit", lambda event, **fields: events.append((event, fields))
+    )
 
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_resp)
+    async def stuck_config(provider):
+        await asyncio.Event().wait()
 
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        await generate_speech_elevenlabs("Hello", "key", voice_id="voice", previous_text="Prev")
-        payload = mock_client.post.call_args[1]["json"]
-        assert payload["previous_text"] == "Prev"
-
-
-@pytest.mark.asyncio
-async def test_generate_speech_elevenlabs_no_previous_text():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.content = b"a" * 150
-
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_resp)
-
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        await generate_speech_elevenlabs("Hello", "key", voice_id="voice", previous_text=None)
-        payload = mock_client.post.call_args[1]["json"]
-        assert "previous_text" not in payload
+    monkeypatch.setattr(elevenlabs_tts, "get_config", stuck_config)
+    with pytest.raises(TimeoutError):
+        await generate_speech_elevenlabs("Hello", "fake-key", voice_id="voice", timeout=0.01)
+    terminals = [fields for event, fields in events if event == "workload.attempt_finished"]
+    assert len(terminals) == 1
+    assert terminals[0]["reason_code"] == "timeout"
 
 
 @pytest.mark.asyncio
-async def test_generate_speech_elevenlabs_apply_text_normalization():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.content = b"a" * 150
+async def test_catalog_cancel_during_error_response_close_has_one_terminal(monkeypatch):
+    closing = asyncio.Event()
+    events = []
+    monkeypatch.setattr(
+        "app.observability.workload_events.emit", lambda event, **fields: events.append((event, fields))
+    )
 
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=mock_resp)
+    class SlowClose(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"unread error body"
 
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        await generate_speech_elevenlabs("Hello", "key", voice_id="voice")
-        payload = mock_client.post.call_args[1]["json"]
-        assert payload["apply_text_normalization"] == "on"
+        async def aclose(self):
+            closing.set()
+            await asyncio.Event().wait()
 
+    async def handler(request):
+        return httpx.Response(401, stream=SlowClose())
 
-@pytest.mark.asyncio
-async def test_generate_speech_elevenlabs_output_format():
-    captured: dict[str, object] = {}
-
-    async def handle_request(request: httpx.Request) -> httpx.Response:
-        captured["query"] = dict(request.url.params)
-        captured["payload"] = json.loads(request.content.decode("utf-8"))
-        return httpx.Response(200, content=b"a" * 150)
-
-    transport = httpx.MockTransport(handle_request)
-    async with httpx.AsyncClient(
-        transport=transport,
-        base_url="https://api.elevenlabs.io",
-    ) as client:
-        with patch("app.providers.elevenlabs_tts._get_client", return_value=client):
-            await generate_speech_elevenlabs("Hello", "key", voice_id="voice")
-
-    assert captured["query"] == {"output_format": "pcm_24000"}
-    assert "output_format" not in captured["payload"]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        task = asyncio.create_task(elevenlabs_tts.fetch_voices("key"))
+        await asyncio.wait_for(closing.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    terminals = [fields for event, fields in events if event == "workload.attempt_finished"]
+    assert [row["outcome"] for row in terminals] == ["cancelled"]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Group 2: generate_speech_with_key_rotation — Atomic Router
+# Group 1: HTTP requests exercise real httpx framing and response objects.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["", "   \n "])
+async def test_generate_speech_elevenlabs_empty_input(text):
+    assert await generate_speech_elevenlabs(text, "api_key", voice_id="voice") is None
+
+
+@pytest.mark.asyncio
+async def test_generate_speech_elevenlabs_success_and_request_payload(monkeypatch):
+    captured = []
+
+    async def handler(request):
+        captured.append(request)
+        return httpx.Response(200, headers={"content-type": "application/octet-stream"}, content=b"\x01\x00" * 75)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        assert (
+            await generate_speech_elevenlabs("Hello", "key", voice_id="voice", previous_text="Prev") == b"\x01\x00" * 75
+        )
+    request = captured[0]
+    payload = json.loads(request.content)
+    assert request.url.path == "/v1/text-to-speech/voice/stream"
+    assert dict(request.url.params) == {"output_format": "pcm_24000"}
+    assert payload["text"] == "Hello"
+    assert payload["previous_text"] == "Prev"
+    assert "next_text" not in payload
+    assert payload["apply_text_normalization"] == "on"
+    assert "output_format" not in payload
+    assert request.headers["xi-api-key"] == "key"
+    assert request.headers["accept-encoding"] == "identity"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403, 429, 500])
+async def test_generate_speech_http_failure_closes_without_reading_private_body(monkeypatch, caplog, status):
+    stream = TrackedStream([b"private-upstream-body" * 10000])
+
+    async def handler(request):
+        return httpx.Response(status, stream=stream)
+
+    error_type = ElevenLabsQuotaError if status in (401, 403, 429) else ElevenLabsAPIError
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        with caplog.at_level(logging.INFO), pytest.raises(error_type) as error:
+            await generate_speech_elevenlabs("Hello", "key", voice_id="voice")
+    assert "private-upstream-body" not in caplog.text
+    assert "private-upstream-body" not in str(error.value)
+    assert stream.reads == 0
+    assert stream.closed
+
+
+@pytest.mark.asyncio
+async def test_invalid_request_does_not_retry_unchanged_payload_for_other_keys(monkeypatch):
+    called = []
+
+    async def handler(request):
+        called.append(request.headers["xi-api-key"])
+        return httpx.Response(422, content=b"invalid voice or settings")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        assert await generate_speech_with_key_rotation(["Hello"], ["key-one", "key-two"], voice_id="voice") is None
+    assert called == ["key-one"]
+
+
+@pytest.mark.asyncio
+async def test_late_chunk_failure_discards_preceding_successful_audio(monkeypatch):
+    async def handler(request):
+        if json.loads(request.content)["text"] == "first":
+            return httpx.Response(200, content=b"\x01\x00" * 75)
+        return httpx.Response(429)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        assert await generate_speech_with_key_rotation(["first", "second"], ["key"], voice_id="voice") is None
+
+
+# # Group 2: generate_speech_with_key_rotation — Atomic Router
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -309,99 +365,69 @@ async def test_generate_speech_with_key_rotation_skips_empty_chunks():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Group 3: fetch_voices — GET /v1/voices
-# ──────────────────────────────────────────────────────────────────────────────
+# Group 3: bounded voice catalog reads and parsing.
 
 
 @pytest.mark.asyncio
-async def test_fetch_voices_success():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "voices": [
-            {"voice_id": "v1", "name": "Charlotte", "category": "premade", "labels": {"accent": "american"}},
-            {"voice_id": "v2", "name": "ClonedVoice", "category": "cloned", "labels": {}},
-        ]
-    }
+@pytest.mark.parametrize(
+    ("payload", "want"),
+    [
+        (
+            {
+                "voices": [
+                    {"voice_id": "v1", "name": "Charlotte", "category": "premade", "labels": {"accent": "american"}},
+                    {"voice_id": "v2", "name": "ClonedVoice", "category": "cloned", "labels": {}},
+                ]
+            },
+            ["v1", "v2"],
+        ),
+        (
+            {
+                "voices": [
+                    {"voice_id": "v1", "name": "Premade", "category": "premade"},
+                    {"voice_id": "v2", "name": "Generated", "category": "generated"},
+                    {"name": "MissingID", "category": "premade"},
+                ]
+            },
+            ["v1"],
+        ),
+        (["unexpected"], []),
+        ({"voices": "unexpected"}, []),
+    ],
+)
+async def test_fetch_voices_parses_only_valid_catalog_rows(monkeypatch, payload, want):
+    async def handler(request):
+        assert request.method == "GET"
+        assert request.url.path == "/v1/voices"
+        return httpx.Response(200, json=payload)
 
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_resp)
-
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        # We access fetch_voices via getattr to allow RED compilation before fetch_voices exists
-        fetch_voices_func = getattr(elevenlabs_tts, "fetch_voices")
-        res = await fetch_voices_func("api_key")
-        assert len(res) == 2
-        assert res[0]["id"] == "v1"
-        assert res[0]["name"] == "Charlotte"
-        assert res[0]["category"] == "premade"
-        assert res[1]["id"] == "v2"
-        assert res[1]["name"] == "ClonedVoice"
-        assert res[1]["category"] == "cloned"
-
-
-@pytest.mark.asyncio
-async def test_fetch_voices_filters_generated():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "voices": [
-            {"voice_id": "v1", "name": "Premade", "category": "premade", "labels": {}},
-            {"voice_id": "v2", "name": "Generated", "category": "generated", "labels": {}},
-        ]
-    }
-
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_resp)
-
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        fetch_voices_func = getattr(elevenlabs_tts, "fetch_voices")
-        res = await fetch_voices_func("api_key")
-        assert len(res) == 1
-        assert res[0]["id"] == "v1"
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        result = await elevenlabs_tts.fetch_voices("key")
+    assert [row["id"] for row in result] == want
 
 
 @pytest.mark.asyncio
-async def test_fetch_voices_401_returns_empty():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 401
+async def test_fetch_voices_transport_error_is_sanitized(monkeypatch, caplog):
+    async def handler(request):
+        raise httpx.ConnectError("private-transport-detail")
 
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_resp)
-
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        fetch_voices_func = getattr(elevenlabs_tts, "fetch_voices")
-        res = await fetch_voices_func("api_key")
-        assert res == []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        with caplog.at_level(logging.INFO):
+            assert await elevenlabs_tts.fetch_voices("key") == []
+    assert "private-transport-detail" not in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_fetch_voices_network_error_returns_empty():
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
+async def test_fetch_voices_http_failure_returns_empty_without_reading_body(monkeypatch):
+    stream = TrackedStream([b"do-not-read"])
 
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        fetch_voices_func = getattr(elevenlabs_tts, "fetch_voices")
-        res = await fetch_voices_func("api_key")
-        assert res == []
+    async def handler(request):
+        return httpx.Response(401, stream=stream)
 
-
-@pytest.mark.asyncio
-async def test_fetch_voices_missing_id_skipped():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "voices": [
-            {"voice_id": "v1", "name": "Premade", "category": "premade", "labels": {}},
-            {"name": "NoID", "category": "premade", "labels": {}},
-        ]
-    }
-
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_resp)
-
-    with patch("app.providers.elevenlabs_tts._get_client", return_value=mock_client):
-        fetch_voices_func = getattr(elevenlabs_tts, "fetch_voices")
-        res = await fetch_voices_func("api_key")
-        assert len(res) == 1
-        assert res[0]["id"] == "v1"
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://example.invalid") as client:
+        monkeypatch.setattr(elevenlabs_tts, "_get_client", lambda: client)
+        assert await elevenlabs_tts.fetch_voices("key") == []
+    assert stream.reads == 0
+    assert stream.closed

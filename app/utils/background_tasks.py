@@ -83,6 +83,32 @@ class TaskManager:
             metadata=metadata,
         )
 
+    def try_submit(
+        self,
+        coro: Coroutine[Any, Any, Any],
+        *,
+        operation: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> asyncio.Task | None:
+        """Reserve mandatory work synchronously, or explicitly reject it.
+
+        No await separates capacity inspection and scheduling, so admission is
+        atomic on the application's event loop. Rejected input is always closed.
+        """
+        if len(self._tasks) >= self.MAX_TASKS:
+            coro.close()
+            emit(
+                "job.capacity_rejected",
+                level="warning",
+                operation=operation or "background.mandatory",
+                job_id=uuid.uuid4().hex,
+                task_name=getattr(coro, "__qualname__", type(coro).__name__),
+                reason_code="capacity",
+                capacity=self.MAX_TASKS,
+            )
+            return None
+        return self.submit(coro, operation=operation, metadata=metadata)
+
     def submit_retryable(
         self,
         factory: Callable[[], Coroutine[Any, Any, Any]],
@@ -340,6 +366,7 @@ _task_manager = TaskManager()
 
 # Public API: module-level functions delegate to the singleton.
 submit_task = _task_manager.submit
+try_submit_task = _task_manager.try_submit
 submit_retryable = _task_manager.submit_retryable
 
 

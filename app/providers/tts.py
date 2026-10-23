@@ -1,38 +1,46 @@
 # /app/providers/tts.py
-"""Gemini TTS provider — text-to-speech via REST generate_content.
+"""Gemini speech adapters returning complete, validated mono 24 kHz PCM.
 
-Uses the configured Gemini TTS model chain (REST API) to generate speech audio.
-Returns raw PCM 24kHz 16-bit mono bytes.
-
-This is the Gemini production path for voice replies. The prompt uses the
-official "Director's Notes + Transcript" format with language-aware
-pronunciation heuristics (Russian ё/е, stress, abbreviations, etc.).
-
-Chunking is byte-based (UTF-8) to honour the Gemini Developer API input
-limits correctly: Cyrillic = 2 bytes/char, so character counts are inaccurate.
+Current TTS models use Interactions speech metadata and explicit raw audio.
+Administrator-selected legacy models retain GenerateContent prompting.
 """
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import logging
 import re
+from typing import Any
 
 from google.genai import types
 
 from app.observability.workload_events import start_workload_attempt
+from app.process_policies import TTS_DEFAULT_MODELS
 from app.prompt_registry import get_prompt_text, register_controlled_text
 from app.providers.gemini import get_cached_genai_client
+from app.providers.tts_audio import (
+    MAX_TTS_AUDIO_BYTES,
+    TTSContractError,
+    TTSOutputError,
+    TTSRequestError,
+    normalize_tts_audio,
+)
 from app.runtime_settings.audio import get_config, resolve_voice
 from app.runtime_settings.lifecycle import runtime_settings_scope
 
-TTS_MODEL = "gemini-3.1-flash-tts-preview"
+TTS_MODEL = TTS_DEFAULT_MODELS[0]
 
 
 class TTSAdmissionRejected(RuntimeError):
     """Local quota is exhausted or unconfirmed; no provider request was sent."""
 
 
-TTS_FALLBACK_MODEL = "gemini-2.5-flash-preview-tts"
+TTS_FALLBACK_MODEL = TTS_DEFAULT_MODELS[1]
+
+# A conservative local bound, not the API's token limit. This leaves ample
+# space below 8,192 input tokens even for edited pronunciation/voice prompts.
+_MAX_TTS_INPUT_BYTES = 7500
 
 # Available voices and their personalities:
 #   Aoede  — Breezy, natural (smooth conversational narration)
@@ -95,56 +103,37 @@ def _clean_text_for_speech(text: str) -> str:
 
 
 def _chunk_text_by_sentences(text: str, max_bytes: int = 3500) -> list[str]:
-    """Split text into chunks at sentence boundaries, each ≤ max_bytes when UTF-8 encoded.
+    """Enforce a local UTF-8 bound, preferring sentence then word boundaries.
 
-    Uses byte length rather than character length because the Gemini TTS API
-    enforces byte-level limits (Cyrillic = 2 bytes/char, CJK = 3 bytes/char).
-    A limit of 3500 bytes leaves ~500 bytes of headroom against the API's
-    4000-byte text-field cap and accounts for prompt overhead.
-
-    Algorithm:
-      1. Split on sentence-ending punctuation (.!? and their Unicode equivalents).
-      2. Greedily accumulate sentences into the current chunk (measuring in bytes).
-      3. When adding the next sentence would exceed max_bytes, start a new chunk.
-      4. If a single sentence exceeds max_bytes, include it as-is (never mid-word split).
-
-    Returns a list of non-empty text chunks.
+    These conservative chunks bound synthesis duration and output size. Actual
+    API input limits are model-specific token/character limits, not this bound.
+    Only a token longer than the entire budget is split between code points.
     """
-    if len(text.encode("utf-8")) <= max_bytes:
-        return [text]
-
-    # Split on sentence boundaries, keeping the delimiter attached to the sentence.
-    import re as _re
-
-    parts = _re.split(r"(?<=[.!?\u2026])\s+", text)
-
+    if max_bytes <= 0:
+        raise ValueError("max_bytes must be positive")
+    encoded = text.strip().encode("utf-8")
     chunks: list[str] = []
-    current = ""
-    current_bytes = 0
-
-    for part in parts:
-        part_bytes = len(part.encode("utf-8"))
-        if current:
-            # +1 for the space separator
-            candidate_bytes = current_bytes + 1 + part_bytes
-            candidate = current + " " + part
-        else:
-            candidate_bytes = part_bytes
-            candidate = part
-
-        if candidate_bytes <= max_bytes:
-            current = candidate
-            current_bytes = candidate_bytes
-        else:
-            if current:
-                chunks.append(current)
-            current = part
-            current_bytes = part_bytes
-
-    if current:
-        chunks.append(current)
-
-    return chunks or [text]
+    offset = 0
+    while offset < len(encoded):
+        end = min(offset + max_bytes, len(encoded))
+        while end < len(encoded) and end > offset and encoded[end] & 0xC0 == 0x80:
+            end -= 1
+        if end == offset:
+            raise ValueError("max_bytes cannot contain one UTF-8 character")
+        prefix = encoded[offset:end].decode("utf-8")
+        if end < len(encoded):
+            boundaries = list(re.finditer(r"[.!?…](?=\s)", prefix))
+            if boundaries:
+                prefix = prefix[: boundaries[-1].end()]
+            else:
+                whitespace = list(re.finditer(r"\s+", prefix))
+                if whitespace and whitespace[-1].start() > 0:
+                    prefix = prefix[: whitespace[-1].end()]
+        offset += len(prefix.encode("utf-8"))
+        chunk = prefix.strip()
+        if chunk:
+            chunks.append(chunk)
+    return chunks
 
 
 # ─── Director's Notes prompt ──────────────────────────────────────────────
@@ -235,6 +224,64 @@ def _get_steerable_tts_prompt(temperature: float, voice_prompt: str = "") -> tup
     return (f"{base_instructions}{individual}{style}", tag)
 
 
+def _complete_audio(parts: list[tuple[bytes, str | None]]) -> bytes:
+    if not parts:
+        raise TTSOutputError("empty_audio")
+    normalized: list[bytes] = []
+    total = 0
+    for data, mime in parts:
+        pcm = normalize_tts_audio(data, mime)
+        total += len(pcm)
+        if total > MAX_TTS_AUDIO_BYTES:
+            raise TTSOutputError("audio_too_large")
+        normalized.append(pcm)
+    return b"".join(normalized)
+
+
+def _interaction_audio(response: Any) -> bytes:
+    if getattr(response, "status", None) != "completed" or getattr(response, "errors", None):
+        raise TTSOutputError("incomplete_audio")
+    parts: list[tuple[bytes, str | None]] = []
+    total = 0
+    for step in response.steps or ():
+        if step.type != "model_output":
+            continue
+        if getattr(step, "error", None):
+            raise TTSOutputError("incomplete_audio")
+        for content in step.content or ():
+            if content.type != "audio":
+                continue
+            data = getattr(content, "data", None)
+            if not isinstance(data, str):
+                raise TTSOutputError("invalid_audio_encoding")
+            # Bound encoded input before allocating its decoded copy.
+            if len(data) > ((MAX_TTS_AUDIO_BYTES + 2) // 3) * 4:
+                raise TTSOutputError("audio_too_large")
+            try:
+                decoded = base64.b64decode(data, validate=True)
+            except (ValueError, binascii.Error) as error:
+                raise TTSOutputError("invalid_audio_encoding") from error
+            total += len(decoded)
+            if total > MAX_TTS_AUDIO_BYTES:
+                raise TTSOutputError("audio_too_large")
+            parts.append((decoded, getattr(content, "mime_type", None)))
+    return _complete_audio(parts)
+
+
+def _legacy_audio(response: Any) -> bytes:
+    candidates = response.candidates or ()
+    if not candidates:
+        raise TTSOutputError("empty_audio")
+    candidate = candidates[0]
+    reason = getattr(candidate, "finish_reason", None)
+    if getattr(reason, "value", reason) != "STOP":
+        raise TTSOutputError("incomplete_audio")
+    parts = getattr(getattr(candidate, "content", None), "parts", None) or ()
+    return _complete_audio(
+        [(part.inline_data.data, part.inline_data.mime_type) for part in parts if part.inline_data is not None]
+    )
+
+
 @runtime_settings_scope()
 async def generate_speech(
     text: str,
@@ -246,25 +293,11 @@ async def generate_speech(
     model_name: str = TTS_MODEL,
     language_code: str | None = None,
 ) -> bytes | None:
-    """Generate speech audio from text using Gemini TTS REST API.
+    """Return complete mono PCM or preserve the failure for the queue's policy.
 
-    Pipeline:
-        1. Pre-clean text (strip Markdown, URLs, code blocks, emoji clusters)
-        2. Build Director's Notes prompt (style + pronunciation rules)
-        3. Call the selected Gemini TTS model with AUDIO modality
-        4. Extract raw PCM 24kHz 16-bit mono from response
-
-    Args:
-        text: Text to synthesize.
-        api_key: Gemini API key.
-        voice: Prebuilt voice name; absent/retired choices use the admin default.
-        timeout: Maximum seconds to wait for TTS response. Callers should
-            compute an adaptive value based on text length; the default of
-            50 s covers short chunks adequately — voice_engine.py passes
-            an adaptive value capped at [40, 120] s for longer texts.
-
-    Returns:
-        Raw PCM 24kHz 16-bit mono bytes, or None on failure.
+    Gemini 3.8 receives only the transcript as text, with delivery instructions
+    in speech metadata. Explicit older models use GenerateContent. Empty text
+    returns None; malformed output never masquerades as successful synthesis.
     """
     if not text or not text.strip():
         return None
@@ -272,12 +305,15 @@ async def generate_speech(
     audio_config = await get_config("gemini")
     voice = resolve_voice(audio_config, voice)
     voice_prompt = next(row["prompt"] for row in audio_config["voices"] if row["id"] == voice)
-    client = get_cached_genai_client(api_key)
-
-    # 1. Pre-clean: strip formatting that TTS should never speak
     clean = _clean_text_for_speech(text)
     if not clean:
         return None
+
+    user_temp = tts_temperature if tts_temperature is not None else audio_config["temperature"]
+    base_prompt, pacing_tag = _get_steerable_tts_prompt(user_temp, voice_prompt)
+    direction = f"{base_prompt}{pacing_tag}"
+    if len((direction + clean).encode("utf-8")) > _MAX_TTS_INPUT_BYTES:
+        raise TTSRequestError("input_too_large")
 
     from app.repos.keys import reserve_gemini_key_usage
 
@@ -288,19 +324,6 @@ async def generate_speech(
     if not admitted:
         raise TTSAdmissionRejected("TTS local quota exhausted")
 
-    # 2. Build structured prompt (no truncation — caller handles chunking)
-    tts_text = clean
-
-    # The prompt steering depends on user_prefs.tts_temperature (which can be < 0.5).
-    # We pass the original requested temperature to fetch tags (so it can be 0.3 for news anchor).
-    user_temp = tts_temperature if tts_temperature is not None else audio_config["temperature"]
-    base_prompt, pacing_tag = _get_steerable_tts_prompt(user_temp, voice_prompt)
-    prompt = f"{base_prompt}{pacing_tag} {tts_text}"
-
-    # GenerateContentConfig temperature: Gemini 2.5 Flash audio generation models have a bug (April 2026)
-    # where temp < 0.5 causes "hangs, timeouts, or empty silent buffers". We must clamp the API temp to 0.5
-    # while leaving the prompt strictly constrained by `user_temp`.
-    api_temp = max(user_temp, 0.5)
     attempt = start_workload_attempt(
         workload="tts",
         provider="gemini",
@@ -308,78 +331,69 @@ async def generate_speech(
         api_key=api_key,
         origin="gemini_tts",
         voice_id=voice,
-        input_chars=len(tts_text),
+        input_chars=len(clean),
         language_code=language_code,
     )
 
-    config = types.GenerateContentConfig(
-        temperature=api_temp,
-        max_output_tokens=audio_config["max_output_tokens"],
-        response_modalities=["AUDIO"],
-        speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=voice,
-                )
-            ),
-            language_code=language_code,
-        ),
-    )
-
     try:
-        response = await asyncio.wait_for(
-            client.aio.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=config,
-            ),
-            timeout=timeout,
-        )
-
-        # Extract PCM audio from inline_data in response parts
-        if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-            for part in response.candidates[0].content.parts:
-                if part.inline_data and part.inline_data.data:
-                    audio_bytes = part.inline_data.data
-                    logging.info(
-                        "TTS generated: voice=%s, text_len=%d, audio_bytes=%d",
-                        voice,
-                        len(tts_text),
-                        len(audio_bytes),
-                    )
-                    attempt.finish(outcome="succeeded", output_bytes=len(audio_bytes))
-                    return audio_bytes
-
-        logging.warning("TTS response contained no audio data")
-        attempt.finish(outcome="failed", level="warning", reason_code="empty_audio")
-        return None
-
+        async with asyncio.timeout(timeout):
+            client = get_cached_genai_client(api_key)
+            if model_name.startswith("gemini-3.8-") and model_name.endswith("-tts"):
+                speech: dict[str, str] = {"voice": voice}
+                if language_code:
+                    speech["language"] = language_code
+                response = await client.aio.interactions.create(
+                    model=model_name,
+                    input=[
+                        {
+                            "type": "user_input",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": clean,
+                                    "annotations": [{"type": "speech_metadata", "style": direction}],
+                                }
+                            ],
+                        }
+                    ],
+                    response_format={"type": "audio", "mime_type": "audio/l16", "sample_rate": 24000},
+                    generation_config={
+                        "speech_config": [speech],
+                        "max_output_tokens": audio_config["max_output_tokens"],
+                    },
+                    store=False,
+                    timeout=timeout,
+                )
+                audio = _interaction_audio(response)
+            else:
+                config = types.GenerateContentConfig(
+                    temperature=max(user_temp, 0.5),
+                    max_output_tokens=audio_config["max_output_tokens"],
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
+                        ),
+                        language_code=language_code,
+                    ),
+                )
+                legacy_response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=f"{direction} {clean}",
+                    config=config,
+                )
+                audio = _legacy_audio(legacy_response)
+        attempt.finish(outcome="succeeded", output_bytes=len(audio))
+        logging.info("TTS generated: voice=%s, text_len=%d, audio_bytes=%d", voice, len(clean), len(audio))
+        return audio
     except asyncio.CancelledError:
         attempt.finish(outcome="cancelled", level="warning", reason_code="cancelled")
         raise
-    except TimeoutError as exc:
-        logging.error("TTS generation timed out after %.0fs — will rotate key", timeout)
-        attempt.fail(exc, reason_code="timeout")
-        raise  # Must re-raise so voice_engine can catch it and rotate the API key
-    except Exception as e:
-        err_str = str(e)
-        # Re-raise retryable errors so the caller's key rotation loop can try
-        # a different API key. Includes quota, overload, AND deadline exceeded —
-        # 504 DEADLINE_EXCEEDED means the server timed out, not a permanent error.
-        if any(
-            s in err_str
-            for s in (
-                "429",
-                "RESOURCE_EXHAUSTED",
-                "503",
-                "UNAVAILABLE",
-                "504",
-                "DEADLINE_EXCEEDED",
-            )
-        ):
-            logging.warning("TTS retryable error (will rotate key): %s", e)
-            attempt.fail(e, reason_code="retryable_provider_error")
-            raise
-        logging.error("TTS generation failed: %s", e)
-        attempt.fail(e, reason_code="provider_error")
-        return None
+    except TTSContractError as error:
+        attempt.finish(outcome="failed", level="warning", reason_code=error.reason_code)
+        raise
+    except Exception as error:
+        attempt.fail(error, reason_code="timeout" if isinstance(error, TimeoutError) else "provider_error")
+        if getattr(error, "code", None) in (400, 404, 422) or getattr(error, "status_code", None) in (400, 404, 422):
+            raise TTSRequestError("unsupported_tts_request") from error
+        raise

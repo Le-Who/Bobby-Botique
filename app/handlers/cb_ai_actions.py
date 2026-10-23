@@ -367,7 +367,18 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             tts_temperature=chat_state.tts_temperature,
             source_key=build_voice_source_key("tts_button", chat_id, message_id),
         )
-        await query.answer("🔊 Озвучка уже в очереди" if enqueue_result.deduped else "🔊 Генерирую голос...")
+        if enqueue_result.deduped:
+            feedback = "🔊 Озвучка уже в очереди"
+        elif enqueue_result.queued:
+            feedback = "🔊 Генерирую голос..."
+        else:
+            feedback = {
+                "capacity": "⏳ Очередь озвучки заполнена. Попробуйте позже.",
+                "user_capacity": "⏳ Дождитесь завершения вашей очереди озвучки.",
+                "text_too_large": "❌ Текст слишком длинный для озвучки.",
+                "closed": "⏳ Озвучка временно недоступна. Попробуйте позже.",
+            }.get(enqueue_result.reason_code, "❌ Озвучка недоступна. Обновите ответ и попробуйте снова.")
+        await query.answer(feedback)
     except Exception as e:
         logging.error("TTS reply callback failed: %s", e)
         await query.answer("❌ Ошибка озвучки")
