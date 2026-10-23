@@ -363,7 +363,7 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             chat_id=chat_id,
             reply_to_message_id=message_id,
             response_text=response_text,
-            voice=chat_state.voice_id or "Aoede",
+            voice=chat_state.voice_id or "",
             tts_temperature=chat_state.tts_temperature,
             source_key=build_voice_source_key("tts_button", chat_id, message_id),
         )

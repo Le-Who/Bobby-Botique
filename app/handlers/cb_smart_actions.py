@@ -238,13 +238,13 @@ async def _route_tts(
 
         # Resolve the user's configured voice preference
         _user_id = user_id
-        tts_voice = "Aoede"
+        tts_voice = ""
         tts_temperature_val: float | None = None
         if _user_id:
             from app.repos.chats import get_user_chat
 
             chat_state = await get_user_chat(_user_id)
-            tts_voice = chat_state.voice_id or "Aoede"
+            tts_voice = chat_state.voice_id or ""
             tts_temperature_val = chat_state.tts_temperature
 
         from app.voice_engine import fire_voice_reply

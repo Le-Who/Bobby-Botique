@@ -31,7 +31,7 @@ def test_frontier_discovery_is_read_only_pinned_and_secret_free() -> None:
     audit_job = workflow.split("  audit:", 1)[1].split("  track-frontier:", 1)[0]
 
     assert "permissions:\n  contents: read" in workflow
-    assert 'python -m pip install "uv==0.12.18"' in audit_job
+    assert 'python -m pip install "uv==0.13.5"' in audit_job
     assert "uv sync --locked" in audit_job
     assert "scripts/dependency_frontier.py audit" in audit_job
     assert "secrets." not in audit_job

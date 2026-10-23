@@ -89,7 +89,7 @@ def test_protected_candidate_install_has_no_credentials_or_secrets_and_uses_trus
         "- name: Run controlled baseline and candidate probes", 1
     )[0]
 
-    assert 'python -m pip install "uv==0.12.18"' in canary_job
+    assert 'python -m pip install "uv==0.13.5"' in canary_job
     assert canary_job.count("persist-credentials: false") == 2
     assert install_block.count("uv sync --locked --no-build --link-mode copy") == 2
     assert "--lock-only" in install_block

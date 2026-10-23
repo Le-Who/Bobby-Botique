@@ -599,6 +599,152 @@
     return node;
   }
 
+  function renderAudio(item) {
+    const id = String(item.id);
+    const node = card("audio", id);
+    node.append(header(item, id), meta(item));
+    if (item.note) node.append(element("p", "control-note", item.note));
+    const current = drafts.getDraft("audio", id)?.value ?? item.value;
+    const parameters = element("div", "audio-parameters");
+    const fields = {};
+    function field(label, name, type, value, attributes = {}) {
+      const wrapper = element("label", type === "checkbox" ? "check" : "field", label);
+      const input = element("input");
+      input.type = type;
+      if (type === "checkbox") input.checked = !!value;
+      else input.value = value;
+      Object.assign(input, attributes);
+      wrapper.append(input);
+      parameters.append(wrapper);
+      fields[name] = input;
+      return input;
+    }
+    if (id === "gemini") {
+      field("Температура", "temperature", "number", current.temperature, { min: "0", max: "2", step: "0.05", required: true });
+      field("Максимум выходных токенов", "max_output_tokens", "number", current.max_output_tokens,
+        { min: "1024", max: "16384", step: "1", required: true });
+      node.append(element("p", "muted", "Температура задаёт значение по умолчанию; личная настройка пользователя имеет приоритет. Промпт каждого голоса дополняет общие инструкции синтеза."));
+    } else {
+      const settings = current.voice_settings;
+      field("Стабильность", "stability", "number", settings.stability, { min: "0", max: "1", step: "0.01", required: true });
+      field("Сходство с голосом", "similarity_boost", "number", settings.similarity_boost, { min: "0", max: "1", step: "0.01", required: true });
+      field("Выразительность", "style", "number", settings.style, { min: "0", max: "1", step: "0.01", required: true });
+      field("Усиление сходства с диктором", "use_speaker_boost", "checkbox", settings.use_speaker_boost);
+      const label = element("label", "field", "Нормализация текста");
+      const select = element("select");
+      select.setAttribute("aria-label", "Нормализация текста");
+      [["auto", "Автоматически"], ["on", "Включена"], ["off", "Выключена"]].forEach(([value, text]) => {
+        const option = element("option", "", text);
+        option.value = value;
+        select.append(option);
+      });
+      select.value = current.apply_text_normalization;
+      label.append(select);
+      parameters.append(label);
+      fields.apply_text_normalization = select;
+      node.append(element("p", "muted", "ElevenLabs использует ID голоса и параметры синтеза; отдельного промпта для голоса в этом API нет."));
+    }
+    node.append(parameters, element("h4", "voice-heading", "Каталог голосов — порядок выбора сверху вниз"));
+    const voices = element("div", "voice-catalog");
+    node.append(voices);
+    const status = feedback(node);
+    const readValue = () => {
+      let defaultVoice = "";
+      const catalog = [...voices.children].map(row => {
+        const voice = {
+          id: row.querySelector(".voice-id").value.trim(),
+          name: row.querySelector(".voice-name").value.trim(),
+        };
+        if (id === "gemini") voice.prompt = row.querySelector(".voice-prompt").value;
+        if (row.querySelector(".voice-default").checked) defaultVoice = voice.id;
+        return voice;
+      });
+      const value = { default_voice: defaultVoice, voices: catalog };
+      if (id === "gemini") {
+        value.temperature = fields.temperature.valueAsNumber;
+        value.max_output_tokens = fields.max_output_tokens.valueAsNumber;
+      } else {
+        value.voice_settings = {
+          stability: fields.stability.valueAsNumber, similarity_boost: fields.similarity_boost.valueAsNumber,
+          style: fields.style.valueAsNumber, use_speaker_boost: fields.use_speaker_boost.checked,
+        };
+        value.apply_text_normalization = fields.apply_text_normalization.value;
+      }
+      return value;
+    };
+    const changed = () => markDraft("audio", id, readValue(), node, status);
+    function renderVoices(config) {
+      voices.replaceChildren();
+      config.voices.forEach((voice, index) => {
+        const row = element("fieldset", "voice-row");
+        row.append(element("legend", "", `Голос ${index + 1}`));
+        const textFields = element("div", "voice-fields");
+        [["ID голоса", "id"], ["Название голоса", "name"],
+          ...(id === "gemini" ? [["Промпт голоса", "prompt"]] : [])].forEach(([label, name]) => {
+          const wrapper = element("label", "field", label);
+          const input = element(name === "prompt" ? "textarea" : "input", `voice-${name}`);
+          if (name !== "prompt") { input.type = "text"; input.required = true; }
+          input.value = voice[name] || "";
+          input.addEventListener("input", changed);
+          wrapper.append(input);
+          textFields.append(wrapper);
+        });
+        row.append(textFields);
+        const defaultLabel = element("label", "check");
+        const defaultInput = element("input", "voice-default");
+        defaultInput.type = "radio";
+        defaultInput.name = `tts-default-${id}`;
+        defaultInput.checked = voice.id === config.default_voice;
+        defaultInput.addEventListener("change", changed);
+        defaultLabel.append(defaultInput, element("span", "", "Голос по умолчанию"));
+        const commands = element("div", "voice-actions");
+        commands.append(defaultLabel);
+        [["↑", "Выше", -1], ["↓", "Ниже", 1], ["×", "Удалить голос", 0]].forEach(([glyph, label, delta]) => {
+          const button = action(glyph, "icon", () => {
+            const next = readValue();
+            if (delta === 0) {
+              const removed = next.voices.splice(index, 1)[0];
+              if (removed.id === next.default_voice) next.default_voice = next.voices[0]?.id || "";
+            } else [next.voices[index], next.voices[index + delta]] = [next.voices[index + delta], next.voices[index]];
+            renderVoices(next);
+            changed();
+            const nextIndex = delta === 0 ? Math.min(index, next.voices.length - 1) : index + delta;
+            voices.children[nextIndex]?.querySelector("input")?.focus({ preventScroll: true });
+          });
+          button.setAttribute("aria-label", `${label}: ${voice.name || `голос ${index + 1}`}`);
+          button.disabled = delta === -1 ? index === 0 : delta === 1 ? index === config.voices.length - 1 : config.voices.length === 1;
+          commands.append(button);
+        });
+        row.append(commands);
+        voices.append(row);
+      });
+    }
+    renderVoices(current);
+    Object.values(fields).forEach(input => input.addEventListener(input.type === "number" ? "input" : "change", changed));
+    const baseline = element("details", "baseline");
+    baseline.append(element("summary", "", "Посмотреть базовые голоса и параметры"),
+      element("pre", "", JSON.stringify(item.baseline, null, 2)));
+    node.append(baseline);
+    const actions = actionRow(node);
+    actions.append(action("Добавить голос", "secondary", () => {
+      const next = readValue();
+      if (next.voices.length >= 100) { message(status, "В каталоге допускается не более 100 голосов.", true); return; }
+      next.voices.push(id === "gemini" ? { id: "", name: "", prompt: "" } : { id: "", name: "" });
+      renderVoices(next);
+      changed();
+      voices.lastElementChild?.querySelector("input")?.focus({ preventScroll: true });
+    }));
+    actions.append(mutationButton("Сбросить к базовому", "quiet", () => save("audio", id, status, true)));
+    actions.append(mutationButton("Сохранить голоса и TTS", "save", () => {
+      if ([...node.querySelectorAll("input, select, textarea")].every(input => input.reportValidity())) {
+        return save("audio", id, status, false);
+      }
+    }));
+    staleDraftControl(node, "audio", id, item.value, status);
+    if (drafts.getDraft("audio", id)) message(status, `Черновик · исходная ревизия ${drafts.getDraft("audio", id).expected_revision}`);
+    return node;
+  }
+
   function renderLimit(item) {
     const id = String(item.model);
     const node = card("limit", id);
@@ -669,7 +815,7 @@
         row.append(mutationButton("Восстановить", "secondary", async () => {
           if (busy || needsRefresh) return;
           const data = drafts.getSnapshot();
-          const scope = `маршруты моделей (${data.processes.length}), промпты (${data.prompts.length}), алиасы команд, каталоги и лимиты`;
+          const scope = `маршруты моделей (${data.processes.length}), промпты (${data.prompts.length}), голоса и TTS, алиасы команд, каталоги и лимиты`;
           if (!window.confirm(`Восстановить ревизию ${entry.revision} всей конфигурации?\nБудут заменены ${scope}. Это создаст новую ревизию и повлияет на новые запросы. Черновики останутся на странице для сравнения.`)) return;
           setBusy(true);
           message(status, "Восстанавливаем…");
@@ -726,6 +872,8 @@
     const orderedPrompts = [...prompts].sort((left, right) => Number(left.editable === false) - Number(right.editable === false) ||
       collator.compare(left.title || left.id, right.title || right.id));
     byId("prompt-list").replaceChildren(...orderedPrompts.map(renderPrompt));
+    byId("audio-list").replaceChildren(...(data.audio || []).map(renderAudio));
+    byId("audio-count").textContent = String((data.audio || []).length);
     const catalogHolder = byId("catalog-list");
     catalogHolder.replaceChildren(...catalogs.map(renderCatalog));
     const limitHolder = byId("limit-list");

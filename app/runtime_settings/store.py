@@ -22,6 +22,7 @@ from app.utils.json_compat import json
 
 _KEY = "runtime_controls:v1"
 _PREFIXES = (
+    "audio:",
     "process:",
     "prompt:",
     "model_limit:",
