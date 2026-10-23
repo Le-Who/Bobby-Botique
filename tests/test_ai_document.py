@@ -1,7 +1,6 @@
 """Tests for app.handlers.ai_document — document question handling."""
 
 from contextlib import asynccontextmanager
-from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -386,7 +385,7 @@ async def test_document_question_success():
     drain_events(collector)
     assert collector.metrics.api_calls == {"gemini": 1}
     assert collector.metrics.model_usage == {"gemini-3.1-flash-lite": 1}
-    assert collector._user_daily[date.today().isoformat()][123]["model_usage"] == {"gemini-3.1-flash-lite": 1}
+    assert [users[123]["model_usage"] for users in collector._user_daily.values()] == [{"gemini-3.1-flash-lite": 1}]
 
 
 # ── No documents uploaded ─────────────────────────────────────────────────────
@@ -531,7 +530,7 @@ async def test_document_question_records_actual_routed_model():
     drain_events(collector)
     assert collector.metrics.api_calls == {"opencode": 1}
     assert collector.metrics.model_usage == {"opencode-go/qwen3.5-plus": 1}
-    assert collector._user_daily[date.today().isoformat()][123]["model_usage"] == {"opencode-go/qwen3.5-plus": 1}
+    assert [users[123]["model_usage"] for users in collector._user_daily.values()] == [{"opencode-go/qwen3.5-plus": 1}]
 
 
 # ── Exception during processing ───────────────────────────────────────────────

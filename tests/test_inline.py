@@ -249,8 +249,6 @@ async def test_generate_and_edit_inline_includes_inline_context_in_history(monke
         captured["system_instruction"] = kwargs["system_instruction"]
         return "новый ответ", [], "gemini-3.1-flash-lite"
 
-    from datetime import date
-
     from app.metrics import MetricsCollector
     from tests.test_metrics_accounting import drain_events
 
@@ -313,10 +311,12 @@ async def test_generate_and_edit_inline_includes_inline_context_in_history(monke
     drain_events(collector)
     assert collector.metrics.api_calls == {"gemini": 1}
     assert collector.metrics.model_usage == {"gemini-3.1-flash-lite": 1}
-    assert collector._user_daily[date.today().isoformat()][42] == {
-        "request_count": 1,
-        "model_usage": {"gemini-3.1-flash-lite": 1},
-    }
+    assert [users[42] for users in collector._user_daily.values()] == [
+        {
+            "request_count": 1,
+            "model_usage": {"gemini-3.1-flash-lite": 1},
+        }
+    ]
 
 
 def test_select_inline_generation_model_uses_lite_for_simple_query():

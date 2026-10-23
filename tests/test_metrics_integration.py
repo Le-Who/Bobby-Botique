@@ -63,8 +63,8 @@ class TestMetricsIntegration(unittest.TestCase):
                 self.assertEqual(self.collector._events_queue.qsize(), 0)
 
                 # Validate dictionaries have been updated properly
-                today = self.metrics_module.date.today().isoformat()
-                self.assertEqual(self.collector.daily_metrics.get(today).api_calls["gemini"], 1)
+                self.assertEqual(len(self.collector.daily_metrics), 1)
+                self.assertEqual(next(iter(self.collector.daily_metrics.values())).api_calls["gemini"], 1)
 
                 # We expect 2 items in the error log to be saved
                 self.assertEqual(len(self.collector.error_log), 2)

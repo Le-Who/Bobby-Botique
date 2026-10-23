@@ -99,7 +99,6 @@ async def test_handle_photo_success(monkeypatch):
     placeholder = make_placeholder()
     original = make_original_message(caption="What is this?")
     chat_state = make_chat_state()
-    from datetime import date
 
     from app import metrics
     from tests.test_metrics_accounting import drain_events
@@ -142,10 +141,12 @@ async def test_handle_photo_success(monkeypatch):
     drain_events(collector)
     assert collector.metrics.api_calls == {"gemini": 1}
     assert collector.metrics.model_usage == {"gemini-3.1-flash-lite": 1}
-    assert collector._user_daily[date.today().isoformat()][123] == {
-        "request_count": 0,
-        "model_usage": {"gemini-3.1-flash-lite": 1},
-    }
+    assert [users[123] for users in collector._user_daily.values()] == [
+        {
+            "request_count": 0,
+            "model_usage": {"gemini-3.1-flash-lite": 1},
+        }
+    ]
 
 
 # ── Empty AI response ────────────────────────────────────────────────────────
