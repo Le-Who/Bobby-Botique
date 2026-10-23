@@ -5,10 +5,10 @@ import urllib.parse
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from quart.testing.connections import WebsocketDisconnectError
 
 from app.observability.context import current_context
 from app.web import quart_app
+from tests.asgi_websocket import websocket_close_event
 from tests.factories import make_crocodile_game, make_valid_init_data
 
 
@@ -46,11 +46,9 @@ class TestWebSocketAuth:
     ):
         url = f"/webapp/game/ws?initData={urllib.parse.quote(init_data)}&game_id=123"
         with patch("app.games.crocodile.load_game", new_callable=AsyncMock) as load_mock:
-            with pytest.raises(WebsocketDisconnectError) as exc_info:
-                async with test_client.websocket(url) as ws:
-                    await ws.receive()
+            closed = await websocket_close_event(quart_app, url)
 
-        assert exc_info.value.args == (4003,)
+        assert closed["code"] == 4003
         load_mock.assert_not_awaited()
         authorized_websocket_user.assert_not_awaited()
 
@@ -59,22 +57,18 @@ class TestWebSocketAuth:
         url = f"/webapp/game/ws?initData={urllib.parse.quote(init_data)}&game_id=nonexistent"
         with patch("app.games.crocodile.load_game", new_callable=AsyncMock) as load_mock:
             load_mock.return_value = None
-            with pytest.raises(WebsocketDisconnectError) as exc_info:
-                async with test_client.websocket(url) as ws:
-                    await ws.receive()
+            closed = await websocket_close_event(quart_app, url)
 
-        assert exc_info.value.args == (4008,)
+        assert closed["code"] == 4008
         load_mock.assert_awaited_once_with("nonexistent")
 
     async def test_missing_game_id(self, test_client, mock_bot_token):
         init_data = make_valid_init_data(mock_bot_token, user_id=111)
         url = f"/webapp/game/ws?initData={urllib.parse.quote(init_data)}"
         with patch("app.games.crocodile.load_game", new_callable=AsyncMock) as load_mock:
-            with pytest.raises(WebsocketDisconnectError) as exc_info:
-                async with test_client.websocket(url) as ws:
-                    await ws.receive()
+            closed = await websocket_close_event(quart_app, url)
 
-        assert exc_info.value.args == (4400,)
+        assert closed["code"] == 4400
         load_mock.assert_not_awaited()
 
 

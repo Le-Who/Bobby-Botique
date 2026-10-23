@@ -3,11 +3,11 @@
 import asyncio
 import hmac
 import secrets
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
 from typing import Any
 
 from quart import Blueprint, jsonify, render_template, request, session
-from quart.wrappers import Request
+from quart.wrappers import Body, Request
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from app import bot_instance
@@ -31,13 +31,41 @@ from app.runtime_settings.store import (
 MAX_CONTROL_BODY_BYTES = 300_000
 
 
+class _ControlsBody(Body):
+    """Wake the JSON reader as soon as streamed input crosses the controls bound."""
+
+    def __init__(self, content_length: int | None) -> None:
+        super().__init__(content_length, MAX_CONTROL_BODY_BYTES)
+        self._received_bytes = 0
+        self._oversized = False
+
+    async def put(self, data: bytes) -> None:
+        if not data or self._oversized:
+            return
+        self._received_bytes += len(data)
+        if self._received_bytes > MAX_CONTROL_BODY_BYTES:
+            self._oversized = True
+            # Quart 0.23 checks the bound only after EOF. Wake its reader via
+            # the public completion API; raising here would cancel ASGI's
+            # request task before it could return a 413 response.
+            self.set_complete()
+            return
+        await super().put(data)
+
+    def __await__(self) -> Generator[Any, None, bytes]:
+        data = yield from super().__await__()
+        if self._oversized:
+            raise RequestEntityTooLarge()
+        return data
+
+
 class ControlsRequest(Request):
     """Apply the mutation bound while ASGI receives even a chunked body."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         if self.path == "/api/admin/controls" or self.path.startswith("/api/admin/controls/"):
-            self.body = self.body_class(self.content_length, MAX_CONTROL_BODY_BYTES)
+            self.body = _ControlsBody(self.content_length)
 
 
 def _csrf() -> str:

@@ -19,10 +19,10 @@ from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from quart.testing.connections import WebsocketDisconnectError
 
 from app.database import ChatState
 from app.web import quart_app
+from tests.asgi_websocket import websocket_close_event
 from tests.factories import make_valid_init_data
 
 
@@ -180,10 +180,8 @@ class TestLiveAudioAuth:
         """Connection without initData should be closed immediately."""
         session = AsyncMock()
         monkeypatch.setattr("app.web_miniapp._handle_live_session", session)
-        with pytest.raises(WebsocketDisconnectError) as error:
-            async with test_client.websocket("/webapp/live/ws") as ws:
-                await asyncio.wait_for(ws.receive(), 1)
-        assert error.value.args == (4003,)
+        closed = await websocket_close_event(quart_app, "/webapp/live/ws")
+        assert closed["code"] == 4003
         session.assert_not_awaited()
 
     async def test_invalid_init_data(self, test_client, mock_bot_token, monkeypatch):
@@ -191,10 +189,8 @@ class TestLiveAudioAuth:
         url = "/webapp/live/ws?initData=user%3Dfake%26hash%3Dinvalid"
         session = AsyncMock()
         monkeypatch.setattr("app.web_miniapp._handle_live_session", session)
-        with pytest.raises(WebsocketDisconnectError) as error:
-            async with test_client.websocket(url) as ws:
-                await asyncio.wait_for(ws.receive(), 1)
-        assert error.value.args == (4003,)
+        closed = await websocket_close_event(quart_app, url)
+        assert closed["code"] == 4003
         session.assert_not_awaited()
 
     async def test_expired_init_data(self, test_client, mock_bot_token, monkeypatch):
@@ -202,10 +198,8 @@ class TestLiveAudioAuth:
         monkeypatch.setattr("app.web_miniapp._handle_live_session", session)
         expired = make_valid_init_data(mock_bot_token, user_id=555, auth_date=1)
         url = f"/webapp/live/ws?initData={urllib.parse.quote(expired)}"
-        with pytest.raises(WebsocketDisconnectError) as error:
-            async with test_client.websocket(url) as ws:
-                await asyncio.wait_for(ws.receive(), 1)
-        assert error.value.args == (4003,)
+        closed = await websocket_close_event(quart_app, url)
+        assert closed["code"] == 4003
         session.assert_not_awaited()
 
     async def test_revoked_user_never_opens_live_session(
@@ -216,10 +210,8 @@ class TestLiveAudioAuth:
         monkeypatch.setattr("app.web_miniapp._handle_live_session", session)
         init_data = make_valid_init_data(mock_bot_token, user_id=555)
         url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
-        with pytest.raises(WebsocketDisconnectError) as error:
-            async with test_client.websocket(url) as ws:
-                await asyncio.wait_for(ws.receive(), 1)
-        assert error.value.args == (4003,)
+        closed = await websocket_close_event(quart_app, url)
+        assert closed["code"] == 4003
         authorized_miniapp_user.assert_awaited_once_with(555)
         session.assert_not_awaited()
 
