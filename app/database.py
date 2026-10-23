@@ -19,7 +19,7 @@ from app.errors import (
 )
 from app.observability.events import emit, record_exception
 
-_background_tasks = set()
+_background_tasks: set[asyncio.Task[None]] = set()
 
 
 @dataclass
