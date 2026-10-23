@@ -29,7 +29,7 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
 from app.bot_instance import get_bot
-from app.config import GEMINI_LIVE_VOICE_NAME, settings
+from app.config import GEMINI_LIVE_MODEL, GEMINI_LIVE_VOICE_NAME, settings
 from app.games import crocodile_runtime as _croc_runtime
 from app.natal.city_catalog import find_city_by_id, search_cities, search_countries
 from app.natal.models import BirthInput, ReportType, TimePrecision
@@ -119,18 +119,50 @@ _LIVE_THINKING_CONFIG_MAP: dict[str, str] = {
     "off": "minimal",
     "low": "low",
     "medium": "medium",
+    "high": "high",
 }
 from app.i18n import t
+
+# The 30 studio voices supported by native Live audio. Keep the requested voice
+# first; TTS has a separate administrator-managed catalog.
+_LIVE_VOICES = (
+    ("Rasalgethi", "Информативный", "Informative"),
+    ("Aoede", "Лёгкий, естественный", "Breezy"),
+    ("Kore", "Уверенный", "Firm"),
+    ("Puck", "Живой, бодрый", "Upbeat"),
+    ("Charon", "Информативный", "Informative"),
+    ("Leda", "Молодой, лёгкий", "Youthful"),
+    ("Zephyr", "Ясный, бодрый", "Bright"),
+    ("Orus", "Уверенный", "Firm"),
+    ("Fenrir", "Энергичный", "Excitable"),
+    ("Callirrhoe", "Непринуждённый", "Easy-going"),
+    ("Autonoe", "Ясный, бодрый", "Bright"),
+    ("Enceladus", "С придыханием", "Breathy"),
+    ("Iapetus", "Чёткий", "Clear"),
+    ("Umbriel", "Непринуждённый", "Easy-going"),
+    ("Algieba", "Плавный", "Smooth"),
+    ("Despina", "Плавный", "Smooth"),
+    ("Erinome", "Чёткий", "Clear"),
+    ("Algenib", "Хрипловатый", "Gravelly"),
+    ("Laomedeia", "Живой, бодрый", "Upbeat"),
+    ("Achernar", "Мягкий", "Soft"),
+    ("Alnilam", "Уверенный", "Firm"),
+    ("Schedar", "Ровный", "Even"),
+    ("Gacrux", "Зрелый", "Mature"),
+    ("Pulcherrima", "Выразительный", "Forward"),
+    ("Achird", "Дружелюбный", "Friendly"),
+    ("Zubenelgenubi", "Разговорный", "Casual"),
+    ("Vindemiatrix", "Нежный", "Gentle"),
+    ("Sadachbia", "Оживлённый", "Lively"),
+    ("Sadaltager", "Рассудительный", "Knowledgeable"),
+    ("Sulafat", "Тёплый", "Warm"),
+)
 
 
 def _get_live_voice_options(lang: str) -> list[dict[str, str]]:
     return [
-        {"id": "Aoede", "name": "Aoede", "gender": "female", "description": t("miniapp.voice.aoede", lang)},
-        {"id": "Kore", "name": "Kore", "gender": "female", "description": t("miniapp.voice.kore", lang)},
-        {"id": "Leda", "name": "Leda", "gender": "female", "description": t("miniapp.voice.leda", lang)},
-        {"id": "Zephyr", "name": "Zephyr", "gender": "male", "description": t("miniapp.voice.zephyr", lang)},
-        {"id": "Charon", "name": "Charon", "gender": "male", "description": t("miniapp.voice.charon", lang)},
-        {"id": "Orus", "name": "Orus", "gender": "male", "description": t("miniapp.voice.orus", lang)},
+        {"id": identity, "name": identity, "description": ru if lang == "ru" else en}
+        for identity, ru, en in _LIVE_VOICES
     ]
 
 
@@ -143,10 +175,15 @@ def _get_live_thinking_presets(lang: str) -> list[dict[str, str]]:
             "label": t("miniapp.preset.medium_label", lang),
             "hint": t("miniapp.preset.medium_hint", lang),
         },
+        {
+            "id": "high",
+            "label": "Глубокий" if lang == "ru" else "Deep",
+            "hint": "Больше размышления и задержка" if lang == "ru" else "More reasoning and latency",
+        },
     ]
 
 
-_LIVE_VOICE_IDS = {"Aoede", "Kore", "Leda", "Zephyr", "Charon", "Orus"}
+_LIVE_VOICE_IDS = {voice[0] for voice in _LIVE_VOICES}
 _LIVE_DEFAULT_CONNECTION_MODE = "standard"
 _LIVE_VERTEX_CONNECTION_MODE = "vertex_internet"
 _VERTEX_LIVE_MODEL = "gemini-live-2.5-flash-native-audio"
@@ -278,7 +315,7 @@ def _default_chat_state():
 
 
 def _default_live_voice_name() -> str:
-    return GEMINI_LIVE_VOICE_NAME or "Aoede"
+    return GEMINI_LIVE_VOICE_NAME if GEMINI_LIVE_VOICE_NAME in _LIVE_VOICE_IDS else "Rasalgethi"
 
 
 def _resolve_live_voice_name(chat_state) -> str:
@@ -318,22 +355,26 @@ def _build_live_connect_config(
     resumption_handle: str | None,
     voice_name: str,
     thinking_level: str,
+    model_name: str = GEMINI_LIVE_MODEL,
+    manual_activity: bool = False,
 ):
     from google.genai import types
 
-    thinking_config = types.ThinkingConfig(thinking_level=_LIVE_THINKING_CONFIG_MAP[thinking_level])  # type: ignore[arg-type]
+    thinking_config = None
+    if model_name.startswith("gemini-3.1-") or model_name == "gemini-3.8-live-extended-thinking":
+        level = _LIVE_THINKING_CONFIG_MAP[thinking_level]
+        if model_name == "gemini-3.8-live-extended-thinking" and level == "minimal":
+            level = "low"
+        thinking_config = types.ThinkingConfig(thinking_level=level)  # type: ignore[arg-type]
     return types.LiveConnectConfig(
         response_modalities=[types.Modality.AUDIO],
+        temperature=0.85,
         session_resumption=types.SessionResumptionConfig(
             handle=resumption_handle or None,
         ),
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
-        realtime_input_config=types.RealtimeInputConfig(
-            automatic_activity_detection=types.AutomaticActivityDetection(
-                disabled=True,
-            ),
-        ),
+        realtime_input_config=_live_realtime_input_config(manual_activity),
         context_window_compression=types.ContextWindowCompressionConfig(
             sliding_window=types.SlidingWindow(),
         ),
@@ -349,27 +390,40 @@ def _build_live_connect_config(
     )
 
 
+def _live_realtime_input_config(manual_activity: bool):
+    from google.genai import types
+
+    return types.RealtimeInputConfig(
+        automatic_activity_detection=types.AutomaticActivityDetection(
+            disabled=manual_activity,
+            start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_LOW,
+            end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
+            prefix_padding_ms=200,
+            silence_duration_ms=1500,
+        ),
+        activity_handling=types.ActivityHandling.NO_INTERRUPTION,
+    )
+
+
 def _build_vertex_live_connect_config(
     *,
     system_instruction: str,
     resumption_handle: str | None,
     voice_name: str,
+    manual_activity: bool = False,
 ):
     from google.genai import types
 
     return types.LiveConnectConfig(
         response_modalities=[types.Modality.AUDIO],
+        temperature=0.85,
         session_resumption=types.SessionResumptionConfig(
             handle=resumption_handle or None,
             transparent=True,
         ),
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
-        realtime_input_config=types.RealtimeInputConfig(
-            automatic_activity_detection=types.AutomaticActivityDetection(
-                disabled=True,
-            ),
-        ),
+        realtime_input_config=_live_realtime_input_config(manual_activity),
         context_window_compression=types.ContextWindowCompressionConfig(
             sliding_window=types.SlidingWindow(),
         ),
@@ -1216,6 +1270,7 @@ async def api_get_voices(user_id: int):
 @miniapp_blueprint.route("/api/live-settings", methods=["GET"])
 @require_webapp_auth
 @require_authorized_webapp_user
+@runtime_settings_scope()
 async def api_get_live_settings(user_id: int):
     """Return per-user Gemini Live Audio settings and available presets."""
     try:
@@ -1223,12 +1278,19 @@ async def api_get_live_settings(user_id: int):
 
         chat_state = await get_user_chat(user_id)
         lang = "ru"
+        policy = await resolve_process("live", (GEMINI_LIVE_MODEL,))
+        model_name = policy.models[0] if policy.explicit else GEMINI_LIVE_MODEL
+        supports_thinking = model_name.startswith("gemini-3.1-") or model_name == "gemini-3.8-live-extended-thinking"
+        thinking_presets = _get_live_thinking_presets(lang) if supports_thinking else []
+        if model_name == "gemini-3.8-live-extended-thinking":
+            thinking_presets = [preset for preset in thinking_presets if preset["id"] != "off"]
         return jsonify(
             {
                 "live_settings": _serialize_live_settings(chat_state),
                 "connection_modes": _get_live_connection_modes(lang),
                 "voices": _get_live_voice_options(lang),
-                "thinking_presets": _get_live_thinking_presets(lang),
+                "thinking_presets": thinking_presets,
+                "model": model_name,
                 "reconnect_note": t("miniapp.reconnect_note", lang),
             }
         )
@@ -1252,20 +1314,20 @@ async def api_update_live_settings(user_id: int):
         if "live_voice_name" in body:
             voice_name = body["live_voice_name"]
             valid_voice_ids = _LIVE_VOICE_IDS
-            if voice_name in valid_voice_ids:
+            if isinstance(voice_name, str) and voice_name in valid_voice_ids:
                 chat_state.live_voice_name = voice_name
                 changed = True
 
         if "live_thinking_level" in body:
             thinking_level = body["live_thinking_level"]
-            if thinking_level in _LIVE_THINKING_CONFIG_MAP:
+            if isinstance(thinking_level, str) and thinking_level in _LIVE_THINKING_CONFIG_MAP:
                 chat_state.live_thinking_level = thinking_level
                 changed = True
 
         if "live_connection_mode" in body:
             connection_mode = body["live_connection_mode"]
             valid_mode_ids = {item["id"] for item in _get_live_connection_modes("ru")}
-            if connection_mode in valid_mode_ids:
+            if isinstance(connection_mode, str) and connection_mode in valid_mode_ids:
                 chat_state.live_connection_mode = connection_mode
                 changed = True
 
@@ -2821,7 +2883,14 @@ async def _open_authenticated_live_socket(route_mode: str) -> None:
         return
 
     try:
-        await _handle_live_session(websocket, user_id, validated, resumption_token, transport_mode=route_mode)
+        await _handle_live_session(
+            websocket,
+            user_id,
+            validated,
+            resumption_token,
+            transport_mode=route_mode,
+            manual_activity=websocket.args.get("turnDetection") == "manual",
+        )
     finally:
         if redis_client:
             await redis_client.delete(f"live_session:{user_id}")
@@ -2883,6 +2952,7 @@ async def _resolve_live_transport(
     resumption_handle: str | None,
     voice_name: str,
     thinking_level: str,
+    manual_activity: bool = False,
 ):
     from app.config import GEMINI_LIVE_MODEL
     from app.providers.gemini import get_live_api_client, get_vertex_live_client
@@ -2906,6 +2976,7 @@ async def _resolve_live_transport(
                 system_instruction=system_instruction,
                 resumption_handle=resumption_handle,
                 voice_name=voice_name,
+                manual_activity=manual_activity,
             ),
             None,
             None,
@@ -2935,6 +3006,8 @@ async def _resolve_live_transport(
             resumption_handle=resumption_handle,
             voice_name=voice_name,
             thinking_level=thinking_level,
+            model_name=model_name,
+            manual_activity=manual_activity,
         ),
         None,
         None,
@@ -2949,6 +3022,7 @@ async def _handle_live_session(
     resumption_token: str,
     *,
     transport_mode: str,
+    manual_activity: bool = False,
 ):
 
     # Extract display metadata from the already-validated initData user object.
@@ -2988,6 +3062,7 @@ async def _handle_live_session(
         resumption_handle=session_resumption_token or resumption_token,
         voice_name=live_voice_name,
         thinking_level=live_thinking_level,
+        manual_activity=manual_activity,
     )
     if client is None or live_config is None:
         if failure_reason == "server_capacity":
@@ -3052,7 +3127,6 @@ async def _handle_live_session(
             if resumption_token:
                 await websocket.send_json({"type": "session_resumed"})
 
-            turn_ready = asyncio.Event()
             producer_alive = True
             turn_sequence = 0
             turn_started_ns: int | None = None
@@ -3060,8 +3134,6 @@ async def _handle_live_session(
             turn_input_text_chars = 0
             turn_output_audio_bytes = 0
             turn_output_transcript_chars = 0
-            if resumption_token:
-                turn_ready.set()
 
             def _ensure_turn_started(trigger: str) -> None:
                 nonlocal turn_sequence, turn_started_ns
@@ -3107,6 +3179,8 @@ async def _handle_live_session(
                             msg = json.loads(raw)
                         except json.JSONDecodeError, TypeError:
                             continue
+                        if not isinstance(msg, dict):
+                            continue
 
                         msg_type = msg.get("type")
 
@@ -3122,20 +3196,25 @@ async def _handle_live_session(
                                     audio=types.Blob(data=audio_bytes, mime_type=mime_type)
                                 )
                         elif msg_type == "activity_start":
+                            if not manual_activity:
+                                continue
                             _ensure_turn_started("activity_start")
                             await session.send_realtime_input(
                                 activity_start=types.ActivityStart(),
                             )
                         elif msg_type == "activity_end":
+                            if not manual_activity:
+                                continue
                             _ensure_turn_started("activity_end")
                             await session.send_realtime_input(
                                 activity_end=types.ActivityEnd(),
                             )
-                            turn_ready.set()
                         elif msg_type == "audio_stream_end":
                             _ensure_turn_started("audio_stream_end")
-                            await session.send_realtime_input(audio_stream_end=True)
-                            turn_ready.set()
+                            if manual_activity:
+                                await session.send_realtime_input(activity_end=types.ActivityEnd())
+                            else:
+                                await session.send_realtime_input(audio_stream_end=True)
                         elif msg_type == "text":
                             text = msg.get("text", "")
                             if text:
@@ -3143,7 +3222,6 @@ async def _handle_live_session(
                                 turn_input_text_chars += len(text)
                                 session_input_text_chars += len(text)
                                 await session.send_realtime_input(text=text)
-                                turn_ready.set()
 
                 except asyncio.CancelledError:
                     pass
@@ -3152,7 +3230,6 @@ async def _handle_live_session(
                     logger.warning("live_audio_ws producer error user=%d error_type=%s", user_id, type(exc).__name__)
                 finally:
                     producer_alive = False
-                    turn_ready.set()
 
             # ── Consumer: Gemini → browser ────────────────────────────────
             async def _consumer() -> None:
@@ -3161,73 +3238,19 @@ async def _handle_live_session(
                 nonlocal session_output_audio_bytes, session_output_transcript_chars
                 nonlocal turn_output_audio_bytes, turn_output_transcript_chars
                 try:
+                    # Input transcription is independent of model-turn boundaries:
+                    # with NO_INTERRUPTION the next user can speak during a reply.
+                    input_transcript = ""
                     while True:
-                        await turn_ready.wait()
-                        turn_ready.clear()
                         if not producer_alive:
                             close_reason = "producer_ended"
                             break
 
-                        _ensure_turn_started("resumed_session" if resumption_token else "turn_ready")
-
                         saw_message = False
                         turn_interrupted = False
-                        turn_input_transcript: str | None = None
-                        input_transcript_sent = False
+                        turn_output_transcript = ""
                         async for response in session.receive():
                             saw_message = True
-                            content = response.server_content
-                            if content:
-                                if content.model_turn and content.model_turn.parts:
-                                    for part in content.model_turn.parts:
-                                        if part.inline_data and part.inline_data.data:
-                                            output_bytes = len(part.inline_data.data)
-                                            turn_output_audio_bytes += output_bytes
-                                            session_output_audio_bytes += output_bytes
-                                            audio_b64 = base64.b64encode(part.inline_data.data).decode("ascii")
-                                            await websocket.send_json(
-                                                {
-                                                    "type": "audio",
-                                                    "data": audio_b64,
-                                                }
-                                            )
-
-                                if content.input_transcription and content.input_transcription.text:
-                                    turn_input_transcript = content.input_transcription.text
-                                if content.output_transcription:
-                                    transcript_text = content.output_transcription.text or ""
-                                    turn_output_transcript_chars += len(transcript_text)
-                                    session_output_transcript_chars += len(transcript_text)
-                                    if turn_input_transcript and not input_transcript_sent:
-                                        await websocket.send_json(
-                                            {
-                                                "type": "input_transcript",
-                                                "text": turn_input_transcript,
-                                            }
-                                        )
-                                        input_transcript_sent = True
-                                    await websocket.send_json(
-                                        {
-                                            "type": "output_transcript",
-                                            "text": content.output_transcription.text,
-                                        }
-                                    )
-
-                                if content.interrupted is True:
-                                    turn_interrupted = True
-                                    await websocket.send_json({"type": "interrupt"})
-
-                                if content.turn_complete or content.waiting_for_input:
-                                    if turn_input_transcript and not input_transcript_sent:
-                                        await websocket.send_json(
-                                            {
-                                                "type": "input_transcript",
-                                                "text": turn_input_transcript,
-                                            }
-                                        )
-                                    await websocket.send_json({"type": "turn_complete"})
-                                    break
-
                             if hasattr(response, "session_resumption_update"):
                                 sru = response.session_resumption_update
                                 if sru and hasattr(sru, "new_handle") and sru.new_handle:
@@ -3259,6 +3282,55 @@ async def _handle_live_session(
                                         "time_left_seconds": seconds_left,
                                     }
                                 )
+
+                            content = response.server_content
+                            if content:
+                                _ensure_turn_started("provider_content")
+                                if content.model_turn and content.model_turn.parts:
+                                    for part in content.model_turn.parts:
+                                        if part.inline_data and part.inline_data.data:
+                                            output_bytes = len(part.inline_data.data)
+                                            turn_output_audio_bytes += output_bytes
+                                            session_output_audio_bytes += output_bytes
+                                            audio_b64 = base64.b64encode(part.inline_data.data).decode("ascii")
+                                            await websocket.send_json(
+                                                {
+                                                    "type": "audio",
+                                                    "data": audio_b64,
+                                                }
+                                            )
+
+                                if content.input_transcription is not None:
+                                    input_transcript += content.input_transcription.text or ""
+                                    finished = bool(getattr(content.input_transcription, "finished", False))
+                                    await websocket.send_json(
+                                        {
+                                            "type": "input_transcript",
+                                            "text": input_transcript,
+                                            "finished": finished,
+                                        }
+                                    )
+                                    if finished:
+                                        input_transcript = ""
+                                if content.output_transcription:
+                                    transcript_text = content.output_transcription.text or ""
+                                    turn_output_transcript_chars += len(transcript_text)
+                                    session_output_transcript_chars += len(transcript_text)
+                                    turn_output_transcript += transcript_text
+                                    await websocket.send_json(
+                                        {
+                                            "type": "output_transcript",
+                                            "text": turn_output_transcript,
+                                        }
+                                    )
+
+                                if content.interrupted is True:
+                                    turn_interrupted = True
+                                    await websocket.send_json({"type": "interrupt"})
+
+                                if content.turn_complete or content.waiting_for_input:
+                                    await websocket.send_json({"type": "turn_complete"})
+                                    break
 
                         if not saw_message:
                             close_reason = "provider_stream_ended"

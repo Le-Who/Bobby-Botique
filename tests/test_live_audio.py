@@ -235,8 +235,7 @@ class TestLiveAudioPage:
         assert "controlledReconnectState?.needsFreshFallback" in body
         assert "settings-updated" in body
         assert "live-connection-modes" in body
-        assert "Женские" in body
-        assert "Мужские" in body
+        assert "live-turn-mode" in body
         assert "/webapp/live-vertex/ws" in body
         assert "Переключаю на стандартный Live" in body
 
@@ -293,14 +292,13 @@ class TestLiveAudioSettingsApi:
 
         assert resp.status_code == 200
         payload = await resp.get_json()
-        assert payload["live_settings"]["live_voice_name"] == "Aoede"
+        assert payload["live_settings"]["live_voice_name"] == "Rasalgethi"
         assert payload["live_settings"]["live_thinking_level"] == "low"
         assert payload["live_settings"]["live_connection_mode"] == "standard"
         assert [item["id"] for item in payload["connection_modes"]] == ["standard", "vertex_internet"]
         assert any(item["id"] == "Aoede" for item in payload["voices"])
-        assert any(item["gender"] == "female" for item in payload["voices"])
-        assert any(item["gender"] == "male" for item in payload["voices"])
-        assert [item["id"] for item in payload["thinking_presets"]] == ["off", "low", "medium"]
+        assert len(payload["voices"]) == 30
+        assert payload["thinking_presets"] == []
 
     async def test_patch_live_settings_persists_selected_values(self, test_client, auth_headers):
         chat_state = ChatState(
@@ -354,14 +352,14 @@ class TestLiveAudioSettingsApi:
                 json={
                     "live_connection_mode": "broken_mode",
                     "live_voice_name": "Unknown",
-                    "live_thinking_level": "high",
+                    "live_thinking_level": "unknown",
                 },
             )
 
         assert resp.status_code == 200
         payload = await resp.get_json()
         assert payload["note"] == "no_changes"
-        assert payload["live_settings"]["live_voice_name"] == "Aoede"
+        assert payload["live_settings"]["live_voice_name"] == "Rasalgethi"
         assert payload["live_settings"]["live_thinking_level"] == "low"
         assert payload["live_settings"]["live_connection_mode"] == "standard"
         update_chat.assert_not_awaited()
@@ -418,19 +416,18 @@ class TestLiveAudioProxy:
                 assert msg["type"] == "connected"
                 connect_kwargs = mock_client.aio.live.connect.call_args.kwargs
                 config = connect_kwargs["config"]
-                assert connect_kwargs["model"] == "gemini-3.1-flash-live-preview"
+                assert connect_kwargs["model"] == "gemini-3.8-live"
                 assert config.session_resumption is not None
                 assert config.session_resumption.handle is None
                 assert config.input_audio_transcription is not None
                 assert config.output_audio_transcription is not None
                 assert config.realtime_input_config is not None
                 assert config.realtime_input_config.automatic_activity_detection is not None
-                assert config.realtime_input_config.automatic_activity_detection.disabled is True
+                assert config.realtime_input_config.automatic_activity_detection.disabled is False
                 assert config.context_window_compression is not None
                 assert config.speech_config is not None
                 assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
-                assert config.thinking_config is not None
-                assert str(config.thinking_config.thinking_level).lower().endswith("medium")
+                assert config.thinking_config is None
                 assert "По умолчанию отвечай по-русски" in config.system_instruction.parts[0].text
 
         authorized_miniapp_user.assert_awaited_once_with(555)
@@ -488,7 +485,7 @@ class TestLiveAudioProxy:
                 assert config.output_audio_transcription is not None
                 assert config.realtime_input_config is not None
                 assert config.realtime_input_config.automatic_activity_detection is not None
-                assert config.realtime_input_config.automatic_activity_detection.disabled is True
+                assert config.realtime_input_config.automatic_activity_detection.disabled is False
                 assert config.context_window_compression is not None
                 assert config.speech_config is not None
                 assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
@@ -501,7 +498,7 @@ class TestLiveAudioProxy:
     async def test_audio_forwarding(self, test_client, mock_bot_token, mock_api_keys):
         """LA-03: realtime_input message should trigger session.send_realtime_input."""
         init_data = make_valid_init_data(mock_bot_token, user_id=556)
-        url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
+        url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}&turnDetection=manual"
 
         mock_session = AsyncMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
@@ -520,8 +517,8 @@ class TestLiveAudioProxy:
 
         async def _gen():
             await audio_forwarded.wait()
-            for r in responses:
-                yield r
+            while responses:
+                yield responses.pop(0)
 
         mock_session.receive = _gen
 
@@ -582,8 +579,8 @@ class TestLiveAudioProxy:
         responses = [_make_response_with_interrupt()]
 
         async def _gen():
-            for r in responses:
-                yield r
+            while responses:
+                yield responses.pop(0)
 
         mock_session.receive = _gen
 
@@ -620,8 +617,8 @@ class TestLiveAudioProxy:
         ]
 
         async def _gen():
-            for r in responses:
-                yield r
+            while responses:
+                yield responses.pop(0)
 
         mock_session.receive = _gen
 
@@ -648,7 +645,9 @@ class TestLiveAudioProxy:
                 assert out_msg["type"] == "output_transcript"
                 assert out_msg["text"] == "Здравствуйте!"
 
-    async def test_input_transcript_is_sent_once_using_latest_partial(self, test_client, mock_bot_token, mock_api_keys):
+    async def test_input_transcript_fragments_are_accumulated_before_output(
+        self, test_client, mock_bot_token, mock_api_keys
+    ):
         init_data = make_valid_init_data(mock_bot_token, user_id=563)
         url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
 
@@ -658,14 +657,14 @@ class TestLiveAudioProxy:
         mock_session.send_realtime_input = AsyncMock()
 
         responses = [
-            _make_response_with_input_partial("{BG}"),
-            _make_response_with_input_partial("Привет, какая погода в Одессе?"),
+            _make_response_with_input_partial("Привет, "),
+            _make_response_with_input_partial("какая погода в Одессе?"),
             _make_response_with_transcript("output", "Сейчас посмотрю."),
         ]
 
         async def _gen():
-            for r in responses:
-                yield r
+            while responses:
+                yield responses.pop(0)
 
         mock_session.receive = _gen
 
@@ -685,6 +684,10 @@ class TestLiveAudioProxy:
 
                 in_raw = await ws.receive()
                 in_msg = json.loads(in_raw)
+                assert in_msg["type"] == "input_transcript"
+                assert in_msg["text"] == "Привет, "
+                assert in_msg["finished"] is False
+                in_msg = json.loads(await ws.receive())
                 assert in_msg["type"] == "input_transcript"
                 assert in_msg["text"] == "Привет, какая погода в Одессе?"
 

@@ -338,8 +338,8 @@ PROCESS_EVIDENCE: dict[str, ProcessEvidence] = {
     ),
     "live": _row(
         "Gemini SDK: Live",
-        "Новый аудиосеанс через стандартный Live transport.",
-        "Уже открытый сеанс сохраняет модель подключения; общий Gemini RPD не резервируется.",
+        "Новый аудиосеанс через стандартный Live transport; baseline Gemini 3.8 Live с автоматическим мышлением.",
+        "Уже открытый сеанс сохраняет модель подключения; общий Gemini RPD не резервируется. VAD ждёт 1,5 с тишины, речь не обрывает ответ. Ручной режим выбирается в Live.",
         ("app/web_miniapp.py", "_resolve_live_transport"),
         apply="new_session",
     ),

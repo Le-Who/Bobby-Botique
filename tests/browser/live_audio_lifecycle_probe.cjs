@@ -28,7 +28,9 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
       return route.fulfill({ body: '', contentType: 'application/javascript' });
     });
     await page.addInitScript(({ scenario }) => {
-      window.metrics = { streams: [], contexts: [], worklets: [], permissionCalls: 0, sockets: [] };
+      window.metrics = { streams: [], contexts: [], worklets: [], permissionCalls: 0, sockets: [], playbackResumes: 0 };
+      if (scenario === 'manual_stop') localStorage.setItem('liveTurnMode', 'manual');
+      if (scenario === 'rejected_resume') sessionStorage.setItem('liveResumptionToken', 'expired-handle');
       window.pendingPermissions = [];
       window.pendingModules = [];
       class Socket {
@@ -59,7 +61,12 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
       const node = () => ({ connect() {}, disconnectCount: 0, disconnect() { this.disconnectCount++; } });
       window.AudioContext = class {
         closeCount = 0; destination = {};
-        constructor() {
+        constructor(options) {
+          if (options?.sampleRate === 24000) {
+            this.state = 'suspended';
+            this.resume = () => { metrics.playbackResumes++; this.state = 'running'; return Promise.resolve(); };
+            return;
+          }
           if (scenario === 'context_failure') throw new Error('unsupported sample rate');
           metrics.contexts.push(this);
           this.audioWorklet = { addModule() {
@@ -104,6 +111,24 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
     }
     // Wait for the rendered API settings before choosing the transport.
     await page.locator(`[data-live-connection-mode="${initialConnectionMode}"].active`).waitFor({ state: 'attached' });
+    if (payload.scenario === 'rejected_resume') {
+      await page.locator('#mic-btn').click();
+      const attempts = await page.evaluate(() => {
+        const first = metrics.sockets.at(-1);
+        first.receive({ type: 'error', reason: 'connect_failed', message: 'Synthetic stale handle' });
+        const fresh = metrics.sockets.at(-1);
+        const result = { old: first.url, fresh: fresh.url, count: metrics.sockets.length };
+        fresh.receive({ type: 'connected' });
+        return result;
+      });
+      assert.equal(attempts.count, 2);
+      assert.ok(attempts.old.includes('resumptionToken=expired-handle'));
+      assert.ok(!attempts.fresh.includes('resumptionToken='));
+      await page.waitForFunction(() => document.getElementById('mic-btn').classList.contains('recording'));
+      await page.locator('#end-btn').click();
+      assert.deepEqual(errors, []);
+      return;
+    }
     await start();
     if (['permission_denied', 'context_failure', 'worklet_failure'].includes(payload.scenario)) {
       await page.waitForFunction(() => document.getElementById('error-bar').classList.contains('show'));
@@ -112,7 +137,37 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
       assert.deepEqual(value.stops, payload.scenario === 'permission_denied' ? [] : [1]);
       assert.deepEqual(value.closes, payload.scenario === 'worklet_failure' ? [1] : []);
       assert.deepEqual(value.events, []);
-    } else if (payload.scenario === 'normal_stop') {
+    } else if (payload.scenario === 'automatic_turns') {
+      await page.waitForFunction(() => document.getElementById('mic-btn').classList.contains('recording'));
+      const result = await page.evaluate(() => {
+        const socket = metrics.sockets.at(-1);
+        const sendAudio = () => metrics.worklets.at(-1).port.onmessage({ data: new Int16Array(1600).buffer });
+        sendAudio();
+        socket.receive({ type: 'input_transcript', text: 'Первая реплика', finished: true });
+        socket.receive({ type: 'output_transcript', text: 'Первый ответ' });
+        socket.receive({ type: 'input_transcript', text: 'Вторая ', finished: false });
+        socket.receive({ type: 'turn_complete' });
+        socket.receive({ type: 'input_transcript', text: 'Вторая реплика', finished: true });
+        sendAudio();
+        socket.receive({ type: 'output_transcript', text: 'Второй ответ' });
+        socket.receive({ type: 'turn_complete' });
+        plannedReconnect = true;
+        socket.close();
+        sendAudio(); // OPEN is not provider setupComplete.
+        const beforeSetup = metrics.sockets.at(-1).sent.length;
+        metrics.sockets.at(-1).receive({ type: 'connected' });
+        sendAudio();
+        return { beforeSetup, events: metrics.sockets.flatMap(s => s.sent.map(m => m.type)),
+          isRecording: recording, resumes: metrics.playbackResumes,
+          userRows: [...document.querySelectorAll('.t-user')].map(el => el.textContent) };
+      });
+      assert.equal(result.beforeSetup, 0);
+      assert.equal(result.isRecording, true);
+      assert.equal(result.resumes, 1, 'playback must be unlocked during the original user gesture');
+      assert.deepEqual(result.events, ['realtime_input', 'realtime_input', 'realtime_input']);
+      assert.deepEqual(result.userRows, ['Вы: Первая реплика', 'Вы: Вторая реплика']);
+      await page.locator('#mic-btn').click();
+    } else if (payload.scenario === 'normal_stop' || payload.scenario === 'manual_stop') {
       await page.waitForFunction(() => document.getElementById('mic-btn').classList.contains('recording'));
       await page.locator('#mic-btn').click();
       await page.evaluate(() => stopRecording()); // idempotent cleanup
@@ -121,7 +176,7 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
       assert.deepEqual(value.stops, [1]); assert.deepEqual(value.closes, [1]);
       assert.deepEqual(value.workletDisconnects, [1]);
       assert.deepEqual(value.socketClosed, [0]);
-      assert.deepEqual(value.events, ['activity_start', 'activity_end']);
+      assert.deepEqual(value.events, payload.scenario === 'manual_stop' ? ['activity_start', 'activity_end'] : ['audio_stream_end']);
     } else if (payload.scenario === 'superseded_start') {
       await page.locator('#mic-btn').click();
       await page.locator('#mic-btn').click();
@@ -133,7 +188,7 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
       const value = await state();
       assert.deepEqual(value.stops, [0, 1], 'a superseded request may only stop its own returned stream');
       assert.equal(value.label, 'Остановить запись');
-      assert.deepEqual(value.events, ['activity_start']);
+      assert.deepEqual(value.events, []);
       await page.locator('#mic-btn').click();
       assert.deepEqual((await state()).stops, [1, 1]);
     } else if (payload.terminal) {

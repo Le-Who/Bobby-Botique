@@ -177,7 +177,7 @@ PROCESSES: dict[str, ProcessSpec] = {
         "Live Audio",
         "Аудио",
         "GEMINI_LIVE_MODEL",
-        "gemini-3.1-flash-live-preview",
+        "gemini-3.8-live",
         ("live",),
         True,
         note="Применяется при открытии следующего аудиосеанса.",

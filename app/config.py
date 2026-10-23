@@ -70,8 +70,8 @@ LEGACY_IMAGEN_MODELS: tuple[str, ...] = (
 
 # --- Gemini Live API (real-time bidirectional audio) ---
 # The current deployed live path in this repo uses the Gemini GenAI Live API.
-GEMINI_LIVE_MODEL: str = "gemini-3.1-flash-live-preview"
-GEMINI_LIVE_VOICE_NAME: str = os.getenv("GEMINI_LIVE_VOICE_NAME", "Aoede").strip() or "Aoede"
+GEMINI_LIVE_MODEL: str = "gemini-3.8-live"
+GEMINI_LIVE_VOICE_NAME: str = os.getenv("GEMINI_LIVE_VOICE_NAME", "Rasalgethi").strip() or "Rasalgethi"
 
 # --- Pollinations.ai image models ---
 # Overridable via env: IMAGE_MODELS="flux,zimage,gptimage,..."

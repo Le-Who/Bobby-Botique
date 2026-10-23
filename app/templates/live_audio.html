@@ -404,7 +404,7 @@
 
 <div id="app">
   <div id="top-bar">
-    <div id="settings-summary">Live: Standard · Aoede · Сбалансированный</div>
+    <div id="settings-summary">Live: Standard · Rasalgethi · Авто</div>
     <button id="settings-btn" type="button" title="Настройки live" aria-label="Открыть настройки Live Audio">⚙️</button>
   </div>
 
@@ -435,10 +435,17 @@
     <div class="sheet-section-title">Подключение</div>
     <div id="live-connection-modes" class="settings-list"></div>
 
+    <div class="sheet-section-title">Разговор</div>
+    <select id="live-turn-mode" class="sheet-option" aria-label="Режим разговора">
+      <option value="automatic">Непрерывный разговор</option>
+      <option value="manual">Завершать реплику кнопкой</option>
+    </select>
+    <div class="sheet-option-hint">В непрерывном режиме ответ начинается после паузы около 1,5 секунды. Ваша речь не обрывает ответ AI. Режим запоминается на этом устройстве.</div>
+
     <div class="sheet-section-title">Голос</div>
     <div id="live-voice-options" class="settings-list"></div>
 
-    <div class="sheet-section-title">Режим мышления</div>
+    <div id="live-thinking-title" class="sheet-section-title">Режим мышления</div>
     <div id="live-thinking-options" class="settings-list"></div>
   </div>
 
@@ -476,6 +483,7 @@ const liveSettingsSheet = $('live-settings-sheet');
 const liveConnectionModesEl = $('live-connection-modes');
 const liveVoiceOptionsEl = $('live-voice-options');
 const liveThinkingOptionsEl = $('live-thinking-options');
+const liveTurnModeEl = $('live-turn-mode');
 const liveSettingsCancelBtn = $('live-settings-cancel');
 const liveSettingsSaveBtn = $('live-settings-save');
 const errorBar    = $('error-bar');
@@ -491,12 +499,13 @@ let activeMicCapture = null;
 let playbackCtx = null;
 let scheduledSources = [];
 let nextPlaybackTime = 0;
+let playbackTurnEnded = true;
 let resumptionToken = sessionStorage.getItem('liveResumptionToken') || '';
 let sessionEndedIntentionally = false;
 let reconnectTimer = null;
 let liveFatalState = null;
 let plannedReconnect = false;
-let liveSettings = { live_connection_mode: 'standard', live_voice_name: 'Aoede', live_thinking_level: 'low' };
+let liveSettings = { live_connection_mode: 'standard', live_voice_name: 'Rasalgethi', live_thinking_level: 'low', live_turn_mode: localStorage.getItem('liveTurnMode') === 'manual' ? 'manual' : 'automatic' };
 let draftLiveSettings = { ...liveSettings };
 let liveConnectionModes = [];
 let liveVoiceOptions = [];
@@ -509,7 +518,7 @@ let pendingModeFallbackMessage = '';
 let modeFallbackUsed = false;
 let liveSessionEstablished = false;
 let pendingRecordingStart = false;
-let activeTranscriptDraft = null;
+const transcriptDrafts = new Map();
 
 const MIC_BUTTON_PRESENTATION = {
   idle: { icon: '🎙️', label: 'Начать запись' },
@@ -535,14 +544,15 @@ let reconnectAttempt = 0;
 const LIVE_THINKING_LABELS = {
   off: 'Быстрый',
   low: 'Сбалансированный',
-  medium: 'Умный'
+  medium: 'Умный',
+  high: 'Глубокий'
 };
 const LIVE_MODE_LABELS = {
   standard: 'Standard',
   vertex_internet: 'Internet'
 };
 const PLAYBACK_FADE_MS = 4;
-const PLAYBACK_MIN_LEAD_SEC = 0.012;
+const PLAYBACK_MIN_LEAD_SEC = 0.12;
 
 function _backoffDelay() {
   const base = Math.min(BACKOFF_BASE_MS * Math.pow(2, reconnectAttempt), BACKOFF_MAX_MS);
@@ -579,9 +589,11 @@ async function api(path, options = {}) {
 
 function renderSettingsSummary() {
   const connectionMode = LIVE_MODE_LABELS[liveSettings.live_connection_mode] || 'Standard';
-  const voice = liveSettings.live_voice_name || 'Aoede';
-  const thinking = LIVE_THINKING_LABELS[liveSettings.live_thinking_level] || 'Сбалансированный';
-  settingsSummaryEl.textContent = `Live: ${connectionMode} · ${voice} · ${thinking}`;
+  const voice = liveSettings.live_voice_name || 'Rasalgethi';
+  const thinking = liveThinkingOptions.length && liveSettings.live_connection_mode === 'standard'
+    ? LIVE_THINKING_LABELS[liveSettings.live_thinking_level] || 'Сбалансированный' : 'Авто';
+  const conversation = liveSettings.live_turn_mode === 'manual' ? 'Кнопка' : 'Разговор';
+  settingsSummaryEl.textContent = `Live: ${connectionMode} · ${voice} · ${thinking} · ${conversation}`;
 }
 
 function renderLiveSettingOptions() {
@@ -598,14 +610,8 @@ function renderLiveSettingOptions() {
     `;
   }).join('');
 
-  const voiceGroups = [
-    { id: 'female', label: 'Женские' },
-    { id: 'male', label: 'Мужские' }
-  ];
-  liveVoiceOptionsEl.innerHTML = voiceGroups.map((group) => {
-    const groupVoices = liveVoiceOptions.filter((voice) => voice.gender === group.id);
-    if (!groupVoices.length) return '';
-    const optionsHtml = groupVoices.map((voice) => {
+  liveTurnModeEl.value = draftLiveSettings.live_turn_mode;
+  liveVoiceOptionsEl.innerHTML = liveVoiceOptions.map((voice) => {
       const active = draftLiveSettings.live_voice_name === voice.id;
       return `
         <button type="button" class="sheet-option ${active ? 'active' : ''}" data-live-voice="${esc(voice.id)}">
@@ -616,16 +622,11 @@ function renderLiveSettingOptions() {
           <div class="sheet-option-hint">${esc(voice.description || '')}</div>
         </button>
       `;
-    }).join('');
-    return `
-      <div class="settings-group" data-voice-group="${esc(group.id)}">
-        <div class="settings-group-label">${esc(group.label)}</div>
-        <div class="settings-list">${optionsHtml}</div>
-      </div>
-    `;
   }).join('');
 
-  liveThinkingOptionsEl.innerHTML = liveThinkingOptions.map((preset) => {
+  const thinkingOptions = draftLiveSettings.live_connection_mode === 'standard' ? liveThinkingOptions : [];
+  $('live-thinking-title').hidden = thinkingOptions.length === 0;
+  liveThinkingOptionsEl.innerHTML = thinkingOptions.map((preset) => {
     const active = draftLiveSettings.live_thinking_level === preset.id;
     return `
       <button type="button" class="sheet-option ${active ? 'active' : ''}" data-live-thinking="${esc(preset.id)}">
@@ -655,8 +656,9 @@ async function loadLiveSettings() {
   const payload = await api('/live-settings');
   liveSettings = {
     live_connection_mode: payload.live_settings?.live_connection_mode || 'standard',
-    live_voice_name: payload.live_settings?.live_voice_name || 'Aoede',
-    live_thinking_level: payload.live_settings?.live_thinking_level || 'low'
+    live_voice_name: payload.live_settings?.live_voice_name || 'Rasalgethi',
+    live_thinking_level: payload.live_settings?.live_thinking_level || 'low',
+    live_turn_mode: liveSettings.live_turn_mode
   };
   draftLiveSettings = { ...liveSettings };
   liveConnectionModes = payload.connection_modes || [];
@@ -702,7 +704,8 @@ async function saveLiveSettings() {
   const changed =
     draftLiveSettings.live_connection_mode !== liveSettings.live_connection_mode ||
     draftLiveSettings.live_voice_name !== liveSettings.live_voice_name ||
-    draftLiveSettings.live_thinking_level !== liveSettings.live_thinking_level;
+    draftLiveSettings.live_thinking_level !== liveSettings.live_thinking_level ||
+    draftLiveSettings.live_turn_mode !== liveSettings.live_turn_mode;
   if (!changed) {
     closeLiveSettingsSheet();
     return;
@@ -717,8 +720,10 @@ async function saveLiveSettings() {
     liveSettings = {
       live_connection_mode: payload.live_settings?.live_connection_mode || draftLiveSettings.live_connection_mode,
       live_voice_name: payload.live_settings?.live_voice_name || draftLiveSettings.live_voice_name,
-      live_thinking_level: payload.live_settings?.live_thinking_level || draftLiveSettings.live_thinking_level
+      live_thinking_level: payload.live_settings?.live_thinking_level || draftLiveSettings.live_thinking_level,
+      live_turn_mode: draftLiveSettings.live_turn_mode
     };
+    localStorage.setItem('liveTurnMode', liveSettings.live_turn_mode);
     draftLiveSettings = { ...liveSettings };
     sessionConnectionModeOverride = null;
     pendingModeFallback = null;
@@ -830,7 +835,21 @@ function enqueueAudio(base64Pcm) {
   }
 
   const now = playbackCtx.currentTime;
-  if (nextPlaybackTime < now + PLAYBACK_MIN_LEAD_SEC) {
+  const startsSegment = nextPlaybackTime <= now;
+  const previous = scheduledSources[scheduledSources.length - 1];
+  if (!startsSegment && !playbackTurnEnded && previous) {
+    const previousGain = previous.playbackGain.gain;
+    if (now < previous.tailFadeStart) {
+      previousGain.cancelScheduledValues(previous.tailFadeStart);
+      previousGain.setValueAtTime(1, previous.tailFadeStart);
+    } else {
+      // A late but contiguous packet arrived during the tail ramp. Restore
+      // the current level smoothly instead of jumping back to full gain.
+      previousGain.cancelAndHoldAtTime(now);
+      previousGain.linearRampToValueAtTime(1, nextPlaybackTime);
+    }
+  }
+  if (startsSegment) {
     nextPlaybackTime = now + PLAYBACK_MIN_LEAD_SEC;
   }
 
@@ -841,10 +860,18 @@ function enqueueAudio(base64Pcm) {
   gain.connect(playbackCtx.destination);
 
   const fadeSeconds = Math.min(PLAYBACK_FADE_MS / 1000, buf.duration / 2);
-  gain.gain.setValueAtTime(0, nextPlaybackTime);
-  gain.gain.linearRampToValueAtTime(1, nextPlaybackTime + fadeSeconds);
-  gain.gain.setValueAtTime(1, Math.max(nextPlaybackTime + fadeSeconds, nextPlaybackTime + buf.duration - fadeSeconds));
+  // The last queued packet is provisionally faded for a possible underrun.
+  // A contiguous packet cancels that fade, preserving one continuous waveform.
+  if (startsSegment || playbackTurnEnded) {
+    gain.gain.setValueAtTime(0, nextPlaybackTime);
+    gain.gain.linearRampToValueAtTime(1, nextPlaybackTime + fadeSeconds);
+  }
+  src.playbackGain = gain;
+  src.playbackEnd = nextPlaybackTime + buf.duration;
+  src.tailFadeStart = nextPlaybackTime + buf.duration - fadeSeconds;
+  gain.gain.setValueAtTime(1, src.tailFadeStart);
   gain.gain.linearRampToValueAtTime(0, nextPlaybackTime + buf.duration);
+  playbackTurnEnded = false;
   src.start(nextPlaybackTime);
   
   nextPlaybackTime += buf.duration;
@@ -853,15 +880,28 @@ function enqueueAudio(base64Pcm) {
   src.onended = () => {
     const idx = scheduledSources.indexOf(src);
     if (idx > -1) scheduledSources.splice(idx, 1);
+    src.disconnect();
+    gain.disconnect();
   };
+}
+
+function finishPlaybackTurn() {
+  playbackTurnEnded = true;
 }
 
 function flushPlayback() {
   scheduledSources.forEach(src => {
-    try { src.stop(); } catch (e) {}
+    try {
+      const now = playbackCtx.currentTime;
+      const stopAt = Math.max(now, Math.min(now + PLAYBACK_FADE_MS / 1000, src.playbackEnd));
+      src.playbackGain.gain.cancelAndHoldAtTime(now);
+      src.playbackGain.gain.linearRampToValueAtTime(0, stopAt);
+      src.stop(stopAt);
+    } catch (e) {}
   });
   scheduledSources = [];
   nextPlaybackTime = 0;
+  playbackTurnEnded = true;
 }
 
 /* ── WebSocket to Quart proxy ───────────────────────────────────────── */
@@ -896,6 +936,7 @@ function connectWS(options = {}) {
   const connectionMode = options.mode || sessionConnectionModeOverride || liveSettings.live_connection_mode || 'standard';
   activeConnectionMode = connectionMode;
   let url = `${proto}://${location.host}${resolveSocketPath(connectionMode)}?initData=${enc}`;
+  url += `&turnDetection=${liveSettings.live_turn_mode}`;
   if (resumptionToken) {
     url += `&resumptionToken=${encodeURIComponent(resumptionToken)}`;
   }
@@ -907,6 +948,7 @@ function connectWS(options = {}) {
   vizWrap.classList.add('connecting');
 
   const socket = new WebSocket(url);
+  const attemptedResumption = Boolean(resumptionToken);
   ws = socket;
 
   socket.onopen = () => {
@@ -939,7 +981,7 @@ function connectWS(options = {}) {
           setStatus('Настройки применены. Возвращаю микрофон…', '');
           void startMicCapture();
         } else if (recording && ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'activity_start' }));
+          if (liveSettings.live_turn_mode === 'manual') ws.send(JSON.stringify({ type: 'activity_start' }));
           setStatus('Соединение восстановлено. Продолжайте говорить.', 'active');
         } else if (controlledReconnectState) {
           controlledReconnectState = null;
@@ -958,11 +1000,12 @@ function connectWS(options = {}) {
 
       case 'interrupt':
         flushPlayback();
-        finalizeTranscriptDraft();
+        finalizeTranscriptDraft('t-ai');
         break;
 
       case 'input_transcript':
         appendTranscript('Вы', msg.text, 't-user');
+        if (msg.finished) finalizeTranscriptDraft('t-user');
         break;
 
       case 'output_transcript':
@@ -970,7 +1013,8 @@ function connectWS(options = {}) {
         break;
 
       case 'turn_complete':
-        finalizeTranscriptDraft();
+        finishPlaybackTurn();
+        finalizeTranscriptDraft('t-ai');
         break;
 
       case 'resumption_token':
@@ -1021,6 +1065,15 @@ function connectWS(options = {}) {
         break;
 
       case 'error':
+        if (msg.reason === 'connect_failed' && !liveSessionEstablished && attemptedResumption) {
+          // A saved handle can expire or belong to the previous deployed model.
+          // Removing it makes this a single fresh retry, including page reloads.
+          resumptionToken = '';
+          sessionStorage.removeItem('liveResumptionToken');
+          plannedReconnect = true;
+          socket.close(1000, 'retry-without-resumption');
+          break;
+        }
         if (
           msg.reason === 'connect_failed' &&
           maybeQueueStandardFallback(msg.reason, 'Не удалось запустить internet-live. Переключаю на стандартный Live.')
@@ -1050,6 +1103,7 @@ function connectWS(options = {}) {
     } else {
       return;
     }
+    finalizeTranscriptDraft();
 
     if (sessionEndedIntentionally) {
       if (liveFatalState) {
@@ -1119,21 +1173,20 @@ function connectWS(options = {}) {
 /* ── Transcript ─────────────────────────────────────────────────────── */
 function appendTranscript(who, text, cls) {
   if (!text) return;
-  if (!activeTranscriptDraft || activeTranscriptDraft.cls !== cls) {
-    activeTranscriptDraft = {
-      cls,
-      who,
-      el: document.createElement('p')
-    };
-    activeTranscriptDraft.el.className = cls;
-    transcriptEl.appendChild(activeTranscriptDraft.el);
+  let draft = transcriptDrafts.get(cls);
+  if (!draft) {
+    draft = document.createElement('p');
+    draft.className = cls;
+    transcriptEl.appendChild(draft);
+    transcriptDrafts.set(cls, draft);
   }
-  activeTranscriptDraft.el.textContent = `${who}: ${text}`;
+  draft.textContent = `${who}: ${text}`;
   transcriptEl.scrollTop = transcriptEl.scrollHeight;
 }
 
-function finalizeTranscriptDraft() {
-  activeTranscriptDraft = null;
+function finalizeTranscriptDraft(cls) {
+  if (cls) transcriptDrafts.delete(cls);
+  else transcriptDrafts.clear();
 }
 
 /* ── Mic capture via AudioWorklet ───────────────────────────────────── */
@@ -1156,7 +1209,7 @@ async function startMicCapture() {
   let failureMessage = 'Нет доступа к микрофону';
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, sampleRate: 16000 }
+      audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     });
     if (!isCurrent()) {
       stream.getTracks().forEach(track => track.stop());
@@ -1165,6 +1218,8 @@ async function startMicCapture() {
     capture.stream = stream;
     failureMessage = 'Не удалось запустить микрофон';
     capture.context = new AudioContext({ sampleRate: 48000 });
+    if (capture.context.state === 'suspended') await capture.context.resume();
+    if (!isCurrent()) return;
     capture.source = capture.context.createMediaStreamSource(stream);
     const analyser = capture.context.createAnalyser();
     analyser.fftSize = 256;
@@ -1177,7 +1232,7 @@ async function startMicCapture() {
     capture.sink = capture.context.createGain();
     capture.sink.gain.value = 0;
     capture.worklet.port.onmessage = (ev) => {
-      if (!isCurrent() || !recording || !ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!isCurrent() || !recording || !liveSessionEstablished || !ws || ws.readyState !== WebSocket.OPEN) return;
       const b64 = arrayBufferToBase64(ev.data);
       ws.send(JSON.stringify({
         type: 'realtime_input',
@@ -1194,13 +1249,13 @@ async function startMicCapture() {
     audioCtx = capture.context;
     workletNode = capture.worklet;
     micSinkGain = capture.sink;
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    if (liveSettings.live_turn_mode === 'manual' && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'activity_start' }));
     }
     setMicState({ isRecording: true, isConnecting: false });
     vizWrap.classList.add('recording');
     startViz(analyser);
-    setStatus('Слушаю…', 'active');
+    setStatus(liveSettings.live_turn_mode === 'manual' ? 'Слушаю… Нажмите ⏸️ в конце реплики.' : 'Слушаю… Можно говорить без нажатий между репликами.', 'active');
     haptic?.impactOccurred('medium');
   } catch (err) {
     if (!isCurrent()) return;
@@ -1213,6 +1268,15 @@ async function startMicCapture() {
 }
 
 function startRecording() {
+  // Unlock output synchronously inside the tap, before websocket/permission
+  // promises consume the browser's transient user activation (mobile WebViews).
+  try {
+    initPlayback();
+    if (playbackCtx.state === 'suspended') void playbackCtx.resume().catch(() => showError('Не удалось включить звук'));
+  } catch (err) {
+    showError('Не удалось включить звук');
+    return;
+  }
   sessionEndedIntentionally = false;
   liveFatalState = null;
   setMicState({ isConnecting: false });
@@ -1238,9 +1302,9 @@ function stopRecording({ preserveStatus = false } = {}) {
   vizWrap.classList.remove('connecting');
   stopViz();
 
-  // Explicit push-to-talk boundary while keeping the websocket session alive.
+  // Pausing the mic flushes server VAD; manual mode uses explicit activity.
   if (!cancelPendingStart && ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'activity_end' }));
+    ws.send(JSON.stringify({ type: liveSettings.live_turn_mode === 'manual' ? 'activity_end' : 'audio_stream_end' }));
   }
 
   // Cleanup mic only
@@ -1310,6 +1374,9 @@ settingsBtn.addEventListener('click', openLiveSettingsSheet);
 sheetOverlay.addEventListener('click', closeLiveSettingsSheet);
 liveSettingsCancelBtn.addEventListener('click', closeLiveSettingsSheet);
 liveSettingsSaveBtn.addEventListener('click', saveLiveSettings);
+liveTurnModeEl.addEventListener('change', () => {
+  draftLiveSettings.live_turn_mode = liveTurnModeEl.value;
+});
 liveConnectionModesEl.addEventListener('click', (event) => {
   const button = event.target.closest('[data-live-connection-mode]');
   if (!button) return;

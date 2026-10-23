@@ -187,8 +187,8 @@ async def validate_gemini_chat_model_capability(
 def get_live_api_client() -> genai.Client | None:
     """Return a Gemini Developer API client for the Live API.
 
-    gemini-3.1-flash-live-preview is a Gemini Developer API model — it is NOT
-    available through Vertex AI.  This function returns a standard (non-Vertex)
+    The standard Live route uses the Gemini Developer API, separate from the
+    optional Vertex Live route. This returns a standard (non-Vertex)
     genai.Client using the first available GEMINI_API_KEY.
 
     Returns None if no Gemini API keys are configured.

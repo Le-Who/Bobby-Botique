@@ -11,7 +11,7 @@ import pytest
 pytestmark = pytest.mark.browser
 
 
-def _run_lifecycle(scenario: str, terminal: str | None = None, *, defer_settings: bool = False) -> None:
+def _run_browser_probe(script: str, payload: dict) -> None:
     node = shutil.which("node")
     if node is None:
         if os.getenv("GEMAIBOT_REQUIRE_BROWSER_TESTS") == "1":
@@ -19,15 +19,8 @@ def _run_lifecycle(scenario: str, terminal: str | None = None, *, defer_settings
         pytest.skip("Live Audio regression needs Node.js")
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
-        [node, "live_audio_lifecycle_probe.cjs"],
-        input=json.dumps(
-            {
-                "scenario": scenario,
-                "terminal": terminal,
-                "defer_settings": defer_settings,
-                "html": (root / "app/templates/live_audio.html").read_text(encoding="utf-8"),
-            }
-        ),
+        [node, script],
+        input=json.dumps({**payload, "html": (root / "app/templates/live_audio.html").read_text(encoding="utf-8")}),
         cwd=root / "tests/browser",
         capture_output=True,
         encoding="utf-8",
@@ -37,6 +30,17 @@ def _run_lifecycle(scenario: str, terminal: str | None = None, *, defer_settings
         if os.getenv("GEMAIBOT_REQUIRE_BROWSER_TESTS") != "1":
             pytest.skip("Live Audio regression needs locked Playwright dependencies")
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _run_lifecycle(scenario: str, terminal: str | None = None, *, defer_settings: bool = False) -> None:
+    _run_browser_probe(
+        "live_audio_lifecycle_probe.cjs",
+        {
+            "scenario": scenario,
+            "terminal": terminal,
+            "defer_settings": defer_settings,
+        },
+    )
 
 
 @pytest.mark.parametrize("scenario", ["permission_denied", "context_failure", "worklet_failure"])
@@ -55,6 +59,22 @@ def test_stop_releases_mic_once_and_keeps_the_live_session_available():
 
 def test_previous_pending_capture_cannot_overwrite_a_new_recording():
     _run_lifecycle("superseded_start")
+
+
+def test_automatic_turns_keep_capturing_and_resume_only_after_provider_setup():
+    _run_lifecycle("automatic_turns")
+
+
+def test_manual_mode_still_uses_explicit_turn_boundaries():
+    _run_lifecycle("manual_stop")
+
+
+def test_rejected_resume_handle_retries_fresh_once_and_restores_the_pending_mic():
+    _run_lifecycle("rejected_resume")
+
+
+def test_continuous_pcm_has_no_periodic_gain_dips_at_network_packet_boundaries():
+    _run_browser_probe("live_audio_playback_probe.cjs", {})
 
 
 @pytest.mark.parametrize("phase", ["permission", "worklet"])
