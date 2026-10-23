@@ -129,7 +129,7 @@ deliberately.
 
 ## Tooling and hooks
 
-Pre-commit and locked/CI Ruff are aligned at 0.15.2. Install hooks for each clone:
+Pre-commit and locked/CI Ruff are aligned at 0.17.2. Install hooks for each clone:
 
 ```bash
 uv run --locked pre-commit install
