@@ -168,7 +168,7 @@ graph TD;
 2. Use Python `>=3.14,<3.15`; the Docker image uses the slim variant. Supply PostgreSQL with pgvector available. CI uses PostgreSQL 17 with pgvector.
 3. Install the pinned package manager and synchronize the committed dependency graph:
    ```bash
-   python -m pip install "uv==0.12.18"
+   python -m pip install "uv==0.13.5"
    uv sync --locked
    ```
 4. Create an untracked UTF-8 `.env` using the configuration reference below; this checkout does not ship `.env.example`. The application reads process environment; local `uv run --env-file .env` or Docker `--env-file` loads the file explicitly.
@@ -613,7 +613,7 @@ Exports and third-party published copies are outside automatic local erasure.
 `pyproject.toml` is the only manually edited dependency manifest and `uv.lock` is the committed exact graph. Use the pinned tool version for every lock operation:
 
 ```bash
-python -m pip install "uv==0.12.18"
+python -m pip install "uv==0.13.5"
 uv lock --check
 uv sync --locked
 uv run --locked python scripts/dependency_frontier.py audit
