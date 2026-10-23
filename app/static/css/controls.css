@@ -48,7 +48,21 @@ input,select{min-height:44px}
 .control-card{scroll-margin-top:155px}
 .alias-editor{min-height:100px;font-family:Consolas,"Courier New",monospace}
 .current-prompt-link{display:inline-block;color:var(--accent);padding:10px 0;font-size:13px}
+.audio-parameters,.voice-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 16px}
+.audio-parameters .check{align-self:center;flex-direction:row-reverse;justify-content:flex-end}
+.voice-heading{font-size:14px;margin:20px 0 10px}
+.voice-catalog{display:grid;gap:14px}
+.voice-row{margin:0;padding:12px 16px 16px;min-width:0;border:1px solid var(--line);border-radius:8px}
+.voice-row legend{font-size:12px;color:var(--accent);padding:0 6px}
+.voice-fields .field:has(textarea){grid-column:1/-1}
+.voice-fields textarea{min-height:90px}
+.voice-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
+.voice-actions .check{margin-right:auto}
+.section-heading a{color:var(--accent)}
 @media(max-width:650px){
+  .audio-parameters,.voice-fields{grid-template-columns:1fr}
+  .voice-row{padding:10px 12px 14px}
+  .voice-actions .check{flex-basis:100%;margin:0 0 6px}
   .sidebar{display:none}
   main{padding-top:20px;padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right))}
   .page-heading{margin-bottom:18px}

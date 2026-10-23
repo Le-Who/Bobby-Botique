@@ -251,7 +251,7 @@ class VoiceReplyManager:
         chat_id: int,
         reply_to_message_id: int,
         response_text: str,
-        voice: str = "Aoede",
+        voice: str = "",
         tts_temperature: float | None = None,
         source_key: str,
         expected_epoch: int,
@@ -289,7 +289,7 @@ class VoiceReplyManager:
         chat_id: int,
         reply_to_message_id: int,
         response_text: str,
-        voice: str = "Aoede",
+        voice: str = "",
         tts_temperature: float | None = None,
         source_key: str,
         expected_epoch: int,
@@ -461,6 +461,7 @@ class VoiceReplyManager:
                 generate_speech_with_key_rotation,
             )
             from app.providers.tts import _chunk_text_by_sentences, _clean_text_for_speech
+            from app.runtime_settings.audio import get_config, resolve_voice
             from app.utils.audio import crossfade_pcm_chunks, pcm_to_ogg_opus
 
             clean_text = _clean_text_for_speech(job.response_text)
@@ -471,13 +472,13 @@ class VoiceReplyManager:
             language_code = "ru-RU" if language == "ru" else "en-US" if language == "en" else None
 
             el_keys = settings.ELEVENLABS_API_KEYS
-            el_voice_id = job.voice if job.voice and len(job.voice) > 10 else settings.ELEVENLABS_VOICE_ID
 
             pcm_parts: list[bytes] | None = None
 
             delivery = await resolve_process("tts.delivery", ("elevenlabs", "gemini"))
             for provider in delivery.models:
                 if provider == "elevenlabs" and el_keys:
+                    el_voice_id = resolve_voice(await get_config("elevenlabs"), job.voice)
                     el_chunks = _chunk_text_by_sentences(clean_text, max_bytes=ELEVENLABS_CHUNK_MAX_BYTES)
                     el_timeout = min(90.0, max(30.0, len(clean_text) / 50.0 + 15.0))
                     async with self._elevenlabs_sem:
@@ -491,7 +492,7 @@ class VoiceReplyManager:
 
                 if provider == "gemini":
                     gemini_chunks = _chunk_text_by_sentences(clean_text, max_bytes=800)
-                    gemini_voice = job.voice if job.voice and len(job.voice) <= 10 else "Aoede"
+                    gemini_voice = resolve_voice(await get_config("gemini"), job.voice)
                     gemini_timeout = min(120.0, max(40.0, len(clean_text) / 40.0 + 40.0))
 
                     default_models = ("gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts")
@@ -747,7 +748,7 @@ async def fire_voice_reply(
     chat_id: int,
     reply_to_message_id: int,
     response_text: str,
-    voice: str = "Aoede",
+    voice: str = "",
     tts_temperature: float | None = None,
     source_key: str,
     expected_epoch: int | None = None,

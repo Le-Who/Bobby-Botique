@@ -1,10 +1,10 @@
 # /app/providers/tts.py
 """Gemini TTS provider — text-to-speech via REST generate_content.
 
-Uses gemini-2.5-flash-preview-tts model (REST API) to generate speech audio.
+Uses the configured Gemini TTS model chain (REST API) to generate speech audio.
 Returns raw PCM 24kHz 16-bit mono bytes.
 
-This is the sole production path for voice replies.  The prompt uses the
+This is the Gemini production path for voice replies. The prompt uses the
 official "Director's Notes + Transcript" format with language-aware
 pronunciation heuristics (Russian ё/е, stress, abbreviations, etc.).
 
@@ -22,6 +22,8 @@ from google.genai import types
 from app.observability.workload_events import start_workload_attempt
 from app.prompt_registry import get_prompt_text, register_controlled_text
 from app.providers.gemini import get_cached_genai_client
+from app.runtime_settings.audio import get_config, resolve_voice
+from app.runtime_settings.lifecycle import runtime_settings_scope
 
 TTS_MODEL = "gemini-3.1-flash-tts-preview"
 
@@ -197,9 +199,14 @@ register_controlled_text("tts.director", _TTS_BASE_INSTRUCTIONS, "TTS: прои�
 register_controlled_text("tts.style.neutral", _TTS_STYLE_NEUTRAL, "TTS: нейтральный стиль")
 register_controlled_text("tts.style.expressive", _TTS_STYLE_EXPRESSIVE, "TTS: выразительный стиль")
 register_controlled_text("tts.style.conversational", _TTS_STYLE_CONVERSATIONAL, "TTS: разговорный стиль")
+register_controlled_text("tts.pacing.neutral", "[fast, flat intonation]", "TTS: темп нейтрального стиля")
+register_controlled_text(
+    "tts.pacing.expressive", "[extremely fast, highly expressive]", "TTS: темп выразительного стиля"
+)
+register_controlled_text("tts.pacing.conversational", "[extremely fast]", "TTS: темп разговорного стиля")
 
 
-def _get_steerable_tts_prompt(temperature: float) -> tuple[str, str]:
+def _get_steerable_tts_prompt(temperature: float, voice_prompt: str = "") -> tuple[str, str]:
     """
     Dynamically generates Steerable Voice prompt and pacing tags
     based on the requested TTS temperature.
@@ -214,24 +221,26 @@ def _get_steerable_tts_prompt(temperature: float) -> tuple[str, str]:
     if temperature <= 0.3:
         # LOW TEMP: Neutral, objective, flat news-anchor.
         style = get_prompt_text("tts.style.neutral")
-        tag = "[fast, flat intonation]"
+        tag = get_prompt_text("tts.pacing.neutral")
     elif temperature >= 0.8:
         # HIGH TEMP: Expressive, dynamic storytelling.
         style = get_prompt_text("tts.style.expressive")
-        tag = "[extremely fast, highly expressive]"
+        tag = get_prompt_text("tts.pacing.expressive")
     else:
         # MEDIUM TEMP (0.4 - 0.7): Conversational, warm, natural assistant.
         style = get_prompt_text("tts.style.conversational")
-        tag = "[extremely fast]"
+        tag = get_prompt_text("tts.pacing.conversational")
 
-    return (f"{base_instructions}{style}", tag)
+    individual = f"Voice direction: {voice_prompt}\n\n" if voice_prompt else ""
+    return (f"{base_instructions}{individual}{style}", tag)
 
 
+@runtime_settings_scope()
 async def generate_speech(
     text: str,
     api_key: str,
     *,
-    voice: str = DEFAULT_VOICE,
+    voice: str | None = None,
     tts_temperature: float | None = None,
     timeout: float = 50.0,
     model_name: str = TTS_MODEL,
@@ -242,13 +251,13 @@ async def generate_speech(
     Pipeline:
         1. Pre-clean text (strip Markdown, URLs, code blocks, emoji clusters)
         2. Build Director's Notes prompt (style + pronunciation rules)
-        3. Call gemini-2.5-flash-preview-tts with AUDIO modality
+        3. Call the selected Gemini TTS model with AUDIO modality
         4. Extract raw PCM 24kHz 16-bit mono from response
 
     Args:
         text: Text to synthesize.
         api_key: Gemini API key.
-        voice: Prebuilt voice name (default: Aoede).
+        voice: Prebuilt voice name; absent/retired choices use the admin default.
         timeout: Maximum seconds to wait for TTS response. Callers should
             compute an adaptive value based on text length; the default of
             50 s covers short chunks adequately — voice_engine.py passes
@@ -260,6 +269,9 @@ async def generate_speech(
     if not text or not text.strip():
         return None
 
+    audio_config = await get_config("gemini")
+    voice = resolve_voice(audio_config, voice)
+    voice_prompt = next(row["prompt"] for row in audio_config["voices"] if row["id"] == voice)
     client = get_cached_genai_client(api_key)
 
     # 1. Pre-clean: strip formatting that TTS should never speak
@@ -281,8 +293,8 @@ async def generate_speech(
 
     # The prompt steering depends on user_prefs.tts_temperature (which can be < 0.5).
     # We pass the original requested temperature to fetch tags (so it can be 0.3 for news anchor).
-    user_temp = tts_temperature if tts_temperature is not None else 0.5
-    base_prompt, pacing_tag = _get_steerable_tts_prompt(user_temp)
+    user_temp = tts_temperature if tts_temperature is not None else audio_config["temperature"]
+    base_prompt, pacing_tag = _get_steerable_tts_prompt(user_temp, voice_prompt)
     prompt = f"{base_prompt}{pacing_tag} {tts_text}"
 
     # GenerateContentConfig temperature: Gemini 2.5 Flash audio generation models have a bug (April 2026)
@@ -302,7 +314,7 @@ async def generate_speech(
 
     config = types.GenerateContentConfig(
         temperature=api_temp,
-        max_output_tokens=16384,
+        max_output_tokens=audio_config["max_output_tokens"],
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(

@@ -458,8 +458,17 @@ provider-routed chat/search and specialized research execution have distinct pat
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
 | `ELEVENLABS_API_KEYS` | ⚙️ | `sk_abc,sk_xyz` | `[]` | Comma-separated outbound TTS keys, tried in order; failed/exhausted keys are skipped for remaining chunks of that synthesis. If the pipeline cannot finish, the voice engine can fall back to Gemini TTS for the entire response. Provider-side quotas are not defined by this repository. |
-| `ELEVENLABS_VOICE_ID` | ⚙️ | `XB0fDUnXU5powFXDhCwa` | `XB0fDUnXU5powFXDhCwa` | ElevenLabs Voice ID to use for synthesis. Default is Charlotte (conversational, English/Russian). Browse voices at [elevenlabs.io/voice-library](https://elevenlabs.io/voice-library). |
+| `ELEVENLABS_VOICE_ID` | ⚙️ | `XB0fDUnXU5powFXDhCwa` | `XB0fDUnXU5powFXDhCwa` | Baseline ElevenLabs voice; the admin catalog and an active user preference take precedence. Default is Charlotte. Browse voices at [elevenlabs.io/voice-library](https://elevenlabs.io/voice-library). |
 | `ELEVENLABS_MODEL` | ⚙️ | `eleven_multilingual_v2` | `eleven_multilingual_v2` | Model passed to the ElevenLabs synthesis path. |
+
+The admin dashboard's **Voices and TTS** section (`/controls#audio`) manages voice
+IDs, names, ordering, defaults, Gemini voice prompts and synthesis parameters.
+The Mini App and voice engine consume the same catalogs. Model chains and provider
+order remain in **Model routes**, and shared pronunciation/style/pacing prompts
+remain in **Prompts**. The default Gemini TTS chain is
+`gemini-3.1-flash-tts-preview` → `gemini-2.5-flash-preview-tts`; admin policies can
+override it. See [voice controls and model inventory](docs/runtime-controls.md#голосовые-сообщения-и-tts)
+for parameters, precedence and the separate ASR and Live boundaries.
 
 These tables cover supported operator settings, not every environment read in the
 repository. A runtime setting is not automatically forwarded by the VPS workflow:
