@@ -18,6 +18,7 @@ from app.database import db_manager
 from app.observability.events import emit, record_exception
 from app.observability.workload_events import start_workload_attempt
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
+from app.providers.gemini_config import build_generate_content_config
 from app.repos.db_helpers import db_query, set_user_context
 from app.repos.memory_config import (
     CHARS_PER_TOKEN as _CHARS_PER_TOKEN,
@@ -377,8 +378,8 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
             response = await client.aio.models.generate_content(
                 model=model,
                 contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json", temperature=0.1, max_output_tokens=2048
+                config=build_generate_content_config(
+                    model, response_mime_type="application/json", temperature=0.1, max_output_tokens=2048
                 ),
             )
             result = json.loads(response.text or "")
@@ -421,7 +422,7 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
             response = await get_cached_genai_client(selected_key).aio.models.generate_content(
                 model=model,
                 contents=fallback_prompt,
-                config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=1024),
+                config=build_generate_content_config(model, temperature=0.1, max_output_tokens=1024),
             )
             raw = (response.text or "").strip()
             facts = [line.strip()[2:].strip() for line in raw.splitlines() if line.strip().startswith(("- ", "• "))]
@@ -464,7 +465,8 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
         response = await client.aio.models.generate_content(
             model=_CONSOLIDATION_MODEL,
             contents=prompt,
-            config=types.GenerateContentConfig(
+            config=build_generate_content_config(
+                _CONSOLIDATION_MODEL,
                 response_mime_type="application/json",
                 temperature=0.1,
                 max_output_tokens=2048,
@@ -533,7 +535,8 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
             response = await client.aio.models.generate_content(
                 model=_CONSOLIDATION_MODEL,
                 contents=fallback_prompt,
-                config=types.GenerateContentConfig(
+                config=build_generate_content_config(
+                    _CONSOLIDATION_MODEL,
                     temperature=0.1,
                     max_output_tokens=1024,
                 ),

@@ -18,7 +18,7 @@ from typing import Any
 import httpx
 from PIL import Image
 
-from app.errors import ErrorCode, tag_error
+from app.errors import ErrorCode, classify_error_from_exception, classify_error_from_status_code, tag_error
 from app.observability.provider_events import record_provider_exception, record_provider_validation_failure
 from app.providers import openrouter as openrouter_provider
 from app.providers.base import AIResponse
@@ -233,28 +233,22 @@ class OpencodeGoProvider(OpenRouterProvider):
             else:
                 body_error_type = None
             status = exc.response.status_code
-            code = (
-                ErrorCode.RATE_LIMIT
-                if status == 429
-                else ErrorCode.OVERLOADED
-                if status in {502, 503, 504}
-                else ErrorCode.INVALID_KEY
-                if status in {401, 403}
-                else ErrorCode.INVALID_REQUEST
-                if status == 400
-                else ErrorCode.GENERIC
-            )
+            code = classify_error_from_status_code(status)
             key = (
                 KeyDisposition.RATE_LIMITED
                 if status == 429
                 else KeyDisposition.INVALID
                 if status in {401, 403}
+                else KeyDisposition.UNCHANGED
+                if status == 400
                 else KeyDisposition.TRANSIENT_FAILURE
             )
             yield StreamFailed(
                 code=code,
                 phase=FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT,
-                retry=(RetryDisposition.DO_NOT_RETRY if text_emitted else RetryDisposition.TRY_NEXT_KEY),
+                retry=(
+                    RetryDisposition.DO_NOT_RETRY if text_emitted or status == 400 else RetryDisposition.TRY_NEXT_KEY
+                ),
                 key=KeyDisposition.UNCHANGED if text_emitted else key,
                 diagnostic=(
                     f"Opencode HTTP {status}; response_chars={response_chars}; "
@@ -273,7 +267,7 @@ class OpencodeGoProvider(OpenRouterProvider):
                 failure_phase=(FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT).value,
             )
             yield StreamFailed(
-                code=ErrorCode.NETWORK if isinstance(exc, httpx.HTTPError) else ErrorCode.GENERIC,
+                code=classify_error_from_exception(exc),
                 phase=FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT,
                 retry=(RetryDisposition.DO_NOT_RETRY if text_emitted else RetryDisposition.TRY_NEXT_KEY),
                 key=(KeyDisposition.UNCHANGED if text_emitted else KeyDisposition.TRANSIENT_FAILURE),

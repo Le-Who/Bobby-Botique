@@ -67,15 +67,42 @@ class TestCacheTTL(unittest.TestCase):
         # Utilization = 3 / 1200 * 100 = 0.25
         self.assertEqual(stats["memory_utilization"], 0.25)
 
-    def test_clear_cache(self):
-        """The public cache-clear operation flushes the configured Redis store."""
+    def test_clear_cache_preserves_non_search_data(self):
+        """Clearing search results must preserve queues, Reader and coordination."""
         from app.cache import clear_cache
 
+        qna_key = b"qna:" + b"a" * 64
+        search_key = "search:" + "b" * 64
         redis = AsyncMock()
-        redis.flushdb.return_value = True
-        with patch("app.cache.redis_client", redis):
+        redis.scan.side_effect = [(7, [qna_key, b"qna:unrelated"]), (0, []), (0, [search_key])]
+        with patch("app.cache.redis_client", redis), patch("app.cache.multi_layer_cache", self.cache):
+            self.cache.qna_cache["q"] = {"answer": "old"}
+            self.cache.search_cache["s"] = {"results": []}
+            self.cache.default_cache["d"] = {"answer": "old"}
             self.loop.run_until_complete(clear_cache())
-        redis.flushdb.assert_awaited_once_with()
+
+        redis.flushdb.assert_not_awaited()
+        self.assertEqual(redis.delete.await_args_list, [unittest.mock.call(qna_key), unittest.mock.call(search_key)])
+        self.assertEqual(self.cache.get_memory_stats()["memory_items"], 0)
+
+    def test_clear_cache_without_redis_invalidates_memory(self):
+        from app.cache import clear_cache
+
+        self.cache.qna_cache["q"] = {"answer": "old"}
+        with patch("app.cache.redis_client", None), patch("app.cache.multi_layer_cache", self.cache):
+            self.loop.run_until_complete(clear_cache())
+        self.assertEqual(self.cache.get_memory_stats()["memory_items"], 0)
+
+    def test_clear_cache_reports_backend_failure(self):
+        from redis.exceptions import ResponseError
+
+        from app.cache import clear_cache
+        from app.errors import RedisConnectionError
+
+        redis = AsyncMock()
+        redis.scan.side_effect = ResponseError("backend unavailable")
+        with patch("app.cache.redis_client", redis), self.assertRaises(RedisConnectionError):
+            self.loop.run_until_complete(clear_cache())
 
 
 if __name__ == "__main__":

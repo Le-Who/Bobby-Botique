@@ -82,6 +82,30 @@ async def show_duplicate_and_confirm(flow):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("local_mode", [False, True])
+async def test_oversized_document_is_rejected_before_download(flow, local_mode):
+    flow.context.bot.local_mode = local_mode
+    flow.document.file_size = 11 * 1024 * 1024
+    await msg_document.handle_document(flow.update, flow.context)
+    flow.document.get_file.assert_not_awaited()
+    assert "10" in flow.update.message.reply_text.await_args.args[0]
+    assert flow.bypasses == []
+
+
+@pytest.mark.asyncio
+async def test_truncated_document_discloses_partial_context(flow, monkeypatch):
+    monkeypatch.setattr(
+        msg_document,
+        "process_uploaded_document",
+        AsyncMock(
+            return_value={"success": True, "pages": 1, "content": "retained", "text_length": 8, "truncated": True}
+        ),
+    )
+    await msg_document.handle_document(flow.update, flow.context)
+    assert t("doc.text_truncated").strip() in flow.processing_message.edit_text.await_args.args[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("local_mode", [False, True])
 async def test_confirmed_duplicate_upload_bypasses_once_for_matching_file(flow, local_mode):
     flow.context.bot.local_mode = local_mode
     await show_duplicate_and_confirm(flow)

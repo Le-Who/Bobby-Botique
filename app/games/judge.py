@@ -38,6 +38,7 @@ from app.games.ai_budget import (
 )
 from app.observability.workload_events import observe_workload_call
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
+from app.providers.gemini_config import build_generate_content_config
 from app.runtime_settings.cache_identity import cache_identity
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
@@ -354,12 +355,12 @@ async def _race_generate(
         S=sense_context or category or "не указан",
     )
 
-    config = _gtypes.GenerateContentConfig(
-        response_mime_type="application/json",
-        response_schema=GuessJudgement.model_json_schema(),
-        temperature=0.5,
-        max_output_tokens=200,
-    )
+    config_options = {
+        "response_mime_type": "application/json",
+        "response_schema": GuessJudgement.model_json_schema(),
+        "temperature": 0.5,
+        "max_output_tokens": 200,
+    }
 
     async def _one_call(
         api_key: str, key_hash: str, model: str, timeout: float = _LLM_TIMEOUT_S
@@ -376,7 +377,7 @@ async def _race_generate(
                         client.aio.models.generate_content(
                             model=model,
                             contents=prompt,
-                            config=config,
+                            config=build_generate_content_config(model, **config_options),
                         ),
                         timeout=timeout,
                     ),
@@ -475,7 +476,7 @@ async def _race_generate(
                             vertex_client.aio.models.generate_content(
                                 model=_PRIMARY_MODEL,
                                 contents=prompt,
-                                config=config,
+                                config=build_generate_content_config(_PRIMARY_MODEL, **config_options),
                             ),
                             timeout=_LLM_TIMEOUT_S,
                         ),
@@ -917,7 +918,8 @@ async def generate_hints(
                             vertex_client.aio.models.generate_content(
                                 model=model_name,
                                 contents=prompt,
-                                config=_gtypes.GenerateContentConfig(
+                                config=build_generate_content_config(
+                                    model_name,
                                     response_mime_type="application/json",
                                     response_schema=HintsOutput.model_json_schema(),
                                     temperature=0.6,

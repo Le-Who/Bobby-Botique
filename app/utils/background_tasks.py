@@ -7,6 +7,7 @@ used across DatabaseManager, TaskQueue, and other components.
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 import uuid
@@ -285,11 +286,11 @@ class TaskManager:
                                 if self._error_callback:
                                     try:
                                         res = self._error_callback(e, f"Task {coro_name}")
-                                        # Execute asynchronously if it's a coroutine
-                                        if asyncio.iscoroutine(res):
-                                            cb_task = asyncio.create_task(res)
-                                            self._tasks.add(cb_task)
-                                            cb_task.add_done_callback(self._tasks.discard)
+                                        # The failing job owns notification cleanup.
+                                        # A separate child can escape drain's snapshot
+                                        # and leave callback failures unobserved.
+                                        if inspect.isawaitable(res):
+                                            await res
                                     except Exception as cb_err:
                                         record_exception(
                                             "job.error_callback_failed",
@@ -328,37 +329,43 @@ class TaskManager:
         cancellation cleanup.  Returns ``False`` when one or more tasks remain
         alive after both bounded phases.
         """
-        finished = {task for task in self._tasks if task.done()}
-        self._tasks.difference_update(finished)
-        active = set(self._tasks)
-        if not active:
-            return True
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, timeout)
+        while True:
+            self._tasks.difference_update(task for task in tuple(self._tasks) if task.done())
+            active = set(self._tasks)
+            if not active:
+                return True
 
-        logging.info("Draining %d background tasks...", len(active))
-        done, pending = await asyncio.wait(active, timeout=max(0.0, timeout))
-        self._tasks.difference_update(done)
+            logging.info("Draining %d background tasks...", len(active))
+            done, pending = await asyncio.wait(active, timeout=max(0.0, deadline - loop.time()))
+            self._tasks.difference_update(done)
+            if pending or loop.time() >= deadline:
+                break
+            # Accepted jobs can enqueue dependent writes. Include those jobs in
+            # the original deadline rather than returning after one snapshot.
 
-        if not pending:
-            return True
-
-        logging.warning("Timeout draining background tasks. Cancelling %d tasks.", len(pending))
-        for task in pending:
-            task.cancel()
-
-        cancelled, stubborn = await asyncio.wait(pending, timeout=max(0.0, cancel_timeout))
-        self._tasks.difference_update(cancelled)
-
-        if stubborn:
-            names = ", ".join(sorted(task.get_name() for task in stubborn))
-            logging.error(
-                "%d background task(s) did not finish cancellation cleanup within %.2fs: %s",
-                len(stubborn),
-                max(0.0, cancel_timeout),
-                names,
-            )
-            return False
-
-        return True
+        logging.warning("Timeout draining background tasks. Cancelling %d tasks.", len(self._tasks))
+        cancellation_deadline = loop.time() + max(0.0, cancel_timeout)
+        while True:
+            self._tasks.difference_update(task for task in tuple(self._tasks) if task.done())
+            active = set(self._tasks)
+            if not active:
+                return True
+            for task in active:
+                if not task.cancelling():
+                    task.cancel()
+            cancelled, stubborn = await asyncio.wait(active, timeout=max(0.0, cancellation_deadline - loop.time()))
+            self._tasks.difference_update(cancelled)
+            if stubborn or (self._tasks and loop.time() >= cancellation_deadline):
+                names = ", ".join(sorted(task.get_name() for task in self._tasks))
+                logging.error(
+                    "%d background task(s) did not finish cancellation cleanup within %.2fs: %s",
+                    len(self._tasks),
+                    max(0.0, cancel_timeout),
+                    names,
+                )
+                return False
 
 
 # ── Global singleton ─────────────────────────────────────────────────────────

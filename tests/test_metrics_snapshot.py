@@ -170,6 +170,128 @@ class TestMetricsSnapshotAtomicity:
         assert user_data["request_count"] == 5
         assert user_data["model_usage"].get("flash") == 3
 
+        # The global upsert already succeeded; retrying user metrics must not
+        # add those five requests to the database a second time.
+        assert metrics_collector.daily_metrics[today].request_count == 0
+
+    @pytest.mark.asyncio
+    async def test_api_only_interval_is_persisted(self, metrics_collector):
+        today = date.today().isoformat()
+        metrics_collector._process_event(
+            {
+                "type": "api_call",
+                "api_name": "gemini",
+                "model": "flash",
+                "user_id": 42,
+                "timestamp": "2026-10-23T10:00:00",
+                "request_id": "test",
+            }
+        )
+        with (
+            patch("app.metrics.db.db_query", new_callable=AsyncMock) as query,
+            patch("app.metrics.db.db_execute_many", new_callable=AsyncMock) as execute_many,
+            patch("app.repos.analytics.record_daily_activity", new_callable=AsyncMock),
+        ):
+            await metrics_collector._save_metrics_to_db()
+        assert query.await_count == 1
+        assert query.await_args.args[1][7] == {"gemini": 1}
+        assert execute_many.await_args.args[1] == [(42, date.today(), 0, {"flash": 1})]
+        assert metrics_collector._user_daily[today][42]["model_usage"] == {}
+
+    @pytest.mark.asyncio
+    async def test_cache_only_failed_interval_is_restored(self, metrics_collector):
+        today = date.today().isoformat()
+        metrics_collector.daily_metrics[today].cache_hits = 3
+        with patch("app.metrics.db.db_query", side_effect=RuntimeError("offline")):
+            await metrics_collector._save_metrics_to_db()
+        assert metrics_collector.daily_metrics[today].cache_hits == 3
+
+    @pytest.mark.asyncio
+    async def test_daily_summary_survives_successful_flush(self, metrics_collector):
+        today = date.today().isoformat()
+        metrics_collector.daily_metrics[today].request_count = 5
+        metrics_collector.daily_metrics[today].total_response_time = 10.0
+        with patch("app.metrics.db.db_query", new_callable=AsyncMock):
+            await metrics_collector._save_metrics_to_db()
+        metrics_collector.daily_metrics[today].request_count += 2
+        metrics_collector.daily_metrics[today].total_response_time += 4.0
+        summary = await metrics_collector.get_metrics_summary()
+        assert summary["daily_metrics"][today] == {"requests": 7, "errors": 0, "avg_response_time": 2.0}
+
+    @pytest.mark.asyncio
+    async def test_previous_day_pending_metrics_are_saved(self, metrics_collector):
+        from datetime import timedelta
+
+        previous_day = date.today() - timedelta(days=1)
+        day_key = previous_day.isoformat()
+        metrics_collector.daily_metrics[day_key].request_count = 2
+        metrics_collector._user_daily[day_key][42]["request_count"] = 2
+        with (
+            patch("app.metrics.db.db_query", new_callable=AsyncMock) as query,
+            patch("app.metrics.db.db_execute_many", new_callable=AsyncMock) as execute_many,
+            patch("app.repos.analytics.record_daily_activity", new_callable=AsyncMock),
+        ):
+            await metrics_collector._save_metrics_to_db()
+        assert query.await_args.args[1][:2] == (previous_day, 2)
+        assert execute_many.await_args.args[1] == [(42, previous_day, 2, {})]
+
+    @pytest.mark.asyncio
+    async def test_loaded_metrics_are_not_persisted_as_new_events(self, metrics_collector):
+        today = date.today()
+        loaded = {
+            "metric_date": today,
+            "request_count": 10,
+            "total_response_time": 20.0,
+            "error_count": 1,
+            "search_queries": 2,
+            "cache_hits": 3,
+            "cache_misses": 4,
+            "api_calls": {"gemini": 5},
+            "model_usage": {"flash": 5},
+        }
+        with patch("app.metrics.db.db_query", new_callable=AsyncMock) as query:
+            query.side_effect = [[], [], [], [loaded], []]
+            await metrics_collector._load_metrics_from_db()
+        with patch("app.metrics.db.db_query", new_callable=AsyncMock) as query:
+            await metrics_collector._save_metrics_to_db()
+        query.assert_not_awaited()
+        summary = await metrics_collector.get_metrics_summary()
+        assert summary["daily_metrics"][today.isoformat()]["requests"] == 10
+
+    @pytest.mark.asyncio
+    async def test_cleanup_flushes_events_waiting_in_queue(self, metrics_collector):
+        await metrics_collector.record_request("chat", 2.0, user_id=42)
+        await metrics_collector.record_error("ProviderError", "synthetic failure")
+        with (
+            patch("app.metrics.db.db_manager") as manager,
+            patch("app.metrics.db.db_query", new_callable=AsyncMock) as query,
+            patch("app.metrics.db.db_execute_many", new_callable=AsyncMock),
+            patch("app.repos.analytics.record_daily_activity", new_callable=AsyncMock),
+        ):
+            manager.is_connected = True
+            await metrics_collector.cleanup()
+        assert metrics_collector._events_queue.empty()
+        assert query.await_args.args[1][1:3] == (1, 2.0)
+        assert metrics_collector.error_log[-1]["saved"] is True
+
+    @pytest.mark.asyncio
+    async def test_cancelled_flush_restores_pending_counters(self, metrics_collector):
+        today = date.today().isoformat()
+        metrics_collector.daily_metrics[today].request_count = 2
+        started = asyncio.Event()
+
+        async def blocked_write(*args, **kwargs):
+            started.set()
+            await asyncio.Future()
+
+        with patch("app.metrics.db.db_query", side_effect=blocked_write):
+            task = asyncio.create_task(metrics_collector._save_metrics_to_db())
+            await asyncio.wait_for(started.wait(), timeout=1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert metrics_collector.daily_metrics[today].request_count == 2
+
     @pytest.mark.asyncio
     async def test_zero_requests_skips_db_write(self, metrics_collector):
         """If no requests accumulated, DB write should be skipped entirely."""

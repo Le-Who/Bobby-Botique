@@ -9,7 +9,7 @@ import httpx
 from google.genai.errors import APIError
 from PIL import Image
 
-from app.errors import ErrorCode, tag_error
+from app.errors import ErrorCode, classify_error_from_exception, classify_error_from_status_code, tag_error
 from app.metrics import metrics_collector
 from app.observability.provider_events import record_provider_exception, record_provider_validation_failure
 from app.providers.base import AIResponse, BaseAIProvider
@@ -196,7 +196,7 @@ class OpenRouterProvider(BaseAIProvider):
             elif self._is_model_access_denied(status, response_text):
                 code = ErrorCode.INVALID_REQUEST
                 key = KeyDisposition.UNCHANGED
-                retry = RetryDisposition.DO_NOT_RETRY
+                retry = RetryDisposition.TRY_NEXT_MODEL
             elif status in {401, 403}:
                 code = ErrorCode.INVALID_KEY
                 key = KeyDisposition.INVALID
@@ -206,7 +206,7 @@ class OpenRouterProvider(BaseAIProvider):
                 key = KeyDisposition.EXHAUSTED
                 retry = RetryDisposition.TRY_NEXT_KEY
             elif status in {502, 503, 504}:
-                code = ErrorCode.OVERLOADED if status == 503 else ErrorCode.NETWORK
+                code = classify_error_from_status_code(status)
                 key = KeyDisposition.TRANSIENT_FAILURE
                 retry = RetryDisposition.TRY_NEXT_KEY
             elif status == 400:
@@ -242,7 +242,7 @@ class OpenRouterProvider(BaseAIProvider):
             )
             diagnostic = f"{type(exc).__name__}: {exc}"[:500].replace(self.api_key, "[redacted]")
             yield StreamFailed(
-                code=ErrorCode.NETWORK if isinstance(exc, httpx.HTTPError) else ErrorCode.GENERIC,
+                code=classify_error_from_exception(exc),
                 phase=FailurePhase.AFTER_TEXT if text_emitted else FailurePhase.BEFORE_TEXT,
                 retry=(RetryDisposition.DO_NOT_RETRY if text_emitted else RetryDisposition.TRY_NEXT_KEY),
                 key=(KeyDisposition.UNCHANGED if text_emitted else KeyDisposition.TRANSIENT_FAILURE),

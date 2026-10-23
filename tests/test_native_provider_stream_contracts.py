@@ -199,12 +199,35 @@ async def test_native_text_then_transport_failure_retains_partial_and_closes(mon
     assert len(events) == 2
     assert isinstance(events[1], StreamFailed)
     assert (events[1].code, events[1].phase, events[1].retry, events[1].key) == (
-        ErrorCode.NETWORK,
+        ErrorCode.TIMEOUT if fault == "timeout" else ErrorCode.NETWORK,
         FailurePhase.AFTER_TEXT,
         RetryDisposition.DO_NOT_RETRY,
         KeyDisposition.UNCHANGED,
     )
     assert events[1].route.provider is ProviderKind(kind)
+    assert stream.closed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["openrouter", "opencode"])
+@pytest.mark.parametrize(
+    "status,code,key,retry",
+    [
+        (400, ErrorCode.INVALID_REQUEST, KeyDisposition.UNCHANGED, RetryDisposition.DO_NOT_RETRY),
+        (504, ErrorCode.TIMEOUT, KeyDisposition.TRANSIENT_FAILURE, RetryDisposition.TRY_NEXT_KEY),
+    ],
+)
+async def test_native_http_rejection_distinguishes_invalid_payload_and_gateway_timeout(
+    monkeypatch, kind, status, code, key, retry
+):
+    provider, stream, request, model = install_native(monkeypatch, kind, [])
+    stream.response = httpx.Response(
+        status, text="synthetic failure", request=httpx.Request("POST", "https://offline.invalid")
+    )
+    events = [event async for event in provider.stream(request, model_name=model)]
+
+    assert len(events) == 1
+    assert (events[0].code, events[0].key, events[0].retry) == (code, key, retry)
     assert stream.closed is True
 
 
@@ -361,7 +384,7 @@ async def test_freetheai_inherited_stream_uses_overrides_and_correlated_header(m
             "model access requires higher tier",
             ErrorCode.INVALID_REQUEST,
             KeyDisposition.UNCHANGED,
-            RetryDisposition.DO_NOT_RETRY,
+            RetryDisposition.TRY_NEXT_MODEL,
         ),
         (403, "credential rejected", ErrorCode.INVALID_KEY, KeyDisposition.INVALID, RetryDisposition.TRY_NEXT_KEY),
         (429, "rate limit", ErrorCode.RATE_LIMIT, KeyDisposition.RATE_LIMITED, RetryDisposition.TRY_NEXT_KEY),
@@ -504,7 +527,7 @@ async def test_freetheai_legacy_http_override_preserves_identity_without_sensiti
             "Access denied for model cat/example",
             ErrorCode.INVALID_REQUEST,
             KeyDisposition.UNCHANGED,
-            RetryDisposition.DO_NOT_RETRY,
+            RetryDisposition.TRY_NEXT_MODEL,
             id="model-access-denial",
         ),
         pytest.param(
@@ -512,7 +535,7 @@ async def test_freetheai_legacy_http_override_preserves_identity_without_sensiti
             "Valid API key does not permit access to this model",
             ErrorCode.INVALID_REQUEST,
             KeyDisposition.UNCHANGED,
-            RetryDisposition.DO_NOT_RETRY,
+            RetryDisposition.TRY_NEXT_MODEL,
             id="model-with-valid-key",
         ),
         pytest.param(
@@ -520,7 +543,7 @@ async def test_freetheai_legacy_http_override_preserves_identity_without_sensiti
             "This tier does not permit access",
             ErrorCode.INVALID_REQUEST,
             KeyDisposition.UNCHANGED,
-            RetryDisposition.DO_NOT_RETRY,
+            RetryDisposition.TRY_NEXT_MODEL,
             id="tier-access-denial",
         ),
         pytest.param(

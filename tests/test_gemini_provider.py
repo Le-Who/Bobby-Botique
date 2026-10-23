@@ -4,10 +4,44 @@ Tests for GeminiProvider._execute_request via the Provider class directly.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from google.genai.errors import APIError
 
 from app.providers.gemini import GeminiProvider, _gemini_clients_cache
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected_code", "expected_key"),
+    [
+        (httpx.ReadTimeout(""), "TIMEOUT", "TRANSIENT_FAILURE"),
+        (APIError(429, {"error": {"message": ""}}), "RATE_LIMIT", "RATE_LIMITED"),
+        (APIError(504, {"error": {"message": ""}}), "TIMEOUT", "TRANSIENT_FAILURE"),
+        (APIError(401, {"error": {"message": ""}}), "INVALID_KEY", "INVALID"),
+    ],
+)
+async def test_native_stream_classifies_typed_statuses_without_error_message(error, expected_code, expected_key):
+    from app.errors import ErrorCode
+    from app.providers.stream_types import (
+        GenerationRequest,
+        KeyDisposition,
+        PromptRole,
+        PromptTurn,
+        StreamFailed,
+        TextPart,
+    )
+
+    request = GenerationRequest(
+        models=("gemini-3.8-flash",), turns=(PromptTurn(PromptRole.USER, (TextPart("Hello"),)),)
+    )
+    with patch("app.providers.gemini.get_cached_genai_client", return_value=MagicMock()) as factory:
+        factory.return_value.aio.models.generate_content_stream = AsyncMock(side_effect=error)
+        provider = GeminiProvider("offline-key")
+        events = [event async for event in provider.stream(request, model_name="gemini-3.8-flash")]
+    assert len(events) == 1 and isinstance(events[0], StreamFailed)
+    assert events[0].code is ErrorCode[expected_code]
+    assert events[0].key is KeyDisposition[expected_key]
 
 
 @pytest.mark.asyncio

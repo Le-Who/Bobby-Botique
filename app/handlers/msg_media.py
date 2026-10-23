@@ -6,6 +6,7 @@ single-image fallback, and TTL-based cleanup.
 """
 
 import asyncio
+import contextlib
 import logging
 import time as _time_module
 import types
@@ -24,7 +25,7 @@ MEDIA_GROUP_TIMEOUT = 300  # 5 minutes
 MEDIA_GROUPS_MAX_SIZE = 500  # OOM protection
 _media_groups_lock = asyncio.Lock()
 _background_tasks: set = set()
-_cleanup_task = None
+_cleanup_task: asyncio.Task[None] | None = None
 _HEAVY_REQUEST_SEMAPHORE = asyncio.Semaphore(10)
 
 
@@ -51,8 +52,8 @@ async def cleanup_old_media_groups() -> None:
 async def start_media_groups_cleanup() -> None:
     """Start the periodic cleanup loop for stale media groups."""
     global _cleanup_task
-    if _cleanup_task and not _cleanup_task.done():  # type: ignore[unreachable]  # runtime Task state check
-        return  # type: ignore[unreachable]
+    if _cleanup_task and not _cleanup_task.done():
+        return
 
     async def cleanup_loop() -> None:
         while True:
@@ -67,6 +68,17 @@ async def start_media_groups_cleanup() -> None:
 
     _cleanup_task = asyncio.create_task(cleanup_loop())
     logging.info("Media groups cleanup task started")
+
+
+async def stop_media_groups_cleanup() -> None:
+    """Retire the maintenance loop after Telegram admission has stopped."""
+    global _cleanup_task
+    task = _cleanup_task
+    _cleanup_task = None
+    if task is not None:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 # ── Media group update handling ──────────────────────────────────────────────
@@ -131,7 +143,9 @@ async def process_media_group_update(update, context: ContextTypes.DEFAULT_TYPE,
                 }
                 MEDIA_GROUPS_TTL[media_group_id] = current_time
                 if _cleanup_task is None or _cleanup_task.done():
-                    submit_task(start_media_groups_cleanup())
+                    # No I/O in startup: register the maintenance owner before
+                    # returning so shutdown cannot race a queued startup job.
+                    await start_media_groups_cleanup()
 
             MEDIA_GROUPS[media_group_id]["messages"].append(update.message)
             is_first = len(MEDIA_GROUPS[media_group_id]["messages"]) == 1
@@ -148,9 +162,19 @@ async def process_media_group_update(update, context: ContextTypes.DEFAULT_TYPE,
                 async with _media_groups_lock:
                     if media_group_id in MEDIA_GROUPS:
                         MEDIA_GROUPS[media_group_id]["processing_scheduled"] = True
-                _process_task = asyncio.create_task(delayed_process_media_group(media_group_id, context, 1.0))
+                group_owner = MEDIA_GROUPS.get(media_group_id)
+                _process_task = submit_task(delayed_process_media_group(media_group_id, context, 1.0))
                 _background_tasks.add(_process_task)
-                _process_task.add_done_callback(_background_tasks.discard)
+
+                def completed(owner: asyncio.Task) -> None:
+                    _background_tasks.discard(owner)
+                    # A task cancelled before its first step never enters the
+                    # coroutine's finally block. Retire only its own album.
+                    if MEDIA_GROUPS.get(media_group_id) is group_owner:
+                        MEDIA_GROUPS.pop(media_group_id, None)
+                        MEDIA_GROUPS_TTL.pop(media_group_id, None)
+
+                _process_task.add_done_callback(completed)
 
         return True
     return False
@@ -161,21 +185,20 @@ async def process_media_group_update(update, context: ContextTypes.DEFAULT_TYPE,
 
 async def delayed_process_media_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE, delay: float) -> None:
     """Deferred media group processing. Owns cleanup of MEDIA_GROUPS entry."""
-    await asyncio.sleep(delay)
-
-    if media_group_id not in MEDIA_GROUPS:
-        return
-
-    group_data = MEDIA_GROUPS[media_group_id]
-    message_count = len(group_data["messages"])
-
-    logging.info(
-        "⏰ Отложенная обработка media_group_id %s: %s сообщений",
-        media_group_id,
-        message_count,
-    )
-
     try:
+        await asyncio.sleep(delay)
+
+        if media_group_id not in MEDIA_GROUPS:
+            return
+
+        group_data = MEDIA_GROUPS[media_group_id]
+        message_count = len(group_data["messages"])
+
+        logging.info(
+            "⏰ Отложенная обработка media_group_id %s: %s сообщений",
+            media_group_id,
+            message_count,
+        )
         if message_count > 1:
             logging.info("🔄 Обрабатываю группу из %s изображений", message_count)
             await _process_media_group(media_group_id, context)
@@ -200,6 +223,7 @@ async def _process_single_image_from_group(media_group_id: str, context: Context
 
     mock_update = types.SimpleNamespace(
         message=message,
+        effective_message=message,
         effective_user=message.from_user,
         effective_chat=message.chat,
         update_id=None,
@@ -209,7 +233,8 @@ async def _process_single_image_from_group(media_group_id: str, context: Context
     try:
         from app.handlers.agent import process_long_request
 
-        await process_long_request(placeholder_message, mock_update, context)  # type: ignore[arg-type]  # SimpleNamespace duck-types Update
+        async with state.get_user_lock(message.from_user.id):
+            await process_long_request(placeholder_message, mock_update, context)  # type: ignore[arg-type]  # SimpleNamespace duck-types Update
     except Exception as e:
         logging.error("Error processing single image from group: %s", e, exc_info=True)
         try:
@@ -255,6 +280,7 @@ async def _process_media_group(media_group_id: str, context: ContextTypes.DEFAUL
         async with _HEAVY_REQUEST_SEMAPHORE, state.get_user_lock(user_id):
             mock_update = types.SimpleNamespace(
                 message=messages[0],
+                effective_message=messages[0],
                 effective_user=messages[0].from_user,
                 effective_chat=messages[0].chat,
                 update_id=None,

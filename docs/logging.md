@@ -47,6 +47,21 @@ mode. `DEBUG` does not change any content or credential rule.
 
 ## Configuration
 
+Admin Telegram alerts use `app/admin_alerts.py`. General incident alerts and
+unauthorized-user alerts share a process-local limit of five delivery attempts
+per five minutes; an unauthorized actor also has a ten-minute cooldown.
+Admission is reserved before awaiting transport, including attempts that fail,
+so simultaneous incidents cannot bypass the cap. Explicit startup/shutdown
+notifications have their own lifecycle path. Rate limiting does not remove the
+primary structured incident; alerts carry bounded redacted descriptions and
+correlation fingerprints rather than private message/provider content.
+
+The global Telegram error owner classifies expected network/timeouts, transient
+limits and user/document input errors as warnings with `error_code` and a safe
+user-facing message. These do not consume the incident alert budget. Key/config
+and exhausted-quota failures request administrator attention at warning severity;
+unexpected failures retain critical alerts and the original `error_id`.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `LOG_FORMAT` | `json` | `json` or explicitly `text`; overrides compatibility aliases |

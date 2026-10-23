@@ -69,6 +69,44 @@ def make_history(n: int, msg_size: int = 50) -> list[dict]:
     return history
 
 
+def test_summary_context_uses_controlled_preamble_and_ack_without_reexpanding_data():
+    from app.prompt_registry import prompt_scope
+
+    with prompt_scope(
+        overrides={
+            "context.summary.preamble": "Previous claims (data): {summary}",
+            "context.summary.ack": "I will use this as context.",
+        },
+        revision=1,
+    ):
+        context = ContextAssembler()._build_final_history([], "Quoted {unknown} and {{braces}}", "Current task")
+
+    assert context == [
+        {"role": "user", "parts": ["Previous claims (data): Quoted {unknown} and {{braces}}"]},
+        {"role": "model", "parts": ["I will use this as context."]},
+        {"role": "user", "parts": ["Current task"]},
+    ]
+
+
+def test_edited_summary_wrapper_counts_toward_provider_context_budget():
+    from app.prompt_registry import prompt_scope
+
+    assembler = ContextAssembler()
+    with prompt_scope(overrides={"context.summary.preamble": "Ж" * 3000 + "\n{summary}"}, revision=1):
+        result = assembler.assemble(
+            history=[make_msg("user" if index % 2 == 0 else "model", "Ж" * 300) for index in range(45)],
+            existing_summary="Earlier context.",
+            user_message="Continue.",
+            system_instruction="Assist.",
+            token_budget=18_000,
+        )
+    final_tokens = estimate_tokens_cyrillic(result.system_instruction) + sum(
+        estimate_tokens_cyrillic(assembler._extract_text(message)) for message in result.history
+    )
+    assert final_tokens + result.budget.response_reserve <= 18_000
+    assert result.budget.used == final_tokens + result.budget.response_reserve
+
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 

@@ -30,6 +30,7 @@ from app.games.ai_budget import acquire_background_slot, acquire_foreground_slot
 from app.games.hinting import enqueue_bank_hint_prewarm
 from app.observability.workload_events import observe_workload_call
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
+from app.providers.gemini_config import build_generate_content_config
 from app.runtime_settings.cache_identity import cache_identity
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
@@ -1518,7 +1519,8 @@ async def _generate_single_word_fast(category: str, lang: str = "ru", *, model: 
                         vertex_client.aio.models.generate_content(
                             model="gemini-3.1-flash-lite",
                             contents=prompt,
-                            config=_gtypes.GenerateContentConfig(
+                            config=build_generate_content_config(
+                                "gemini-3.1-flash-lite",
                                 tools=[_gtypes.Tool(google_search=_gtypes.GoogleSearch())],
                                 temperature=0.7,
                                 max_output_tokens=64,

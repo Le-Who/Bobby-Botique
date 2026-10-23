@@ -68,6 +68,24 @@ class TestCacheRedisUnavailable:
         mock_redis.get.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_memory_hits_are_included_in_cache_metrics(self, cache):
+        cache.qna_cache["test-key"] = {"answer": "cached"}
+        with patch("app.cache.metrics_collector") as metrics:
+            metrics.record_cache_hit = AsyncMock()
+            metrics.record_cache_miss = AsyncMock()
+            assert await cache.get("test-key", "qna") == {"answer": "cached"}
+        metrics.record_cache_hit.assert_awaited_once_with()
+        metrics.record_cache_miss.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("payload", ["[]", "null", '"text"', "42"])
+    async def test_invalid_redis_payload_is_a_miss(self, cache, payload):
+        with patch("app.cache.redis_client") as redis:
+            redis.get = AsyncMock(return_value=payload)
+            assert await cache.get("malformed-key", "qna") is None
+        assert "malformed-key" not in cache.qna_cache
+
+    @pytest.mark.asyncio
     async def test_redis_none_client_handled_gracefully(self, cache):
         """If redis_client is None (not configured), cache should work memory-only."""
         with patch("app.cache.redis_client", None):

@@ -131,7 +131,7 @@ class NetworkErrorHandler:
             True if connectivity is available, False otherwise
         """
         try:
-            timeout_config = httpx.Timeout(connect=timeout, read=timeout)
+            timeout_config = httpx.Timeout(timeout)
             async with httpx.AsyncClient(timeout=timeout_config) as client:
                 response = await client.get(url)
                 return response.status_code == 200
@@ -157,8 +157,15 @@ def network_retry_decorator(
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def wrapper(*args, **kwargs):
+            @wraps(func)
+            async def attempt():
+                return await func(*args, **kwargs)
+
             return await NetworkErrorHandler.retry_with_backoff(
-                func, max_retries, base_delay, *args, exceptions=exceptions, **kwargs
+                attempt,
+                max_retries=max_retries,
+                base_delay=base_delay,
+                exceptions=exceptions,
             )
 
         return wrapper

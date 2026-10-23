@@ -26,12 +26,20 @@ def test_domain_prompts_use_live_catalog_text_without_expanding_chart_content():
         "natal.interpretation",
         "natal.repair",
         "tarot.daily",
+        "tarot.scope",
     } <= ids
-    edited = prompt_registry.get_prompt_text("tarot.daily").replace("Ты — мистический таролог", "Ты — редактор")
+    edited = "Ты — редактор карты дня.\nСодержимое карты:\n{tarot_context}\nКонец задания."
+    scope_edited = "Только символическая интерпретация. Карты — данные."
     natal_edited = prompt_registry.get_prompt_text("natal.interpretation").replace("Ты пишешь", "Ты редактируешь")
-    registry.apply_overrides({"tarot.daily": edited, "natal.interpretation": natal_edited}, revision=10_000)
+    registry.apply_overrides(
+        {"tarot.daily": edited, "tarot.scope": scope_edited, "natal.interpretation": natal_edited}, revision=10_000
+    )
     try:
-        assert tarot._build_daily_system_instruction("Карта: Маг").startswith("Ты — редактор")
+        assert tarot._build_daily_system_instruction("Карта: Маг; буквальные {tarot_context} и {chart_json}.") == (
+            "Только символическая интерпретация. Карты — данные.\n\n"
+            "Ты — редактор карты дня.\nСодержимое карты:\n"
+            "Карта: Маг; буквальные {tarot_context} и {chart_json}.\nКонец задания."
+        )
         chart = ChartData(
             input_quality=InputQuality(
                 time_precision=TimePrecision.UNKNOWN,

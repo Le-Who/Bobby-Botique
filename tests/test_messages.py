@@ -153,6 +153,46 @@ async def test_handle_request_unauthorized():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("authorized, rate_allowed", [(False, True), (True, False)])
+async def test_photo_album_is_not_accumulated_before_auth_and_rate_admission(monkeypatch, authorized, rate_allowed):
+    from app.handlers import msg_media
+
+    user = MockUser(user_id=123)
+    chat = MockChat(chat_id=456)
+    message = MockMessage(text=None, user=user, chat=chat)
+    message.photo = [object()]
+    message.media_group_id = "synthetic-album"
+    update = DummyUpdate(message=message)
+    context = DummyContext()
+    monkeypatch.setattr(msg_media, "MEDIA_GROUPS", {})
+    monkeypatch.setattr(msg_media, "MEDIA_GROUPS_TTL", {})
+    monkeypatch.setattr(msg_media, "_background_tasks", set())
+    monkeypatch.setattr(msg_media, "_cleanup_task", None)
+    monkeypatch.setattr(msg_media, "start_media_groups_cleanup", AsyncMock())
+
+    def discard_work(coroutine):
+        coroutine.close()
+
+    monkeypatch.setattr(msg_media, "submit_task", discard_work)
+    try:
+        with (
+            patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
+            patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock, return_value=rate_allowed),
+            patch("app.handlers.messages.is_authorized", new_callable=AsyncMock, return_value=authorized),
+            patch("app.admin_alerts.alert_admin_unauthorized_user", new_callable=AsyncMock),
+        ):
+            await messages.handle_request(update, context)
+
+        assert msg_media.MEDIA_GROUPS == {}
+        assert not msg_media._background_tasks
+    finally:
+        pending = list(msg_media._background_tasks)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_handle_request_text_message_happy_path(monkeypatch):
     """Authorized group text is processed and retained in protected operational logs."""
     monkeypatch.delenv("LOG_CONTENT_MODE", raising=False)

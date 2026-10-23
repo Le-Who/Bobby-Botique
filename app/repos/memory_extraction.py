@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from app.observability.events import emit, record_exception
 from app.observability.workload_events import start_workload_attempt
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
+from app.providers.gemini_config import build_generate_content_config
 from app.repos.memory_config import (
     GRAPH_EXTRACTION_MODEL,
     GRAPH_EXTRACTION_THINKING_LEVEL,
@@ -170,7 +171,7 @@ async def extract_graph_structured(
             response = await client.aio.models.generate_content(
                 model=model,
                 contents=prompt,
-                config=types.GenerateContentConfig(**config_kwargs),  # type: ignore[arg-type]
+                config=build_generate_content_config(model, **config_kwargs),  # type: ignore[arg-type]
             )
             parsed = GraphExtractionResult.model_validate_json((response.text or "").strip())
             try:
@@ -252,7 +253,7 @@ async def extract_graph_structured(
             response = await client.aio.models.generate_content(
                 model=GRAPH_EXTRACTION_MODEL,
                 contents=prompt,
-                config=types.GenerateContentConfig(**config_kwargs),  # type: ignore[arg-type]
+                config=build_generate_content_config(GRAPH_EXTRACTION_MODEL, **config_kwargs),  # type: ignore[arg-type]
             )
             response_text = (response.text or "").strip()
             if not response_text:
@@ -846,7 +847,7 @@ async def _resolve_ambiguous_conflict(
             response = await client.aio.models.generate_content(
                 model=model,
                 contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.0, max_output_tokens=10),
+                config=build_generate_content_config(model, temperature=0.0, max_output_tokens=10),
             )
             verdict = (response.text or "").strip().lower()
             if verdict not in ("update", "parallel", "refinement"):
@@ -889,7 +890,8 @@ async def _resolve_ambiguous_conflict(
         response = await client.aio.models.generate_content(
             model=get_taxonomy_model(),
             contents=prompt,
-            config=types.GenerateContentConfig(
+            config=build_generate_content_config(
+                get_taxonomy_model(),
                 temperature=0.0,
                 max_output_tokens=10,
             ),

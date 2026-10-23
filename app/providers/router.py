@@ -834,6 +834,9 @@ class ProviderRouter:
                     yield event
                     continue
                 if isinstance(event, StreamFailed):
+                    if event.retry is RetryDisposition.DO_NOT_RETRY and event.key is KeyDisposition.UNCHANGED:
+                        yield event
+                        return
                     failures.append(event)
                     continue
                 if isinstance(event, StreamDeferred):
@@ -911,6 +914,8 @@ class ProviderRouter:
             model_name: str,
             failure: StreamFailed,
         ) -> str:
+            if failure.key is KeyDisposition.UNCHANGED:
+                return "unchanged"
             category = _failure_category(failure)
             key_hash = key_data["key_hash"]
             try:
@@ -1083,6 +1088,13 @@ class ProviderRouter:
                     assert failure is not None
                     failed_keys.add(key_data["key_hash"])
                     category = await _record_failure(key_data, model_used, failure)
+                    if failure.retry is RetryDisposition.TRY_NEXT_MODEL:
+                        last_failure = failure
+                        model_all_permanent = False
+                        break
+                    if failure.retry is not RetryDisposition.TRY_NEXT_KEY:
+                        yield failure
+                        return
                     model_had_transient |= category == "transient"
                     model_all_permanent &= category == "permanent"
                     last_failure = failure
@@ -1157,6 +1169,7 @@ class ProviderRouter:
                 winner_idx: int | None = None
                 pre_text_terminals: dict[int, GenerationEvent] = {}
                 done: set[int] = set()
+                next_model_failure: tuple[int, StreamFailed] | None = None
                 first_text_deadline = asyncio.get_running_loop().time() + KEY_RACE_FIRST_TEXT_TIMEOUT_SECONDS
 
                 try:
@@ -1186,7 +1199,23 @@ class ProviderRouter:
                             winner_idx = race_idx
                             first_delta = race_event
                             break
+                        if (
+                            isinstance(race_event, StreamFailed)
+                            and race_event.retry is not RetryDisposition.TRY_NEXT_KEY
+                        ):
+                            if race_event.retry is RetryDisposition.TRY_NEXT_MODEL:
+                                next_model_failure = (race_idx, race_event)
+                                break
+                            await _record_failure(keys_to_race[race_idx], model_used, race_event)
+                            yield race_event
+                            return
                         pre_text_terminals[race_idx] = race_event
+
+                    if next_model_failure is not None:
+                        failure_index, last_failure = next_model_failure
+                        await _record_failure(keys_to_race[failure_index], model_used, last_failure)
+                        model_all_permanent = False
+                        break
 
                     if winner_idx is None:
                         deferred = next(
@@ -1316,6 +1345,9 @@ class ProviderRouter:
                 logging.warning("Typed deferred queue fallback failed: %s", exc)
 
         if last_failure is not None:
+            if last_failure.retry is RetryDisposition.TRY_NEXT_MODEL:
+                yield last_failure
+                return
             yield StreamFailed(
                 code=last_failure.code,
                 phase=FailurePhase.BEFORE_TEXT,
@@ -1323,6 +1355,7 @@ class ProviderRouter:
                 key=last_failure.key,
                 diagnostic=last_failure.diagnostic,
                 route=last_failure.route,
+                error_id=last_failure.error_id,
             )
             return
 

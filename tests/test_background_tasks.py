@@ -359,6 +359,116 @@ async def test_taskmanager_failure_callback_cancellation_keeps_failed_terminal(j
 
 
 @pytest.mark.asyncio
+async def test_taskmanager_drain_owns_async_error_callback_until_it_finishes():
+    tm = TaskManager()
+    work_started = asyncio.Event()
+    work_release = asyncio.Event()
+    callback_started = asyncio.Event()
+    callback_release = asyncio.Event()
+    callback_finished = asyncio.Event()
+
+    async def work():
+        work_started.set()
+        await work_release.wait()
+        raise RuntimeError("job failed")
+
+    async def on_error(_error, _description):
+        callback_started.set()
+        await callback_release.wait()
+        callback_finished.set()
+
+    tm.register_error_callback(on_error)
+    tm.submit(work())
+    await work_started.wait()
+    # Start draining before the failing task has spawned its error notification.
+    drain = asyncio.create_task(tm.drain(timeout=1.0))
+    try:
+        await asyncio.sleep(0)
+        work_release.set()
+        await callback_started.wait()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not drain.done()
+        callback_release.set()
+        assert await drain is True
+        assert callback_finished.is_set()
+        assert not tm._tasks
+    finally:
+        callback_release.set()
+        await drain
+        await tm.drain(timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_taskmanager_drain_includes_dependent_work_submitted_by_an_accepted_job():
+    tm = TaskManager()
+    parent_started = asyncio.Event()
+    parent_release = asyncio.Event()
+    child_started = asyncio.Event()
+    child_release = asyncio.Event()
+    child_finished = asyncio.Event()
+
+    async def child():
+        child_started.set()
+        await child_release.wait()
+        child_finished.set()
+
+    async def parent():
+        parent_started.set()
+        await parent_release.wait()
+        tm.submit(child())
+
+    tm.submit(parent())
+    await parent_started.wait()
+    drain = asyncio.create_task(tm.drain(timeout=1.0))
+    try:
+        await asyncio.sleep(0)
+        parent_release.set()
+        await child_started.wait()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not drain.done()
+        child_release.set()
+        assert await drain is True
+        assert child_finished.is_set()
+        assert not tm._tasks
+    finally:
+        child_release.set()
+        await drain
+        await tm.drain(timeout=0)
+
+
+@pytest.mark.asyncio
+async def test_taskmanager_records_async_error_callback_failure(job_events):
+    tm = TaskManager()
+    loop_errors = []
+    loop = asyncio.get_running_loop()
+    old_handler = loop.get_exception_handler()
+
+    async def work():
+        raise RuntimeError("job failed")
+
+    async def on_error(_error, _description):
+        raise ValueError("notification failed")
+
+    loop.set_exception_handler(lambda _loop, context: loop_errors.append(context))
+    try:
+        tm.register_error_callback(on_error)
+        tm.submit(work())
+        await tm.drain(timeout=1.0)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert not loop_errors
+        failures = [record for event, record, _ in job_events if event == "job.error_callback_failed"]
+        assert len(failures) == 1
+        original_failure = next(record for event, record, _ in job_events if event == "job.attempt_failed")
+        assert failures[0].original_error_id == original_failure.error_id
+    finally:
+        loop.set_exception_handler(old_handler)
+
+
+@pytest.mark.asyncio
 async def test_taskmanager_adds_named_execution_context():
     from app.observability.context import current_context, request_scope
 

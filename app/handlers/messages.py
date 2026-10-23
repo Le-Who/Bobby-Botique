@@ -275,10 +275,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logging.error("Invalid user_id: %s", user_id)
             return
 
-        # ── 1. Media groups ──────────────────────────────────────────────────
-        if await process_media_group_update(update, context, user_id, chat_id):
-            return
-
         # ── 2. Telegram API logging ──────────────────────────────────────────
         message_type = (
             "photo"
@@ -359,6 +355,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 chat_type=effective_msg.chat.type,
                 message_text=message_text,
             )
+            return
+
+        # Album accumulation schedules provider work, so it requires the same
+        # authorization and rate admission as ordinary photo requests.
+        if await process_media_group_update(update, context, user_id, chat_id):
             return
 
         # ── 4. Document uploads ──────────────────────────────────────────────

@@ -86,6 +86,8 @@ async def webhook_lifecycle(monkeypatch, request):
         shutdown=asyncio.Event(),
         stop_entered=asyncio.Event(),
         release_stop=asyncio.Event(),
+        updater_stop_entered=asyncio.Event(),
+        release_updater_stop=asyncio.Event(),
         registration_failure=None,
         order=[],
     )
@@ -115,7 +117,15 @@ async def webhook_lifecycle(monkeypatch, request):
         await control.release_stop.wait()
 
     application.stop = stop
-    monkeypatch.setenv("WEBHOOK_URL", "https://webhook.example.test")
+    polling = getattr(request, "param", None) == "polling"
+    if polling:
+
+        async def stop_updater():
+            control.updater_stop_entered.set()
+            await control.release_updater_stop.wait()
+
+        application.updater = SimpleNamespace(start_polling=AsyncMock(), stop=stop_updater)
+    monkeypatch.setenv("WEBHOOK_URL", "" if polling else "https://webhook.example.test")
     monkeypatch.setattr(bot, "quart_app", app)
     monkeypatch.setattr(bot, "shutdown_event", SimpleNamespace(wait=wait_for_shutdown, is_set=control.shutdown.is_set))
     monkeypatch.setattr(
@@ -165,14 +175,32 @@ async def webhook_lifecycle(monkeypatch, request):
     control.path = bot._telegram_webhook_path(_TOKEN)
     control.owner = asyncio.create_task(bot.run_bot_with_retry())
     try:
-        await asyncio.wait_for((control.start_entered if blocked_start else control.registered).wait(), timeout=5)
+        ready = control.start_entered if blocked_start else control.ready if polling else control.registered
+        await asyncio.wait_for(ready.wait(), timeout=5)
         yield control
     finally:
         control.release_registration.set()
         control.release_start.set()
         control.shutdown.set()
         control.release_stop.set()
+        control.release_updater_stop.set()
         await _finish_requests(control.owner)
+
+
+@pytest.mark.parametrize("webhook_lifecycle", ["polling"], indirect=True)
+async def test_polling_shutdown_cancellation_owns_updater_and_application_stop(webhook_lifecycle):
+    control = webhook_lifecycle
+    control.shutdown.set()
+    await control.updater_stop_entered.wait()
+    control.owner.cancel("orchestrator shutdown")
+    await _checkpoint()
+    assert not control.owner.done(), "polling shutdown abandoned its shielded updater child"
+    control.release_updater_stop.set()
+    await control.stop_entered.wait()
+    assert not control.owner.done(), "application.stop must finish before producer teardown returns"
+    control.release_stop.set()
+    with pytest.raises(asyncio.CancelledError):
+        await control.owner
 
 
 @pytest.mark.parametrize("command, gate_at", [(False, 1), (True, 1), (True, 2)])
@@ -690,10 +718,10 @@ async def test_registration_error_cleanup_finishes_resources_after_repeated_owne
         assert cancelled.value.args == ("first exceptional-cleanup interruption",)
         assert resources == [
             "alert",
-            "memory",
-            "compact",
             "queue",
             "stop",
+            "memory",
+            "compact",
             "http",
             "tavily",
             "intent",

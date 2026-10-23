@@ -20,6 +20,7 @@ from app.observability.workload_events import start_workload_attempt
 from app.prompt_registry import get_registry, render_prompt_text
 from app.providers.base import _build_thinking_config
 from app.providers.gemini import get_cached_genai_client
+from app.providers.gemini_config import build_generate_content_config
 from app.runtime_settings import interactive_prompts as _interactive_prompts  # noqa: F401
 from app.search_services import parallel_search
 from app.utils.stage_indicators import STAGES_AGENTIC_RESEARCH
@@ -275,6 +276,17 @@ class AgenticResult:
     pages_deduplicated: int = 0
     budget_reason: str | None = None
     usage_uncertain: bool = False
+
+
+def _function_response_part(call: types.FunctionCall, name: str, response: dict[str, Any]) -> types.Part:
+    """Match the provider's call ID when present; legacy calls can omit it."""
+    return types.Part(
+        function_response=types.FunctionResponse(
+            id=call.id if isinstance(call.id, str) else None,
+            name=name,
+            response=response,
+        )
+    )
 
 
 class AgenticSearch:
@@ -721,7 +733,8 @@ class AgenticSearch:
 
             contents.append(types.Content(role="user", parts=[types.Part.from_text(text=query)]))
 
-            config = types.GenerateContentConfig(
+            config = build_generate_content_config(
+                self.model_name,
                 system_instruction=self._get_system_instruction(),
                 temperature=0.2,
                 tools=self._get_tools(),
@@ -841,7 +854,7 @@ class AgenticSearch:
                     # ── Phase 2: Batch validate page limits & query dedup ──
                     # (Risk 1.1 mitigation: validate ALL read_page calls upfront)
                     executable_calls: list[tuple[str, dict, types.FunctionCall]] = []
-                    denied_responses: list[types.Part] = []
+                    responses_by_call: dict[int, types.Part] = {}
 
                     for call_name, call_args, call_obj in parsed_calls:
                         if call_name == "read_page":
@@ -850,13 +863,12 @@ class AgenticSearch:
                                     "Agent hit max pages limit (%d). Denying read_page.",
                                     self.max_pages,
                                 )
-                                denied_responses.append(
-                                    types.Part.from_function_response(
-                                        name=call_name,
-                                        response={
-                                            "error": f"Max page limit ({self.max_pages}) reached. Analyze existing data or conclude."
-                                        },
-                                    )
+                                responses_by_call[id(call_obj)] = _function_response_part(
+                                    call_obj,
+                                    call_name,
+                                    {
+                                        "error": f"Max page limit ({self.max_pages}) reached. Analyze existing data or conclude."
+                                    },
                                 )
                                 continue
                             pages_read += 1
@@ -875,14 +887,13 @@ class AgenticSearch:
                                     reason_code="duplicate_queries",
                                     duplicate_count=len(dupes),
                                 )
-                                denied_responses.append(
-                                    types.Part.from_function_response(
-                                        name=call_name,
-                                        response={
-                                            "advisory": "All these queries are very similar to ones already executed. "
-                                            "Analyze existing results or refine with different keywords, or conclude."
-                                        },
-                                    )
+                                responses_by_call[id(call_obj)] = _function_response_part(
+                                    call_obj,
+                                    call_name,
+                                    {
+                                        "advisory": "All these queries are very similar to ones already executed. "
+                                        "Analyze existing results or refine with different keywords, or conclude."
+                                    },
                                 )
                                 continue
                             # Track queries for future dedup
@@ -952,8 +963,7 @@ class AgenticSearch:
                     else:
                         tool_results = []
 
-                    # Build function responses (maintain order matching executable_calls)
-                    function_responses: list[types.Part] = list(denied_responses)
+                    # Match the original call order, including calls denied locally.
                     for i, (call_name, _call_args, _call_obj) in enumerate(executable_calls):
                         result = tool_results[i]
                         if isinstance(result, asyncio.CancelledError):
@@ -964,9 +974,9 @@ class AgenticSearch:
                             result_dict = dict(result)  # type: ignore[arg-type]  # _execute_tool returns dict
                         # Accumulate dedup metrics and strip metadata before sending to model
                         pages_deduplicated += result_dict.pop("_dedup_count", 0)
-                        function_responses.append(
-                            types.Part.from_function_response(name=call_name, response=result_dict)
-                        )
+                        responses_by_call[id(_call_obj)] = _function_response_part(_call_obj, call_name, result_dict)
+
+                    function_responses = [responses_by_call[id(call)] for _, _, call in parsed_calls]
 
                     # Append all tool results to history for the model to see in the next turn
                     if function_responses:
@@ -1015,7 +1025,8 @@ class AgenticSearch:
 
             try:
                 # Build a fresh config for synthesis — do NOT mutate the loop's config
-                synthesis_config = types.GenerateContentConfig(
+                synthesis_config = build_generate_content_config(
+                    self.model_name,
                     system_instruction=render_prompt_text(
                         get_registry().get_prompt_text("research.synthesis.system"),
                         query=query,

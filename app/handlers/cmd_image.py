@@ -62,6 +62,7 @@ from app.providers.freetheai_image import (
     FTAImageResult,
     get_fta_image_provider,
 )
+from app.providers.gemini_config import build_generate_content_config
 from app.providers.imagen_provider import (
     ASPECT_RATIO_LABELS,
     SUPPORTED_ASPECT_RATIOS,
@@ -208,7 +209,8 @@ async def _extract_draw_prompt_ai(text: str) -> str | None:
             get_cached_genai_client(key).aio.models.generate_content(
                 model=model,
                 contents=text,
-                config=types.GenerateContentConfig(
+                config=build_generate_content_config(
+                    model,
                     system_instruction=get_prompt_text("image.prompt_extract"),
                     temperature=0.0,
                     max_output_tokens=300,
@@ -346,7 +348,8 @@ async def _translate_to_english(prompt: str, user_id: int | None = None) -> str:
             get_cached_genai_client(key).aio.models.generate_content(
                 model=model,
                 contents=prompt,
-                config=types.GenerateContentConfig(
+                config=build_generate_content_config(
+                    model,
                     system_instruction=get_prompt_text("image.translate"),
                     temperature=0.2,
                     max_output_tokens=300,

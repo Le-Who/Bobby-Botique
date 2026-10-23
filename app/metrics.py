@@ -44,6 +44,8 @@ class MetricsCollector:
         self.error_log = deque(maxlen=100)  # Храним последние 100 ошибок
         self.api_event_log = deque(maxlen=200)  # Храним последние API события
         self.daily_metrics: dict[str, PerformanceMetrics] = defaultdict(PerformanceMetrics)
+        # Persisted totals are display data, never new deltas for the next UPSERT.
+        self._persisted_daily_metrics: dict[str, PerformanceMetrics] = defaultdict(PerformanceMetrics)
         # Per-user daily metrics: key = date_str -> uid
         self._user_daily: dict[str, dict[int, dict[str, Any]]] = defaultdict(
             lambda: defaultdict(lambda: {"request_count": 0, "model_usage": {}})
@@ -87,14 +89,21 @@ class MetricsCollector:
         from datetime import timedelta as _td
 
         cutoff = (today - _td(days=8)).isoformat()
-        stale_days = [d for d in self.daily_metrics if d < cutoff]
+        stale_days = [d for d, metrics in self.daily_metrics.items() if d < cutoff and metrics == PerformanceMetrics()]
         for d in stale_days:
             del self.daily_metrics[d]
-        # Prune _user_daily for past days (keep only today)
+        # Past-day deltas survive until their write succeeds.
         today_str = today.isoformat()
-        stale_dates = [d for d in self._user_daily if d != today_str]
+        stale_dates = [
+            d
+            for d, users in self._user_daily.items()
+            if d != today_str and not any(data["request_count"] or data["model_usage"] for data in users.values())
+        ]
         for d in stale_dates:
             del self._user_daily[d]
+        for d in list(self._persisted_daily_metrics):
+            if d < cutoff:
+                del self._persisted_daily_metrics[d]
         if stale_days or stale_dates:
             logging.debug(
                 "Metrics pruned: %d stale days, %d stale user-day entries",
@@ -185,18 +194,26 @@ class MetricsCollector:
             )
 
     async def _save_metrics_to_db(self):
+        """Flush pending days, including the interval spanning midnight."""
+        days = sorted(set(self.daily_metrics) | set(self._user_daily) | {date.today().isoformat()})
+        for day in days:
+            await self._save_metrics_day(date.fromisoformat(day))
+
+    async def _save_metrics_day(self, metric_date: date):
         """Сохраняет текущие метрики в базу данных (Non-blocking).
 
         Uses atomic snapshot-then-reset under lock to prevent race conditions:
         events arriving during DB I/O are NOT lost.
         """
-        snapshot_data = None
+        snapshot_data: dict[str, Any] | None = None
         user_snapshot: list[tuple[int, dict]] = []
+        global_saved = False
+        users_saved = False
 
         # ── Phase 1: Atomic snapshot + reset under lock (O(1), no I/O) ────
         try:
             async with self._lock:
-                today = date.today()
+                today = metric_date
                 today_str = today.isoformat()
 
                 daily = self.daily_metrics.get(today_str, PerformanceMetrics())
@@ -229,11 +246,11 @@ class MetricsCollector:
                 user_snapshot = [
                     (uid, {"request_count": data["request_count"], "model_usage": dict(data["model_usage"])})
                     for uid, data in self._user_daily[today_str].items()
-                    if data["request_count"] > 0
+                    if data["request_count"] > 0 or data["model_usage"]
                 ]
                 # Reset per-user counters
                 for _uid, data in self._user_daily[today_str].items():
-                    if data["request_count"] > 0:
+                    if data["request_count"] > 0 or data["model_usage"]:
                         data["request_count"] = 0
                         data["model_usage"] = {}
 
@@ -246,7 +263,7 @@ class MetricsCollector:
 
         # ── Phase 2: Save to DB (I/O, no lock held) ──────────────────────
         try:
-            if snapshot_data and snapshot_data["request_count"] > 0:
+            if snapshot_data and any(value for key, value in snapshot_data.items() if key != "date"):
                 await db.db_query(
                     """
                     INSERT INTO metrics (metric_date, request_count, total_response_time, error_count,
@@ -291,19 +308,24 @@ class MetricsCollector:
                         snapshot_data["model_usage"],
                     ),
                 )
+                global_saved = True
+                persisted = self._persisted_daily_metrics[today_str]
+                persisted.request_count += snapshot_data["request_count"]
+                persisted.total_response_time += snapshot_data["total_response_time"]
+                persisted.error_count += snapshot_data["error_count"]
 
             # Save new errors
             if errors_to_process:
                 unsaved_errors = [e for e in errors_to_process if not e.get("saved", False)]
                 if unsaved_errors:
-                    params_list = [(e["type"], e["message"], e.get("request_id")) for e in unsaved_errors]
+                    error_params = [(e["type"], e["message"], e.get("request_id")) for e in unsaved_errors]
 
                     await db.db_execute_many(
                         """
                         INSERT INTO error_logs (error_type, error_message, request_id)
                         VALUES ($1, $2, $3)
                     """,
-                        params_list,
+                        error_params,
                     )
 
                     for error in unsaved_errors:
@@ -344,37 +366,43 @@ class MetricsCollector:
                     """,
                     params_list,
                 )
+                users_saved = True
                 logging.debug("Per-user metrics flushed for up to %s existing users", len(user_snapshot))
 
                 # Update streaks for active users
                 try:
                     from app.repos.analytics import record_daily_activity
 
-                    for uid, _ in user_snapshot:
-                        await record_daily_activity(uid)
+                    # This API records today's streak; a delayed previous-day
+                    # flush must not manufacture activity for today.
+                    if metric_date == date.today():
+                        for uid, data in user_snapshot:
+                            if data["request_count"] > 0:
+                                await record_daily_activity(uid)
                 except Exception as streak_err:
                     logging.debug("Streak update skipped: %s", streak_err)
 
-        except Exception as e:
+        except (Exception, asyncio.CancelledError) as e:
             logging.error("Error saving metrics to database: %s", e, exc_info=True)
             # ── Compensate: re-add snapshot values so they aren't lost ────
-            if snapshot_data and snapshot_data["request_count"] > 0:
+            if snapshot_data:
                 try:
                     async with self._lock:
-                        today_str = date.today().isoformat()
+                        today_str = snapshot_data["date"].isoformat()
                         daily = self.daily_metrics[today_str]
-                        daily.request_count += snapshot_data["request_count"]
-                        daily.total_response_time += snapshot_data["total_response_time"]
-                        daily.error_count += snapshot_data["error_count"]
-                        daily.search_queries += snapshot_data["search_queries"]
-                        daily.cache_hits += snapshot_data["cache_hits"]
-                        daily.cache_misses += snapshot_data["cache_misses"]
-                        for k, v in snapshot_data["api_calls"].items():
-                            daily.api_calls[k] = daily.api_calls.get(k, 0) + v
-                        for k, v in snapshot_data["model_usage"].items():
-                            daily.model_usage[k] = daily.model_usage.get(k, 0) + v
+                        if not global_saved:
+                            daily.request_count += snapshot_data["request_count"]
+                            daily.total_response_time += snapshot_data["total_response_time"]
+                            daily.error_count += snapshot_data["error_count"]
+                            daily.search_queries += snapshot_data["search_queries"]
+                            daily.cache_hits += snapshot_data["cache_hits"]
+                            daily.cache_misses += snapshot_data["cache_misses"]
+                            for k, v in snapshot_data["api_calls"].items():
+                                daily.api_calls[k] = daily.api_calls.get(k, 0) + v
+                            for k, v in snapshot_data["model_usage"].items():
+                                daily.model_usage[k] = daily.model_usage.get(k, 0) + v
                         # Re-add per-user data
-                        for uid, data in user_snapshot:
+                        for uid, data in user_snapshot if not users_saved else []:
                             self._user_daily[today_str][uid]["request_count"] += data["request_count"]
                             for k, v in data["model_usage"].items():
                                 self._user_daily[today_str][uid]["model_usage"][k] = (
@@ -382,6 +410,8 @@ class MetricsCollector:
                                 )
                 except Exception as comp_err:
                     logging.error("Metrics compensation failed: %s", comp_err, exc_info=True)
+            if isinstance(e, asyncio.CancelledError):
+                raise
 
     async def _load_metrics_from_db(self):
         """Загружает метрики из базы данных"""
@@ -442,7 +472,7 @@ class MetricsCollector:
             for row in daily_result:
                 try:
                     date_str = row["metric_date"].isoformat()
-                    self.daily_metrics[date_str] = PerformanceMetrics(
+                    self._persisted_daily_metrics[date_str] = PerformanceMetrics(
                         request_count=row.get("request_count", 0) or 0,
                         total_response_time=row.get("total_response_time", 0.0) or 0.0,
                         error_count=row.get("error_count", 0) or 0,
@@ -585,6 +615,18 @@ class MetricsCollector:
         average_response_time = self.get_average_response_time()
         error_rate = self.get_error_rate()
         cache_hit_rate = self.get_cache_hit_rate()
+        daily_summary = {}
+        for day in set(self.daily_metrics) | set(self._persisted_daily_metrics):
+            pending = self.daily_metrics.get(day, PerformanceMetrics())
+            persisted = self._persisted_daily_metrics.get(day, PerformanceMetrics())
+            requests = pending.request_count + persisted.request_count
+            daily_summary[day] = {
+                "requests": requests,
+                "errors": pending.error_count + persisted.error_count,
+                "avg_response_time": (
+                    (pending.total_response_time + persisted.total_response_time) / requests if requests else 0
+                ),
+            }
 
         summary = {
             "total_requests": self.metrics.request_count,
@@ -600,16 +642,7 @@ class MetricsCollector:
             "search_queries": self.metrics.search_queries,
             "recent_errors": recent_errors,
             "recent_api_events": list(self.api_event_log)[-20:],
-            "daily_metrics": {
-                date: {
-                    "requests": metrics.request_count,
-                    "errors": metrics.error_count,
-                    "avg_response_time": (
-                        metrics.total_response_time / metrics.request_count if metrics.request_count > 0 else 0
-                    ),
-                }
-                for date, metrics in self.daily_metrics.items()
-            },
+            "daily_metrics": daily_summary,
         }
 
         logging.debug(
@@ -636,6 +669,15 @@ class MetricsCollector:
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._bg_save_task
                 self._bg_save_task = None
+
+            # Producers are drained by lifecycle cleanup before this boundary.
+            # Cancelling the consumer does not process its queued final events.
+            while not self._events_queue.empty():
+                event = self._events_queue.get_nowait()
+                try:
+                    self._process_event(event)
+                finally:
+                    self._events_queue.task_done()
 
             # Check, что база данных доступна before сохранением
             if db.db_manager.is_connected:

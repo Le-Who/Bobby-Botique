@@ -242,7 +242,7 @@ async def test_oversized_director_prompt_is_rejected_before_key_reservation(isol
     tts, attempt = isolated_speech
     reserve = AsyncMock(return_value=True)
     monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserve)
-    monkeypatch.setattr(tts, "_get_steerable_tts_prompt", lambda *_: ("x" * 7501, ""))
+    monkeypatch.setattr(tts, "_get_delivery_direction", lambda *_: "x" * 7501)
     with pytest.raises(TTSRequestError, match="input_too_large"):
         await tts.generate_speech("Hello.", "offline-test-key")
     reserve.assert_not_awaited()
@@ -268,3 +268,81 @@ async def test_provider_deadline_has_one_failed_terminal(isolated_speech, monkey
     attempt.fail.assert_called_once()
     assert attempt.fail.call_args.kwargs["reason_code"] == "timeout"
     attempt.finish.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("voice", ["Aoede", "Kore", "Puck", "Charon", "Leda", "Orus", "Zephyr", "Rasalgethi"])
+async def test_current_voices_send_brief_individual_delivery_without_legacy_reading_instructions(
+    isolated_speech, monkeypatch, voice
+):
+    from app.runtime_settings.audio import baseline_config
+
+    tts, _ = isolated_speech
+    monkeypatch.setattr(tts, "get_config", AsyncMock(return_value=baseline_config("gemini")))
+    seen = []
+
+    async def synthesize(**kwargs):
+        seen.append(kwargs)
+        return SimpleNamespace(
+            status="completed",
+            errors=None,
+            steps=[
+                SimpleNamespace(
+                    type="model_output",
+                    error=None,
+                    content=[SimpleNamespace(type="audio", mime_type="audio/l16", data=base64.b64encode(PCM).decode())],
+                )
+            ],
+        )
+
+    monkeypatch.setattr(
+        tts,
+        "get_cached_genai_client",
+        lambda _: SimpleNamespace(aio=SimpleNamespace(interactions=SimpleNamespace(create=synthesize))),
+    )
+    assert await tts.generate_speech("Прочитай только это предложение.", "offline-test-key", voice=voice) == PCM
+    content = seen[0]["input"][0]["content"][0]
+    assert content["text"] == "Прочитай только это предложение."
+    style = content["annotations"][0]["style"]
+    individual = next(row for row in baseline_config("gemini")["voices"] if row["id"] == voice)
+    assert individual["prompt"] and individual["prompt"] in style
+    assert 0.5 <= individual["temperature"] <= 1.0
+    assert len(style) < 350
+    assert "Text to read" not in style
+    assert "Pronunciation Rules" not in style
+    assert "temperature" not in seen[0]["generation_config"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("personal", "expected"), [(None, 0.7), (0.9, 0.9)])
+async def test_legacy_voice_level_is_used_unless_user_overrides_it(isolated_speech, monkeypatch, personal, expected):
+    tts, _ = isolated_speech
+    config = await tts.get_config("gemini")
+    config["voices"][0]["temperature"] = 0.7
+    seen = []
+
+    async def synthesize(**kwargs):
+        seen.append(kwargs)
+        return types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    finish_reason="STOP",
+                    content=types.Content(
+                        parts=[types.Part(inline_data=types.Blob(data=PCM, mime_type="audio/l16;rate=24000"))]
+                    ),
+                )
+            ]
+        )
+
+    monkeypatch.setattr(
+        tts,
+        "get_cached_genai_client",
+        lambda _: SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=synthesize))),
+    )
+    assert (
+        await tts.generate_speech(
+            "Hello.", "offline-test-key", model_name="gemini-3.1-flash-tts-preview", tts_temperature=personal
+        )
+        == PCM
+    )
+    assert seen[0]["config"].temperature == expected

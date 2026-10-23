@@ -19,6 +19,14 @@ def prompt_control_metadata(name: str) -> dict[str, object]:
         "evidence": [location.as_dict() for location in inventory.prompt_consumers.get(name, ())],
         "definitions": [location.as_dict() for location in inventory.prompt_definitions.get(name, ())],
     }
+    if name == "tts.director":
+        return {
+            **locations,
+            "editable": True,
+            "apply": "next_request",
+            "note": "Правила чтения для старых TTS-моделей через GenerateContent. "
+            "Gemini 3.8 получает только краткий стиль/темп и индивидуальную инструкцию голоса в speech metadata.",
+        }
     if name.startswith("live."):
         return {
             **locations,

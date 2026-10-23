@@ -302,8 +302,15 @@ def _schedule_persist(state: UserState) -> None:
         return
 
     def _fire() -> None:
+        from app.utils.background_tasks import try_submit_task
+
+        task = try_submit_task(_persist(state), operation="state.persist")
+        if task is None:
+            # Keep a timer/marker for the latest state when background capacity
+            # is full; shutdown can still flush it directly.
+            _schedule_persist(state)
+            return
         _pending_persists.pop(state._user_id, None)
-        task = loop.create_task(_persist(state))
         task.add_done_callback(_on_done)
 
     def _on_done(task: asyncio.Task) -> None:

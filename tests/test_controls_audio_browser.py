@@ -104,6 +104,7 @@ process.stdin.on('end', async () => {
     await first.getByLabel('ID голоса', { exact: true }).fill('Charon');
     await first.getByLabel('Название голоса', { exact: true }).fill('<img src=x onerror=alert(1)>');
     await first.getByLabel('Промпт голоса', { exact: true }).fill('Custom delivery.');
+    await first.getByLabel('Стиль / legacy temperature', { exact: true }).fill('0.7');
     await gemini.getByLabel('Температура', { exact: true }).fill('1.1');
     await gemini.getByLabel('Максимум выходных токенов', { exact: true }).fill('8192');
     await gemini.getByRole('button', { name: 'Добавить голос', exact: true }).click();
@@ -119,12 +120,14 @@ process.stdin.on('end', async () => {
     await page.locator('#notice').filter({ hasText: 'Сохранено' }).waitFor();
     assert.deepEqual(writes[0].value, {
       default_voice: 'Aoede', voices: [
-        { id: 'Charon', name: '<img src=x onerror=alert(1)>', prompt: 'Custom delivery.' },
+        { id: 'Charon', name: '<img src=x onerror=alert(1)>', prompt: 'Custom delivery.', temperature: 0.7 },
         { id: 'Aoede', name: 'Новый голос', prompt: 'Read gently.' },
       ], temperature: 1.1, max_output_tokens: 8192,
     });
     assert.equal(await gemini.locator('img').count(), 0);
     assert.equal(await gemini.locator('.voice-row').nth(1).getByLabel('Голос по умолчанию', { exact: true }).isChecked(), true);
+    assert.equal(await gemini.locator('.voice-row').nth(0).getByLabel('Стиль / legacy temperature', { exact: true }).inputValue(), '0.7');
+    assert.equal(await gemini.locator('.voice-row').nth(1).getByLabel('Стиль / legacy temperature', { exact: true }).inputValue(), '');
 
     await eleven.getByLabel('Стабильность', { exact: true }).fill('0.6');
     await eleven.getByLabel('Сходство с голосом', { exact: true }).fill('0.8');
@@ -173,6 +176,11 @@ process.stdin.on('end', async () => {
     await gemini.getByRole('button', { name: 'Сохранить голоса и TTS', exact: true }).click();
     await page.locator('#notice').filter({ hasText: 'ревизия 7' }).waitFor();
     assert.equal(writes[5].value.default_voice, 'Charon');
+    assert.equal(writes[5].value.voices[0].temperature, 0.7);
+    await gemini.locator('.voice-row').nth(0).getByLabel('Стиль / legacy temperature', { exact: true }).fill('');
+    await gemini.getByRole('button', { name: 'Сохранить голоса и TTS', exact: true }).click();
+    await page.locator('#notice').filter({ hasText: 'ревизия 8' }).waitFor();
+    assert.equal('temperature' in writes[6].value.voices[0], false);
 
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.locator('#section-select').isVisible(), true);

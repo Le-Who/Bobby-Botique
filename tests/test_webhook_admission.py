@@ -304,9 +304,10 @@ async def test_guarded_error_cleanup_still_cleans_other_resources_after_terminal
     assert stops == ["stop"]
     assert resources == [
         "alert",
+        # Stop job producers before the final memory/state persistence barrier.
+        "queue",
         "memory",
         "compact",
-        "queue",
         "http",
         "tavily",
         "intent",

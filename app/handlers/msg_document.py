@@ -11,7 +11,7 @@ from time import monotonic
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app.document_processor import process_uploaded_document
+from app.document_processor import document_processor, process_uploaded_document
 from app.i18n import t
 from app.metrics import metrics_collector
 from app.repos.chats import get_user_chat
@@ -144,14 +144,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # a different file. A later retry must return through duplicate confirmation.
     clear_pending_document_upload(context)
 
-    # Dynamic file size guard: 2 GB with Local Bot API, 50 MB via cloud
-    _max_file_size = (
-        2 * 1024 * 1024 * 1024  # 2 GB — Local Bot API Server limit
-        if getattr(context.bot, "local_mode", False)
-        else 50 * 1024 * 1024  # 50 MB — official cloud API limit
-    )
+    # The parser's limit applies in both Telegram modes. Reject before fetching
+    # or downloading files which the processor will necessarily refuse.
+    _max_file_size = document_processor.max_file_size
     if document.file_size and document.file_size > _max_file_size:
-        await update.message.reply_text(t("doc.file_too_large"))
+        await update.message.reply_text(t("doc.file_too_large", max_mb=str(_max_file_size // (1024 * 1024))))
         return
 
     # Check file type
@@ -252,8 +249,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 await processing_msg.edit_text(t("doc.process_failed"))
                 return
 
-        from app.document_processor import document_processor
-
         user_stats = await document_processor.get_user_document_stats(user_id)
 
         success_text = t(
@@ -267,6 +262,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             success_text += t("doc.paragraphs", count=str(result["paragraphs"]))
         if result.get("tables"):
             success_text += t("doc.tables", count=str(result["tables"]))
+        if result.get("truncated"):
+            success_text += t("doc.text_truncated")
 
         success_text += t("doc.user_stats", count=str(user_stats["document_count"]))
         if user_stats["limit_reached"]:

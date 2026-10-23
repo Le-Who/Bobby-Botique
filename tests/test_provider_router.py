@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -276,6 +277,177 @@ async def test_typed_router_rotates_pre_text_failure_without_leaking_error_text(
 
     assert events == [TextDelta("Recovered"), _completion("gemini-3.5-flash", 9)]
     assert status.suspended_keys["hash1"]["category"] == "rate_limit"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raced", [False, True])
+@pytest.mark.parametrize("retry", [RetryDisposition.DO_NOT_RETRY, RetryDisposition.RETRY_LATER])
+async def test_typed_router_preserves_nonretryable_terminal_without_rotating_or_penalizing_keys(raced, retry):
+    model = "gemini-3.5-flash"
+    failure = StreamFailed(
+        code=ErrorCode.INVALID_REQUEST if retry is RetryDisposition.DO_NOT_RETRY else ErrorCode.OVERLOADED,
+        phase=FailurePhase.BEFORE_TEXT,
+        retry=retry,
+        key=KeyDisposition.UNCHANGED,
+        diagnostic="Synthetic request rejected before transport",
+        error_id="synthetic-error-id",
+    )
+    status = FakeKeyStatusManager()
+    initial_keys = [({"api_key": "k1", "key_hash": "hash1"}, model, None)]
+    initial_keys += (
+        [({"api_key": "k2", "key_hash": "hash2"}, model, None)] if raced else [(None, None, "all_exhausted")]
+    )
+    use_case = FakeAgentRequestUseCase(
+        resolve_sequence=[*initial_keys, ({"api_key": "extra", "key_hash": "hash3"}, model, None)],
+        response_sequence=[],
+    )
+    started = []
+
+    class Provider:
+        provider_name = "gemini"
+
+        async def stream(self, request, *, model_name):
+            started.append(model_name)
+            yield failure
+
+    with (
+        patch("app.agent_use_cases.AgentRequestUseCase", return_value=use_case),
+        patch("app.repos.keys.get_key_status_manager", return_value=status),
+        patch("app.providers.base.get_provider_for_model", return_value=Provider()),
+    ):
+        events = [event async for event in ProviderRouter().stream(_typed_request(model))]
+
+    assert status.suspended_keys == {}
+    assert events == [failure]
+    assert len(started) == (2 if raced else 1)
+    assert use_case.resolves_made == 2
+
+
+@pytest.mark.asyncio
+async def test_typed_router_key_rotation_respects_unchanged_key_disposition():
+    model = "gemini-3.5-flash"
+    status = FakeKeyStatusManager()
+    use_case = FakeAgentRequestUseCase(
+        resolve_sequence=[
+            ({"api_key": "first", "key_hash": "hash1"}, model, None),
+            (None, None, "all_exhausted"),
+            ({"api_key": "next", "key_hash": "hash2"}, model, None),
+            (None, None, "all_exhausted"),
+        ],
+        response_sequence=[],
+    )
+    attempted = []
+
+    class Provider:
+        provider_name = "gemini"
+
+        async def stream(self, request, *, model_name):
+            attempted.append(model_name)
+            if len(attempted) == 1:
+                yield StreamFailed(
+                    code=ErrorCode.EMPTY_RESPONSE,
+                    phase=FailurePhase.BEFORE_TEXT,
+                    retry=RetryDisposition.TRY_NEXT_KEY,
+                    key=KeyDisposition.UNCHANGED,
+                    diagnostic="Synthetic empty result",
+                )
+            else:
+                yield TextDelta("Recovered")
+                yield _completion(model_name, 9)
+
+    with (
+        patch("app.agent_use_cases.AgentRequestUseCase", return_value=use_case),
+        patch("app.repos.keys.get_key_status_manager", return_value=status),
+        patch("app.providers.base.get_provider_for_model", return_value=Provider()),
+    ):
+        events = [event async for event in ProviderRouter().stream(_typed_request(model))]
+
+    assert events == [TextDelta("Recovered"), _completion(model, 9)]
+    assert status.suspended_keys == {}
+
+
+@pytest.mark.asyncio
+async def test_hedged_router_does_not_launch_fallback_after_nonretryable_request_failure():
+    model = "gemini-3.5-flash"
+    failure = StreamFailed(
+        code=ErrorCode.INVALID_REQUEST,
+        phase=FailurePhase.BEFORE_TEXT,
+        retry=RetryDisposition.DO_NOT_RETRY,
+        key=KeyDisposition.UNCHANGED,
+        diagnostic="Synthetic invalid payload",
+    )
+    status = FakeKeyStatusManager()
+    started = []
+
+    class UseCase(FakeAgentRequestUseCase):
+        async def resolve_ai_request(self, model_name, *, excluded_key_hashes, **kwargs):
+            if "hash1" in excluded_key_hashes:
+                return None, None, "all_exhausted"
+            return {"api_key": "k1", "key_hash": "hash1"}, model_name, None
+
+    class Provider:
+        provider_name = "gemini"
+
+        async def stream(self, request, *, model_name):
+            started.append(model_name)
+            yield failure
+
+    request = replace(_typed_request(model), allow_deferred=False)
+    with (
+        patch("app.agent_use_cases.AgentRequestUseCase", return_value=UseCase([], [])),
+        patch("app.repos.keys.get_key_status_manager", return_value=status),
+        patch("app.providers.base.get_provider_for_model", return_value=Provider()),
+    ):
+        events = [event async for event in ProviderRouter().stream(request)]
+
+    assert started == [model]
+    assert events == [failure]
+    assert status.suspended_keys == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raced", [False, True])
+async def test_typed_router_model_rejection_skips_remaining_keys_and_uses_next_model(raced):
+    primary, fallback = "cat/restricted-model", "gemini-3.5-flash"
+    status = FakeKeyStatusManager()
+    started = []
+
+    class UseCase(FakeAgentRequestUseCase):
+        async def resolve_ai_request(self, model_name, *, excluded_key_hashes, **kwargs):
+            for index in range(2 if raced else 1):
+                key_hash = f"{model_name}:{index}"
+                if key_hash not in excluded_key_hashes:
+                    return {"api_key": key_hash, "key_hash": key_hash}, model_name, None
+            return None, None, "all_exhausted"
+
+    class Provider:
+        provider_name = "synthetic"
+
+        async def stream(self, request, *, model_name):
+            started.append(model_name)
+            if model_name == primary:
+                yield StreamFailed(
+                    code=ErrorCode.INVALID_REQUEST,
+                    phase=FailurePhase.BEFORE_TEXT,
+                    retry=RetryDisposition.TRY_NEXT_MODEL,
+                    key=KeyDisposition.UNCHANGED,
+                    diagnostic="Model requires a different account tier",
+                )
+                return
+            yield TextDelta("Available model answer")
+            yield _completion(model_name, 9)
+
+    request = replace(_typed_request(primary), models=(primary, fallback))
+    with (
+        patch("app.agent_use_cases.AgentRequestUseCase", return_value=UseCase([], [])),
+        patch("app.repos.keys.get_key_status_manager", return_value=status),
+        patch("app.providers.base.get_provider_for_model", return_value=Provider()),
+    ):
+        events = [event async for event in ProviderRouter().stream(request)]
+
+    assert events == [TextDelta("Available model answer"), _completion(fallback, 9)]
+    assert started.count(primary) == (2 if raced else 1)
+    assert status.suspended_keys == {}
 
 
 @pytest.mark.asyncio

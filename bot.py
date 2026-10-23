@@ -42,42 +42,67 @@ from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log the error and send a telegram message to notify the user."""
+    from app.admin_alerts import AlertSeverity, alert_admin
+    from app.errors import ErrorCode, classify_error_from_exception, strip_error_tag, user_friendly_error
     from app.observability.events import record_exception
 
     error = (
         context.error if isinstance(context.error, BaseException) else RuntimeError("Unknown Telegram handler error")
     )
+    code = classify_error_from_exception(error) if isinstance(error, Exception) else ErrorCode.GENERIC
+    expected_errors = {
+        ErrorCode.TIMEOUT,
+        ErrorCode.NETWORK,
+        ErrorCode.OVERLOADED,
+        ErrorCode.RATE_LIMIT,
+        ErrorCode.INVALID_REQUEST,
+        ErrorCode.USER_RATE_LIMIT,
+        ErrorCode.DOCUMENT,
+    }
+    configuration_errors = {
+        ErrorCode.QUOTA_EXCEEDED,
+        ErrorCode.KEYS_EXHAUSTED,
+        ErrorCode.NO_KEYS,
+        ErrorCode.INVALID_KEY,
+    }
+    severity = (
+        None
+        if code in expected_errors
+        else AlertSeverity.WARNING
+        if code in configuration_errors
+        else AlertSeverity.CRITICAL
+    )
     error_id = record_exception(
         "telegram.unhandled_update_failed",
         error,
         operation="telegram.update",
+        level="error" if severity is AlertSeverity.CRITICAL else "warning",
+        fields={"error_code": code.value},
     )
 
-    # Alert admin about unhandled exceptions
-    try:
-        from app.admin_alerts import AlertSeverity, alert_admin
-
-        await alert_admin(
-            context.application,
-            f"Unhandled exception in update handler: {type(error).__name__}",
-            severity=AlertSeverity.CRITICAL,
-            exc=error,
-            error_id=error_id,
-        )
-    except Exception as alert_error:
-        record_exception(
-            "alert.delivery_failed",
-            alert_error,
-            operation="admin.alert",
-            level="warning",
-            fields={"original_error_id": error_id},
-        )
+    if severity is not None:
+        try:
+            await alert_admin(
+                context.application,
+                f"Unhandled exception in update handler: {type(error).__name__} ({code.value})",
+                severity=severity,
+                exc=error,
+                error_id=error_id,
+            )
+        except Exception as alert_error:
+            record_exception(
+                "alert.delivery_failed",
+                alert_error,
+                operation="admin.alert",
+                level="warning",
+                fields={"original_error_id": error_id},
+            )
 
     # Send message to user if possible
     if isinstance(update, Update) and update.effective_message:
         try:
             # Avoid infinite loops if error happens during sending error message
-            text = "❌ Произошла непредвиденная ошибка. Попробуйте позже."
+            text = strip_error_tag(user_friendly_error(error if isinstance(error, Exception) else str(error)))
             await update.effective_message.reply_text(text)
         except Exception as notification_error:
             record_exception(
@@ -223,6 +248,25 @@ async def _cleanup_application(
         await _cleanup_application_resources(application, reason)
 
 
+async def _drain_request_tasks() -> None:
+    """Finish request-owned work after ingress stops and before clients close."""
+    try:
+        from app.handlers.msg_media import stop_media_groups_cleanup
+
+        await stop_media_groups_cleanup()
+    except Exception as cleanup_error:
+        logging.warning("Cleanup error (media maintenance): %s", cleanup_error)
+
+    try:
+        from app.utils.background_tasks import get_task_manager
+
+        drained = await get_task_manager().drain(timeout=10.0)
+        if not drained:
+            logging.error("Background task cancellation cleanup did not finish before shutdown")
+    except Exception as cleanup_error:
+        logging.error("Error draining background tasks: %s", cleanup_error)
+
+
 async def _cleanup_application_resources(
     application, reason: str, *, webhook_admission: WebhookAdmissionGate | None = None
 ):
@@ -242,44 +286,6 @@ async def _cleanup_application_resources(
         await alert_admin_shutdown(application, reason=reason)
     except Exception:
         pass  # Best-effort
-
-    # ── Drain in-flight memory writes (MemPalace safety layer) ───────────
-    try:
-        from app.repos.memory_autosave import (
-            drain_pending_memory_writes,
-            pre_shutdown_compact,
-        )
-
-        await drain_pending_memory_writes(timeout=5.0)
-        compacted = await pre_shutdown_compact(timeout=8.0)
-        if compacted:
-            logging.info("Pre-shutdown compact: %d users consolidated", compacted)
-    except Exception as e:
-        logging.warning("Memory autosave drain on shutdown failed: %s", e)
-
-    # ── Drain pending state persists ──────────────────────────────────────
-    # Flush all debounced _schedule_persist timers so no user state is lost.
-    try:
-        from app.state import USER_STATES, _pending_persists, _persist
-
-        if _pending_persists:
-            logging.info("Draining %d pending state persists...", len(_pending_persists))
-            # Cancel all timers and flush immediately
-            tasks = []
-            for user_id, handle in list(_pending_persists.items()):
-                handle.cancel()
-                if user_id in USER_STATES:
-                    state = USER_STATES[user_id]
-                    tasks.append(_persist(state))
-            _pending_persists.clear()
-            if tasks:
-                await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=5.0,
-                )
-                logging.info("Flushed %d state persists on shutdown", len(tasks))
-    except Exception as e:
-        logging.warning("State drain on shutdown failed: %s", e)
 
     # ── Stop task queue (let running tasks finish) ────────────────────────
     try:
@@ -307,6 +313,9 @@ async def _cleanup_application_resources(
             await stop_application()
     except Exception as cleanup_error:
         logging.warning(f"Cleanup error (application): {cleanup_error}")
+
+    await _drain_request_tasks()
+    await _flush_request_persistence()
 
     # Close module-level HTTP clients
     try:
@@ -731,8 +740,12 @@ async def run_bot_with_retry():
                 logging.info("Webhook mode shutdown: preserving Telegram webhook for zero-downtime deploy.")
                 await webhook_admission.shutdown(application.stop)
             else:
-                await asyncio.shield(application.updater.stop())
-                await asyncio.shield(application.stop())
+
+                async def stop_polling_application():
+                    await application.updater.stop()
+                    await application.stop()
+
+                await _await_owned(asyncio.create_task(stop_polling_application(), name="polling-application-stop"))
             logging.info("Bot stopped.")
 
     except asyncio.CancelledError as cancellation:
@@ -753,6 +766,35 @@ async def run_bot_with_retry():
             await _cleanup_application(application, webhook_admission=webhook_admission)
         # Propagate to trigger restart if needed, or exit
         raise e
+
+
+async def _flush_request_persistence() -> None:
+    """Flush the final state after request producers and their jobs retire."""
+    try:
+        from app.repos.memory_autosave import drain_pending_memory_writes, pre_shutdown_compact
+
+        await drain_pending_memory_writes(timeout=5.0)
+        compacted = await pre_shutdown_compact(timeout=8.0)
+        if compacted:
+            logging.info("Pre-shutdown compact: %d users consolidated", compacted)
+    except Exception as error:
+        logging.warning("Memory autosave drain on shutdown failed: %s", error)
+
+    try:
+        from app.state import USER_STATES, _pending_persists, _persist
+
+        if _pending_persists:
+            tasks = []
+            for user_id, handle in list(_pending_persists.items()):
+                handle.cancel()
+                if user_id in USER_STATES:
+                    tasks.append(_persist(USER_STATES[user_id]))
+            _pending_persists.clear()
+            if tasks:
+                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=5.0)
+                logging.info("Flushed %d state persists on shutdown", len(tasks))
+    except Exception as error:
+        logging.warning("State drain on shutdown failed: %s", error)
 
 
 async def bot_watchdog(bot_task: asyncio.Task):
@@ -834,15 +876,6 @@ async def run_bot_and_server():
         except Exception as e:
             logging.error("Error closing voice reply queue: %s", e)
 
-        try:
-            from app.utils.background_tasks import get_task_manager
-
-            drained = await get_task_manager().drain(timeout=10.0)
-            if not drained:
-                logging.error("Background task cancellation cleanup did not finish before shutdown")
-        except Exception as e:
-            logging.error(f"Error draining background tasks: {e}")
-
         tasks_to_cancel = [monitoring_task, bot_task, watchdog_task, shutdown_task]
         if server_task:
             tasks_to_cancel.append(server_task)
@@ -852,6 +885,15 @@ async def run_bot_and_server():
                 task.cancel()
 
         await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+
+        # PTB/HTTP cleanup can submit final writes. Once those producers have
+        # stopped, their accepted jobs must finish before transport teardown.
+        try:
+            await asyncio.wait_for(stop_task_queue(), timeout=10.0)
+        except Exception as error:
+            logging.warning("Task queue drain failed during shutdown: %s", error)
+        await _drain_request_tasks()
+        await _flush_request_persistence()
 
         try:
             from app.providers import close_http_clients

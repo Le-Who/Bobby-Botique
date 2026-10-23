@@ -14,14 +14,29 @@ from app.runtime_settings.store import SettingsSnapshot
 PROVIDERS = ("gemini", "elevenlabs")
 _VOICE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _GEMINI_VOICES = (
-    ("Aoede", "естественный, лёгкий"),
-    ("Kore", "уверенный, энергичный"),
-    ("Puck", "живой"),
-    ("Charon", "профессиональный"),
-    ("Leda", "лёгкий, молодой"),
-    ("Orus", "глубокий, уверенный"),
-    ("Zephyr", "ясный, бодрый"),
-    ("Rasalgethi", "информативный"),
+    ("Aoede", "естественный, лёгкий", "Breezy, relaxed conversation, with gentle emphasis and natural pauses.", 0.6),
+    ("Kore", "уверенный", "Firm, assured delivery, with clear diction and measured emphasis.", 0.55),
+    ("Puck", "живой", "Upbeat, friendly conversation, with lively inflection and an easy rhythm.", 0.75),
+    (
+        "Charon",
+        "профессиональный",
+        "Informative, composed narration, with precise articulation and unhurried phrasing.",
+        0.5,
+    ),
+    ("Leda", "лёгкий, молодой", "Light, bright conversation, with gentle energy and a flowing rhythm.", 0.65),
+    ("Orus", "уверенный", "Firm, grounded narration, with deliberate phrasing and restrained emphasis.", 0.5),
+    (
+        "Zephyr",
+        "ясный, бодрый",
+        "Bright, cheerful delivery, with crisp diction and a buoyant, comfortable rhythm.",
+        0.7,
+    ),
+    (
+        "Rasalgethi",
+        "информативный",
+        "Engaging, informative narration, with clear phrasing and emphasis on key ideas.",
+        0.55,
+    ),
 )
 _ELEVENLABS_VOICES = (
     ("XB0fDUnXU5powFXDhCwa", "Charlotte (разговорный)"),
@@ -47,7 +62,8 @@ def baseline_config(provider: str) -> dict[str, Any]:
         return {
             "default_voice": "Aoede",
             "voices": [
-                {"id": identity, "name": f"{identity} ({label})", "prompt": ""} for identity, label in _GEMINI_VOICES
+                {"id": identity, "name": f"{identity} ({label})", "prompt": prompt, "temperature": temperature}
+                for identity, label, prompt, temperature in _GEMINI_VOICES
             ],
             "temperature": 0.5,
             "max_output_tokens": 16384,
@@ -87,7 +103,8 @@ def validate_config(provider: str, value: Any) -> dict[str, Any]:
     identities = set()
     for row in rows:
         voice_fields = {"id", "name", "prompt"} if provider == "gemini" else {"id", "name"}
-        if not isinstance(row, Mapping) or set(row) != voice_fields:
+        allowed_fields = voice_fields | ({"temperature"} if provider == "gemini" else set())
+        if not isinstance(row, Mapping) or not voice_fields <= set(row) <= allowed_fields:
             raise ValueError("Некорректные поля голоса")
         identity, name = row["id"], row["name"]
         if not isinstance(identity, str) or not _VOICE_ID.fullmatch(identity) or identity in identities:
@@ -97,7 +114,7 @@ def validate_config(provider: str, value: Any) -> dict[str, Any]:
         if not isinstance(name, str) or not name.strip() or len(name) > 200 or any(ord(c) < 32 for c in name):
             raise ValueError("Название голоса должно содержать от 1 до 200 символов")
         identities.add(identity)
-        voice = {"id": identity, "name": name.strip()}
+        voice: dict[str, Any] = {"id": identity, "name": name.strip()}
         if provider == "gemini":
             prompt = row["prompt"]
             if (
@@ -107,6 +124,8 @@ def validate_config(provider: str, value: Any) -> dict[str, Any]:
             ):
                 raise ValueError("Инструкция голоса: не более 4000 байт UTF-8")
             voice["prompt"] = prompt
+            if "temperature" in row:
+                voice["temperature"] = _number(row["temperature"], "Температура голоса", 0, 2)
         voices.append(voice)
     default = value["default_voice"]
     if not isinstance(default, str) or default not in identities:
@@ -165,7 +184,9 @@ async def list_audio_configs(*, snapshot: SettingsSnapshot | None = None) -> lis
             "baseline": baseline_config(provider),
             "note": "Порядок списка задаёт порядок выбора. ID должен поддерживаться провайдером. "
             + (
-                "Индивидуальная инструкция дополняет общие промпты TTS. Температура пользователя имеет приоритет; API минимум 0.5."
+                "Краткая инструкция голоса задаёт подачу без изменения тембра. Приоритет уровня: пользователь → голос → общая настройка. "
+                "В Gemini 3.8 уровень выбирает стиль и темп; temperature в API не отправляется. "
+                "Для старых моделей он также задаёт temperature API (минимум 0.5)."
                 if provider == "gemini"
                 else "Отдельный промпт стиля не поддерживается: переданный текст озвучивается дословно."
             ),

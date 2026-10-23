@@ -17,8 +17,11 @@ These tests verify behavior (observable transformations) not implementation deta
 import asyncpg
 import httpx
 import pytest
+from telegram.error import BadRequest, RetryAfter, TimedOut
+from telegram.error import NetworkError as TelegramNetworkError
 
 from app.errors import (
+    APIError,
     APIInvalidResponseError,
     APIQuotaExceededError,
     AuthenticationError,
@@ -40,6 +43,7 @@ from app.errors import (
     classify_error_from_status_code,
     convert_to_typed_exception,
     extract_error_code,
+    is_retryable_error,
     strip_error_tag,
     tag_error,
     user_friendly_error,
@@ -191,6 +195,59 @@ def test_empty_timeout_exception_retains_timeout_classification(exception_type):
     assert str(error) == ""
     assert classify_error_from_exception(error) == ErrorCode.TIMEOUT
     assert extract_error_code(user_friendly_error(error)) == ErrorCode.TIMEOUT
+
+
+@pytest.mark.parametrize(
+    "error_type, args, expected",
+    [
+        (httpx.ReadTimeout, ("",), ErrorCode.TIMEOUT),
+        (httpx.ConnectError, ("",), ErrorCode.NETWORK),
+        (httpx.RemoteProtocolError, ("",), ErrorCode.NETWORK),
+        (TimedOut, (), ErrorCode.TIMEOUT),
+        (TelegramNetworkError, ("",), ErrorCode.NETWORK),
+        (BadRequest, ("synthetic rejected request",), ErrorCode.INVALID_REQUEST),
+        (RetryAfter, (17,), ErrorCode.RATE_LIMIT),
+    ],
+)
+def test_transport_errors_classify_without_matching_exception_message(monkeypatch, error_type, args, expected):
+    monkeypatch.setenv("PTB_TIMEDELTA", "1")
+    error = error_type(*args)
+    assert classify_error_from_exception(error) is expected
+    assert extract_error_code(user_friendly_error(error)) is expected
+
+
+@pytest.mark.parametrize(
+    "status, expected",
+    [
+        (400, ErrorCode.INVALID_REQUEST),
+        (401, ErrorCode.INVALID_KEY),
+        (402, ErrorCode.QUOTA_EXCEEDED),
+        (429, ErrorCode.RATE_LIMIT),
+    ],
+)
+def test_httpx_status_uses_response_metadata_without_raw_error_text(status, expected):
+    request = httpx.Request("GET", "https://offline.invalid")
+    response = httpx.Response(status, request=request)
+    error = httpx.HTTPStatusError("synthetic rejection", request=request, response=response)
+
+    assert classify_error_from_exception(error) is expected
+    assert extract_error_code(user_friendly_error(error)) is expected
+
+
+@pytest.mark.parametrize("error", [TimeoutError(), httpx.ReadTimeout("")])
+def test_api_error_factory_preserves_typed_retryable_failure(error):
+    converted = APIError.from_exception(error)
+
+    assert converted.retryable is True
+    assert converted.key_related is False
+    assert extract_error_code(converted.user_message) is ErrorCode.TIMEOUT
+
+
+def test_rate_limit_user_message_retains_retryable_rate_limit_code():
+    message = user_friendly_error(ValueError("HTTP 429 rate limit"))
+
+    assert extract_error_code(message) is ErrorCode.RATE_LIMIT
+    assert is_retryable_error(message) is True
 
 
 # ─── classify_error_from_exception — status code path ────────────────────────

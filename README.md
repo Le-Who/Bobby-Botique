@@ -35,6 +35,9 @@ The [changelog](CHANGELOG.md) records history, not a current runtime specificati
   understanding and deterministic weather/currency/crypto shortcuts.
 - Document Q&A preserves the file explicitly selected in `/documents`; an
   unavailable selected file is not silently replaced with the latest upload.
+  PDF/DOCX uploads have a 10 MB processing limit, checked before download when
+  Telegram provides the size. Extracted text is capped at 100,000 characters;
+  a truncated document is explicitly identified in the upload result.
 - Typed streamed/completed response delivery, preserving final actions; long
   responses use Redis Reader, optional public Telegraph, or Telegram splitting.
 - Inline answers, response tabs, collaborative boards and image generation.
@@ -677,6 +680,9 @@ Administrative and developer commands are deliberately excluded from `app/bot_co
   - `/metrics`, `/rolemetrics` — Detailed system and role-based usage telemetry.
   - `/cachestats`, `/queuestats`, `/docstats`, `/groupstats` — Performance monitoring for different subsystems.
   - `/clearcache`, `/clearoldmetrics`, `/clearolddocs` — System maintenance and cleanup.
+    `/clearcache` removes search results from local memory and the `qna` / `search`
+    Redis namespaces; it preserves queues, locks and Reader content. Backend failure
+    is reported instead of confirming a successful clear.
   - `/updatetavilykeys`, `/checktavilykeys` — Hot-swap and verify search API keys.
   - `/checkgeminikeys` — Async parallel health check of all Gemini API keys against the Google API.
   - `/set_inline_thinking <level>` — Set inline generation `thinking_level` at runtime (stored in `global_settings` DB table, no restart required). Valid: `minimal`, `low`, `medium`, `high`.

@@ -1,6 +1,8 @@
 # Architecture — GemAI Bot v2
 
-Reviewed against checkout `f44541a7` on 2026-09-20. This describes implementation,
+Baseline review: checkout `f44541a7` on 2026-09-20. Runtime/error/shutdown corrections
+were reviewed on 2026-10-23 against `25e25897` and the changes documented in the
+[runtime audit](runtime-audit-2026-10-23.md). This describes implementation,
 not a claim that a particular VPS or provider has been tested today.
 
 ## Runtime and request ownership
@@ -79,6 +81,11 @@ Explicit v2 administrator overrides take precedence over the env baseline.
 Internal role models need not appear in the user selector. An accepted model ID
 does not prove account access, quota or current provider availability.
 
+Typed failure dispositions distinguish another key, another model, retry later
+and a terminal request error. A model-specific access denial can advance the
+configured model chain; an invalid payload does not repeat the same request
+through healthy keys. `KeyDisposition.UNCHANGED` preserves key health.
+
 `imagen_provider.py` retains its historical filename/class but now uses Gemini
 native image generation; old Imagen IDs are normalized compatibility inputs.
 Pollinations generation is authenticated; no anonymous fallback is promised.
@@ -111,6 +118,13 @@ transformations need not become async. Stdlib logging, structlog, warnings and
 uncaught exceptions converge on one bounded NDJSON pipeline. Stable owner events
 link ingress, provider attempts, immutable delivery outcomes, jobs and storage;
 legacy strings retain the same envelope. See [logging operations](logging.md).
+
+Shutdown stops producers and the deferred queue, drains accepted background
+jobs and dependent writes under one deadline, then flushes final private-memory
+and debounced state writes before closing HTTP/Redis resources. Polling and
+webhook stop operations retain cancellation ownership. State timers submit to
+the tracked task manager; capacity rejection retains their marker and retries
+admission so final cleanup can still persist the latest state.
 
 ## Long-term memory
 

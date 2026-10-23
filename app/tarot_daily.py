@@ -14,6 +14,7 @@ from app.process_policies import resolve_process
 from app.prompt_registry import get_prompt_text, register_controlled_text
 from app.providers import get_provider_router
 from app.repos.keys import count_gemini_keys
+from app.runtime_settings import interactive_prompts as _interactive_prompts  # noqa: F401
 from app.runtime_settings.lifecycle import runtime_settings_scope
 from app.tarot import iter_daily_card_variants
 from app.utils.time import get_pacific_tz
@@ -314,7 +315,11 @@ def _should_stop_batch_after_error(text: str | None) -> bool:
 
 
 def _build_daily_system_instruction(tarot_context: str) -> str:
-    return get_prompt_text("tarot.daily").replace("{tarot_context}", tarot_context)
+    return (
+        get_prompt_text("tarot.scope")
+        + "\n\n"
+        + get_prompt_text("tarot.daily").replace("{tarot_context}", tarot_context)
+    )
 
 
 def _reading_from_row(row) -> TarotDailyReading:

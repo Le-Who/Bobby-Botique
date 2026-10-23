@@ -47,12 +47,21 @@ def _build_thinking_config(model_name: str, thinking_level: str | None) -> types
     """
     if not thinking_level or thinking_level not in _THINKING_BUDGET_MAP:
         return None
-    # Only Gemini models support thinking
+    # The Developer API also accepts the explicit models/ resource prefix.
+    model_name = model_name.removeprefix("models/")
     if is_openrouter_model(model_name):
         return None
     if _is_gemini3_model(model_name):
-        return types.ThinkingConfig(thinking_level=_THINKING_LEVEL_MAP[thinking_level])  # type: ignore[arg-type]  # Pydantic coerces str→ThinkingLevel
-    return types.ThinkingConfig(thinking_budget=_THINKING_BUDGET_MAP[thinking_level])
+        level = _THINKING_LEVEL_MAP[thinking_level]
+        if level == "minimal" and (model_name.startswith("gemini-3.8-") or "pro" in model_name):
+            level = "low"
+        if level == "medium" and model_name.startswith("gemini-3-pro"):
+            level = "high"
+        return types.ThinkingConfig(thinking_level=level)  # type: ignore[arg-type]  # Pydantic coerces str→ThinkingLevel
+    budget = _THINKING_BUDGET_MAP[thinking_level]
+    if model_name.startswith("gemini-2.5-pro"):
+        budget = max(128, budget)
+    return types.ThinkingConfig(thinking_budget=budget)
 
 
 @dataclass

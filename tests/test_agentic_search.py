@@ -138,3 +138,62 @@ async def test_agentic_search_max_pages_enforcement(mock_agent, mock_status_call
         assert result.answer == "Done reading"
         # read_url should only be called ONCE because the second call hits the limit
         mock_read.assert_called_once_with("http://page1.com", timeout=12.0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_ids", [True, False])
+async def test_tool_replies_match_original_ids_names_and_order_across_denied_calls(
+    mock_agent, mock_status_callback, with_ids
+):
+    from google.genai import types
+
+    mock_agent.model_name = "gemini-3.8-flash"
+    mock_agent.max_pages = 1
+    calls = [
+        types.FunctionCall(id="read-first" if with_ids else None, name="read_page", args={"url": "https://one.test"}),
+        types.FunctionCall(id="read-denied" if with_ids else None, name="read_page", args={"url": "https://two.test"}),
+        types.FunctionCall(id="search-last" if with_ids else None, name="search_web", args={"queries": ["new query"]}),
+    ]
+    first = types.GenerateContentResponse(
+        candidates=[
+            types.Candidate(
+                content=types.Content(
+                    role="model",
+                    parts=[types.Part(function_call=call, thought_signature=b"original-signature") for call in calls],
+                )
+            )
+        ]
+    )
+    second = types.GenerateContentResponse(
+        candidates=[
+            types.Candidate(content=types.Content(role="model", parts=[types.Part(text="Evidence-based answer.")]))
+        ]
+    )
+    sent_responses = []
+
+    async def generate(**kwargs):
+        if not sent_responses:
+            sent_responses.append(None)
+            return first
+        turns = kwargs["contents"]
+        assert turns[-2] == first.candidates[0].content
+        sent_responses.append([part.function_response for part in turns[-1].parts])
+        return second
+
+    mock_agent.client.aio.models.generate_content.side_effect = generate
+    with (
+        patch("app.core.agentic.read_url", AsyncMock(return_value="Page evidence")),
+        patch(
+            "app.core.agentic.parallel_search",
+            AsyncMock(return_value=[{"url": "https://three.test", "content": "Evidence"}]),
+        ),
+    ):
+        result = await mock_agent.run("Research these sources.", mock_status_callback)
+
+    assert result.answer == "Evidence-based answer."
+    replies = sent_responses[1]
+    assert [reply.name for reply in replies] == ["read_page", "read_page", "search_web"]
+    assert [reply.id for reply in replies] == (["read-first", "read-denied", "search-last"] if with_ids else [None] * 3)
+    assert replies[0].response["content"] == "Page evidence"
+    assert "error" in replies[1].response
+    assert replies[2].response["results"][0]["url"] == "https://three.test"

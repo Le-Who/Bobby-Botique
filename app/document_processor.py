@@ -142,14 +142,16 @@ class DocumentProcessor:
                     current_length += len(chunk)
 
                 if current_length > MAX_DOCUMENT_TEXT_LENGTH:
-                    text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
                     break
 
             full_text = "\n\n".join(text_content)
+            truncated = len(full_text) > MAX_DOCUMENT_TEXT_LENGTH
+            full_text = full_text[:MAX_DOCUMENT_TEXT_LENGTH]
             return {
                 "success": True,
                 "pages": len(pdf_reader.pages),
                 "content": full_text,
+                "truncated": truncated,
             }
         except Exception as e:
             return {"error": str(e)}
@@ -165,22 +167,37 @@ class DocumentProcessor:
 
             text_content: list[str] = []
             paragraph_count = 0
-
-            for para in doc.paragraphs:
-                if para.text.strip():
-                    text_content.append(para.text)
-                    paragraph_count += 1
-
             table_count = 0
-            for table in doc.tables:
-                table_count += 1
-                text_content.append(f"\n--- Table {table_count} ---")
-                for row in table.rows:
-                    row_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-                    if row_text:
-                        text_content.append(" | ".join(row_text))
+            current_length = 0
+            truncated = False
 
-            full_text = "\n\n".join(text_content)
+            def chunks():
+                nonlocal paragraph_count, table_count
+                for para in doc.paragraphs:
+                    text = para.text
+                    if text.strip():
+                        paragraph_count += 1
+                        yield text
+                for table in doc.tables:
+                    table_count += 1
+                    yield f"\n--- Table {table_count} ---"
+                    for row in table.rows:
+                        cells = [cell.text.strip() for cell in row.cells]
+                        row_text = [text for text in cells if text]
+                        if row_text:
+                            yield " | ".join(row_text)
+
+            for chunk in chunks():
+                segment = ("\n\n" if text_content else "") + chunk
+                remaining = MAX_DOCUMENT_TEXT_LENGTH - current_length
+                if len(segment) > remaining:
+                    text_content.append(segment[:remaining])
+                    truncated = True
+                    break
+                text_content.append(segment)
+                current_length += len(segment)
+
+            full_text = "".join(text_content)
             return {
                 "success": True,
                 "pages": 1,
@@ -188,6 +205,7 @@ class DocumentProcessor:
                 "tables": table_count,
                 "text_length": len(full_text),
                 "content": full_text,
+                "truncated": truncated,
             }
         except Exception as e:
             return {"error": str(e)}
@@ -226,6 +244,7 @@ class DocumentProcessor:
                 "text_length": len(full_text),
                 "content": full_text,
                 "method": "pypdf",
+                "truncated": result.get("truncated", False),
             }
 
         except (ValueError, OSError, pypdf.errors.PdfReadError) as e:

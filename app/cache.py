@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 from typing import Any, TypedDict
 
 from redis.asyncio import Redis
@@ -106,7 +107,11 @@ def _safe_decode_redis_response(
 
     try:
         if isinstance(data, (bytes, str)):
-            return json.loads(data)
+            decoded = json.loads(data)
+            if isinstance(decoded, dict):
+                return decoded
+            logging.warning("Redis search cache payload is not an object")
+            return None
         else:
             logging.warning("Unexpected Redis response type: %s", type(data))  # type: ignore[unreachable]  # defensive
             return None
@@ -247,18 +252,40 @@ async def get_cache_stats() -> dict[str, Any]:
 
 
 async def clear_cache() -> None:
-    """Clears the entire cache."""
-    if not redis_client:
-        return
-
+    """Clear search results while preserving other application Redis state."""
     try:
-        # Use retry logic for Redis operations
-        await _redis_operation_with_retry(redis_client.flushdb)
-        logging.info("Cache cleared")
+        if redis_client:
+            for namespace in ("qna", "search"):
+                cursor = 0
+                while True:
+                    cursor, keys = await _redis_operation_with_retry(
+                        redis_client.scan, cursor=cursor, match=f"{namespace}:*", count=200
+                    )
+                    # These are the exact namespaces/key shape written by the
+                    # search cache. Redis also stores queues, locks and Reader
+                    # content; flushing its database destroys live bot state.
+                    cache_keys = [
+                        key
+                        for key in keys
+                        if re.fullmatch(
+                            r"(?:qna|search):[0-9a-f]{64}",
+                            key.decode("ascii", errors="replace") if isinstance(key, bytes) else key,
+                        )
+                    ]
+                    for offset in range(0, len(cache_keys), 200):
+                        await _redis_operation_with_retry(redis_client.delete, *cache_keys[offset : offset + 200])
+                    if not cursor:
+                        break
+        logging.info("Search cache cleared")
     except RedisConnectionError as e:
-        logging.warning("Failed to clear Redis cache (connection issue): %s", e)
-    except RedisError as e:
-        logging.error("Error clearing Redis cache: %s", e, exc_info=True)
+        raise RedisConnectionError("Search cache could not be cleared") from e
+    finally:
+        for memory_cache in (
+            multi_layer_cache.qna_cache,
+            multi_layer_cache.search_cache,
+            multi_layer_cache.default_cache,
+        ):
+            memory_cache.clear()
 
 
 # Multi-layer caching implementation
@@ -291,6 +318,8 @@ class MultiLayerCache:
         cache_dict = self._get_cache(search_type)
         # Try memory cache first — direct access, no lock needed (see __init__).
         if key in cache_dict:
+            result = cache_dict[key]
+            await metrics_collector.record_cache_hit()
             emit(
                 "cache.lookup_finished",
                 level="debug",
@@ -300,7 +329,7 @@ class MultiLayerCache:
                 outcome="hit",
                 cache_key_fingerprint=key[:16],
             )
-            return cache_dict[key]
+            return result
 
         # Try Redis cache
         if redis_client:

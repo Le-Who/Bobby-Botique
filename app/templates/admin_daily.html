@@ -1247,7 +1247,7 @@ function showToast(message, type = 'info') {
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
   const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
-  toast.innerHTML = `<span>${icon}</span> <span>${message}</span>`;
+  toast.innerHTML = `<span>${icon}</span> <span>${escapeHtml(message)}</span>`;
   container.appendChild(toast);
   setTimeout(() => {
     toast.style.opacity = '0';
@@ -1389,7 +1389,7 @@ const BroadcastModule = (() => {
         updateDailyDriverUI(challengeCh.active_game);
       }
     } catch (e) {
-      container.innerHTML = `<div class="empty-state error-text">Ошибка загрузки: ${e.message}</div>`;
+      container.innerHTML = `<div class="empty-state error-text">Ошибка загрузки: ${escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -1521,7 +1521,7 @@ const BroadcastModule = (() => {
       document.getElementById('sub-prev').disabled = offset <= 0;
       document.getElementById('sub-next').disabled = rows.length < SUB_LIMIT;
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="5" class="error-state"><div class="error-state-icon">🚨</div><div class="error-state-msg">${e.message}</div></td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="error-state"><div class="error-state-icon">🚨</div><div class="error-state-msg">${escapeHtml(e.message)}</div></td></tr>`;
     }
   }
 
@@ -1623,7 +1623,7 @@ const BroadcastModule = (() => {
       document.getElementById('offer-prev').disabled = offset <= 0;
       document.getElementById('offer-next').disabled = rows.length < OFFER_LIMIT;
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="8" class="error-state"><div class="error-state-icon">🚨</div><div class="error-state-msg">${e.message}</div></td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="error-state"><div class="error-state-icon">🚨</div><div class="error-state-msg">${escapeHtml(e.message)}</div></td></tr>`;
     }
   }
 
@@ -2050,7 +2050,7 @@ const CrocModule = (() => {
       renderPuzzles(currentPuzzles, container);
       loadStats();
     } catch (e) {
-      container.innerHTML = `<div class="loading-container error-text">Не удалось загрузить данные: ${e.message}</div>`;
+      container.innerHTML = `<div class="loading-container error-text">Не удалось загрузить данные: ${escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -2421,7 +2421,7 @@ const TriviaModule = (() => {
         }
       }
     } catch (e) {
-      container.innerHTML = `<div class="empty-state error-text">Ошибка загрузки: ${e.message}</div>`;
+      container.innerHTML = `<div class="empty-state error-text">Ошибка загрузки: ${escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -2838,7 +2838,7 @@ const TriviaModule = (() => {
         </table>
       `;
     } catch (e) {
-      container.innerHTML = `<div style="color:var(--danger, #ef4444); font-size:0.85rem;">Ошибка лидерборда: ${e.message}</div>`;
+      container.innerHTML = `<div style="color:var(--danger, #ef4444); font-size:0.85rem;">Ошибка лидерборда: ${escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -2958,7 +2958,7 @@ const TarotModule = (() => {
       renderCards(td.cards, 'tarot-today-cards');
       renderCards(tm.cards, 'tarot-tomorrow-cards');
     } catch (e) {
-      document.getElementById('tarot-today-cards').innerHTML = `<div class="empty-state error-text">${e.message}</div>`;
+      document.getElementById('tarot-today-cards').innerHTML = `<div class="empty-state error-text">${escapeHtml(e.message)}</div>`;
     }
   }
 

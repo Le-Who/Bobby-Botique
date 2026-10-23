@@ -94,7 +94,11 @@ async def test_voice_classifier_uses_text_process_and_preserves_timeout(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_brief_summary_keeps_json_budget_with_configured_model(monkeypatch):
+@pytest.mark.parametrize(
+    ("model", "temperature"),
+    [("gemini-3.8-flash", None), ("gemini-3.5-flash-lite", None), ("gemini-2.5-flash", 0.3)],
+)
+async def test_brief_summary_keeps_json_budget_with_configured_model(monkeypatch, model, temperature):
     from app.handlers import scheduled_briefs as briefs
 
     generate = AsyncMock(return_value=SimpleNamespace(text='{"News":"A short summary."}'))
@@ -103,16 +107,18 @@ async def test_brief_summary_keeps_json_budget_with_configured_model(monkeypatch
     async def chosen(process_id, baseline, execute, *, initial_api_key=None):
         assert process_id == "brief.summary"
         assert baseline == ("gemini-3.1-flash-lite",)
-        return await execute("gemini-3.8-flash", "test-key")
+        return await execute(model, "test-key")
 
     monkeypatch.setattr(briefs, "run_gemini_override", chosen, raising=False)
     monkeypatch.setattr("app.providers.gemini.get_cached_genai_client", lambda _: client)
     monkeypatch.setattr(
         "app.repos.keys.get_available_gemini_key", AsyncMock(return_value={"api_key": "test-key", "key_hash": "hash"})
     )
-    result = await briefs._generate_brief_summary(["Technology"], [])
+    result = await briefs._generate_brief_summary(["Technology {articles}"], [])
     assert result == {"News": "A short summary."}
-    assert generate.await_args.kwargs["model"] == "gemini-3.8-flash"
+    assert generate.await_args.kwargs["model"] == model
+    assert "Topics:\n- Technology {articles}" in generate.await_args.kwargs["contents"]
     config = generate.await_args.kwargs["config"]
-    assert config.temperature == 0.3
+    assert config.temperature == temperature
     assert config.max_output_tokens == 1200
+    assert config.thinking_config is None

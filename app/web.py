@@ -437,15 +437,7 @@ async def prometheus_metrics():
 async def api_overview():
     """High-level system overview: system health, bot uptime, key counts."""
     try:
-        import psutil
-
-        system = {
-            "cpu_percent": psutil.cpu_percent(interval=0.1),
-            "memory_percent": psutil.virtual_memory().percent,
-            "memory_used_mb": round(psutil.virtual_memory().used / (1024 * 1024), 1),
-            "memory_total_mb": round(psutil.virtual_memory().total / (1024 * 1024), 1),
-            "disk_percent": psutil.disk_usage("/").percent,
-        }
+        system = await asyncio.to_thread(_sample_system_metrics)
     except Exception:
         system = {
             "cpu_percent": 0,
@@ -680,6 +672,20 @@ async def api_memory():
 # =============================================================================
 
 
+def _sample_system_metrics() -> dict:
+    """Sample CPU and host I/O in a worker, away from the HTTP event loop."""
+    import psutil
+
+    virtual_memory = psutil.virtual_memory()
+    return {
+        "cpu_percent": psutil.cpu_percent(interval=0.1),
+        "memory_percent": virtual_memory.percent,
+        "memory_used_mb": round(virtual_memory.used / (1024 * 1024), 1),
+        "memory_total_mb": round(virtual_memory.total / (1024 * 1024), 1),
+        "disk_percent": psutil.disk_usage("/").percent,
+    }
+
+
 async def _safe_fetch(name: str, coro):
     """Run a coroutine and return (name, result) or (name, error_dict)."""
     try:
@@ -824,8 +830,6 @@ async def _get_dashboard_key_health() -> dict:
 
 
 async def _build_dashboard_snapshot() -> dict:
-    import psutil
-
     from app.cache import get_multi_layer_cache_stats, ping_safe
     from app.metrics import metrics_collector, role_conv_metrics
     from app.queue import task_queue
@@ -835,6 +839,7 @@ async def _build_dashboard_snapshot() -> dict:
         return summary.get("summarization", {})
 
     results = await asyncio.gather(
+        _safe_fetch("system", asyncio.to_thread(_sample_system_metrics)),
         _safe_fetch("metrics", metrics_collector.get_metrics_summary()),
         _safe_fetch("summarization", summarization_metrics()),
         _safe_fetch("cache", get_multi_layer_cache_stats()),
@@ -853,18 +858,7 @@ async def _build_dashboard_snapshot() -> dict:
         name, value = item
         raw[name] = value
 
-    try:
-        virtual_memory = psutil.virtual_memory()
-        system = {
-            "cpu_percent": psutil.cpu_percent(interval=0.1),
-            "memory_percent": virtual_memory.percent,
-            "memory_used_mb": round(virtual_memory.used / (1024 * 1024), 1),
-            "memory_total_mb": round(virtual_memory.total / (1024 * 1024), 1),
-            "disk_percent": psutil.disk_usage("/").percent,
-        }
-    except Exception as exc:
-        logging.warning("Dashboard system metrics failed: %s", exc)
-        system = {}
+    system, _, _ = _dashboard_source(raw, "system", {})
 
     try:
         from app.circuit_breaker import _circuit_breakers
@@ -953,8 +947,8 @@ async def api_events():
 
                     q_stats = await task_queue.get_queue_stats()
                     payload["queue"] = {
-                        "pending": q_stats.get("total_pending", 0),
-                        "processing": q_stats.get("processing", 0),
+                        "pending": q_stats.get("pending_tasks"),
+                        "processing": q_stats.get("running_tasks"),
                     }
                 except Exception:
                     pass
@@ -964,8 +958,8 @@ async def api_events():
                     from app.metrics import metrics_collector as mc
 
                     payload["metrics"] = {
-                        "total_requests": mc.request_count,
-                        "error_count": len(mc.error_log),
+                        "total_requests": mc.metrics.request_count,
+                        "error_count": mc.metrics.error_count,
                     }
                 except Exception:
                     pass

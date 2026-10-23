@@ -60,6 +60,79 @@ async def test_pending_persist_reuses_live_state_and_saves_latest_fields(store, 
     assert not state._pending_persists
 
 
+async def test_fired_state_persist_remains_owned_by_shutdown_drain(store, monkeypatch):
+    from app.utils.background_tasks import TaskManager
+
+    manager = TaskManager()
+    started = asyncio.Event()
+    finished = asyncio.Event()
+    owners = []
+
+    async def save(**data):
+        owners.append(asyncio.current_task())
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            finished.set()
+
+    monkeypatch.setattr("app.repos.users.save_user_state", save)
+    monkeypatch.setattr("app.utils.background_tasks.try_submit_task", manager.try_submit)
+    monkeypatch.setattr(state, "_PERSIST_DEBOUNCE_SEC", 0)
+    state.set_document_mode(11, True, document_id=42)
+    await started.wait()
+    try:
+        assert not state._pending_persists
+        assert await manager.drain(timeout=0) is True
+        assert finished.is_set()
+        assert all(owner.done() for owner in owners)
+    finally:
+        for owner in owners:
+            owner.cancel()
+        await asyncio.gather(*owners, return_exceptions=True)
+
+
+async def test_capacity_rejection_retains_state_for_retry_and_final_flush(store, monkeypatch):
+    from app.utils.background_tasks import TaskManager
+
+    manager = TaskManager()
+    manager.MAX_TASKS = 0
+    rejected = asyncio.Event()
+    saved = asyncio.Event()
+    written = []
+
+    async def save(**data):
+        written.append((data["user_id"], data["selected_document_id"]))
+        saved.set()
+
+    def bounded_submit(coroutine, **kwargs):
+        owner = manager.try_submit(coroutine, **kwargs)
+        if owner is None:
+            rejected.set()
+        return owner
+
+    def legacy_submit(coroutine, **kwargs):
+        rejected.set()
+        return manager.submit(coroutine, **kwargs)
+
+    monkeypatch.setattr("app.repos.users.save_user_state", save)
+    monkeypatch.setattr("app.utils.background_tasks.try_submit_task", bounded_submit)
+    monkeypatch.setattr("app.utils.background_tasks.submit_task", legacy_submit)
+    monkeypatch.setattr(state, "_PERSIST_DEBOUNCE_SEC", 0)
+    state.set_document_mode(11, True, document_id=42)
+    await rejected.wait()
+    try:
+        assert 11 in state._pending_persists
+        assert not written
+        manager.MAX_TASKS = 1
+        await asyncio.wait_for(saved.wait(), timeout=1)
+        await manager.drain(timeout=1)
+        assert written == [(11, 42)]
+        assert not state._pending_persists
+    finally:
+        await manager.drain(timeout=0)
+
+
 async def test_unreferenced_evicted_state_can_be_collected(store):
     old = store[11]
     ref = weakref.ref(old)

@@ -53,11 +53,11 @@ async def test_application_cleanup_contains_faults_and_preserves_resource_order(
     want = [
         "voice",
         "alert",
-        "memory",
-        "compact",
         "queue",
         "updater",
         "application",
+        "memory",
+        "compact",
         "http",
         "tavily",
         "intent",
@@ -164,10 +164,10 @@ async def test_cleanup_flushes_evicted_pending_state_before_stopping_dependents(
             calls.append("save_cleanup")
 
     async def queue():
-        assert calls[-1] == "save_cleanup"
         calls.append("queue")
 
     async def redis():
+        assert calls[-1] == "save_cleanup"
         calls.append("redis")
 
     async def noop(*args, **kwargs):
@@ -193,9 +193,9 @@ async def test_cleanup_flushes_evicted_pending_state_before_stopping_dependents(
     store[12]
     await bot._cleanup_application(SimpleNamespace(updater=None, _initialized=False))
     assert calls == (
-        ["save_started", "save_cleanup", "queue", "redis"]
+        ["queue", "save_started", "save_cleanup", "redis"]
         if save_timeout
-        else ["save_started", "save_finished", "save_cleanup", "queue", "redis"]
+        else ["queue", "save_started", "save_finished", "save_cleanup", "redis"]
     )
     assert handle.cancelled()
     assert not state._pending_persists
@@ -218,6 +218,8 @@ async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup
     cleanup_started = asyncio.Event()
     voice_closed = asyncio.Event()
     clients_closed = asyncio.Event()
+    drain_observations = []
+    persistence_observations = []
 
     async def child(name):
         tasks.append(asyncio.current_task())
@@ -239,6 +241,7 @@ async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup
     async def drain(**kwargs):
         assert voice_closed.is_set(), "TTS admission must stop before draining tracked tasks"
         assert kwargs == {"timeout": 10.0}
+        drain_observations.append(all(task.done() for task in tasks))
         if drain_outcome == "fault":
             raise RuntimeError("synthetic background drain fault")
         return drain_outcome == "success"
@@ -250,6 +253,11 @@ async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup
     monkeypatch.setattr(bot, "bot_watchdog", lambda task: child("watchdog"))
     monkeypatch.setattr(bot, "serve", lambda *args, **kwargs: child("server"))
     monkeypatch.setattr("app.utils.background_tasks.get_task_manager", lambda: SimpleNamespace(drain=drain))
+
+    async def flush_persistence():
+        persistence_observations.append(all(task.done() for task in tasks) and bool(drain_observations))
+
+    monkeypatch.setattr(bot, "_flush_request_persistence", flush_persistence, raising=False)
 
     async def close_voice():
         voice_closed.set()
@@ -284,6 +292,8 @@ async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup
             await asyncio.wait_for(owner, 1)
         assert voice_closed.is_set()
         assert clients_closed.is_set()
+        assert drain_observations == [True], "Telegram/server producers must finish before the final background drain"
+        assert persistence_observations == [True]
         assert finished == ({"monitor", "watchdog", "server"} if web and not server_fault else {"monitor", "watchdog"})
         assert all(task.done() for task in tasks)
         assert sum(isinstance(task.exception(), RuntimeError) for task in tasks if not task.cancelled()) == (
@@ -294,3 +304,121 @@ async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup
         shutdown.set()
         owner.cancel()
         await asyncio.gather(owner, return_exceptions=True)
+
+
+async def test_error_cleanup_drains_owned_work_before_closing_provider_resources(monkeypatch):
+    import bot
+    from app.utils.background_tasks import TaskManager
+
+    manager = TaskManager()
+    running = asyncio.Event()
+    retired = asyncio.Event()
+    admission_stopped = asyncio.Event()
+    clients_closed = asyncio.Event()
+
+    async def work():
+        running.set()
+        try:
+            await asyncio.Future()
+        finally:
+            await asyncio.sleep(0)
+            retired.set()
+
+    async def noop(*args, **kwargs):
+        return 0
+
+    async def stop():
+        admission_stopped.set()
+
+    async def drain(**kwargs):
+        assert admission_stopped.is_set()
+        return await manager.drain(timeout=0)
+
+    async def close_clients():
+        assert retired.is_set()
+        assert not manager._tasks
+        clients_closed.set()
+
+    for target in (
+        "app.admin_alerts.alert_admin_shutdown",
+        "app.repos.memory_autosave.drain_pending_memory_writes",
+        "app.repos.memory_autosave.pre_shutdown_compact",
+        "app.search_services.close_tavily_client",
+        "app.intent_router.close_http_client",
+        "app.cache.shutdown_redis",
+        "app.memory_manager.shutdown_memory_manager",
+        "bot.stop_task_queue",
+    ):
+        monkeypatch.setattr(target, noop)
+    monkeypatch.setattr("app.voice_engine.get_voice_reply_manager", lambda: SimpleNamespace(close=noop))
+    monkeypatch.setattr("app.utils.background_tasks.get_task_manager", lambda: SimpleNamespace(drain=drain))
+    monkeypatch.setattr("app.providers.close_http_clients", close_clients)
+    monkeypatch.setattr("app.state._pending_persists", {})
+    monkeypatch.setattr("app.utils.image_utils.shutdown_image_pool", lambda: None)
+    manager.submit(work())
+    await running.wait()
+    try:
+        await bot._cleanup_application(SimpleNamespace(updater=None, _initialized=True, stop=stop))
+        assert clients_closed.is_set()
+        assert retired.is_set()
+    finally:
+        await manager.drain(timeout=0)
+
+
+async def test_application_cleanup_persists_state_mutated_by_a_finishing_request(monkeypatch):
+    import bot
+    from app import state
+    from app.utils.background_tasks import TaskManager
+
+    manager = TaskManager()
+    running = asyncio.Event()
+    release = asyncio.Event()
+    saved = []
+    monkeypatch.setattr(state, "USER_STATES", state._UserStateStore(maxsize=2))
+    monkeypatch.setattr(state, "_pending_persists", {})
+    monkeypatch.setattr(state, "_PERSIST_DEBOUNCE_SEC", 60)
+
+    async def work():
+        running.set()
+        await release.wait()
+        state.set_document_mode(11, True, document_id=42)
+
+    async def stop():
+        release.set()
+
+    async def noop(*args, **kwargs):
+        return 0
+
+    async def drain(**kwargs):
+        return await manager.drain(timeout=1)
+
+    async def save(**data):
+        saved.append((data["user_id"], data["selected_document_id"]))
+
+    for target in (
+        "app.admin_alerts.alert_admin_shutdown",
+        "app.repos.memory_autosave.drain_pending_memory_writes",
+        "app.repos.memory_autosave.pre_shutdown_compact",
+        "app.providers.close_http_clients",
+        "app.search_services.close_tavily_client",
+        "app.intent_router.close_http_client",
+        "app.cache.shutdown_redis",
+        "app.memory_manager.shutdown_memory_manager",
+        "bot.stop_task_queue",
+    ):
+        monkeypatch.setattr(target, noop)
+    monkeypatch.setattr("app.voice_engine.get_voice_reply_manager", lambda: SimpleNamespace(close=noop))
+    monkeypatch.setattr("app.utils.background_tasks.get_task_manager", lambda: SimpleNamespace(drain=drain))
+    monkeypatch.setattr("app.repos.users.save_user_state", save)
+    monkeypatch.setattr("app.utils.image_utils.shutdown_image_pool", lambda: None)
+    manager.submit(work())
+    await running.wait()
+    try:
+        await bot._cleanup_application(SimpleNamespace(updater=None, _initialized=True, stop=stop))
+        assert saved == [(11, 42)]
+        assert not state._pending_persists
+    finally:
+        release.set()
+        await manager.drain(timeout=0)
+        for handle in state._pending_persists.values():
+            handle.cancel()

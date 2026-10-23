@@ -623,7 +623,7 @@
       field("Температура", "temperature", "number", current.temperature, { min: "0", max: "2", step: "0.05", required: true });
       field("Максимум выходных токенов", "max_output_tokens", "number", current.max_output_tokens,
         { min: "1024", max: "16384", step: "1", required: true });
-      node.append(element("p", "muted", "Температура задаёт значение по умолчанию; личная настройка пользователя имеет приоритет. Промпт каждого голоса дополняет общие инструкции синтеза."));
+      node.append(element("p", "muted", "Приоритет стиля: личная настройка пользователя, настройка голоса, общая температура. Gemini 3.8 использует уровень для инструкции о манере речи; temperature в API не передаётся. Для старых моделей температура API не ниже 0.5. Промпт голоса дополняет общие инструкции синтеза."));
     } else {
       const settings = current.voice_settings;
       field("Стабильность", "stability", "number", settings.stability, { min: "0", max: "1", step: "0.01", required: true });
@@ -655,7 +655,11 @@
           id: row.querySelector(".voice-id").value.trim(),
           name: row.querySelector(".voice-name").value.trim(),
         };
-        if (id === "gemini") voice.prompt = row.querySelector(".voice-prompt").value;
+        if (id === "gemini") {
+          voice.prompt = row.querySelector(".voice-prompt").value;
+          const temperature = row.querySelector(".voice-temperature");
+          if (temperature.value !== "") voice.temperature = temperature.valueAsNumber;
+        }
         if (row.querySelector(".voice-default").checked) defaultVoice = voice.id;
         return voice;
       });
@@ -689,6 +693,15 @@
           wrapper.append(input);
           textFields.append(wrapper);
         });
+        if (id === "gemini") {
+          const wrapper = element("label", "field", "Стиль / legacy temperature");
+          const input = element("input", "voice-temperature");
+          Object.assign(input, { type: "number", min: "0", max: "2", step: "0.05",
+            placeholder: "Общая настройка TTS", value: voice.temperature ?? "" });
+          input.addEventListener("input", changed);
+          wrapper.append(input);
+          textFields.append(wrapper);
+        }
         row.append(textFields);
         const defaultLabel = element("label", "check");
         const defaultInput = element("input", "voice-default");

@@ -28,6 +28,7 @@ from telegram.ext import ContextTypes
 from app import database as db
 from app.i18n import t
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
+from app.providers.gemini_config import build_generate_content_config
 from app.runtime_settings.gemini_execution import run_gemini_override
 from app.runtime_settings.lifecycle import runtime_settings_scope
 from app.utils.json_compat import json
@@ -366,7 +367,7 @@ async def _generate_brief_summary(
                     client.aio.models.generate_content(
                         model=model,
                         contents=prompt,
-                        config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
+                        config=build_generate_content_config(model, temperature=0.3, max_output_tokens=1200),
                     ),
                     workload="scheduled_brief",
                     provider="gemini",
@@ -414,7 +415,9 @@ async def _generate_brief_summary(
                 client.aio.models.generate_content(
                     model="gemini-3.1-flash-lite",
                     contents=prompt,
-                    config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
+                    config=build_generate_content_config(
+                        "gemini-3.1-flash-lite", temperature=0.3, max_output_tokens=1200
+                    ),
                 ),
                 workload="scheduled_brief",
                 provider="gemini",
@@ -442,7 +445,9 @@ async def _generate_brief_summary(
                     client.aio.models.generate_content(
                         model="gemini-3.1-flash-lite",
                         contents=prompt,
-                        config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
+                        config=build_generate_content_config(
+                            "gemini-3.1-flash-lite", temperature=0.3, max_output_tokens=1200
+                        ),
                     ),
                     workload="scheduled_brief",
                     provider="gemini",

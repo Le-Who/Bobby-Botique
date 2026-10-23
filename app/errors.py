@@ -17,7 +17,10 @@ from contextlib import asynccontextmanager
 from enum import StrEnum
 from typing import Any
 
+import httpx
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from telegram.error import BadRequest, RetryAfter, TimedOut
+from telegram.error import NetworkError as TelegramNetworkError
 
 # =============================================================================
 # TYPED EXCEPTION HIERARCHY
@@ -370,6 +373,13 @@ NETWORK_ERROR_MSG = tag_error(ErrorCode.NETWORK, "🌐 Ошибка сети. П
 # Exception type → ErrorCode mapping (O(1) classification)
 _EXCEPTION_TYPE_MAP: dict[type, ErrorCode] = {
     TimeoutError: ErrorCode.TIMEOUT,
+    ConnectionError: ErrorCode.NETWORK,
+    httpx.TimeoutException: ErrorCode.TIMEOUT,
+    httpx.TransportError: ErrorCode.NETWORK,
+    TimedOut: ErrorCode.TIMEOUT,
+    BadRequest: ErrorCode.INVALID_REQUEST,
+    TelegramNetworkError: ErrorCode.NETWORK,
+    RetryAfter: ErrorCode.RATE_LIMIT,
     DatabaseConnectionError: ErrorCode.TIMEOUT,
     DatabaseRateLimitError: ErrorCode.RATE_LIMIT,
     DatabaseQueryError: ErrorCode.PROCESSING,
@@ -377,12 +387,14 @@ _EXCEPTION_TYPE_MAP: dict[type, ErrorCode] = {
     ConnectionTimeoutError: ErrorCode.TIMEOUT,
     ServiceConnectionRefusedError: ErrorCode.NETWORK,
     CircuitBreakerOpenError: ErrorCode.OVERLOADED,
+    ProviderOverloadError: ErrorCode.OVERLOADED,
     APIQuotaExceededError: ErrorCode.QUOTA_EXCEEDED,
     APIInvalidResponseError: ErrorCode.INVALID_RESPONSE,
     GeminiAPIError: ErrorCode.PROCESSING,
     TavilyAPIError: ErrorCode.NETWORK,
     NetworkError: ErrorCode.NETWORK,
     InputValidationError: ErrorCode.INVALID_REQUEST,
+    ConfigurationError: ErrorCode.NO_KEYS,
     DocumentProcessingError: ErrorCode.DOCUMENT,
     UserLimitExceededError: ErrorCode.USER_RATE_LIMIT,
     DecryptionError: ErrorCode.DECRYPTION_FAILED,
@@ -401,6 +413,7 @@ _STATUS_CODE_MAP: dict[int, ErrorCode] = {
     502: ErrorCode.NETWORK,
     504: ErrorCode.TIMEOUT,
     401: ErrorCode.INVALID_KEY,
+    402: ErrorCode.QUOTA_EXCEEDED,
     403: ErrorCode.INVALID_KEY,
     400: ErrorCode.INVALID_REQUEST,
     500: ErrorCode.PROCESSING,
@@ -411,7 +424,7 @@ _ERROR_CODE_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.TIMEOUT: TIMEOUT_ERROR,
     ErrorCode.OVERLOADED: OVERLOADED_ERROR,
     ErrorCode.NETWORK: NETWORK_ERROR_MSG,
-    ErrorCode.RATE_LIMIT: QUOTA_ERROR,
+    ErrorCode.RATE_LIMIT: tag_error(ErrorCode.RATE_LIMIT, "⏱️ Временный лимит запросов. Подождите немного."),
     ErrorCode.QUOTA_EXCEEDED: QUOTA_ERROR,
     ErrorCode.INVALID_KEY: tag_error(
         ErrorCode.INVALID_KEY,
@@ -492,6 +505,8 @@ def classify_error_from_exception(exc: Exception) -> ErrorCode:
 
     # HTTP status code extraction (google.genai.errors.APIError, httpx, etc.)
     status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    if not isinstance(status, int):
+        status = getattr(getattr(exc, "response", None), "status_code", None)
     if isinstance(status, int) and status in _STATUS_CODE_MAP:
         return _STATUS_CODE_MAP[status]
 
@@ -748,18 +763,19 @@ class APIError(GemaibotAPIError):
         self.raw_error = str(raw_error) if isinstance(raw_error, Exception) else raw_error
         self.retryable = retryable
         self.key_related = key_related
-        self.user_message = user_friendly_error(self.raw_error)
+        self.user_message = user_friendly_error(raw_error)
         # Initialize base with message + empty details
         super().__init__(self.user_message)
 
     @classmethod
     def from_exception(cls, exc: Exception) -> APIError:
         """Create APIError from any exception, auto-detecting error type."""
-        raw = str(exc)
+        code = classify_error_from_exception(exc)
+        retryable, key_related, _category = _ERROR_PROPERTIES[code]
         return cls(
-            raw_error=raw,
-            retryable=is_retryable_error(raw),
-            key_related=is_key_related_error(raw),
+            raw_error=exc,
+            retryable=retryable,
+            key_related=key_related,
         )
 
 

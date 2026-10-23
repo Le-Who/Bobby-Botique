@@ -1,5 +1,6 @@
 """Tests for app.admin_alerts — rate limiter and alert formatting."""
 
+import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,6 +14,7 @@ from app.admin_alerts import (
     _record_alert,
     _unauthorized_last_alerted,
     alert_admin,
+    alert_admin_raw,
     alert_admin_unauthorized_user,
 )
 
@@ -109,6 +111,75 @@ class TestAlertAdmin:
         with patch("app.config.settings", MagicMock(ADMIN_ID=12345)):
             # Should not raise
             await alert_admin(mock_app, "Alert with exception")
+
+    @pytest.mark.asyncio
+    async def test_concurrent_alerts_reserve_shared_budget_before_delivery(self):
+        delivered = []
+
+        async def send(**kwargs):
+            delivered.append(kwargs["text"])
+            await asyncio.sleep(0)
+
+        app = MagicMock()
+        app.bot.send_message = send
+        with (
+            patch("app.config.settings", MagicMock(ADMIN_ID=12345)),
+            patch("app.bot_instance.get_bot", return_value=app.bot),
+        ):
+            await asyncio.gather(
+                *(alert_admin(app, f"Incident {index}") for index in range(4)),
+                *(alert_admin_raw(f"Background incident {index}") for index in range(4)),
+            )
+
+        assert len(delivered) == 5
+
+    @pytest.mark.asyncio
+    async def test_failed_delivery_attempts_are_bounded_during_telegram_outage(self):
+        attempted = []
+
+        async def send(**kwargs):
+            attempted.append(kwargs["chat_id"])
+            raise RuntimeError("offline transport")
+
+        app = MagicMock()
+        app.bot.send_message = send
+        with patch("app.config.settings", MagicMock(ADMIN_ID=12345)):
+            for _ in range(8):
+                await alert_admin(app, "Incident")
+
+        assert attempted == [12345] * 5
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_alerts_share_budget_and_reserve_user_cooldown(self):
+        delivered = []
+
+        async def send(**kwargs):
+            delivered.append(kwargs["text"])
+            await asyncio.sleep(0)
+
+        app = MagicMock()
+        app.bot.send_message = send
+        with patch("app.config.settings", MagicMock(ADMIN_ID=12345)):
+            await asyncio.gather(
+                *(
+                    alert_admin_unauthorized_user(app, 42, "visitor", "Visitor", "ru", "private", "hello")
+                    for _ in range(4)
+                ),
+                *(
+                    alert_admin_unauthorized_user(app, user_id, None, None, None, "private", None)
+                    for user_id in range(100, 108)
+                ),
+            )
+
+        assert len(delivered) == 5
+        assert sum("<code>42</code>" in text for text in delivered) == 1
+
+    def test_unauthorized_cooldown_discards_expired_actor_entries(self):
+        _unauthorized_last_alerted.update({10: 1.0, 11: 300.0})
+        with patch("app.admin_alerts.time.monotonic", return_value=650.0):
+            assert _can_alert_unauthorized(12) is True
+
+        assert _unauthorized_last_alerted == {11: 300.0}
 
     @pytest.mark.asyncio
     async def test_exception_alert_uses_safe_incident_summary(self):

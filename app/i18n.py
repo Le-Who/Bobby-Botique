@@ -1493,8 +1493,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "❌ Could not retrieve document content.",
     },
     "doc.file_too_large": {
-        "ru": "❌ Файл слишком большой. Максимальный размер: 50MB.\nПопробуйте файл меньшего размера.",
-        "en": "❌ File too large. Max size: 50MB.\nTry a smaller file.",
+        "ru": "❌ Файл слишком большой. Максимальный размер: {max_mb} MB.\nПопробуйте файл меньшего размера.",
+        "en": "❌ File too large. Max size: {max_mb} MB.\nTry a smaller file.",
+    },
+    "doc.text_truncated": {
+        "ru": "\n⚠️ Документ длинный: сохранена начальная часть текста. Ответы учитывают только сохранённую часть.",
+        "en": "\n⚠️ This document is long: only the beginning was saved. Answers use only the saved portion.",
     },
     "doc.unsupported_format": {
         "ru": "❌ Неподдерживаемый формат файла `.{ext}`.\nОтправьте PDF или DOCX.",

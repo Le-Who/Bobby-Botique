@@ -26,6 +26,7 @@ from app.observability.events import emit
 from app.observability.workload_events import start_workload_attempt
 from app.prompt_registry import get_prompt_text, register_controlled_text, render_prompt_text
 from app.providers.gemini import get_cached_genai_client
+from app.providers.gemini_config import build_generate_content_config
 
 # ── Constants (re-exported from memory_config for backward compatibility) ─────
 from app.repos.memory_config import (
@@ -152,7 +153,7 @@ async def expand_query_with_llm(query: str, api_key: str) -> str:
             response = await client.aio.models.generate_content(
                 model=model,
                 contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.0, max_output_tokens=60),
+                config=build_generate_content_config(model, temperature=0.0, max_output_tokens=60),
             )
             expanded = (response.text or "").strip().strip('"')
             if len(expanded) <= 3:
@@ -202,7 +203,7 @@ async def expand_query_with_llm(query: str, api_key: str) -> str:
             client.aio.models.generate_content(
                 model=QUERY_EXPANSION_MODEL,
                 contents=prompt,
-                config=_types.GenerateContentConfig(temperature=0.0, max_output_tokens=60),
+                config=build_generate_content_config(QUERY_EXPANSION_MODEL, temperature=0.0, max_output_tokens=60),
             ),
             timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
         )
@@ -1357,8 +1358,8 @@ async def _search_memories_with_llm_judge_impl(
                 client.aio.models.generate_content(
                     model=model,
                     contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.0, max_output_tokens=256, response_mime_type="application/json"
+                    config=build_generate_content_config(
+                        model, temperature=0.0, max_output_tokens=256, response_mime_type="application/json"
                     ),
                 ),
                 workload="memory_relevance_judge",

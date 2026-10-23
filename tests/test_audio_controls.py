@@ -42,6 +42,27 @@ def gemini_config():
     }
 
 
+@pytest.mark.parametrize("temperature", [None, 0.65])
+def test_voice_delivery_level_round_trips_without_invalidating_historical_catalogs(temperature):
+    from app.runtime_settings import audio
+
+    value = gemini_config()
+    if temperature is not None:
+        value["voices"][0]["temperature"] = temperature
+    validated = audio.validate_config("gemini", value)
+    assert validated["voices"][0].get("temperature") == temperature
+
+
+@pytest.mark.parametrize("temperature", [True, float("nan"), -0.1, 2.1])
+def test_invalid_voice_delivery_level_is_rejected(temperature):
+    from app.runtime_settings import audio
+
+    value = gemini_config()
+    value["voices"][0]["temperature"] = temperature
+    with pytest.raises(ValueError):
+        audio.validate_config("gemini", value)
+
+
 @pytest.mark.asyncio
 async def test_voice_catalog_order_defaults_and_reset_are_durable(audio_runtime):
     from app.runtime_settings import audio

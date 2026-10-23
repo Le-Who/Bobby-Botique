@@ -17,7 +17,7 @@ from google.genai.errors import APIError
 from PIL import Image
 
 from app.config import settings
-from app.errors import ErrorCode, extract_retry_after_seconds, tag_error
+from app.errors import ErrorCode, classify_error_from_exception, extract_retry_after_seconds, tag_error
 from app.metrics import metrics_collector
 from app.observability.provider_events import record_provider_exception
 from app.observability.workload_events import observe_workload_call
@@ -405,27 +405,27 @@ class GeminiProvider(BaseAIProvider):
             lowered = message.lower()
             retry = RetryDisposition.DO_NOT_RETRY if text_emitted else RetryDisposition.TRY_NEXT_KEY
             key = KeyDisposition.UNCHANGED if text_emitted else KeyDisposition.TRANSIENT_FAILURE
-            if isinstance(exc, TimeoutError):
-                code = ErrorCode.TIMEOUT
-            elif "rate limit" in lowered or extract_retry_after_seconds(message) is not None:
+            code = classify_error_from_exception(exc)
+            if extract_retry_after_seconds(message) is not None:
                 code = ErrorCode.RATE_LIMIT
-                key = KeyDisposition.RATE_LIMITED
-            elif "quota" in lowered:
+            elif code in {ErrorCode.RATE_LIMIT, ErrorCode.GENERIC, ErrorCode.PROCESSING} and "quota" in lowered:
                 code = ErrorCode.QUOTA_EXCEEDED
-                key = KeyDisposition.EXHAUSTED
-            elif "api key" in lowered or "api_key_invalid" in lowered:
+            elif code in {ErrorCode.GENERIC, ErrorCode.PROCESSING} and (
+                "api key" in lowered or "api_key_invalid" in lowered
+            ):
                 code = ErrorCode.INVALID_KEY
-                key = KeyDisposition.INVALID
-            elif getattr(exc, "code", None) in {503, 504} or "unavailable" in lowered or "overloaded" in lowered:
-                code = ErrorCode.OVERLOADED
-            elif "invalid" in lowered or "malformed" in lowered:
+            elif code in {ErrorCode.GENERIC, ErrorCode.PROCESSING} and ("invalid" in lowered or "malformed" in lowered):
                 code = ErrorCode.INVALID_REQUEST
+
+            if code is ErrorCode.RATE_LIMIT:
+                key = KeyDisposition.RATE_LIMITED
+            elif code is ErrorCode.QUOTA_EXCEEDED:
+                key = KeyDisposition.EXHAUSTED
+            elif code is ErrorCode.INVALID_KEY:
+                key = KeyDisposition.INVALID
+            elif code is ErrorCode.INVALID_REQUEST:
                 retry = RetryDisposition.DO_NOT_RETRY
                 key = KeyDisposition.UNCHANGED
-            elif isinstance(exc, httpx.HTTPError):
-                code = ErrorCode.NETWORK
-            else:
-                code = ErrorCode.GENERIC
 
             diagnostic = f"{type(exc).__name__}: {message}"[:500]
             if self.api_key:

@@ -53,6 +53,8 @@ def _is_rate_limited() -> bool:
 
 
 def _record_alert() -> None:
+    # Reserve before transport yields. Failed sends consume capacity too, so an
+    # outage cannot create an unbounded stream of alert delivery attempts.
     _alert_timestamps.append(time.monotonic())
 
 
@@ -66,6 +68,11 @@ _UNAUTHORIZED_COOLDOWN_S = 600.0  # 10 minutes per user
 def _can_alert_unauthorized(user_id: int) -> bool:
     """Return True if enough time has passed since last alert for this user."""
     now = time.monotonic()
+    expired = [
+        actor for actor, timestamp in _unauthorized_last_alerted.items() if now - timestamp >= _UNAUTHORIZED_COOLDOWN_S
+    ]
+    for actor in expired:
+        _unauthorized_last_alerted.pop(actor, None)
     last = _unauthorized_last_alerted.get(user_id)
     return last is None or (now - last) >= _UNAUTHORIZED_COOLDOWN_S
 
@@ -143,12 +150,12 @@ async def alert_admin(
         from app.utils.formatting import TelegramFormatter
 
         fmt_text, fmt_pm = TelegramFormatter.format_text(text)
+        _record_alert()
         await app.bot.send_message(
             chat_id=admin_id,
             text=fmt_text,
             parse_mode=fmt_pm,
         )
-        _record_alert()
         logger.info(
             "Admin alert sent",
             extra={
@@ -262,8 +269,8 @@ async def alert_admin_raw(
         from app.utils.formatting import TelegramFormatter
 
         fmt_text, fmt_pm = TelegramFormatter.format_text(text)
-        await bot.send_message(chat_id=admin_id, text=fmt_text, parse_mode=fmt_pm)
         _record_alert()
+        await bot.send_message(chat_id=admin_id, text=fmt_text, parse_mode=fmt_pm)
         logger.info(
             "Admin alert (raw) sent",
             extra={"_event_name": "alert.sent", "alert_fingerprint": alert_fingerprint},
@@ -286,7 +293,7 @@ async def alert_admin_unauthorized_user(
     message_text: str | None,
 ) -> None:
     """Send an alert to the admin about an unauthorized user attempt."""
-    if not _can_alert_unauthorized(user_id):
+    if not _can_alert_unauthorized(user_id) or _is_rate_limited():
         return
 
     from app.config import settings
@@ -330,13 +337,14 @@ async def alert_admin_unauthorized_user(
     )
 
     try:
+        _record_alert()
+        _record_unauthorized_alert(user_id)
         await app.bot.send_message(
             chat_id=admin_id,
             text=message,
             parse_mode="HTML",
             reply_markup=keyboard,
         )
-        _record_unauthorized_alert(user_id)
         logger.info("Admin alert sent for unauthorized user %s", user_id)
     except Exception:
         logger.warning(

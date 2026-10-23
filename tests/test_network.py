@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from app.utils.network import NetworkErrorHandler
+from app.utils.network import NetworkErrorHandler, network_retry_decorator
 
 
 class TestRetryWithBackoff:
@@ -56,3 +56,39 @@ class TestCreateRobustHttpClient:
         client = NetworkErrorHandler.create_robust_http_client(connect_timeout=5.0, read_timeout=15.0)
         assert client.timeout.connect == 5.0
         assert client.timeout.read == 15.0
+
+
+@pytest.mark.asyncio
+async def test_retry_decorator_forwards_positional_and_named_arguments_to_each_attempt():
+    attempts = []
+
+    @network_retry_decorator(max_retries=1, base_delay=0)
+    async def load(first, second, *, max_retries):
+        attempts.append((first, second, max_retries))
+        if len(attempts) == 1:
+            raise httpx.ConnectError("synthetic connection failure")
+        return first + second
+
+    assert await load("left", "right", max_retries=17) == "leftright"
+    assert attempts == [("left", "right", 17), ("left", "right", 17)]
+
+
+@pytest.mark.asyncio
+async def test_connectivity_check_configures_complete_timeout_and_observes_http_success(monkeypatch):
+    requests = []
+    timeouts = []
+
+    def respond(request):
+        requests.append(str(request.url))
+        return httpx.Response(200)
+
+    client_type = httpx.AsyncClient
+
+    def client(**kwargs):
+        timeouts.append(kwargs["timeout"])
+        return client_type(transport=httpx.MockTransport(respond), **kwargs)
+
+    monkeypatch.setattr("app.utils.network.httpx.AsyncClient", client)
+    assert await NetworkErrorHandler.check_connectivity("https://offline.invalid/check", timeout=3.0) is True
+    assert requests == ["https://offline.invalid/check"]
+    assert timeouts[0].as_dict() == {"connect": 3.0, "read": 3.0, "write": 3.0, "pool": 3.0}
