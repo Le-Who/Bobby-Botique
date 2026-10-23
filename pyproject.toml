@@ -37,7 +37,7 @@ dev = [
     "mypy>=1.0.0,<2.0.0",
     "packaging>=24.0.0,<27.0.0",
     "pip-audit==2.10.1",
-    "ruff==0.17.0",
+    "ruff==0.17.2",
     "pre-commit>=3.0.0,<5.0.0",
 ]
 
@@ -58,6 +58,10 @@ target-version = "py314"
 line-length = 120
 # Supplied review bundles are external evidence, not application source.
 extend-exclude = ["revisions"]
+
+[tool.ruff.format]
+# Keep the existing Python-only scope when upgrading Ruff's Markdown support.
+exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = [
