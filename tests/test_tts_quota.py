@@ -25,6 +25,23 @@ async def test_concurrent_admission_cannot_exceed_minute_budget(quota):
 
 
 @pytest.mark.asyncio
+async def test_sent_requests_and_pending_reservations_share_the_same_three_slots(quota):
+    limiter, now = quota
+    sent, _ = await limiter.reserve("key-model", 3, pending_for=120)
+    await limiter.commit("key-model", sent)
+    pending, _ = await limiter.reserve("key-model", 3, pending_for=120)
+    last_free, _ = await limiter.reserve("key-model", 3, pending_for=120)
+    assert pending is not None and last_free is not None
+    assert await limiter.reserve("key-model", 3) == (None, 60.0)
+
+    # Only the sent request expires after its dispatch window. Both pending
+    # requests keep their reservations until dispatch or owned cancellation.
+    now[0] = 160.0
+    assert (await limiter.reserve("key-model", 3))[0] is not None
+    assert await limiter.reserve("key-model", 3) == (None, 60.0)
+
+
+@pytest.mark.asyncio
 async def test_minute_usage_expires_and_is_independent_for_each_key_and_model(quota):
     limiter, now = quota
     assert (await limiter.reserve("key-a/model-a", 1))[0] is not None

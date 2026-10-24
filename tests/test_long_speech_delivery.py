@@ -15,7 +15,8 @@ from app.process_policies import ResolvedPolicy
 
 
 @pytest.mark.asyncio
-async def test_long_source_parts_keep_replies_content_and_fifo_without_unneeded_tts_parts(monkeypatch):
+@pytest.mark.parametrize("source_count", [3, 4, 8])
+async def test_long_source_parts_keep_replies_content_and_fifo_without_unneeded_tts_parts(monkeypatch, source_count):
     """A slow first part gates identical later sources, with no chat generation."""
     from app.runtime_settings.store import SettingsSnapshot
     from tests.factories import make_chat_state
@@ -78,17 +79,19 @@ async def test_long_source_parts_keep_replies_content_and_fifo_without_unneeded_
     first = "Озвучь: " + "Начало. " * 510 + " электро"
     assert len(first) == 4096
     repeated = "станция. " + "Одинаковый фрагмент. " * 120
+    source_ids = list(range(101, 101 + source_count))
+    source_texts = [first, *([repeated] * (source_count - 1))]
     messages = [
         SimpleNamespace(text=text, message_id=number, reply_text=AsyncMock(), reply_to_message=None)
-        for number, text in zip((101, 102, 103), (first, repeated, repeated), strict=True)
+        for number, text in zip(source_ids, source_texts, strict=True)
     ]
     entries = [SimpleNamespace(text=item.text, message=item) for item in messages]
     batch = DebounceResult(entries=entries, speech_collection=True, speech_epoch=0)
     request = speech_request_for_message(messages[0], batch)
-    original = first.removeprefix("Озвучь: ") + repeated + repeated
+    original = first.removeprefix("Озвучь: ") + repeated * (source_count - 1)
     assert request.action == "speak"
     assert "".join(part.text for part in request.parts) == original
-    assert [part.reply_to_message_id for part in request.parts] == [101, 102, 103]
+    assert [part.reply_to_message_id for part in request.parts] == source_ids
     assert request.parts[1].text.startswith("электростанция.")
 
     update = SimpleNamespace(
@@ -104,8 +107,8 @@ async def test_long_source_parts_keep_replies_content_and_fifo_without_unneeded_
         release.set()
         await manager.wait_until_idle(11, timeout=5)
         sent = bot.send_voice.await_args_list
-        assert [call.kwargs["reply_to_message_id"] for call in sent] == [101, 102, 103]
-        assert len(encoded) == 3
+        assert [call.kwargs["reply_to_message_id"] for call in sent] == source_ids
+        assert len(encoded) == source_count
         cursor = 0
         for part, pcm in zip(request.parts, encoded, strict=True):
             count = len(pcm) // 2000

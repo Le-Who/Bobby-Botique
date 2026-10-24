@@ -69,7 +69,7 @@ def request(*texts, contiguous=True):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("full_count", [1, 2])
+@pytest.mark.parametrize("full_count", [1, 2, 3, 4, 7])
 async def test_short_final_tail_joins_only_previous_full_source_and_reuses_token_receipt(speech_tail, full_count):
     full = "Полное предложение с точным текстом. " * 100
     tail = "Короткий конец. Ещё одна фраза."
