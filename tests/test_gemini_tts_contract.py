@@ -1,4 +1,4 @@
-"""Actual TTS payloads, complete audio and conservative input boundaries."""
+"""Actual TTS payloads, complete audio and model-native input boundaries."""
 
 import base64
 import json
@@ -47,6 +47,8 @@ async def test_current_speech_uses_actual_sdk_metadata_pcm_and_storage_opt_out(i
 
     def respond(request):
         requests.append(request)
+        if request.url.path.endswith(":countTokens"):
+            return httpx.Response(200, json={"totalTokens": 40})
         return httpx.Response(
             200,
             json={
@@ -75,9 +77,10 @@ async def test_current_speech_uses_actual_sdk_metadata_pcm_and_storage_opt_out(i
             await client.aio.aclose()
             client.close()
 
-    assert len(requests) == 1
-    assert requests[0].url.path == "/v1beta/interactions"
-    payload = json.loads(requests[0].content)
+    assert len(requests) == 2
+    assert requests[0].url.path.endswith(f"/{model or 'gemini-3.8-flash-lite-tts'}:countTokens")
+    assert requests[1].url.path == "/v1beta/interactions"
+    payload = json.loads(requests[1].content)
     assert payload["model"] == (model or "gemini-3.8-flash-lite-tts")
     assert payload["store"] is False
     assert payload["response_format"] == {"type": "audio", "mime_type": "audio/l16", "sample_rate": 24000}
@@ -240,7 +243,7 @@ async def test_oversized_director_prompt_is_rejected_before_key_reservation(isol
 
 
 @pytest.mark.asyncio
-async def test_input_token_exposure_is_rejected_locally_before_any_quota_or_sdk(isolated_speech, monkeypatch):
+async def test_source_memory_guard_is_rejected_locally_before_any_quota_or_sdk(isolated_speech, monkeypatch):
     from app.providers.tts_audio import TTSRequestError
 
     tts, attempt = isolated_speech
@@ -273,7 +276,7 @@ async def test_input_token_exposure_is_rejected_locally_before_any_quota_or_sdk(
     monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserve)
     monkeypatch.setattr(tts, "get_cached_genai_client", sdk)
     with pytest.raises(TTSRequestError, match="input_too_large"):
-        await tts.generate_speech("я" * 4096, "offline-test-key")
+        await tts.generate_speech("я" * 32769, "offline-test-key")
     reserve.assert_not_awaited()
     sdk.assert_not_called()
     attempt.finish.assert_not_called()
@@ -287,9 +290,17 @@ async def test_direction_metadata_consumes_the_same_input_allowance(isolated_spe
     reserve = AsyncMock(return_value=True)
     monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserve)
     monkeypatch.setattr(tts, "_get_delivery_direction", lambda *_: "я" * 3500)
+    count = AsyncMock(return_value=SimpleNamespace(total_tokens=9000))
+    monkeypatch.setattr(
+        tts,
+        "get_cached_genai_client",
+        lambda _: SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(count_tokens=count))),
+    )
     with pytest.raises(TTSRequestError, match="input_too_large"):
         await tts.generate_speech("x" * 200, "offline-test-key")
     reserve.assert_not_awaited()
+    counted = count.call_args.kwargs["contents"].parts
+    assert any("я" * 3500 in part.text for part in counted)
 
 
 @pytest.mark.asyncio
@@ -387,6 +398,8 @@ async def test_actual_sdk_incomplete_response_is_subdivided_and_each_dispatch_is
     monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: SimpleNamespace(suspend_key=suspend))
 
     def respond(request):
+        if request.url.path.endswith(":countTokens"):
+            return httpx.Response(200, json={"totalTokens": 40})
         transcript = json.loads(request.content)["input"][0]["content"][0]["text"]
         requests.append(transcript)
         return httpx.Response(
@@ -429,7 +442,6 @@ async def test_actual_sdk_incomplete_response_is_subdivided_and_each_dispatch_is
 @pytest.mark.asyncio
 async def test_silent_separator_pieces_do_not_abort_real_sdk_synthesis(isolated_speech, monkeypatch):
     from app import voice_engine
-    from app.providers.tts_budget import split_speech_text
 
     tts, _ = isolated_speech
     tts.get_config.return_value["max_output_tokens"] = 1024
@@ -447,6 +459,8 @@ async def test_silent_separator_pieces_do_not_abort_real_sdk_synthesis(isolated_
         progress.append((done, total))
 
     def respond(request):
+        if request.url.path.endswith(":countTokens"):
+            return httpx.Response(200, json={"totalTokens": 40})
         transcript = json.loads(request.content)["input"][0]["content"][0]["text"]
         requests.append(transcript)
         return httpx.Response(
@@ -476,9 +490,8 @@ async def test_silent_separator_pieces_do_not_abort_real_sdk_synthesis(isolated_
         monkeypatch.setattr(tts, "get_cached_genai_client", lambda _: client)
         try:
             prepared = await tts.prepare_speech_settings(voice="Aoede")
-            pieces = split_speech_text(text, prepared.piece_max_bytes)
+            pieces = ["First. ", " " * 400, "Last."]
             assert "".join(pieces) == text
-            assert any(not piece.strip() for piece in pieces)
             result = await voice_engine._run_gemini_pipeline(
                 pieces,
                 "Aoede",
@@ -716,4 +729,5 @@ async def test_sdk_never_retries_beneath_tts_quota_accounting(isolated_speech, m
             for client in clients:
                 await client.aio.aclose()
                 client.close()
-    assert len(requests) == 1
+    assert len(requests) == 2
+    assert sum(request.url.path.endswith(":countTokens") for request in requests) == 1

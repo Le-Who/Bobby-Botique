@@ -13,7 +13,7 @@ from app.runtime_settings.store import SettingsSnapshot
 
 
 @pytest.mark.asyncio
-async def test_long_gemini_reply_is_bounded_sequential_synthesis_in_one_file(monkeypatch):
+async def test_long_gemini_reply_starts_as_one_complete_source_in_one_file(monkeypatch):
     text = "Это достаточно длинное предложение для проверки цельной озвучки. " * 100
     seen = []
 
@@ -40,9 +40,8 @@ async def test_long_gemini_reply_is_bounded_sequential_synthesis_in_one_file(mon
     job = SimpleNamespace(response_text=text.strip(), voice="Aoede", tts_temperature=None)
     async with runtime_settings_scope(SettingsSnapshot(1, MappingProxyType({}))):
         assert await manager._pregenerate_audio(job) == b"ogg"
-    assert len(seen) > 1
+    assert len(seen) == 1
     assert "".join(part for part, _ in seen) == text.strip()
-    assert all(len(part.encode("utf-8")) <= 2621 for part, _ in seen)
 
 
 @pytest.mark.asyncio

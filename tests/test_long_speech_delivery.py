@@ -1,4 +1,4 @@
-"""Physical source parts reach real FIFO jobs and sequential internal synthesis."""
+"""Physical source parts reach real FIFO jobs without needless speech pieces."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -15,7 +15,7 @@ from app.process_policies import ResolvedPolicy
 
 
 @pytest.mark.asyncio
-async def test_long_source_parts_keep_replies_content_and_fifo_through_internal_tts(monkeypatch):
+async def test_long_source_parts_keep_replies_content_and_fifo_without_unneeded_tts_parts(monkeypatch):
     """A slow first part gates identical later sources, with no chat generation."""
     from app.runtime_settings.store import SettingsSnapshot
     from tests.factories import make_chat_state
@@ -109,7 +109,7 @@ async def test_long_source_parts_keep_replies_content_and_fifo_through_internal_
         cursor = 0
         for part, pcm in zip(request.parts, encoded, strict=True):
             count = len(pcm) // 2000
-            assert count > 1
+            assert count == 1
             assert "".join(seen[cursor : cursor + count]).strip() == part.text.strip()
             assert pcm == b"".join(
                 index.to_bytes(2, "little") * 1000 for index in range(cursor + 1, cursor + count + 1)

@@ -8,44 +8,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app import voice_engine
-from app.providers.tts_budget import bisect_speech_text, split_speech_text
+from app.providers.tts_budget import bisect_speech_text
 from app.runtime_settings.lifecycle import runtime_settings_scope
 from app.runtime_settings.store import SettingsSnapshot
-
-
-def test_speech_split_preserves_words_unicode_and_every_separator():
-    text = "Начало.  Ещё слово!\n\nCafé — 👨‍👩‍👧‍👦 рядом.   Last words."
-    pieces = split_speech_text(text, 50)
-    assert "".join(pieces) == text
-    assert all(len(piece.encode("utf-8")) <= 50 for piece in pieces)
-    assert all(not piece or piece[-1].isspace() for piece in pieces[:-1])
-    assert any("👨‍👩‍👧‍👦" in piece for piece in pieces)
-
-
-def test_cjk_sentences_without_spaces_split_at_sentence_boundaries():
-    text = "你好世界。再见朋友。"
-    assert split_speech_text(text, 15) == ["你好世界。", "再见朋友。"]
-
-
-@pytest.mark.parametrize("text", ["word" * 100, "я" * 200, "Café" * 50])
-def test_unbreakable_word_never_becomes_separate_spoken_fragments(text):
-    from app.providers.tts_audio import TTSRequestError
-
-    with pytest.raises(TTSRequestError, match="unsplittable_text"):
-        split_speech_text(text, 80)
-
-
-@pytest.mark.parametrize("text", ["слово " * 1000, "界 " * 1000, "🐱 " * 1000])
-def test_long_unicode_text_stays_under_each_piece_bound_without_losing_whitespace(text):
-    pieces = split_speech_text(text, 160)
-    assert all(0 < len(piece.encode("utf-8")) <= 160 for piece in pieces)
-    assert "".join(pieces) == text
-
-
-@pytest.mark.parametrize("limit", [0, -1])
-def test_invalid_local_chunk_bound_is_rejected(limit):
-    with pytest.raises(ValueError):
-        split_speech_text("Hello.", max_bytes=limit)
 
 
 def test_adaptive_bisection_keeps_full_source_and_never_retries_an_atomic_word():
@@ -121,7 +86,7 @@ async def test_repeated_truncation_is_bounded_and_does_not_return_partial_pcm(mo
 
 
 @pytest.mark.asyncio
-async def test_low_output_setting_shrinks_requests_and_pcm_join_keeps_every_sample(monkeypatch):
+async def test_low_output_setting_keeps_whole_input_and_pcm_join_keeps_every_sample(monkeypatch):
     from app.process_policies import ResolvedPolicy
     from app.runtime_settings.audio import baseline_config
 
@@ -155,8 +120,7 @@ async def test_low_output_setting_shrinks_requests_and_pcm_join_keeps_every_samp
     job = SimpleNamespace(response_text=text.strip(), voice="Aoede", tts_temperature=None)
     async with runtime_settings_scope(SettingsSnapshot(1, MappingProxyType({"audio:gemini": config}))):
         assert await manager._pregenerate_audio(job) == b"one-ogg"
-    assert len(seen) > 2
-    assert all(len(piece.encode("utf-8")) <= 163 for piece in seen)
+    assert len(seen) == 1
     assert "".join(seen) == text.strip()
     assert len({id(snapshot) for snapshot in snapshots}) == 1
     assert snapshots[0].voice == "Aoede" and snapshots[0].max_output_tokens == 1024
@@ -166,6 +130,7 @@ async def test_low_output_setting_shrinks_requests_and_pcm_join_keeps_every_samp
 @pytest.mark.asyncio
 async def test_failed_later_piece_delivers_no_partial_voice(monkeypatch):
     from app.process_policies import ResolvedPolicy
+    from app.providers.tts_audio import TTSOutputError
 
     install_keys(monkeypatch)
     text = "This sentence is repeated to require several bounded requests. " * 100
@@ -180,7 +145,9 @@ async def test_failed_later_piece_delivers_no_partial_voice(monkeypatch):
 
     async def synthesize(transcript, *args, **kwargs):
         requests.append(transcript)
-        return b"\x01\x00" * 100 if len(requests) == 1 else None
+        if transcript == text.strip():
+            raise TTSOutputError("output_token_limit")
+        return b"\x01\x00" * 100 if len(requests) == 2 else None
 
     monkeypatch.setattr(voice_engine, "resolve_process", resolve)
     monkeypatch.setattr("app.providers.tts.generate_speech", synthesize)
@@ -192,7 +159,7 @@ async def test_failed_later_piece_delivers_no_partial_voice(monkeypatch):
     job = voice_engine.VoiceJob("job", 1, 1, 1, text, "Aoede", None, "source", bot, 1)
     async with runtime_settings_scope(SettingsSnapshot(1, MappingProxyType({}))):
         await manager._process_job_leased(job)
-    assert len(requests) == 2
+    assert len(requests) == 3
     encode.assert_not_awaited()
     bot.send_voice.assert_not_awaited()
     assert manager._set_status.call_args.kwargs["status"] == "failed"

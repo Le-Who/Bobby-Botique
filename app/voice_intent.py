@@ -46,6 +46,7 @@ class SpeechSourcePart:
 
     text: str
     reply_to_message_id: int
+    merged_source_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -1,9 +1,13 @@
 """Direct text-to-speech ingress; the voice queue owns synthesis and delivery."""
 
+from __future__ import annotations
+
 import logging
+import re
 import time
 import unicodedata
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
 from telegram import Message, Update
 from telegram.error import BadRequest
@@ -15,6 +19,50 @@ from app.middleware.debounce import DebounceResult, SpeechIngressReservation, ha
 from app.voice_intent import SpeechRequestIntent, SpeechSourcePart, build_voice_source_key, resolve_speech_request
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from app.providers.tts_tokens import SpeechTokenReceipt
+
+
+def _is_short_source_tail(previous: str, tail: str) -> bool:
+    previous, tail = previous.strip(), tail.strip()
+    return bool(previous and tail and len(re.findall(r"\S+", tail)) <= 80 and len(tail) * 5 <= len(previous))
+
+
+async def _group_short_source_tail(
+    parts: tuple[SpeechSourcePart, ...],
+    *,
+    contiguous: bool,
+    user_id: int,
+    epoch: int,
+    voice: str,
+    temperature: float | None,
+) -> tuple[tuple[SpeechSourcePart, ...], dict[int, tuple[SpeechTokenReceipt, ...]]]:
+    """Merge only an adjacent small final continuation with verified admission."""
+    if not contiguous or len(parts) < 2 or not _is_short_source_tail(parts[-2].text, parts[-1].text):
+        return parts, {}
+    from app.repos.memory_consent import private_data_lease
+    from app.voice_engine import plan_voice_source_merge
+
+    previous, tail = parts[-2:]
+    text = previous.text + tail.text
+    try:
+        async with private_data_lease(user_id, epoch, purpose="conversation:tts_plan", require_ltm=False) as current:
+            if not current:
+                return parts, {}
+            admission = await plan_voice_source_merge(response_text=text, voice=voice, tts_temperature=temperature)
+        if not admission.allowed:
+            return parts, {}
+    except Exception as error:
+        logger.warning("Speech tail admission unavailable: %s", type(error).__name__)
+        return parts, {}
+    merged = replace(
+        previous,
+        text=text,
+        merged_source_ids=(*previous.merged_source_ids, tail.reply_to_message_id, *tail.merged_source_ids),
+    )
+    receipts = {previous.reply_to_message_id: admission.token_receipts} if admission.token_receipts else {}
+    return (*parts[:-2], merged), receipts
 
 
 def speech_request_for_message(message: Message, batch: DebounceResult | None = None) -> SpeechRequestIntent:
@@ -250,6 +298,15 @@ async def _enqueue_speech_request(
         logger.exception("Direct speech enqueue failed")
         await message.reply_text(t("speech.unavailable", lang))
         return False
+    epoch = request.expected_epoch if request.expected_epoch is not None else chat_state.memory_epoch
+    parts, token_receipts = await _group_short_source_tail(
+        parts,
+        contiguous=request.contiguous_parts,
+        user_id=user.id,
+        epoch=epoch,
+        voice=chat_state.voice_id or "",
+        temperature=chat_state.tts_temperature,
+    )
     success = True
     for part in parts:
         if shared_cleanup and not part.text.strip():
@@ -270,8 +327,16 @@ async def _enqueue_speech_request(
                 if request.expected_epoch is not None
                 else chat_state.memory_epoch,
                 **({"text_is_clean": True} if shared_cleanup else {}),
+                **(
+                    {"token_receipts": token_receipts[part.reply_to_message_id]}
+                    if part.reply_to_message_id in token_receipts
+                    else {}
+                ),
             )
             if result.queued or result.deduped:
+                if result.queued:
+                    for source_id in part.merged_source_ids:
+                        await _notify_source(context.bot, chat.id, source_id, t("speech.tail_joined", lang))
                 continue
             key = {
                 "capacity": "speech.capacity",
@@ -285,13 +350,14 @@ async def _enqueue_speech_request(
         success = False
         # Every physical source receives its own rejection, including parts
         # following a partial queue admission. Never silently drop the tail.
-        await _notify_source(
-            context.bot,
-            chat.id,
-            part.reply_to_message_id,
-            t(key, lang),
-            message=message if part.reply_to_message_id == message.message_id else None,
-        )
+        for source_id in (part.reply_to_message_id, *part.merged_source_ids):
+            await _notify_source(
+                context.bot,
+                chat.id,
+                source_id,
+                t(key, lang),
+                message=message if source_id == message.message_id else None,
+            )
     return success
 
 

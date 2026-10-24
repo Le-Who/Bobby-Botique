@@ -28,8 +28,9 @@ from app.providers.tts_audio import (
     TTSRequestError,
     normalize_tts_audio,
 )
-from app.providers.tts_budget import speech_input_bytes, speech_output_text_bytes
+from app.providers.tts_budget import validate_speech_output_tokens
 from app.providers.tts_quota import tts_minute_quota
+from app.providers.tts_tokens import SpeechInputSplitRequired, SpeechTokenCache, plan_speech_chunks
 from app.runtime_settings.audio import get_config, resolve_voice
 from app.runtime_settings.lifecycle import runtime_settings_scope
 
@@ -47,6 +48,7 @@ class TTSAdmissionRejected(RuntimeError):
 TTS_FALLBACK_MODEL = TTS_DEFAULT_MODELS[1]
 
 _MAX_TTS_DIRECTION_BYTES = 7500
+_MAX_TTS_SOURCE_BYTES = 64 * 1024
 
 # Available voices and their personalities:
 #   Aoede  — Breezy, natural (smooth conversational narration)
@@ -247,8 +249,6 @@ class SpeechSettings:
     model_name: str
     language_code: str | None
     max_output_tokens: int
-    input_max_bytes: int
-    piece_max_bytes: int
     current_tts: bool
 
 
@@ -273,8 +273,8 @@ async def prepare_speech_settings(
         direction = f"{base_prompt}{pacing_tag}"
     if len(direction.encode("utf-8")) > _MAX_TTS_DIRECTION_BYTES:
         raise TTSRequestError("input_too_large")
-    input_max_bytes = speech_input_bytes(direction, selected_voice, language_code)
     max_output_tokens = int(audio_config["max_output_tokens"])
+    validate_speech_output_tokens(max_output_tokens)
     return SpeechSettings(
         selected_voice,
         temperature,
@@ -282,8 +282,6 @@ async def prepare_speech_settings(
         model_name,
         language_code,
         max_output_tokens,
-        input_max_bytes,
-        min(input_max_bytes, speech_output_text_bytes(max_output_tokens)),
         current_tts,
     )
 
@@ -363,6 +361,7 @@ async def generate_speech(
     model_name: str = TTS_MODEL,
     language_code: str | None = None,
     speech_settings: SpeechSettings | None = None,
+    token_cache: SpeechTokenCache | None = None,
 ) -> bytes | None:
     """Return complete mono PCM or preserve the failure for the queue's policy.
 
@@ -370,7 +369,11 @@ async def generate_speech(
     in speech metadata. Explicit older models use GenerateContent. Empty text
     returns None; malformed output never masquerades as successful synthesis.
     """
-    if not text or not text.strip():
+    if not text:
+        return None
+    if len(text) > _MAX_TTS_SOURCE_BYTES or len(text.encode("utf-8")) > _MAX_TTS_SOURCE_BYTES:
+        raise TTSRequestError("input_too_large")
+    if not text.strip():
         return None
 
     deadline = asyncio.get_running_loop().time() + timeout
@@ -383,16 +386,23 @@ async def generate_speech(
     )
     voice, user_temp, direction = prepared.voice, prepared.temperature, prepared.direction
     model_name, language_code, current_tts = prepared.model_name, prepared.language_code, prepared.current_tts
-    if len(clean.encode("utf-8")) > prepared.input_max_bytes:
-        raise TTSRequestError("input_too_large")
-    if len(clean.encode("utf-8")) > prepared.piece_max_bytes:
-        raise TTSRequestError("output_budget_exceeded")
 
     from app.config import settings
     from app.repos.keys import reserve_gemini_key_usage
 
     # Construct local SDK state before reserving a request that could be sent.
     client = get_cached_genai_client(api_key)
+    async with asyncio.timeout_at(deadline):
+        pieces = await plan_speech_chunks(
+            clean,
+            api_key,
+            prepared,
+            client=client,
+            cache=token_cache if token_cache is not None else SpeechTokenCache(),
+            timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
+        )
+    if len(pieces) > 1:
+        raise SpeechInputSplitRequired(pieces)
     key_hash = hashlib.sha256(api_key.encode()).hexdigest()
     scope = f"{key_hash}:{model_name}"
     try:

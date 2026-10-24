@@ -265,7 +265,7 @@ PROCESS_EVIDENCE: dict[str, ProcessEvidence] = {
     ),
     "tts": _row(
         "Gemini SDK: TTS",
-        "Gemini-цепочка полного озвучивания: Interactions со speech metadata для 3.8 TTS; AUDIO GenerateContent для прежних моделей.",
+        "Gemini-цепочка озвучивания: countTokens выбранной модели сохраняет помещающийся текст целиком; Interactions со speech metadata для 3.8 TTS, AUDIO GenerateContent для прежних моделей. Подсчёт учитывается как API-вызов, отдельно от квоты генераций.",
         _AUDIO,
         ("app/voice_engine.py", "VoiceReplyManager._pregenerate_audio"),
         ("app/providers/tts.py", "generate_speech"),

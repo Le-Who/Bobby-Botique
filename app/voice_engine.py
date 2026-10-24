@@ -23,6 +23,7 @@ from app.utils.background_tasks import try_submit_task
 
 if TYPE_CHECKING:
     from app.providers.tts import SpeechSettings
+    from app.providers.tts_tokens import SpeechTokenCache, SpeechTokenReceipt
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,8 @@ class VoiceJob:
     status_rendered: int = 0
     cleanup_scheduled: bool = False
     text_is_clean: bool = False
+    token_receipts: tuple[SpeechTokenReceipt, ...] = ()
+    synthesis_timeout: asyncio.Timeout | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,75 @@ class VoiceEnqueueResult:
     job_id: str | None
     queue_position: int
     reason_code: str | None = None
+
+
+@dataclass(frozen=True)
+class VoiceMergeAdmission:
+    allowed: bool
+    token_receipts: tuple[SpeechTokenReceipt, ...] = ()
+
+
+@runtime_settings_scope()
+async def plan_voice_source_merge(
+    response_text: str,
+    voice: str = "",
+    tts_temperature: float | None = None,
+) -> VoiceMergeAdmission:
+    """Check one merged transcript under the caller's lease/settings snapshot.
+
+    This performs no synthesis, changes no settings and reserves no generation
+    quota. Unknown limits/counts leave the original source boundaries intact.
+    """
+    from app.config import settings
+    from app.i18n import detect_language
+    from app.providers.elevenlabs_tts import _MODEL_CHARACTER_LIMITS
+    from app.providers.tts import get_cached_genai_client, prepare_speech_settings
+    from app.providers.tts_audio import TTSContractError
+    from app.providers.tts_budget import GEMINI_TTS_INPUT_TOKENS
+    from app.providers.tts_tokens import SpeechTokenCache, count_speech_tokens
+    from app.repos.keys import get_available_gemini_key
+
+    if not response_text.strip() or len(response_text.encode("utf-8")) > _MAX_JOB_BYTES:
+        return VoiceMergeAdmission(False)
+    delivery = await resolve_process("tts.delivery", ("elevenlabs", "gemini"))
+    for provider in delivery.models:
+        if provider == "elevenlabs" and settings.ELEVENLABS_API_KEYS:
+            policy = await resolve_process("tts.elevenlabs", (settings.ELEVENLABS_MODEL,))
+            models = policy.models if policy.explicit else (settings.ELEVENLABS_MODEL,)
+            if not models:
+                continue
+            limit = _MODEL_CHARACTER_LIMITS.get(models[0])
+            return VoiceMergeAdmission(limit is not None and len(response_text) <= limit)
+        if provider == "gemini":
+            policy = await resolve_process("tts", TTS_DEFAULT_MODELS)
+            models = policy.models if policy.explicit else TTS_DEFAULT_MODELS
+            if not models:
+                continue
+            model = models[0]
+            key = await get_available_gemini_key(model, excluded_hashes=set(), use_cache=False)
+            if not key:
+                return VoiceMergeAdmission(False)
+            language = detect_language(response_text)
+            language_code = "ru-RU" if language == "ru" else "en-US" if language == "en" else None
+            try:
+                prepared = await prepare_speech_settings(
+                    voice=voice,
+                    tts_temperature=tts_temperature,
+                    model_name=model,
+                    language_code=language_code,
+                )
+            except TTSContractError:
+                return VoiceMergeAdmission(False)
+            receipt = await count_speech_tokens(
+                response_text,
+                key["api_key"],
+                prepared,
+                client=get_cached_genai_client(key["api_key"]),
+                cache=SpeechTokenCache(),
+            )
+            allowed = receipt is not None and receipt.input_tokens <= GEMINI_TTS_INPUT_TOKENS
+            return VoiceMergeAdmission(allowed, (receipt,) if allowed and receipt is not None else ())
+    return VoiceMergeAdmission(False)
 
 
 async def _generate_single_chunk_gemini(
@@ -101,6 +173,7 @@ async def _generate_single_chunk_gemini(
     language_code: str | None = None,
     request_semaphore: asyncio.Semaphore | None = None,
     speech_settings: SpeechSettings | None = None,
+    token_cache: SpeechTokenCache | None = None,
 ) -> bytes | None:
     """Synthesize once, trying other keys only after a rejected/failed attempt."""
     from app.errors import classify_key_error
@@ -138,6 +211,7 @@ async def _generate_single_chunk_gemini(
                     model_name=model_name,
                     language_code=language_code,
                     speech_settings=speech_settings,
+                    token_cache=token_cache,
                 )
             if not pcm:
                 return None
@@ -179,11 +253,14 @@ async def _run_gemini_pipeline(
     require_complete: bool = False,
     request_semaphore: asyncio.Semaphore | None = None,
     speech_settings: SpeechSettings | None = None,
+    token_cache: SpeechTokenCache | None = None,
 ) -> list[bytes] | None:
     """Collect sequential pieces, subdividing explicitly incomplete output."""
     from app.providers.tts_audio import MAX_TTS_AUDIO_BYTES, TTSContractError
     from app.providers.tts_budget import bisect_speech_text
+    from app.providers.tts_tokens import SpeechInputSplitRequired, SpeechTokenCache
 
+    token_cache = token_cache if token_cache is not None else SpeechTokenCache()
     pcm_parts: list[bytes] = []
     audio_size = 0
     # Lossless text splitting can isolate a long whitespace run. It carries no
@@ -204,20 +281,26 @@ async def _run_gemini_pipeline(
                 language_code=language_code,
                 request_semaphore=request_semaphore,
                 speech_settings=speech_settings,
+                token_cache=token_cache,
             )
         except TTSContractError as error:
-            pieces = bisect_speech_text(transcript)
+            pieces = error.pieces if isinstance(error, SpeechInputSplitRequired) else bisect_speech_text(transcript)
+            if pieces is not None:
+                pieces = [piece for piece in pieces if piece.strip()]
             if (
                 error.reason_code
                 not in {"incomplete_audio", "output_token_limit", "input_too_large", "output_budget_exceeded"}
                 or depth >= _MAX_ADAPTIVE_DEPTH
-                or subdivisions >= _MAX_ADAPTIVE_SPLITS
-                or len(transcript.encode("utf-8")) <= _MIN_ADAPTIVE_BYTES
-                or pieces is None
+                or subdivisions + (len(pieces) - 1 if pieces else 1) > _MAX_ADAPTIVE_SPLITS
+                or (
+                    not isinstance(error, SpeechInputSplitRequired)
+                    and len(transcript.encode("utf-8")) <= _MIN_ADAPTIVE_BYTES
+                )
+                or not pieces
             ):
                 return None
-            subdivisions += 1
-            total += 1
+            subdivisions += len(pieces) - 1
+            total += len(pieces) - 1
             pending.extendleft((piece, depth + 1) for piece in reversed(pieces))
             if on_chunk_complete:
                 await on_chunk_complete(len(pcm_parts), total)
@@ -267,6 +350,7 @@ class VoiceReplyManager:
         expected_epoch: int,
         require_ltm: bool = False,
         text_is_clean: bool = False,
+        token_receipts: tuple[SpeechTokenReceipt, ...] = (),
     ) -> VoiceEnqueueResult:
         """Atomically authorize queue capture of private response text."""
         from app.repos.memory_consent import private_data_lease
@@ -291,6 +375,7 @@ class VoiceReplyManager:
                 expected_epoch=expected_epoch,
                 require_ltm=require_ltm,
                 text_is_clean=text_is_clean,
+                token_receipts=token_receipts,
             )
 
     async def _enqueue_leased(
@@ -307,6 +392,7 @@ class VoiceReplyManager:
         expected_epoch: int,
         require_ltm: bool = False,
         text_is_clean: bool = False,
+        token_receipts: tuple[SpeechTokenReceipt, ...] = (),
     ) -> VoiceEnqueueResult:
         if len(response_text) > _MAX_JOB_BYTES:
             return VoiceEnqueueResult(False, False, None, 0, "text_too_large")
@@ -352,6 +438,7 @@ class VoiceReplyManager:
                 response_hash=response_hash,
                 retained_bytes=text_bytes,
                 text_is_clean=text_is_clean,
+                token_receipts=token_receipts,
             )
             job.state.queue_position = position
             self._queues.setdefault(user_id, deque()).append(job)
@@ -368,6 +455,7 @@ class VoiceReplyManager:
             job.retained_bytes = 0
         job.response_text = ""
         job.response_hash = ""
+        job.token_receipts = ()
         job.discarded = True
         if job.state.status not in {"done", "failed"}:
             self._schedule_status_cleanup(job)
@@ -533,7 +621,7 @@ class VoiceReplyManager:
             )
             from app.providers.tts import _clean_text_for_speech, prepare_speech_settings
             from app.providers.tts_audio import TTSContractError
-            from app.providers.tts_budget import split_speech_text
+            from app.providers.tts_tokens import SpeechTokenCache
             from app.runtime_settings.audio import get_config, resolve_voice
             from app.utils.audio import pcm_to_ogg_opus
 
@@ -549,10 +637,32 @@ class VoiceReplyManager:
             el_keys = settings.ELEVENLABS_API_KEYS
 
             pcm_parts: list[bytes] | None = None
+            token_cache = SpeechTokenCache(getattr(job, "token_receipts", ()))
 
             delivery = await resolve_process("tts.delivery", ("elevenlabs", "gemini"))
+            model_deadline: asyncio.Timeout | None = None
+            model_started = 0.0
+            model_unit_timeout = 0.0
 
             async def progress(completed: int, total: int) -> None:
+                if total > 1:
+                    if model_deadline is not None:
+                        expanded = model_started + min(_MAX_SYNTHESIS_TIMEOUT_S - 30, model_unit_timeout * total)
+                        model_deadline.reschedule(
+                            min(
+                                model_started + _MAX_SYNTHESIS_TIMEOUT_S - 30,
+                                max(model_deadline.when() or expanded, expanded),
+                            )
+                        )
+                    job_deadline = getattr(job, "synthesis_timeout", None)
+                    if job_deadline is not None and job.state.started_at is not None:
+                        expanded = job.state.started_at + min(_MAX_SYNTHESIS_TIMEOUT_S, _SYNTHESIS_TIMEOUT_S * total)
+                        job_deadline.reschedule(
+                            min(
+                                job.state.started_at + _MAX_SYNTHESIS_TIMEOUT_S,
+                                max(job_deadline.when() or expanded, expanded),
+                            )
+                        )
                 await self._set_status(
                     job,
                     status="synthesizing",
@@ -596,7 +706,6 @@ class VoiceReplyManager:
                     # Budget the sequential plan for every required piece, with
                     # an absolute cap retained by the owning whole-job timeout.
                     plan_settings = {}
-                    plan_chunks = {}
                     for model in model_plan:
                         try:
                             prepared = await prepare_speech_settings(
@@ -605,21 +714,20 @@ class VoiceReplyManager:
                                 model_name=model,
                                 language_code=language_code,
                             )
-                            plan_chunks[model] = split_speech_text(clean_text, prepared.piece_max_bytes)
                             plan_settings[model] = prepared
                         except TTSContractError as error:
                             logger.warning("TTS local model plan rejected: reason=%s", error.reason_code)
-                    largest_plan = max((len(parts) for parts in plan_chunks.values()), default=1)
-                    plan_timeout = min(
-                        _MAX_SYNTHESIS_TIMEOUT_S - 30,
-                        gemini_timeout * max(1, largest_plan) * _GEMINI_PLAN_TIMEOUT_FACTOR,
-                    )
+                    # Fitting sources keep the normal failover deadline. Extend
+                    # only after actual input/output evidence proves more pieces.
+                    model_unit_timeout = gemini_timeout * _GEMINI_PLAN_TIMEOUT_FACTOR
+                    model_started = asyncio.get_running_loop().time()
+                    plan_timeout = min(_MAX_SYNTHESIS_TIMEOUT_S - 30, model_unit_timeout)
                     try:
-                        async with asyncio.timeout(plan_timeout):
+                        async with asyncio.timeout(plan_timeout) as model_deadline:
                             for model_index, model_name in enumerate(model_plan):
                                 if model_name not in plan_settings:
                                     continue
-                                gemini_chunks = plan_chunks[model_name]
+                                gemini_chunks = [clean_text]
                                 await self._set_status(
                                     job,
                                     status="synthesizing",
@@ -640,6 +748,7 @@ class VoiceReplyManager:
                                     on_chunk_complete=progress,
                                     request_semaphore=self._gemini_sem,
                                     speech_settings=plan_settings[model_name],
+                                    token_cache=token_cache,
                                 )
                                 if pcm_parts:
                                     break
@@ -648,6 +757,8 @@ class VoiceReplyManager:
                         logger.warning(
                             "Gemini TTS message plan exhausted its deadline; trying next configured provider"
                         )
+                    finally:
+                        model_deadline = None
                 if pcm_parts:
                     break
 
@@ -696,11 +807,8 @@ class VoiceReplyManager:
             logger.info("TTS job started: job_id=%s user_id=%s queue_wait_ms=%.1f", job.job_id, job.user_id, wait_ms)
 
             await self._set_status(job, status="synthesizing", detail="Генерирую аудио…")
-            timeout = min(
-                _MAX_SYNTHESIS_TIMEOUT_S,
-                _SYNTHESIS_TIMEOUT_S * max(1.0, len(job.response_text.encode("utf-8")) / 2621),
-            )
-            async with asyncio.timeout(timeout):
+            async with asyncio.timeout(_SYNTHESIS_TIMEOUT_S) as synthesis_timeout:
+                job.synthesis_timeout = synthesis_timeout
                 ogg_bytes = await self._pregenerate_audio(job)
             if ogg_bytes is None:
                 raise RuntimeError("no_audio_generated")
@@ -717,6 +825,7 @@ class VoiceReplyManager:
                 error_text="❌ Озвучка не удалась. Попробуйте ещё раз.",
             )
         finally:
+            job.synthesis_timeout = None
             heartbeat_stop.set()
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -951,6 +1060,7 @@ async def fire_voice_reply(
     expected_epoch: int | None = None,
     require_ltm: bool = False,
     text_is_clean: bool = False,
+    token_receipts: tuple[SpeechTokenReceipt, ...] = (),
 ) -> VoiceEnqueueResult:
     """Enqueue reply TTS for per-user serialized processing."""
     if expected_epoch is None:
@@ -971,4 +1081,5 @@ async def fire_voice_reply(
         expected_epoch=expected_epoch,
         require_ltm=require_ltm,
         text_is_clean=text_is_clean,
+        token_receipts=token_receipts,
     )

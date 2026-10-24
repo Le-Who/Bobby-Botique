@@ -485,14 +485,19 @@ text. Missing or competing sources produce a clarification. Requests to generate
 an answer and speak it retain the chat route. See the
 [speech request guide](docs/voice-and-tts.md) for examples and limits.
 
-Long direct recitation retains each original Telegram message: one audio file
-replies to each source, in source order. Collection waits visibly for possible
+Long direct recitation retains each original Telegram message: full sources get
+separate audio replies in source order. A small final continuation can join the
+preceding source when their combined input fits one request; the tail receives
+an explanatory reply. Collection waits visibly for possible
 continuations; repeated text in different message IDs remains part of the source.
 See the speech guide for the bounded collection window and ambiguous final parts.
 
-Gemini TTS divides a transcript only as required by its conservative local
-input/output budget, then synthesizes those pieces sequentially into one file
-for that source. Key rotation is sequential; duplicate key races are disabled.
+Gemini TTS counts the transcript and speech metadata with the selected TTS model's
+`countTokens` endpoint. Fitting input stays whole; verified input overflow or
+reported output truncation triggers necessary pieces, synthesized sequentially
+into one file for that source. A matching scoped count receipt prevents counting
+a merged input again in the worker. The old 2621-byte/duration estimate is removed.
+Key rotation is sequential; duplicate key races are disabled.
 Explicitly incomplete or token-limited output is discarded and retried with
 smaller pieces within bounded limits. A failed source never delivers partial audio.
 ElevenLabs also sends a whole transcript when it fits the selected model, splitting

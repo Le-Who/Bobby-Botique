@@ -1599,6 +1599,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "В этой части нет текста для озвучки после удаления разметки, ссылок и блоков кода.",
         "en": "This part has no spoken text after formatting, links and code blocks are removed.",
     },
+    "speech.tail_joined": {
+        "ru": "Короткое продолжение войдёт в аудио предыдущей части. Отдельного голосового для него не будет.",
+        "en": "This short continuation will be included in the previous part's audio, without a separate voice message.",
+    },
     # ── Expandable blockquote labels ─────────────────────────────────────
     "blockquote.partial_label": {
         "ru": "Частичный ответ / Сбой сети",

@@ -1,6 +1,7 @@
 """Physical Telegram speech parts keep their identity, seams and admission outcome."""
 
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -13,6 +14,22 @@ from tests import test_edited_request_ownership as support
 
 real_debounce_message = debounce.debounce_message
 ownership = support.ownership
+
+
+@pytest.fixture(autouse=True)
+def _individual_source_admission(monkeypatch):
+    """Ownership regressions exercise the valid, unmerged admission outcome."""
+
+    @asynccontextmanager
+    async def lease(*_args, **_kwargs):
+        yield True
+
+    monkeypatch.setattr("app.repos.memory_consent.private_data_lease", lease)
+    monkeypatch.setattr(
+        "app.voice_engine.plan_voice_source_merge",
+        AsyncMock(return_value=SimpleNamespace(allowed=False, token_receipts=())),
+        raising=False,
+    )
 
 
 def message(text, message_id, *, chat_id=11, forwarded=False):

@@ -78,11 +78,15 @@ router is not a universal superclass/factory for every image, audio or game API.
 Image providers, Gemini embeddings, TTS and Live Audio have specialized interfaces.
 Direct recitation bypasses chat context assembly, intent classifiers and text
 generation. Long direct sources retain their Telegram message IDs and enqueue
-one job per original message in source order. It preserves the selected text
+one job per full original message in source order. A verified small final tail
+can join its predecessor; a notice identifies the shared audio reply. It preserves the selected text
 until shared formatting cleanup. Contiguous collected sources are cleaned once
 with character provenance across physical cuts; surviving text keeps its original
-reply target and bypasses a second cleanup in the FIFO job. Gemini budgets each request for input and audio
-output, synthesizes necessary pieces sequentially and combines their PCM into
+reply target and bypasses a second cleanup in the FIFO job. Gemini counts actual
+input tokens on the selected TTS model, including explicit metadata material.
+Hash-only receipts remain scoped to the source/job and avoid duplicate counting
+after merge admission or key rotation. Audio output limits are enforced by the
+API; explicit truncation can trigger subdivision. The engine synthesizes necessary pieces sequentially and combines their PCM into
 one file per job. Explicit truncation can subdivide the same source within
 bounded limits; partial jobs are never delivered. Key/model retries are
 sequential; ElevenLabs splits only beyond its model's text limit. TTS has
