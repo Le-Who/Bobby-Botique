@@ -148,7 +148,7 @@ def _make_response_with_transcript(who: str, text: str):
 def _make_response_with_input_partial(text: str):
     content = SimpleNamespace(
         model_turn=None,
-        input_transcription=SimpleNamespace(text=text),
+        input_transcription=SimpleNamespace(text=text, finished=False),
         output_transcription=None,
         interrupted=None,
         turn_complete=False,

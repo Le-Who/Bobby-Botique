@@ -3350,7 +3350,10 @@ async def _handle_live_session(
 
                                 if content.input_transcription is not None:
                                     input_transcript += content.input_transcription.text or ""
-                                    finished = bool(getattr(content.input_transcription, "finished", False))
+                                    # Native Live can send a completed input
+                                    # transcription without the optional marker;
+                                    # explicit False is the partial-update case.
+                                    finished = getattr(content.input_transcription, "finished", None) is not False
                                     await websocket.send_json(
                                         {
                                             "type": "input_transcript",

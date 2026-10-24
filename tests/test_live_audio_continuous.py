@@ -123,7 +123,8 @@ async def test_speech_during_a_reply_waits_for_provider_idle_instead_of_being_di
 
 
 @pytest.mark.asyncio
-async def test_automatic_audio_receives_two_turns_and_same_event_session_metadata(monkeypatch):
+@pytest.mark.parametrize("first_finished", [True, None])
+async def test_automatic_audio_receives_two_turns_and_same_event_session_metadata(monkeypatch, first_finished):
     from app.web_miniapp import _handle_live_session
 
     queue = asyncio.Queue()
@@ -148,7 +149,7 @@ async def test_automatic_audio_receives_two_turns_and_same_event_session_metadat
             yield SimpleNamespace(
                 server_content=SimpleNamespace(
                     model_turn=None,
-                    input_transcription=SimpleNamespace(text="Первая реплика", finished=True),
+                    input_transcription=SimpleNamespace(text="Первая реплика", finished=first_finished),
                     output_transcription=SimpleNamespace(text="Начало. "),
                     interrupted=False,
                     turn_complete=False,
