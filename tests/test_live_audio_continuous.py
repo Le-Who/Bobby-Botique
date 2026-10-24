@@ -13,6 +13,116 @@ from tests.factories import make_valid_init_data
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("extended", [False, True])
+@pytest.mark.parametrize("release", ["idle", "waiting", "requires_action", "idle_then_transcript"])
+async def test_speech_during_a_reply_waits_for_provider_idle_instead_of_being_discarded(monkeypatch, extended, release):
+    from app.web_miniapp import _handle_live_session
+
+    incoming = asyncio.Queue()
+    responses = asyncio.Queue()
+    second_read = asyncio.Event()
+    forwarded = []
+    provider_audio = []
+    stream_ends = []
+
+    async def read_browser():
+        raw = await incoming.get()
+        if json.loads(raw).get("data") == "AgA=":
+            second_read.set()
+        return raw
+
+    socket = SimpleNamespace(send_json=AsyncMock(side_effect=forwarded.append), receive=read_browser)
+    session = AsyncMock()
+    session.__aenter__.return_value = session
+
+    async def send(**kwargs):
+        if "audio" in kwargs:
+            provider_audio.append(kwargs["audio"].data)
+        if kwargs.get("audio_stream_end"):
+            stream_ends.append(True)
+
+    session.send_realtime_input.side_effect = send
+
+    async def receive():
+        while True:
+            response = await responses.get()
+            yield response
+            if response.server_content.turn_complete:
+                return
+
+    session.receive = receive
+    client = MagicMock()
+    client.aio.live.connect.return_value = session
+    model = "gemini-3.8-live-extended-thinking" if extended else "gemini-3.8-live"
+    monkeypatch.setattr("app.web_miniapp.settings", SimpleNamespace(GEMINI_API_KEYS=["synthetic"]))
+
+    def response(*, audio=False, complete=False, status=None, waiting=False, transcript=None):
+        return SimpleNamespace(
+            server_content=SimpleNamespace(
+                model_turn=SimpleNamespace(parts=[SimpleNamespace(inline_data=SimpleNamespace(data=b"\0\0"))])
+                if audio
+                else None,
+                input_transcription=None,
+                output_transcription=SimpleNamespace(text=transcript) if transcript else None,
+                interrupted=False,
+                turn_complete=complete,
+                waiting_for_input=waiting,
+                interaction_status=status,
+            )
+        )
+
+    with (
+        patch("app.web_miniapp._resolve_live_transport", AsyncMock(return_value=(client, model, object(), None, None))),
+        patch("app.games.crocodile_flags.is_live_audio_enabled", AsyncMock(return_value=True)),
+        patch("app.repos.chats.get_user_chat", AsyncMock(return_value=None)),
+        patch("app.runtime_settings.lifecycle.refresh_runtime_settings", AsyncMock()),
+    ):
+        task = asyncio.create_task(_handle_live_session(socket, 777, {}, "", transport_mode="standard"))
+        try:
+            await incoming.put(json.dumps({"type": "realtime_input", "data": "AQA="}))
+            async with asyncio.timeout(1):
+                while not provider_audio:
+                    await asyncio.sleep(0.005)
+            await responses.put(response(audio=True, status="IN_PROGRESS" if extended else None))
+            async with asyncio.timeout(1):
+                while not any(m["type"] == "audio" for m in forwarded):
+                    await asyncio.sleep(0.005)
+            await incoming.put(json.dumps({"type": "realtime_input", "data": "AgA="}))
+            await second_read.wait()
+            await asyncio.sleep(0.02)
+            assert provider_audio == [b"\x01\0"]
+            assert stream_ends == [True], "pausing automatic audio must flush the provider's cached VAD input"
+            if extended:
+                await responses.put(response(complete=True, status="IN_PROGRESS"))
+                await asyncio.sleep(0.02)
+                assert provider_audio == [b"\x01\0"], "an intermediate utterance is not provider IDLE"
+            if release == "waiting":
+                await responses.put(response(waiting=True))
+            elif release == "requires_action":
+                await responses.put(response(complete=True, status="REQUIRES_ACTION"))
+            else:
+                await responses.put(response(complete=True, status="IDLE" if extended else None))
+                if release == "idle_then_transcript":
+                    await responses.put(response(transcript="Late final transcript"))
+            async with asyncio.timeout(1):
+                while len(provider_audio) < 2:
+                    await asyncio.sleep(0.005)
+            assert provider_audio == [b"\x01\0", b"\x02\0"]
+            if release == "idle_then_transcript":
+                # A waiter released before a late transcript can send one frame
+                # even if the event was wrongly cleared again. The next frame
+                # must also pass, preserving the rest of the user's utterance.
+                await incoming.put(json.dumps({"type": "realtime_input", "data": "AwA="}))
+                async with asyncio.timeout(1):
+                    while len(provider_audio) < 3:
+                        await asyncio.sleep(0.005)
+                assert provider_audio[-1] == b"\x03\0"
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_automatic_audio_receives_two_turns_and_same_event_session_metadata(monkeypatch):
     from app.web_miniapp import _handle_live_session
 
@@ -22,7 +132,12 @@ async def test_automatic_audio_receives_two_turns_and_same_event_session_metadat
     provider_inputs = asyncio.Queue()
     session = AsyncMock()
     session.__aenter__.return_value = session
-    session.send_realtime_input.side_effect = lambda **kwargs: provider_inputs.put_nowait(kwargs)
+
+    async def receive_input(**kwargs):
+        if "audio" in kwargs:
+            provider_inputs.put_nowait(kwargs)
+
+    session.send_realtime_input.side_effect = receive_input
     sequence = 0
 
     async def receive():

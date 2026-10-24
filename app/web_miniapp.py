@@ -3128,6 +3128,9 @@ async def _handle_live_session(
                 await websocket.send_json({"type": "session_resumed"})
 
             producer_alive = True
+            provider_ready_for_input = asyncio.Event()
+            provider_ready_for_input.set()
+            extended_thinking = model_name == "gemini-3.8-live-extended-thinking"
             turn_sequence = 0
             turn_started_ns: int | None = None
             turn_input_audio_bytes = 0
@@ -3183,6 +3186,17 @@ async def _handle_live_session(
                             continue
 
                         msg_type = msg.get("type")
+                        if msg_type in {"realtime_input", "activity_start", "activity_end", "audio_stream_end", "text"}:
+                            # NO_INTERRUPTION protects the spoken answer, but the
+                            # provider need not retain a simultaneous user turn.
+                            # Keep socket input ordered until the response is idle.
+                            # Do not leave one dispatch blocked indefinitely.
+                            if not manual_activity and not provider_ready_for_input.is_set():
+                                # Automatic VAD must be flushed when its audio
+                                # stream pauses. Otherwise native thinking can
+                                # finish speaking while still waiting for input.
+                                await session.send_realtime_input(audio_stream_end=True)
+                            await asyncio.wait_for(provider_ready_for_input.wait(), timeout=60.0)
 
                         if msg_type == "realtime_input":
                             audio_b64 = msg.get("data", "")
@@ -3249,6 +3263,7 @@ async def _handle_live_session(
                         saw_message = False
                         turn_interrupted = False
                         turn_output_transcript = ""
+                        ready_after_response = False
                         async for response in session.receive():
                             saw_message = True
                             if hasattr(response, "session_resumption_update"):
@@ -3285,6 +3300,24 @@ async def _handle_live_session(
 
                             content = response.server_content
                             if content:
+                                status = getattr(content, "interaction_status", None)
+                                status_value = str(getattr(status, "value", status)) if status else None
+                                if status_value:
+                                    await websocket.send_json({"type": "interaction_status", "status": status_value})
+                                # Transcription may arrive after IDLE, independently
+                                # of model audio. It must not close the input gate.
+                                if status_value == "IN_PROGRESS" or content.model_turn:
+                                    provider_ready_for_input.clear()
+                                if (
+                                    status_value in {"IDLE", "REQUIRES_ACTION"}
+                                    or content.waiting_for_input
+                                    or (
+                                        not extended_thinking
+                                        and status_value != "IN_PROGRESS"
+                                        and content.turn_complete
+                                    )
+                                ):
+                                    ready_after_response = True
                                 _ensure_turn_started("provider_content")
                                 if content.model_turn and content.model_turn.parts:
                                     for part in content.model_turn.parts:
@@ -3328,7 +3361,7 @@ async def _handle_live_session(
                                     turn_interrupted = True
                                     await websocket.send_json({"type": "interrupt"})
 
-                                if content.turn_complete or content.waiting_for_input:
+                                if content.turn_complete or content.waiting_for_input or ready_after_response:
                                     await websocket.send_json({"type": "turn_complete"})
                                     break
 
@@ -3353,6 +3386,8 @@ async def _handle_live_session(
                             )
                             completed_turns += 1
                             turn_started_ns = None
+                        if ready_after_response:
+                            provider_ready_for_input.set()
                         if not saw_message:
                             break
 
