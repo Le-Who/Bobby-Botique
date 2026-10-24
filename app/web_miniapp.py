@@ -3035,6 +3035,7 @@ async def _handle_live_session(
     from google.genai import types
 
     from app.games.crocodile_flags import is_live_audio_enabled
+    from app.live_audio_pacing import LiveAudioPacer
     from app.repos.chats import get_user_chat
 
     session_resumption_token: str | None = None
@@ -3130,6 +3131,7 @@ async def _handle_live_session(
             producer_alive = True
             provider_ready_for_input = asyncio.Event()
             provider_ready_for_input.set()
+            input_pacer = LiveAudioPacer()
             extended_thinking = model_name == "gemini-3.8-live-extended-thinking"
             turn_sequence = 0
             turn_started_ns: int | None = None
@@ -3159,6 +3161,16 @@ async def _handle_live_session(
                 )
 
             # ── Producer: browser → Gemini ────────────────────────────────
+            async def _wait_for_provider_input() -> None:
+                if provider_ready_for_input.is_set():
+                    return
+                async with asyncio.timeout(60.0):
+                    while not provider_ready_for_input.is_set():
+                        if not manual_activity:
+                            # Flush automatic VAD before pausing the upstream stream.
+                            await session.send_realtime_input(audio_stream_end=True)
+                        await provider_ready_for_input.wait()
+
             async def _producer() -> None:
                 nonlocal close_reason, producer_alive, session_failure
                 nonlocal session_input_audio_bytes, session_input_text_chars
@@ -3191,19 +3203,22 @@ async def _handle_live_session(
                             # provider need not retain a simultaneous user turn.
                             # Keep socket input ordered until the response is idle.
                             # Do not leave one dispatch blocked indefinitely.
-                            if not manual_activity and not provider_ready_for_input.is_set():
-                                # Automatic VAD must be flushed when its audio
-                                # stream pauses. Otherwise native thinking can
-                                # finish speaking while still waiting for input.
-                                await session.send_realtime_input(audio_stream_end=True)
-                            await asyncio.wait_for(provider_ready_for_input.wait(), timeout=60.0)
+                            await _wait_for_provider_input()
 
                         if msg_type == "realtime_input":
                             audio_b64 = msg.get("data", "")
                             mime_type = msg.get("mime_type", "audio/pcm;rate=16000")
                             if audio_b64:
-                                _ensure_turn_started("realtime_input")
                                 audio_bytes = base64.b64decode(audio_b64)
+                                rate = re.search(r"(?:^|;)rate=(\d+)", mime_type)
+                                sample_rate = int(rate.group(1)) if rate else 16000
+                                # The model can start speaking while pacing yields.
+                                await input_pacer.pace(
+                                    len(audio_bytes),
+                                    sample_rate=sample_rate or 16000,
+                                    wait_ready=_wait_for_provider_input,
+                                )
+                                _ensure_turn_started("realtime_input")
                                 turn_input_audio_bytes += len(audio_bytes)
                                 session_input_audio_bytes += len(audio_bytes)
                                 await session.send_realtime_input(
