@@ -21,7 +21,14 @@ from collections.abc import Callable
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest, NetworkError
-from telegram.ext import Application, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    ApplicationHandlerStop,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from app import state
 from app.config import settings
@@ -42,6 +49,7 @@ from app.handlers.msg_roles import (
 from app.handlers.msg_voice import handle_voice_inline
 from app.i18n import detect_language, t
 from app.metrics import metrics_collector
+from app.middleware.debounce import SpeechIngressReservation
 from app.observability.content import content_fields
 from app.repos.users import is_authorized
 from app.request_context import ensure_request_id as set_request_id
@@ -251,6 +259,32 @@ async def _submit_request_worker(
 
 
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reserve only source identity before async hydration/auth can reorder parts."""
+    from app.middleware.debounce import release_speech_hint, release_speech_reservation, reserve_speech_hint
+
+    user, message = update.effective_user if update else None, update.effective_message if update else None
+    owner = asyncio.current_task()
+    assert owner is not None
+    reservation = SpeechIngressReservation()
+    if user is not None and message is not None and message.text:
+        reservation = reserve_speech_hint(user.id, message)
+    try:
+        await _handle_request(update, context, speech_reservation=reservation)
+    except Exception, asyncio.CancelledError:
+        if reservation.continuation:
+            from app.middleware.debounce import reject_speech_reservation
+
+            reject_speech_reservation(reservation)
+        raise
+    finally:
+        release_speech_reservation(reservation)
+        if user is not None:
+            release_speech_hint(user.id, owner)
+
+
+async def _handle_request(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, speech_reservation: SpeechIngressReservation
+) -> None:
     """Main message router — handles NEW messages only.
 
     Registered with ``filters.UpdateType.MESSAGE`` so ``update.message``
@@ -278,7 +312,15 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Filters run before lazy hydration. Recheck the restored mode so the first
     # message after a restart follows the same route as subsequent messages.
-    if effective_msg.text and state.is_in_tarot_mode(user_id):
+    from app.middleware.debounce import accepts_speech_message, starts_long_speech
+
+    if (
+        effective_msg.text
+        and state.is_in_tarot_mode(user_id)
+        and not speech_reservation.continuation
+        and not starts_long_speech(effective_msg)
+        and not accepts_speech_message(user_id, effective_msg)
+    ):
         from app.handlers.tarot_chat import handle_tarot_message
 
         await handle_tarot_message(update, context)
@@ -322,7 +364,12 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await effective_msg.reply_text(t("error.message_too_long"))
             return
 
-        is_rate_ok, is_auth_ok = await asyncio.gather(check_user_rate_limit(user_id), is_authorized(user_id))
+        if speech_reservation.continuation:
+            # Physical source parts belong to the first admitted operation.
+            # Every update still passes authorization and collection bounds.
+            is_rate_ok, is_auth_ok = True, await is_authorized(user_id)
+        else:
+            is_rate_ok, is_auth_ok = await asyncio.gather(check_user_rate_limit(user_id), is_authorized(user_id))
 
         logging.info(
             "Received Telegram message",
@@ -361,11 +408,17 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if effective_msg.text:
             from app.middleware.dedup import is_duplicate_request
 
-            if await is_duplicate_request(user_id, effective_msg.text):
+            if await is_duplicate_request(
+                user_id, effective_msg.text, chat_id=chat_id, message_id=getattr(effective_msg, "message_id", None)
+            ):
                 logging.info("Dedup: skipping duplicate from user %s", user_id)
                 return
 
         if not is_auth_ok:
+            if speech_reservation.continuation:
+                from app.middleware.debounce import reject_speech_reservation
+
+                reject_speech_reservation(speech_reservation)
             logging.warning("Unauthorized user %s attempted to use bot", user_id)
             from app.admin_alerts import alert_admin_unauthorized_user
 
@@ -379,6 +432,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 chat_type=effective_msg.chat.type,
                 message_text=message_text,
             )
+            return
+
+        from app.handlers.msg_speech import try_handle_speech_collection
+
+        if await try_handle_speech_collection(update, context, speech_reservation):
             return
 
         # Album accumulation schedules provider work, so it requires the same
@@ -1036,10 +1094,40 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
         _release_admission(user_id, admission_owner)
 
 
+class _SpeechContinuationFilter(filters.MessageFilter):
+    def filter(self, message) -> bool:
+        from app.middleware.debounce import accepts_speech_message
+
+        return bool(message.from_user and accepts_speech_message(message.from_user.id, message))
+
+
+class _SpeechSourceFilter(filters.MessageFilter):
+    def filter(self, message) -> bool:
+        from app.middleware.debounce import accepts_speech_message, starts_long_speech
+
+        return bool(
+            message.from_user and (starts_long_speech(message) or accepts_speech_message(message.from_user.id, message))
+        )
+
+
+async def _handle_speech_command_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # This blocking pre-handler claims only slash-prefixed source continuations.
+    # Other commands keep their existing registrations and control semantics.
+    await handle_request(update, context)
+    raise ApplicationHandlerStop
+
+
 def register(application: Application) -> None:
     # NEW messages only — explicit UpdateType.MESSAGE guard prevents
     # edited_message / channel_post from leaking into these handlers.
     _msg = filters.UpdateType.MESSAGE
+    speech_source_filter = _SpeechSourceFilter()
+    application.add_handler(
+        MessageHandler(
+            _msg & filters.TEXT & filters.COMMAND & _SpeechContinuationFilter(), _handle_speech_command_data
+        ),
+        group=-99,
+    )
 
     # Explicit menu entries take priority over an existing Tarot session.
     from app.handlers.cmd_tarot import tarot_command
@@ -1057,18 +1145,26 @@ def register(application: Application) -> None:
     )
 
     application.add_handler(
-        MessageHandler(_msg & filters.TEXT & is_tarot_end_session_filter, handle_tarot_end_session_message, block=False)
+        MessageHandler(
+            _msg & filters.TEXT & is_tarot_end_session_filter & ~speech_source_filter,
+            handle_tarot_end_session_message,
+            block=False,
+        )
     )
     application.add_handler(
         MessageHandler(
-            _msg & filters.TEXT & is_tarot_mode_filter & ~tarot_intent_filter, handle_tarot_message, block=False
+            _msg & filters.TEXT & is_tarot_mode_filter & ~tarot_intent_filter & ~speech_source_filter,
+            handle_tarot_message,
+            block=False,
         )
     )
     application.add_handler(
         CallbackQueryHandler(handle_tarot_idle_choice_callback, pattern=r"^tarot_idle:", block=False)
     )
 
-    application.add_handler(MessageHandler(_msg & tarot_intent_filter, tarot_command, block=False))
+    application.add_handler(
+        MessageHandler(_msg & tarot_intent_filter & ~speech_source_filter, tarot_command, block=False)
+    )
 
     application.add_handler(MessageHandler(_msg & filters.TEXT & ~filters.COMMAND, handle_request, block=False))
     application.add_handler(MessageHandler(_msg & filters.PHOTO, handle_request, block=False))

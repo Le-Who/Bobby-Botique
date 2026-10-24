@@ -44,7 +44,9 @@ def _cleanup_stale(user_id: int) -> None:
         del user_hashes[h]
 
 
-async def is_duplicate_request(user_id: int, message_text: str) -> bool:
+async def is_duplicate_request(
+    user_id: int, message_text: str, *, chat_id: int | None = None, message_id: int | None = None
+) -> bool:
     """Check if this request is a duplicate (same text within DEDUP_WINDOW).
 
     Returns True if the request should be skipped (duplicate detected).
@@ -52,7 +54,9 @@ async def is_duplicate_request(user_id: int, message_text: str) -> bool:
     if not message_text or not message_text.strip():
         return False
 
-    request_hash = _hash_request(message_text.strip())
+    # Different physical messages can legitimately contain identical source
+    # fragments. Telegram's identity, when available, detects only redelivery.
+    request_hash = f"message:{chat_id}:{message_id}" if message_id is not None else _hash_request(message_text.strip())
     now = time.monotonic()
 
     # Cleanup old entries periodically
@@ -81,6 +85,9 @@ def clear_user_dedup(user_id: int) -> None:
     """Clear dedup state for a user (e.g., after /newchat)."""
     _recent_requests.pop(user_id, None)
     _recent_voice_ids.pop(user_id, None)
+    from app.middleware.debounce import clear_user_speech_collection
+
+    clear_user_speech_collection(user_id)
 
 
 # --- Voice-specific dedup (extended window) ---

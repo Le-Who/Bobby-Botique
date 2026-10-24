@@ -3,7 +3,7 @@
 Baseline review: checkout `f44541a7` on 2026-09-20. Runtime/error/shutdown corrections
 were reviewed on 2026-10-23 against `25e25897` and the changes documented in the
 [runtime audit](runtime-audit-2026-10-23.md). Later updates cover request cancellation,
-state persistence, CI/deploy gates, whole-message TTS and
+state persistence, CI/deploy gates, sequential bounded TTS and
 [direct speech requests](voice-and-tts.md). This describes implementation,
 not a claim that a particular VPS or provider has been tested today.
 
@@ -77,9 +77,15 @@ Chat providers include Gemini, Opencode, OpenRouter and FreeTheAI. The provider
 router is not a universal superclass/factory for every image, audio or game API.
 Image providers, Gemini embeddings, TTS and Live Audio have specialized interfaces.
 Direct recitation bypasses chat context assembly, intent classifiers and text
-generation. It preserves the selected text until the shared formatting cleanup,
-then Gemini synthesizes the whole transcript once per attempt. Key/model retries
-are sequential; ElevenLabs splits only beyond its model's text limit. TTS has
+generation. Long direct sources retain their Telegram message IDs and enqueue
+one job per original message in source order. It preserves the selected text
+until shared formatting cleanup. Contiguous collected sources are cleaned once
+with character provenance across physical cuts; surviving text keeps its original
+reply target and bypasses a second cleanup in the FIFO job. Gemini budgets each request for input and audio
+output, synthesizes necessary pieces sequentially and combines their PCM into
+one file per job. Explicit truncation can subdivide the same source within
+bounded limits; partial jobs are never delivered. Key/model retries are
+sequential; ElevenLabs splits only beyond its model's text limit. TTS has
 independent RPM/RPD admission and does not inherit chat key racing. See
 [runtime voice controls](runtime-controls.md#голосовые-сообщения-и-tts).
 An explicit Crocodile text-model selection uses `google-genai` inside the game

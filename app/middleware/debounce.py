@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -47,6 +49,11 @@ logger = logging.getLogger(__name__)
 # ── Timing constants ─────────────────────────────────────────────────────────
 _DEFAULT_WINDOW_S = 1.0
 _FORWARD_WINDOW_S = 3.5
+_SPEECH_WINDOW_S = 15.0
+_SPEECH_TOTAL_S = 60.0
+_SPEECH_MAX_PARTS = 32
+_SPEECH_MAX_BYTES = 256 * 1024
+_SPEECH_MAX_SLOTS = 128
 
 # Maximum time we will wait for a pending STT future beyond the debounce window.
 # If STT finishes before this, transcript is included; otherwise a placeholder
@@ -109,6 +116,9 @@ class DebounceResult:
     """Result returned from debounce_message when the window fires."""
 
     entries: list[_MessageEntry]
+    speech_collection: bool = False
+    speech_epoch: int | None = None
+    speech_error: str = ""
 
     # ── Convenience accessors ────────────────────────────────────────────────
 
@@ -210,6 +220,362 @@ class _DebounceSlot:
 _debounce_slots: dict[int, _DebounceSlot] = {}
 
 
+@dataclass
+class _SpeechSlot:
+    entries: list[_MessageEntry]
+    chat_id: int
+    epoch: int | None
+    owner: asyncio.Task
+    changed: asyncio.Event = field(default_factory=asyncio.Event)
+    finished: bool = False
+    finish_requested: bool = False
+    error: str = ""
+    retained_bytes: int = 0
+    first_ts: float = field(default_factory=time.monotonic)
+    last_ts: float = field(default_factory=time.monotonic)
+    notices: list[Message] = field(default_factory=list)
+    pending_ids: set[int] = field(default_factory=set)
+
+
+_speech_slots: dict[int, _SpeechSlot] = {}
+
+
+@dataclass
+class _SpeechHint:
+    """Metadata-only ownership while the first update passes admission."""
+
+    owner: asyncio.Task
+    chat_id: int
+    first_message_id: int
+    ready: asyncio.Event = field(default_factory=asyncio.Event)
+    first_ts: float = field(default_factory=time.monotonic)
+    pending_ids: set[int] = field(default_factory=set)
+    collection: _SpeechSlot | None = None
+    error: str = ""
+
+
+_speech_hints: dict[int, _SpeechHint] = {}
+
+
+@dataclass(frozen=True)
+class SpeechIngressReservation:
+    """One physical source's metadata-only claim on its exact collection owner."""
+
+    continuation: bool = False
+    capacity: bool = False
+    target: _SpeechSlot | _SpeechHint | None = None
+    message_id: int = 0
+
+
+def reserve_speech_hint(user_id: int, message: Message) -> SpeechIngressReservation:
+    if accepts_speech_message(user_id, message):
+        target = _speech_slots.get(user_id) or _speech_hints[user_id]
+        if len(target.pending_ids) >= _SPEECH_MAX_PARTS:
+            return SpeechIngressReservation(True, True, target, message.message_id)
+        target.pending_ids.add(message.message_id)
+        return SpeechIngressReservation(True, False, target, message.message_id)
+    if user_id in _speech_slots or user_id in _speech_hints or not starts_long_speech(message):
+        return SpeechIngressReservation()
+    if len(_speech_hints) + len(_speech_slots) >= _SPEECH_MAX_SLOTS:
+        return SpeechIngressReservation()
+    owner = asyncio.current_task()
+    assert owner is not None
+    _speech_hints[user_id] = _SpeechHint(owner, message.chat_id, message.message_id)
+    return SpeechIngressReservation()
+
+
+def release_speech_reservation(reservation: SpeechIngressReservation) -> None:
+    target = reservation.target
+    if target is not None and not reservation.capacity:
+        target.pending_ids.discard(reservation.message_id)
+        slot = target if isinstance(target, _SpeechSlot) else target.collection
+        if slot is not None:
+            slot.changed.set()
+
+
+def release_speech_hint(user_id: int, owner: asyncio.Task) -> None:
+    hint = _speech_hints.get(user_id)
+    if hint is not None and hint.owner is owner:
+        _speech_hints.pop(user_id, None)
+        hint.ready.set()
+
+
+async def wait_for_speech_collection(
+    user_id: int, message: Message, reservation: SpeechIngressReservation | None = None
+) -> bool:
+    target = reservation.target if reservation else None
+    hint = target if isinstance(target, _SpeechHint) else _speech_hints.get(user_id)
+    if not has_open_speech_slot(user_id, message.chat_id) and hint is not None:
+        remaining = _SPEECH_TOTAL_S - (time.monotonic() - hint.first_ts)
+        try:
+            await asyncio.wait_for(hint.ready.wait(), timeout=max(0, remaining))
+        except TimeoutError:
+            return False
+    slot = _speech_slots.get(user_id)
+    expected_slot = target.collection if isinstance(target, _SpeechHint) else target
+    if reservation is not None:
+        return slot is not None and slot is expected_slot and not slot.finished
+    return has_open_speech_slot(user_id, message.chat_id) and accepts_speech_message(user_id, message)
+
+
+async def capture_reserved_speech_message(
+    user_id: int, message: Message, reservation: SpeechIngressReservation, *, bot=None
+) -> bool:
+    if reservation.capacity or not await wait_for_speech_collection(user_id, message, reservation):
+        return False
+    await _collect_speech_message(user_id, message, bot=bot, speech_epoch=_speech_slots[user_id].epoch)
+    return True
+
+
+def reject_speech_reservation(reservation: SpeechIngressReservation) -> None:
+    target = reservation.target
+    if isinstance(target, _SpeechHint):
+        target.error = "source_admission"
+    slot = target if isinstance(target, _SpeechSlot) else target.collection if target is not None else None
+    if slot is not None:
+        slot.error = "source_admission"
+        slot.finished = True
+        slot.changed.set()
+
+
+def _near_telegram_limit(text: str) -> bool:
+    # Desktop can choose a preferred word/newline cut anywhere after half the
+    # scalar limit; some clients instead enforce the UTF-16 representation.
+    return 2049 <= len(text) <= 4096 or 4094 <= len(text.encode("utf-16-le")) // 2 <= 4096
+
+
+def has_hard_speech_boundary(text: str) -> bool:
+    """Infer an exact hard client cut; discarded client whitespace is unknowable."""
+    return len(text) == 4096 or len(text.encode("utf-16-le")) // 2 == 4096
+
+
+def starts_long_speech(message: Message) -> bool:
+    """Only an explicit, near-limit inline source starts continuation capture."""
+    from app.voice_intent import resolve_speech_request
+
+    text = message.text or ""
+    if getattr(message, "forward_origin", None) or not _near_telegram_limit(text):
+        return False
+    intent = resolve_speech_request(user_texts=[text])
+    return intent.action == "speak" and intent.source == "inline"
+
+
+def has_open_speech_slot(user_id: int, chat_id: int) -> bool:
+    slot = _speech_slots.get(user_id)
+    return slot is not None and slot.chat_id == chat_id and not slot.finished
+
+
+def accepts_speech_message(user_id: int, message: Message) -> bool:
+    """A short final source or an explicit reply elsewhere closes association."""
+    slot = _speech_slots.get(user_id)
+    if slot is None:
+        hint = _speech_hints.get(user_id)
+        if (
+            hint is None
+            or hint.chat_id != getattr(message, "chat_id", 0)
+            or time.monotonic() - hint.first_ts >= _SPEECH_TOTAL_S
+            or message.message_id <= hint.first_message_id
+        ):
+            return False
+        source_ids = {hint.first_message_id}
+    else:
+        if not has_open_speech_slot(user_id, getattr(message, "chat_id", 0)):
+            return False
+        tail = max(slot.entries, key=lambda entry: entry.message.message_id)
+        # Concurrent admission may deliver an earlier source after its short
+        # terminal source. Keep that earlier ID inside the open window.
+        if message.message_id < min(entry.message.message_id for entry in slot.entries):
+            return False
+        if not _near_telegram_limit(tail.text) and message.message_id > tail.message.message_id:
+            return False
+        if slot.finish_requested and message.message_id > tail.message.message_id:
+            return False
+        source_ids = {entry.message.message_id for entry in slot.entries}
+    if getattr(message, "forward_origin", None) or any(
+        getattr(message, name, None) for name in ("photo", "voice", "document", "video", "audio")
+    ):
+        return False
+    text = message.text or ""
+    # Bare commands are an explicit control escape. Preserve account erasure's
+    # confirmation as well; slash-prefixed prose with payload remains source data.
+    if re.fullmatch(r"/[a-z0-9_]+(?:@[a-z0-9_]+)?\s*", text, re.IGNORECASE) or re.fullmatch(
+        r"/deleteme(?:@[a-z0-9_]+)?\s+CONFIRM\s*", text, re.IGNORECASE
+    ):
+        return False
+    reply = getattr(message, "reply_to_message", None)
+    return reply is None or getattr(reply, "message_id", None) in source_ids
+
+
+def speech_collection_epoch(user_id: int) -> int | None:
+    return _speech_slots[user_id].epoch
+
+
+def clear_user_speech_collection(user_id: int) -> None:
+    """Reset/erasure scrubs retained text immediately and cancels its owner."""
+    hint = _speech_hints.pop(user_id, None)
+    if hint is not None:
+        hint.ready.set()
+        if not hint.owner.done():
+            hint.owner.cancel()
+    slot = _speech_slots.pop(user_id, None)
+    if slot is not None:
+        slot.entries.clear()
+        slot.pending_ids.clear()
+        slot.finished = True
+        slot.changed.set()
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+        if not slot.owner.done() and slot.owner is not current_task:
+            slot.owner.cancel()
+
+
+def _speech_tail_is_complete(slot: _SpeechSlot) -> bool:
+    text = max(slot.entries, key=lambda entry: entry.message.message_id).text
+    return not has_hard_speech_boundary(text) or text[-1:].isspace() or text.endswith(tuple('.!?…。！？»"”'))
+
+
+async def _collect_speech_message(
+    user_id: int,
+    message: Message,
+    *,
+    bot=None,
+    speech_epoch: int | None,
+    load_speech_epoch: Callable[[], Awaitable[int | None]] | None = None,
+) -> DebounceResult | None:
+    """Keep one bounded, private, explicit source collection owned by its waiter."""
+    chat_id = message.chat_id
+    slot = _speech_slots.get(user_id)
+    if slot is not None and slot.chat_id == chat_id and not slot.finished:
+        if slot.epoch != speech_epoch:
+            slot.error = "stale_epoch"
+            slot.finished = True
+        elif (message.text or "").strip().casefold() in ("готово", "done"):
+            slot.finish_requested = True
+        else:
+            if any(item.message.message_id == message.message_id for item in slot.entries):
+                return None
+            entry = await _build_entry(message, bot=bot)
+            size = len(entry.text.encode("utf-8"))
+            if len(slot.entries) >= _SPEECH_MAX_PARTS or slot.retained_bytes + size > _SPEECH_MAX_BYTES:
+                # Include the rejected source identity so the terminal error
+                # explicitly covers every submitted physical part.
+                slot.entries.append(entry)
+                slot.error = "collection_capacity"
+                slot.finished = True
+            else:
+                slot.entries.append(entry)
+                slot.retained_bytes += size
+                slot.last_ts = time.monotonic()
+        slot.changed.set()
+        return None
+
+    entry = await _build_entry(message, bot=bot)
+    if slot is not None or len(_speech_slots) >= _SPEECH_MAX_SLOTS:
+        return DebounceResult(
+            [entry], speech_collection=True, speech_epoch=speech_epoch, speech_error="collection_capacity"
+        )
+    owner = asyncio.current_task()
+    assert owner is not None
+    slot = _SpeechSlot([entry], chat_id, speech_epoch, owner, retained_bytes=len(entry.text.encode("utf-8")))
+    _speech_slots[user_id] = slot
+    hint = _speech_hints.get(user_id)
+    if hint is not None and hint.owner is owner:
+        slot.pending_ids = hint.pending_ids
+        slot.first_ts = hint.first_ts
+        hint.collection = slot
+        if hint.error:
+            slot.error, slot.finished = hint.error, True
+        hint.ready.set()
+    cancellation = None
+    try:
+        # Reservation precedes the snapshot read. Concurrent physical sources
+        # can be captured while the epoch is still provisional; no provider job
+        # is admitted until the owner's exact epoch has been pinned here.
+        if load_speech_epoch is not None:
+            slot.epoch = await load_speech_epoch()
+        slot.notices.append(
+            await message.reply_text(
+                "Собираю части текста для озвучивания. После длинной части жду продолжение до 15 секунд, "
+                "после короткой — 1 секунду. «Готово» подтверждает конец текста. "
+                "Если конец длинной части неоднозначен, сохраняю части до 60 секунд. "
+                "Отдельное голосовое сообщение будет ответом на каждую исходную часть."
+            )
+        )
+        idle_notice_sent = False
+        while not slot.finished:
+            # Clear before reading state. A Telegram notice can await network
+            # I/O while another admitted physical source sets this event.
+            slot.changed.clear()
+            remaining_total = _SPEECH_TOTAL_S - (time.monotonic() - slot.first_ts)
+            if remaining_total <= 0:
+                slot.error = "" if not slot.pending_ids and _speech_tail_is_complete(slot) else "collection_incomplete"
+                break
+            if slot.pending_ids:
+                try:
+                    await asyncio.wait_for(slot.changed.wait(), timeout=remaining_total)
+                except TimeoutError:
+                    pass
+                continue
+            if slot.finish_requested:
+                break
+            complete = _speech_tail_is_complete(slot)
+            tail_text = max(slot.entries, key=lambda entry: entry.message.message_id).text
+            idle_window = _DEFAULT_WINDOW_S if not _near_telegram_limit(tail_text) else _SPEECH_WINDOW_S
+            remaining_idle = idle_window - (time.monotonic() - slot.last_ts)
+            if remaining_idle <= 0:
+                if complete:
+                    break
+                if not idle_notice_sent:
+                    slot.notices.append(
+                        await message.reply_text(
+                            "Конец длинной части может быть обрезан внутри слова. Пришлите продолжение "
+                            "или «Готово», если текст полный. Все части сохранены до конца 60-секундного сбора."
+                        )
+                    )
+                    idle_notice_sent = True
+                    continue
+                remaining_idle = remaining_total
+            try:
+                await asyncio.wait_for(slot.changed.wait(), timeout=min(remaining_idle, remaining_total))
+            except TimeoutError:
+                pass
+        return DebounceResult(
+            list(slot.entries), speech_collection=True, speech_epoch=slot.epoch, speech_error=slot.error
+        )
+    except asyncio.CancelledError as error:
+        cancellation = error
+        raise
+    finally:
+        if _speech_slots.get(user_id) is slot:
+            _speech_slots.pop(user_id, None)
+        slot.entries.clear()
+        await _retire_speech_notices(slot.notices, cancellation=cancellation)
+
+
+async def _retire_speech_notices(notices: list[Message], *, cancellation: asyncio.CancelledError | None) -> None:
+    async def retire() -> None:
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*(notice.delete() for notice in notices), return_exceptions=True), timeout=3
+            )
+        except TimeoutError:
+            pass
+        finally:
+            notices.clear()
+
+    cleanup = asyncio.create_task(retire())
+    while not cleanup.done():
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+    cleanup.result()
+    if cancellation is not None:
+        raise cancellation
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
@@ -257,6 +623,8 @@ async def debounce_message(
     message: Message,
     *,
     bot=None,  # telegram.Bot — used for reaction feedback; optional
+    speech_epoch: int | None = None,
+    load_speech_epoch: Callable[[], Awaitable[int | None]] | None = None,
 ) -> DebounceResult | None:
     """Accumulate *message* for *user_id* and wait for the debounce window.
 
@@ -264,6 +632,10 @@ async def debounce_message(
         None      → message absorbed; caller must return immediately.
         DebounceResult → window fired; caller proceeds with the merged context.
     """
+    if accepts_speech_message(user_id, message) or starts_long_speech(message):
+        return await _collect_speech_message(
+            user_id, message, bot=bot, speech_epoch=speech_epoch, load_speech_epoch=load_speech_epoch
+        )
     entry = await _build_entry(message, bot=bot)
     slot = _debounce_slots.get(user_id)
 

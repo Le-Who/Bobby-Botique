@@ -177,25 +177,6 @@ async def test_credentials_error_reaches_key_owner_unchanged(isolated_speech, mo
     attempt.fail.assert_called_once()
 
 
-@pytest.mark.parametrize(
-    "text", ["слово " * 1000, "界" * 1000, "🐱" * 1000, "a" * 2000], ids=["cyrillic", "cjk", "emoji", "long-token"]
-)
-def test_long_sentences_and_tokens_obey_utf8_chunk_bound_without_losing_text(text):
-    from app.providers.tts import _chunk_text_by_sentences
-
-    chunks = _chunk_text_by_sentences(text, max_bytes=160)
-    assert all(0 < len(chunk.encode()) <= 160 for chunk in chunks)
-    assert "".join(chunks).replace(" ", "") == text.replace(" ", "")
-
-
-@pytest.mark.parametrize("limit", [0, -1])
-def test_invalid_local_chunk_bound_is_rejected(limit):
-    from app.providers.tts import _chunk_text_by_sentences
-
-    with pytest.raises(ValueError):
-        _chunk_text_by_sentences("Hello.", max_bytes=limit)
-
-
 @pytest.mark.parametrize("status", ["failed", "incomplete", "budget_exceeded", "in_progress", "cancelled"])
 def test_current_audio_requires_completed_interaction(status):
     from app.providers.tts import _interaction_audio
@@ -256,6 +237,262 @@ async def test_oversized_director_prompt_is_rejected_before_key_reservation(isol
         await tts.generate_speech("Hello.", "offline-test-key")
     reserve.assert_not_awaited()
     attempt.finish.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_input_token_exposure_is_rejected_locally_before_any_quota_or_sdk(isolated_speech, monkeypatch):
+    from app.providers.tts_audio import TTSRequestError
+
+    tts, attempt = isolated_speech
+    reserve = AsyncMock(return_value=True)
+    sdk = MagicMock(
+        return_value=SimpleNamespace(
+            aio=SimpleNamespace(
+                interactions=SimpleNamespace(
+                    create=AsyncMock(
+                        return_value=SimpleNamespace(
+                            status="completed",
+                            errors=None,
+                            steps=[
+                                SimpleNamespace(
+                                    type="model_output",
+                                    error=None,
+                                    content=[
+                                        SimpleNamespace(
+                                            type="audio", mime_type="audio/l16", data=base64.b64encode(PCM).decode()
+                                        )
+                                    ],
+                                )
+                            ],
+                        )
+                    )
+                )
+            )
+        )
+    )
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserve)
+    monkeypatch.setattr(tts, "get_cached_genai_client", sdk)
+    with pytest.raises(TTSRequestError, match="input_too_large"):
+        await tts.generate_speech("я" * 4096, "offline-test-key")
+    reserve.assert_not_awaited()
+    sdk.assert_not_called()
+    attempt.finish.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_direction_metadata_consumes_the_same_input_allowance(isolated_speech, monkeypatch):
+    from app.providers.tts_audio import TTSRequestError
+
+    tts, _ = isolated_speech
+    reserve = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserve)
+    monkeypatch.setattr(tts, "_get_delivery_direction", lambda *_: "я" * 3500)
+    with pytest.raises(TTSRequestError, match="input_too_large"):
+        await tts.generate_speech("x" * 200, "offline-test-key")
+    reserve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["gemini-3.8-flash-lite-tts", "gemini-3.1-flash-tts-preview"])
+async def test_completed_audio_at_output_token_ceiling_is_never_accepted(isolated_speech, monkeypatch, model):
+    from app.providers.tts_audio import TTSOutputError
+
+    tts, _ = isolated_speech
+    if model.startswith("gemini-3.8"):
+        payload = {
+            "id": "offline",
+            "status": "completed",
+            "model": model,
+            "usage": {"total_output_tokens": 4096},
+            "steps": [
+                {
+                    "type": "model_output",
+                    "role": "model",
+                    "content": [
+                        {
+                            "type": "audio",
+                            "mime_type": "audio/l16",
+                            "data": base64.b64encode(PCM).decode(),
+                        }
+                    ],
+                }
+            ],
+        }
+    else:
+        payload = {
+            "candidates": [
+                {
+                    "finishReason": "STOP",
+                    "content": {
+                        "role": "model",
+                        "parts": [
+                            {
+                                "inlineData": {"mimeType": "audio/l16", "data": base64.b64encode(PCM).decode()},
+                            }
+                        ],
+                    },
+                }
+            ],
+            "usageMetadata": {"candidatesTokenCount": 4096},
+        }
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    ) as transport:
+        client = genai.Client(api_key="offline-test-key", http_options=types.HttpOptions(httpx_async_client=transport))
+        monkeypatch.setattr(tts, "get_cached_genai_client", lambda _: client)
+        try:
+            with pytest.raises(TTSOutputError, match="output_token_limit"):
+                await tts.generate_speech("Complete source.", "offline-test-key", model_name=model)
+        finally:
+            await client.aio.aclose()
+            client.close()
+
+
+@pytest.mark.asyncio
+async def test_provider_input_token_error_has_a_resizable_contract_not_a_key_error(isolated_speech, monkeypatch):
+    from google.genai.errors import ClientError
+
+    from app.providers.tts_audio import TTSRequestError
+
+    tts, _ = isolated_speech
+    error = ClientError(400, {"error": {"message": "Input token count exceeds maximum input token limit of 8192"}})
+    monkeypatch.setattr(
+        tts,
+        "get_cached_genai_client",
+        lambda _: SimpleNamespace(
+            aio=SimpleNamespace(interactions=SimpleNamespace(create=AsyncMock(side_effect=error)))
+        ),
+    )
+    with pytest.raises(TTSRequestError, match="input_too_large"):
+        await tts.generate_speech("Complete source.", "offline-test-key")
+
+
+@pytest.mark.asyncio
+async def test_actual_sdk_incomplete_response_is_subdivided_and_each_dispatch_is_accounted(
+    isolated_speech, monkeypatch
+):
+    from app import voice_engine
+
+    tts, _ = isolated_speech
+    text = "First complete transcript. Second complete transcript."
+    requests = []
+    reserve = AsyncMock(return_value=True)
+    suspend = AsyncMock()
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserve)
+    monkeypatch.setattr(
+        "app.repos.keys.get_available_gemini_key",
+        AsyncMock(return_value={"key_hash": "offline", "api_key": "offline-test-key"}),
+    )
+    monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: SimpleNamespace(suspend_key=suspend))
+
+    def respond(request):
+        transcript = json.loads(request.content)["input"][0]["content"][0]["text"]
+        requests.append(transcript)
+        return httpx.Response(
+            200,
+            json={
+                "id": "offline",
+                "status": "incomplete" if transcript == text else "completed",
+                "model": "gemini-3.8-flash-lite-tts",
+                "steps": [
+                    {
+                        "type": "model_output",
+                        "role": "model",
+                        "content": [
+                            {
+                                "type": "audio",
+                                "mime_type": "audio/l16",
+                                "data": base64.b64encode(PCM).decode(),
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as transport:
+        client = genai.Client(api_key="offline-test-key", http_options=types.HttpOptions(httpx_async_client=transport))
+        monkeypatch.setattr(tts, "get_cached_genai_client", lambda _: client)
+        try:
+            prepared = await tts.prepare_speech_settings(voice="Aoede")
+            result = await voice_engine._run_gemini_pipeline([text], "Aoede", 1, speech_settings=prepared)
+        finally:
+            await client.aio.aclose()
+            client.close()
+    assert result == [PCM, PCM]
+    assert requests == [text, "First complete transcript. ", "Second complete transcript."]
+    assert reserve.await_count == 3
+    suspend.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_silent_separator_pieces_do_not_abort_real_sdk_synthesis(isolated_speech, monkeypatch):
+    from app import voice_engine
+    from app.providers.tts_budget import split_speech_text
+
+    tts, _ = isolated_speech
+    tts.get_config.return_value["max_output_tokens"] = 1024
+    text = "First. " + " " * 400 + "Last."
+    requests, progress = [], []
+    reserve = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.repos.keys.reserve_gemini_key_usage", reserve)
+    monkeypatch.setattr(
+        "app.repos.keys.get_available_gemini_key",
+        AsyncMock(return_value={"key_hash": "offline", "api_key": "offline-test-key"}),
+    )
+    monkeypatch.setattr("app.repos.keys.get_key_status_manager", lambda: SimpleNamespace(suspend_key=AsyncMock()))
+
+    async def complete(done, total):
+        progress.append((done, total))
+
+    def respond(request):
+        transcript = json.loads(request.content)["input"][0]["content"][0]["text"]
+        requests.append(transcript)
+        return httpx.Response(
+            200,
+            json={
+                "id": "offline",
+                "status": "completed",
+                "model": "gemini-3.8-flash-lite-tts",
+                "steps": [
+                    {
+                        "type": "model_output",
+                        "role": "model",
+                        "content": [
+                            {
+                                "type": "audio",
+                                "mime_type": "audio/l16",
+                                "data": base64.b64encode(PCM).decode(),
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as transport:
+        client = genai.Client(api_key="offline-test-key", http_options=types.HttpOptions(httpx_async_client=transport))
+        monkeypatch.setattr(tts, "get_cached_genai_client", lambda _: client)
+        try:
+            prepared = await tts.prepare_speech_settings(voice="Aoede")
+            pieces = split_speech_text(text, prepared.piece_max_bytes)
+            assert "".join(pieces) == text
+            assert any(not piece.strip() for piece in pieces)
+            result = await voice_engine._run_gemini_pipeline(
+                pieces,
+                "Aoede",
+                1,
+                speech_settings=prepared,
+                on_chunk_complete=complete,
+            )
+        finally:
+            await client.aio.aclose()
+            client.close()
+    assert result == [PCM, PCM]
+    assert [item.strip() for item in requests] == ["First.", "Last."]
+    assert reserve.await_count == 2
+    assert progress[-1] == (2, 2)
 
 
 @pytest.mark.asyncio

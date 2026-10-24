@@ -41,12 +41,25 @@ _GENERATE_START = re.compile(
 
 
 @dataclass(frozen=True)
+class SpeechSourcePart:
+    """One original Telegram source and its uninterrupted lexical transcript."""
+
+    text: str
+    reply_to_message_id: int
+
+
+@dataclass(frozen=True)
 class SpeechRequestIntent:
     """An exact transcript, a source clarification, or ordinary chat routing."""
 
     action: Literal["none", "speak", "clarify"] = "none"
     text: str = ""
     source: str = ""
+    parts: tuple[SpeechSourcePart, ...] = ()
+    expected_epoch: int | None = None
+    error: str = ""
+    source_message_ids: tuple[int, ...] = ()
+    contiguous_parts: bool = False
 
 
 def _unquote_transcript(text: str) -> str:

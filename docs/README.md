@@ -2,7 +2,8 @@
 
 Initial documentation audit: 2026-09-20 against checkout `f44541a7`; current
 references are maintained with subsequent changes, including the 2026-10-23
-runtime, CI and speech updates. Read current references first; historical plans,
+runtime, CI and speech updates, and the 2026-10-24 long-source/TTS budget changes.
+Read current references first; historical plans,
 journals and test/deploy reports are not current instructions.
 
 ## Current references

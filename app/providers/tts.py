@@ -11,6 +11,7 @@ import binascii
 import hashlib
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from google.genai import types
@@ -27,6 +28,7 @@ from app.providers.tts_audio import (
     TTSRequestError,
     normalize_tts_audio,
 )
+from app.providers.tts_budget import speech_input_bytes, speech_output_text_bytes
 from app.providers.tts_quota import tts_minute_quota
 from app.runtime_settings.audio import get_config, resolve_voice
 from app.runtime_settings.lifecycle import runtime_settings_scope
@@ -44,10 +46,6 @@ class TTSAdmissionRejected(RuntimeError):
 
 TTS_FALLBACK_MODEL = TTS_DEFAULT_MODELS[1]
 
-# Bound retained input locally; the provider enforces its model token limit.
-# A byte limit is not a tokenizer: Russian transcripts must not inherit the
-# former 7,500-byte chunk guard. Keep edited delivery directions bounded.
-_MAX_TTS_INPUT_BYTES = 64 * 1024
 _MAX_TTS_DIRECTION_BYTES = 7500
 
 # Available voices and their personalities:
@@ -80,6 +78,29 @@ _RE_EMOJI_CLUSTER = re.compile(
     r"\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF"
     r"\u2600-\u26FF\u2700-\u27BF]{2,}"
 )
+_MAX_CLEANUP_SOURCES = 32
+_MAX_CLEANUP_BYTES = 256 * 1024
+# Each rule only deletes characters: keep a capture group, an initial span,
+# or nothing. The same ordered rules drive the fast and provenance paths.
+_SPEECH_CLEAN_RULES: tuple[tuple[re.Pattern[str], int | None, int | None], ...] = (
+    (_RE_CODE_BLOCK, None, None),
+    (_RE_INLINE_CODE, 1, None),
+    (_RE_MD_IMAGE, None, None),
+    (_RE_MD_LINK, 1, None),
+    (_RE_BARE_URL, None, None),
+    (_RE_HTML_TAG, None, None),
+    (_RE_BOLD_ITALIC, None, None),
+    (_RE_HEADER, None, None),
+    (_RE_EMOJI_CLUSTER, 0, 1),
+    (_RE_CONSECUTIVE_NEWLINES, 0, 2),
+)
+
+
+def _cleanup_kept_span(match: re.Match[str], group: int | None, length: int | None) -> tuple[int, int]:
+    if group is None:
+        return match.start(), match.start()
+    start, end = match.span(group)
+    return start, min(end, start + length) if length is not None else end
 
 
 def _clean_text_for_speech(text: str) -> str:
@@ -97,51 +118,57 @@ def _clean_text_for_speech(text: str) -> str:
       9. Collapse excessive whitespace
     """
     t = text
-    t = _RE_CODE_BLOCK.sub("", t)  # 1
-    t = _RE_INLINE_CODE.sub(r"\1", t)  # 1b: keep inline code text
-    t = _RE_MD_IMAGE.sub("", t)  # 2
-    t = _RE_MD_LINK.sub(r"\1", t)  # 3
-    t = _RE_BARE_URL.sub("", t)  # 4
-    t = _RE_HTML_TAG.sub("", t)  # 5
-    t = _RE_BOLD_ITALIC.sub("", t)  # 6
-    t = _RE_HEADER.sub("", t)  # 7
-    t = _RE_EMOJI_CLUSTER.sub(lambda m: m.group()[0], t)  # 8
-    t = _RE_CONSECUTIVE_NEWLINES.sub("\n\n", t)  # 9
+    for pattern, group, length in _SPEECH_CLEAN_RULES:
+
+        def replace(match: re.Match[str], keep_group: int | None = group, keep_length: int | None = length) -> str:
+            return match.string[slice(*_cleanup_kept_span(match, keep_group, keep_length))]
+
+        t = pattern.sub(replace, t)
     return t.strip()
 
 
-def _chunk_text_by_sentences(text: str, max_bytes: int = 3500) -> list[str]:
-    """Enforce a local UTF-8 bound, preferring sentence then word boundaries.
+def clean_speech_parts(parts: list[str]) -> list[str]:
+    """Clean contiguous source text once, retaining each surviving character's owner.
 
-    These conservative chunks bound synthesis duration and output size. Actual
-    API input limits are model-specific token/character limits, not this bound.
-    Only a token longer than the entire budget is split between code points.
+    Formatting may span physical message cuts. Carry source indices through
+    each deletion rather than searching the cleaned text in repeated source
+    words. Return one slot per source, including sources removed entirely.
     """
-    if max_bytes <= 0:
-        raise ValueError("max_bytes must be positive")
-    encoded = text.strip().encode("utf-8")
-    chunks: list[str] = []
-    offset = 0
-    while offset < len(encoded):
-        end = min(offset + max_bytes, len(encoded))
-        while end < len(encoded) and end > offset and encoded[end] & 0xC0 == 0x80:
-            end -= 1
-        if end == offset:
-            raise ValueError("max_bytes cannot contain one UTF-8 character")
-        prefix = encoded[offset:end].decode("utf-8")
-        if end < len(encoded):
-            boundaries = list(re.finditer(r"[.!?…](?=\s)", prefix))
-            if boundaries:
-                prefix = prefix[: boundaries[-1].end()]
-            else:
-                whitespace = list(re.finditer(r"\s+", prefix))
-                if whitespace and whitespace[-1].start() > 0:
-                    prefix = prefix[: whitespace[-1].end()]
-        offset += len(prefix.encode("utf-8"))
-        chunk = prefix.strip()
-        if chunk:
-            chunks.append(chunk)
-    return chunks
+    if len(parts) > _MAX_CLEANUP_SOURCES or any(len(part) > _MAX_CLEANUP_BYTES for part in parts):
+        raise TTSRequestError("input_too_large")
+    if sum(len(part.encode("utf-8")) for part in parts) > _MAX_CLEANUP_BYTES:
+        raise TTSRequestError("input_too_large")
+    if len(parts) <= 1:
+        return [_clean_text_for_speech(part) for part in parts]
+
+    text = "".join(parts)
+    origins = b"".join(bytes([index]) * len(part) for index, part in enumerate(parts))
+    for pattern, group, length in _SPEECH_CLEAN_RULES:
+        text_parts: list[str] = []
+        next_origins = bytearray()
+        cursor = 0
+        for match in pattern.finditer(text):
+            start, end = _cleanup_kept_span(match, group, length)
+            text_parts.extend((text[cursor : match.start()], text[start:end]))
+            next_origins.extend(origins[cursor : match.start()])
+            next_origins.extend(origins[start:end])
+            cursor = match.end()
+        text_parts.append(text[cursor:])
+        next_origins.extend(origins[cursor:])
+        text = "".join(text_parts)
+        origins = bytes(next_origins)
+
+    leading = len(text) - len(text.lstrip())
+    trailing = len(text.rstrip())
+    text, origins = text[leading:trailing], origins[leading:trailing]
+    result = []
+    cursor = 0
+    for source in range(len(parts)):
+        start = cursor
+        while cursor < len(origins) and origins[cursor] == source:
+            cursor += 1
+        result.append(text[start:cursor])
+    return result
 
 
 # ─── Legacy recitation rules and shared concise delivery directions ────────
@@ -210,6 +237,57 @@ def _get_steerable_tts_prompt(temperature: float, voice_prompt: str = "") -> tup
     )
 
 
+@dataclass(frozen=True)
+class SpeechSettings:
+    """One immutable voice, direction and budget for a whole model attempt."""
+
+    voice: str
+    temperature: float
+    direction: str
+    model_name: str
+    language_code: str | None
+    max_output_tokens: int
+    input_max_bytes: int
+    piece_max_bytes: int
+    current_tts: bool
+
+
+async def prepare_speech_settings(
+    *,
+    voice: str | None = None,
+    tts_temperature: float | None = None,
+    model_name: str = TTS_MODEL,
+    language_code: str | None = None,
+) -> SpeechSettings:
+    audio_config = await get_config("gemini")
+    selected_voice = resolve_voice(audio_config, voice)
+    voice_config = next(row for row in audio_config["voices"] if row["id"] == selected_voice)
+    temperature = (
+        tts_temperature if tts_temperature is not None else voice_config.get("temperature", audio_config["temperature"])
+    )
+    current_tts = model_name.startswith("gemini-3.8-") and model_name.endswith("-tts")
+    if current_tts:
+        direction = _get_delivery_direction(temperature, voice_config["prompt"])
+    else:
+        base_prompt, pacing_tag = _get_steerable_tts_prompt(temperature, voice_config["prompt"])
+        direction = f"{base_prompt}{pacing_tag}"
+    if len(direction.encode("utf-8")) > _MAX_TTS_DIRECTION_BYTES:
+        raise TTSRequestError("input_too_large")
+    input_max_bytes = speech_input_bytes(direction, selected_voice, language_code)
+    max_output_tokens = int(audio_config["max_output_tokens"])
+    return SpeechSettings(
+        selected_voice,
+        temperature,
+        direction,
+        model_name,
+        language_code,
+        max_output_tokens,
+        input_max_bytes,
+        min(input_max_bytes, speech_output_text_bytes(max_output_tokens)),
+        current_tts,
+    )
+
+
 def _complete_audio(parts: list[tuple[bytes, str | None]]) -> bytes:
     if not parts:
         raise TTSOutputError("empty_audio")
@@ -224,9 +302,12 @@ def _complete_audio(parts: list[tuple[bytes, str | None]]) -> bytes:
     return b"".join(normalized)
 
 
-def _interaction_audio(response: Any) -> bytes:
+def _interaction_audio(response: Any, max_output_tokens: int | None = None) -> bytes:
     if getattr(response, "status", None) != "completed" or getattr(response, "errors", None):
         raise TTSOutputError("incomplete_audio")
+    used = getattr(getattr(response, "usage", None), "total_output_tokens", None)
+    if max_output_tokens is not None and isinstance(used, int) and used >= max_output_tokens:
+        raise TTSOutputError("output_token_limit")
     parts: list[tuple[bytes, str | None]] = []
     total = 0
     for step in response.steps or ():
@@ -254,7 +335,7 @@ def _interaction_audio(response: Any) -> bytes:
     return _complete_audio(parts)
 
 
-def _legacy_audio(response: Any) -> bytes:
+def _legacy_audio(response: Any, max_output_tokens: int | None = None) -> bytes:
     candidates = response.candidates or ()
     if not candidates:
         raise TTSOutputError("empty_audio")
@@ -262,6 +343,9 @@ def _legacy_audio(response: Any) -> bytes:
     reason = getattr(candidate, "finish_reason", None)
     if getattr(reason, "value", reason) != "STOP":
         raise TTSOutputError("incomplete_audio")
+    used = getattr(getattr(response, "usage_metadata", None), "candidates_token_count", None)
+    if max_output_tokens is not None and isinstance(used, int) and used >= max_output_tokens:
+        raise TTSOutputError("output_token_limit")
     parts = getattr(getattr(candidate, "content", None), "parts", None) or ()
     return _complete_audio(
         [(part.inline_data.data, part.inline_data.mime_type) for part in parts if part.inline_data is not None]
@@ -278,6 +362,7 @@ async def generate_speech(
     timeout: float = 50.0,
     model_name: str = TTS_MODEL,
     language_code: str | None = None,
+    speech_settings: SpeechSettings | None = None,
 ) -> bytes | None:
     """Return complete mono PCM or preserve the failure for the queue's policy.
 
@@ -289,28 +374,19 @@ async def generate_speech(
         return None
 
     deadline = asyncio.get_running_loop().time() + timeout
-    audio_config = await get_config("gemini")
-    voice = resolve_voice(audio_config, voice)
-    voice_config = next(row for row in audio_config["voices"] if row["id"] == voice)
-    voice_prompt = voice_config["prompt"]
-    clean = _clean_text_for_speech(text)
+    clean = text if speech_settings is not None else _clean_text_for_speech(text)
     if not clean:
         return None
 
-    user_temp = (
-        tts_temperature if tts_temperature is not None else voice_config.get("temperature", audio_config["temperature"])
+    prepared = speech_settings or await prepare_speech_settings(
+        voice=voice, tts_temperature=tts_temperature, model_name=model_name, language_code=language_code
     )
-    current_tts = model_name.startswith("gemini-3.8-") and model_name.endswith("-tts")
-    if current_tts:
-        direction = _get_delivery_direction(user_temp, voice_prompt)
-    else:
-        base_prompt, pacing_tag = _get_steerable_tts_prompt(user_temp, voice_prompt)
-        direction = f"{base_prompt}{pacing_tag}"
-    if (
-        len(direction.encode("utf-8")) > _MAX_TTS_DIRECTION_BYTES
-        or len((direction + clean).encode("utf-8")) > _MAX_TTS_INPUT_BYTES
-    ):
+    voice, user_temp, direction = prepared.voice, prepared.temperature, prepared.direction
+    model_name, language_code, current_tts = prepared.model_name, prepared.language_code, prepared.current_tts
+    if len(clean.encode("utf-8")) > prepared.input_max_bytes:
         raise TTSRequestError("input_too_large")
+    if len(clean.encode("utf-8")) > prepared.piece_max_bytes:
+        raise TTSRequestError("output_budget_exceeded")
 
     from app.config import settings
     from app.repos.keys import reserve_gemini_key_usage
@@ -383,17 +459,17 @@ async def generate_speech(
                     response_format={"type": "audio", "mime_type": "audio/l16", "sample_rate": 24000},
                     generation_config={
                         "speech_config": [speech],
-                        "max_output_tokens": audio_config["max_output_tokens"],
+                        "max_output_tokens": prepared.max_output_tokens,
                     },
                     store=False,
                     timeout=timeout,
                 )
-                audio = _interaction_audio(response)
+                audio = _interaction_audio(response, prepared.max_output_tokens)
             else:
                 config = types.GenerateContentConfig(
                     http_options=types.HttpOptions(retry_options=types.HttpRetryOptions(attempts=1)),
                     temperature=max(user_temp, 0.5),
-                    max_output_tokens=audio_config["max_output_tokens"],
+                    max_output_tokens=prepared.max_output_tokens,
                     response_modalities=["AUDIO"],
                     speech_config=types.SpeechConfig(
                         voice_config=types.VoiceConfig(
@@ -408,7 +484,7 @@ async def generate_speech(
                     contents=f"{direction} {clean}",
                     config=config,
                 )
-                audio = _legacy_audio(legacy_response)
+                audio = _legacy_audio(legacy_response, prepared.max_output_tokens)
         attempt.finish(outcome="succeeded", output_bytes=len(audio))
         logging.info("TTS generated: voice=%s, text_len=%d, audio_bytes=%d", voice, len(clean), len(audio))
         return audio
@@ -430,5 +506,8 @@ async def generate_speech(
             marker in evidence for marker in ("api key not valid", "failed_precondition")
         )
         if rejected_request and not project_failure:
+            if "token" in evidence and any(marker in evidence for marker in ("limit", "exceed", "maximum", "too long")):
+                reason = "output_budget_exceeded" if "output" in evidence else "input_too_large"
+                raise TTSRequestError(reason) from error
             raise TTSRequestError("unsupported_tts_request") from error
         raise

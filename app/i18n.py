@@ -1595,6 +1595,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "❌ Озвучка сейчас недоступна. Попробуйте ещё раз.",
         "en": "❌ Speech is currently unavailable. Please try again.",
     },
+    "speech.empty": {
+        "ru": "В этой части нет текста для озвучки после удаления разметки, ссылок и блоков кода.",
+        "en": "This part has no spoken text after formatting, links and code blocks are removed.",
+    },
     # ── Expandable blockquote labels ─────────────────────────────────────
     "blockquote.partial_label": {
         "ru": "Частичный ответ / Сбой сети",

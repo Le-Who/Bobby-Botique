@@ -485,14 +485,22 @@ text. Missing or competing sources produce a clarification. Requests to generate
 an answer and speak it retain the chat route. See the
 [speech request guide](docs/voice-and-tts.md) for examples and limits.
 
-Gemini TTS sends the whole cleaned reply in one generation, with sequential key
-rotation and no duplicate key races. Input/output token limits still apply;
-incomplete audio is discarded before trying the next configured model/provider.
+Long direct recitation retains each original Telegram message: one audio file
+replies to each source, in source order. Collection waits visibly for possible
+continuations; repeated text in different message IDs remains part of the source.
+See the speech guide for the bounded collection window and ambiguous final parts.
+
+Gemini TTS divides a transcript only as required by its conservative local
+input/output budget, then synthesizes those pieces sequentially into one file
+for that source. Key rotation is sequential; duplicate key races are disabled.
+Explicitly incomplete or token-limited output is discarded and retried with
+smaller pieces within bounded limits. A failed source never delivers partial audio.
 ElevenLabs also sends a whole transcript when it fits the selected model, splitting
 only at known model character limits (10,000 for Multilingual v2, 40,000 for Flash
 v2.5). Separate requests can differ in prosody; those necessary long-form joins
-retain neighbouring text context. Gemini input is bounded locally at 64 KiB UTF-8
-including directions; the provider enforces its token limit.
+retain neighbouring text context in ElevenLabs. The queue's 64 KiB UTF-8 source
+limit is separate from Gemini's per-call token budget. Audio validation detects
+reported truncation and malformed data; it does not verify every spoken word.
 
 RPM admission precedes atomic RPD admission. An unsent minute reservation is
 refunded; dispatched requests retain RPM/RPD usage on errors and cancellation.

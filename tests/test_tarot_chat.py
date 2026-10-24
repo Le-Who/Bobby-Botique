@@ -118,11 +118,10 @@ def test_stale_tarot_end_button_handler_is_registered_before_tarot_mode():
 
     messages.register(application)
 
-    callbacks = [call.args[0].callback for call in application.add_handler.call_args_list[:2]]
-    assert callbacks == [
-        tarot_chat.handle_tarot_end_session_message,
-        tarot_chat.handle_tarot_message,
-    ]
+    callbacks = [call.args[0].callback for call in application.add_handler.call_args_list]
+    assert callbacks.index(tarot_chat.handle_tarot_end_session_message) < callbacks.index(
+        tarot_chat.handle_tarot_message
+    )
 
 
 def test_tarot_idle_choice_callback_is_registered_with_tarot_messages():

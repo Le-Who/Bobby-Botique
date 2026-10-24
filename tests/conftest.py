@@ -196,11 +196,14 @@ def _clear_global_caches():
     """
     from app.config import _invalidate_primary_provider_cache
     from app.database import db_manager
+    from app.middleware import dedup
     from app.providers.tts_quota import tts_minute_quota
 
     def _clear():
         _invalidate_primary_provider_cache()
         tts_minute_quota._local.clear()
+        dedup._recent_requests.clear()
+        dedup._recent_voice_ids.clear()
         if hasattr(db_manager, "_active_keys_cache"):
             db_manager._active_keys_cache.clear()
         if hasattr(db_manager, "_model_config_cache"):
