@@ -61,14 +61,23 @@ async def test_pending_persist_reuses_live_state_and_saves_latest_fields(store, 
 
 
 async def test_fired_state_persist_remains_owned_by_shutdown_drain(store, monkeypatch):
+    import bot
     from app.utils.background_tasks import TaskManager
 
     manager = TaskManager()
     started = asyncio.Event()
     finished = asyncio.Event()
     owners = []
+    allow_save = False
+    written = []
+
+    async def noop(*args, **kwargs):
+        return 0
 
     async def save(**data):
+        if allow_save:
+            written.append((data["user_id"], data["selected_document_id"]))
+            return
         owners.append(asyncio.current_task())
         started.set()
         try:
@@ -77,6 +86,8 @@ async def test_fired_state_persist_remains_owned_by_shutdown_drain(store, monkey
             finished.set()
 
     monkeypatch.setattr("app.repos.users.save_user_state", save)
+    monkeypatch.setattr("app.repos.memory_autosave.drain_pending_memory_writes", noop)
+    monkeypatch.setattr("app.repos.memory_autosave.pre_shutdown_compact", noop)
     monkeypatch.setattr("app.utils.background_tasks.try_submit_task", manager.try_submit)
     monkeypatch.setattr(state, "_PERSIST_DEBOUNCE_SEC", 0)
     state.set_document_mode(11, True, document_id=42)
@@ -84,8 +95,18 @@ async def test_fired_state_persist_remains_owned_by_shutdown_drain(store, monkey
     try:
         assert not state._pending_persists
         assert await manager.drain(timeout=0) is True
+        # A retained retry marker must not create a new writer after drain.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
         assert finished.is_set()
+        assert len(owners) == 1
         assert all(owner.done() for owner in owners)
+        assert 11 in state._pending_persists
+        allow_save = True
+        store[11].selected_document_id = 43
+        await bot._flush_request_persistence()
+        assert written == [(11, 43)]
+        assert not state._pending_persists
     finally:
         for owner in owners:
             owner.cancel()

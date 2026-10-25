@@ -63,6 +63,7 @@ class TaskManager:
     def __init__(self) -> None:
         self._tasks: set[asyncio.Task] = set()
         self._error_callback: Callable[[Exception, str], Any] | None = None
+        self._accepting_tasks = True
 
     def register_error_callback(self, callback: Callable[[Exception, str], Any]) -> None:
         """Register a callback to be invoked when a background task exhausts all retries."""
@@ -96,7 +97,7 @@ class TaskManager:
         No await separates capacity inspection and scheduling, so admission is
         atomic on the application's event loop. Rejected input is always closed.
         """
-        if len(self._tasks) >= self.MAX_TASKS:
+        if not self._accepting_tasks or len(self._tasks) >= self.MAX_TASKS:
             coro.close()
             emit(
                 "job.capacity_rejected",
@@ -104,7 +105,7 @@ class TaskManager:
                 operation=operation or "background.mandatory",
                 job_id=uuid.uuid4().hex,
                 task_name=getattr(coro, "__qualname__", type(coro).__name__),
-                reason_code="capacity",
+                reason_code="capacity" if self._accepting_tasks else "shutdown",
                 capacity=self.MAX_TASKS,
             )
             return None
@@ -154,14 +155,14 @@ class TaskManager:
         portable_context = export_job_context()
         safe_metadata = dict(metadata or {})
 
-        if len(self._tasks) >= self.MAX_TASKS:
+        if not self._accepting_tasks or len(self._tasks) >= self.MAX_TASKS:
             emit(
                 "job.capacity_rejected",
                 level="warning",
                 operation=operation_name,
                 job_id=task_id,
                 task_name=coro_name,
-                reason_code="capacity",
+                reason_code="capacity" if self._accepting_tasks else "shutdown",
                 capacity=self.MAX_TASKS,
             )
 
@@ -327,7 +328,9 @@ class TaskManager:
 
         Returns ``True`` when every task finishes normally or completes its
         cancellation cleanup.  Returns ``False`` when one or more tasks remain
-        alive after both bounded phases.
+        alive after both bounded phases. Graceful work may submit dependencies;
+        reaching cancellation permanently closes admission so cleanup cannot
+        restart work after shutdown. Rejected coroutines are still closed.
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.0, timeout)
@@ -345,6 +348,7 @@ class TaskManager:
             # Accepted jobs can enqueue dependent writes. Include those jobs in
             # the original deadline rather than returning after one snapshot.
 
+        self._accepting_tasks = False
         logging.warning("Timeout draining background tasks. Cancelling %d tasks.", len(self._tasks))
         cancellation_deadline = loop.time() + max(0.0, cancel_timeout)
         while True:

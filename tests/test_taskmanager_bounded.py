@@ -1,10 +1,55 @@
 import asyncio
 import contextlib
+import inspect
 import time
 
 import pytest
 
 from app.utils.background_tasks import TaskManager
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admission", ["mandatory", "best_effort", "retryable"])
+async def test_cancellation_drain_rejects_replacement_work_and_closes_admission(admission):
+    tm = TaskManager()
+    started = asyncio.Event()
+    replacement_ran = asyncio.Event()
+    inputs = []
+    owners = []
+
+    async def replacement():
+        replacement_ran.set()
+
+    def submit_replacement():
+        if admission == "retryable":
+            owners.append(tm.submit_retryable(replacement))
+        else:
+            coroutine = replacement()
+            inputs.append(coroutine)
+            submit = tm.try_submit if admission == "mandatory" else tm.submit
+            owners.append(submit(coroutine))
+
+    async def work():
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            submit_replacement()
+            # Let cleanup submissions start before the cancelling owner finishes.
+            await asyncio.sleep(0)
+
+    tm.submit(work())
+    await started.wait()
+    try:
+        assert await tm.drain(timeout=0)
+        submit_replacement()
+        await asyncio.gather(*(owner for owner in owners if owner is not None))
+        assert not replacement_ran.is_set(), "cancellation cleanup reopened background work"
+        assert all(inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED for coro in inputs)
+        if admission == "mandatory":
+            assert owners == [None, None]
+    finally:
+        await tm.drain(timeout=0)
 
 
 @pytest.mark.asyncio
