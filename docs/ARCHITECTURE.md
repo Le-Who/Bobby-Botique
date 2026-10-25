@@ -220,6 +220,13 @@ Consent epochs and renewable database leases prevent stale private-data work
 from surviving revocation. Group messages are not implicitly captured into
 private LTM. Deletion, expiry and retrieval use live tenant-scoped provenance.
 
+One graph recall reuses its successfully prepared query embedding for vector
+and graph search. Reuse is limited to that recall's owning task, user, consent
+epoch, text, key, model and dimensionality; it is cleared on success, failure or
+cancellation. Failed, malformed or non-finite vectors are not retained, so a graph
+retry can still recover after unsuccessful vector preparation. Durable consent
+checks remain in place before graph preparation and inside read transactions.
+
 Extraction and consolidation prepare provider results/embeddings before a
 caller-owned transaction. `memory_graph_writer.write_graph` receives that
 connection and an immutable plan with durable source IDs. Source rows, graph

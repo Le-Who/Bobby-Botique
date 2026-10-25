@@ -124,6 +124,33 @@ async def test_public_recall_same_epoch_returns_the_real_private_row(db_conn, mo
     assert await db_conn.fetchval("SELECT count(*) FROM private_data_leases WHERE user_id=$1", USER) == 0
 
 
+async def test_graph_reuses_embedding_while_preserving_real_read_transactions(db_conn, monkeypatch):
+    epoch, memory_id = await _seed(db_conn)
+    embedding_calls = []
+
+    async def embedding(text, _key, *, task_type):
+        embedding_calls.append((text, task_type))
+        assert (
+            await db_conn.fetchval(
+                "SELECT count(*) FROM private_data_leases WHERE user_id=$1 AND memory_epoch=$2", USER, epoch
+            )
+            == 2
+        )
+        return EMBEDDING
+
+    monkeypatch.setattr(memory, "_get_embedding", embedding)
+    monkeypatch.setattr(memory, "_trgm_available", False)
+    memories, triples, passages = await memory.search_memories_with_graph(
+        USER, "safe query", "synthetic-key", expected_epoch=epoch
+    )
+    assert [row["id"] for row in memories] == [memory_id]
+    assert memories[0]["content"] == "Synthetic current-generation fact"
+    assert memories[0]["similarity"] > 0.99
+    assert triples == [] and passages == {}
+    assert embedding_calls == [("safe query", "RETRIEVAL_QUERY")]
+    assert await db_conn.fetchval("SELECT count(*) FROM private_data_leases WHERE user_id=$1", USER) == 0
+
+
 async def test_blocked_account_rejects_public_recall_before_embedding(db_conn, monkeypatch):
     epoch, _ = await _seed(db_conn, blocked=True)
     embedding_calls = []

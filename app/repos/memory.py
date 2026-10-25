@@ -8,9 +8,11 @@ Embeddings are generated via Gemini's embedding API (gemini-embedding-2-preview,
 import asyncio
 import hashlib
 import logging
+import math
 import re
 from collections.abc import Iterable
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -59,6 +61,58 @@ _current_retrieved_edge_ids: ContextVar[tuple[int, tuple[int, ...]] | None] = Co
     default=None,
 )
 _response_retrieved_edge_ids: TTLCache[tuple[int, int], tuple[int, ...]] = TTLCache(maxsize=4096, ttl=3600)
+
+
+@dataclass(slots=True, repr=False)
+class _QueryEmbeddingReuse:
+    """One successful query vector, owned only by the current graph recall task."""
+
+    user_id: int
+    memory_epoch: int | None
+    owner: asyncio.Task[Any] | None
+    identity: tuple[str, str, str, int] | None = None
+    vector: tuple[float, ...] | None = None
+
+    def clear(self) -> None:
+        # Child tasks inherit ContextVars. Retire their shared holder as well,
+        # rather than leaving private query data in an inherited context.
+        self.identity = None
+        self.vector = None
+        self.owner = None
+
+
+_query_embedding_reuse: ContextVar[_QueryEmbeddingReuse | None] = ContextVar("query_embedding_reuse", default=None)
+
+
+async def _get_query_embedding(user_id: int, memory_epoch: int | None, query: str, api_key: str) -> list[float] | None:
+    """Reuse RETRIEVAL_QUERY preparation without replacing caller consent checks."""
+    reuse = _query_embedding_reuse.get()
+    owned = (
+        reuse is not None
+        and reuse.owner is asyncio.current_task()
+        and reuse.user_id == user_id
+        and reuse.memory_epoch == memory_epoch
+    )
+    identity = (query, api_key, EMBEDDING_MODEL, EMBEDDING_DIMENSION)
+    if owned and reuse is not None and reuse.identity == identity and reuse.vector is not None:
+        return list(reuse.vector)
+
+    # Storage/multimodal embeddings bypass this query-only helper. The original
+    # provider function still owns key resolution, retries and attempt events.
+    embedding = await _get_embedding(query, api_key, task_type="RETRIEVAL_QUERY")
+    if (
+        owned
+        and reuse is not None
+        and reuse.owner is asyncio.current_task()
+        and identity[2:] == (EMBEDDING_MODEL, EMBEDDING_DIMENSION)
+        and embedding is not None
+        and len(embedding) == EMBEDDING_DIMENSION
+        and all(math.isfinite(value) for value in embedding)
+        and any(embedding)
+    ):
+        reuse.identity = identity
+        reuse.vector = tuple(embedding)
+    return embedding
 
 
 # ── Query Intent Gate ────────────────────────────────────────────────────────
@@ -683,7 +737,7 @@ async def _search_memories_impl(
     if not _consent_checked and not await _is_ltm_read_enabled(user_id, expected_epoch):
         return []
 
-    query_embedding = await _get_embedding(query, api_key, task_type="RETRIEVAL_QUERY")
+    query_embedding = await _get_query_embedding(user_id, expected_epoch, query, api_key)
     if query_embedding is None:
         return []
 
@@ -862,14 +916,20 @@ async def search_memories_with_graph(
         if not lease_current:
             _current_retrieved_edge_ids.set((user_id, ()))
             return [], [], {}
-        return await _search_memories_with_graph_impl(
-            user_id,
-            query,
-            api_key,
-            limit=limit,
-            min_similarity=min_similarity,
-            expected_epoch=expected_epoch,
-        )
+        reuse = _QueryEmbeddingReuse(user_id, expected_epoch, asyncio.current_task())
+        token = _query_embedding_reuse.set(reuse)
+        try:
+            return await _search_memories_with_graph_impl(
+                user_id,
+                query,
+                api_key,
+                limit=limit,
+                min_similarity=min_similarity,
+                expected_epoch=expected_epoch,
+            )
+        finally:
+            reuse.clear()
+            _query_embedding_reuse.reset(token)
 
 
 async def _search_memories_with_graph_impl(
@@ -927,11 +987,11 @@ async def _search_memories_with_graph_impl(
     source_passages: dict[str, str] = {}
     try:
         # Vector retrieval may have taken long enough for consent to change. Recheck
-        # immediately before the separate graph embedding leaves the process.
+        # before reusing the query vector or dispatching a graph retry.
         if not await _is_ltm_read_enabled(user_id, expected_epoch):
             return [], [], {}
 
-        query_embedding = await _get_embedding(expanded_query, api_key, task_type="RETRIEVAL_QUERY")
+        query_embedding = await _get_query_embedding(user_id, expected_epoch, expanded_query, api_key)
         # Provider failure may return None after consent changed while it was
         # pending. Even a vector-only fallback must still belong to this epoch.
         if not await _is_ltm_read_enabled(user_id, expected_epoch):

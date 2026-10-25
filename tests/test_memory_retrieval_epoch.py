@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.repos import memory, memory_consent, memory_tools
+from app.repos.memory import _get_embedding as _provider_get_embedding
 
 
 class _Transaction:
@@ -90,6 +91,11 @@ class _RecallBoundary:
         self.resume_embedding = asyncio.Event()
         self.pause_embedding_number = None
         self.graph_embedding_failure = None
+        self.query_preparations = []
+        self.preparation_started = asyncio.Event()
+        self.resume_preparation = asyncio.Event()
+        self.pause_preparation_number = None
+        self.change_graph_model = False
         self.expansion_started = asyncio.Event()
         self.resume_expansion = asyncio.Event()
         self.pause_expansion = False
@@ -187,7 +193,7 @@ class _RecallBoundary:
                 return None
             if self.graph_embedding_failure == "error":
                 raise RuntimeError("Synthetic graph embedding failure")
-        return [0.1, 0.2]
+        return [0.1, 0.2] + [0.0] * (memory.EMBEDDING_DIMENSION - 2)
 
     async def expand(self, text, _key):
         self.expansions.append(text)
@@ -212,6 +218,7 @@ class _RecallBoundary:
 
     def unblock(self):
         self.resume_embedding.set()
+        self.resume_preparation.set()
         self.resume_expansion.set()
         self.resume_candidates.set()
 
@@ -229,6 +236,18 @@ def recall_boundary(monkeypatch):
         monkeypatch.setattr(module, "set_user_context", boundary.context)
     monkeypatch.setattr(memory_consent, "clear_user_context", boundary.context)
     monkeypatch.setattr(memory, "_get_embedding", boundary.embedding)
+    original_prepare = memory._get_query_embedding
+
+    async def prepare(user_id, epoch, query, key):
+        boundary.query_preparations.append((user_id, epoch, query))
+        if len(boundary.query_preparations) == 2 and boundary.change_graph_model:
+            monkeypatch.setattr(memory, "EMBEDDING_MODEL", "synthetic-other-embedding-model")
+        if len(boundary.query_preparations) == boundary.pause_preparation_number:
+            boundary.preparation_started.set()
+            await boundary.resume_preparation.wait()
+        return await original_prepare(user_id, epoch, query, key)
+
+    monkeypatch.setattr(memory, "_get_query_embedding", prepare)
     monkeypatch.setattr(memory, "_trgm_available", False)
     monkeypatch.setattr(memory, "expand_query_with_llm", boundary.expand)
     monkeypatch.setattr(memory, "run_gemini_override", boundary.override)
@@ -295,12 +314,13 @@ async def test_public_vector_returns_same_generation_fact(recall_boundary):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("phase", ["expansion", "vector_embedding", "candidate_retrieval", "graph_embedding"])
+@pytest.mark.parametrize("phase", ["expansion", "vector_embedding", "candidate_retrieval", "graph_preparation"])
 async def test_public_graph_keeps_epoch_across_suspended_phases(recall_boundary, phase):
     """Rebinding nested recall or removing graph revalidation exposes a stale graph."""
     boundary = recall_boundary
     boundary.pause_expansion = phase == "expansion"
-    boundary.pause_embedding_number = {"vector_embedding": 1, "graph_embedding": 2}.get(phase)
+    boundary.pause_embedding_number = 1 if phase == "vector_embedding" else None
+    boundary.pause_preparation_number = 2 if phase == "graph_preparation" else None
     boundary.pause_candidates = phase == "candidate_retrieval"
 
     async def recall():
@@ -314,6 +334,7 @@ async def test_public_graph_keeps_epoch_across_suspended_phases(recall_boundary,
         started = {
             "expansion": boundary.expansion_started,
             "candidate_retrieval": boundary.candidates_ready,
+            "graph_preparation": boundary.preparation_started,
         }.get(phase, boundary.embedding_started)
         await started.wait()
         boundary.epoch = 9
@@ -328,7 +349,7 @@ async def test_public_graph_keeps_epoch_across_suspended_phases(recall_boundary,
             assert len(boundary.embeddings) == (0 if phase == "expansion" else 1)
         else:
             assert boundary.private_reads == ["memories"]
-            assert len(boundary.embeddings) == (1 if phase == "candidate_retrieval" else 2)
+            assert len(boundary.embeddings) == 1
     finally:
         await _finish_task(task, boundary)
 
@@ -345,14 +366,304 @@ async def test_public_graph_same_generation_returns_provenance_and_attribution(r
     assert memory.get_current_retrieved_edge_ids(42) == [77]
     assert boundary.acquired_epochs == [7, 7]
     assert boundary.resolved_epochs == []
+    assert boundary.embeddings == [("safe query", "RETRIEVAL_QUERY")]
+
+
+@pytest.mark.asyncio
+async def test_public_graph_prepares_a_fresh_embedding_for_each_recall(recall_boundary):
+    boundary = recall_boundary
+    results = [
+        await memory.search_memories_with_graph(42, "safe query", "synthetic-key", expected_epoch=7) for _ in range(2)
+    ]
+    assert results[0] == results[1]
+    assert boundary.embeddings == [("safe query", "RETRIEVAL_QUERY")] * 2
+    assert boundary.leases == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rotate_key", [False, True])
+async def test_graph_reuses_one_successful_sdk_result_after_original_key_retry(
+    recall_boundary, monkeypatch, rotate_key
+):
+    """Exercise the original provider, including its invalid-key rotation."""
+    from unittest.mock import AsyncMock
+
+    from app.handlers import ai_core
+
+    calls = []
+
+    async def embed_content(**kwargs):
+        calls.append(kwargs)
+        if rotate_key and len(calls) == 1:
+            raise RuntimeError("400 invalid api_key synthetic")
+        return SimpleNamespace(embeddings=[SimpleNamespace(values=[0.1] * memory.EMBEDDING_DIMENSION)])
+
+    client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(embed_content=embed_content)))
+    resolver = AsyncMock(return_value=({"api_key": "synthetic-rotated-key"}, None, None))
+    monkeypatch.setattr(ai_core, "_resolve_ai_request", resolver)
+    monkeypatch.setattr(memory, "get_cached_genai_client", lambda _key: client)
+    monkeypatch.setattr(memory, "_get_embedding", _provider_get_embedding)
+    memories, triples, passages = await memory.search_memories_with_graph(
+        42, "safe query", "synthetic-key", expected_epoch=7
+    )
+    assert [row["id"] for row in memories] == [731]
+    assert triples == ["Example — USES → Python ★"]
+    assert passages == {"Example — USES → Python": "Synthetic source passage"}
+    assert len(calls) == (2 if rotate_key else 1)
+    assert all(call["config"].task_type == "RETRIEVAL_QUERY" for call in calls)
+    assert resolver.await_count == int(rotate_key)
+
+
+@pytest.mark.asyncio
+async def test_original_sdk_failure_does_not_prevent_a_graph_retry(recall_boundary, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.metrics import metrics_collector
+
+    calls = []
+
+    async def embed_content(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("Synthetic provider unavailable")
+        return SimpleNamespace(embeddings=[SimpleNamespace(values=[0.1] * memory.EMBEDDING_DIMENSION)])
+
+    client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(embed_content=embed_content)))
+    monkeypatch.setattr(memory, "get_cached_genai_client", lambda _key: client)
+    monkeypatch.setattr(memory, "_get_embedding", _provider_get_embedding)
+    monkeypatch.setattr(metrics_collector, "record_error", AsyncMock())
+    memories, triples, passages = await memory.search_memories_with_graph(
+        42, "safe query", "synthetic-key", expected_epoch=7
+    )
+    assert memories == []
+    assert triples == ["Example — USES → Python ★"]
+    assert passages == {"Example — USES → Python": "Synthetic source passage"}
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_graph_shares_the_expanded_query_embedding(recall_boundary):
+    await memory.search_memories_with_graph(42, "Tell me about my project", "synthetic-key", expected_epoch=7)
+    assert recall_boundary.expansions == ["Tell me about my project"]
+    assert recall_boundary.embeddings == [("expanded synthetic query", "RETRIEVAL_QUERY")]
+
+
+@pytest.mark.asyncio
+async def test_configuration_change_during_embedding_cannot_label_an_old_result_as_current(
+    recall_boundary, monkeypatch
+):
+    models = []
+    initial_model = memory.EMBEDDING_MODEL
+
+    async def embed(*_args, **_kwargs):
+        models.append(memory.EMBEDDING_MODEL)
+        if len(models) == 1:
+            monkeypatch.setattr(memory, "EMBEDDING_MODEL", "synthetic-new-model")
+        return [0.1] * memory.EMBEDDING_DIMENSION
+
+    monkeypatch.setattr(memory, "_get_embedding", embed)
+    _, triples, _ = await memory.search_memories_with_graph(42, "safe query", "synthetic-key", expected_epoch=7)
+    assert models == [initial_model, "synthetic-new-model"]
+    assert triples == ["Example — USES → Python ★"]
+
+
+@pytest.mark.asyncio
+async def test_standalone_vector_reads_do_not_keep_an_embedding_between_calls(recall_boundary):
+    first = await memory.search_memories(42, "safe query", "synthetic-key", expected_epoch=7)
+    second = await memory.search_memories(42, "safe query", "synthetic-key", expected_epoch=7)
+    assert first == second
+    assert len(recall_boundary.embeddings) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [None, [], [0.1], "nan", "inf", "zero"])
+async def test_graph_retries_an_unsuccessful_or_invalid_vector(recall_boundary, monkeypatch, invalid):
+    calls = []
+
+    async def embed(*_args, **_kwargs):
+        calls.append(True)
+        if len(calls) > 1:
+            return [0.1] * memory.EMBEDDING_DIMENSION
+        if invalid in ("nan", "inf"):
+            return [float(invalid)] * memory.EMBEDDING_DIMENSION
+        if invalid == "zero":
+            return [0.0] * memory.EMBEDDING_DIMENSION
+        return invalid
+
+    monkeypatch.setattr(memory, "_get_embedding", embed)
+    _, triples, passages = await memory.search_memories_with_graph(42, "safe query", "synthetic-key", expected_epoch=7)
+    assert len(calls) == 2
+    assert triples == ["Example — USES → Python ★"]
+    assert passages == {"Example — USES → Python": "Synthetic source passage"}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_graph_recalls_do_not_share_embeddings(recall_boundary, monkeypatch):
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = []
+
+    async def embed(query, _key, *, task_type):
+        calls.append((query, task_type))
+        if len(calls) == 2:
+            entered.set()
+        await release.wait()
+        return [0.1] * memory.EMBEDDING_DIMENSION
+
+    monkeypatch.setattr(memory, "_get_embedding", embed)
+    tasks = [
+        asyncio.create_task(memory.search_memories_with_graph(42, "safe query", "synthetic-key", expected_epoch=7))
+        for _ in range(2)
+    ]
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        release.set()
+        first, second = await asyncio.gather(*tasks)
+        assert first == second
+        assert calls == [("safe query", "RETRIEVAL_QUERY")] * 2
+        assert recall_boundary.leases == {}
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", ["query", "key", "model", "dimensions", "user", "epoch"])
+async def test_query_reuse_identity_cannot_cross_inputs_or_tenants(recall_boundary, monkeypatch, changed):
+    calls = []
+
+    async def embed(query, key, *, task_type):
+        calls.append((query, key, task_type))
+        return [0.1] * memory.EMBEDDING_DIMENSION
+
+    async def recall(user_id, query, key, *, expected_epoch, **_kwargs):
+        await memory._get_query_embedding(user_id, expected_epoch, query, key)
+        if changed == "model":
+            monkeypatch.setattr(memory, "EMBEDDING_MODEL", "synthetic-other-model")
+        elif changed == "dimensions":
+            monkeypatch.setattr(memory, "EMBEDDING_DIMENSION", 3)
+        await memory._get_query_embedding(
+            user_id + int(changed == "user"),
+            expected_epoch + int(changed == "epoch"),
+            query + (" other" if changed == "query" else ""),
+            key + (" other" if changed == "key" else ""),
+        )
+        return [], [], {}
+
+    monkeypatch.setattr(memory, "_get_embedding", embed)
+    monkeypatch.setattr(memory, "_search_memories_with_graph_impl", recall)
+    await memory.search_memories_with_graph(42, "safe query", "synthetic-key", expected_epoch=7)
+    assert len(calls) == 2
+    assert memory._query_embedding_reuse.get() is None
+
+
+@pytest.mark.asyncio
+async def test_query_reuse_returns_a_copy_and_retires_its_private_holder(recall_boundary, monkeypatch):
+    holders = []
+
+    async def recall(user_id, query, key, *, expected_epoch, **_kwargs):
+        first = await memory._get_query_embedding(user_id, expected_epoch, query, key)
+        holders.append(memory._query_embedding_reuse.get())
+        first[0] = 99.0
+        second = await memory._get_query_embedding(user_id, expected_epoch, query, key)
+        assert second[0] == 0.1
+        return [], [], {}
+
+    monkeypatch.setattr(memory, "_search_memories_with_graph_impl", recall)
+    await memory.search_memories_with_graph(42, "safe query", "synthetic-key", expected_epoch=7)
+    assert len(recall_boundary.embeddings) == 1
+    assert memory._query_embedding_reuse.get() is None
+    assert holders[0].identity is None and holders[0].vector is None and holders[0].owner is None
+
+
+@pytest.mark.asyncio
+async def test_nested_graph_recall_restores_the_outer_query_scope(recall_boundary, monkeypatch):
+    async def recall(user_id, query, key, *, expected_epoch, **_kwargs):
+        await memory._get_query_embedding(user_id, expected_epoch, query, key)
+        if user_id == 42:
+            await memory.search_memories_with_graph(43, "nested query", key, expected_epoch=expected_epoch)
+            await memory._get_query_embedding(user_id, expected_epoch, query, key)
+        return [], [], {}
+
+    monkeypatch.setattr(memory, "_search_memories_with_graph_impl", recall)
+    await memory.search_memories_with_graph(42, "safe query", "synthetic-key", expected_epoch=7)
+    assert recall_boundary.embeddings == [("safe query", "RETRIEVAL_QUERY"), ("nested query", "RETRIEVAL_QUERY")]
+    assert recall_boundary.acquired_epochs == [7, 7]
+    assert memory._query_embedding_reuse.get() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("after_exit", [False, True])
+async def test_inherited_child_context_cannot_reuse_or_retain_the_owner_vector(
+    recall_boundary, monkeypatch, after_exit
+):
+    release = asyncio.Event()
+    children = []
+    inherited = []
+
+    async def recall(user_id, query, key, *, expected_epoch, **_kwargs):
+        await memory._get_query_embedding(user_id, expected_epoch, query, key)
+
+        async def child():
+            inherited.append(memory._query_embedding_reuse.get())
+            await release.wait()
+            return await memory._get_query_embedding(user_id, expected_epoch, query, key)
+
+        children.append(asyncio.create_task(child()))
+        await asyncio.sleep(0)
+        if not after_exit:
+            release.set()
+            await children[0]
+            await memory._get_query_embedding(user_id, expected_epoch, query, key)
+        return [], [], {}
+
+    monkeypatch.setattr(memory, "_search_memories_with_graph_impl", recall)
+    try:
+        await memory.search_memories_with_graph(42, "safe query", "synthetic-key", expected_epoch=7)
+        assert inherited[0].identity is None and inherited[0].vector is None and inherited[0].owner is None
+        release.set()
+        assert len(await asyncio.gather(*children)) == 1
+        assert len(recall_boundary.embeddings) == 2
+    finally:
+        release.set()
+        await asyncio.gather(*children, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["embedding", "reuse"])
+async def test_cancelled_graph_retires_query_vector_and_releases_leases(recall_boundary, monkeypatch, phase):
+    boundary = recall_boundary
+    boundary.pause_embedding_number = 1 if phase == "embedding" else None
+    boundary.pause_preparation_number = 2 if phase == "reuse" else None
+    prepare = memory._get_query_embedding
+    holders = []
+
+    async def observed_prepare(*args, **kwargs):
+        holders.append(memory._query_embedding_reuse.get())
+        return await prepare(*args, **kwargs)
+
+    monkeypatch.setattr(memory, "_get_query_embedding", observed_prepare)
+    task = asyncio.create_task(memory.search_memories_with_graph(42, "safe query", "synthetic-key", expected_epoch=7))
+    try:
+        started = boundary.embedding_started if phase == "embedding" else boundary.preparation_started
+        await asyncio.wait_for(started.wait(), 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert boundary.leases == {}
+        assert memory._query_embedding_reuse.get() is None
+        assert all(holder.identity is None and holder.vector is None and holder.owner is None for holder in holders)
+    finally:
+        await _finish_task(task, boundary)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["none", "error"])
 @pytest.mark.parametrize("change", ["new_epoch", "blocked", "unchanged"])
-async def test_public_graph_failed_embedding_keeps_only_authorized_vector_fallback(recall_boundary, failure, change):
-    """Graph provider failure cannot bypass exact-epoch checks on saved vector facts."""
+async def test_public_graph_failed_retry_keeps_only_authorized_vector_fallback(recall_boundary, failure, change):
+    """A changed model requires a retry, whose failure cannot bypass epoch checks."""
     boundary = recall_boundary
+    boundary.change_graph_model = True
     boundary.pause_embedding_number = 2
     boundary.graph_embedding_failure = failure
 
