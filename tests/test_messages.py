@@ -5,6 +5,12 @@ import pytest
 
 from app.handlers import messages
 
+
+@pytest.fixture(autouse=True)
+def _offline_state_hydration(monkeypatch):
+    monkeypatch.setattr("app.repos.users.load_user_state", AsyncMock(return_value=None))
+
+
 # --- Mocks for Telegram Objects ---
 
 

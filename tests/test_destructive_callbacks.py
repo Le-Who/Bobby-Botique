@@ -22,6 +22,8 @@ def document_store(monkeypatch):
     rows = {(101, 11): {"id": 11, "filename": "synthetic.txt"}, (202, 22): {"id": 22, "filename": "other.txt"}}
     mutations = []
     states = {uid: state.UserState(uid) for uid in (101, 202)}
+    for current in states.values():
+        current._loaded_from_db = True
     monkeypatch.setattr(state, "get_user_state", states.__getitem__)
     monkeypatch.setattr(state, "_schedule_persist", lambda chat: None)
     state.set_document_mode(101, True, 11)

@@ -1047,34 +1047,67 @@ function modelSubLabel(modelId) {
 }
 
 function buildModelSheet() {
+  const list = document.getElementById('sheet-models-list');
+  list.replaceChildren();
+  function modelRow(model, detailed) {
+    const row = document.createElement('div');
+    row.className = `sheet-row ${model === settingsData.model ? 'active' : ''}`;
+    bindChoice(row, () => setModel(model, row));
+    if (detailed) {
+      const labels = document.createElement('div');
+      const name = document.createElement('div');
+      name.className = 'model-name';
+      name.textContent = modelDisplayName(model);
+      labels.appendChild(name);
+      const subtitle = modelSubLabel(model);
+      if (subtitle) {
+        const sub = document.createElement('div');
+        sub.className = 'model-sub';
+        sub.textContent = subtitle;
+        labels.appendChild(sub);
+      }
+      row.appendChild(labels);
+    } else row.textContent = modelDisplayName(model);
+    return row;
+  }
   if (!groupedModels.length) {
     // Flat fallback if no grouped_models
-    document.getElementById('sheet-models-list').innerHTML = availableModels.map(m => {
-      const active = m === settingsData.model;
-      return `<div class="sheet-row ${active ? 'active' : ''}" onclick="setModel('${esc(m)}')">${esc(modelDisplayName(m))}</div>`;
-    }).join('');
+    availableModels.forEach(model => list.appendChild(modelRow(model, false)));
     return;
   }
 
-  let html = '';
   groupedModels.forEach((group, gi) => {
     const groupId = 'pg-' + gi;
-    html += `<div class="sheet-provider-group" id="${groupId}">`;
-    html += `<div class="sheet-provider-header" onclick="toggleProviderGroup('${groupId}')">`;
-    html += `<span>${esc(group.icon)} ${esc(group.provider)}</span>`;
-    html += `<span class="ph-chevron">&#8250;</span>`;
-    html += `</div><div class="sheet-provider-rows">`;
-    group.models.forEach(m => {
-      const active = m === settingsData.model;
-      const dname = esc(modelDisplayName(m));
-      const sub = esc(modelSubLabel(m));
-      html += `<div class="sheet-row ${active ? 'active' : ''}" onclick="setModel('${esc(m)}')">`;
-      html += `<div><div class="model-name">${dname}</div>${sub ? `<div class="model-sub">${sub}</div>` : ''}</div>`;
-      html += `</div>`;
-    });
-    html += `</div></div>`;
+    const container = document.createElement('div');
+    container.className = 'sheet-provider-group';
+    container.id = groupId;
+    const header = document.createElement('div');
+    header.className = 'sheet-provider-header';
+    bindChoice(header, () => toggleProviderGroup(groupId));
+    const label = document.createElement('span');
+    label.textContent = `${group.icon} ${group.provider}`;
+    const chevron = document.createElement('span');
+    chevron.className = 'ph-chevron';
+    chevron.textContent = '›';
+    header.append(label, chevron);
+    const rows = document.createElement('div');
+    rows.className = 'sheet-provider-rows';
+    group.models.forEach(model => rows.appendChild(modelRow(model, true)));
+    container.append(header, rows);
+    list.appendChild(container);
   });
-  document.getElementById('sheet-models-list').innerHTML = html;
+}
+
+function bindChoice(element, select) {
+  element.setAttribute('role', 'button');
+  element.tabIndex = 0;
+  element.addEventListener('click', select);
+  element.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      select();
+    }
+  });
 }
 
 function toggleProviderGroup(groupId) {
@@ -1166,13 +1199,16 @@ async function loadSettings() {
 }
 
 function renderRoles(activePrompt) {
-  let roleHtml = `<div class="chip ${!activePrompt ? 'active':''}" onclick="setRole(null, this)">Стандартная</div>`;
-  roleDataCache.forEach(role => {
-    let isA = activePrompt === role.prompt;
-    let safePrompt = encodeURIComponent(role.prompt || '');
-    roleHtml += `<div class="chip ${isA ? 'active':''}" onclick="setRole(decodeURIComponent('${safePrompt}'), this)">${esc(role.title)}</div>`;
+  const wrap = document.getElementById('s-roles-wrap');
+  wrap.replaceChildren();
+  [{ title: 'Стандартная', prompt: null }, ...roleDataCache].forEach(role => {
+    const chip = document.createElement('div');
+    const active = role.prompt ? activePrompt === role.prompt : !activePrompt;
+    chip.className = `chip ${active ? 'active' : ''}`;
+    chip.textContent = role.title;
+    bindChoice(chip, () => setRole(role.prompt, chip));
+    wrap.appendChild(chip);
   });
-  document.getElementById('s-roles-wrap').innerHTML = roleHtml;
   // FIX #1: refresh arrow/fade states after chips DOM change
   requestAnimationFrame(() => {
     const wrap = document.getElementById('s-roles-wrap');
@@ -1203,7 +1239,7 @@ async function saveSettings() {
   
   const body = {
     model: settingsData.model,
-    system_prompt: document.getElementById('s-prompt-area').value.trim() || undefined,
+    system_prompt: document.getElementById('s-prompt-area').value.trim(),
     thinking_level: settingsData.thinking_level,
     ltm_enabled: document.getElementById('s-ltm').checked,
     search_enabled: document.getElementById('s-search').checked,
@@ -1238,13 +1274,13 @@ function openSheet(id) {
 }
 function closeSheet() { document.getElementById('sheet-overlay').classList.remove('show'); currentTargetSheet = null;}
 
-function setModel(model) {
+function setModel(model, element) {
   if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
   settingsData.model = model;
   document.getElementById('val-model').textContent = `${modelDisplayName(model)} ❭`;
   // Update active state in sheet
   document.querySelectorAll('#sheet-models .sheet-row').forEach(row => row.classList.remove('active'));
-  event.currentTarget.classList.add('active');
+  element.classList.add('active');
   closeSheet();
   markDirty();
 }

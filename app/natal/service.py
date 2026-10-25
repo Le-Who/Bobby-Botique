@@ -10,6 +10,7 @@ from app.natal.destiny_matrix import build_destiny_matrix_sections, calculate_de
 from app.natal.geocoding import resolve_birth_data
 from app.natal.llm import generate_interpretation
 from app.natal.models import BirthInput, ChartData, InputQuality, NatalReport, ReportType, TimePrecision
+from app.natal.private_work import capture_natal_epoch
 from app.natal.report_builder import build_telegraph_markdown
 from app.natal.storage import save_report
 from app.natal.svg_renderer import render_chart_svg
@@ -44,10 +45,39 @@ async def create_natal_report(
     webhook_url: str,
     *,
     access_guard: Callable[[], Awaitable[bool]] | None = None,
+    expected_epoch: int | None = None,
 ) -> NatalReport:
     if not _natal_reports_enabled():
         raise NatalConfigurationError("Natal reports are disabled.")
     _validate_webhook_url(webhook_url)
+    from app.repos.memory_consent import is_private_data_snapshot_current, private_data_lease
+
+    # Queued callers supply their ingress generation; never replace it with a
+    # newly recreated account's generation. Direct callers (including smoke)
+    # capture once before any calculation, provider, publication or storage work.
+    epoch = expected_epoch if expected_epoch is not None else await capture_natal_epoch(user_id)
+    async with private_data_lease(user_id, epoch, purpose="natal:report", require_ltm=False) as current:
+        if not current:
+            raise NatalAccessRevoked("Natal report account generation is no longer current.")
+
+        async def generation_access() -> bool:
+            if not await is_private_data_snapshot_current(user_id, epoch, require_ltm=False):
+                return False
+            return access_guard is None or await access_guard()
+
+        return await _create_natal_report_current(
+            birth_input, user_id, chat_id, webhook_url, access_guard=generation_access
+        )
+
+
+async def _create_natal_report_current(
+    birth_input: BirthInput,
+    user_id: int,
+    chat_id: int,
+    webhook_url: str,
+    *,
+    access_guard: Callable[[], Awaitable[bool]],
+) -> NatalReport:
     await _check_access(access_guard)
     report_type = birth_input.report_type
     matrix = calculate_destiny_matrix(birth_input.birth_date) if _includes_destiny_matrix(report_type) else None

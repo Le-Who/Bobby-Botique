@@ -57,7 +57,7 @@ async def test_get_user_custom_roles_full(mock_db_query):
 
     assert result == [{"id": 1, "title": "Role 1", "prompt": "Prompt 1"}]
     mock_db_query.assert_called_once_with(
-        "SELECT id, title, prompt FROM user_roles WHERE user_id = $1",
+        "SELECT id, title, prompt FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC",
         (user_id,),
     )
 

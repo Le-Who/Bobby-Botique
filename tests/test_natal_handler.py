@@ -46,6 +46,12 @@ from app.natal.models import (
     ReportType,
     TimePrecision,
 )
+from tests.natal_privacy_fakes import install_natal_privacy_database
+
+
+@pytest.fixture(autouse=True)
+def natal_database_boundary(monkeypatch):
+    return install_natal_privacy_database(monkeypatch)
 
 
 def test_natal_cover_asset_exists():
@@ -134,7 +140,7 @@ def make_callback_update(data: str):
 def make_context(bot=None):
     if bot is None:
         bot = SimpleNamespace(send_photo=AsyncMock(), send_message=AsyncMock())
-    return SimpleNamespace(user_data={}, bot=bot)
+    return SimpleNamespace(user_data={"natal_memory_epoch": 100}, bot=bot)
 
 
 def first_callback_data(update, text_part: str) -> str:
@@ -469,7 +475,7 @@ async def test_table_mode_requires_birth_country():
 async def test_step_flow_exact_time_city_selection_generates_hosted_report(monkeypatch):
     captured = {}
 
-    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url):
+    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url, expected_epoch=None):
         captured.update(
             {
                 "birth_input": birth_input,
@@ -542,7 +548,7 @@ async def test_step_flow_exact_time_city_selection_generates_hosted_report(monke
 async def test_step_flow_unknown_time_city_selection_generates_limited_report(monkeypatch):
     captured = {}
 
-    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url):
+    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url, expected_epoch=None):
         captured["birth_input"] = birth_input
         return fake_natal_report(f"{webhook_url}/reports/natal/unknown-report-id")
 
@@ -586,7 +592,7 @@ async def test_step_flow_unknown_time_city_selection_generates_limited_report(mo
 async def test_matrix_only_mode_uses_date_and_focus_without_place(monkeypatch):
     captured = {}
 
-    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url):
+    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url, expected_epoch=None):
         captured["birth_input"] = birth_input
         return fake_natal_report(f"{webhook_url}/reports/natal/matrix-report-id")
 

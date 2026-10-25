@@ -543,8 +543,8 @@
     if (twa) { twa.expand(); twa.ready(); }
 
     // SSR data injected from server — no second fetch needed
-    const TOC_DATA    = {{ toc_json | safe }};
-    const SOURCE      = "{{ source_label }}";
+    const TOC_DATA    = {{ toc | tojson }};
+    const SOURCE      = {{ source_label | tojson }};
     const HAS_CONTENT = {{ 'true' if body_html else 'false' }};
 
     // Snag a copy of the *raw rendered text* for TTS and clipboard.
@@ -877,7 +877,7 @@
     //  AUTO-REDIRECT — if Telegraph fallback URL is set (server set it
     //  because our reverse-proxy fetch failed), redirect inside Telegram
     // ═══════════════════════════════════════════════════════════════════
-    const TG_FALLBACK = "{{ telegraph_fallback_url }}";
+    const TG_FALLBACK = {{ telegraph_fallback_url | tojson }};
     if (TG_FALLBACK && twa) {
       setTimeout(() => { window.location.href = TG_FALLBACK; }, 900);
     }

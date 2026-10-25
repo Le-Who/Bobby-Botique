@@ -12,12 +12,14 @@ from app.natal.models import ChartData, InputQuality, ReportType, TimePrecision
 from app.web import quart_app
 from app.web_miniapp import _build_and_send_natal_report
 from tests.factories import make_valid_init_data
+from tests.natal_privacy_fakes import install_natal_privacy_database
 
 _publish_telegraph = service._try_publish_telegraph
 
 
 @pytest.fixture
 def queued_natal(monkeypatch):
+    privacy = install_natal_privacy_database(monkeypatch)
     # Boundary tests need report shape, never personal birth values.
     birth = SimpleNamespace(report_type=ReportType.NATAL, language="ru", focus="general")
     chart = ChartData(
@@ -64,6 +66,7 @@ def queued_natal(monkeypatch):
         publish=publish,
         bot=bot,
         settings=settings,
+        privacy=privacy,
     )
 
 

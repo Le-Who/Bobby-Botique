@@ -28,7 +28,8 @@ from app.natal.city_catalog import CityRecord, CountryRecord, find_city_by_id, s
 from app.natal.intent import NATAL_INTENT_RE, NATAL_SLASH_ALIAS_RE
 from app.natal.models import BirthInput, ReportType, TimePrecision
 from app.natal.parser import BirthInputParseError, parse_birth_table
-from app.natal.service import create_natal_report
+from app.natal.private_work import capture_natal_epoch
+from app.natal.service import NatalAccessRevoked, create_natal_report
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ NATAL_FOCUS: Final = "NATAL_FOCUS"
 NATAL_CONFIRM: Final = "NATAL_CONFIRM"
 
 _NATAL_KEYS = {
+    "natal_memory_epoch",
     "natal_birth_input",
     "natal_date",
     "natal_date_day",
@@ -166,6 +168,11 @@ async def natal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if not _natal_reports_enabled_for_handler():
         await message.reply_text("Натальные карты временно недоступны.")
         return ConversationHandler.END
+    epoch = await capture_natal_epoch(update.effective_user.id)
+    if epoch is None:
+        await message.reply_text("Не удалось начать разбор. Попробуйте /natal ещё раз.")
+        return ConversationHandler.END
+    context.user_data["natal_memory_epoch"] = epoch
     flow_message = await message.reply_text(
         "Натальная карта и матрица судьбы — это не приговор, а бережная навигация по вашим акцентам, "
         "ритмам и повторяющимся темам.\n\n"
@@ -188,6 +195,12 @@ async def on_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | s
         clear_natal_user_data(context.user_data)
         await query.edit_message_text("Отменено.")
         return ConversationHandler.END
+    if "natal_memory_epoch" not in (context.user_data or {}):
+        epoch = await capture_natal_epoch(update.effective_user.id)
+        if epoch is None:
+            await _show_flow_prompt(update, context, "Не удалось начать разбор. Попробуйте /natal ещё раз.")
+            return ConversationHandler.END
+        context.user_data["natal_memory_epoch"] = epoch
     context.user_data["natal_mode"] = mode
     if mode == "table":
         context.user_data["natal_report_type"] = ReportType.NATAL
@@ -525,22 +538,36 @@ async def on_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int 
     if not isinstance(birth_input, BirthInput):
         await query.edit_message_text("Данные не найдены. Запустите /natal заново.")
         return ConversationHandler.END
+    epoch = context.user_data.get("natal_memory_epoch")
+    if type(epoch) is not int:
+        clear_natal_user_data(context.user_data)
+        await query.edit_message_text("Данные устарели. Запустите /natal заново.")
+        return ConversationHandler.END
     await _show_flow_prompt(update, context, "Считаю карту...")
     webhook_url = os.getenv("WEBHOOK_URL", "").strip()
     try:
-        report = await create_natal_report(
-            birth_input=birth_input,
-            user_id=update.effective_user.id,
-            chat_id=update.effective_chat.id,
-            webhook_url=webhook_url,
-        )
+        from app.repos.memory_consent import is_private_data_snapshot_current, private_data_lease
+
+        user_id = update.effective_user.id
+        async with private_data_lease(user_id, epoch, purpose="natal:delivery", require_ltm=False) as current:
+            if not current:
+                raise NatalAccessRevoked("Natal input account generation is no longer current.")
+            report = await create_natal_report(
+                birth_input=birth_input,
+                user_id=user_id,
+                chat_id=update.effective_chat.id,
+                webhook_url=webhook_url,
+                expected_epoch=epoch,
+            )
+            if not await is_private_data_snapshot_current(user_id, epoch, require_ltm=False):
+                raise NatalAccessRevoked("Natal delivery account generation is no longer current.")
+            await _send_natal_result_card(update, context, report, birth_input, expected_epoch=epoch)
+            await _show_flow_prompt(update, context, "Карта готова. Полный разбор отправлен карточкой ниже.")
     except Exception as exc:
-        await _show_flow_prompt(update, context, f"Не удалось построить карту: {exc}")
+        logger.warning("Natal report failed type=%s", type(exc).__name__)
+        await _show_flow_prompt(update, context, "Не удалось построить карту. Запустите /natal и попробуйте ещё раз.")
+    finally:
         clear_natal_user_data(context.user_data)
-        return ConversationHandler.END
-    await _send_natal_result_card(update, context, report, birth_input)
-    await _show_flow_prompt(update, context, "Карта готова. Полный разбор отправлен карточкой ниже.")
-    clear_natal_user_data(context.user_data)
     return ConversationHandler.END
 
 
@@ -632,12 +659,23 @@ async def _send_natal_result_card(
     context: ContextTypes.DEFAULT_TYPE,
     report,
     birth_input: BirthInput,
+    *,
+    expected_epoch: int | None = None,
 ) -> None:
+    from app.repos.memory_consent import is_private_data_snapshot_current
+
+    async def check_generation() -> None:
+        if expected_epoch is not None and not await is_private_data_snapshot_current(
+            update.effective_user.id, expected_epoch, require_ltm=False
+        ):
+            raise NatalAccessRevoked("Natal delivery account generation is no longer current.")
+
     caption = _result_caption(report, birth_input)
     keyboard = _result_keyboard(report)
     chat_id = getattr(getattr(update, "effective_chat", None), "id", None)
     bot = getattr(context, "bot", None)
     cover = await _get_natal_cover_photo()
+    await check_generation()
 
     if bot is not None and chat_id is not None and cover is not None:
         try:
@@ -654,6 +692,7 @@ async def _send_natal_result_card(
             logger.warning("natal result cover send failed chat=%s: %s", chat_id, exc)
 
     if bot is not None and chat_id is not None:
+        await check_generation()
         await bot.send_message(
             chat_id=chat_id,
             text=caption,

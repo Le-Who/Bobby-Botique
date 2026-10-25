@@ -18,7 +18,7 @@ async def get_user_custom_roles(user_id: int) -> list[dict[str, Any]]:
 async def get_user_custom_roles_full(user_id: int) -> list[dict[str, Any]]:
     """Returns all custom roles with prompts for a user."""
     return await db.db_query(
-        "SELECT id, title, prompt FROM user_roles WHERE user_id = $1",
+        "SELECT id, title, prompt FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC",
         (user_id,),
     )
 

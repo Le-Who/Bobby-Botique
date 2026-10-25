@@ -5,6 +5,7 @@ Extracted from app/database.py to isolate user-domain business logic
 from database infrastructure.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -21,6 +22,8 @@ from app.database import (
     reconnect_database,
     set_user_context,
 )
+
+_STATE_ERASURE_WAIT_SECONDS = 10.0
 
 
 def is_admin(user_id: int) -> bool:
@@ -62,6 +65,24 @@ async def invalidate_user_auth_cache(user_id: int) -> None:
 
 
 async def erase_user_account(user_id: int) -> None:
+    """Drain process-local state writes and keep them blocked through erasure."""
+    if is_admin(user_id):
+        raise ValueError("configured administrator account cannot be self-erased")
+
+    from app.state import get_user_state
+
+    # Retain the canonical state across LRU eviction while its persistence lock
+    # orders full SQL retries before deletion and post-commit invalidation.
+    user_state = get_user_state(user_id)
+    async with asyncio.timeout(_STATE_ERASURE_WAIT_SECONDS):
+        await user_state._persist_lock.acquire()
+    try:
+        await _erase_user_account_with_persistence_locked(user_id)
+    finally:
+        user_state._persist_lock.release()
+
+
+async def _erase_user_account_with_persistence_locked(user_id: int) -> None:
     """Atomically erase a non-admin user and every database-owned record.
 
     Most user tables are protected by ``ON DELETE CASCADE``.  The explicit
@@ -106,6 +127,28 @@ async def erase_user_account(user_id: int) -> None:
 
         await get_voice_reply_manager().purge_user_jobs(user_id, ltm_only=False)
 
+        # Once destructive work starts, caller cancellation must not separate a
+        # committed DELETE from local invalidation and release waiting writers.
+        operation = asyncio.create_task(_finish_account_erasure(user_id, privacy_barrier))
+        cancellation: asyncio.CancelledError | None = None
+        while not operation.done():
+            try:
+                await asyncio.shield(operation)
+            except asyncio.CancelledError as exc:
+                cancellation = cancellation or exc
+            except Exception:
+                break
+        try:
+            operation.result()
+        finally:
+            if cancellation is not None:
+                raise cancellation
+
+
+async def _finish_account_erasure(user_id: int, privacy_barrier: int) -> None:
+    """Own the destructive transaction and local invalidation through acknowledgment."""
+    delete_completed = False
+    try:
         # Phase 2: reacquire the same lock, verify nobody replaced the
         # generation while leases drained, then perform the atomic destructive
         # work.
@@ -210,8 +253,18 @@ async def erase_user_account(user_id: int) -> None:
                     (user_id,),
                     conn=conn,
                 )
+                delete_completed = True
             finally:
                 await clear_user_context(conn=conn)
+    except BaseException:
+        if delete_completed:
+            # A failed COMMIT acknowledgment cannot establish rollback. Discard
+            # old local snapshots without reporting a successful durable erase.
+            from app.state import purge_user_runtime_state
+
+            db_manager._user_auth_cache.pop(user_id, None)
+            purge_user_runtime_state(user_id)
+        raise
 
     # Only clear process-local authorization/state after the transaction has
     # committed.  If the transaction rolls back, the user must remain usable.
@@ -276,7 +329,7 @@ async def load_user_state(user_id: int) -> dict[str, Any] | None:
         return None
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to load user state for %s: %s", user_id, e)
-        return None
+        raise
 
 
 async def save_user_state(
@@ -347,6 +400,7 @@ async def save_user_state(
         )
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to save user state for %s: %s", user_id, e)
+        raise
 
 
 async def save_feedback(user_id: int, message_id: int, rating: str) -> None:

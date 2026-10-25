@@ -374,8 +374,21 @@ def _inline_markup(text: str) -> str:
     # Strikethrough
     text = _INLINE_STRIKE_RE.sub(r"<s>\1</s>", text)
     # Links
-    text = _INLINE_LINK_RE.sub(r'<a href="\2" target="_blank">\1</a>', text)
+    text = _INLINE_LINK_RE.sub(_render_link, text)
     return text
+
+
+def _render_link(match: re.Match[str]) -> str:
+    label, escaped_url = match.groups()
+    url = html.unescape(escaped_url).strip()
+    try:
+        scheme = urllib.parse.urlsplit(url).scheme.lower()
+    except ValueError:
+        return label
+    # Markdown is untrusted; HTML escaping alone does not disable active URLs.
+    if scheme not in {"", "https", "http", "mailto"}:
+        return label
+    return f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">{label}</a>'
 
 
 # ── Telegraph HTML → plain text extraction ────────────────────────────────────

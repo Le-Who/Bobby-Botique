@@ -17,7 +17,7 @@ from app.document_processor import (
 from app.handlers import menus
 from app.handlers.msg_document import clear_pending_document_upload, confirm_pending_document_upload
 from app.i18n import t
-from app.state import clear_document_state, get_selected_document_id, set_document_mode
+from app.state import clear_document_state, ensure_state_loaded, get_selected_document_id, set_document_mode
 from app.utils.formatting import TelegramFormatter
 from app.utils.keyboards import (
     back_button,
@@ -288,6 +288,8 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     handler = handlers.get(action)
     if handler:
         try:
+            if action in {"cancel", "clear_all_confirm", "use_existing", "select", "delete_document"}:
+                await ensure_state_loaded(user_id)
             await handler(query, context, user_id)
         except Exception as exc:
             logging.error("Document callback failed user=%s action=%s type=%s", user_id, action, type(exc).__name__)

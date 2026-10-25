@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 from jinja2 import Environment, FileSystemLoader
 
+from app.utils.reader_utils import extract_toc, markdown_to_reader_html
+
 pytestmark = pytest.mark.browser
 
 
@@ -22,16 +24,25 @@ def _run_page(page_name: str, scenario: str) -> None:
     template = Environment(loader=FileSystemLoader(root / "app/templates"), autoescape=True).get_template(
         page_name + ".html"
     )
-    html = template.render(
-        body_html='<h1 id="overview">Overview</h1><p>Readable answer.</p>'
+    body_html = (
+        '<h1 id="overview">Overview</h1><p>Readable answer.</p>'
         + "<p>Independent browser fixture.</p>" * 50
-        + '<h2 id="details">Details</h2><p>Second section.</p>',
-        toc_json=json.dumps(
-            [
-                {"level": "h1", "anchor": "overview", "text": "Overview"},
-                {"level": "h2", "anchor": "details", "text": "Details"},
-            ]
-        ),
+        + '<h2 id="details">Details</h2><p>Second section.</p>'
+    )
+    toc = [
+        {"level": "h1", "anchor": "overview", "text": "Overview"},
+        {"level": "h2", "anchor": "details", "text": "Details"},
+    ]
+    if scenario == "untrusted_content":
+        markdown = (
+            "# </script><script>window.readerInjected=true</script>\n\n## Details\n\n"
+            "[Unsafe](javascript:readerInjected=true) [Safe](https://example.test/read?a=1&b=2)"
+        )
+        toc = extract_toc(markdown)
+        body_html = markdown_to_reader_html(markdown, toc)
+    html = template.render(
+        body_html=body_html,
+        toc=toc,
         source_label="Synthetic test",
         uid="synthetic-reader",
         telegraph_fallback_url="",
@@ -69,7 +80,17 @@ def test_memory_delete_window_has_exact_request_and_visible_result(scenario):
 
 @pytest.mark.parametrize(
     "scenario",
-    ["tts_toggle", "tts_hidden", "tts_error", "tts_reload", "tts_navigate", "tts_close", "toc", "clipboard_error"],
+    [
+        "tts_toggle",
+        "tts_hidden",
+        "tts_error",
+        "tts_reload",
+        "tts_navigate",
+        "tts_close",
+        "toc",
+        "clipboard_error",
+        "untrusted_content",
+    ],
 )
 def test_reader_controls_have_observable_browser_results(scenario):
     _run_page("reader", scenario)

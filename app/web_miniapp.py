@@ -17,6 +17,7 @@ import hmac
 import logging
 import os
 import re
+import secrets
 import time
 import typing
 import urllib.parse
@@ -112,6 +113,9 @@ rate_limit_reader = rate_limit(_reader_limiter)
 
 # State tracking for Live Audio sessions
 ACTIVE_LIVE_SESSIONS: set[int] = set()
+_LIVE_SESSION_MAX_SECONDS = 1800
+_LIVE_SESSION_LEASE_SECONDS = _LIVE_SESSION_MAX_SECONDS + 60
+_LIVE_SESSION_RELEASE = "if redis.call('get',KEYS[1]) == ARGV[1] then return redis.call('del',KEYS[1]) end return 0"
 _KEY_ROTATION_INDEX: int = 0
 _LIVE_CONNECT_RETRY_AFTER_RE = re.compile(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE)
 _LIVE_DEFAULT_THINKING_LEVEL = "low"
@@ -685,6 +689,12 @@ async def api_natal_submit(user_id: int):
     if bot is None:
         return jsonify({"error": "bot_not_ready"}), 503
 
+    from app.natal.private_work import capture_natal_epoch
+
+    expected_epoch = await capture_natal_epoch(user_id)
+    if expected_epoch is None:
+        return jsonify({"error": "account_unavailable"}), 409
+
     body = await request.get_json(silent=True) or {}
     try:
         birth_input = _birth_input_from_natal_payload(body)
@@ -700,29 +710,61 @@ async def api_natal_submit(user_id: int):
             }
         ), 500
 
-    submit_task(_build_and_send_natal_report(bot, user_id, birth_input, webhook_url))
+    submit_task(_build_and_send_natal_report(bot, user_id, birth_input, webhook_url, expected_epoch=expected_epoch))
     return jsonify({"ok": True, "status": "accepted"})
 
 
-async def _build_and_send_natal_report(bot: Any, user_id: int, birth_input: BirthInput, webhook_url: str) -> None:
+async def _build_and_send_natal_report(
+    bot: Any,
+    user_id: int,
+    birth_input: BirthInput,
+    webhook_url: str,
+    *,
+    expected_epoch: int | None = None,
+) -> None:
+    from app.natal.private_work import capture_natal_epoch
+    from app.repos.memory_consent import private_data_lease
+
+    epoch = expected_epoch if expected_epoch is not None else await capture_natal_epoch(user_id)
+    if epoch is None:
+        return
+    # Account erasure waits for generation-bound generation, publication and
+    # delivery together. A queued ingress token is never refreshed on dequeue.
+    async with private_data_lease(user_id, epoch, purpose="natal:delivery", require_ltm=False) as current:
+        if not current:
+            return
+        await _build_and_send_natal_report_leased(bot, user_id, birth_input, webhook_url, epoch)
+
+
+async def _build_and_send_natal_report_leased(
+    bot: Any, user_id: int, birth_input: BirthInput, webhook_url: str, expected_epoch: int
+) -> None:
+    from app.repos.memory_consent import is_private_data_snapshot_current
+
+    async def has_access() -> bool:
+        return await is_private_data_snapshot_current(
+            user_id, expected_epoch, require_ltm=False
+        ) and await _natal_user_has_access(user_id)
+
     try:
-        if not await _natal_user_has_access(user_id):
+        if not await has_access():
             return
         report = await create_natal_report(
             birth_input=birth_input,
             user_id=user_id,
             chat_id=user_id,
             webhook_url=webhook_url,
-            access_guard=lambda: _natal_user_has_access(user_id),
+            access_guard=has_access,
+            expected_epoch=expected_epoch,
         )
-        if not await _natal_user_has_access(user_id):
+        if not await has_access():
             return
-        await _send_natal_report_to_private_chat(bot, user_id, report, birth_input)
+        await _send_natal_report_to_private_chat(bot, user_id, report, birth_input, access_guard=has_access)
     except NatalAccessRevoked:
         logger.info("Mini App natal background access revoked user=%s", user_id)
     except Exception as exc:
         logger.error("Mini App natal background task failed user=%s type=%s", user_id, type(exc).__name__)
-        if not await _natal_user_has_access(user_id):
+        if not await has_access():
             return
         try:
             await bot.send_message(
@@ -941,11 +983,21 @@ def natal_result_keyboard(report):
     return _result_keyboard(report)
 
 
-async def _send_natal_report_to_private_chat(bot, user_id: int, report, birth_input: BirthInput) -> None:
+async def _send_natal_report_to_private_chat(
+    bot,
+    user_id: int,
+    report,
+    birth_input: BirthInput,
+    *,
+    access_guard: typing.Callable[[], typing.Awaitable[bool]] | None = None,
+) -> None:
+    async def has_access() -> bool:
+        return await access_guard() if access_guard is not None else await _natal_user_has_access(user_id)
+
     caption = natal_result_caption(report, birth_input)
     keyboard = natal_result_keyboard(report)
     cover = await get_natal_cover_photo()
-    if not await _natal_user_has_access(user_id):
+    if not await has_access():
         return
     if cover is not None:
         try:
@@ -960,7 +1012,7 @@ async def _send_natal_report_to_private_chat(bot, user_id: int, report, birth_in
             return
         except (OSError, TelegramError) as exc:
             logger.warning("Mini App natal cover send failed user=%s type=%s", user_id, type(exc).__name__)
-    if not await _natal_user_has_access(user_id):
+    if not await has_access():
         return
     await bot.send_message(
         chat_id=user_id,
@@ -1234,9 +1286,9 @@ async def api_reset_context(user_id: int):
 async def api_get_roles(user_id: int):
     """Get custom roles."""
     try:
-        from app.repos.roles import get_user_custom_roles
+        from app.repos.roles import get_user_custom_roles_full
 
-        roles = await get_user_custom_roles(user_id)
+        roles = await get_user_custom_roles_full(user_id)
         return jsonify({"roles": roles})
     except Exception as e:
         logger.error("Mini App get roles error: %s", e, exc_info=True)
@@ -1374,7 +1426,7 @@ async def reader_page():
         uid = ""  # treat as missing rather than raising
 
     body_html = ""
-    toc_json = "[]"
+    toc: list[dict[str, str]] = []
     telegraph_fallback_url = ""
     source_label = ""
 
@@ -1389,7 +1441,6 @@ async def reader_page():
                 # ── 2. Redis hit — SSR
                 toc = extract_toc(markdown)
                 body_html = markdown_to_reader_html(markdown, toc)
-                toc_json = json.dumps(toc, ensure_ascii=False)
                 source_label = "redis"
             else:
                 # ── 3. Redis miss — try Telegraph cold-storage
@@ -1399,7 +1450,6 @@ async def reader_page():
                     if pulled:
                         toc = extract_toc(pulled)
                         body_html = markdown_to_reader_html(pulled, toc)
-                        toc_json = json.dumps(toc, ensure_ascii=False)
                         source_label = "telegraph"
                     else:
                         # Could fetch URL but could not parse content → redirect
@@ -1411,7 +1461,7 @@ async def reader_page():
     return await render_template(
         "reader.html",
         body_html=body_html,
-        toc_json=toc_json,
+        toc=toc,
         telegraph_fallback_url=telegraph_fallback_url,
         uid=uid,
         source_label=source_label,
@@ -1948,6 +1998,7 @@ async def daily2048_ws():
     from quart import websocket
 
     from app.games.crocodile_runtime import (
+        await_owned_game_action,
         cache_pending_action_result,
         game_mutation_lock,
         get_cached_pending_action_result,
@@ -2048,6 +2099,40 @@ async def daily2048_ws():
             return None
         return max(0, min(value, 24 * 60 * 60 * 1000))
 
+    async def apply_and_cache_move(
+        direction: str,
+        payload: dict[str, Any],
+        elapsed_ms: int | None,
+        pending_id: str,
+        base_result: daily2048_repo.Daily2048Result,
+    ) -> dict[str, Any]:
+        nonlocal practice_result
+        if practice_result is not None:
+            accepted = await process_practice_move(practice_result, puzzle, direction)
+        else:
+            accepted = await process_move(
+                user_id,
+                direction,
+                client_elapsed_ms=elapsed_ms,
+                client_board_before=payload.get("client_board_before"),
+                client_board_after=payload.get("client_board_after"),
+            )
+        if accepted.get("daily2048_completed"):
+            completion = await _completion_payload()
+            accepted = {**accepted, **completion}
+            practice_result = _result_from_event(accepted, base_result, status="won")
+        elif accepted.get("game_over") and accepted.get("status") == "lost":
+            accepted = {**accepted, "start_board": puzzle.board}
+            practice_result = _result_from_event(accepted, base_result, status="lost")
+        elif practice_result is not None and accepted.get("event") == "move_result":
+            practice_result = _result_from_event(accepted, practice_result)
+
+        accepted = await stamp_runtime_payload(runtime_id, accepted)
+        if pending_id:
+            accepted["pending_id"] = pending_id
+            await cache_pending_action_result(runtime_id, pending_id, accepted)
+        return accepted
+
     await websocket.send_json(
         await stamp_runtime_payload(
             runtime_id,
@@ -2139,16 +2224,20 @@ async def daily2048_ws():
 
             try:
                 async with game_mutation_lock(f"daily2048:{puzzle.puzzle_date}:{user_id}"):
-                    if practice_result is not None:
-                        event = await process_practice_move(practice_result, puzzle, direction)
-                    else:
-                        event = await process_move(
-                            user_id,
-                            direction,
-                            client_elapsed_ms=client_elapsed_ms,
-                            client_board_before=msg.get("client_board_before"),
-                            client_board_after=msg.get("client_board_after"),
-                        )
+                    # Concurrent reconnects can both miss the optimistic lookup.
+                    # Claim the move and its replayable response under one lock.
+                    if pending_id:
+                        cached_event = await get_cached_pending_action_result(runtime_id, pending_id)
+                        if cached_event is not None:
+                            await websocket.send_json(cached_event)
+                            continue
+
+                    # Once admitted, a socket disconnect must not release the
+                    # mutex between the committed move and its cached reply.
+                    # Retain and drain the child even under repeated cancellation.
+                    event = await await_owned_game_action(
+                        apply_and_cache_move(direction, msg, client_elapsed_ms, pending_id, result)
+                    )
             except TimeoutError:
                 await websocket.send_json(
                     await stamp_runtime_payload(
@@ -2163,20 +2252,6 @@ async def daily2048_ws():
                 )
                 continue
 
-            if event.get("daily2048_completed"):
-                completion = await _completion_payload()
-                event = {**event, **completion}
-                practice_result = _result_from_event(event, result, status="won")
-            elif event.get("game_over") and event.get("status") == "lost":
-                event = {**event, "start_board": puzzle.board}
-                practice_result = _result_from_event(event, result, status="lost")
-            elif practice_result is not None and event.get("event") == "move_result":
-                practice_result = _result_from_event(event, practice_result)
-
-            event = await stamp_runtime_payload(runtime_id, event)
-            if pending_id:
-                event["pending_id"] = pending_id
-                await cache_pending_action_result(runtime_id, pending_id, event)
             await websocket.send_json(event)
 
             if event.get("daily2048_completed") and not result_message_sent:
@@ -2206,6 +2281,7 @@ async def daily_game_ws():
         process_daily_guess,
     )
     from app.games.crocodile_runtime import (
+        await_owned_game_action,
         cache_pending_action_result,
         game_mutation_lock,
         get_cached_pending_action_result,
@@ -2268,6 +2344,20 @@ async def daily_game_ws():
     puzzle = puzzles[difficulty]
     result = results[difficulty]
     runtime_id = f"daily:{puzzle_date}:{difficulty}:{user_id}"
+
+    async def apply_and_cache_guess(word: str, pending_id: str) -> tuple[dict[str, Any], bool]:
+        nonlocal puzzle
+        _, current_puzzles, current_results = await get_daily_overview(user_id)
+        puzzle = current_puzzles.get(difficulty, puzzle)
+        before = current_results.get(difficulty, result)
+        was_active = before.status == "active"
+        accepted = await process_daily_guess(user_id, word, difficulty=difficulty)
+        accepted = await stamp_runtime_payload(runtime_id, accepted)
+        if pending_id:
+            accepted["pending_id"] = pending_id
+            await cache_pending_action_result(runtime_id, pending_id, accepted)
+        return accepted, was_active
+
     await websocket.send_json(
         await stamp_runtime_payload(
             runtime_id,
@@ -2400,11 +2490,12 @@ async def daily_game_ws():
 
             try:
                 async with game_mutation_lock(f"daily:{puzzle.puzzle_date}:{difficulty}:{user_id}"):
-                    _, current_puzzles, current_results = await get_daily_overview(user_id)
-                    puzzle = current_puzzles.get(difficulty, puzzle)
-                    before = current_results.get(difficulty, result)
-                    was_active = before.status == "active"
-                    event = await process_daily_guess(user_id, word, difficulty=difficulty)
+                    if pending_id:
+                        cached_event = await get_cached_pending_action_result(runtime_id, pending_id)
+                        if cached_event is not None:
+                            await websocket.send_json(cached_event)
+                            continue
+                    event, was_active = await await_owned_game_action(apply_and_cache_guess(word, pending_id))
             except TimeoutError:
                 logger.warning("daily_game_ws: mutation lock timeout user=%s", user_id)
                 await websocket.send_json(
@@ -2418,10 +2509,6 @@ async def daily_game_ws():
                 )
                 continue
 
-            event = await stamp_runtime_payload(runtime_id, event)
-            if pending_id:
-                event["pending_id"] = pending_id
-                await cache_pending_action_result(runtime_id, pending_id, event)
             await websocket.send_json(event)
 
             if was_active and event.get("daily_completed"):
@@ -2465,6 +2552,7 @@ async def game_ws():
 
     from app.games.crocodile import get_game_hints, get_game_history, load_game
     from app.games.crocodile_runtime import (
+        await_owned_game_action,
         cache_pending_action_result,
         game_mutation_lock,
         get_cached_pending_action_result,
@@ -2600,6 +2688,66 @@ async def game_ws():
     # Subscribe this socket to the game's PubSub broadcast queue
     subscriber_id = uuid.uuid4().hex
     subscription = await open_game_event_subscription(game_id, subscriber_id)
+
+    async def apply_and_publish_guess(word: str, pending_id: str) -> dict[str, Any]:
+        accepted = await game.process_guess(word)
+        if pending_id:
+            accepted["pending_id"] = pending_id
+        accepted = await stamp_runtime_payload(game_id, accepted)
+        if pending_id:
+            await cache_pending_action_result(game_id, pending_id, accepted)
+
+        send_cancellation = None
+        try:
+            # Preserve the immediate player result while a slow/closed socket
+            # cannot indefinitely postpone the accepted game completion.
+            async with asyncio.timeout(5.0):
+                await websocket.send_json(accepted)
+        except asyncio.CancelledError as exc:
+            send_cancellation = exc
+        except Exception as exc:
+            logger.debug("game_ws: accepted reply send failed game=%s: %s", game_id, type(exc).__name__)
+
+        broadcast_payload = {
+            "event": "spectator_result",
+            "word": word,
+            "status": accepted.get("status"),
+            "score": accepted.get("score"),
+            "hint": accepted.get("hint"),
+            "seq": accepted.get("seq"),
+            "server_time_ms": accepted.get("server_time_ms"),
+        }
+        if accepted.get("event") == "game_over":
+            broadcast_payload["event"] = "spectator_game_over"
+            broadcast_payload["word"] = accepted.get("word", word)
+        elif accepted.get("status") == "exact_match":
+            broadcast_payload["event"] = "spectator_win"
+            broadcast_payload["word"] = accepted.get("word", word)
+        try:
+            await publish_runtime_event(game_id, broadcast_payload, exclude_subscriber_id=subscriber_id)
+        except Exception as exc:
+            logger.warning("game_ws: broadcast failed game=%s: %s", game_id, exc)
+
+        if game.status in ("won", "lost"):
+            try:
+                from app.bot_instance import get_bot
+
+                bot = get_bot()
+                if bot:
+                    # Keep an accepted win/loss owned after the socket closes,
+                    # while bounding its Telegram finalization and cleanup.
+                    async with asyncio.timeout(30.0):
+                        await game.finalize(bot)
+            except Exception as exc:
+                logger.warning("game_ws: finalize failed game=%s: %s", game_id, exc)
+            finally:
+                # finalize/delete clears runtime state, including pending replies.
+                # Restore this terminal replay before releasing mutation ownership.
+                if pending_id:
+                    await cache_pending_action_result(game_id, pending_id, accepted)
+        if send_cancellation is not None:
+            raise send_cancellation
+        return accepted
 
     # ── Drain task: forward broadcast events to this WebSocket connection ──
     # Runs concurrently with the receive loop so broadcasts are never blocked
@@ -2757,13 +2905,7 @@ async def game_ws():
                     if game.status != "active":
                         break
 
-                    event = await game.process_guess(word)
-                    # Publish the replay record before releasing mutation ownership.
-                    if pending_id:
-                        event["pending_id"] = pending_id
-                    event = await stamp_runtime_payload(game_id, event)
-                    if pending_id:
-                        await cache_pending_action_result(game_id, pending_id, event)
+                    event = await await_owned_game_action(apply_and_publish_guess(word, pending_id))
             except TimeoutError:
                 logger.warning("game_ws: mutation lock timeout game=%s", game_id)
                 await websocket.send_json(
@@ -2777,26 +2919,6 @@ async def game_ws():
                 )
                 continue
 
-            await websocket.send_json(event)
-
-            # Broadcast the result to all other subscribers (spectators / creator)
-            broadcast_payload = {
-                "event": "spectator_result",
-                "word": word,
-                "status": event.get("status"),
-                "score": event.get("score"),
-                "hint": event.get("hint"),
-                "seq": event.get("seq"),
-                "server_time_ms": event.get("server_time_ms"),
-            }
-            if event.get("event") in ("game_over",):
-                broadcast_payload["event"] = "spectator_game_over"
-                broadcast_payload["word"] = event.get("word", word)
-            elif event.get("status") == "exact_match":
-                broadcast_payload["event"] = "spectator_win"
-                broadcast_payload["word"] = event.get("word", word)
-            await publish_runtime_event(game_id, broadcast_payload, exclude_subscriber_id=subscriber_id)
-
             if event.get("best_score_updated") and game.status == "active":
                 try:
                     from app.bot_instance import get_bot
@@ -2808,16 +2930,7 @@ async def game_ws():
                 except Exception as exc:
                     logger.debug("game_ws: thermometer queue failed game=%s: %s", game_id, exc)
 
-            # Finalize if game ended (won / lost)
             if game.status in ("won", "lost"):
-                try:
-                    from app.bot_instance import get_bot
-
-                    bot = get_bot()
-                    if bot:
-                        await game.finalize(bot)
-                except Exception as exc:
-                    logger.warning("game_ws: finalize failed game=%s: %s", game_id, exc)
                 break
 
     except Exception as exc:
@@ -2837,6 +2950,30 @@ async def live_audio_page():
     from quart import render_template
 
     return await render_template("live_audio.html")
+
+
+async def _release_live_session_lease(client: Any, key: str, token: str) -> None:
+    """Drain the bounded owner-only release before restoring caller cancellation."""
+
+    async def release() -> None:
+        async with asyncio.timeout(5.0):
+            await client.eval(_LIVE_SESSION_RELEASE, 1, key, token)
+
+    cleanup = asyncio.create_task(release(), name="live-session-lease-release")
+    cancelled = False
+    while not cleanup.done():
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            cancelled = True
+        except Exception:
+            break
+    try:
+        cleanup.result()
+    except Exception as exc:
+        logger.warning("Live session lease release unavailable (error_type=%s)", type(exc).__name__)
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 async def _open_authenticated_live_socket(route_mode: str) -> None:
@@ -2868,32 +3005,40 @@ async def _open_authenticated_live_socket(route_mode: str) -> None:
 
     from app.cache import redis_client
 
+    lease_key = f"live_session:{user_id}"
+    lease_token = secrets.token_hex(16)
     has_active_session = False
     if redis_client:
-        # Atomically check and set the active session flag (15-min TTL safety net)
+        # The lease outlasts the full setup/session deadline and bounded cleanup.
         has_active_session = not await redis_client.set(
-            f"live_session:{user_id}",
-            "1",
+            lease_key,
+            lease_token,
             nx=True,
-            ex=900,
+            ex=_LIVE_SESSION_LEASE_SECONDS,
         )
 
     if has_active_session:
         await websocket.close(4009, "User already has an active session")
         return
 
+    session_deadline = asyncio.timeout(_LIVE_SESSION_MAX_SECONDS)
     try:
-        await _handle_live_session(
-            websocket,
-            user_id,
-            validated,
-            resumption_token,
-            transport_mode=route_mode,
-            manual_activity=websocket.args.get("turnDetection") == "manual",
-        )
+        async with session_deadline:
+            await _handle_live_session(
+                websocket,
+                user_id,
+                validated,
+                resumption_token,
+                transport_mode=route_mode,
+                manual_activity=websocket.args.get("turnDetection") == "manual",
+            )
+    except TimeoutError:
+        if not session_deadline.expired():
+            raise
+        await websocket.close(1008, "Session duration limit reached (30m)")
     finally:
         if redis_client:
-            await redis_client.delete(f"live_session:{user_id}")
+            await _release_live_session_lease(redis_client, lease_key, lease_token)
 
 
 @miniapp_blueprint.websocket("/live/ws")
@@ -3178,7 +3323,7 @@ async def _handle_live_session(
                 start_time = time.monotonic()
                 try:
                     while True:
-                        if time.monotonic() - start_time > 1800:
+                        if time.monotonic() - start_time > _LIVE_SESSION_MAX_SECONDS:
                             close_reason = "duration_limit"
                             await websocket.close(1008, "Session duration limit reached (30m)")
                             return

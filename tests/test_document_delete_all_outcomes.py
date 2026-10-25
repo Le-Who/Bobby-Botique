@@ -111,6 +111,7 @@ def documents(monkeypatch):
     monkeypatch.setattr(state, "_schedule_persist", lambda chat: None)
     states = {uid: state.get_user_state(uid) for uid in (101, 202)}
     for uid, doc_id in ((101, 11), (202, 22)):
+        states[uid]._loaded_from_db = True
         state.set_document_mode(uid, True, doc_id)
         states[uid].last_document_message_id = 77
     query = SimpleNamespace(

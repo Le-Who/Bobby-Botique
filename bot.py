@@ -788,11 +788,15 @@ async def _flush_request_persistence() -> None:
             for user_id, handle in list(_pending_persists.items()):
                 handle.cancel()
                 if user_id in USER_STATES:
-                    tasks.append(_persist(USER_STATES[user_id]))
+                    tasks.append(_persist(USER_STATES[user_id], retry_on_failure=False))
             _pending_persists.clear()
             if tasks:
-                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=5.0)
-                logging.info("Flushed %d state persists on shutdown", len(tasks))
+                results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=5.0)
+                failed = sum(result is not True for result in results)
+                if failed:
+                    logging.warning("State drain failed for %d of %d pending users", failed, len(tasks))
+                else:
+                    logging.info("Flushed %d state persists on shutdown", len(tasks))
     except Exception as error:
         logging.warning("State drain on shutdown failed: %s", error)
 
@@ -861,11 +865,22 @@ async def run_bot_and_server():
     shutdown_task = asyncio.create_task(_wait_for_shutdown())
 
     try:
-        await shutdown_task
+        critical_tasks = {bot_task: "Telegram bot"}
+        if server_task is not None:
+            critical_tasks[server_task] = "web server"
+        done, _ = await asyncio.wait({shutdown_task, *critical_tasks}, return_when=asyncio.FIRST_COMPLETED)
+        if not shutdown_event.is_set():
+            for task, name in critical_tasks.items():
+                if task in done:
+                    if task.cancelled():
+                        raise RuntimeError(f"{name} task was cancelled unexpectedly")
+                    task.result()
+                    raise RuntimeError(f"{name} task exited unexpectedly")
         logging.info("Shutdown signal received, initiating graceful shutdown...")
     except Exception as e:
         logging.error(f"Critical error in main loop: {e}", exc_info=True)
         _handle_polling_conflict(e)
+        raise
     finally:
         logging.info("Starting graceful shutdown...")
 
@@ -1020,6 +1035,7 @@ async def main():
             config_manager.add_watcher(model_migration_watcher)
         except Exception as e:
             logging.error(f"Database initialization failed: {e}")
+            raise
 
         try:
             from app.memory_manager import memory_manager as shared_memory_manager
@@ -1071,6 +1087,7 @@ async def main():
         logging.info("Main application loop was cancelled")
     except Exception as e:
         logging.critical(f"Application failed critically: {e}", exc_info=True)
+        raise
     finally:
         logging.info("Shutting down services...")
         if memory_manager:

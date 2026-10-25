@@ -170,6 +170,13 @@ const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
           assert.equal(await page.locator('#mem-stats-text').textContent(), '0 / 500');
         }
       }
+    } else if (payload.scenario === 'untrusted_content') {
+      assert.equal(await page.evaluate(() => window.readerInjected), undefined);
+      assert.deepEqual(await page.locator('#toc-list a').allTextContents(),
+        ['</script><script>window.readerInjected=true</script>', 'Details']);
+      assert.equal(await page.locator('#md-body a').count(), 1);
+      assert.equal(await page.locator('#md-body a').getAttribute('href'), 'https://example.test/read?a=1&b=2');
+      assert.ok((await page.locator('#md-body').textContent()).includes('Unsafe'));
     } else if (payload.scenario === 'toc') {
       assert.deepEqual(await page.locator('#toc-list a').allTextContents(), ['Overview', 'Details']);
       await page.locator('#toc-fab').click();

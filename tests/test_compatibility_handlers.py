@@ -490,7 +490,9 @@ async def test_compatibility_tarot_callback_ends_active_natal_conversation():
 async def test_natal_entry_callback_clears_another_pending_birth_flow(monkeypatch):
     from app.handlers import compatibility as handler
     from app.handlers import natal_chart
+    from tests.natal_privacy_fakes import install_natal_privacy_database
 
+    privacy = install_natal_privacy_database(monkeypatch)
     context = _context()
     await commands.start_command(_update(), context)
     await handler.handle_compatibility_date(_update("30.06.2003", message_id=2), context)
@@ -498,6 +500,7 @@ async def test_natal_entry_callback_clears_another_pending_birth_flow(monkeypatc
     callback = _update("Open natal", message_id=3)
     callback.callback_query = SimpleNamespace(data="start_natal", answer=AsyncMock(), message=callback.message, id="cb")
     await natal_chart.natal_command(callback, context)
+    assert context.user_data["natal_memory_epoch"] == privacy.epoch
 
     assert "compatibility_flow" not in context.user_data
 

@@ -41,6 +41,7 @@ def isolated_runtime(monkeypatch):
 def _role_update(monkeypatch):
     user_id = 401
     state = get_user_state(user_id)
+    state._loaded_from_db = True
     state.last_custom_role_prompt = "Create a science teacher"
     progress = SimpleNamespace(edit_text=AsyncMock())
     query = SimpleNamespace(

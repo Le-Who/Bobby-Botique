@@ -9,6 +9,7 @@ from telegram.ext import Application, CallbackContext, ConversationHandler, ExtB
 
 from app import state
 from app.handlers import commands, horoscope_subscription, messages, natal_chart
+from tests.natal_privacy_fakes import install_natal_privacy_database
 
 _USER_ID = 98764123
 _KEY = (_USER_ID, _USER_ID)
@@ -80,6 +81,7 @@ def test_menu_request_classifier_only_accepts_standalone_entries(text, expected)
 
 @pytest.fixture
 def application(monkeypatch):
+    install_natal_privacy_database(monkeypatch)
     monkeypatch.setattr("app.repos.users.load_user_state", AsyncMock(return_value=None))
     monkeypatch.setattr("app.repos.users.save_user_state", AsyncMock())
     monkeypatch.setattr("app.utils.decorators.is_authorized", AsyncMock(return_value=True))
@@ -147,6 +149,7 @@ async def test_standalone_private_words_open_their_menu(application, word, menu)
     sent = application.bot.send_message.await_args.kwargs
     if menu == "natal":
         assert "Натальная карта и матрица судьбы" in sent["text"]
+        assert context.user_data["natal_memory_epoch"] == 100
         assert _conversation(application, "natal_chart")._conversations[_KEY] == natal_chart.NATAL_MODE
     elif menu == "tarot":
         assert "Сеанс Таро начат" in sent["text"]
@@ -220,6 +223,7 @@ async def test_cancelled_natal_does_not_resume_the_previous_horoscope_form(appli
 
     assert _callback(selected, matched) is messages.handle_request
     assert "horo_sign" not in application.user_data[_USER_ID]
+    assert "natal_memory_epoch" not in application.user_data[_USER_ID]
 
 
 @pytest.mark.asyncio

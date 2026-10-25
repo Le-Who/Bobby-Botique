@@ -201,17 +201,14 @@ async def test_cleanup_flushes_evicted_pending_state_before_stopping_dependents(
     assert not state._pending_persists
 
 
-@pytest.mark.parametrize("web, server_fault", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("web", [False, True])
 @pytest.mark.parametrize("drain_outcome", ["success", "incomplete", "fault"])
 @pytest.mark.parametrize("trigger", ["signal", "cancel"])
-async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup(
-    monkeypatch, web, server_fault, drain_outcome, trigger
-):
+async def test_orchestration_awaits_sibling_cleanup(monkeypatch, web, drain_outcome, trigger):
     import bot
 
     shutdown = asyncio.Event()
-    bot_failed = asyncio.Event()
-    started = {name: asyncio.Event() for name in ("monitor", "watchdog", "server")}
+    started = {name: asyncio.Event() for name in ("monitor", "bot", "watchdog", "server")}
     finished = set()
     tasks = []
     release = asyncio.Event()
@@ -224,19 +221,12 @@ async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup
     async def child(name):
         tasks.append(asyncio.current_task())
         started[name].set()
-        if name == "server" and server_fault:
-            raise RuntimeError("synthetic server failure")
         try:
             await asyncio.Future()
         finally:
             cleanup_started.set()
             await release.wait()
             finished.add(name)
-
-    async def failed_bot():
-        tasks.append(asyncio.current_task())
-        bot_failed.set()
-        raise RuntimeError("synthetic bot failure")
 
     async def drain(**kwargs):
         assert voice_closed.is_set(), "TTS admission must stop before draining tracked tasks"
@@ -249,7 +239,7 @@ async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup
     monkeypatch.setattr(bot, "settings", SimpleNamespace(PORT=19000, ENABLE_WEB_SERVER=web))
     monkeypatch.setattr(bot, "shutdown_event", shutdown)
     monkeypatch.setattr(bot, "basic_monitoring", lambda: child("monitor"))
-    monkeypatch.setattr(bot, "run_bot_with_retry", failed_bot)
+    monkeypatch.setattr(bot, "run_bot_with_retry", lambda: child("bot"))
     monkeypatch.setattr(bot, "bot_watchdog", lambda task: child("watchdog"))
     monkeypatch.setattr(bot, "serve", lambda *args, **kwargs: child("server"))
     monkeypatch.setattr("app.utils.background_tasks.get_task_manager", lambda: SimpleNamespace(drain=drain))
@@ -272,12 +262,12 @@ async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup
     monkeypatch.setattr("app.providers.close_http_clients", close_clients)
     owner = asyncio.create_task(bot.run_bot_and_server())
     try:
-        await bot_failed.wait()
+        await started["bot"].wait()
         await started["monitor"].wait()
         await started["watchdog"].wait()
         if web:
             await started["server"].wait()
-        assert not owner.done(), "watchdog logs failures; shutdown remains explicitly signalled"
+        assert not owner.done()
         if trigger == "signal":
             shutdown.set()
         else:
@@ -294,11 +284,8 @@ async def test_orchestration_collects_failed_children_and_awaits_sibling_cleanup
         assert clients_closed.is_set()
         assert drain_observations == [True], "Telegram/server producers must finish before the final background drain"
         assert persistence_observations == [True]
-        assert finished == ({"monitor", "watchdog", "server"} if web and not server_fault else {"monitor", "watchdog"})
+        assert finished == ({"monitor", "bot", "watchdog", "server"} if web else {"monitor", "bot", "watchdog"})
         assert all(task.done() for task in tasks)
-        assert sum(isinstance(task.exception(), RuntimeError) for task in tasks if not task.cancelled()) == (
-            2 if server_fault else 1
-        )
     finally:
         release.set()
         shutdown.set()

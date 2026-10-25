@@ -16,6 +16,7 @@ def flow(monkeypatch, tmp_path):
     # Document parsing/persistence are exercised in test_document_upload_atomicity;
     # this boundary exposes whether a duplicate bypass was actually requested.
     attempted_bypasses = []
+    monkeypatch.setattr("app.repos.users.load_user_state", AsyncMock(return_value=None))
 
     async def process(_path, _filename, _user_id, is_path=False, **options):
         attempted_bypasses.append(options.get("skip_duplicate_check", False))

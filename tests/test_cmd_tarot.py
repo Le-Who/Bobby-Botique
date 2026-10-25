@@ -177,13 +177,24 @@ async def test_warm_tarot_entry_keeps_current_fields_without_reloading(_offline_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("load_failure", [False, True], ids=["no-saved-state", "repository-error"])
-async def test_tarot_entry_keeps_existing_hydration_failure_contract(load_failure, _offline_repositories):
+async def test_tarot_entry_stops_on_hydration_failure_and_retries(load_failure, _offline_repositories):
     _offline_repositories.load.return_value = None
     if load_failure:
         _offline_repositories.load.side_effect = RuntimeError("Synthetic repository unavailable")
 
     result = await cmd_tarot.tarot_command(_update(), _context())
     current = state.get_user_state(_USER_ID)
+
+    if load_failure:
+        assert current._loaded_from_db is False
+        assert current.tarot_mode is False
+        assert current.tarot_session is None
+        assert result is None
+        _offline_repositories.load.side_effect = None
+        assert await state.ensure_state_loaded(_USER_ID) is current
+        assert current._loaded_from_db is True
+        assert _offline_repositories.load.await_count == 2
+        return
 
     assert current._loaded_from_db is True
     assert current.tarot_mode is True

@@ -36,7 +36,15 @@ async def test_main_starts_and_stops_the_shared_monitor(monkeypatch):
     monkeypatch.setattr(module, "memory_manager", shared)
     monkeypatch.setattr(module, "MemoryManager", constructor)
     monkeypatch.setattr(bot, "install_asyncio_exception_handler", lambda: None)
-    monkeypatch.setattr(bot.database, "init_db", AsyncMock(side_effect=RuntimeError("offline startup")))
+    # Exercise the monitor's successful startup/shutdown path with synthetic
+    # infrastructure; failed database initialization now correctly stops main.
+    monkeypatch.setattr(bot.database, "init_db", AsyncMock())
+    monkeypatch.setattr("app.runtime_settings.lifecycle.refresh_runtime_settings", AsyncMock())
+    monkeypatch.setattr("app.config.config_manager.add_watcher", Mock())
+    monkeypatch.setattr(bot, "start_task_queue", AsyncMock())
+    monkeypatch.setattr(bot, "stop_task_queue", AsyncMock())
+    monkeypatch.setattr(bot, "startup_health_check", AsyncMock())
+    monkeypatch.setattr(bot.metrics_collector, "cleanup", AsyncMock())
     monkeypatch.setattr(bot.database.db_manager, "close", AsyncMock())
     monkeypatch.setattr(bot, "initialize_group_chats", AsyncMock())
     monkeypatch.setattr(bot, "run_bot_and_server", AsyncMock())

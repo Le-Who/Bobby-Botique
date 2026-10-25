@@ -68,6 +68,8 @@ async def driver(monkeypatch):
         if not task.done():
             task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    for timer in state._pending_persists.values():
+        timer.cancel()
     assert driver.acquired == driver.released
 
 

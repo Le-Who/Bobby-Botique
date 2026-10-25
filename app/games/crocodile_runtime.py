@@ -4,7 +4,9 @@ import asyncio
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Coroutine
 from contextlib import asynccontextmanager
+from typing import Any
 
 from app.cache import redis_client
 from app.utils.json_compat import json
@@ -28,6 +30,29 @@ _local_locks: dict[str, asyncio.Lock] = {}
 _local_event_seq: dict[str, int] = {}
 _local_pending_results: dict[str, dict[str, dict]] = defaultdict(dict)
 _game_locks = _local_locks
+
+
+async def await_owned_game_action[T](action: Coroutine[Any, Any, T]) -> T:
+    """Finish admitted game work before restoring transport cancellation.
+
+    The caller owns its mutation lock. Keeping the child joined here prevents
+    a disconnected socket from releasing that lock after persistence but before
+    the replay result and required completion work have finished.
+    """
+    accepted_task = asyncio.create_task(action)
+    cancellation = None
+    while not accepted_task.done():
+        try:
+            await asyncio.shield(accepted_task)
+        except asyncio.CancelledError as exc:
+            cancellation = cancellation or exc
+        except Exception:
+            break
+    try:
+        return accepted_task.result()
+    finally:
+        if cancellation is not None:
+            raise cancellation
 
 
 def _decode_text(value: bytes | str | None) -> str | None:

@@ -236,18 +236,27 @@ async def _ensure_loaded(state: UserState) -> UserState:
                     "duration_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
                 },
             )
+            # Absence and an unavailable store are different outcomes. Do not
+            # admit a handler against defaults that could overwrite saved data.
+            raise
 
         state._loaded_from_db = True
     return state
 
 
-async def _persist(state: UserState) -> None:
-    """Save state to DB. Fire-and-forget style (errors are logged, not raised)."""
+async def _persist(state: UserState, *, retry_on_failure: bool = True) -> bool:
+    """Save a snapshot; retain retry ownership unless this is the final flush."""
     # Snapshot only after the preceding write (including its retries) finishes.
     # The request lock stays independent so handlers can mutate state during I/O.
-    async with state._persist_lock:
+    try:
+        await state._persist_lock.acquire()
+    except asyncio.CancelledError:
+        if retry_on_failure:
+            _schedule_persist(state)
+        raise
+    try:
         if state._user_id == 0:
-            return
+            return True
 
         started_ns = time.monotonic_ns()
         try:
@@ -278,6 +287,11 @@ async def _persist(state: UserState) -> None:
                 actor_user_id=state._user_id,
                 duration_ms=round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
             )
+            return True
+        except asyncio.CancelledError:
+            if retry_on_failure:
+                _schedule_persist(state)
+            raise
         except Exception as e:
             record_exception(
                 "state.persistence_failed",
@@ -289,6 +303,13 @@ async def _persist(state: UserState) -> None:
                     "duration_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 2),
                 },
             )
+            # The DB manager already exhausted its immediate retries. Retain
+            # the latest state for debounced retry and the final shutdown flush.
+            if retry_on_failure:
+                _schedule_persist(state)
+            return False
+    finally:
+        state._persist_lock.release()
 
 
 _PERSIST_DEBOUNCE_SEC = 0.3  # 300ms debounce window

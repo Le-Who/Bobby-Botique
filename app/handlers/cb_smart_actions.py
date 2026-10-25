@@ -54,6 +54,10 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not user or not chat:
         return
 
+    from app.state import ensure_state_loaded
+
+    await ensure_state_loaded(user.id)
+
     try:
         await context.bot.send_message(
             chat_id=chat.id,
@@ -78,23 +82,31 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     user_state.is_processing = True
 
+    from app.handlers.messages import _release_admission, _request_cleanup, _submit_request_worker
     from app.i18n import t as _t
-    from app.state import set_last_bot_message, set_last_sent_message
+    from app.state import register_active_task, set_last_bot_message, set_last_sent_message
 
+    admission_owner = asyncio.current_task()
+    assert admission_owner is not None
+    register_active_task(user.id, admission_owner)
     set_last_sent_message(user.id, suggestion_text)
 
     try:
         placeholder_message = await context.bot.send_message(chat_id=chat.id, text=_t("msg.thinking", "ru"))
         set_last_bot_message(user.id, placeholder_message.message_id, chat.id)
+    except asyncio.CancelledError:
+        _release_admission(user.id, admission_owner)
+        raise
     except Exception as e:
         logging.error("Failed to send placeholder: %s", e)
-        user_state.is_processing = False
+        _release_admission(user.id, admission_owner)
         return
 
-    from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
+    from app.utils.heartbeat import register_heartbeat, retire_heartbeat
 
     done_event = asyncio.Event()
     register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
+    finish_request = _request_cleanup(user.id, placeholder_message, done_event)
 
     async def _run_suggestion() -> None:
         try:
@@ -106,20 +118,22 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception as _e:
             logging.error("Smart suggestion error: %s", _e, exc_info=True)
             try:
-                stop_heartbeat(placeholder_message.message_id)
+                await retire_heartbeat(placeholder_message.message_id, event=done_event)
                 await placeholder_message.edit_text("❌ При обработке произошла ошибка.")
             except Exception:
                 pass
-        finally:
-            _us = get_user_state(user.id)
-            _us.is_processing = False
-            unregister_heartbeat(placeholder_message.message_id)
-            if not done_event.is_set():
-                stop_heartbeat(placeholder_message.message_id)
 
-    from app.utils.background_tasks import submit_task
-
-    submit_task(_run_suggestion())
+    try:
+        await _submit_request_worker(
+            user.id,
+            _run_suggestion(),
+            finish_request,
+            placeholder_message=placeholder_message,
+            done_event=done_event,
+            retry_text=True,
+        )
+    finally:
+        _release_admission(user.id, admission_owner)
 
 
 async def intent_route_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

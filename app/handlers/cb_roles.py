@@ -26,6 +26,7 @@ from app.repos.users import is_authorized as _is_authorized
 from app.state import (
     begin_custom_role_creation,
     clear_custom_role_state,
+    ensure_state_loaded,
     get_generated_role,
     get_last_custom_role_prompt,
     set_generated_role,
@@ -150,6 +151,7 @@ async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    await ensure_state_loaded(query.from_user.id)
     begin_custom_role_creation(query.from_user.id)
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data="role_create_cancel")]])
     await query.edit_message_text(
@@ -163,6 +165,7 @@ async def role_create_cancel_callback(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     await query.answer("❌ Создание роли отменено")
     user_id = query.from_user.id
+    await ensure_state_loaded(user_id)
     clear_custom_role_state(user_id)
     chat_state = await get_user_chat(user_id)
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state, view_mode="hub")
@@ -192,6 +195,7 @@ async def role_custom_apply_callback(update: Update, context: ContextTypes.DEFAU
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    await ensure_state_loaded(user_id)
     chat_state = await get_user_chat(user_id)
     role = get_generated_role(user_id)
     if not role:
@@ -219,6 +223,7 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    await ensure_state_loaded(user_id)
     role = get_generated_role(user_id)
     if not role:
         from app.utils.keyboards import error_with_back_keyboard
@@ -261,6 +266,7 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    await ensure_state_loaded(user_id)
     last_prompt = get_last_custom_role_prompt(user_id)
     if not last_prompt:
         from app.utils.keyboards import error_with_back_keyboard
@@ -799,6 +805,7 @@ async def role_create_manual_callback(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    await ensure_state_loaded(user_id)
     from app.state import begin_manual_role_creation
 
     begin_manual_role_creation(user_id)
@@ -817,6 +824,7 @@ async def role_manual_cancel_callback(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     await query.answer("↩️ Создание роли отменено")
     user_id = query.from_user.id
+    await ensure_state_loaded(user_id)
     from app.state import clear_manual_role_state
 
     clear_manual_role_state(user_id)
@@ -834,6 +842,7 @@ async def role_manual_save_callback(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    await ensure_state_loaded(user_id)
     from app.state import (
         clear_manual_role_state,
         get_manual_role_prompt,

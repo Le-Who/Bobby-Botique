@@ -4,14 +4,19 @@ Baseline review: checkout `f44541a7` on 2026-09-20. Runtime/error/shutdown corre
 were reviewed on 2026-10-23 against `25e25897` and the changes documented in the
 [runtime audit](runtime-audit-2026-10-23.md). Later updates cover request cancellation,
 state persistence, CI/deploy gates, sequential bounded TTS and
-[direct speech requests](voice-and-tts.md). This describes implementation,
+[direct speech requests](voice-and-tts.md). The 2026-10-25 audit additionally
+checked startup supervision, state recovery, Reader rendering, Live leases,
+2048 retry ownership and natal account generations. This describes implementation,
 not a claim that a particular VPS or provider has been tested today.
 
 ## Runtime and request ownership
 
 Python 3.14 runs PTB and Quart/Hypercorn in one async application lifecycle.
 `bot.py` registers handlers, public command menus and scheduled jobs, initializes
-storage, and drains owned work on shutdown. Without `WEBHOOK_URL` it polls.
+storage, and drains owned work on shutdown. Failed database initialization stops
+bootstrap. An unexpected Telegram or web-server task exit stops and awaits the
+other owned services, then propagates failure so the process can be restarted.
+Without `WEBHOOK_URL` it polls.
 With it, the webhook path contains a derived hash rather than the bot token;
 configured `WEBHOOK_SECRET_TOKEN` is validated by `app/webhook_security.py`
 (1–256 ASCII letters/digits/underscore/hyphen) and checked with constant-time
@@ -33,7 +38,7 @@ Redis acknowledgements are outside this cooperative cancellation guarantee.
 See the [dated verification report](webhook-admission-ownership-2026-10-10.md)
 for tested scenarios and evidence limits.
 
-Required text/photo/edit/voice/draw workers use bounded task admission. Capacity
+Required text/photo/edit/voice/draw/suggestion workers use bounded task admission. Capacity
 rejection produces a visible overload result and retires the placeholder's
 heartbeat and admission; optional typing/cleanup work remains best effort.
 The stop callback checks the active owner, message/chat identity and pending
@@ -98,9 +103,13 @@ See [Crocodile operations](pollinations-daily-croc.md).
 
 Agentic research is another specialized SDK boundary: `app/core/agentic.py`
 executes Gemini tool iterations and final synthesis directly; `ai_search.py`
-owns its model/key fallback. Page admission is bounded per agent run. Time and
-reported-token cutoffs are checked between iterations, not hard cancellation or
-billing ceilings; synthesis and a fresh fallback run can add time/usage.
+owns its model/key fallback. One `ResearchBudget` shares page admission, at most
+three attempts and a deadline across the fallback chain. Async calls use the
+remaining time, with a synthesis reserve of `min(15 seconds, timeout / 6)`.
+Cancellation is cooperative and cleanup can take additional time. The token cap
+controls admission rather than billing: an admitted call and final synthesis can
+exceed it, and missing usage reserves 4,000 estimated tokens. Initial key lookup
+and final Telegram delivery remain outside this budget.
 
 `app/config.py` defines role defaults and ordered selectable lists. Unset/blank
 `*_AVAILABLE_MODELS` uses defaults; `none` makes a selector intentionally empty.
@@ -131,13 +140,31 @@ storage and displaying its action succeed. Reader cold-storage mirroring is also
 gated by `TELEGRAPH_PUBLICATION_ENABLED=false` by default. Split actions attach to
 the last message. See [ADR 0001](adr/0001-single-owner-ai-response-delivery.md).
 
+Reader treats Markdown and table-of-contents entries as untrusted content.
+Inline JavaScript values use Jinja's HTML-safe JSON serialization; rendered
+Markdown links allow HTTP, HTTPS, mailto and relative destinations. Script-bearing
+URL schemes are rendered as text instead of active links.
+
 ## State and background work
 
 `UserState` is a process-local LRU with PostgreSQL-backed persisted fields, a local
-request lock and debounced persistence. A separate per-state persistence lock
+request lock and debounced persistence. A failed initial read is propagated and
+retried on the next access; it is not treated as an absent saved row. Document,
+role and suggestion entry points hydrate before reading or mutating persisted fields. Failed or
+cancelled ordinary writes retain a retry marker for the latest snapshot. The
+final shutdown flush starts no further retries and reports failed saves.
+A separate per-state persistence lock
 serializes snapshots and their writes, including database retries, so an older
 write cannot overwrite a newer snapshot. Queued writes recheck account-erasure
-invalidation after acquiring that lock. Active tasks and last-message references
+invalidation after acquiring that lock. Account erasure acquires the same local
+persistence lock before deleting data and holds it through post-commit state
+invalidation. This orders an already-running SQL retry before deletion, so it
+cannot repopulate a recreated account in the same process. Waiting for this lock
+has a ten-second admission limit; failure leaves the account and state intact.
+Once destructive work starts, its owned child drains commit acknowledgment and
+local invalidation before caller cancellation is restored. An unknown commit
+outcome invalidates the old local snapshot and propagates failure.
+Active tasks and last-message references
 are process-local. Redis holds selected caches, distributed semaphores, deferred
 work and game state; it does not replicate all Python state. Multi-replica safety
 must be evaluated per subsystem.
@@ -170,6 +197,18 @@ main-row-first lock order inside a short transaction; a super completion updates
 both result rows atomically. Repeated answers are idempotent, skipped/conflicting
 answers are rejected, and the Mini App restores active progress with the same
 question snapshot. Telegram result notifications run after the write commits.
+
+Daily 2048 and daily/classic Crocodile recheck a guess or move's `pending_id` and
+record its replay response under the same game mutation lock. Accepted actions
+finish before socket cancellation releases that lock. Classic result broadcast
+and bounded finalization also remain owned through cancellation; terminal replay
+is restored after finalization clears the game cache. Daily result messages and
+the optional thermometer update remain best effort.
+This is bounded runtime replay, not database-backed exactly-once delivery across
+process crashes or an unavailable Redis cache. The existing Redis mutation lease
+lasts 60 seconds without renewal; local regressions do not establish cross-replica
+safety beyond that lease. Client elapsed-time correction in 2048 remains
+supported; the speed score therefore still trusts that client input.
 
 ## Long-term memory
 
@@ -209,6 +248,18 @@ Keys use Fernet derived from `ADMIN_SECRET`. Mini App initData, dashboard sessio
 webhooks and game/Live WebSockets have separate guards; rate limits and circuit
 breakers are resilience controls, not a substitute for authentication.
 Public Telegraph copies and shared report links require their own privacy handling.
+
+Live Audio bounds the whole setup/session workload to 30 minutes. Its Redis lease
+lasts 31 minutes and carries a unique owner token; cleanup compares ownership
+before deleting the key and awaits the bounded release even during cancellation.
+Without Redis, the existing active-session set is process-local.
+
+Natal work captures the account's durable generation before queueing or collecting
+report input. Report generation and final Telegram delivery use the existing
+private-data lease with `require_ltm=False`; natal use does not enable or require
+long-term memory. Account erasure can invalidate and drain that work, and an old
+queued report cannot adopt a recreated account's generation. The service also
+guards direct callers, including the explicitly invoked smoke tool.
 
 ## Build, CI and deployment
 

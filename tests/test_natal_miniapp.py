@@ -56,6 +56,9 @@ def _fake_report(url: str) -> NatalReport:
 
 @pytest.fixture(autouse=True)
 def natal_miniapp_settings(monkeypatch):
+    from tests.natal_privacy_fakes import install_natal_privacy_database
+
+    install_natal_privacy_database(monkeypatch)
     settings = SimpleNamespace(
         TELEGRAM_BOT_TOKEN=_BOT_TOKEN,
         WEBAPP_BASE_URL="https://bot.example.com",
@@ -280,7 +283,9 @@ async def test_natal_submit_accepts_form_before_report_is_ready(monkeypatch):
     sent = {}
     scheduled = {}
 
-    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url, access_guard=None):
+    async def fake_create_natal_report(
+        *, birth_input, user_id, chat_id, webhook_url, access_guard=None, expected_epoch=None
+    ):
         assert isinstance(birth_input, BirthInput)
         sent["birth_input"] = birth_input
         sent["user_id"] = user_id
@@ -339,7 +344,9 @@ async def test_natal_submit_matrix_only_requires_only_birth_date(monkeypatch):
     sent = {}
     scheduled = {}
 
-    async def fake_create_natal_report(*, birth_input, user_id, chat_id, webhook_url, access_guard=None):
+    async def fake_create_natal_report(
+        *, birth_input, user_id, chat_id, webhook_url, access_guard=None, expected_epoch=None
+    ):
         sent["birth_input"] = birth_input
         sent["user_id"] = user_id
         sent["chat_id"] = chat_id

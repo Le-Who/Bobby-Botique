@@ -3,7 +3,9 @@
 Initial documentation audit: 2026-09-20 against checkout `f44541a7`; current
 references are maintained with subsequent changes, including the 2026-10-23
 runtime, CI and speech updates, and the 2026-10-24 long-source/TTS token counting
-and short-tail grouping changes.
+and short-tail grouping changes. The 2026-10-25 updates cover startup supervision,
+state recovery, Reader/role rendering, Live session ownership, 2048 retries and
+natal account-generation guards.
 Read current references first; historical plans,
 journals and test/deploy reports are not current instructions.
 

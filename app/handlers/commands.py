@@ -354,8 +354,9 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
 async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показывает список документов пользователя и управляет ими"""
     from app.handlers.msg_document import clear_pending_document_upload
-    from app.state import clear_document_state
+    from app.state import clear_document_state, ensure_state_loaded
 
+    await ensure_state_loaded(update.effective_user.id)
     clear_pending_document_upload(context)
     clear_document_state(update.effective_user.id)
 

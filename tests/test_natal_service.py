@@ -14,6 +14,12 @@ from app.natal.models import (
     TimePrecision,
 )
 from app.natal.service import NatalConfigurationError, create_natal_report
+from tests.natal_privacy_fakes import install_natal_privacy_database
+
+
+@pytest.fixture(autouse=True)
+def natal_database_boundary(monkeypatch):
+    return install_natal_privacy_database(monkeypatch)
 
 
 def patch_report_dependencies(monkeypatch, *, telegraph_url=None, saved_reports=None, telegraph_enabled=False):
