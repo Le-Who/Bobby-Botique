@@ -9,7 +9,11 @@ import concurrent.futures
 import io
 import logging
 import math
+import multiprocessing
+import threading
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
+from functools import partial
 
 from cachetools import TTLCache
 from PIL import Image
@@ -36,6 +40,10 @@ class TaggedImage:
 # Lazily initialized to keep module imports safe in restricted environments.
 _image_process_pool: concurrent.futures.ProcessPoolExecutor | None = None
 _image_process_pool_failed = False
+_image_pool_lock = threading.RLock()
+_image_pool_jobs = 0
+_image_pool_idle_timer: threading.Timer | None = None
+_IMAGE_POOL_IDLE_SECONDS = 60.0
 
 # TTL cache for compressed images — avoids reprocessing on retries/follow-ups.
 # Keyed by cache_key (e.g. Telegram file_unique_id). Max 50 entries, 3 min TTL.
@@ -62,22 +70,89 @@ def _get_image_process_pool() -> concurrent.futures.ProcessPoolExecutor | None:
     Callers should gracefully fall back to the loop's default thread executor.
     """
     global _image_process_pool, _image_process_pool_failed
-    if _image_process_pool is not None:
+    with _image_pool_lock:
+        if _image_process_pool is not None:
+            return _image_process_pool
+        if _image_process_pool_failed:
+            return None
+
+        try:
+            _image_process_pool = concurrent.futures.ProcessPoolExecutor(
+                max_workers=2,
+                mp_context=multiprocessing.get_context("spawn"),
+            )
+        except Exception as e:
+            _image_process_pool_failed = True
+            logging.warning("Image process pool unavailable, falling back to thread executor: %s", e)
+            return None
+
         return _image_process_pool
-    if _image_process_pool_failed:
-        return None
 
+
+def _cancel_image_idle_timer_locked() -> None:
+    global _image_pool_idle_timer
+    if _image_pool_idle_timer is not None:
+        _image_pool_idle_timer.cancel()
+        _image_pool_idle_timer = None
+
+
+def _detach_image_pool_locked(pool: concurrent.futures.ProcessPoolExecutor) -> bool:
+    """Retire only this generation; caller holds the lifecycle lock."""
+    global _image_process_pool, _image_pool_jobs
+    if _image_process_pool is not pool:
+        return False
+    _cancel_image_idle_timer_locked()
+    _image_process_pool = None
+    _image_pool_jobs = 0
+    return True
+
+
+def _close_image_executor(pool: concurrent.futures.ProcessPoolExecutor) -> None:
     try:
-        _image_process_pool = concurrent.futures.ProcessPoolExecutor(
-            max_workers=2,
-            max_tasks_per_child=1,
-        )
-    except Exception as e:
-        _image_process_pool_failed = True
-        logging.warning("Image process pool unavailable, falling back to thread executor: %s", e)
-        return None
+        pool.shutdown(wait=False, cancel_futures=True)
+    except Exception as error:
+        logging.warning("Image process pool shutdown failed: %s", type(error).__name__)
 
-    return _image_process_pool
+
+def _image_job_finished(
+    pool: concurrent.futures.ProcessPoolExecutor, future: concurrent.futures.Future[bytes | None]
+) -> None:
+    """Observe real worker completion, including work whose await was cancelled."""
+    global _image_pool_jobs, _image_pool_idle_timer
+    broken = not future.cancelled() and isinstance(future.exception(), BrokenProcessPool)
+    retire = False
+    with _image_pool_lock:
+        if _image_process_pool is not pool:
+            return
+        _image_pool_jobs -= 1
+        if broken:
+            # CPython delivers BrokenProcessPool while holding the executor's
+            # shutdown lock. Its manager owns termination/queue cleanup/join;
+            # calling shutdown here would deadlock that same manager thread.
+            _detach_image_pool_locked(pool)
+        elif _image_pool_jobs == 0:
+            _cancel_image_idle_timer_locked()
+
+            def expire() -> None:
+                with _image_pool_lock:
+                    # cancel() may race a callback already entering the lock.
+                    if _image_pool_idle_timer is not timer or _image_pool_jobs:
+                        return
+                    expired = _detach_image_pool_locked(pool)
+                if expired:
+                    _close_image_executor(pool)
+
+            timer = threading.Timer(_IMAGE_POOL_IDLE_SECONDS, expire)
+            timer.daemon = True
+            _image_pool_idle_timer = timer
+            try:
+                timer.start()
+            except RuntimeError:
+                # A restricted runtime may reject new threads. Release the idle
+                # pool immediately rather than leaking it or failing delivery.
+                retire = _detach_image_pool_locked(pool)
+    if retire:
+        _close_image_executor(pool)
 
 
 def _image_worker(
@@ -187,34 +262,53 @@ async def save_image_as_bytes(
             compressed result.  Repeated calls with the same key skip
             the CPU-intensive compression step.
     """
+    global _image_pool_jobs
     if cache_key and cache_key in _compressed_cache:
         return _compressed_cache[cache_key]
 
     loop = asyncio.get_running_loop()
-    executor = _get_image_process_pool()
+    retired_executor = None
     try:
-        result = await asyncio.wait_for(
-            loop.run_in_executor(executor, _image_worker, image_data, max_size_mb, task_type),
-            timeout=timeout,
-        )
+        with _image_pool_lock:
+            executor = _get_image_process_pool()
+            if executor is not None:
+                _cancel_image_idle_timer_locked()
+                _image_pool_jobs += 1
+        # Never hold the lifecycle lock across executor methods: broken-pool
+        # callbacks run under its internal shutdown lock (opposite lock order).
+        if executor is None:
+            pending = loop.run_in_executor(None, _image_worker, image_data, max_size_mb, task_type)
+        else:
+            try:
+                worker_future = executor.submit(_image_worker, image_data, max_size_mb, task_type)
+            except BaseException:
+                with _image_pool_lock:
+                    if _detach_image_pool_locked(executor):
+                        retired_executor = executor
+                raise
+            worker_future.add_done_callback(partial(_image_job_finished, executor))
+            pending = asyncio.wrap_future(worker_future, loop=loop)
+        result = await asyncio.wait_for(pending, timeout=timeout)
         if cache_key and result is not None:
             _compressed_cache[cache_key] = result
         return result
     except Exception as e:
         logging.error("Image processing error: %s", e, exc_info=True)
         return None
+    finally:
+        if retired_executor is not None:
+            _close_image_executor(retired_executor)
 
 
 def shutdown_image_pool() -> None:
     """Shut down the global image process pool (call during bot shutdown)."""
-    global _image_process_pool
-    try:
-        if _image_process_pool is not None:
-            _image_process_pool.shutdown(wait=False, cancel_futures=True)
-            _image_process_pool = None
-            logging.info("Image process pool shut down")
-    except Exception as e:
-        logging.warning("Error shutting down image process pool: %s", e)
+    with _image_pool_lock:
+        pool = _image_process_pool
+        _cancel_image_idle_timer_locked()
+        detached = pool is not None and _detach_image_pool_locked(pool)
+    if detached and pool is not None:
+        _close_image_executor(pool)
+        logging.info("Image process pool shut down")
 
 
 def clear_image_cache() -> None:

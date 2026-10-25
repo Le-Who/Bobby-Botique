@@ -76,6 +76,17 @@ Telegram update → bot.py / handlers → context + provider routing
 
 Avoid static file-size/module-count maps: they drift without helping identify owners.
 
+Image preprocessing in `app/utils/image_utils.py` uses a lazy pool of at most two
+spawned processes. Workers are reused across a burst and the pool is released
+after 60 seconds without pending or running work. Compression, task-specific
+dimensions, cache keys and the `bytes | None` result contract are unchanged.
+A timeout or cancellation stops waiting; an already running compression continues,
+and its actual completion starts the idle interval. A broken pool fails the current
+request and is recreated for the next one. Shutdown is nonblocking; pending work
+can be cancelled and running work finishes. Pool creation failure retains the
+default thread-executor fallback. This limits worker count, not the submission
+queue or the size of individual decoded images.
+
 ## Providers and model selection
 
 Chat providers include Gemini, Opencode, OpenRouter and FreeTheAI. The provider
