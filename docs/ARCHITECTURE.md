@@ -89,6 +89,69 @@ Telegram update → bot.py / handlers → context + provider routing
 
 Avoid static file-size/module-count maps: they drift without helping identify owners.
 
+## Provider latency
+
+`GenerationRequest.first_text_timeout_seconds` defines one deadline across all
+keys, rotations and model fallbacks, including both hedged model lanes. It is
+separate from transport/completion limits. These are interface policy caps, not
+provider SLAs or measured deployment p95s:
+
+| Request context | First visible text cap | Inline completion cap |
+| --- | --- | --- |
+| Gemini Flash chat, low or explicit off | 12 s | — |
+| Gemini Flash chat, auto/default or medium | 20 s | — |
+| High reasoning, or other model families | 30 s | — |
+| Quick Search / provider Search grounding | 20 s | — |
+| Inline text, any reasoning level | 6 s | 12 s |
+| Inline with Search grounding | 10 s | 20 s |
+
+Google recommends low thinking for latency-sensitive chat and explains that
+[3.8 Flash medium/high performs more reasoning](https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.8).
+These recommendations do not establish this deployment's latency distribution.
+The timer values are interface policy choices; long-context or high-reasoning
+requests can hit them. Real provider load and transport failures remain separate
+causes. Select a measured reserve delay from workload/model/thinking/context
+histograms when operational evidence is available.
+
+Only the primary attempt may start a pair of keys. Later key rotations and model
+fallbacks dispatch one key at a time. Where process policy permits a parallel
+model fallback, it starts after three seconds with one key and never opens a key
+race; another fallback model waits for the current reserve lane to finish. The
+primary model uses only its initial pair in that path. When no parallel model
+fallback is used, a slow primary pair may instead add one exact-model reserve
+after three seconds (one second for a direct inline request). Its lookup and
+quota admission run in an owned task; further rotations remain single attempts.
+These two reserve mechanisms do not nest. Thus a routed request has at most
+three active provider calls: the initial pair and one reserve. Reserves consume
+the existing per-model allowance of twice the workload's key-attempt rounds.
+
+Inline handlers already race model completions, so their typed requests set
+`allow_key_race=False`; each model dispatches one key at a time. This avoids
+multiplying an outer model race by inner key races. These rules belong to each
+request, with no shared limit across users or background jobs. Daily Tarot's
+non-streaming path and explicit background model plans retain their sequential
+retries and independent concurrency ownership.
+
+The first visible text wins; all other lanes are cancelled and awaited. Router
+deadlines leave key health unchanged; provider errors retain their dispositions.
+
+Winner key-health persistence runs in a separate request-owned task with a
+one-second best-effort cap; it cannot hold the first visible delta. Other health
+writes use the remaining first-text budget. Cancellation cleanup is awaited and
+may extend completion past a deadline. After text begins, silence is limited to
+10 seconds between chunks (five for inline); a stall yields a typed after-text
+timeout, preserving partial delivery. Transport/completion timeouts still apply
+independently, including the 120-second non-inline transport allowance.
+
+Inline queries return their selectable placeholders before generation. After
+selection, a usable completed standby wins immediately, without the former
+13-second primary grace period. Explicit process model plans keep their existing
+selection authority. Explicit thinking `off` reaches the adapter; it maps to
+`low` for 3.7/3.8 and `minimal` where supported, rather than omitting the setting
+and accidentally enabling the API's default medium reasoning.
+
+## Image preprocessing
+
 Image preprocessing in `app/utils/image_utils.py` uses a lazy pool of at most two
 spawned processes. Workers are reused across a burst and the pool is released
 after 60 seconds without pending or running work. Compression, task-specific

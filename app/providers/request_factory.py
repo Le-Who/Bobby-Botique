@@ -93,6 +93,7 @@ async def generation_request_from_history(
     grounding: GroundingMode = GroundingMode.NONE,
     workload: Workload = Workload.INTERACTIVE,
     allow_deferred: bool = True,
+    allow_key_race: bool = True,
     process_id: str | None = None,
 ) -> GenerationRequest:
     """Perform the only JSON/handler-history conversion before provider routing."""
@@ -137,6 +138,7 @@ async def generation_request_from_history(
         # Only an epoch captured by the original operation can authorize later
         # private retention. Never resolve a new epoch after history assembly.
         allow_deferred=allow_deferred and privacy_epoch is not None and bool(operation_id),
+        allow_key_race=allow_key_race,
         route_strategy=route_strategy,
         allow_model_fallback=not explicit,
         policy_revision=revision,

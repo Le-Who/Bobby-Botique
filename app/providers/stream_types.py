@@ -145,6 +145,7 @@ class GenerationRequest:
     route_strategy: str = "legacy"
     allow_model_fallback: bool = True
     policy_revision: int = 0
+    allow_key_race: bool = True
 
     def __post_init__(self) -> None:
         if self.route_strategy not in {"legacy", "sequential", "hedged"}:
@@ -177,8 +178,41 @@ class GenerationRequest:
 
     @property
     def provider_timeout_seconds(self) -> float:
-        """Provider timeout budget selected explicitly by workload."""
-        return 45.0 if self.workload is Workload.INLINE else 120.0
+        """Transport/completion budget; silent first-text waits have a separate cap."""
+        if self.workload is Workload.INLINE:
+            return (
+                20.0
+                if self.grounding in {GroundingMode.PROVIDER_SEARCH, GroundingMode.PROVIDER_SEARCH_REQUIRED}
+                else 12.0
+            )
+        return 120.0
+
+    @property
+    def first_text_timeout_seconds(self) -> float:
+        """Interface latency cap shared by every key and model in one route.
+
+        Product limits, not a provider SLA. Low thinking suits interactive chat:
+        https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.8
+        """
+        grounded = self.grounding in {GroundingMode.PROVIDER_SEARCH, GroundingMode.PROVIDER_SEARCH_REQUIRED}
+        if self.workload is Workload.INLINE:
+            return 10.0 if grounded else 6.0
+        if grounded or self.workload is Workload.QUICK_SEARCH:
+            return 20.0
+        if self.thinking_level is ThinkingLevel.HIGH:
+            return 30.0
+        if all(model.removeprefix("models/").startswith("gemini-") and "flash" in model for model in self.models):
+            return 12.0 if self.thinking_level in {ThinkingLevel.LOW, ThinkingLevel.OFF} else 20.0
+        return 30.0
+
+    @property
+    def key_hedge_delay_seconds(self) -> float:
+        return 1.0 if self.workload is Workload.INLINE else 3.0
+
+    @property
+    def stream_idle_timeout_seconds(self) -> float:
+        """Maximum silence between visible chunks once streaming has started."""
+        return 5.0 if self.workload is Workload.INLINE else 10.0
 
     @property
     def key_attempt_rounds(self) -> int:

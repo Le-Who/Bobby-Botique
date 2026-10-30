@@ -502,7 +502,7 @@ class TestProviders:
         assert events[1].usage.prompt == 3
         assert events[1].usage.completion == 2
         assert events[1].usage.total == 5
-        assert client.stream.call_args.kwargs["timeout"] == 45.0
+        assert client.stream.call_args.kwargs["timeout"] == 12.0
 
     @pytest.mark.asyncio
     async def test_openrouter_empty_local_payload_has_validation_terminal_before_http(self):

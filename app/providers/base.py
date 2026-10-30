@@ -54,7 +54,7 @@ def _build_thinking_config(model_name: str, thinking_level: str | None) -> types
         return None
     if _is_gemini3_model(model_name):
         level = _THINKING_LEVEL_MAP[thinking_level]
-        if level == "minimal" and (model_name.startswith("gemini-3.8-") or "pro" in model_name):
+        if level == "minimal" and (model_name.startswith(("gemini-3.8-", "gemini-3.7-")) or "pro" in model_name):
             level = "low"
         if level == "medium" and model_name.startswith("gemini-3-pro"):
             level = "high"

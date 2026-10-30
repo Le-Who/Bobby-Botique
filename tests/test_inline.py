@@ -10,6 +10,39 @@ def test_parse_inline_query_empty():
     assert parse_inline_query("") == {}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("grounded", [False, True])
+async def test_ready_inline_standby_is_returned_without_waiting_for_slow_primary(monkeypatch, grounded):
+    from app.handlers import inline
+
+    primary_closed = asyncio.Event()
+    primary = "gemini-2.5-flash" if grounded else "gemini-3.5-flash"
+
+    async def stream(**kwargs):
+        if kwargs["preferred_model"] == primary:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0)
+                primary_closed.set()
+        return "ready standby", []
+
+    monkeypatch.setattr(inline, "_stream_inline_fast", stream)
+    result = await asyncio.wait_for(
+        inline._generate_inline_answer(
+            preferred_model=primary,
+            user_query="составь договор",
+            history=[{"role": "user", "parts": ["request"]}],
+            system_instruction="system",
+            user_id=123,
+            enable_web_search=grounded,
+        ),
+        0.05,
+    )
+    assert result == ("ready standby", [], "gemini-2.5-flash-lite" if grounded else "gemini-3.1-flash-lite")
+    assert primary_closed.is_set()
+
+
 def test_parse_inline_query_basic():
     res = parse_inline_query("hello world")
     assert res["is_image_intent"] is False
@@ -380,7 +413,6 @@ async def test_generate_inline_answer_returns_lite_when_primary_misses_deadline(
         return "lite answer", []
 
     monkeypatch.setattr(inline, "_stream_inline_fast", fake_stream_inline_fast)
-    monkeypatch.setattr(inline, "_INLINE_PRIMARY_GRACE_S", 0.05, raising=False)
     monkeypatch.setattr(inline, "get_global_setting", _async_return("low"))
 
     text, sources, model_used = await inline._generate_inline_answer(
@@ -416,7 +448,6 @@ async def test_generate_inline_answer_uses_grounding_standby_when_primary_misses
         return "standby grounded answer", [("https://example.com/standby", "Standby")]
 
     monkeypatch.setattr(inline, "_stream_inline_fast", fake_stream_inline_fast)
-    monkeypatch.setattr(inline, "_INLINE_PRIMARY_GRACE_S", 0.05, raising=False)
 
     text, sources, model_used = await inline._generate_inline_answer(
         preferred_model="gemini-3.5-flash",

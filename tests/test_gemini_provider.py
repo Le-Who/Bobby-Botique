@@ -354,7 +354,7 @@ async def test_typed_inline_stream_uses_inline_timeout_budget():
         ]
 
     assert events
-    assert wait_for.await_args.kwargs["timeout"] == 45.0
+    assert wait_for.await_args.kwargs["timeout"] == 6.0
 
 
 @pytest.mark.asyncio

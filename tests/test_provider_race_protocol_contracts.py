@@ -295,7 +295,7 @@ async def test_valid_race_has_one_typed_terminal_and_coordinator_exact_outcome(m
         ([], "without terminal event"),
         ([completion(), TextDelta("late")], "after terminal"),
         ([failure(FailurePhase.BEFORE_TEXT)], "BEFORE_TEXT after text"),
-        ([StreamDeferred(task_id="synthetic-deferred")], "deferred after emitting visible text"),
+        ([StreamDeferred(task_id="synthetic-deferred")], "deferred after visible text"),
         ([object()], "Unsupported provider event"),
     ],
     ids=["missing-terminal", "post-terminal", "wrong-phase", "deferred-after-text", "unsupported-event"],

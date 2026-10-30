@@ -265,13 +265,13 @@ def resolve_thinking_decision(
         model: Model name being used (e.g. "gemini-3.1-flash-lite").
 
     Returns:
-        Effective thinking level and a fixed reason code; off has level None.
+        Effective thinking level and a fixed reason code; explicit off reaches the adapter.
     """
     # Explicit user override
     if user_level and user_level in ("low", "medium", "high"):
         return ThinkingDecision(user_level, "explicit_level")
     if user_level == "off":
-        return ThinkingDecision(None, "explicit_off")
+        return ThinkingDecision("off", "explicit_off")
 
     # Model-specific default (auto mode)
     if model:

@@ -18,7 +18,7 @@ from app.thinking_classifier import classify_thinking_level, resolve_thinking_le
 @pytest.mark.parametrize(
     ("setting", "text", "model", "expected_level", "expected_reason"),
     [
-        ("off", "def synthetic():", "gemini-3.1-flash-lite", None, "explicit_off"),
+        ("off", "def synthetic():", "gemini-3.1-flash-lite", "off", "explicit_off"),
         ("high", "Привет", None, "high", "explicit_level"),
         ("low", "2 + 2", None, "low", "explicit_level"),
         (None, "Привет", "gemini-3.1-flash-lite", "high", "model_default"),
@@ -384,8 +384,8 @@ def test_resolve_explicit_user_level_always_wins(explicit_level):
     assert result == explicit_level, f"Explicit '{explicit_level}' must not be overridden"
 
 
-def test_resolve_off_returns_none():
-    """'off' setting must disable thinking by returning None."""
+def test_resolve_off_keeps_explicit_low_latency_intent():
+    """Do not turn explicit off into an omitted API setting (medium by default)."""
     # Arrange
     complex_message = "```python\ncomplex code\n```"
 
@@ -393,7 +393,18 @@ def test_resolve_off_returns_none():
     result = resolve_thinking_level("off", complex_message)
 
     # Assert
-    assert result is None
+    assert result == "off"
+
+
+@pytest.mark.parametrize(
+    "model,expected", [("gemini-3.8-flash", "LOW"), ("gemini-3.7-flash", "LOW"), ("gemini-3.5-flash", "MINIMAL")]
+)
+def test_explicit_off_reaches_supported_lowest_gemini_thinking_level(model, expected):
+    from app.providers.base import _build_thinking_config
+
+    config = _build_thinking_config(model, resolve_thinking_level("off", "complex request"))
+    assert config is not None
+    assert config.thinking_level == expected
 
 
 def test_resolve_none_triggers_auto_classification():

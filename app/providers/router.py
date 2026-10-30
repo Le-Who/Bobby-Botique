@@ -10,7 +10,7 @@ import asyncio
 import inspect
 import logging
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from contextlib import aclosing
 from typing import Any, TypeVar
 
@@ -39,6 +39,7 @@ from app.observability.provider_events import observe_provider_stream
 from app.observability.request_metrics import observe_generation, record_race_outcome
 from app.providers.base import is_freetheai_model, is_opencode_model
 from app.providers.openrouter import _has_multimodal_content
+from app.providers.stream_tasks import drain_provider_tasks
 from app.providers.stream_types import (
     FailurePhase,
     GenerationEvent,
@@ -56,8 +57,9 @@ from app.providers.stream_types import (
 )
 
 _ParsedResponse = TypeVar("_ParsedResponse")
-MODEL_HEDGE_DELAY_SECONDS = 8.0
-KEY_RACE_FIRST_TEXT_TIMEOUT_SECONDS = 30.0
+MODEL_HEDGE_DELAY_SECONDS = 3.0
+KEY_RACE_HEDGE_DELAY_SECONDS = 3.0
+KEY_HEALTH_UPDATE_TIMEOUT_SECONDS = 1.0
 
 
 def _setting(name: str, fallback: str) -> str:
@@ -705,13 +707,20 @@ class ProviderRouter:
     @observe_generation
     async def stream(self, request: GenerationRequest):
         """Race two model lanes for interactive chat; retain serial paths elsewhere."""
+        first_text_deadline = asyncio.get_running_loop().time() + request.first_text_timeout_seconds
         hedge_models = self._interactive_hedge_models(request)
         if hedge_models:
-            async with aclosing(self._stream_hedged(request, hedge_models)) as events:
+            async with aclosing(self._stream_hedged(request, hedge_models, first_text_deadline)) as events:
                 async for event in events:
                     yield event
             return
-        async with aclosing(self._stream_serial(request, enable_model_fallback=request.allow_model_fallback)) as events:
+        async with aclosing(
+            self._stream_serial(
+                request,
+                enable_model_fallback=request.allow_model_fallback,
+                first_text_deadline=first_text_deadline,
+            )
+        ) as events:
             async for event in events:
                 yield event
 
@@ -733,7 +742,7 @@ class ProviderRouter:
         )
         return models if len(models) > 1 else []
 
-    async def _stream_hedged(self, request: GenerationRequest, models: list[str]):
+    async def _stream_hedged(self, request: GenerationRequest, models: list[str], first_text_deadline: float):
         """Start a backup after a short delay, and keep at most two model lanes."""
         scope = request.scope
         if scope.user_id and not await self._rate_limiter.check_rate_limit(scope.user_id):
@@ -754,7 +763,7 @@ class ProviderRouter:
         winner: str | None = None
         late_losers: set[str] = set()
 
-        async def run_model(model: str) -> None:
+        async def run_model(model: str, primary: bool) -> None:
             try:
                 async with aclosing(
                     self._stream_serial(
@@ -762,6 +771,10 @@ class ProviderRouter:
                         model_plan=(model,),
                         check_rate_limit=False,
                         enable_model_fallback=False,
+                        first_text_deadline=first_text_deadline,
+                        primary_key_race=primary,
+                        allow_key_hedge=False,
+                        max_key_attempts=2 if primary else None,
                     )
                 ) as events:
                     async for event in events:
@@ -777,9 +790,14 @@ class ProviderRouter:
             nonlocal next_index
             model = models[next_index]
             next_index += 1
-            task = asyncio.create_task(run_model(model))
+            task = asyncio.create_task(run_model(model, primary=next_index == 1))
             active[model] = task
             all_tasks.append(task)
+
+        def can_start_next() -> bool:
+            # The primary pair may overlap one reserve model. Reserves never
+            # overlap another reserve, even after the primary has failed.
+            return next_index < len(models) and not any(lane != models[0] for lane in active)
 
         start_next()
         hedge_deadline = asyncio.get_running_loop().time() + MODEL_HEDGE_DELAY_SECONDS
@@ -798,10 +816,12 @@ class ProviderRouter:
                         )
                     return
 
-                timeout: float | None = None
-                if winner is None and len(active) == 1 and next_index < len(models):
+                timeout: float | None = (
+                    max(0.0, first_text_deadline - asyncio.get_running_loop().time()) if winner is None else None
+                )
+                if winner is None and can_start_next():
                     if next_index == 1:
-                        timeout = max(0.0, hedge_deadline - asyncio.get_running_loop().time())
+                        timeout = max(0.0, min(hedge_deadline, first_text_deadline) - asyncio.get_running_loop().time())
                     else:
                         start_next()
                         continue
@@ -812,7 +832,16 @@ class ProviderRouter:
                         else await queue.get()
                     )
                 except TimeoutError:
-                    if winner is None and len(active) < 2 and next_index < len(models):
+                    if asyncio.get_running_loop().time() >= first_text_deadline:
+                        yield StreamFailed(
+                            code=ErrorCode.TIMEOUT,
+                            phase=FailurePhase.BEFORE_TEXT,
+                            retry=RetryDisposition.RETRY_LATER,
+                            key=KeyDisposition.UNCHANGED,
+                            diagnostic="Provider route deadline expired before first text",
+                        )
+                        return
+                    if winner is None and can_start_next():
                         start_next()
                     continue
 
@@ -836,7 +865,7 @@ class ProviderRouter:
                     raise error
                 if done:
                     active.pop(lane, None)
-                    if next_index < len(models) and len(active) < 2:
+                    if can_start_next():
                         start_next()
                     continue
                 if isinstance(event, TextDelta):
@@ -871,7 +900,7 @@ class ProviderRouter:
             for task in all_tasks:
                 if not task.done() and not task.cancelling():
                     task.cancel()
-            await asyncio.gather(*all_tasks, return_exceptions=True)
+            await drain_provider_tasks(all_tasks)
 
     async def _stream_serial(
         self,
@@ -880,6 +909,10 @@ class ProviderRouter:
         model_plan: tuple[str, ...] | None = None,
         check_rate_limit: bool = True,
         enable_model_fallback: bool = True,
+        first_text_deadline: float | None = None,
+        primary_key_race: bool = True,
+        allow_key_hedge: bool = True,
+        max_key_attempts: int | None = None,
     ):
         """Route one typed stream with existing key races and optional model fallback."""
         from app.agent_use_cases import AgentRequestUseCase
@@ -899,11 +932,14 @@ class ProviderRouter:
             return
 
         use_case = AgentRequestUseCase()
+        if first_text_deadline is None:
+            first_text_deadline = asyncio.get_running_loop().time() + request.first_text_timeout_seconds
         status_mgr = get_key_status_manager()
         model_queue = list(model_plan or request.models)
         attempted_models: set[str] = set()
         overall_had_transient = False
         last_failure: StreamFailed | None = None
+        primary_attempt = True
         _VERTEX_KH = "__vertex_ai__"
 
         def _failure_category(failure: StreamFailed) -> str:
@@ -919,7 +955,8 @@ class ProviderRouter:
             key_hash = key_data["key_hash"]
             try:
                 if key_hash != _VERTEX_KH and not is_opencode_model(model_name) and not is_freetheai_model(model_name):
-                    await status_mgr.record_success(key_hash, model_name)
+                    async with asyncio.timeout(max(0.0, first_text_deadline - asyncio.get_running_loop().time())):
+                        await status_mgr.record_success(key_hash, model_name)
             except Exception as exc:
                 logging.debug("Non-critical typed-stream stats update failed: %s", exc)
 
@@ -938,18 +975,54 @@ class ProviderRouter:
 
                     report_vertex_error(RuntimeError(failure.diagnostic))
                 elif not is_opencode_model(model_name) and not is_freetheai_model(model_name):
-                    await status_mgr.suspend_key(
-                        key_hash,
-                        model_name,
-                        category,
-                        failure.diagnostic[:200],
-                    )
+                    async with asyncio.timeout(max(0.0, first_text_deadline - asyncio.get_running_loop().time())):
+                        await status_mgr.suspend_key(
+                            key_hash,
+                            model_name,
+                            category,
+                            failure.diagnostic[:200],
+                        )
             except Exception as exc:
                 logging.warning("Failed to apply typed-stream key disposition: %s", exc)
             return category
 
+        async def _record_winner_health(
+            winner_key: dict, model_name: str, failures: list[tuple[dict, StreamFailed]]
+        ) -> None:
+            try:
+                async with asyncio.timeout(KEY_HEALTH_UPDATE_TIMEOUT_SECONDS):
+                    for key_data, failure in failures:
+                        await _record_failure(key_data, model_name, failure)
+                    await _record_success(winner_key, model_name)
+            except TimeoutError:
+                logging.debug("Typed-stream winner key-health update exceeded its best-effort budget")
+
+        def _first_text_timeout(model_name: str, race_id: str) -> StreamFailed:
+            from app.observability.events import emit
+
+            emit(
+                "provider.race_timed_out",
+                level="warning",
+                operation="provider.request",
+                race_id=race_id,
+                actual_model=model_name,
+                reason_code=ErrorCode.TIMEOUT.value,
+                timeout_seconds=request.first_text_timeout_seconds,
+            )
+            return StreamFailed(
+                code=ErrorCode.TIMEOUT,
+                phase=FailurePhase.BEFORE_TEXT,
+                retry=RetryDisposition.TRY_NEXT_KEY,
+                key=KeyDisposition.UNCHANGED,
+                diagnostic="Provider model deadline expired before first text",
+            )
+
         while model_queue:
             preferred_model = model_queue.pop(0)
+            if asyncio.get_running_loop().time() >= first_text_deadline:
+                last_failure = _first_text_timeout(preferred_model, uuid.uuid4().hex)
+                overall_had_transient = True
+                break
             if preferred_model in attempted_models:
                 continue
             attempted_models.add(preferred_model)
@@ -958,56 +1031,94 @@ class ProviderRouter:
             model_had_transient = False
             model_all_permanent = True
             resolution_status: str | None = None
+            key_attempt_limit = max_key_attempts or 2 * request.key_attempt_rounds
+            remaining_key_attempts = key_attempt_limit
 
-            for attempt in range(request.key_attempt_rounds):
+            for attempt in range(2 * request.key_attempt_rounds):
+                if remaining_key_attempts <= 0 or asyncio.get_running_loop().time() >= first_text_deadline:
+                    break
                 keys_to_race: list[dict] = []
                 resolved_model: str | None = None
+                race_id = uuid.uuid4().hex
+                racing_primary = (
+                    primary_attempt
+                    and primary_key_race
+                    and request.allow_key_race
+                    and preferred_model == request.models[0]
+                )
+                key_count = min(2 if racing_primary else 1, remaining_key_attempts)
 
-                for _race_idx in range(2):
-                    excluded = failed_keys | {key["key_hash"] for key in keys_to_race}
-                    # A companion key must belong to the first key's model. Expanding
-                    # fallback here both discards usable routes and duplicates hedge lanes.
-                    if resolved_model is not None or not enable_model_fallback or not request.allow_model_fallback:
-                        key_data, model_used, resolution_status = await use_case.resolve_exact_ai_request(
-                            resolved_model or preferred_model, excluded_key_hashes=excluded
-                        )
-                    else:
-                        key_data, model_used, resolution_status = await use_case.resolve_ai_request(
-                            preferred_model, use_openrouter=None, excluded_key_hashes=excluded
-                        )
-                    if not key_data or not model_used:
-                        break
-                    keys_to_race.append(key_data)
-                    resolved_model = model_used
+                try:
+                    async with asyncio.timeout(max(0.0, first_text_deadline - asyncio.get_running_loop().time())):
+                        for _race_idx in range(key_count):
+                            if resolved_model is not None and resolved_model != preferred_model:
+                                break
+                            excluded = failed_keys | {key["key_hash"] for key in keys_to_race}
+                            # A companion key must belong to the first key's model. Expanding
+                            # fallback here both discards usable routes and duplicates hedge lanes.
+                            if (
+                                resolved_model is not None
+                                or not enable_model_fallback
+                                or not request.allow_model_fallback
+                            ):
+                                key_data, model_used, resolution_status = await use_case.resolve_exact_ai_request(
+                                    resolved_model or preferred_model, excluded_key_hashes=excluded
+                                )
+                            else:
+                                key_data, model_used, resolution_status = await use_case.resolve_ai_request(
+                                    preferred_model, use_openrouter=None, excluded_key_hashes=excluded
+                                )
+                            if not key_data or not model_used:
+                                break
+                            keys_to_race.append(key_data)
+                            resolved_model = model_used
 
-                if keys_to_race and resolved_model and "gemini-3.1-flash-lite" in resolved_model:
-                    from app.providers.gemini import is_vertex_client_available
+                        if resolved_model is not None and resolved_model != request.models[0]:
+                            racing_primary = False
+                            key_count = 1
+                        vertex_model = resolved_model or preferred_model
+                        if "gemini-3.1-flash-lite" in vertex_model:
+                            from app.providers.gemini import is_vertex_client_available
 
-                    if is_vertex_client_available() and _VERTEX_KH not in failed_keys:
-                        keys_to_race.append({"api_key": "vertex", "key_hash": _VERTEX_KH})
+                            if is_vertex_client_available() and _VERTEX_KH not in failed_keys:
+                                vertex_key = {"api_key": "vertex", "key_hash": _VERTEX_KH}
+                                if key_count == 2:
+                                    keys_to_race = [*keys_to_race[:1], vertex_key]
+                                    resolved_model = vertex_model
+                                elif not keys_to_race or failed_keys:
+                                    # A reserve tries Vertex sequentially, rather
+                                    # than appending another parallel provider.
+                                    keys_to_race = [vertex_key]
+                                    resolved_model = vertex_model
 
-                if keys_to_race and resolved_model:
-                    reserved_keys: list[dict] = []
-                    for key_data in keys_to_race:
-                        key_hash = key_data["key_hash"]
-                        if key_hash == _VERTEX_KH:
-                            reserved_keys.append(key_data)
-                            continue
-                        try:
-                            reserved = await use_case.reserve_key_usage(key_hash, resolved_model, None)
-                        except Exception as exc:
-                            logging.warning(
-                                "Typed stream RPD reservation failed key=%s… model=%s: %s",
-                                key_hash[:8],
-                                resolved_model,
-                                exc,
-                            )
-                            reserved = False
-                        if reserved:
-                            reserved_keys.append(key_data)
-                        else:
-                            failed_keys.add(key_hash)
-                    keys_to_race = reserved_keys
+                        if keys_to_race and resolved_model:
+                            reserved_keys: list[dict] = []
+                            for key_data in keys_to_race:
+                                key_hash = key_data["key_hash"]
+                                if key_hash == _VERTEX_KH:
+                                    reserved_keys.append(key_data)
+                                    continue
+                                try:
+                                    reserved = await use_case.reserve_key_usage(key_hash, resolved_model, None)
+                                except Exception as exc:
+                                    logging.warning(
+                                        "Typed stream RPD reservation failed key=%s… model=%s: %s",
+                                        key_hash[:8],
+                                        resolved_model,
+                                        exc,
+                                    )
+                                    reserved = False
+                                if reserved:
+                                    reserved_keys.append(key_data)
+                                else:
+                                    failed_keys.add(key_hash)
+                            keys_to_race = reserved_keys
+
+                except TimeoutError:
+                    last_failure = _first_text_timeout(resolved_model or preferred_model, race_id)
+                    model_had_transient = True
+                    model_all_permanent = False
+                    break
 
                 if not keys_to_race or not resolved_model:
                     if resolution_status == "decryption_failed":
@@ -1029,92 +1140,14 @@ class ProviderRouter:
                     break
 
                 model_used = resolved_model
+                racing_primary &= model_used == request.models[0]
                 logging.info(
                     "Typed stream route: model=%s keys=%s attempt=%d/%d",
                     model_used,
                     [key["key_hash"][:8] for key in keys_to_race],
                     attempt + 1,
-                    request.key_attempt_rounds,
+                    key_attempt_limit,
                 )
-
-                if len(keys_to_race) == 1:
-                    key_data = keys_to_race[0]
-                    provider = get_provider_for_model(model_used, key_data["api_key"])
-                    saw_text = False
-                    terminal_seen = False
-                    failure: StreamFailed | None = None
-                    terminal_result: GenerationEvent | None = None
-
-                    observed_events = observe_provider_stream(
-                        provider.stream(request, model_name=model_used),
-                        provider=getattr(provider, "provider_name", _provider_label(model_used, None)),
-                        requested_model=preferred_model,
-                        actual_model=model_used,
-                        api_key=key_data["api_key"],
-                        key_hash=key_data["key_hash"],
-                        attempt_number=attempt + 1,
-                        max_attempts=request.key_attempt_rounds,
-                        key_source=key_data.get("source"),
-                    )
-                    async with aclosing(observed_events):
-                        async for event in observed_events:
-                            if terminal_seen:
-                                raise ProviderStreamProtocolError(
-                                    f"{provider.provider_name} emitted an event after terminal"
-                                )
-                            if isinstance(event, TextDelta):
-                                if not saw_text:
-                                    saw_text = True
-                                    await _record_success(key_data, model_used)
-                                yield event
-                                continue
-                            if not is_terminal_event(event):
-                                raise ProviderStreamProtocolError(f"Unsupported provider event: {type(event).__name__}")
-                            terminal_seen = True
-                            if isinstance(event, StreamCompleted):
-                                if not saw_text:
-                                    failure = StreamFailed(
-                                        code=ErrorCode.EMPTY_RESPONSE,
-                                        phase=FailurePhase.BEFORE_TEXT,
-                                        retry=RetryDisposition.TRY_NEXT_KEY,
-                                        key=KeyDisposition.TRANSIENT_FAILURE,
-                                        diagnostic="Provider completed before emitting visible text",
-                                        route=event.route,
-                                    )
-                                else:
-                                    terminal_result = event
-                            elif isinstance(event, StreamDeferred):
-                                if saw_text:
-                                    raise ProviderStreamProtocolError("Provider deferred after emitting visible text")
-                                terminal_result = event
-                            elif isinstance(event, StreamFailed):
-                                if saw_text:
-                                    if event.phase is not FailurePhase.AFTER_TEXT:
-                                        raise ProviderStreamProtocolError("Provider reported BEFORE_TEXT after text")
-                                    terminal_result = event
-                                failure = event
-
-                    if not terminal_seen:
-                        raise ProviderStreamProtocolError(
-                            f"{getattr(provider, 'provider_name', type(provider).__name__)} ended without terminal event"
-                        )
-                    if terminal_result is not None:
-                        yield terminal_result
-                        return
-                    assert failure is not None
-                    failed_keys.add(key_data["key_hash"])
-                    category = await _record_failure(key_data, model_used, failure)
-                    if failure.retry is RetryDisposition.TRY_NEXT_MODEL:
-                        last_failure = failure
-                        model_all_permanent = False
-                        break
-                    if failure.retry is not RetryDisposition.TRY_NEXT_KEY:
-                        yield failure
-                        return
-                    model_had_transient |= category == "transient"
-                    model_all_permanent &= category == "permanent"
-                    last_failure = failure
-                    continue
 
                 queue: asyncio.Queue[tuple[int, GenerationEvent | None, BaseException | None, bool]] = asyncio.Queue()
 
@@ -1127,10 +1160,11 @@ class ProviderRouter:
                     attempt_number: int,
                     provider_race_id: str,
                     race_queue: asyncio.Queue[tuple[int, GenerationEvent | None, BaseException | None, bool]],
+                    attempt_limit: int = key_attempt_limit,
                 ) -> None:
                     terminal: GenerationEvent | None = None
-                    provider = get_provider_for_model(race_model, key_data["api_key"])
                     try:
+                        provider = get_provider_for_model(race_model, key_data["api_key"])
                         observed_events = observe_provider_stream(
                             provider.stream(request, model_name=race_model),
                             provider=getattr(provider, "provider_name", _provider_label(race_model, None)),
@@ -1139,7 +1173,7 @@ class ProviderRouter:
                             api_key=key_data["api_key"],
                             key_hash=key_data["key_hash"],
                             attempt_number=attempt_number,
-                            max_attempts=request.key_attempt_rounds,
+                            max_attempts=attempt_limit,
                             race_id=provider_race_id,
                             key_source=key_data.get("source"),
                         )
@@ -1167,42 +1201,114 @@ class ProviderRouter:
                     finally:
                         race_queue.put_nowait((idx, None, None, True))
 
-                race_id = uuid.uuid4().hex
-                tasks = [
-                    asyncio.create_task(
-                        _race_provider(
-                            index,
-                            key_data,
-                            race_model=model_used,
-                            requested_model=preferred_model,
-                            attempt_number=attempt + 1,
-                            provider_race_id=race_id,
-                            race_queue=queue,
-                        )
+                async def run_key(
+                    index: int,
+                    *,
+                    candidates: list[dict] = keys_to_race,
+                    race_model: str = model_used,
+                    requested_model: str = preferred_model,
+                    attempt_number: int = attempt + 1,
+                    provider_race_id: str = race_id,
+                    race_queue: asyncio.Queue = queue,
+                ) -> None:
+                    await _race_provider(
+                        index,
+                        candidates[index],
+                        race_model=race_model,
+                        requested_model=requested_model,
+                        attempt_number=attempt_number,
+                        provider_race_id=provider_race_id,
+                        race_queue=race_queue,
                     )
-                    for index, key_data in enumerate(keys_to_race)
-                ]
+
+                tasks = [asyncio.create_task(run_key(index)) for index in range(len(keys_to_race))]
+                remaining_key_attempts -= len(tasks)
+                primary_attempt = False
                 winner_idx: int | None = None
                 late_key_losers: set[int] = set()
                 pre_text_terminals: dict[int, GenerationEvent] = {}
                 done: set[int] = set()
                 next_model_failure: tuple[int, StreamFailed] | None = None
-                first_text_deadline = asyncio.get_running_loop().time() + KEY_RACE_FIRST_TEXT_TIMEOUT_SECONDS
+                hedge_deadline = asyncio.get_running_loop().time() + min(
+                    KEY_RACE_HEDGE_DELAY_SECONDS, request.key_hedge_delay_seconds
+                )
+                hedge_checked = not (racing_primary and allow_key_hedge) or remaining_key_attempts <= 0
+                health_task: asyncio.Task[None] | None = None
+                winner_finished = False
+
+                async def run_reserve(
+                    index: int,
+                    *,
+                    candidates: list[dict] = keys_to_race,
+                    excluded_keys: set[str] = failed_keys,
+                    race_model: str = model_used,
+                    deadline: float = first_text_deadline,
+                    provider_race_id: str = race_id,
+                    attempt_number: int = attempt + 1,
+                    race_tasks: list[asyncio.Task[None]] = tasks,
+                    done_indices: set[int] = done,
+                    race_queue: asyncio.Queue = queue,
+                    run: Callable[[int], Awaitable[None]] = run_key,
+                ) -> None:
+                    nonlocal remaining_key_attempts
+                    started = False
+                    try:
+                        # Resolve in an owned lane so a slow storage lookup cannot
+                        # block the original's first text or the model deadline.
+                        excluded = excluded_keys | {key["key_hash"] for key in candidates}
+                        key_data, backup_model, _ = await use_case.resolve_exact_ai_request(
+                            race_model, excluded_key_hashes=excluded
+                        )
+                        if not key_data or backup_model != race_model:
+                            return
+                        reserved = await use_case.reserve_key_usage(key_data["key_hash"], race_model, None)
+                        if not reserved or asyncio.get_running_loop().time() >= deadline:
+                            return
+                        candidates.append(key_data)
+                        remaining_key_attempts -= 1
+                        from app.observability.events import emit
+
+                        emit(
+                            "provider.race_hedge_started",
+                            operation="provider.request",
+                            race_id=provider_race_id,
+                            actual_model=race_model,
+                            attempt_number=attempt_number,
+                            active_attempts=len(race_tasks) - len(done_indices),
+                        )
+                        started = True
+                        await run(index)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        if started:
+                            raise
+                        logging.warning("Typed stream reserve-key resolution or usage reservation failed")
+                    finally:
+                        if not started:
+                            race_queue.put_nowait((index, None, None, True))
 
                 try:
                     while winner_idx is None and len(done) < len(tasks):
                         try:
+                            deadline = (
+                                first_text_deadline if hedge_checked else min(first_text_deadline, hedge_deadline)
+                            )
                             race_idx, race_event, race_error, race_done = await asyncio.wait_for(
-                                queue.get(), timeout=max(0.0, first_text_deadline - asyncio.get_running_loop().time())
+                                queue.get(), timeout=max(0.0, deadline - asyncio.get_running_loop().time())
                             )
                         except TimeoutError:
-                            timeout_failure = StreamFailed(
-                                code=ErrorCode.TIMEOUT,
-                                phase=FailurePhase.BEFORE_TEXT,
-                                retry=RetryDisposition.TRY_NEXT_KEY,
-                                key=KeyDisposition.TRANSIENT_FAILURE,
-                                diagnostic="Provider key race timed out before first text",
-                            )
+                            if (
+                                not hedge_checked
+                                and hedge_deadline < first_text_deadline
+                                and asyncio.get_running_loop().time() < first_text_deadline
+                            ):
+                                # The soft timer adds one reserve; existing requests
+                                # remain eligible and retain their key health.
+                                hedge_checked = True
+                                tasks.append(asyncio.create_task(run_reserve(len(keys_to_race))))
+                                continue
+                            timeout_failure = _first_text_timeout(model_used, race_id)
                             for index in range(len(keys_to_race)):
                                 pre_text_terminals.setdefault(index, timeout_failure)
                             break
@@ -1269,7 +1375,7 @@ class ProviderRouter:
                                 model_used,
                                 terminal,
                             )
-                            model_had_transient |= category == "transient"
+                            model_had_transient |= category == "transient" or terminal.code is ErrorCode.TIMEOUT
                             model_all_permanent &= category == "permanent"
                             last_failure = terminal
                         continue
@@ -1279,18 +1385,39 @@ class ProviderRouter:
                             task.cancel()
                     # A sibling's success does not repair a key that already
                     # reported a failure. Cancelled lanes without one stay healthy.
-                    for index, terminal in pre_text_terminals.items():
-                        if isinstance(terminal, StreamFailed):
-                            await _record_failure(keys_to_race[index], model_used, terminal)
                     winner_key = keys_to_race[winner_idx]
-                    await _record_success(winner_key, model_used)
+                    health_task = asyncio.create_task(
+                        _record_winner_health(
+                            winner_key,
+                            model_used,
+                            [
+                                (keys_to_race[index], terminal)
+                                for index, terminal in pre_text_terminals.items()
+                                if isinstance(terminal, StreamFailed)
+                            ],
+                        )
+                    )
+                    idle_deadline = asyncio.get_running_loop().time() + request.stream_idle_timeout_seconds
                     yield first_delta
 
                     while True:
                         try:
-                            winner_event = await asyncio.wait_for(queue.get(), timeout=120.0)
-                        except TimeoutError as exc:
-                            raise ProviderStreamProtocolError("Winning provider did not emit a terminal event") from exc
+                            winner_event = (
+                                queue.get_nowait()
+                                if not queue.empty()
+                                else await asyncio.wait_for(
+                                    queue.get(), timeout=max(0.0, idle_deadline - asyncio.get_running_loop().time())
+                                )
+                            )
+                        except TimeoutError:
+                            yield StreamFailed(
+                                code=ErrorCode.TIMEOUT,
+                                phase=FailurePhase.AFTER_TEXT,
+                                retry=RetryDisposition.DO_NOT_RETRY,
+                                key=KeyDisposition.UNCHANGED,
+                                diagnostic="Winning provider stalled after visible text",
+                            )
+                            return
                         winner_event_idx, terminal_event, winner_error, is_done = winner_event
                         if winner_event_idx != winner_idx:
                             if isinstance(terminal_event, TextDelta) and winner_event_idx not in late_key_losers:
@@ -1303,6 +1430,7 @@ class ProviderRouter:
                             raise ProviderStreamProtocolError("Winning provider ended before terminal delivery")
                         assert terminal_event is not None
                         if isinstance(terminal_event, TextDelta):
+                            idle_deadline = asyncio.get_running_loop().time() + request.stream_idle_timeout_seconds
                             yield terminal_event
                             continue
                         if isinstance(terminal_event, StreamDeferred):
@@ -1312,13 +1440,21 @@ class ProviderRouter:
                             and terminal_event.phase is not FailurePhase.AFTER_TEXT
                         ):
                             raise ProviderStreamProtocolError("Winning provider reported BEFORE_TEXT after text")
+                        winner_finished = True
                         yield terminal_event
                         return
                 finally:
                     for task in tasks:
                         if not task.done() and not task.cancelling():
                             task.cancel()
-                    await asyncio.gather(*tasks, return_exceptions=True)
+                    if (
+                        health_task is not None
+                        and not winner_finished
+                        and not health_task.done()
+                        and not health_task.cancelling()
+                    ):
+                        health_task.cancel()
+                    await drain_provider_tasks([*tasks, *([health_task] if health_task is not None else [])])
 
             overall_had_transient |= model_had_transient
 

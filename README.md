@@ -29,8 +29,17 @@ The [changelog](CHANGELOG.md) records history, not a current runtime specificati
 
 - Chat with Gemini, Opencode, OpenRouter and FreeTheAI routing, model selection,
   key rotation and recovery from partial responses. Interactive Gemini chat
-  can start a second model after eight seconds without text; at most two model
+  can start a second model after three seconds without text; at most two model
   routes run at once, and the first to produce text wins.
+  Only the primary attempt races keys. A reserve uses one model and one key;
+  further reserves run sequentially. A slow primary pair may overlap one reserve,
+  with at most three provider calls per routed request. Independent requests and
+  background Daily preparation retain their own execution budgets.
+  One first-text deadline covers all keys and models: 12 seconds for Flash at
+  low/off thinking, 20 at auto/medium, and 30 at high. Inline uses 6 seconds,
+  or 10 with Search, and returns a ready standby immediately. See the
+  [latency policy and evidence limits](docs/ARCHITECTURE.md#provider-latency).
+  Router deadlines do not suspend otherwise healthy keys.
 - Quick search (`?`), bounded agentic research (`??`), URL/document/photo
   understanding and deterministic weather/currency/crypto shortcuts.
 - Document Q&A preserves the file explicitly selected in `/documents`; an

@@ -235,7 +235,8 @@ async def test_closing_hedged_stream_awaits_active_provider_cleanup(monkeypatch)
 async def test_key_race_first_text_deadline_does_not_reset_after_one_key_fails(monkeypatch) -> None:
     from app.providers import router as router_module
 
-    monkeypatch.setattr(router_module, "KEY_RACE_FIRST_TEXT_TIMEOUT_SECONDS", 0.05, raising=False)
+    monkeypatch.setattr(router_module, "KEY_RACE_HEDGE_DELAY_SECONDS", 1.0)
+    monkeypatch.setattr(GenerationRequest, "first_text_timeout_seconds", property(lambda self: 0.05))
     monkeypatch.setattr(router_module, "_ordered_gemini_fallback_models", lambda model: [])
     now = 100.0
     remaining_timeouts = []

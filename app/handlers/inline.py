@@ -95,12 +95,10 @@ _INLINE_GROUNDING_MODEL = GEMINI_GROUNDING_MODEL
 _INLINE_GROUNDING_STANDBY_MODEL = GEMINI_GROUNDING_FALLBACK_MODEL
 
 # Outer timeout for the entire generation pipeline.
-_GEN_TIMEOUT_S = 55.0
+_GEN_TIMEOUT_S = 12.0
+_GEN_SEARCH_TIMEOUT_S = 20.0
 # Seconds after which we edit the placeholder to show a progress message.
-_GEN_PROGRESS_AFTER_S = 20.0
-# When inline is configured to a heavier primary model, flash-lite runs as a
-# hot standby and may answer once the primary misses this deadline.
-_INLINE_PRIMARY_GRACE_S = 13.0
+_GEN_PROGRESS_AFTER_S = 4.0
 
 _TAROT_LITE_MODEL = "gemini-3.1-flash-lite"
 _TAROT_PRIMARY_MODEL = "gemini-3.6-flash"
@@ -1450,6 +1448,7 @@ async def _stream_inline_fast(
         grounding=(GroundingMode.PROVIDER_SEARCH_REQUIRED if enable_web_search else GroundingMode.NONE),
         workload=Workload.INLINE,
         allow_deferred=False,
+        allow_key_race=False,
     )
 
     chunks: list[str] = []
@@ -1478,6 +1477,33 @@ async def _stream_inline_fast(
 
 def _is_usable_inline_answer(text: str | None) -> bool:
     return bool(text and text.strip() and not is_error_message(text))
+
+
+async def _first_ready_inline_answer(candidates: tuple[tuple[str, asyncio.Task], ...]):
+    """Return the first usable completion; never hold a ready standby for a primary."""
+    from app.providers.stream_tasks import drain_provider_tasks
+
+    pending = {task for _, task in candidates}
+    try:
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            # Prefer the configured model only when both finish in the same turn.
+            for model, task in candidates:
+                if task not in done:
+                    continue
+                try:
+                    text, sources = task.result()
+                except Exception:
+                    logging.warning("Inline candidate %s failed", model, exc_info=True)
+                    continue
+                if _is_usable_inline_answer(text):
+                    return text, sources, model
+        return None, [], candidates[0][0]
+    finally:
+        for _, task in candidates:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        await drain_provider_tasks(task for _, task in candidates)
 
 
 def _should_use_inline_primary(user_query: str) -> bool:
@@ -1549,57 +1575,9 @@ async def _generate_inline_grounded_answer(
         )
     )
 
-    primary_result: tuple[str | None, list[tuple[str, str]]] | None = None
-    standby_result: tuple[str | None, list[tuple[str, str]]] | None = None
-
-    try:
-        try:
-            primary_result = await asyncio.wait_for(
-                asyncio.shield(primary_task),
-                timeout=_INLINE_PRIMARY_GRACE_S,
-            )
-            if _is_usable_inline_answer(primary_result[0]):
-                return primary_result[0], primary_result[1], _INLINE_GROUNDING_MODEL
-        except TimeoutError:
-            logging.info(
-                "Inline grounded primary %s missed %.0fs deadline; waiting for %s standby",
-                _INLINE_GROUNDING_MODEL,
-                _INLINE_PRIMARY_GRACE_S,
-                _INLINE_GROUNDING_STANDBY_MODEL,
-            )
-        except Exception as exc:
-            logging.warning(
-                "Inline grounded primary %s failed before standby decision: %s", _INLINE_GROUNDING_MODEL, exc
-            )
-
-        try:
-            standby_result = await standby_task
-            if _is_usable_inline_answer(standby_result[0]):
-                return standby_result[0], standby_result[1], _INLINE_GROUNDING_STANDBY_MODEL
-        except Exception as exc:
-            logging.warning("Inline grounded standby %s failed: %s", _INLINE_GROUNDING_STANDBY_MODEL, exc)
-
-        if primary_result is None:
-            try:
-                primary_result = await primary_task
-            except Exception as exc:
-                logging.warning(
-                    "Inline grounded primary %s failed after standby failure: %s", _INLINE_GROUNDING_MODEL, exc
-                )
-
-        if primary_result and _is_usable_inline_answer(primary_result[0]):
-            return primary_result[0], primary_result[1], _INLINE_GROUNDING_MODEL
-        if standby_result:
-            return standby_result[0], standby_result[1], _INLINE_GROUNDING_STANDBY_MODEL
-        if primary_result:
-            return primary_result[0], primary_result[1], _INLINE_GROUNDING_MODEL
-        return None, [], _INLINE_GROUNDING_MODEL
-    finally:
-        for task in (primary_task, standby_task):
-            if not task.done():
-                task.cancel()
-                with contextlib.suppress(BaseException):
-                    await task
+    return await _first_ready_inline_answer(
+        ((_INLINE_GROUNDING_MODEL, primary_task), (_INLINE_GROUNDING_STANDBY_MODEL, standby_task))
+    )
 
 
 async def _generate_inline_answer(
@@ -1665,53 +1643,7 @@ async def _generate_inline_answer(
         )
     )
 
-    primary_result: tuple[str | None, list[tuple[str, str]]] | None = None
-    lite_result: tuple[str | None, list[tuple[str, str]]] | None = None
-
-    try:
-        try:
-            primary_result = await asyncio.wait_for(
-                asyncio.shield(primary_task),
-                timeout=_INLINE_PRIMARY_GRACE_S,
-            )
-            if _is_usable_inline_answer(primary_result[0]):
-                return primary_result[0], primary_result[1], preferred_model
-        except TimeoutError:
-            logging.info(
-                "Inline primary %s missed %.0fs deadline; waiting for %s hot standby",
-                preferred_model,
-                _INLINE_PRIMARY_GRACE_S,
-                _INLINE_FALLBACK_MODEL,
-            )
-        except Exception as exc:
-            logging.warning("Inline primary %s failed before fallback decision: %s", preferred_model, exc)
-
-        try:
-            lite_result = await lite_task
-            if _is_usable_inline_answer(lite_result[0]):
-                return lite_result[0], lite_result[1], _INLINE_FALLBACK_MODEL
-        except Exception as exc:
-            logging.warning("Inline flash-lite hot standby failed: %s", exc)
-
-        if primary_result is None:
-            try:
-                primary_result = await primary_task
-            except Exception as exc:
-                logging.warning("Inline primary %s failed after fallback failure: %s", preferred_model, exc)
-
-        if primary_result and _is_usable_inline_answer(primary_result[0]):
-            return primary_result[0], primary_result[1], preferred_model
-        if lite_result:
-            return lite_result[0], lite_result[1], _INLINE_FALLBACK_MODEL
-        if primary_result:
-            return primary_result[0], primary_result[1], preferred_model
-        return None, [], preferred_model
-    finally:
-        for task in (primary_task, lite_task):
-            if not task.done():
-                task.cancel()
-                with contextlib.suppress(BaseException):
-                    await task
+    return await _first_ready_inline_answer(((preferred_model, primary_task), (_INLINE_FALLBACK_MODEL, lite_task)))
 
 
 # ── Background generation ─────────────────────────────────────────────────────
@@ -1735,8 +1667,8 @@ async def _generate_and_edit_inline(
          ``gemini-2.5-flash-lite`` hot standby;
        - high-complexity prompts → configured primary model with flash-lite
          hot standby.
-       → At 20 s mark: edit placeholder to "⏳ задерживается…" (if still running).
-       → Hard timeout at 55 s.
+       → At 4 s mark: edit placeholder to "⏳ задерживается…" (if still running).
+       → Completion deadline: 12 s, or 20 s with Search grounding.
     2. Convert Markdown response to Telegram HTML.
     3. Edit the placeholder inline message in-place.
     """
@@ -1791,6 +1723,7 @@ async def _generate_and_edit_inline(
     final_answer: str | None = None
     _grounding_sources: list[tuple[str, str]] = []  # Grounding Citations (url, title)
     _gen_timed_out = False
+    _generation_timeout = _GEN_SEARCH_TIMEOUT_S if _enable_web_search else _GEN_TIMEOUT_S
     _progress_shown = False
     _inline_req_id = f"inline-{user_id}-{uuid.uuid4().hex[:8]}"
     _requested_inline_model = await get_inline_model()
@@ -1838,13 +1771,13 @@ async def _generate_and_edit_inline(
                 user_id=user_id,
                 enable_web_search=_enable_web_search,
             ),
-            timeout=_GEN_TIMEOUT_S,
+            timeout=_generation_timeout,
         )
     except TimeoutError:
         _gen_timed_out = True
         logging.warning(
             "Inline: Generation timed out after %.0fs for query '%s'",
-            _GEN_TIMEOUT_S,
+            _generation_timeout,
             user_query[:60],
         )
     except Exception as gen_err:

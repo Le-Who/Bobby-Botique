@@ -392,7 +392,7 @@ class GeminiProvider(BaseAIProvider):
                     contents=cast(Any, contents),
                     config=config,
                 ),
-                timeout=request.provider_timeout_seconds,
+                timeout=request.first_text_timeout_seconds,
             )
             async with aclosing(cast(AsyncGenerator[types.GenerateContentResponse], response_stream)):
                 async for chunk in response_stream:

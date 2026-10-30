@@ -125,7 +125,7 @@ async def test_hedged_lanes_resolve_only_their_model_without_duplicate_fallback_
     assert events == [TextDelta(f"answer from {BACKUP}"), completion(BACKUP)]
     assert calls == [("backup-key", BACKUP)]
     assert reservations == [("backup-key", BACKUP)]
-    assert lookups == [(PRIMARY, frozenset()), (BACKUP, frozenset()), (BACKUP, frozenset({"backup-key"}))]
+    assert lookups == [(PRIMARY, frozenset()), (BACKUP, frozenset())]
     assert [
         (fields["requested_model"], fields["actual_model"])
         for event, fields in attempt_events

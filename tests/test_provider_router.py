@@ -566,20 +566,17 @@ async def test_typed_router_returns_deferred_terminal_instead_of_status_text(
 
 
 @pytest.mark.asyncio
-async def test_typed_inline_router_preserves_four_key_attempt_rounds():
+async def test_typed_inline_single_reserves_preserve_eight_attempt_budget():
     router = ProviderRouter()
     status = FakeKeyStatusManager()
     resolve_sequence = []
-    for index in range(4):
-        resolve_sequence.extend(
-            [
-                (
-                    {"api_key": f"bad-{index}", "key_hash": f"hash-{index}"},
-                    "vendor/model",
-                    None,
-                ),
-                (None, None, "all_exhausted"),
-            ]
+    for index in range(10):
+        resolve_sequence.append(
+            (
+                {"api_key": f"bad-{index}", "key_hash": f"hash-{index}"},
+                "vendor/model",
+                None,
+            )
         )
     use_case = FakeAgentRequestUseCase(resolve_sequence, response_sequence=[])
 
@@ -600,6 +597,7 @@ async def test_typed_inline_router_preserves_four_key_attempt_rounds():
         turns=(PromptTurn(PromptRole.USER, (TextPart("hi"),)),),
         workload=Workload.INLINE,
         allow_deferred=False,
+        allow_key_race=False,
     )
     with (
         patch("app.agent_use_cases.AgentRequestUseCase", return_value=use_case),
@@ -610,7 +608,7 @@ async def test_typed_inline_router_preserves_four_key_attempt_rounds():
     ):
         events = [event async for event in router.stream(request)]
 
-    assert len(status.suspended_keys) == 4
+    assert len(status.suspended_keys) == 8
     assert isinstance(events[-1], StreamFailed)
 
 
