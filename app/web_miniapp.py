@@ -2044,7 +2044,18 @@ async def daily2048_ws():
     except Exception as exc:
         logger.debug("daily2048_ws: display_name update failed user=%s: %s", user_id, exc)
 
-    puzzle, result = await get_daily_state(user_id)
+    try:
+        puzzle, result = await get_daily_state(user_id)
+    except daily2048_repo.DailyPuzzleUnavailable as exc:
+        await websocket.send_json(
+            {
+                "event": "error",
+                "reason": exc.reason,
+                "message": "Сегодня игра Daily 2048 недоступна. Вернитесь позже или выберите другую игру.",
+            }
+        )
+        await websocket.close(4004, "Daily 2048 unavailable")
+        return
     runtime_id = f"daily2048:{puzzle.puzzle_date}:{user_id}"
     practice_result = result if result.status in {"won", "lost"} else None
     result_message_sent = result.status == "won"
@@ -2108,6 +2119,8 @@ async def daily2048_ws():
     ) -> dict[str, Any]:
         nonlocal practice_result
         if practice_result is not None:
+            current_puzzle = await daily2048_repo.get_puzzle(puzzle.puzzle_date)
+            daily2048_repo.require_available(current_puzzle or puzzle)
             accepted = await process_practice_move(practice_result, puzzle, direction)
         else:
             accepted = await process_move(
@@ -2208,6 +2221,16 @@ async def daily2048_ws():
                                         {"event": "timer_sync", "elapsed_ms": result.elapsed_ms},
                                     )
                                 )
+                    except daily2048_repo.DailyPuzzleUnavailable as exc:
+                        await websocket.send_json(
+                            {
+                                "event": "error",
+                                "reason": exc.reason,
+                                "message": "Игра Daily 2048 сейчас недоступна. Ваш результат сохранён.",
+                            }
+                        )
+                        await websocket.close(4004, "Daily 2048 unavailable")
+                        break
                     except Exception as exc:
                         logger.debug("daily2048_ws: elapsed sync failed user=%s: %s", user_id, exc)
                 continue
@@ -2238,6 +2261,16 @@ async def daily2048_ws():
                     event = await await_owned_game_action(
                         apply_and_cache_move(direction, msg, client_elapsed_ms, pending_id, result)
                     )
+            except daily2048_repo.DailyPuzzleUnavailable as exc:
+                await websocket.send_json(
+                    {
+                        "event": "error",
+                        "reason": exc.reason,
+                        "message": "Игра Daily 2048 сейчас недоступна. Ваш результат сохранён.",
+                    }
+                )
+                await websocket.close(4004, "Daily 2048 unavailable")
+                break
             except TimeoutError:
                 await websocket.send_json(
                     await stamp_runtime_payload(
@@ -2338,7 +2371,21 @@ async def daily_game_ws():
     except ValueError:
         last_seen_seq = 0
 
-    puzzle_date, puzzles, results = await get_daily_overview(user_id)
+    from app.repos import crocodile_daily as daily_croc_repo
+
+    try:
+        puzzle_date, puzzles, results = await get_daily_overview(user_id)
+    except daily_croc_repo.DailyCrocNotReady, daily_croc_repo.DailyCrocConflict:
+        await websocket.send_json(
+            {
+                "event": "error",
+                "reason": "not_ready",
+                "retryable": True,
+                "message": "Игра ещё готовится. Попробуйте снова через минуту.",
+            }
+        )
+        await websocket.close(1013, "Daily puzzle not ready")
+        return
     if difficulty not in puzzles:
         difficulty = "easy"
     puzzle = puzzles[difficulty]
@@ -2531,6 +2578,19 @@ async def daily_game_ws():
                 except Exception as exc:
                     logger.warning("daily_game_ws: result message failed user=%s: %s", user_id, exc)
                 break
+    except daily_croc_repo.DailyCrocNotReady, daily_croc_repo.DailyCrocConflict:
+        await websocket.send_json(
+            await stamp_runtime_payload(
+                runtime_id,
+                {
+                    "event": "error",
+                    "reason": "not_ready",
+                    "retryable": True,
+                    "message": "Игра ещё готовится. Попробуйте снова через минуту.",
+                },
+            )
+        )
+        await websocket.close(1013, "Daily puzzle not ready")
     except Exception as exc:
         logger.warning("daily_game_ws: unexpected error user=%s: %s", user_id, exc)
 

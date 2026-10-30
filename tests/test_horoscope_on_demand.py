@@ -91,7 +91,9 @@ async def test_manual_reading_uses_subscription_without_changing_delivery(monkey
     claims = MagicMock(side_effect=AssertionError("manual reading must not claim scheduled delivery"))
     monkeypatch.setattr(horoscope, "upsert_horoscope_subscription", writes)
     monkeypatch.setattr("app.repos.horoscope_subscriptions.mark_horoscope_sent", writes)
-    monkeypatch.setattr("app.handlers.scheduled_horoscopes.claim_horoscope_delivery", claims)
+    monkeypatch.setattr("app.repos.horoscope_subscriptions.claim_horoscope_delivery", claims)
+    enqueue = AsyncMock(side_effect=AssertionError("manual reading must not enqueue scheduled delivery"))
+    monkeypatch.setattr("app.broadcast_jobs.enqueue_scheduled", enqueue)
     monkeypatch.setattr(
         "app.intent_router._handle_horoscope", AsyncMock(return_value=SimpleNamespace(text="Прогноз готов"))
     )
@@ -107,6 +109,7 @@ async def test_manual_reading_uses_subscription_without_changing_delivery(monkey
     assert context.user_data["horo_sign"] == "aries"
     writes.assert_not_awaited()
     claims.assert_not_called()
+    enqueue.assert_not_awaited()
 
 
 @pytest.mark.asyncio

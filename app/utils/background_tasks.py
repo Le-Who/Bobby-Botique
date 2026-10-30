@@ -18,6 +18,13 @@ from app.observability.context import export_job_context, replace_current_contex
 from app.observability.events import emit, record_exception
 
 
+def _detached_context():
+    from app.observability.request_metrics import detached_request_context
+    from app.runtime_settings.lifecycle import detached_settings_context
+
+    return detached_request_context(detached_settings_context())
+
+
 def start_background_task(
     task_ref: asyncio.Task | None,
     coro_factory: Callable[[], Coroutine[Any, Any, Any]],
@@ -32,9 +39,7 @@ def start_background_task(
         logging.debug("Background task '%s' already running", task_name)
         return task_ref
 
-    from app.runtime_settings.lifecycle import detached_settings_context
-
-    return asyncio.create_task(coro_factory(), name=task_name, context=detached_settings_context())
+    return asyncio.create_task(coro_factory(), name=task_name, context=_detached_context())
 
 
 async def cancel_background_task(owner: object, attr_name: str) -> None:
@@ -64,6 +69,22 @@ class TaskManager:
         self._tasks: set[asyncio.Task] = set()
         self._error_callback: Callable[[Exception, str], Any] | None = None
         self._accepting_tasks = True
+        self._accepted_count = 0
+        self._rejected_count = 0
+        self._running_count = 0
+
+    def metrics_snapshot(self) -> dict[str, Any]:
+        return {
+            "scope": "process",
+            "available": True,
+            "observed_at": time.time(),
+            "outstanding": len(self._tasks),
+            "running": self._running_count,
+            "accepted_total": self._accepted_count,
+            "rejected_total": self._rejected_count,
+            "capacity": self.MAX_TASKS,
+            "accepting": self._accepting_tasks,
+        }
 
     def register_error_callback(self, callback: Callable[[Exception, str], Any]) -> None:
         """Register a callback to be invoked when a background task exhausts all retries."""
@@ -98,6 +119,7 @@ class TaskManager:
         atomic on the application's event loop. Rejected input is always closed.
         """
         if not self._accepting_tasks or len(self._tasks) >= self.MAX_TASKS:
+            self._rejected_count += 1
             coro.close()
             emit(
                 "job.capacity_rejected",
@@ -156,6 +178,7 @@ class TaskManager:
         safe_metadata = dict(metadata or {})
 
         if not self._accepting_tasks or len(self._tasks) >= self.MAX_TASKS:
+            self._rejected_count += 1
             emit(
                 "job.capacity_rejected",
                 level="warning",
@@ -172,8 +195,9 @@ class TaskManager:
             async def _noop():
                 pass
 
-            return asyncio.create_task(_noop())
+            return asyncio.create_task(_noop(), context=_detached_context())
 
+        self._accepted_count += 1
         emit(
             "job.enqueued",
             operation=operation_name,
@@ -186,9 +210,7 @@ class TaskManager:
 
         # Preserve the caller's tracing/privacy context. A persistent worker
         # captures runtime settings separately for each job, not at enqueue.
-        from app.runtime_settings.lifecycle import detached_settings_context
-
-        ctx = detached_settings_context()
+        ctx = _detached_context()
         execution_id = uuid.uuid4().hex
         started_ns = time.monotonic_ns()
         wrapper_started = False
@@ -213,6 +235,7 @@ class TaskManager:
         async def _wrapper():
             nonlocal started_ns, wrapper_started, attempts_started, terminal_emitted
             wrapper_started = True
+            self._running_count += 1
             started_ns = time.monotonic_ns()
             with restore_job_context(portable_context, task_id=task_id, execution_id=execution_id):
                 replace_current_context(operation=operation_name)
@@ -310,6 +333,8 @@ class TaskManager:
 
         def _discard_finished(done: asyncio.Task) -> None:
             self._tasks.discard(done)
+            if wrapper_started:
+                self._running_count -= 1
             # Cancellation can finish the wrapper before its first instruction,
             # leaving an accepted bare coroutine unawaited. The completed owner
             # can safely close it; already-awaited coroutines are closed already.

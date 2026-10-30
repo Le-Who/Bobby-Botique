@@ -3,10 +3,10 @@
 Automatically selects the appropriate ``thinking_level`` for a user message
 when the user's setting is ``None`` (auto) or explicitly ``"auto"``.
 
-Three-phase classification:
-  1. Fast regex heuristics (0 ms, free) → definite HIGH or LOW.
-  2. LLM micro-classifier (only for grey-zone MEDIUM) → ~100 ms, ~50 tokens.
-  3. Context-aware escalation from conversation history.
+Classification is deterministic and makes no model or network calls:
+  1. Ordered regex and length heuristics select HIGH or LOW.
+  2. Remaining messages default to MEDIUM.
+  3. Three long recent model responses can escalate MEDIUM to HIGH.
 
 User's explicit ``thinking_level`` always overrides.
 
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,7 @@ _LOW_TRANSLATE = re.compile(
     re.IGNORECASE,
 )
 
-# MEDIUM signals (grey zone — triggers LLM classifier if no HIGH/LOW match)
+# MEDIUM signals (grey zone — deterministic fallback if no HIGH/LOW match)
 _MEDIUM_EXPLAIN = re.compile(
     r"(?:объясни|почему|как работает|зачем|explain|why|how does)",
     re.IGNORECASE,
@@ -96,14 +97,22 @@ def _count_numbered_steps(text: str) -> int:
     return len(_HIGH_MULTIPART.findall(text))
 
 
-def classify_thinking_level(
+@dataclass(frozen=True, slots=True)
+class ThinkingDecision:
+    """Effective thinking policy with a fixed, content-free diagnostic code."""
+
+    level: str | None
+    reason_code: str
+
+
+def classify_thinking_decision(
     message: str,
     *,
     history: list[dict[str, Any]] | None = None,
-) -> str:
+) -> ThinkingDecision:
     """Classify message complexity into a thinking level.
 
-    Returns one of: "low", "medium", "high".
+    Returns a level and its first matching deterministic reason.
 
     Args:
         message: The user's message text.
@@ -115,43 +124,43 @@ def classify_thinking_level(
     # ── HIGH signals (any match) ──
     if _HIGH_CODE.search(message):
         logger.debug("Thinking classifier: HIGH (code detected)")
-        return "high"
+        return ThinkingDecision("high", "high_code")
 
     if _HIGH_MATH.search(message):
         logger.debug("Thinking classifier: HIGH (math detected)")
-        return "high"
+        return ThinkingDecision("high", "high_math")
 
     if _count_numbered_steps(message) >= 3:
         logger.debug("Thinking classifier: HIGH (multipart instructions)")
-        return "high"
+        return ThinkingDecision("high", "high_multipart")
 
     if _HIGH_COMPARISON.search(message):
         logger.debug("Thinking classifier: HIGH (comparison request)")
-        return "high"
+        return ThinkingDecision("high", "high_comparison")
 
     if msg_len > 800:
         logger.debug("Thinking classifier: HIGH (long message: %d chars)", msg_len)
-        return "high"
+        return ThinkingDecision("high", "high_length")
 
     if questions >= 3:
         logger.debug("Thinking classifier: HIGH (multiple questions: %d)", questions)
-        return "high"
+        return ThinkingDecision("high", "high_questions")
 
     if _HIGH_ARCHITECTURE.search(message):
         logger.debug("Thinking classifier: HIGH (architecture/design)")
-        return "high"
+        return ThinkingDecision("high", "high_architecture")
 
     if _HIGH_DEBUG.search(message):
         logger.debug("Thinking classifier: HIGH (debugging)")
-        return "high"
+        return ThinkingDecision("high", "high_debug")
 
     if _HIGH_LEGAL.search(message):
         logger.debug("Thinking classifier: HIGH (legal/contract)")
-        return "high"
+        return ThinkingDecision("high", "high_legal")
 
     if _HIGH_LONG_FORM_WRITING.search(message):
         logger.debug("Thinking classifier: HIGH (long-form writing / essay)")
-        return "high"
+        return ThinkingDecision("high", "high_long_form")
 
     # ── LOW signals (ALL must match) ──
     is_short = msg_len < 60
@@ -162,16 +171,16 @@ def classify_thinking_level(
 
     if is_greeting or is_confirmation:
         logger.debug("Thinking classifier: LOW (greeting/confirmation)")
-        return "low"
+        return ThinkingDecision("low", "low_greeting" if is_greeting else "low_confirmation")
 
     if is_short and is_single_question and is_translate:
         logger.debug("Thinking classifier: LOW (short translation request)")
-        return "low"
+        return ThinkingDecision("low", "low_translation")
 
     # Single word responses
     if msg_len < 20 and " " not in message.strip():
         logger.debug("Thinking classifier: LOW (single word)")
-        return "low"
+        return ThinkingDecision("low", "low_single_word")
 
     if (
         is_short
@@ -185,10 +194,11 @@ def classify_thinking_level(
         )
     ):
         logger.debug("Thinking classifier: LOW (short simple message)")
-        return "low"
+        return ThinkingDecision("low", "low_short_simple")
 
     # ── Phase 3: Context-aware escalation ──
     level = "medium"
+    reason_code = "medium_default"
 
     if history:
         # If recent model responses are long → conversation is complex → escalate
@@ -201,19 +211,30 @@ def classify_thinking_level(
         if long_responses >= 3:
             logger.debug("Thinking classifier: escalated MEDIUM->HIGH (conversation complexity)")
             level = "high"
+            reason_code = "history_complexity"
 
     # Medium signals (for logging/observability)
     if level == "medium":
         if _MEDIUM_EXPLAIN.search(message):
             logger.debug("Thinking classifier: MEDIUM (explanation request)")
+            reason_code = "medium_explanation"
         elif _MEDIUM_CREATIVE.search(message):
             logger.debug("Thinking classifier: MEDIUM (creative request)")
+            reason_code = "medium_creative"
         elif _MEDIUM_SUMMARIZE.search(message):
             logger.debug("Thinking classifier: MEDIUM (summarization)")
+            reason_code = "medium_summary"
         else:
             logger.debug("Thinking classifier: MEDIUM (grey zone, len=%d)", msg_len)
 
-    return level
+    return ThinkingDecision(level, reason_code)
+
+
+def classify_thinking_level(message: str, *, history: list[dict[str, Any]] | None = None) -> str:
+    """Return the deterministic auto-mode level, preserving the public API."""
+    decision = classify_thinking_decision(message, history=history)
+    assert decision.level is not None
+    return decision.level
 
 
 # ── Model-specific auto-mode defaults ─────────────────────────────────────────
@@ -224,13 +245,13 @@ _MODEL_DEFAULT_THINKING: dict[str, str] = {
 }
 
 
-def resolve_thinking_level(
+def resolve_thinking_decision(
     user_level: str | None,
     message: str,
     history: list[dict[str, Any]] | None = None,
     *,
     model: str | None = None,
-) -> str | None:
+) -> ThinkingDecision:
     """Resolve the effective thinking level.
 
     If the user has explicitly set a level (low/medium/high/off), respect it.
@@ -244,13 +265,13 @@ def resolve_thinking_level(
         model: Model name being used (e.g. "gemini-3.1-flash-lite").
 
     Returns:
-        Effective thinking level string or None (for "off").
+        Effective thinking level and a fixed reason code; off has level None.
     """
     # Explicit user override
     if user_level and user_level in ("low", "medium", "high"):
-        return user_level
+        return ThinkingDecision(user_level, "explicit_level")
     if user_level == "off":
-        return None
+        return ThinkingDecision(None, "explicit_off")
 
     # Model-specific default (auto mode)
     if model:
@@ -261,7 +282,18 @@ def resolve_thinking_level(
                     default_level,
                     model,
                 )
-                return default_level
+                return ThinkingDecision(default_level, "model_default")
 
     # Auto mode — classify via heuristics
-    return classify_thinking_level(message, history=history)
+    return classify_thinking_decision(message, history=history)
+
+
+def resolve_thinking_level(
+    user_level: str | None,
+    message: str,
+    history: list[dict[str, Any]] | None = None,
+    *,
+    model: str | None = None,
+) -> str | None:
+    """Return the effective policy; explicit settings precede all auto rules."""
+    return resolve_thinking_decision(user_level, message, history, model=model).level

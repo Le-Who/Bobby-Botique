@@ -5,7 +5,10 @@ references are maintained with subsequent changes, including the 2026-10-23
 runtime, CI and speech updates, and the 2026-10-24 long-source/TTS token counting
 and short-tail grouping changes. The 2026-10-25 updates cover startup supervision,
 state recovery, Reader/role rendering, Live session ownership, 2048 retries and
-natal account-generation guards.
+natal account-generation guards. The 2026-10-28 implementation adds bounded
+request admission, owned job queues, Daily edit/generation fences, delivery
+journaling and operator diagnostics; its dated verification report separates
+local checks, isolated service checks and production evidence.
 Read current references first; historical plans,
 journals and test/deploy reports are not current instructions.
 
@@ -83,6 +86,7 @@ neither authorizes execution now nor proves a feature is missing.
 | 2026-10-23 prompts, TTS and runtime audit | [Prompt inventory](prompt-quality-audit-2026-10-23.md) and [runtime audit](runtime-audit-2026-10-23.md); current Google API contracts, voice profiles, request/error/shutdown ownership, cache/metrics/documents and dashboard corrections; offline evidence and explicit live-service limits |
 | 2026-10-23 latency and dashboard follow-up | [Performance and diagnostics audit](performance-dashboard-audit-2026-10-23.md); exact model/key races, HTTP retries, result-budget cache identity, document retrieval, truthful local model diagnostics, batched limits and offline browser evidence |
 | 2026-10-23 codebase audit and corrections | [Codebase audit](codebase-audit-2026-10-23.md); parallel runtime/data/web review, reproduced corrections, independent review and final local verification boundaries |
+| 2026-10-28 request processing, queues and admin dashboards | [Dated audit](request-processing-dashboard-audit-2026-10-28.md), [implementation plan](superpowers/plans/2026-10-28-request-processing-and-dashboards.md) and [implementation evidence](request-processing-dashboard-implementation-2026-10-28.md); current contracts live in runtime controls, architecture and metrics guides. The audit describes the original snapshot; verification of this implementation does not establish live provider performance or a production queue cutover |
 
 [CHANGELOG.md](../CHANGELOG.md), [maintainer queue](MAINTAINER_QUEUE.md) and
 `.jules/` journals are historical evidence. Old performance figures and broad

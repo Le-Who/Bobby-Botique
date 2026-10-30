@@ -28,6 +28,24 @@ from app.documents.repository import check_duplicate_file, save_document_content
 from app.metrics import metrics_collector
 
 
+def _is_transient_storage_error(error: Exception) -> bool:
+    """Explicit operational failures; schema, permission and generic PG errors stay terminal."""
+    return isinstance(
+        error,
+        (
+            TimeoutError,
+            ConnectionError,
+            asyncpg.PostgresConnectionError,
+            asyncpg.CannotConnectNowError,
+            asyncpg.TooManyConnectionsError,
+            asyncpg.AdminShutdownError,
+            asyncpg.CrashShutdownError,
+            asyncpg.SerializationError,
+            asyncpg.DeadlockDetectedError,
+        ),
+    )
+
+
 def _duplicate_result(filename: str, duplicate: dict[str, Any]) -> dict[str, Any]:
     created_date = duplicate["created_at"]
     date_str = created_date.strftime("%Y-%m-%d") if hasattr(created_date, "strftime") else str(created_date)[:10]
@@ -50,6 +68,8 @@ class DocumentProcessor:
         self, file_data, filename: str, user_id: int, is_path: bool = False, *, skip_duplicate_check: bool = False
     ) -> dict[str, Any]:
         """Process a document and return extracted text."""
+        stage = "validation"
+        write_started = False
         try:
             # Check file size
             if is_path:
@@ -69,18 +89,33 @@ class DocumentProcessor:
             # Hash + duplicate check
             loop = asyncio.get_running_loop()
             file_hash = await loop.run_in_executor(None, calculate_file_hash_sync, file_data)
-            duplicate = None if skip_duplicate_check else await check_duplicate_file(user_id, file_hash, filename)
+            stage = "duplicate_lookup"
+            duplicate = (
+                None
+                if skip_duplicate_check
+                else await check_duplicate_file(user_id, file_hash, filename, raise_on_error=True)
+            )
 
             if duplicate:
                 return _duplicate_result(filename, duplicate)
 
             # Dispatch to format-specific parser
+            stage = "parsing"
             if file_ext == ".pdf":
                 result = await self._process_pdf_unified(file_data, filename, is_path=is_path)
             else:
                 result = await self._process_word_unified(file_data, filename, is_path=is_path)
             if result.get("error"):
                 return result
+            from app.queue import current_job_guard
+
+            guard = current_job_guard()
+            if guard is not None:
+                await guard.checkpoint()
+            stage = "storage_write"
+            # The repository owns the transaction. Once entered, a failed commit
+            # reply cannot establish whether persistence took effect.
+            write_started = True
             duplicate = await save_document_content(
                 user_id,
                 filename,
@@ -91,14 +126,24 @@ class DocumentProcessor:
             )
             return _duplicate_result(filename, duplicate) if duplicate else result
 
-        except (asyncpg.PostgresError, asyncpg.InterfaceError, TimeoutError) as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError, TimeoutError, ConnectionError) as e:
             logging.error("Error saving uploaded document for user %s: %s", user_id, type(e).__name__)
             await metrics_collector.record_error("document_storage", type(e).__name__)
-            return {"error": "storage_error"}
+            return {
+                "error": "storage_error",
+                "error_stage": stage,
+                "write_started": write_started,
+                "retryable": stage == "duplicate_lookup" and not write_started and _is_transient_storage_error(e),
+            }
         except (ValueError, UnicodeDecodeError, OSError) as e:
             logging.error("Error processing document %s: %s", filename, e, exc_info=True)
             await metrics_collector.record_error("document_processing", str(e))
-            return {"error": f"Error processing document: {str(e)}"}
+            return {
+                "error": f"Error processing document: {str(e)}",
+                "error_stage": stage,
+                "write_started": write_started,
+                "retryable": False,
+            }
 
     # ── Synchronous parsing helpers (run via run_in_executor) ─────────────
 

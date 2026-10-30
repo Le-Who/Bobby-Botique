@@ -201,16 +201,21 @@ class AIStreamCoordinator:
             await _invoke(self._on_before_terminal)
 
             if isinstance(terminal, StreamDeferred):
-                displayed = "⏳ Серверы AI временно перегружены. Я отправлю ответ, как только они освободятся."
+                displayed = (
+                    "⏳ Уточняется статус запроса. Подтверждения постановки в очередь пока нет."
+                    if terminal.admission_uncertain
+                    else "⏳ Серверы AI временно перегружены. Я отправлю ответ, как только они освободятся."
+                )
                 receipt = await self._session.finalize(
                     displayed_text=displayed,
                     title=prepared.long_read_title,
-                    actions=prepared.failure_actions,
+                    actions=None if terminal.admission_uncertain else prepared.failure_actions,
                 )
                 return DeferredDelivery(
                     task_id=terminal.task_id,
                     displayed_text=displayed,
                     receipt=receipt,
+                    admission_uncertain=terminal.admission_uncertain,
                 )
 
             if isinstance(terminal, StreamFailed) and terminal.phase is FailurePhase.BEFORE_TEXT:

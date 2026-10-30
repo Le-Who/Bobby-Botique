@@ -8,9 +8,87 @@ Tests that critical subsystems behave correctly under concurrent access:
 """
 
 import asyncio
+import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from app.adapters.concurrency import GlobalLLMSemaphore
+from app.errors import UserLimitExceededError
+
+
+@pytest.mark.asyncio
+async def test_local_and_redis_wait_share_one_admission_deadline(monkeypatch):
+    """A 119-second local wait leaves one second of the 120-second budget."""
+    clock = SimpleNamespace(now=0.0)
+    real_sleep = asyncio.sleep
+
+    class DelayedLocalSemaphore(asyncio.Semaphore):
+        async def acquire(self):
+            result = await super().acquire()
+            clock.now += 119
+            return result
+
+    async def advance_clock(seconds):
+        clock.now += seconds
+        await real_sleep(0)
+
+    redis = AsyncMock()
+    redis.eval.return_value = 0
+    semaphore = GlobalLLMSemaphore(1, timeout=120)
+    semaphore._local_semaphore = DelayedLocalSemaphore(1)
+    monkeypatch.setattr("app.cache.redis_client", redis)
+    monkeypatch.setattr(
+        "app.adapters.concurrency.time",
+        SimpleNamespace(monotonic=lambda: clock.now, monotonic_ns=time.monotonic_ns),
+    )
+    monkeypatch.setattr(asyncio, "sleep", advance_clock)
+
+    with pytest.raises(UserLimitExceededError):
+        async with semaphore:
+            pytest.fail("exhausted admission must not enter provider work")
+
+    assert clock.now == 120
+    assert semaphore._local_semaphore._value == 1
+    assert semaphore._waiting_count == 0
+
+
+@pytest.mark.asyncio
+async def test_stalled_redis_eval_is_bounded_by_admission_deadline(monkeypatch):
+    """Socket/retry stalls cannot overrun the whole admission budget."""
+    entered = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def blocked_admission(*args):
+        entered.set()
+        try:
+            await asyncio.Future()
+        finally:
+            stopped.set()
+
+    redis = AsyncMock()
+    redis.eval.side_effect = blocked_admission
+    semaphore = GlobalLLMSemaphore(1, timeout=0.03)
+    monkeypatch.setattr("app.cache.redis_client", redis)
+
+    async def acquire():
+        async with semaphore:
+            pytest.fail("a timed out Redis call cannot become local fallback")
+
+    task = asyncio.create_task(acquire())
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        done, _ = await asyncio.wait({task}, timeout=0.2)
+        assert task in done, "the Redis await must obey the admission deadline"
+        with pytest.raises(UserLimitExceededError):
+            await task
+        assert stopped.is_set()
+        assert semaphore._local_semaphore._value == 1
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
 
 # ============================================================================
 # 1. CACHE STAMPEDE TEST

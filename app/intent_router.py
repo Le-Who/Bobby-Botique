@@ -14,6 +14,7 @@ Falls back to the standard LLM pipeline when intent is ambiguous or all APIs fai
 
 import logging
 import re
+from dataclasses import dataclass
 
 import httpx
 
@@ -283,6 +284,20 @@ _COMPLEX_PHRASES: frozenset[str] = frozenset(
     }
 )
 
+# A card is safe only for an affirmative, standalone request. Conservative
+# fallback leaves negation, quoted material and additional authored tasks to chat.
+# Single quote pairs need word boundaries: Ukrainian word-internal apostrophes
+# (including two in one sentence) do not delimit quoted command data.
+_NON_DIRECT_REQUEST_RE = re.compile(
+    r"\b(?:не|not|don't|do\s+not)\b|[«»\"“”`]|(?:^|\n)\s*>"
+    r"|(?<!\w)'[^\n]*?'(?!\w)|(?<!\w)‘[^\n]*?’(?!\w)",
+    re.IGNORECASE,
+)
+_ADDITIONAL_TASK_RE = re.compile(
+    r"(?:\b(?:и|та|and)\s+|[,;.!?\n]\s*)(?:напиши|переведи|сочини|объясни|расскажи|сравни|write|translate|explain|compare)\b",
+    re.IGNORECASE,
+)
+
 
 def _clean_candidate(raw: str) -> str:
     """Strip known trailing temporal/query words from a city candidate."""
@@ -325,6 +340,15 @@ class IntentResult:
         self.context_data = context_data
 
 
+@dataclass(frozen=True, slots=True)
+class DirectIntentDecision:
+    """Routing outcome; reason codes never include message or provider content."""
+
+    route: str
+    reason_code: str
+    result: IntentResult | None = None
+
+
 def _is_complex_query(text: str, word_count: int) -> bool:
     """Determine if a query is complex and should NOT short-circuit to API cards."""
     # 1. Length heuristic (long text or article)
@@ -342,55 +366,73 @@ def _is_complex_query(text: str, word_count: int) -> bool:
     return any(phrase in lower_text for phrase in _COMPLEX_PHRASES)
 
 
-async def try_direct_intent(message_text: str) -> IntentResult | None:
-    """Attempt to handle the message via direct API calls.
-
-    Returns IntentResult with the formatted response text if a known intent
-    is detected and successfully resolved. Returns None if the message
-    doesn't match any known intent or the API call failed.
-    """
+async def resolve_direct_intent(message_text: str) -> DirectIntentDecision:
+    """Resolve the existing direct handlers with content-free routing diagnostics."""
     text = message_text.strip()
     word_count = len(text.split())
     is_complex = _is_complex_query(text, word_count)
+    weather_match = bool(_WEATHER_PATTERNS.search(text)) or (
+        word_count <= _WEATHER_COLLOQUIAL_MAX_WORDS and bool(_WEATHER_COLLOQUIAL_RE.search(text))
+    )
+    currency_match = bool(_CURRENCY_PATTERNS.search(text)) or (
+        word_count <= _CURRENCY_COLLOQUIAL_MAX_WORDS and bool(_CURRENCY_COLLOQUIAL_RE.search(text))
+    )
+    horoscope_match = bool(_HOROSCOPE_PATTERNS.search(text))
+    if _NON_DIRECT_REQUEST_RE.search(text):
+        return DirectIntentDecision("llm", "non_direct_request")
+    if sum((weather_match, currency_match, horoscope_match)) > 1 or _ADDITIONAL_TASK_RE.search(text):
+        return DirectIntentDecision("llm", "multiple_tasks")
 
-    def _prepare_result(res: IntentResult | None) -> IntentResult | None:
-        if res and is_complex:
+    def _prepare_result(res: IntentResult, route: str) -> DirectIntentDecision:
+        if is_complex:
             res.handled = False
             res.context_data = res.text
-        return res
+            return DirectIntentDecision("llm", "complex_context", res)
+        return DirectIntentDecision(route, "direct_resolved", res)
 
     # Try weather first (more common)
     if _WEATHER_PATTERNS.search(text):
         result = await _handle_weather(text)
         if result:
-            return _prepare_result(result)
+            return _prepare_result(result, "weather")
 
     # Colloquial weather — only for short messages to avoid false positives
     # (e.g. "жарко спорить о политике" has 5 words but no city → falls through safely)
     if word_count <= _WEATHER_COLLOQUIAL_MAX_WORDS and _WEATHER_COLLOQUIAL_RE.search(text):
         result = await _handle_weather(text)
         if result:
-            return _prepare_result(result)
+            return _prepare_result(result, "weather")
 
     # Then currency / crypto
     if _CURRENCY_PATTERNS.search(text):
         result = await _handle_currency(text)
         if result:
-            return _prepare_result(result)
+            return _prepare_result(
+                result, "crypto" if any(alias in text.lower() for alias in _CRYPTO_ALIASES) else "currency"
+            )
 
     # Colloquial currency — only for short messages; currency-pair extraction is the inner guard
     if word_count <= _CURRENCY_COLLOQUIAL_MAX_WORDS and _CURRENCY_COLLOQUIAL_RE.search(text):
         result = await _handle_currency(text)
         if result:
-            return _prepare_result(result)
+            return _prepare_result(
+                result, "crypto" if any(alias in text.lower() for alias in _CRYPTO_ALIASES) else "currency"
+            )
 
     # Horoscope
     if _HOROSCOPE_PATTERNS.search(text):
         result = await _handle_horoscope(text)
         if result:
-            return _prepare_result(result)
+            return _prepare_result(result, "horoscope")
 
-    return None
+    return DirectIntentDecision(
+        "llm", "direct_unresolved" if weather_match or currency_match or horoscope_match else "no_direct_match"
+    )
+
+
+async def try_direct_intent(message_text: str) -> IntentResult | None:
+    """Return a direct result, enrichment, or None for ordinary chat fallback."""
+    return (await resolve_direct_intent(message_text)).result
 
 
 # ── Weather ───────────────────────────────────────────────────────────────────

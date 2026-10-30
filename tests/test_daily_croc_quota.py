@@ -80,16 +80,33 @@ async def test_quota_requires_admin(quota_store):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model", ["qwen-image", "fta-gpt-image-2"])
 async def test_admin_regeneration_bypasses_exhausted_quota_including_fallback(quota_store, monkeypatch, model):
-    from app import web
+    from app.games import admin_jobs
+    from app.queue_contracts import JobOutcome
 
-    monkeypatch.setattr(web.settings, "ADMIN_SECRET", "test-token")
+    monkeypatch.setattr(admin_jobs, "effective_policy", AsyncMock(return_value={"models": [model], "revision": 1}))
     puzzle = repo.DailyPuzzle(
-        date(2026, 9, 9), "cat", "animals", "en", hints=["hint"], image_prompt="cat", image_file_id="old"
+        date(2026, 9, 9),
+        "cat",
+        "animals",
+        "en",
+        hints=["hint one", "hint two", "hint three"],
+        image_prompt="cat",
+        image_file_id="old",
     )
+    from tests.test_daily_croc_generation_ownership import install_preparation_transport
+
+    install_preparation_transport(monkeypatch)
     monkeypatch.setattr(repo, "get_puzzle", AsyncMock(return_value=puzzle))
     monkeypatch.setattr(repo, "create_puzzle_if_missing", AsyncMock(return_value=puzzle))
-    save = AsyncMock()
+    save = AsyncMock(return_value=True)
     monkeypatch.setattr(repo, "set_puzzle_image_asset", save)
+
+    async def edit(day, difficulty, revision, **fields):
+        from dataclasses import replace
+
+        return replace(puzzle, **fields, content_revision=revision + 1)
+
+    monkeypatch.setattr(repo, "edit_puzzle", edit)
     monkeypatch.setattr(repo, "mark_puzzle_prepared", AsyncMock())
     bot = SimpleNamespace(
         send_photo=AsyncMock(return_value=SimpleNamespace(photo=[SimpleNamespace(file_id="new")], delete=AsyncMock()))
@@ -105,13 +122,16 @@ async def test_admin_regeneration_bypasses_exhausted_quota_including_fallback(qu
     while await daily._check_and_consume_image_quota():
         pass
     before = dict(daily._local_image_quota)
-    response = await web.quart_app.test_client().post(
-        "/api/admin/dailycroc/regenerate",
-        headers={"X-Auth-Token": "test-token"},
-        json={"date": "2026-09-09", "difficulty": "easy", "model": model},
+    result = await admin_jobs.execute(
+        command={
+            "kind": "croc.regenerate_image",
+            "date": "2026-09-09",
+            "difficulty": "easy",
+            "model": model,
+            "expected_revision": 1,
+        }
     )
-    assert response.status_code == 200
-    assert (await response.get_json())["file_id"] == "new"
+    assert result.outcome is JobOutcome.SUCCEEDED
     assert save.await_args.args[1] == "new"
     assert daily._local_image_quota == before
 
@@ -192,12 +212,17 @@ async def test_failed_automatic_fallback_consumes_only_one_attempt(quota_store, 
 
 @pytest.mark.asyncio
 async def test_player_force_image_does_not_bypass_automatic_quota(quota_store, monkeypatch):
+    from tests.test_daily_croc_generation_ownership import install_preparation_transport
+
+    install_preparation_transport(monkeypatch)
     from app.runtime_settings import lifecycle, store
 
     monkeypatch.setattr(lifecycle, "refresh_runtime_settings", AsyncMock())
     monkeypatch.setattr(store, "get_snapshot", AsyncMock(return_value=store.SettingsSnapshot(0, {})))
     quota_store["daily_croc_image_quota_per_hour"] = "0"
-    puzzle = repo.DailyPuzzle(date(2026, 9, 9), "cat", "animals", "en", hints=["hint"], image_prompt="cat")
+    puzzle = repo.DailyPuzzle(
+        date(2026, 9, 9), "cat", "animals", "en", hints=["hint one", "hint two", "hint three"], image_prompt="cat"
+    )
     monkeypatch.setattr(repo, "create_puzzle_if_missing", AsyncMock(return_value=puzzle))
     monkeypatch.setattr(daily, "_generate_via_pollinations", AsyncMock(side_effect=AssertionError("must not run")))
     with pytest.raises(RuntimeError, match="Failed to generate"):

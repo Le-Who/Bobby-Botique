@@ -196,16 +196,34 @@ async def generate_question_lane(
     )
 
 
-async def prepare_daily_puzzle(puzzle_date: date, *, force: bool = False, mode: str = "all") -> repo.DailyTriviaPuzzle:
+def has_complete_sibling(puzzle: repo.DailyTriviaPuzzle | None, part: str) -> bool:
+    """Partial admin work preserves a complete sibling instead of expanding scope."""
+    if part == "all":
+        return True
+    if puzzle is None:
+        return False
+    return len(puzzle.super_questions) == 3 if part == "main" else len(puzzle.questions) == 5
+
+
+async def prepare_daily_puzzle(
+    puzzle_date: date, *, force: bool = False, mode: str = "all", expected_revision: int | None = None
+) -> repo.DailyTriviaPuzzle:
     """Generate, validate against the bank, and atomically publish one day."""
     async with runtime_settings_scope():
-        return await _prepare_daily_puzzle(puzzle_date, force=force, mode=mode)
+        return await _prepare_daily_puzzle(puzzle_date, force=force, mode=mode, expected_revision=expected_revision)
 
 
-async def _prepare_daily_puzzle(puzzle_date: date, *, force: bool, mode: str) -> repo.DailyTriviaPuzzle:
+async def _prepare_daily_puzzle(
+    puzzle_date: date, *, force: bool, mode: str, expected_revision: int | None = None
+) -> repo.DailyTriviaPuzzle:
     if mode not in {"all", "main", "super"}:
         raise ValueError("mode must be 'all', 'main', or 'super'")
     existing = await repo.get_puzzle(puzzle_date)
+    current_revision = existing.revision if existing else 0
+    if expected_revision is not None and expected_revision != current_revision:
+        raise repo.RevisionConflictError(expected=expected_revision, actual=current_revision)
+    if expected_revision is not None and not has_complete_sibling(existing, mode):
+        raise ValueError("incomplete_sibling")
     if (
         existing
         and len(existing.questions) == 5
@@ -219,7 +237,7 @@ async def _prepare_daily_puzzle(puzzle_date: date, *, force: bool, mode: str) ->
     from app.repos.settings_repo import get_global_setting
 
     model_name = await get_global_setting("daily_trivia_llm_model", TRIVIA_MODEL)
-    expected_revision = existing.revision if existing else 0
+    expected_revision = current_revision
     regenerate_main = mode in {"all", "main"} or not existing or len(existing.questions) != 5
     regenerate_super = mode in {"all", "super"} or not existing or len(existing.super_questions) != 3
     preserved_main = list(existing.questions) if existing else []
@@ -228,6 +246,9 @@ async def _prepare_daily_puzzle(puzzle_date: date, *, force: bool, mode: str) ->
     rejected_facts: list[FactIdentity] = []
 
     for attempt in range(1, GENERATION_ATTEMPTS + 1):
+        from app.games.daily_execution import checkpoint
+
+        await checkpoint()
         questions = (
             await generate_question_lane(puzzle_date, lane="main", model_name=model_name, rejected_facts=rejected_facts)
             if regenerate_main

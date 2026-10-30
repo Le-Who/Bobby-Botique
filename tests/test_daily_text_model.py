@@ -136,6 +136,9 @@ async def test_daily_translation_uses_selected_model_and_model_scoped_cache(monk
 
 @pytest.mark.asyncio
 async def test_daily_selected_hints_are_saved_without_using_classic_generator(monkeypatch):
+    from tests.test_daily_croc_generation_ownership import install_preparation_transport
+
+    install_preparation_transport(monkeypatch)
     from app.games import daily_ai
 
     puzzle = repo.DailyPuzzle(date(2026, 9, 8), "чайник", "предметы", "ru")
@@ -149,6 +152,7 @@ async def test_daily_selected_hints_are_saved_without_using_classic_generator(mo
 
     async def save(day, hints, **kwargs):
         saved.extend(hints)
+        return True
 
     monkeypatch.setattr(repo, "set_puzzle_hints", save)
     monkeypatch.setattr(
@@ -216,6 +220,7 @@ async def test_create_daily_puzzle_uses_configured_model_with_wordbank_fallback(
 
     monkeypatch.setattr(repo.db, "db_query", query)
     monkeypatch.setattr(repo.db.db_manager, "pool", None)
+    monkeypatch.setattr(repo, "_pick_local_daily_word", lambda topic, **kwargs: ("лампа", "ru", topic.category, False))
     puzzle = await repo.create_puzzle_if_missing(date(2026, 9, 8))
     assert puzzle.target_word == expected
     assert puzzle.lang == "ru"
@@ -242,6 +247,15 @@ async def test_regenerate_daily_word_uses_selected_model_and_excludes_previous_w
     )
     conn = MagicMock()
     conn.execute = AsyncMock()
+    conn.fetchrow = AsyncMock(
+        return_value={
+            "puzzle_date": existing.puzzle_date,
+            "target_word": existing.target_word,
+            "topic": existing.topic,
+            "lang": existing.lang,
+        }
+    )
+    conn.fetchval = AsyncMock(return_value=False)
     pool = MagicMock(_closed=False)
     pool.acquire.return_value.__aenter__.return_value = conn
     monkeypatch.setattr(repo.db.db_manager, "pool", pool)
@@ -258,7 +272,7 @@ async def test_regenerate_daily_word_uses_selected_model_and_excludes_previous_w
         ]
 
     monkeypatch.setattr(repo.db, "db_query", query)
-    puzzle = await repo.regenerate_puzzle_word(existing.puzzle_date, model=override)
+    puzzle = await repo.regenerate_puzzle_word(existing.puzzle_date, model=override, expected_revision=1)
     assert puzzle.target_word == "самовар"
 
 

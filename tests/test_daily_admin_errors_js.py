@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.admin_daily_sources import read_admin_daily_sources
+
 TEMPLATE = Path(__file__).parents[1] / "app/templates/admin_daily.html"
 
 
@@ -28,7 +30,7 @@ def _function(template, signature, *, module="", indent="  "):
     ],
 )
 def test_api_error_text_never_becomes_admin_markup(module, name, target):
-    template = TEMPLATE.read_text(encoding="utf-8")
+    template = read_admin_daily_sources()
     escape = template[template.index("function escapeHtml(") : template.index("function showToast(")]
     source = _function(template, f"  async function {name}(", module=module)
     _run(
@@ -45,6 +47,10 @@ const getHeaders = {}, SUB_LIMIT = 50, OFFER_LIMIT = 50;
 const _selectedUids = new Set();
 const _updateBatchBar = () => {};
 let selectedDate = null, currentLbType, subOffset, offerOffset;
+const captureDraft = () => {};
+let puzzleRequest=0,leaderboardRequest=0;
+const currentPuzzles=[];
+const capturePromptDrafts=()=>{};
 const fetch = async () => { throw new Error(attack); };
 """
         + source

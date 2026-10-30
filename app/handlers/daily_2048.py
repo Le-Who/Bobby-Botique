@@ -73,6 +73,12 @@ async def send_daily2048_entry(
     reply_to_message_id: int | None = None,
     mark_delivered: bool = True,
 ) -> None:
+    puzzle = await repo.ensure_puzzle(puzzle_date)
+    if puzzle.status != "ready":
+        await bot.send_message(
+            chat_id=user_id, text="Сегодня игра Daily 2048 недоступна. Выберите другую игру или вернитесь позже."
+        )
+        return
     caption = _entry_caption(puzzle_date)
     keyboard = daily2048_entry_keyboard(include_subscribe=include_subscribe)
     send_kwargs = {
@@ -86,13 +92,6 @@ async def send_daily2048_entry(
         send_kwargs["reply_to_message_id"] = reply_to_message_id
     try:
         message = await bot.send_photo(**send_kwargs)
-        await _remember_cover_file_id(message)
-        await repo.register_prompt_message(
-            user_id=user_id,
-            puzzle_date=puzzle_date,
-            chat_id=message.chat_id,
-            message_id=message.message_id,
-        )
     except (OSError, TelegramError) as exc:
         if is_unreachable_chat_error(exc):
             raise
@@ -106,12 +105,11 @@ async def send_daily2048_entry(
         if reply_to_message_id is not None:
             fallback_kwargs["reply_to_message_id"] = reply_to_message_id
         message = await bot.send_message(**fallback_kwargs)
-        await repo.register_prompt_message(
-            user_id=user_id,
-            puzzle_date=puzzle_date,
-            chat_id=message.chat_id,
-            message_id=message.message_id,
-        )
+    else:
+        await _remember_cover_file_id(message)
+    await repo.register_prompt_message(
+        user_id=user_id, puzzle_date=puzzle_date, chat_id=message.chat_id, message_id=message.message_id
+    )
     if mark_delivered:
         pref = await daily_delivery_repo.get_preference(user_id)
         await daily_delivery_repo.mark_daily_sent(
@@ -136,12 +134,13 @@ async def send_discovery_intro(bot, user_id: int) -> bool:
             parse_mode=ParseMode.HTML,
             reply_markup=keyboard,
         )
-        await _remember_cover_file_id(message)
     except (OSError, TelegramError) as exc:
         if is_unreachable_chat_error(exc):
             raise
         logger.warning("daily 2048 discovery cover failed user=%s: %s", user_id, exc)
         await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    else:
+        await _remember_cover_file_id(message)
     await daily_delivery_repo.mark_discovery_sent(user_id)
     return True
 
@@ -171,6 +170,9 @@ async def check_daily_2048_jobs(context: ContextTypes.DEFAULT_TYPE, *, admin_mod
         return
 
     today = repo.today_puzzle_date(now)
+    puzzle = await repo.get_puzzle(today)
+    if puzzle is None or puzzle.status != "ready":
+        return
     if not await is_daily_delivery_enabled():
         logger.info("daily 2048 delivery disabled by daily delivery switch")
         return
@@ -178,36 +180,25 @@ async def check_daily_2048_jobs(context: ContextTypes.DEFAULT_TYPE, *, admin_mod
     due_delivery = await daily_delivery_repo.get_due_deliveries(
         puzzle_date=today, now=now, game_mode="2048", default_game_mode=admin_mode
     )
+    from app.broadcast_jobs import enqueue_scheduled
+
     if due_delivery:
-        sem = asyncio.Semaphore(10)
-
-        async def _bounded_send(item):
-            async with sem:
-                try:
-                    await send_daily2048_entry(context.bot, int(item["user_id"]), today)
-                except Exception as exc:
-                    if await retire_unreachable_daily_recipient(int(item["user_id"]), exc, discovery=False):
-                        logger.info("daily 2048 delivery stopped for unreachable chat")
-                        return
-                    logger.warning("daily 2048 delivery failed user=%s: %s", item.get("user_id"), exc)
-
-        await asyncio.gather(*[_bounded_send(item) for item in due_delivery])
-
+        await enqueue_scheduled(
+            channel="daily_challenge",
+            user_ids=[int(item["user_id"]) for item in due_delivery],
+            effective_date=today,
+            variant="2048",
+            mode="delivery",
+        )
     discovery = await daily_delivery_repo.get_discovery_candidates(now=now) if admin_mode == "2048" else []
     if discovery:
-        sem_disc = asyncio.Semaphore(10)
-
-        async def _bounded_discovery(item):
-            async with sem_disc:
-                try:
-                    await send_discovery_intro(context.bot, int(item["user_id"]))
-                except Exception as exc:
-                    if await retire_unreachable_daily_recipient(int(item["user_id"]), exc, discovery=True):
-                        logger.info("daily 2048 discovery snoozed for unreachable chat")
-                        return
-                    logger.warning("daily 2048 discovery failed user=%s: %s", item.get("user_id"), exc)
-
-        await asyncio.gather(*[_bounded_discovery(item) for item in discovery])
+        await enqueue_scheduled(
+            channel="daily_challenge",
+            user_ids=[int(item["user_id"]) for item in discovery],
+            effective_date=today,
+            variant="2048",
+            mode="offer",
+        )
 
 
 async def monthly_champions_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

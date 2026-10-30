@@ -61,6 +61,8 @@ def make_telegram_message(text="Hello", user_id=123, chat_id=456, chat_type="pri
     """Create a mock telegram.Message."""
     msg = MagicMock(spec=telegram.Message if HAS_TELEGRAM else object)
     msg.text = text
+    msg.caption = None
+    msg.forward_origin = None
     msg.chat = make_telegram_chat(chat_id=chat_id, chat_type=chat_type)
     msg.from_user = make_telegram_user(user_id=user_id)
     msg.id = 999

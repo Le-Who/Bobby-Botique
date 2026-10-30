@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GemAI Bot v2 | Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard-operations.css', v='operations-20261028-1') }}" />
+    <script nonce="{{ g.csp_nonce }}" src="{{ url_for('static', filename='js/dashboard-operations.js', v='operations-20261028-1') }}" defer></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -120,6 +122,16 @@
         <p class="section-description traffic-note" id="traffic-note">Historical API coverage depends on recorded instrumentation.</p>
       </section>
       <!-- ROW 2: Performance Metrics -->
+      <section class="dash-section operations-section" aria-labelledby="operations-heading">
+        <h2 class="section-title" id="operations-heading">Request stages and live load</h2>
+        <p class="operations-note">Approximate p50/p95/p99 from fixed buckets, over a 900-second process window. Fewer than 20 samples is a low sample. Stage percentiles are not added to calculate total latency. These are observations from one replica.</p>
+        <div class="operations-table-scroll" tabindex="0" role="region" aria-label="Request stage percentiles"><table class="operations-table"><thead><tr><th>Stage / workload</th><th>p50, s</th><th>p95, s</th><th>p99, s</th><th>Samples</th><th>Window</th><th>Scope</th></tr></thead><tbody id="operations-stages"><tr><td colspan="7">Waiting for stage observations</td></tr></tbody></table></div>
+        <p class="operations-note" id="operations-amplification">Generation amplification unavailable</p>
+        <p class="operations-note" id="operations-generation-wait">Completed generation wait rate unavailable</p>
+        <p class="operations-note" id="operations-races"></p>
+        <div class="operations-load" id="operations-load"></div>
+        <a href="/controls#queues">Inspect queue lanes and supported actions</a>
+      </section>
       <section class="dash-section">
         <h2 class="section-title">Performance</h2>
         <p class="section-description">Independent of the workload period above. Error and cache rates combine the history loaded at startup (previous 30 days) with this process's new events.</p>
@@ -315,6 +327,7 @@
           </div>
           <div class="card">
             <div class="card-label">Cache Details</div>
+            <p class="section-description" id="cache-source-status"></p>
             <div class="db-stats" id="cache-stats">
               <div class="stat-line">
                 <span class="sl-label">Memory Items</span>
@@ -377,6 +390,7 @@
     <footer class="dash-footer">
       <span>GemAI Bot v2 Operations Dashboard</span>
       <span id="last-update">—</span>
+      <div id="source-freshness" role="status" aria-live="polite"></div>
     </footer>
 
     <script nonce="{{ g.csp_nonce }}">
@@ -509,12 +523,14 @@
         if (
           status === "connected" ||
           status === "running" ||
+          status === "ready" ||
           status === "healthy"
         )
           el.classList.add("dot-ok");
         else if (
           status === "disconnected" ||
           status === "unhealthy" ||
+          status === "failed" ||
           status === "error"
         )
           el.classList.add("dot-err");
@@ -536,12 +552,34 @@
       // Data loaders
       // =====================================================================
 
-      let trafficSnapshot = null;
-      function renderTraffic(traffic) {
+      function sourceStateText(name, source) {
+        if (!source) return name + ": unknown";
+        const age = source.observed_at == null ? "unknown age" : Math.max(0, Math.round(Date.now() / 1000 - source.observed_at)) + "s";
+        const state = !source.available ? "unavailable" : source.stale ? "stale" : source.reason_code === "source_partial" ? "partial" : "current";
+        return name + ": " + state + " · " + age + " · " + source.scope;
+      }
+      function renderSourceFreshness(sources, replace = false) {
+        const box = $("source-freshness");
+        if (!box || !sources) return;
+        if (replace) box.replaceChildren();
+        for (const [name, source] of Object.entries(sources)) {
+          let badge = [...box.children].find(item => item.dataset.source === name);
+          if (!badge) {
+            badge = document.createElement("span");
+            badge.dataset.source = name;
+            box.append(badge);
+          }
+          badge.textContent = sourceStateText(name, source) + "  ";
+          badge.dataset.state = !source.available ? "unavailable" : source.stale ? "stale" : source.reason_code === "source_partial" ? "partial" : "current";
+        }
+      }
+      let trafficSnapshot = null, trafficSourceSnapshot = null;
+      function renderTraffic(traffic, source = trafficSourceSnapshot) {
         trafficSnapshot = traffic;
+        trafficSourceSnapshot = source;
         const period = traffic?.periods?.[$("traffic-period").value];
         const validCount = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
-        const available = traffic?.timezone === "Europe/Kyiv" && period?.available === true;
+        const available = source?.available !== false && traffic?.timezone === "Europe/Kyiv" && period?.available === true;
         $("req-count").textContent = available && validCount(period.user_requests)
           ? period.user_requests.toLocaleString() : "Unavailable";
         $("api-attempt-count").textContent = available && validCount(period.api_attempts)
@@ -572,11 +610,17 @@
         } else {
           note.textContent = "Historical API coverage is unknown; these are recorded attempts, including retries and failed calls.";
         }
+        if (source?.stale && source.available) {
+          note.textContent = "Stale traffic · " + sourceStateText("last observation", source) + ". " + note.textContent;
+        } else if (source?.available === false) {
+          note.textContent += " " + sourceStateText("traffic", source) + ".";
+        }
       }
       $("traffic-period").addEventListener("change", () => renderTraffic(trafficSnapshot));
 
       function renderOverview(d) {
         if (!d) return;
+        renderSourceFreshness(d.sources, true);
         const s = d.system;
         const cpu = s.cpu_percent ?? 0;
         const memory = s.memory_percent ?? 0;
@@ -596,11 +640,11 @@
         const svc = d.services;
         setDot("svc-db", svc.database);
         setDot("svc-redis", svc.redis);
-        setDot("svc-bot", svc.bot);
+        setDot("svc-bot", d.lifecycle?.state || svc.bot);
 
         // Metrics
         const m = d.metrics;
-        renderTraffic(m?.traffic);
+        renderTraffic(m?.traffic, d.traffic_source || d.sources?.traffic || null);
         if (m && d.metrics_available !== false) {
           const avgMs = m.average_response_time_ms || 0;
           $("avg-resp").textContent = avgMs ? avgMs.toFixed(0) + "ms" : "—";
@@ -893,16 +937,18 @@
 
       function renderCache(cache) {
         if (!cache) return;
+        $("cache-source-status").textContent = sourceStateText("memory", cache.memory_source)
+          + " · " + sourceStateText("redis", cache.redis_source);
         if (cache.available === false) {
           $("c-mem-hits").textContent = "Unavailable";
           ["c-redis-hits", "c-misses", "c-mem-items"].forEach(id => { $(id).textContent = "—"; });
           return;
         }
-        $("c-mem-hits").textContent = cache.memory_items ?? "—";
-        $("c-redis-hits").textContent = cache.memory_capacity ?? "—";
-        $("c-misses").textContent = cache.memory_utilization_percent != null
+        $("c-mem-hits").textContent = cache.memory_available === false ? "Unavailable" : cache.memory_items ?? "—";
+        $("c-redis-hits").textContent = cache.memory_available === false ? "—" : cache.memory_capacity ?? "—";
+        $("c-misses").textContent = cache.memory_available !== false && cache.memory_utilization_percent != null
           ? Number(cache.memory_utilization_percent).toFixed(1) + "%" : "—";
-        $("c-mem-items").textContent = cache.redis_keys ?? "—";
+        $("c-mem-items").textContent = cache.redis_available === false ? "Unavailable" : cache.redis_keys ?? "—";
       }
 
       // =====================================================================
@@ -911,6 +957,7 @@
 
       let dashboardRefreshPending = false;
       async function refreshAll() {
+        if (document.hidden) return;
         if (dashboardRefreshPending) return;
         dashboardRefreshPending = true;
         try {
@@ -918,12 +965,15 @@
           if (!d || !d.overview || !d.providers || !d.infrastructure || !d.errors) {
             throw new Error("Complete dashboard snapshot unavailable");
           }
+          d.overview.sources = d.sources;
           renderOverview(d.overview);
           renderProviders(d.providers);
           renderCircuitBreakers(d.providers);
           renderDatabase(d.infrastructure?.database);
           renderQueue(d.infrastructure?.queue);
           renderCache(d.infrastructure?.cache);
+          globalThis.GemAIOperationsData = d.operations;
+          globalThis.GemAIOperations?.render(d.operations);
           renderErrors(d.errors);
           renderKeyHealth(d.providers?.key_health);
           dashboardUpdatedAt = Date.now();
@@ -975,6 +1025,9 @@
       // Initial load
       refreshAll();
       setInterval(refreshAll, 15000);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) refreshAll();
+      });
 
       // =====================================================================
       // Key Health loader
@@ -1018,6 +1071,8 @@
           try {
             const d = JSON.parse(e.data);
             if (d.error) return;
+            renderSourceFreshness(d.sources);
+            if (d.lifecycle?.state) setDot("svc-bot", d.lifecycle.state);
 
             // Update system metrics in real-time
             if (d.system) {
@@ -1041,14 +1096,20 @@
             // legacy SSE pool-presence hint cannot establish connectivity.
 
             // Update queue (if visible)
-            if (d.queue) {
+            if (d.sources?.queue?.available === false) {
+              renderQueue({ available: false });
+            } else if (d.queue) {
               $('q-pending').textContent = d.queue.pending ?? '—';
               $('q-running').textContent = d.queue.processing ?? '—';
             }
 
             // Calendar traffic belongs to the canonical snapshot. Legacy SSE
             // totals mix scopes and must never overwrite selected-period counts.
-            if (d.metrics?.traffic) renderTraffic(d.metrics.traffic);
+            if (d.metrics && Object.prototype.hasOwnProperty.call(d.metrics, "traffic")) {
+              renderTraffic(d.metrics.traffic, d.sources?.traffic || trafficSourceSnapshot);
+            } else if (d.sources?.traffic?.available === false) {
+              renderTraffic(null, d.sources.traffic);
+            }
 
             // Partial SSE updates cannot establish a fresh complete snapshot.
             updateDashboardFreshness();

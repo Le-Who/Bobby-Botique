@@ -347,6 +347,7 @@ async def _handle_regular_chat(
         return
 
     # Assemble context with token-budget awareness
+    _context_started = time.monotonic()
     from app.context_assembler import get_assembler
 
     assembler = get_assembler()
@@ -470,6 +471,9 @@ async def _handle_regular_chat(
         (system_instruction_new, _injection_stats, _retrieved_edge_ids),
         new_placeholder,
     ) = await asyncio.gather(_do_inject(), _do_stage_update())
+    from app.observability.request_metrics import record_stage
+
+    record_stage("context", time.monotonic() - _context_started)
     system_instruction = system_instruction_new
     placeholder_message = new_placeholder
     _memories_injected = _injection_stats.get("l2_memories", 0)

@@ -195,8 +195,8 @@ async def get_daily_state(
     now: datetime | None = None,
 ) -> tuple[repo.Daily2048Puzzle, repo.Daily2048Result]:
     puzzle = await repo.ensure_today_puzzle(now)
-    result = await repo.get_or_create_result(user_id, puzzle)
-    return puzzle, result
+    repo.require_available(puzzle)
+    return await repo.start_puzzle(user_id, puzzle)
 
 
 def _elapsed_ms(started_at: datetime, now: datetime) -> int:
@@ -293,6 +293,7 @@ async def process_move(
 ) -> dict[str, Any]:
     current_time = now or datetime.now(tz=UTC)
     puzzle, result = await get_daily_state(user_id, now=current_time)
+    repo.require_available(puzzle)
     if result.status != "active":
         return _event_from_result(result, puzzle, moved=False)
 
@@ -355,6 +356,7 @@ async def process_practice_move(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     del now
+    repo.require_available(puzzle)
     base_result = _practice_base_result(result, puzzle)
     outcome = apply_move(base_result.board, direction)
     if not outcome.moved:

@@ -37,11 +37,15 @@ async def _find_duplicate_document(user_id: int, file_hash: str, *, conn=None) -
     return dict(result[0]) if result else None
 
 
-async def check_duplicate_file(user_id: int, file_hash: str, filename: str) -> dict[str, Any] | None:
-    """Fast duplicate lookup, including intentional copies of the same content."""
+async def check_duplicate_file(
+    user_id: int, file_hash: str, filename: str, *, raise_on_error: bool = False
+) -> dict[str, Any] | None:
+    """Find duplicates; strict upload callers must distinguish an outage from absence."""
     try:
         return await _find_duplicate_document(user_id, file_hash)
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
+        if raise_on_error:
+            raise
         logger.error("Error checking duplicate file: %s", e, exc_info=True)
         return None
 

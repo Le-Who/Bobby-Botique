@@ -89,12 +89,13 @@ async def send_daily_trivia_entry(
     if cover:
         try:
             sent_message = await bot.send_photo(photo=cover, caption=caption, **send_kwargs)
-            await cover_photo.remember_cover_file_id("dailytrivia", sent_message)
         except Exception as exc:
             if is_unreachable_chat_error(exc):
                 raise
             logger.warning("daily trivia cover prompt failed user=%s: %s — falling back to text", user_id, exc)
             sent_message = None
+        else:
+            await cover_photo.remember_cover_file_id("dailytrivia", sent_message)
 
     if sent_message is None:
         sent_message = await bot.send_message(text=caption, **send_kwargs)
@@ -134,12 +135,13 @@ async def send_discovery_intro(bot, user_id: int) -> bool:
             message = await bot.send_photo(
                 chat_id=user_id, photo=cover, caption=text, parse_mode=ParseMode.HTML, reply_markup=keyboard
             )
-            await cover_photo.remember_cover_file_id("dailytrivia", message)
         except Exception as exc:
             if is_unreachable_chat_error(exc):
                 raise
             logger.warning("daily trivia photo discovery failed user=%s: %s", user_id, exc)
             await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        else:
+            await cover_photo.remember_cover_file_id("dailytrivia", message)
     else:
         await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
     await daily_delivery_repo.mark_discovery_sent(user_id)
@@ -244,36 +246,25 @@ async def check_daily_trivia_jobs(context: ContextTypes.DEFAULT_TYPE, *, admin_m
     due_delivery = await daily_delivery_repo.get_due_deliveries(
         puzzle_date=today, now=now, game_mode="trivia", default_game_mode=admin_mode
     )
+    from app.broadcast_jobs import enqueue_scheduled
+
     if due_delivery:
-        sem = asyncio.Semaphore(10)
-
-        async def _bounded_send(item):
-            async with sem:
-                try:
-                    await send_daily_trivia_entry(context.bot, int(item["user_id"]), today)
-                except Exception as exc:
-                    if await retire_unreachable_daily_recipient(int(item["user_id"]), exc, discovery=False):
-                        logger.info("daily trivia delivery stopped for unreachable chat")
-                        return
-                    logger.warning("daily trivia delivery failed user=%s: %s", item.get("user_id"), exc)
-
-        await asyncio.gather(*[_bounded_send(item) for item in due_delivery])
-
+        await enqueue_scheduled(
+            channel="daily_challenge",
+            user_ids=[int(item["user_id"]) for item in due_delivery],
+            effective_date=today,
+            variant="trivia",
+            mode="delivery",
+        )
     discovery = await daily_delivery_repo.get_discovery_candidates(now=now) if admin_mode == "trivia" else []
     if discovery:
-        sem_disc = asyncio.Semaphore(10)
-
-        async def _bounded_discovery(item):
-            async with sem_disc:
-                try:
-                    await send_discovery_intro(context.bot, int(item["user_id"]))
-                except Exception as exc:
-                    if await retire_unreachable_daily_recipient(int(item["user_id"]), exc, discovery=True):
-                        logger.info("daily trivia discovery snoozed for unreachable chat")
-                        return
-                    logger.warning("daily trivia discovery failed user=%s: %s", item.get("user_id"), exc)
-
-        await asyncio.gather(*[_bounded_discovery(item) for item in discovery])
+        await enqueue_scheduled(
+            channel="daily_challenge",
+            user_ids=[int(item["user_id"]) for item in discovery],
+            effective_date=today,
+            variant="trivia",
+            mode="offer",
+        )
 
 
 async def trivia_monthly_champions_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

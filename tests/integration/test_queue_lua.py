@@ -2,6 +2,7 @@
 
 import os
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -100,6 +101,51 @@ async def test_recovery_waits_for_expired_owner_and_is_idempotent(redis_queue_ke
     assert await redis.eval(queue._RECOVER_TASK, 3, *arguments) == 0
     assert await redis.llen(keys.processing) == 0
     assert await redis.lrange(keys.pending, 0, -1) == ["recovered-task"]
+
+
+async def test_exhausted_recovery_removes_processing_without_requeue(redis_queue_keys):
+    redis, keys = redis_queue_keys
+    await redis.lpush(keys.processing, "exhausted-task")
+    arguments = (keys.lease, keys.processing, keys.pending, "exhausted-task", "", "owned")
+    assert await redis.eval(queue._RECOVER_TASK, 3, *arguments) == 1
+    assert await redis.eval(queue._RECOVER_TASK, 3, *arguments) == 0
+    assert await redis.llen(keys.processing) == 0
+    assert await redis.llen(keys.pending) == 0
+
+
+@pytest.mark.parametrize("task_type", ["deferred_ai_response", "document_processing"])
+async def test_explicit_drained_legacy_recovery_preserves_effects_without_replay(
+    redis_queue_keys, monkeypatch, task_type
+):
+    from app import queue_legacy
+
+    redis, keys = redis_queue_keys
+    monkeypatch.setattr(queue_legacy, "_PROCESSING_KEY", keys.processing)
+    monkeypatch.setattr(queue_legacy, "_LEASE_PREFIX", keys.lease)
+    monkeypatch.setattr(queue_legacy, "_OWNERS_KEY", keys.owners)
+    monkeypatch.setattr(queue_legacy, "_QUEUE_PREFIX", keys.pending)
+    processing = f"{keys.processing}:dead"
+    pending = f"{keys.pending}:2"
+    task = queue.Task(
+        id="interrupted-deferred",
+        user_id=1,
+        task_type=task_type,
+        data={},
+        priority=queue.TaskPriority.NORMAL,
+        status=queue.TaskStatus.PENDING,
+        created_at=datetime.now(UTC),
+    )
+    try:
+        await redis.sadd(keys.owners, "dead")
+        await redis.lpush(processing, queue._task_to_json_bytes(task))
+        with pytest.raises(ValueError, match="legacy_drain_required"):
+            await queue_legacy.recover_legacy_processing(redis)
+        assert await queue_legacy.recover_legacy_processing(redis, confirm_drained=True) == 0
+        assert await queue_legacy.recover_legacy_processing(redis, confirm_drained=True) == 0
+        assert await redis.llen(processing) == 1
+        assert await redis.llen(pending) == 0
+    finally:
+        await redis.delete(processing, pending)
 
 
 async def test_legacy_recovery_does_not_require_an_owner_lease(redis_queue_keys):

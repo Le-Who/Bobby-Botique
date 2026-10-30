@@ -2,6 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
+<meta name="csrf-token" content="{{ csrf_token }}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Admin: Daily & Broadcast</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -485,6 +486,7 @@ input:checked + .slider:before { transform: translateX(16px); }
 .loading-container { padding: 60px 0; text-align: center; color: var(--text-muted); font-size: 0.9rem; }
 .badge-missing { display: inline-block; font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; background: rgba(244,63,94,0.15); color: var(--rose); font-weight: 700; border: 1px solid rgba(244,63,94,0.25); text-transform: uppercase; }
 .edit-hidden { display: none; }
+.puzzle-card [hidden], #trivia-editor-conflict[hidden] { display: none !important; }
 .mt-8 { margin-top: 8px; }
 .error-text { color: var(--rose); }
 .security-mode .puzzle-word { filter: blur(6px); transition: filter 0.15s; user-select: none; }
@@ -696,6 +698,7 @@ input:checked + .slider:before { transform: translateX(16px); }
 .btn-confirm { background: var(--rose); border: none; color: #fff; font-weight: 600; }
 .btn-confirm:hover { background: #e53935; }
 </style>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/daily-admin.css') }}">
 </head>
 <body>
 
@@ -719,7 +722,20 @@ input:checked + .slider:before { transform: translateX(16px); }
   <button class="tab-btn" data-tab="trivia">🧠 Trivia</button>
   <button class="tab-btn" data-tab="horoscope">⭐ Horoscope</button>
   <button class="tab-btn" data-tab="tarot">🔮 Tarot</button>
+  <button class="tab-btn" data-tab="jobs">📋 Задания</button>
 </nav>
+
+<div class="tab-panel" id="tab-jobs">
+  <div class="main-content">
+    <h2 class="section-title">Календарь готовности · Europe/Kyiv</h2>
+    <p>Подготовка выполняется для одной выбранной даты после подтверждения. Проверка готовности не запускает генерацию.</p>
+    <button class="btn btn-refresh" id="daily-readiness-refresh">Обновить готовность</button>
+    <div class="info-grid" id="daily-readiness-calendar"></div>
+    <h2 class="section-title">Операции этой вкладки</h2>
+    <p id="daily-jobs-notice" role="status" aria-live="polite"></p>
+    <ul id="daily-jobs-list"></ul>
+  </div>
+</div>
 
 <!-- ========================================
      TAB: BROADCAST
@@ -869,6 +885,29 @@ input:checked + .slider:before { transform: translateX(16px); }
       </div>
     </div>
 
+    <section class="card" aria-labelledby="broadcast-jobs-heading" style="margin-top:20px;">
+      <h2 id="broadcast-jobs-heading">Batch и результаты доставки</h2>
+      <p>Храним в этой вкладке не более 10 operation ID. Принятый batch не означает доставку. Неизвестный исход не повторяется автоматически.</p>
+      <button type="button" class="btn btn-refresh" id="broadcast-jobs-refresh">Проверить активные batch</button>
+      <div id="broadcast-jobs-list" aria-live="polite"></div>
+    </section>
+    <section class="card" aria-labelledby="broadcast-journal-heading" style="margin-top:20px;">
+      <h2 id="broadcast-journal-heading">Журнал попыток доставки</h2>
+      <p id="broadcast-journal-coverage" aria-live="polite">Покрытие ещё не загружено. Персональная история хранится 30 дней; тексты сообщений не сохраняются.</p>
+      <div class="filter-bar" style="display:flex;flex-wrap:wrap;gap:10px;align-items:end;">
+        <label>Канал <select id="broadcast-journal-channel"><option value="">Все</option><option value="daily_challenge">Daily Challenge</option><option value="horoscope">Horoscope</option><option value="tarot">Tarot</option></select></label>
+        <label>Дата (Киев) <input type="date" id="broadcast-journal-date"></label>
+        <label>Исход <select id="broadcast-journal-state"><option value="">Все</option><option value="started">Начато</option><option value="sent">Отправлено</option><option value="failed">Ошибка</option><option value="skipped">Пропущено</option><option value="unknown_delivery">Исход неизвестен</option></select></label>
+        <label>Reason <input type="text" id="broadcast-journal-reason" maxlength="64" placeholder="telegram_timeout"></label>
+        <button type="button" class="btn btn-primary" id="broadcast-journal-apply">Применить фильтры</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="sub-table"><thead><tr><th>Начало</th><th>Канал</th><th>Режим</th><th>User ID</th><th>Исход</th><th>Причина</th><th>Batch ID</th></tr></thead><tbody id="broadcast-journal-body"></tbody></table>
+      </div>
+      <button type="button" class="btn btn-refresh" id="broadcast-journal-prev" disabled>← Назад</button>
+      <button type="button" class="btn btn-refresh" id="broadcast-journal-next" disabled>Далее →</button>
+    </section>
+
   </div>
 </div>
 
@@ -920,6 +959,7 @@ input:checked + .slider:before { transform: translateX(16px); }
       <select id="croc-default-image-model" class="model-select" disabled><option>Загрузка моделей…</option></select>
       <p class="stat-card-sub">Применяется к новым пазлам. Индивидуальные модели и готовые изображения не меняются.</p>
       <p id="croc-model-status" role="status" class="stat-card-sub"></p>
+      <button type="button" id="croc-settings-reload" class="btn btn-secondary">Обновить редактор моделей</button>
       <label for="croc-image-quota">Лимит автоматических изображений в час</label>
       <div class="btn-row">
         <input id="croc-image-quota" type="number" min="0" max="1000" step="1" disabled aria-describedby="croc-image-quota-help">
@@ -976,6 +1016,9 @@ input:checked + .slider:before { transform: translateX(16px); }
       <div class="s2048-puzzles" id="s2048-puzzles"></div>
 
       <aside class="s2048-editor">
+        <p class="s2048-meta">Revision: <strong id="s2048-edit-revision">0</strong> · <span id="s2048-played-state">Не играли</span></p>
+        <p class="s2048-meta" id="s2048-lock-reason" role="status"></p>
+        <p class="s2048-meta" id="s2048-unavailable-reason" role="status"></p>
         <div class="form-row">
           <div class="field"><label>Дата</label><input id="s2048-edit-date" type="date"></div>
           <div class="field"><label>Статус</label>
@@ -1008,6 +1051,7 @@ input:checked + .slider:before { transform: translateX(16px); }
         </div>
         <div class="s2048-actions">
           <button class="s2048-btn primary" id="s2048-save">Сохранить</button>
+          <button class="s2048-btn" id="s2048-status-save">Изменить доступность</button>
           <button class="s2048-btn" id="s2048-generate">Сгенерировать день</button>
         </div>
       </aside>
@@ -1054,6 +1098,8 @@ input:checked + .slider:before { transform: translateX(16px); }
           </datalist>
           <button type="button" id="trivia-model-save" class="btn btn-secondary" style="padding:4px 8px;">Сохранить</button>
         </div>
+        <p id="trivia-model-status" role="status" class="stat-card-sub"></p>
+        <button type="button" id="trivia-settings-reload" class="btn btn-secondary">Обновить редактор модели</button>
         <div class="stat-card-sub" style="margin-top:4px;">5 обычных + 3 супер</div>
       </div>
       <div class="stat-card">
@@ -1075,6 +1121,7 @@ input:checked + .slider:before { transform: translateX(16px); }
       <!-- Left pane -->
       <div id="trivia-left-pane">
         <h2 class="section-title">Календарь вопросов (последние 14 дней и +7 дней)</h2>
+        <button type="button" class="s2048-btn" id="trivia-refresh-list">Обновить список</button>
         <div class="s2048-puzzles" id="trivia-puzzles-list">
           <div class="loading-container"><div class="image-spinner" style="margin:0 auto 12px;"></div>Загрузка...</div>
         </div>
@@ -1100,6 +1147,11 @@ input:checked + .slider:before { transform: translateX(16px); }
           <h3 style="font-size: 1rem; font-weight: 700;" id="trivia-editor-title">Редактор Trivia</h3>
           <span class="s2048-badge" id="trivia-editor-status">—</span>
         </div>
+        <section id="trivia-editor-conflict" hidden role="alert">
+          <p id="trivia-editor-comparison"></p>
+          <button type="button" class="s2048-btn" id="trivia-editor-reload">Загрузить серверную версию</button>
+          <button type="button" class="s2048-btn" id="trivia-editor-continue">Продолжить редактировать</button>
+        </section>
 
         <div id="trivia-editor-questions" style="overflow-y: visible; padding-right: 4px; display: flex; flex-direction: column; gap: 12px;">
           <!-- 5 question forms rendered here -->
@@ -1175,11 +1227,17 @@ input:checked + .slider:before { transform: translateX(16px); }
       <div class="info-card"><div class="info-card-label">Готово сегодня</div><div class="info-card-value" id="tarot-today-ready">—</div></div>
       <div class="info-card"><div class="info-card-label">Готово завтра</div><div class="info-card-value" id="tarot-tomorrow-ready">—</div></div>
       <div class="info-card">
-        <div class="info-card-label">Принудительная регенерация</div>
-        <div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
+        <div class="info-card-label">Подготовка карт</div>
+        <div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap;">
+          <label for="tarot-regen-date">Дата</label>
           <input type="date" id="tarot-regen-date" style="background:var(--bg-surface);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 8px;font-family:inherit;font-size:0.78rem;">
-          <button class="btn btn-regen btn-refresh" id="tarot-regen-btn">▶ Старт</button>
+          <label for="tarot-model">Модель этой операции</label>
+          <select id="tarot-model"><option value="">Auto</option></select>
+          <button class="btn btn-regen btn-refresh" id="tarot-missing-btn" disabled>Дополнить отсутствующие</button>
+          <button class="btn btn-regen btn-refresh" id="tarot-replace-btn" disabled>Перегенерировать все</button>
         </div>
+        <p id="tarot-policy"></p>
+        <p id="tarot-result" role="status" aria-live="polite"></p>
       </div>
     </div>
 
@@ -1201,10 +1259,10 @@ input:checked + .slider:before { transform: translateX(16px); }
 </div>
 
 <!-- ========== TOAST ========== -->
-<div class="toast-container" id="toast-container"></div>
+<div class="toast-container" id="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 
 <!-- ========== MODAL ========== -->
-<div class="modal" id="confirm-modal">
+<div class="modal" id="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-message">
   <div class="modal-content">
     <h3 id="modal-title">Подтверждение</h3>
     <p id="modal-message">Вы уверены?</p>
@@ -1215,6 +1273,10 @@ input:checked + .slider:before { transform: translateX(16px); }
   </div>
 </div>
 
+<script src="{{ url_for('static', filename='js/admin-api.js') }}" nonce="{{ g.csp_nonce }}"></script>
+<script id="daily-bootstrap" type="application/json" nonce="{{ g.csp_nonce }}">{{ daily_bootstrap|tojson }}</script>
+<script src="{{ url_for('static', filename='js/daily-chrome.js') }}" nonce="{{ g.csp_nonce }}"></script>
+<script src="{{ url_for('static', filename='js/daily-jobs.js') }}" nonce="{{ g.csp_nonce }}"></script>
 <script nonce="{{ g.csp_nonce }}">
 'use strict';
 
@@ -1223,6 +1285,7 @@ input:checked + .slider:before { transform: translateX(16px); }
 // ============================================================
 const apiHeaders = { 'Content-Type': 'application/json' };
 const getHeaders = {};
+const fetch = (...args) => window.DailyChrome.fetch(...args);
 
 if (window.Telegram?.WebApp?.initData) {
   const initData = window.Telegram.WebApp.initData;
@@ -1258,46 +1321,34 @@ function showToast(message, type = 'info') {
 }
 
 function showConfirm(title, message) {
-  return new Promise((resolve) => {
-    const modal = document.getElementById('confirm-modal');
-    const confirmBtn = document.getElementById('modal-confirm');
-    const cancelBtn = document.getElementById('modal-cancel');
-    document.getElementById('modal-title').textContent = title;
-    document.getElementById('modal-message').textContent = message;
-    modal.style.display = 'flex';
-    const cleanup = (value) => {
-      modal.style.display = 'none';
-      confirmBtn.onclick = null;
-      cancelBtn.onclick = null;
-      resolve(value);
-    };
-    confirmBtn.onclick = () => cleanup(true);
-    cancelBtn.onclick = () => cleanup(false);
-  });
+  return window.DailyChrome.confirm(title, message);
 }
 
 function getKyivDateString() {
-  try {
-    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Kyiv', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-  } catch (e) {
-    return new Date().toISOString().slice(0, 10);
-  }
+  return window.DailyChrome.today();
 }
 
 // ============================================================
 // TAB ROUTER (hash-based)
 // ============================================================
 const TabRouter = (() => {
-  const TABS = ['broadcast', 'croc', '2048', 'trivia', 'horoscope', 'tarot'];
+  const TABS = ['broadcast', 'croc', '2048', 'trivia', 'horoscope', 'tarot', 'jobs'];
   const HEADER_ACTIONS = {
     croc: 'croc-header-actions',
     broadcast: 'broadcast-header-actions',
   };
 
-  function activate(tabId) {
+  async function activate(tabId) {
     if (!TABS.includes(tabId)) tabId = 'broadcast';
+    const previous=document.querySelector('.tab-btn.active')?.dataset.tab;
+    const dirty=previous==='trivia' ? TriviaModule.hasDirtyDrafts?.() : previous==='croc' ? CrocModule.hasDirtyDrafts?.() : previous==='2048' ? S2048Module.hasDirtyDrafts?.() : false;
+    if(previous!==tabId && dirty && !await showConfirm('Несохранённые изменения','Перейти в другой раздел? Черновики останутся в памяти этой вкладки.')) {
+      history.replaceState(null,'','#'+previous); return false;
+    }
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.tab === tabId);
+      btn.setAttribute('aria-selected',String(btn.dataset.tab===tabId));
+      btn.tabIndex=btn.dataset.tab===tabId?0:-1;
     });
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     const panel = document.getElementById('tab-' + tabId);
@@ -1330,905 +1381,28 @@ const TabRouter = (() => {
 // ============================================================
 // MODULE: BROADCAST
 // ============================================================
-const BroadcastModule = (() => {
-  let initialized = false;
-  let subOffset = 0;
-  let offerOffset = 0;
-  const SUB_LIMIT = 50;
-  const OFFER_LIMIT = 50;
-
-  function updateDailyDriverUI(mode) {
-    const label = document.getElementById('daily-driver-label');
-    if (label) {
-      const modeNames = { crocodile: '🐊 Daily Crocodile', 2048: '🎲 Daily 2048', trivia: '🧠 Daily Trivia' };
-      label.textContent = modeNames[mode] || mode;
-    }
-    document.querySelectorAll('#daily-mode-buttons button').forEach(btn => {
-      const btnMode = btn.getAttribute('data-daily-mode');
-      if (btnMode === mode) {
-        btn.classList.add('btn-primary');
-        btn.classList.remove('btn-refresh');
-      } else {
-        btn.classList.remove('btn-primary');
-        btn.classList.add('btn-refresh');
-      }
-    });
-  }
-
-  async function setDailyMode(mode) {
-    try {
-      const res = await fetch('/api/admin/daily-mode', {
-        method: 'POST',
-        headers: apiHeaders,
-        body: JSON.stringify({ mode })
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        showToast(data.error || `HTTP ${res.status}`, 'error');
-        return;
-      }
-      updateDailyDriverUI(mode);
-      showToast(`Daily-игра по умолчанию: ${mode}`, 'success');
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  }
-
-  // ── Channel overview ──────────────────────────────────────────────────────
-  async function loadOverview() {
-    const container = document.getElementById('channel-cards');
-    try {
-      const res = await fetch('/api/admin/broadcast/overview', { headers: getHeaders });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      const channels = data.channels || [];
-      renderChannelCards(channels);
-      const challengeCh = channels.find(c => c.id === 'daily_challenge');
-      if (challengeCh && challengeCh.active_game) {
-        updateDailyDriverUI(challengeCh.active_game);
-      }
-    } catch (e) {
-      container.innerHTML = `<div class="empty-state error-text">Ошибка загрузки: ${escapeHtml(e.message)}</div>`;
-    }
-  }
-
-  function renderChannelCards(channels) {
-    const container = document.getElementById('channel-cards');
-    if (!channels.length) {
-      container.innerHTML = '<div class="empty-state">Нет данных по каналам</div>';
-      return;
-    }
-    container.innerHTML = channels.map(ch => {
-      const isEnabled = ch.delivery_enabled;
-      const dotCls = isEnabled ? 'dot-on' : 'dot-off';
-      const cardCls = isEnabled ? 'enabled' : 'disabled';
-      const toggleHtml = ch.id !== 'tarot' || ch.subscribers > 0
-        ? `<div class="channel-toggle">
-            <label class="switch">
-              <input type="checkbox" ${isEnabled ? 'checked' : ''} data-channel="${ch.id}" class="channel-toggle-chk">
-              <span class="slider"></span>
-            </label>
-           </div>` : '';
-      return `
-        <div class="channel-card ${cardCls}">
-          <div class="channel-card-header">
-            <div class="channel-name">
-              <span class="channel-status-dot ${dotCls}"></span>${ch.emoji} ${ch.name}
-            </div>
-            ${ch.active_game ? `<span class="channel-mode-badge">${ch.active_game}</span>` : ''}
-          </div>
-          <div class="channel-stats">
-            <div class="channel-stat-line">
-              <span>Подписчики</span>
-              <span>${ch.subscribers != null ? ch.subscribers : '—'}</span>
-            </div>
-            ${ch.pending_today != null ? `<div class="channel-stat-line"><span>Ожидает</span><span>${ch.pending_today}</span></div>` : ''}
-            ${ch.sent_today != null ? `<div class="channel-stat-line"><span>Отправлено</span><span>${ch.sent_today}</span></div>` : ''}
-            ${ch.last_sent_at ? `<div class="channel-stat-line"><span>Последняя</span><span>${new Date(ch.last_sent_at).toLocaleTimeString('ru-RU')}</span></div>` : ''}
-          </div>
-          ${toggleHtml}
-        </div>`;
-    }).join('');
-
-    // Bind toggles
-    container.querySelectorAll('.channel-toggle-chk').forEach(chk => {
-      chk.addEventListener('change', async () => {
-        const channel = chk.dataset.channel;
-        const enabled = chk.checked;
-        const label = enabled ? 'включить' : 'отключить';
-        const confirmed = await showConfirm('Изменение рассылки', `${label} рассылку "${channel}"?`);
-        if (!confirmed) { chk.checked = !enabled; return; }
-        chk.disabled = true;
-        try {
-          const res = await fetch('/api/admin/broadcast/toggle', {
-            method: 'POST', headers: apiHeaders,
-            body: JSON.stringify({ channel, enabled })
-          });
-          const d = await res.json();
-          if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
-          showToast(`Рассылка ${channel}: ${enabled ? 'включена' : 'отключена'}`, 'success');
-          await loadOverview();
-        } catch (e) {
-          showToast(`Ошибка: ${e.message}`, 'error');
-          chk.checked = !enabled;
-        } finally {
-          chk.disabled = false;
-        }
-      });
-    });
-  }
-
-  // ── Subscribers table ─────────────────────────────────────────────────────
-  async function loadSubscribers(offset = 0) {
-    subOffset = offset;
-    const channel = document.getElementById('sub-filter-channel').value;
-    const status = document.getElementById('sub-filter-status').value;
-    const uid = document.getElementById('sub-filter-uid').value.trim();
-    const params = new URLSearchParams({ limit: SUB_LIMIT, offset });
-    if (channel) params.set('channel', channel);
-    if (status) params.set('status', status);
-    if (uid) params.set('user_id', uid);
-
-    const tbody = document.getElementById('sub-tbody');
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-state"><div class="image-spinner" style="margin:0 auto 8px;"></div>Загрузка...</td></tr>';
-    try {
-      const res = await fetch('/api/admin/broadcast/subscribers?' + params, { headers: getHeaders });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      const rows = data.rows || [];
-      document.getElementById('sub-count-label').textContent = `Всего: ${data.total}`;
-      if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-state"><span class="empty-state-icon">🙅</span>Подписчиков не найдено</td></tr>';
-      } else {
-        tbody.innerHTML = rows.map(r => {
-          const isActive = r.status === 'active';
-          const isSnoozed = r.status === 'snoozed';
-          const rowCls = isActive ? '' : 'row-inactive';
-          let statusBadge;
-          if (isActive) statusBadge = '<span class="badge-status badge-status-active">✦ active</span>';
-          else if (isSnoozed) statusBadge = '<span class="badge-status badge-status-snoozed">⏸ snoozed</span>';
-          else statusBadge = '<span class="badge-status badge-status-inactive">— inactive</span>';
-          const channels = (r.channels || []).map(c => `<span class="badge-channel">${c}</span>`).join('');
-          const lastSent = r.last_sent
-            ? new Date(r.last_sent).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
-            : null;
-          const nameStr = escapeHtml(r.display_name || '');
-          const hourStr = r.preferred_hour != null ? String(r.preferred_hour).padStart(2,'0') + ':00' : '—';
-          const tzStr = r.timezone || '—';
-          return `<tr class="${rowCls}">
-            <td>
-              <div class="cell-user">
-                <span class="cell-user-name">${nameStr || 'Без имени'}</span>
-                <span class="cell-user-id">${r.user_id}</span>
-              </div>
-            </td>
-            <td>${channels || '<span class="cell-date-never">нет</span>'}</td>
-            <td class="td-r">
-              <div class="cell-time">
-                <span class="cell-time-hour">${hourStr}</span>
-                <span class="cell-time-tz">${tzStr}</span>
-              </div>
-            </td>
-            <td class="td-r">${lastSent
-              ? `<span class="cell-date-val">${lastSent}</span>`
-              : '<span class="cell-date-never">никогда</span>'}</td>
-            <td>${statusBadge}</td>
-          </tr>`;
-        }).join('');
-      }
-      document.getElementById('sub-prev').disabled = offset <= 0;
-      document.getElementById('sub-next').disabled = rows.length < SUB_LIMIT;
-    } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="5" class="error-state"><div class="error-state-icon">🚨</div><div class="error-state-msg">${escapeHtml(e.message)}</div></td></tr>`;
-    }
-  }
-
-  // ── Offer history ─────────────────────────────────────────────────────────
-  let _selectedUids = new Set();
-
-  function _updateBatchBar() {
-    const bar = document.getElementById('offer-batch-bar');
-    const countEl = document.getElementById('offer-batch-count');
-    const n = _selectedUids.size;
-    bar.style.display = n > 0 ? 'flex' : 'none';
-    countEl.textContent = `${n} выбрано`;
-  }
-
-  async function loadOfferHistory(offset = 0) {
-    offerOffset = offset;
-    const channel = document.getElementById('offer-filter-channel').value;
-    const status  = document.getElementById('offer-filter-status').value;
-    const never   = document.getElementById('offer-filter-never').checked;
-    const uid     = document.getElementById('offer-filter-uid').value.trim();
-    const params  = new URLSearchParams({ limit: OFFER_LIMIT, offset });
-    if (channel && channel !== 'all') params.set('channel', channel);
-    if (status) params.set('status', status);
-    if (never) params.set('never_sent', '1');
-    if (uid) params.set('user_id', uid);
-
-    const tbody = document.getElementById('offer-tbody');
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="image-spinner" style="margin:0 auto 8px;"></div>Загрузка...</td></tr>';
-    _selectedUids.clear();
-    _updateBatchBar();
-    document.getElementById('offer-select-all').checked = false;
-
-    try {
-      const res = await fetch('/api/admin/broadcast/offer-history?' + params, { headers: getHeaders });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      const rows = data.rows || [];
-      document.getElementById('offer-count-label').textContent = `Всего: ${data.total}`;
-
-      if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><span class="empty-state-icon">🙅</span>Нет данных по выбранным фильтрам</td></tr>';
-      } else {
-        tbody.innerHTML = rows.map((r) => {
-          const offerAt = r.offer_sent_at
-            ? new Date(r.offer_sent_at).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
-            : null;
-          const snoozedUntil = r.snoozed_until
-            ? new Date(r.snoozed_until).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
-            : null;
-          const subBadge = r.is_subscribed
-            ? '<span class="badge-status badge-status-yes">✦ подписан</span>'
-            : '<span class="badge-status badge-status-no">— нет</span>';
-          const nameStr = escapeHtml(r.display_name || '');
-          const rowCls = r.is_subscribed ? '' : 'row-inactive';
-          return `<tr class="${rowCls}" data-uid="${r.user_id}" data-channel="${r.channel}">
-            <td style="text-align:center;padding:9px 8px;"><input type="checkbox" class="offer-row-chk" value="${r.user_id}"></td>
-            <td>
-              <div class="cell-user">
-                <span class="cell-user-name">${nameStr || 'Без имени'}</span>
-                <span class="cell-user-id">${r.user_id}</span>
-              </div>
-            </td>
-            <td><span class="badge-channel">${r.channel_emoji} ${r.channel}</span></td>
-            <td class="td-r">${offerAt
-              ? `<span class="cell-date-val">${offerAt}</span>`
-              : '<span class="cell-date-never">никогда</span>'}</td>
-            <td class="td-r">${snoozedUntil
-              ? `<span class="badge-status badge-status-snoozed">⏸ ${snoozedUntil}</span>`
-              : '<span class="cell-date-never">—</span>'}</td>
-            <td>${subBadge}</td>
-            <td>
-              <button class="btn btn-sm offer-send-btn"
-                data-uid="${r.user_id}"
-                data-channel="${r.channel}"
-                data-subscribed="${r.is_subscribed}"
-                title="Отправить оффер">✈️</button>
-            </td>
-          </tr>`;
-        }).join('');
-
-        tbody.querySelectorAll('.offer-row-chk').forEach(chk => {
-          chk.addEventListener('change', () => {
-            const uid = parseInt(chk.value);
-            chk.checked ? _selectedUids.add(uid) : _selectedUids.delete(uid);
-            _updateBatchBar();
-          });
-        });
-
-        tbody.querySelectorAll('.offer-send-btn').forEach(btn => {
-          btn.addEventListener('click', () => _sendOfferConfirm(
-            parseInt(btn.dataset.uid),
-            btn.dataset.channel,
-            btn.dataset.subscribed === 'true',
-            btn
-          ));
-        });
-      }
-      document.getElementById('offer-prev').disabled = offset <= 0;
-      document.getElementById('offer-next').disabled = rows.length < OFFER_LIMIT;
-    } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="8" class="error-state"><div class="error-state-icon">🚨</div><div class="error-state-msg">${escapeHtml(e.message)}</div></td></tr>`;
-    }
-  }
-
-  async function _sendOfferConfirm(uid, channel, isSubscribed, btnEl) {
-    const chLabel = { daily_challenge: '🎮 Daily Challenge', horoscope: '⭐ Horoscope', tarot: '🔮 Tarot' }[channel] || channel;
-    const subNote = isSubscribed ? '\n⚠️ Пользователь уже подписан.' : '';
-    const confirmed = await showConfirm(
-      'Отправить оффер',
-      `Отправить оффер «${chLabel}» пользователю ${uid}?${subNote}`
-    );
-    if (!confirmed) return;
-    if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
-    try {
-      const res = await fetch('/api/admin/broadcast/send-offer', {
-        method: 'POST', headers: apiHeaders,
-        body: JSON.stringify({ user_id: uid, channel, force: isSubscribed })
-      });
-      const d = await res.json();
-      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
-      if (d.warning) {
-        showToast(`⚠️ ${d.warning}`, 'info');
-      } else {
-        showToast(`✅ Оффер отправлен пользователю ${uid}`, 'success');
-        // Refresh the row's offer_sent_at visually
-        const tr = document.querySelector(`#offer-tbody tr[data-uid="${uid}"]`);
-        if (tr) {
-          const cells = tr.querySelectorAll('td');
-          if (cells[4]) cells[4].textContent = new Date().toLocaleString('ru-RU', {dateStyle:'short',timeStyle:'short'});
-        }
-      }
-    } catch (e) {
-      showToast(`Ошибка: ${e.message}`, 'error');
-    } finally {
-      if (btnEl) { btnEl.disabled = false; btnEl.textContent = '✈️'; }
-    }
-  }
-
-  async function _sendBatch() {
-    const uids = [..._selectedUids];
-    const channel = document.getElementById('offer-batch-channel').value;
-    const force = document.getElementById('offer-batch-force').checked;
-    const chLabel = { daily_challenge: '🎮 Daily Challenge', horoscope: '⭐ Horoscope', tarot: '🔮 Tarot' }[channel] || channel;
-    const confirmed = await showConfirm(
-      'Batch-отправка',
-      `Отправить оффер «${chLabel}» для ${uids.length} пользователей?`
-    );
-    if (!confirmed) return;
-    const btn = document.getElementById('btn-offer-batch-send');
-    btn.disabled = true;
-    btn.textContent = '…';
-    try {
-      const res = await fetch('/api/admin/broadcast/send-offer-batch', {
-        method: 'POST', headers: apiHeaders,
-        body: JSON.stringify({ user_ids: uids, channel, force })
-      });
-      const d = await res.json();
-      if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
-      const s = d.summary || {};
-      showToast(`✅ Отправлено: ${s.sent} · Пропущено: ${s.skipped} · Ошибок: ${s.errors}`, 'success');
-      _selectedUids.clear();
-      _updateBatchBar();
-      document.getElementById('offer-select-all').checked = false;
-      document.querySelectorAll('.offer-row-chk').forEach(c => { c.checked = false; });
-    } catch (e) {
-      showToast(`Ошибка: ${e.message}`, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '✈️ Отправить выбранным';
-    }
-  }
-
-  async function _quickSend() {
-    const uid = parseInt(document.getElementById('offer-quick-uid').value.trim());
-    const channel = document.getElementById('offer-quick-channel').value;
-    const force = document.getElementById('offer-quick-force').checked;
-    if (!uid) { showToast('Введите User ID', 'error'); return; }
-    const chLabel = { daily_challenge: '🎮 Daily Challenge', horoscope: '⭐ Horoscope', tarot: '🔮 Tarot' }[channel] || channel;
-    const confirmed = await showConfirm('Отправить оффер', `Отправить оффер «${chLabel}» пользователю ${uid}?`);
-    if (!confirmed) return;
-    const btn = document.getElementById('btn-offer-quick-send');
-    btn.disabled = true;
-    try {
-      const res = await fetch('/api/admin/broadcast/send-offer', {
-        method: 'POST', headers: apiHeaders,
-        body: JSON.stringify({ user_id: uid, channel, force })
-      });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
-      if (d.error) throw new Error(d.error);
-      if (d.warning) showToast(`⚠️ ${d.warning}`, 'info');
-      else showToast(`✅ Оффер отправлен пользователю ${uid}`, 'success');
-      document.getElementById('offer-quick-uid').value = '';
-    } catch (e) {
-      showToast(`Ошибка: ${e.message}`, 'error');
-    } finally {
-      btn.disabled = false;
-    }
-  }
-
-  // ── init ──────────────────────────────────────────────────────────────────
-  function init() {
-    if (initialized) return;
-    initialized = true;
-    loadOverview();
-
-    document.getElementById('btn-refresh-broadcast').addEventListener('click', () => {
-      initialized = false;
-      init();
-    });
-    // Subscribers
-    document.getElementById('btn-load-subs').addEventListener('click', () => loadSubscribers(0));
-    document.getElementById('sub-prev').addEventListener('click', () => loadSubscribers(Math.max(0, subOffset - SUB_LIMIT)));
-    document.getElementById('sub-next').addEventListener('click', () => loadSubscribers(subOffset + SUB_LIMIT));
-
-    // Offer history
-    document.getElementById('btn-load-offers').addEventListener('click', () => loadOfferHistory(0));
-    document.getElementById('offer-prev').addEventListener('click', () => loadOfferHistory(Math.max(0, offerOffset - OFFER_LIMIT)));
-    document.getElementById('offer-next').addEventListener('click', () => loadOfferHistory(offerOffset + OFFER_LIMIT));
-
-    // Select all checkbox
-    document.getElementById('offer-select-all').addEventListener('change', e => {
-      document.querySelectorAll('.offer-row-chk').forEach(chk => {
-        chk.checked = e.target.checked;
-        const uid = parseInt(chk.value);
-        e.target.checked ? _selectedUids.add(uid) : _selectedUids.delete(uid);
-      });
-      _updateBatchBar();
-    });
-
-    // Batch send
-    document.getElementById('btn-offer-batch-send').addEventListener('click', _sendBatch);
-    document.getElementById('btn-offer-batch-clear').addEventListener('click', () => {
-      _selectedUids.clear();
-      _updateBatchBar();
-      document.getElementById('offer-select-all').checked = false;
-      document.querySelectorAll('.offer-row-chk').forEach(c => { c.checked = false; });
-    });
-
-    // Quick send
-    document.getElementById('btn-offer-quick-send').addEventListener('click', _quickSend);
-
-    // Daily mode buttons
-    document.querySelectorAll('#daily-mode-buttons button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const mode = btn.getAttribute('data-daily-mode');
-        if (mode) setDailyMode(mode);
-      });
-    });
-  }
-
-  return { init };
-})();
+</script>
+<script src="{{ url_for('static', filename='js/daily-broadcast-jobs.js') }}" nonce="{{ g.csp_nonce }}"></script>
+<script src="{{ url_for('static', filename='js/daily-broadcast.js') }}" nonce="{{ g.csp_nonce }}"></script>
+<script nonce="{{ g.csp_nonce }}">
 
 // ============================================================
 // MODULE: CROC (ported from admin_dailycroc.html, delivery toggle removed)
 // ============================================================
-const CrocModule = (() => {
-  let initialized = false;
-  let currentPuzzles = [];
-  let kyivTodayStr = '';
-  let imageModels = [];
-  let savedTextModel = '';
-  let savedProcessModels = {};
-  let savedImageModel = '';
-  let dayPoll = null;
-  let dayRequest = 0;
-  let activePreparationDate = null;
-
-  function fillModels(select, models, saved) {
-    select.replaceChildren();
-    const match = models.find(model => model.id === saved || (model.aliases || []).includes(saved));
-    const selected = match ? match.id : saved;
-    const groups = new Map();
-    const sourceLabels = {pollinations: 'Pollinations', fta: 'FTA'};
-    for (const model of models) {
-      const option = new Option(model.title || model.id, model.id, false, model.id === selected);
-      const sourceLabel = sourceLabels[model.source];
-      if (sourceLabel) {
-        if (!groups.has(model.source)) {
-          const group = document.createElement('optgroup');
-          group.label = sourceLabel;
-          groups.set(model.source, group);
-          select.append(group);
-        }
-        groups.get(model.source).append(option);
-      } else {
-        select.add(option);
-      }
+const DailySettingsState = (() => {
+  const listeners = new Set();
+  return {
+    subscribe(listener) { listeners.add(listener); },
+    saved(revision) {
+      if (!Number.isInteger(revision) || revision < 0) throw new Error('Ревизия сохранения не подтверждена');
+      listeners.forEach(listener => listener(revision));
     }
-    if (!match) select.add(new Option(`${saved || 'Авто'} (сохранено)`, saved, true, true));
-  }
-
-  async function loadModels() {
-    const select = document.getElementById('croc-text-model');
-    try {
-      const res = await fetch('/api/admin/dailycroc/models', { headers: getHeaders });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      imageModels = data.image_models || [];
-      savedTextModel = data.text_model || '';
-      fillModels(select, data.text_models || [], savedTextModel);
-      select.disabled = false;
-      const processRoot = document.getElementById('croc-process-models');
-      processRoot.replaceChildren();
-      for (const process of data.text_processes || []) {
-        savedProcessModels[process.id] = process.model || '';
-        const field = document.createElement('div');
-        field.className = 'field';
-        const label = document.createElement('label');
-        const input = document.createElement('select');
-        input.id = `croc-process-${process.id}`;
-        input.className = 'model-select';
-        input.dataset.process = process.id;
-        label.htmlFor = input.id;
-        label.textContent = process.label;
-        fillModels(input, (data.text_models || []).map(model => model.id ? model : {...model, title: 'Наследовать общую'}), process.model || '');
-        field.append(label, input);
-        processRoot.append(field);
-      }
-      const imageSelect = document.getElementById('croc-default-image-model');
-      fillModels(imageSelect, imageModels, data.default_image_model || 'qwen-image');
-      savedImageModel = imageSelect.value;
-      imageSelect.disabled = false;
-      document.getElementById('croc-model-status').textContent = data.catalog_unavailable
-        ? 'Каталог Pollinations недоступен; сохранённые модели не изменены.' : '';
-    } catch (e) {
-      document.getElementById('croc-model-status').textContent = `Не удалось загрузить модели: ${e.message}`;
-    }
-  }
-
-  async function saveTextModel(event) {
-    const select = event?.target || document.getElementById('croc-text-model');
-    const process = select.dataset.process || '';
-    select.disabled = true;
-    try {
-      const res = await fetch('/api/admin/dailycroc/text-model', {
-        method: 'POST', headers: apiHeaders, body: JSON.stringify({ model: select.value, process })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      if (process) savedProcessModels[process] = data.model;
-      else savedTextModel = data.model;
-      showToast('Текстовая модель сохранена');
-    } catch (e) {
-      select.value = process ? savedProcessModels[process] : savedTextModel;
-      showToast(`Ошибка: ${e.message}`, 'error');
-    } finally { select.disabled = false; }
-  }
-
-  async function saveDefaultImage() {
-    const select = document.getElementById('croc-default-image-model');
-    select.disabled = true;
-    try {
-      const res = await fetch('/api/admin/dailycroc/image-default', {
-        method: 'POST', headers: apiHeaders, body: JSON.stringify({model: select.value})
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      savedImageModel = data.model;
-      showToast('Модель новых изображений сохранена');
-      loadStats();
-    } catch (e) {
-      select.value = savedImageModel;
-      showToast(`Ошибка: ${e.message}`, 'error');
-    } finally { select.disabled = false; }
-  }
-
-  async function loadImageQuota() {
-    const input = document.getElementById('croc-image-quota');
-    const button = document.getElementById('croc-image-quota-save');
-    const status = document.getElementById('croc-image-quota-status');
-    try {
-      const res = await fetch('/api/admin/dailycroc/image-quota', {headers: getHeaders});
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      input.value = data.limit;
-      input.disabled = false;
-      button.disabled = false;
-      status.textContent = '';
-    } catch (e) { status.textContent = `Не удалось загрузить лимит: ${e.message}. Обновите страницу для повтора.`; }
-  }
-
-  async function saveImageQuota() {
-    const input = document.getElementById('croc-image-quota');
-    const button = document.getElementById('croc-image-quota-save');
-    const status = document.getElementById('croc-image-quota-status');
-    const limit = Number(input.value);
-    if (!input.value.trim() || !Number.isInteger(limit) || limit < 0 || limit > 1000) {
-      status.textContent = 'Введите целое число от 0 до 1000.';
-      return;
-    }
-    input.disabled = true;
-    button.disabled = true;
-    try {
-      const res = await fetch('/api/admin/dailycroc/image-quota', {
-        method: 'POST', headers: apiHeaders, body: JSON.stringify({limit})
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      input.value = data.limit;
-      status.textContent = 'Лимит сохранён. Применение на всех процессах — до 30 секунд; текущий расход не сбрасывается.';
-    } catch (e) { status.textContent = `Лимит не сохранён: ${e.message}`; }
-    finally { input.disabled = false; button.disabled = false; }
-  }
-
-  function renderDayStatus(data) {
-    const root = document.getElementById('croc-day-status');
-    root.replaceChildren();
-    const states = {queued:'В очереди', running:'Подготовка идёт…', completed:'Подготовка завершена', partial:'Подготовлено частично', failed:'Не удалось завершить подготовку', interrupted:'Подготовка прервана'};
-    const title = document.createElement('p');
-    title.textContent = `${data.date}: ${data.fully_ready ? 'Всё готово' : 'Есть недостающие части'}${data.job ? ' · ' + (states[data.job.state] || data.job.state) : ''}`;
-    root.append(title);
-    for (const puzzle of data.puzzles || []) {
-      const line = document.createElement('p');
-      const flag = ready => ready ? '✅' : '❌';
-      line.textContent = `${puzzle.difficulty.toUpperCase()}: слово ${flag(puzzle.word_ready)} · подсказки ${flag(puzzle.hints_ready)} · промпт ${flag(puzzle.prompt_ready)} · картинка ${flag(puzzle.image_ready)}`;
-      root.append(line);
-    }
-    if (data.job?.errors?.length) {
-      const error = document.createElement('p');
-      error.textContent = `Проблемы: ${data.job.errors.join('; ')}`;
-      root.append(error);
-    }
-  }
-
-  async function inspectDay() {
-    clearTimeout(dayPoll);
-    const date = document.getElementById('croc-day-date').value;
-    const ticket = ++dayRequest;
-    if (!date) {
-      document.getElementById('croc-day-status').textContent = 'Выберите дату.';
-      return;
-    }
-    try {
-      const res = await fetch(`/api/admin/dailycroc/day?date=${encodeURIComponent(date)}`, {headers:getHeaders});
-      const data = await res.json();
-      if (ticket !== dayRequest) return;
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      renderDayStatus(data);
-      const running = ['queued','running'].includes(data.job?.state);
-      document.getElementById('croc-day-prepare').disabled = running;
-      if (running) {
-        activePreparationDate = date;
-        dayPoll = setTimeout(inspectDay, 2000);
-      } else if (activePreparationDate === date) {
-        activePreparationDate = null;
-        loadPuzzles();
-      }
-    } catch (e) {
-      if (ticket !== dayRequest) return;
-      document.getElementById('croc-day-status').textContent = `Проверка недоступна: ${e.message}. Нажмите «Проверить готовность», чтобы повторить.`;
-      document.getElementById('croc-day-prepare').disabled = false;
-    }
-  }
-
-  async function prepareDay() {
-    const date = document.getElementById('croc-day-date').value;
-    if (!date) { await inspectDay(); return; }
-    if (!await showConfirm('Подготовка дня', `Создать недостающие части Easy и Hard на ${date}? Генерация расходует квоты моделей.`)) return;
-    const button = document.getElementById('croc-day-prepare');
-    button.disabled = true;
-    try {
-      const res = await fetch('/api/admin/dailycroc/day/prepare', {
-        method:'POST', headers:apiHeaders, body:JSON.stringify({date})
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      activePreparationDate = date;
-      showToast(`Подготовка на ${date} запущена`);
-      await inspectDay();
-    } catch (e) {
-      showToast(`Ошибка запуска: ${e.message}`, 'error');
-      button.disabled = false;
-    }
-  }
-
-  async function loadStats() {
-    try {
-      const res = await fetch('/api/admin/dailycroc/stats', { headers: getHeaders });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      document.getElementById('croc-stats-total-subs').textContent = data.total_subscribed || '0';
-      document.getElementById('croc-stats-subs-detail').textContent = `Осталось отправить: ${data.pending_today ?? 0}`;
-      document.getElementById('croc-stats-games').textContent = data.finished || '0';
-      document.getElementById('croc-stats-games-detail').textContent = `Побед: ${data.won ?? 0} | В игре: ${data.active ?? 0}`;
-      document.getElementById('croc-stats-placeholder').textContent = `Баннер: ${data.placeholder_set ? 'Установлен ✅' : 'Не задан ⚠️'}`;
-      document.getElementById('croc-stats-model').textContent = `Модель: ${data.image_model || '—'}`;
-    } catch (e) { console.error('Croc stats error:', e); }
-  }
-
-  async function loadImage(img) {
-    const fileId = img.dataset.fileId;
-    if (!fileId) return;
-    const container = img.parentNode;
-    const spinner = document.createElement('div');
-    spinner.className = 'image-spinner';
-    container.appendChild(spinner);
-    try {
-      const res = await fetch(`/api/admin/dailycroc/image?file_id=${encodeURIComponent(fileId)}`, { headers: getHeaders });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      img.src = URL.createObjectURL(blob);
-      img.style.display = 'block';
-    } catch (e) {
-      img.style.display = 'none';
-      const placeholder = document.createElement('div');
-      placeholder.className = 'image-placeholder';
-      placeholder.innerHTML = '<span>⚠️</span> <span>Ошибка загрузки</span>';
-      container.appendChild(placeholder);
-    } finally { spinner.remove(); }
-  }
-
-  async function loadPuzzles() {
-    const container = document.getElementById('croc-puzzle-container');
-    try {
-      const res = await fetch('/api/admin/dailycroc', { headers: getHeaders });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      currentPuzzles = data.puzzles || [];
-      kyivTodayStr = getKyivDateString();
-      await loadModels();
-      renderPuzzles(currentPuzzles, container);
-      loadStats();
-    } catch (e) {
-      container.innerHTML = `<div class="loading-container error-text">Не удалось загрузить данные: ${escapeHtml(e.message)}</div>`;
-    }
-  }
-
-  function renderPuzzles(puzzles, container) {
-    container.innerHTML = '';
-    if (!puzzles || !puzzles.length) {
-      container.innerHTML = '<div class="loading-container">Пазлы не найдены.</div>';
-      return;
-    }
-    puzzles.sort((a, b) => {
-      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-      return a.difficulty === 'easy' ? -1 : 1;
-    });
-    puzzles.forEach(p => {
-      const isMissing = !p.target_word;
-      const isToday = p.date === kyivTodayStr;
-      const dateObj = new Date(p.date);
-      const dateStr = dateObj.toLocaleDateString('ru-RU', { weekday: 'short', month: 'short', day: 'numeric' });
-      const diffClass = p.difficulty === 'easy' ? 'diff-easy' : 'diff-hard';
-      const card = document.createElement('div');
-      card.className = `puzzle-card ${isToday ? 'card-today' : ''}`;
-      card.id = `croc-card-${p.date}-${p.difficulty}`;
-      let imageSection = '';
-      if (!isMissing) {
-        imageSection = p.image_file_id
-          ? `<div class="image-container"><img class="image-preview" data-file-id="${p.image_file_id.replace(/"/g, '&quot;')}" alt="puzzle image" style="display:none"></div>`
-          : `<div class="image-container"><div class="image-placeholder"><span>❌</span> <span>Изображение отсутствует</span></div></div>`;
-      }
-      card.innerHTML = `
-        <div class="card-body">
-          <div class="puzzle-header">
-            <div class="puzzle-date">${dateStr}${isToday ? '<span class="today-badge">сегодня</span>' : ''}</div>
-            <div class="puzzle-diff ${diffClass}">${p.difficulty}</div>
-          </div>
-          ${isMissing
-            ? '<div class="badge-missing">Не создан</div>'
-            : `<div class="puzzle-info">
-                <div class="puzzle-word-row"><div class="puzzle-word">${p.target_word}</div></div>
-                <div class="puzzle-topic">${p.topic || '—'}</div>
-              </div>
-              <div class="prompt-section">
-                <div class="prompt-header">
-                  <span class="prompt-title">IMAGE PROMPT</span>
-                  <button class="btn-text" data-croc-action="editPrompt" data-date="${p.date}" data-diff="${p.difficulty}">✏️ Изменить</button>
-                </div>
-                <div class="puzzle-prompt" id="croc-prompt-text-${p.date}-${p.difficulty}">${p.image_prompt || '<i>(Промпт отсутствует)</i>'}</div>
-                <div class="prompt-edit edit-hidden" id="croc-prompt-edit-${p.date}-${p.difficulty}">
-                  <textarea class="prompt-input" id="croc-prompt-input-${p.date}-${p.difficulty}">${p.image_prompt || ''}</textarea>
-                  <div class="btn-row">
-                    <button class="btn btn-save" data-croc-action="savePrompt" data-date="${p.date}" data-diff="${p.difficulty}">Сохранить</button>
-                    <button class="btn" data-croc-action="cancelPrompt" data-date="${p.date}" data-diff="${p.difficulty}">Отмена</button>
-                  </div>
-                </div>
-              </div>
-              <div class="prompt-section mt-8">
-                <div class="prompt-header"><span class="prompt-title">IMAGE MODEL</span></div>
-                <select class="model-select" id="croc-model-${p.date}-${p.difficulty}" data-croc-action="saveModel" data-date="${p.date}" data-diff="${p.difficulty}">
-                </select>
-              </div>`
-          }
-        </div>
-        ${imageSection}
-        <div class="card-actions">
-          <div class="btn-row">
-            <button class="btn btn-regen" id="croc-regen-${p.date}-${p.difficulty}" data-croc-action="regen" data-date="${p.date}" data-diff="${p.difficulty}" ${isMissing ? 'disabled' : ''}>🖼️ Обновить арт</button>
-            <button class="btn btn-reset" id="croc-reset-${p.date}-${p.difficulty}" data-croc-action="reset" data-date="${p.date}" data-diff="${p.difficulty}">🔀 Новое слово</button>
-          </div>
-        </div>`;
-      container.appendChild(card);
-      const modelSelect = card.querySelector('select.model-select');
-      if (modelSelect) fillModels(modelSelect, imageModels, p.image_model || 'qwen-image');
-    });
-    container.querySelectorAll('img[data-file-id]').forEach(loadImage);
-  }
-
-  async function regenerate(date, diff) {
-    const confirmed = await showConfirm('Перегенерация арта', `Перегенерировать изображение для ${date} (${diff})?`);
-    if (!confirmed) return;
-    const btn = document.getElementById(`croc-regen-${date}-${diff}`);
-    btn.disabled = true; btn.textContent = '⏳ Генерация…';
-    const model = document.getElementById(`croc-model-${date}-${diff}`)?.value;
-    try {
-      const res = await fetch('/api/admin/dailycroc/regenerate', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date, difficulty: diff, model }) });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-      showToast('Изображение сгенерировано!', 'success');
-      await loadPuzzles();
-    } catch (e) { showToast(`Ошибка: ${e.message}`, 'error'); btn.disabled = false; btn.textContent = '🖼️ Обновить арт'; }
-  }
-
-  async function savePrompt(date, diff) {
-    const newPrompt = document.getElementById(`croc-prompt-input-${date}-${diff}`).value;
-    try {
-      const res = await fetch('/api/admin/dailycroc/prompt', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date, difficulty: diff, prompt: newPrompt }) });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-      showToast('Промпт сохранён.', 'success');
-      document.getElementById(`croc-prompt-text-${date}-${diff}`).textContent = newPrompt || '(Промпт отсутствует)';
-      document.getElementById(`croc-prompt-text-${date}-${diff}`).classList.remove('edit-hidden');
-      document.getElementById(`croc-prompt-edit-${date}-${diff}`).classList.add('edit-hidden');
-    } catch (e) { showToast(`Ошибка: ${e.message}`, 'error'); }
-  }
-
-  async function saveModel(date, diff, model) {
-    try {
-      const res = await fetch('/api/admin/dailycroc/model', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date, difficulty: diff, model }) });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-      showToast('Модель обновлена.', 'success');
-    } catch (e) { showToast(`Ошибка: ${e.message}`, 'error'); }
-  }
-
-  async function resetWord(date, diff) {
-    const confirmed = await showConfirm('Сброс слова дня', `Сбросить слово для ${date} (${diff})? Удалит прогресс, промпты и арт.`);
-    if (!confirmed) return;
-    const btn = document.getElementById(`croc-reset-${date}-${diff}`);
-    btn.disabled = true; btn.textContent = '⏳ Сброс…';
-    try {
-      const res = await fetch('/api/admin/dailycroc/reset-word', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date, difficulty: diff }) });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-      showToast(`Новое слово: ${data.new_word} (${data.new_topic})`, 'success');
-      await loadPuzzles();
-    } catch (e) { showToast(`Ошибка: ${e.message}`, 'error'); btn.disabled = false; btn.textContent = '🔀 Новое слово'; }
-  }
-
-  function init() {
-    if (initialized) return;
-    initialized = true;
-    loadPuzzles();
-    document.getElementById('croc-text-model').addEventListener('change', saveTextModel);
-    document.getElementById('croc-process-models').addEventListener('change', event => {
-      if (event.target.matches('select[data-process]')) saveTextModel(event);
-    });
-    document.getElementById('croc-default-image-model').addEventListener('change', saveDefaultImage);
-    loadImageQuota();
-    document.getElementById('croc-image-quota-save').addEventListener('click', saveImageQuota);
-    document.getElementById('croc-day-date').value = getKyivDateString();
-    document.getElementById('croc-day-date').addEventListener('change', inspectDay);
-    document.getElementById('croc-day-check').addEventListener('click', inspectDay);
-    document.getElementById('croc-day-prepare').addEventListener('click', prepareDay);
-    document.getElementById('croc-puzzle-container').addEventListener('click', (e) => {
-      const target = e.target.closest('[data-croc-action]');
-      if (!target) return;
-      const action = target.dataset.crocAction;
-      const date = target.dataset.date;
-      const diff = target.dataset.diff;
-      if (action === 'regen') regenerate(date, diff);
-      else if (action === 'reset') resetWord(date, diff);
-      else if (action === 'editPrompt') {
-        document.getElementById(`croc-prompt-text-${date}-${diff}`).classList.add('edit-hidden');
-        document.getElementById(`croc-prompt-edit-${date}-${diff}`).classList.remove('edit-hidden');
-      }
-      else if (action === 'savePrompt') savePrompt(date, diff);
-      else if (action === 'cancelPrompt') {
-        document.getElementById(`croc-prompt-text-${date}-${diff}`).classList.remove('edit-hidden');
-        document.getElementById(`croc-prompt-edit-${date}-${diff}`).classList.add('edit-hidden');
-      }
-    });
-    document.getElementById('croc-puzzle-container').addEventListener('change', (e) => {
-      if (e.target.matches('.model-select')) saveModel(e.target.dataset.date, e.target.dataset.diff, e.target.value);
-    });
-  }
-
-  // Bind header refresh/security buttons (data-croc-action on header)
-  document.addEventListener('click', (e) => {
-    const target = e.target.closest('[data-croc-action]');
-    if (!target) return;
-    const action = target.dataset.crocAction;
-    if (action === 'loadPuzzles') loadPuzzles();
-    else if (action === 'toggleSecurity') {
-      document.body.classList.toggle('security-mode');
-      target.textContent = document.body.classList.contains('security-mode') ? '👁 Показать' : '🔒 Скрыть слова';
-    }
-  });
-
-  return { init };
+  };
 })();
+
+</script>
+<script src="{{ url_for('static', filename='js/daily-croc-editor.js') }}" nonce="{{ g.csp_nonce }}"></script>
+<script nonce="{{ g.csp_nonce }}">
 
 // ============================================================
 // MODULE: 2048 (ported from admin_daily2048.html)
@@ -2237,10 +1411,24 @@ const S2048Module = (() => {
   let initialized = false;
   let puzzles = [];
   let selected = null;
+  let editorBaseline = null, saving = false, unconfirmed = false;
+  const retainedDrafts = new Map();
+  const editorFields=['date','status','goal-type','goal-value','par-moves','target-seconds','seed','spawns','solution'];
 
   const $ = id => document.getElementById(id);
 
-  function todayIso() { return new Date().toISOString().slice(0, 10); }
+  function todayIso() { return getKyivDateString(); }
+  function editorValue() {
+    return {fields:Object.fromEntries(editorFields.map(name=>[name,$('s2048-edit-'+name).value])),board:readBoard()};
+  }
+  function signature() {return JSON.stringify(editorValue());}
+  function retainDraft() {
+    if(selected && editorBaseline!==null && signature()!==editorBaseline) {
+      retainedDrafts.set(selected.date,editorValue());
+      $('s2048-retained-draft').textContent=JSON.stringify([...retainedDrafts.entries()],null,2);
+      $('s2048-retained').hidden=false;
+    }
+  }
   function blankBoard() { return [[0,0,0,0],[0,0,0,0],[2,4,8,16],[32,64,128,0]]; }
 
   function renderEditorBoard(board = blankBoard()) {
@@ -2269,7 +1457,15 @@ const S2048Module = (() => {
     return `<div class="mini-board">${board.flat().map(v => `<div class="mini-cell">${v || ''}</div>`).join('')}</div>`;
   }
 
-  function selectPuzzle(puzzle) {
+  function selectPuzzle(puzzle, {preserveLocal=false}={}) {
+    const local=preserveLocal?editorValue():null;
+    const focused=document.activeElement;
+    const focusId=focused?.id, x=focused?.dataset?.x,y=focused?.dataset?.y;
+    if (puzzle.revision > 0) {
+      const index = puzzles.findIndex(item => item.date === puzzle.date);
+      if (index < 0) puzzles.push(puzzle);
+      else puzzles[index] = puzzle;
+    }
     selected = puzzle;
     $('s2048-edit-date').value = puzzle.date || todayIso();
     $('s2048-edit-status').value = puzzle.status || 'ready';
@@ -2281,6 +1477,24 @@ const S2048Module = (() => {
     $('s2048-edit-spawns').value = JSON.stringify(puzzle.spawn_sequence || [], null, 2);
     $('s2048-edit-solution').value = puzzle.solution_moves || '';
     renderEditorBoard(puzzle.board || blankBoard());
+    const locked = !!puzzle.played;
+    $('s2048-edit-revision').textContent = String(puzzle.revision || 0);
+    $('s2048-played-state').textContent = locked ? 'Есть начатые партии · правила заблокированы' : 'Не играли';
+    $('s2048-lock-reason').textContent = locked ? 'Правила начатой партии изменить нельзя. Выберите новую дату для другого пазла.' : '';
+    $('s2048-unavailable-reason').textContent = puzzle.status === 'disabled' ? 'Игра отключена: новые партии и ходы недоступны.' : puzzle.status === 'draft' ? 'Черновик: игра пока недоступна.' : '';
+    ['goal-type', 'goal-value', 'par-moves', 'target-seconds', 'seed', 'spawns', 'solution'].forEach(name => {
+      $('s2048-edit-' + name).disabled = locked;
+    });
+    $('s2048-editor-board').querySelectorAll('input').forEach(input => { input.disabled = locked; });
+    $('s2048-status-save').disabled = !(puzzle.revision > 0);
+    editorBaseline=signature(); unconfirmed=false;
+    $('s2048-save').disabled=saving;
+    $('s2048-generate').disabled=saving;
+    if(local) {
+      editorFields.forEach(name=>{$('s2048-edit-'+name).value=local.fields[name];});
+      $('s2048-editor-board').querySelectorAll('input').forEach(input=>{input.value=local.board[Number(input.dataset.y)][Number(input.dataset.x)] || '';});
+      (focusId?$(focusId):$('s2048-editor-board').querySelector(`[data-x="${x}"][data-y="${y}"]`))?.focus({preventScroll:true});
+    }
     renderPuzzles();
   }
 
@@ -2296,7 +1510,7 @@ const S2048Module = (() => {
         </div>
         <div class="s2048-goal">${puzzle.goal_label}</div>
         ${miniBoard(puzzle.board || blankBoard())}
-        <div class="s2048-meta">${puzzle.par_moves} ходов · ${puzzle.target_seconds}s · ${puzzle.spawn_sequence?.length || 0} spawns</div>
+        <div class="s2048-meta">${puzzle.par_moves} ходов · ${puzzle.target_seconds}s · ${puzzle.spawn_sequence?.length || 0} spawns · r${puzzle.revision} · ${puzzle.played ? 'Правила заблокированы' : 'Не играли'}</div>
       </article>`;
     }).join('');
     root.querySelectorAll('[data-index]').forEach(card => {
@@ -2317,11 +1531,13 @@ const S2048Module = (() => {
   }
 
   async function save() {
+    if(saving || unconfirmed) {showToast('Сначала загрузите серверный пазл из календаря для сравнения. Черновик сохранён.','error');return;}
     let spawnSequence;
     try { spawnSequence = JSON.parse($('s2048-edit-spawns').value || '[]'); }
     catch { showToast('Spawn JSON некорректен', 'error'); return; }
     const payload = {
       date: $('s2048-edit-date').value,
+      expected_revision: selected?.date === $('s2048-edit-date').value ? (selected.revision || 0) : 0,
       board: readBoard(),
       goal_type: $('s2048-edit-goal-type').value,
       goal_value: Number($('s2048-edit-goal-value').value || 512),
@@ -2332,560 +1548,108 @@ const S2048Module = (() => {
       status: $('s2048-edit-status').value,
       solution_moves: $('s2048-edit-solution').value || ''
     };
-    const res = await fetch('/api/admin/daily2048/puzzle', { method: 'POST', headers: apiHeaders, body: JSON.stringify(payload) });
-    const data = await res.json();
-    if (!res.ok || data.error) { showToast(data.error || `HTTP ${res.status}`, 'error'); return; }
-    showToast('Пазл сохранен', 'success');
-    selected = data.puzzle;
-    await load();
+    const submittedSignature=signature();
+    saving=true; $('s2048-save').disabled=true; $('s2048-save').setAttribute('aria-busy','true');
+    const status=$('s2048-save-status'); status.textContent='Сохраняем…';
+    try {
+      const data=await AdminApi.adminRequest('/api/admin/daily2048/puzzle',{method:'POST',headers:apiHeaders,body:payload});
+      selectPuzzle(data.puzzle,{preserveLocal:signature()!==submittedSignature});
+      status.textContent='Сохранение подтверждено.';
+      showToast('Пазл сохранен','success');
+    } catch(error) {
+      if(error.outcomeUnknown) {
+        status.textContent='Результат пока неизвестен. Проверяем ревизию; черновик сохранён.'; unconfirmed=true;
+        try {
+          const data=await AdminApi.adminRequest('/api/admin/daily2048',{headers:getHeaders});
+          const server=data.puzzles?.find(puzzle=>puzzle.date===payload.date);
+          const keys=['board','goal_type','goal_value','spawn_sequence','seed','par_moves','target_seconds','status','solution_moves'];
+          if(server?.revision>payload.expected_revision && keys.every(key=>JSON.stringify(server[key])===JSON.stringify(payload[key]))) {
+            selectPuzzle(server,{preserveLocal:signature()!==submittedSignature});
+            status.textContent='Сохранение подтверждено чтением пазла. Более поздний ввод сохранён.';
+          } else status.textContent='Результат пока неизвестен: версия или содержимое отличается. Выберите серверный пазл в календаре для сравнения. Черновик сохранён.';
+        } catch(_) {status.textContent='Результат пока неизвестен. Серверную версию прочитать не удалось. Черновик сохранён; повторная запись заблокирована.';}
+      } else if(error.status===409 && error.data?.puzzle) {
+        retainDraft(); selectPuzzle(error.data.puzzle);
+        status.textContent='Конфликт: показана серверная версия. Локальный черновик оставлен ниже для сравнения.';
+        showToast(error.data.reason==='puzzle_in_use'?'Партия уже началась. Выберите новую дату.':'Пазл изменён. Сравните версии.','error');
+      } else {status.textContent=error.message;showToast(error.message,'error');}
+    } finally {saving=false;$('s2048-save').disabled=unconfirmed;$('s2048-save').setAttribute('aria-busy','false');}
+  }
+
+  async function saveStatus() {
+    if(saving || unconfirmed)return;
+    const status = $('s2048-edit-status').value;
+    if (!['ready', 'disabled'].includes(status)) { showToast('Выберите ready или disabled для изменения доступности.', 'error'); return; }
+    const body={date:selected.date,status,expected_revision:selected.revision};
+    const feedback=$('s2048-save-status');
+    saving=true;$('s2048-status-save').disabled=true;$('s2048-status-save').setAttribute('aria-busy','true');
+    try {
+      const data=await AdminApi.adminRequest('/api/admin/daily2048/status',{method:'POST',headers:apiHeaders,body});
+      selectPuzzle(data.puzzle,{preserveLocal:signature()!==editorBaseline});
+      feedback.textContent='Изменение доступности подтверждено. Несохранённые поля правил сохранены.';
+    } catch(error) {
+      if(error.outcomeUnknown) {
+        unconfirmed=true;feedback.textContent='Результат пока неизвестен. Проверяем доступность; черновик сохранён.';
+        try {
+          const data=await AdminApi.adminRequest('/api/admin/daily2048',{headers:getHeaders});
+          const server=data.puzzles?.find(puzzle=>puzzle.date===body.date);
+          if(server?.revision>body.expected_revision && server.status===body.status) {
+            selectPuzzle(server,{preserveLocal:signature()!==editorBaseline});
+            feedback.textContent='Изменение доступности подтверждено чтением пазла. Несохранённые поля правил сохранены.';
+          } else feedback.textContent='Результат пока неизвестен. Выберите серверный пазл в календаре для сравнения; черновик сохранён.';
+        } catch(_) {feedback.textContent='Результат пока неизвестен. Серверная версия недоступна; черновик сохранён.';}
+      } else {
+        if(error.status===409 && error.data?.puzzle){retainDraft();selectPuzzle(error.data.puzzle);}
+        feedback.textContent=error.message;showToast(error.message,'error');
+      }
+    } finally {saving=false;$('s2048-status-save').disabled=unconfirmed || !(selected?.revision>0);$('s2048-save').disabled=unconfirmed;$('s2048-status-save').setAttribute('aria-busy','false');}
   }
 
   async function generate() {
+    if(saving || unconfirmed)return;
     const date = $('s2048-edit-date').value || todayIso();
-    const res = await fetch('/api/admin/daily2048/generate', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date }) });
-    const data = await res.json();
-    if (!res.ok || data.error) { showToast(data.error || `HTTP ${res.status}`, 'error'); return; }
-    showToast('День подготовлен', 'success');
-    selected = data.puzzle;
-    await load();
+    if(signature()!==editorBaseline && !await showConfirm('Подготовить день','Локальные изменения будут оставлены ниже для сравнения. Продолжить?'))return;
+    retainDraft();saving=true;$('s2048-generate').disabled=true;
+    try {
+      const data=await AdminApi.adminRequest('/api/admin/daily2048/generate',{method:'POST',headers:apiHeaders,body:{date}});
+      selectPuzzle(data.puzzle);showToast('День подготовлен','success');
+    } catch(error) {
+      if(error.outcomeUnknown)unconfirmed=true;
+      $('s2048-save-status').textContent=error.message;showToast(error.message,'error');
+    } finally {saving=false;$('s2048-generate').disabled=unconfirmed;}
   }
 
   function init() {
     if (initialized) return;
     initialized = true;
+    const status=document.createElement('p');status.id='s2048-save-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+    const retained=document.createElement('details');retained.id='s2048-retained';retained.hidden=true;
+    const summary=document.createElement('summary');summary.textContent='Локальные черновики для сравнения';
+    const content=document.createElement('pre');content.id='s2048-retained-draft';content.style.whiteSpace='pre-wrap';content.style.overflowWrap='anywhere';
+    const discard=document.createElement('button');discard.className='btn';discard.textContent='Удалить сохранённые черновики';
+    discard.addEventListener('click',async()=>{if(await showConfirm('Удалить черновики','Удалить локальные копии для сравнения?')){retainedDrafts.clear();retained.hidden=true;content.textContent='';}});
+    retained.append(summary,content,discard);$('s2048-save').parentElement.after(status,retained);
     renderEditorBoard();
     load().catch(err => showToast(err.message, 'error'));
     $('s2048-save').addEventListener('click', save);
+    $('s2048-status-save').addEventListener('click', saveStatus);
+    $('s2048-edit-date').addEventListener('change', () => {
+      const date = $('s2048-edit-date').value;
+      const existing = puzzles.find(puzzle => puzzle.date === date);
+      selectPuzzle(existing || {...selected, date, revision:0, played:false, gameplay_locked:false, status:'draft'});
+    });
     $('s2048-generate').addEventListener('click', generate);
   }
 
-  return { init };
+  return { init, hasDirtyDrafts:()=>retainedDrafts.size>0 || (editorBaseline!==null && signature()!==editorBaseline) };
 })();
 
 // ============================================================
 // MODULE: TRIVIA
 // ============================================================
-const TriviaModule = (() => {
-  let initialized = false;
-  let puzzles = [];
-  let selectedDate = null;
-  let selectedPuzzle = null;
-
-  async function loadStats() {
-    try {
-      const res = await fetch('/api/admin/dailytrivia/stats', { headers: getHeaders });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      document.getElementById('trivia-stats-subs').textContent = `${data.sent_today ?? 0} / ${data.total_subscribed ?? 0}`;
-      document.getElementById('trivia-stats-subs-detail').textContent = `Отправлено: ${data.sent_today ?? 0} | Ожидает: ${data.pending_today ?? 0}`;
-      document.getElementById('trivia-stats-games').textContent = data.played_today || '0';
-      document.getElementById('trivia-stats-games-detail').textContent = `Завершено: ${data.finished_today ?? 0} | В игре: ${data.active_today ?? 0}`;
-      document.getElementById('trivia-stats-puzzles-ahead').textContent = data.ready_puzzles_ahead ?? '0';
-      document.getElementById('trivia-stats-bank').textContent = data.bank_fact_count ?? '0';
-      document.getElementById('trivia-stats-bank-detail').textContent = `За 90 дней: ${data.recent_bank_fact_count ?? 0}`;
-
-      const modelInput = document.getElementById('trivia-model-input');
-      const modelOptions = document.getElementById('trivia-model-options');
-      if (modelOptions && Array.isArray(data.llm_models)) {
-        modelOptions.replaceChildren(...data.llm_models.map(model => {
-          const option = document.createElement('option');
-          option.value = model;
-          return option;
-        }));
-      }
-      if (modelInput && data.llm_model) {
-        modelInput.value = data.llm_model;
-      }
-    } catch (e) {
-      console.error('Trivia stats error:', e);
-    }
-  }
-
-  async function loadPuzzles() {
-    const container = document.getElementById('trivia-puzzles-list');
-    try {
-      const res = await fetch('/api/admin/dailytrivia', { headers: getHeaders });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      puzzles = data.puzzles || [];
-      const todayStr = data.today || getKyivDateString();
-      renderPuzzles(puzzles, container, todayStr);
-
-      if (selectedDate) {
-        const p = puzzles.find(x => x.date === selectedDate);
-        if (p) {
-          selectedPuzzle = p;
-          selectPuzzle(p, true);
-        }
-      }
-    } catch (e) {
-      container.innerHTML = `<div class="empty-state error-text">Ошибка загрузки: ${escapeHtml(e.message)}</div>`;
-    }
-  }
-
-  function renderPuzzles(list, container, todayStr) {
-    if (!list.length) {
-      container.innerHTML = '<div class="empty-state">Нет викторин</div>';
-      return;
-    }
-    
-    const future = [];
-    const recent = [];
-    const older = [];
-
-    const todayDate = new Date(todayStr);
-    const sevenDaysAgo = new Date(todayDate);
-    sevenDaysAgo.setDate(todayDate.getDate() - 7);
-    const sevenDaysAgoStr = sevenDaysAgo.toISOString().slice(0, 10);
-
-    list.forEach(p => {
-      if (p.date > todayStr) future.push(p);
-      else if (p.date >= sevenDaysAgoStr) recent.push(p);
-      else older.push(p);
-    });
-
-    const renderCard = (p) => {
-      const isToday = p.date === todayStr;
-      const isSelected = selectedDate === p.date;
-      const isReady = p.status === 'ready';
-      const qCount = (p.questions || []).length;
-      const superCount = (p.super_questions || []).length;
-      return `
-        <div class="s2048-puzzle ${isSelected ? 'active' : ''}" data-date="${p.date}">
-          <div class="s2048-puzzle-head">
-            <span class="s2048-date">${p.date}${isToday ? ' <span class="today-badge">СЕГОДНЯ</span>' : ''}</span>
-            <span class="s2048-badge">${isReady && qCount === 5 && superCount === 3 ? '✅ 5/5 + 3/3' : `⚠️ ${qCount}/5 + ${superCount}/3`}</span>
-          </div>
-          <div style="font-size:0.75rem; color:var(--text-muted); margin-top:6px;">
-            ${(p.questions && p.questions[0]) ? '1. ' + escapeHtml(p.questions[0].question.slice(0, 45)) + '...' : 'Вопросы не сгенерированы'}
-          </div>
-        </div>
-      `;
-    };
-
-    const renderGroup = (title, items) => {
-      if (!items.length) return '';
-      let groupHtml = `<h3 style="width: 100%; grid-column: 1 / -1; font-size: 0.9rem; color: var(--accent); margin-top: 10px; border-bottom: 1px solid var(--border); padding-bottom: 4px;">${title}</h3>`;
-      groupHtml += items.map(renderCard).join('');
-      return groupHtml;
-    };
-
-    let html = '';
-    html += renderGroup('🔮 Будущие', future);
-    html += renderGroup('📅 Последние 7 дней', recent);
-    html += renderGroup('🕰 Более старые', older);
-
-    container.innerHTML = html;
-
-    container.querySelectorAll('.s2048-puzzle').forEach(el => {
-      el.addEventListener('click', () => {
-        const d = el.dataset.date;
-        const target = puzzles.find(p => p.date === d);
-        if (target) selectPuzzle(target);
-      });
-    });
-  }
-
-  function selectPuzzle(p, isReload = false) {
-    if (!p) return;
-    selectedDate = p.date;
-    selectedPuzzle = p;
-
-    // Show editor in foreground
-    document.getElementById('trivia-left-pane').style.display = 'none';
-    const editorPane = document.getElementById('trivia-editor-pane');
-    editorPane.style.display = 'block';
-    editorPane.style.gridColumn = '1 / -1';
-    editorPane.style.maxWidth = '1000px';
-    editorPane.style.margin = '0 auto';
-
-    document.querySelectorAll('#trivia-puzzles-list .s2048-puzzle').forEach(el => {
-      el.classList.toggle('active', el.dataset.date === p.date);
-    });
-
-    document.getElementById('trivia-editor-title').textContent = `Викторина на ${p.date} · ревизия ${p.revision || 0}`;
-    const mainCount = (p.questions || []).length;
-    const superCount = (p.super_questions || []).length;
-    document.getElementById('trivia-editor-status').textContent = `${p.status || 'draft'} · обычные ${mainCount}/5 · супер ${superCount}/3`;
-
-    renderEditorQuestions(p.questions || [], p.super_questions || []);
-  }
-
-  function closeEditor() {
-    document.getElementById('trivia-left-pane').style.display = 'block';
-    document.getElementById('trivia-editor-pane').style.display = 'none';
-    selectedDate = null;
-    selectedPuzzle = null;
-    document.querySelectorAll('#trivia-puzzles-list .s2048-puzzle').forEach(el => el.classList.remove('active'));
-  }
-
-  function renderEditorQuestions(questions, superQuestions) {
-    const container = document.getElementById('trivia-editor-questions');
-    const qList = [];
-    for (let i = 0; i < 5; i++) {
-      qList.push(questions[i] || {
-        id: i + 1,
-        topic: 'Общие знания',
-        question: '',
-        options: ['', '', '', ''],
-        correct_index: 0,
-        explanation: ''
-      });
-    }
-
-    container.innerHTML = qList.map((q, i) => {
-      const opts = q.options || ['', '', '', ''];
-      while (opts.length < 4) opts.push('');
-      return `
-        <div style="border:1px solid var(--border); border-radius:8px; padding:10px; background:var(--bg-surface);">
-          <div style="font-weight:700; font-size:0.8rem; color:var(--accent); margin-bottom:8px;">Вопрос #${i + 1}</div>
-          <div class="field" style="margin-bottom:6px;">
-            <label>Тема</label>
-            <input type="text" class="t-q-topic" data-idx="${i}" value="${escapeHtml(q.topic || '')}" placeholder="Тема (напр. Наука)">
-          </div>
-          <div class="field" style="margin-bottom:6px;">
-            <label>Текст вопроса</label>
-            <textarea class="t-q-text" data-idx="${i}" style="min-height:50px;">${escapeHtml(q.question || '')}</textarea>
-          </div>
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
-            <div class="field">
-              <label>Сущность факта</label>
-              <input type="text" class="t-q-subject" data-idx="${i}" value="${escapeHtml(q.identity?.subject || q.question || '')}" placeholder="Напр. Пенициллин">
-            </div>
-            <div class="field">
-              <label>Что спрашиваем</label>
-              <input type="text" class="t-q-relation" data-idx="${i}" value="${escapeHtml(q.identity?.relation || 'правильный ответ')}" placeholder="Напр. первооткрыватель">
-            </div>
-          </div>
-          <div class="field" style="margin-bottom:6px;">
-            <label>Варианты ответа (отметьте точкой верный):</label>
-            <div style="display:flex; flex-direction:column; gap:4px;">
-              ${opts.slice(0, 4).map((opt, optIdx) => `
-                <div style="display:flex; align-items:center; gap:6px;">
-                  <input type="radio" name="t-q-correct-${i}" value="${optIdx}" ${q.correct_index === optIdx ? 'checked' : ''}>
-                  <input type="text" class="t-q-opt-${optIdx}" data-idx="${i}" value="${escapeHtml(opt)}" placeholder="Вариант ${optIdx + 1}" style="flex:1;">
-                </div>
-              `).join('')}
-            </div>
-          </div>
-          <div class="field">
-            <label>Познавательное объяснение</label>
-            <textarea class="t-q-exp" data-idx="${i}" style="min-height:45px;">${escapeHtml(q.explanation || '')}</textarea>
-          </div>
-        </div>
-      `;
-    }).join('');
-
-    // Render super questions (editable)
-    const superSection = document.getElementById('trivia-super-questions-section');
-    const superContainer = document.getElementById('trivia-editor-super-questions');
-    if (superQuestions && superQuestions.length > 0) {
-      superSection.style.display = 'block';
-      const sqList = [];
-      for (let i = 0; i < 3; i++) {
-        sqList.push(superQuestions[i] || {
-          id: i + 1, topic: 'Сложная тема', question: '', options: ['', '', '', ''], correct_index: 0, explanation: ''
-        });
-      }
-      superContainer.innerHTML = sqList.map((q, i) => {
-        const opts = q.options || ['', '', '', ''];
-        while (opts.length < 4) opts.push('');
-        return `
-          <div style="border:1px solid rgba(255,128,191,0.3); border-radius:8px; padding:10px; background:rgba(255,0,128,0.04);">
-            <div style="font-weight:700; font-size:0.8rem; color:#ff80bf; margin-bottom:8px;">⚡ Супервопрос #${i + 1}</div>
-            <div class="field" style="margin-bottom:6px;">
-              <label>Тема</label>
-              <input type="text" class="t-sq-topic" data-idx="${i}" value="${escapeHtml(q.topic || '')}" placeholder="Тема">
-            </div>
-            <div class="field" style="margin-bottom:6px;">
-              <label>Текст вопроса</label>
-              <textarea class="t-sq-text" data-idx="${i}" style="min-height:50px;">${escapeHtml(q.question || '')}</textarea>
-            </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
-              <div class="field">
-                <label>Сущность факта</label>
-                <input type="text" class="t-sq-subject" data-idx="${i}" value="${escapeHtml(q.identity?.subject || q.question || '')}" placeholder="Конкретная сущность">
-              </div>
-              <div class="field">
-                <label>Что спрашиваем</label>
-                <input type="text" class="t-sq-relation" data-idx="${i}" value="${escapeHtml(q.identity?.relation || 'правильный ответ')}" placeholder="Конкретное отношение">
-              </div>
-            </div>
-            <div class="field" style="margin-bottom:6px;">
-              <label>Варианты ответа (отметьте точкой верный):</label>
-              <div style="display:flex; flex-direction:column; gap:4px;">
-                ${opts.slice(0, 4).map((opt, optIdx) => `
-                  <div style="display:flex; align-items:center; gap:6px;">
-                    <input type="radio" name="t-sq-correct-${i}" value="${optIdx}" ${q.correct_index === optIdx ? 'checked' : ''}>
-                    <input type="text" class="t-sq-opt-${optIdx}" data-idx="${i}" value="${escapeHtml(opt)}" placeholder="Вариант ${optIdx + 1}" style="flex:1;">
-                  </div>
-                `).join('')}
-              </div>
-            </div>
-            <div class="field">
-              <label>Познавательное объяснение</label>
-              <textarea class="t-sq-exp" data-idx="${i}" style="min-height:45px;">${escapeHtml(q.explanation || '')}</textarea>
-            </div>
-          </div>
-        `;
-      }).join('');
-    } else {
-      superSection.style.display = 'none';
-    }
-  }
-
-
-  function getFormQuestions() {
-    const container = document.getElementById('trivia-editor-questions');
-    const questions = [];
-    for (let i = 0; i < 5; i++) {
-      const topic = container.querySelector(`.t-q-topic[data-idx="${i}"]`)?.value.trim() || 'Общие знания';
-      const question = container.querySelector(`.t-q-text[data-idx="${i}"]`)?.value.trim() || '';
-      const opt0 = container.querySelector(`.t-q-opt-0[data-idx="${i}"]`)?.value.trim() || '';
-      const opt1 = container.querySelector(`.t-q-opt-1[data-idx="${i}"]`)?.value.trim() || '';
-      const opt2 = container.querySelector(`.t-q-opt-2[data-idx="${i}"]`)?.value.trim() || '';
-      const opt3 = container.querySelector(`.t-q-opt-3[data-idx="${i}"]`)?.value.trim() || '';
-      const correctRadio = container.querySelector(`input[name="t-q-correct-${i}"]:checked`);
-      const correct_index = correctRadio ? parseInt(correctRadio.value) : 0;
-      const explanation = container.querySelector(`.t-q-exp[data-idx="${i}"]`)?.value.trim() || '';
-      const subject = container.querySelector(`.t-q-subject[data-idx="${i}"]`)?.value.trim() || question;
-      const relation = container.querySelector(`.t-q-relation[data-idx="${i}"]`)?.value.trim() || 'правильный ответ';
-
-      questions.push({
-        id: i + 1,
-        topic,
-        question,
-        options: [opt0, opt1, opt2, opt3],
-        correct_index,
-        explanation,
-        identity: { subject, relation, answer: [opt0, opt1, opt2, opt3][correct_index] || '' }
-      });
-    }
-    return questions;
-  }
-
-  function getFormSuperQuestions() {
-    const container = document.getElementById('trivia-editor-super-questions');
-    const questions = [];
-    for (let i = 0; i < 3; i++) {
-      const topic = container.querySelector(`.t-sq-topic[data-idx="${i}"]`)?.value.trim() || 'Общие знания';
-      const question = container.querySelector(`.t-sq-text[data-idx="${i}"]`)?.value.trim() || '';
-      const opt0 = container.querySelector(`.t-sq-opt-0[data-idx="${i}"]`)?.value.trim() || '';
-      const opt1 = container.querySelector(`.t-sq-opt-1[data-idx="${i}"]`)?.value.trim() || '';
-      const opt2 = container.querySelector(`.t-sq-opt-2[data-idx="${i}"]`)?.value.trim() || '';
-      const opt3 = container.querySelector(`.t-sq-opt-3[data-idx="${i}"]`)?.value.trim() || '';
-      const correctRadio = container.querySelector(`input[name="t-sq-correct-${i}"]:checked`);
-      const correct_index = correctRadio ? parseInt(correctRadio.value) : 0;
-      const explanation = container.querySelector(`.t-sq-exp[data-idx="${i}"]`)?.value.trim() || '';
-      const subject = container.querySelector(`.t-sq-subject[data-idx="${i}"]`)?.value.trim() || question;
-      const relation = container.querySelector(`.t-sq-relation[data-idx="${i}"]`)?.value.trim() || 'правильный ответ';
-      questions.push({ id: i + 1, topic, question, options: [opt0, opt1, opt2, opt3], correct_index, explanation, identity: { subject, relation, answer: [opt0, opt1, opt2, opt3][correct_index] || '' } });
-    }
-    return questions;
-  }
-
-  async function save() {
-    if (!selectedDate) { showToast('Выберите дату', 'error'); return; }
-    const btn = document.getElementById('trivia-btn-save');
-    btn.disabled = true;
-    btn.textContent = '⏳ Сохранение...';
-
-    const questions = getFormQuestions();
-
-    try {
-      const res = await fetch('/api/admin/dailytrivia/save', {
-        method: 'POST',
-        headers: apiHeaders,
-        body: JSON.stringify({ date: selectedDate, revision: selectedPuzzle?.revision ?? 0, questions, status: 'ready' })
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-      showToast(`Викторина на ${selectedDate} сохранена!`, 'success');
-      await loadPuzzles();
-      loadStats();
-    } catch (e) {
-      showToast(`Ошибка сохранения: ${e.message}`, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '💾 Сохранить обычные';
-    }
-  }
-
-  async function saveSuperQuestions() {
-    if (!selectedDate) { showToast('Выберите дату', 'error'); return; }
-    const btn = document.getElementById('trivia-btn-save-super');
-    btn.disabled = true;
-    btn.textContent = '⏳ Сохранение...';
-
-    const super_questions = getFormSuperQuestions();
-    try {
-      const res = await fetch('/api/admin/dailytrivia/save_super', {
-        method: 'POST',
-        headers: apiHeaders,
-        body: JSON.stringify({ date: selectedDate, revision: selectedPuzzle?.revision ?? 0, super_questions })
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-      showToast(`Суперигра на ${selectedDate} сохранена!`, 'success');
-      await loadPuzzles();
-    } catch (e) {
-      showToast(`Ошибка сохранения: ${e.message}`, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '💾 Сохранить супер';
-    }
-  }
-
-  async function regenerate() {
-    if (!selectedDate) { showToast('Выберите дату', 'error'); return; }
-    const doMain = document.getElementById('trivia-regen-main')?.checked ?? true;
-    const doSuper = document.getElementById('trivia-regen-super')?.checked ?? true;
-    if (!doMain && !doSuper) { showToast('Выберите хотя бы одну часть для регенерации', 'error'); return; }
-    const mode = doMain && doSuper ? 'all' : doMain ? 'main' : 'super';
-    const modeLabel = mode === 'all' ? 'все вопросы' : mode === 'main' ? 'обычные вопросы (5)' : 'суперигру (3)';
-    const confirmed = await showConfirm('Регенерация через AI', `Сгенерировать ${modeLabel} на ${selectedDate} через LLM?`);
-    if (!confirmed) return;
-
-    const btn = document.getElementById('trivia-btn-regen');
-    btn.disabled = true;
-    btn.textContent = '⏳ Генерация AI...';
-
-    try {
-      const res = await fetch('/api/admin/dailytrivia/regenerate', {
-        method: 'POST',
-        headers: apiHeaders,
-        body: JSON.stringify({ date: selectedDate, mode })
-      });
-      const data = await res.json();
-      if (res.status === 409 && data.puzzle) {
-        selectPuzzle(data.puzzle, true);
-        showToast('Вопросы уже обновлены другим процессом — загружена актуальная ревизия.', 'info');
-        await loadPuzzles();
-        loadStats();
-        return;
-      }
-      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
-      showToast(`Перегенерировано (${mode}): ${selectedDate}`, 'success');
-      const p = data.puzzle;
-      if (p) selectPuzzle(p, true);
-      await loadPuzzles();
-      loadStats();
-    } catch (e) {
-      showToast(`Ошибка генерации: ${e.message}`, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '🤖 Регенерировать (AI)';
-    }
-  }
-
-  let currentLbType = 'daily';
-
-  async function loadLeaderboard(type = 'daily') {
-    currentLbType = type;
-    const container = document.getElementById('trivia-leaderboard-container');
-    const titleEl = document.getElementById('trivia-lb-title');
-    const dailyBtn = document.getElementById('trivia-lb-btn-daily');
-    const monthlyBtn = document.getElementById('trivia-lb-btn-monthly');
-
-    if (dailyBtn && monthlyBtn) {
-      dailyBtn.className = type === 'daily' ? 's2048-btn primary' : 's2048-btn';
-      monthlyBtn.className = type === 'monthly' ? 's2048-btn primary' : 's2048-btn';
-    }
-
-    if (titleEl) {
-      titleEl.textContent = type === 'daily' 
-        ? `🏆 Лидерборд Trivia (за ${selectedDate || 'сегодня'})`
-        : `🏆 Лидерборд Trivia (за текущий месяц)`;
-    }
-
-    try {
-      let url = `/api/admin/dailytrivia/leaderboard?type=${type}`;
-      if (type === 'daily' && selectedDate) url += `&date=${selectedDate}`;
-      const res = await fetch(url, { headers: getHeaders });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const items = data.items || [];
-
-      if (!items.length) {
-        container.innerHTML = '<div style="color:var(--text-muted); font-size:0.85rem; padding:8px 0;">Записей пока нет</div>';
-        return;
-      }
-
-      container.innerHTML = `
-        <table style="width:100%; border-collapse:collapse; font-size:0.85rem; text-align:left;">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border); color:var(--text-muted);">
-              <th style="padding:6px;">#</th>
-              <th style="padding:6px;">Игрок</th>
-              <th style="padding:6px;">Очки</th>
-              <th style="padding:6px;">Верно</th>
-              ${type === 'monthly' ? '<th style="padding:6px;">Игр</th>' : ''}
-            </tr>
-          </thead>
-          <tbody>
-            ${items.map((item, idx) => `
-              <tr style="border-bottom:1px solid var(--border-subtle, rgba(255,255,255,0.05));">
-                <td style="padding:6px; font-weight:700; color:var(--accent);">${idx + 1}</td>
-                <td style="padding:6px;">${escapeHtml(item.name || 'User ' + item.user_id)}</td>
-                <td style="padding:6px; font-weight:600;">${item.score}</td>
-                <td style="padding:6px;">${item.correct} ${type === 'daily' ? '/ 5' : ''}</td>
-                ${type === 'monthly' ? `<td style="padding:6px;">${item.games_played}</td>` : ''}
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      `;
-    } catch (e) {
-      container.innerHTML = `<div style="color:var(--danger, #ef4444); font-size:0.85rem;">Ошибка лидерборда: ${escapeHtml(e.message)}</div>`;
-    }
-  }
-
-  async function updateModel(newModel) {
-    const model = String(newModel || '').trim();
-    if (!model) {
-      showToast('Укажите модель LLM', 'error');
-      return;
-    }
-    try {
-      const res = await fetch('/api/admin/dailytrivia/settings', {
-        method: 'POST',
-        headers: apiHeaders,
-        body: JSON.stringify({ llm_model: model })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      document.getElementById('trivia-model-input').value = data.llm_model || model;
-      showToast(`Модель LLM успешно изменена на ${data.llm_model || model}`, 'success');
-    } catch (e) {
-      showToast(`Ошибка смены модели: ${e.message}`, 'error');
-    }
-  }
-
-  function init() {
-    if (initialized) return;
-    initialized = true;
-    loadStats();
-    loadPuzzles();
-
-    document.getElementById('trivia-btn-save').addEventListener('click', save);
-    document.getElementById('trivia-btn-save-super').addEventListener('click', saveSuperQuestions);
-    document.getElementById('trivia-btn-regen').addEventListener('click', regenerate);
-    document.getElementById('trivia-btn-close').addEventListener('click', closeEditor);
-    document.getElementById('trivia-lb-btn-daily').addEventListener('click', () => loadLeaderboard('daily'));
-    document.getElementById('trivia-lb-btn-monthly').addEventListener('click', () => loadLeaderboard('monthly'));
-    const modelInput = document.getElementById('trivia-model-input');
-    document.getElementById('trivia-model-save').addEventListener('click', () => updateModel(modelInput.value));
-    modelInput.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') updateModel(modelInput.value);
-    });
-
-    loadLeaderboard('daily');
-  }
-
-  return { init };
-})();
+</script>
+<script src="{{ url_for('static', filename='js/daily-trivia-editor.js') }}" nonce="{{ g.csp_nonce }}"></script>
+<script nonce="{{ g.csp_nonce }}">
 
 // ============================================================
 // MODULE: HOROSCOPE
@@ -2929,6 +1693,59 @@ const HoroscopeModule = (() => {
 // ============================================================
 const TarotModule = (() => {
   let initialized = false;
+  let catalog = null;
+  let busy = false;
+
+  function setBusy(value) {
+    busy = value;
+    ['tarot-missing-btn', 'tarot-replace-btn'].forEach(id => {
+      document.getElementById(id).disabled = busy || !catalog;
+    });
+  }
+
+  async function loadModels() {
+    try {
+      const res = await fetch('/api/admin/tarot/models', { headers: getHeaders });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!Array.isArray(data.models) || !data.effective_models?.length || !Number.isInteger(data.variants)) {
+        throw new Error('Каталог моделей недоступен');
+      }
+      catalog = data;
+      const select = document.getElementById('tarot-model');
+      select.replaceChildren(new Option('Auto', ''));
+      data.models.forEach(model => select.add(new Option(model, model)));
+      document.getElementById('tarot-policy').textContent = `Auto: ${data.effective_models.join(' → ')}. Выбор действует только для этой операции.`;
+    } catch (e) {
+      catalog = null;
+      document.getElementById('tarot-policy').textContent = `Модели недоступны: ${e.message}`;
+    } finally { setBusy(false); }
+  }
+
+  async function prepare(mode) {
+    if (busy || !catalog) return;
+    const date = document.getElementById('tarot-regen-date').value;
+    if (!date) { showToast('Укажите дату', 'error'); return; }
+    const model = document.getElementById('tarot-model').value || null;
+    setBusy(true);
+    try {
+      const record = await DailyJobs.run({kind:'tarot.prepare', date, mode, model, language:'ru'}, {
+        onTerminal: async job => {
+          const result = job.result_summary || {};
+          const summary = `${job.reason_code === 'generation_busy' ? 'Уже выполняется другая подготовка. ' : ''}Состояние: ${job.state}. Создано: ${result.generated ?? 0}. Пропущено: ${result.skipped ?? 0}. Ошибок: ${result.failed ?? 0}. Осталось: ${result.remaining ?? 0}.`;
+          document.getElementById('tarot-result').textContent = summary;
+          showToast(summary, job.state === 'succeeded' ? (result.generated ? 'success' : 'info') : 'error');
+          await load();
+        }
+      });
+      if (record && !['succeeded','failed','cancelled','expired','unknown_delivery'].includes(record.snapshot?.state)) {
+        document.getElementById('tarot-result').textContent = `Операция отслеживается во вкладке «Задания»: ${record.jobId || record.operationId}`;
+      }
+    } catch (e) {
+      document.getElementById('tarot-result').textContent = `Результат операции не подтверждён: ${e.message}`;
+      showToast(`Ошибка: ${e.message}`, 'error');
+    } finally { setBusy(false); }
+  }
 
   async function load() {
     try {
@@ -2939,8 +1756,8 @@ const TarotModule = (() => {
       document.getElementById('tarot-subs').textContent = data.subscribers ?? 0;
       const td = data.today || {};
       const tm = data.tomorrow || {};
-      document.getElementById('tarot-today-ready').textContent = `${td.ready_count ?? 0}/${td.total ?? 22}`;
-      document.getElementById('tarot-tomorrow-ready').textContent = `${tm.ready_count ?? 0}/${tm.total ?? 22}`;
+      document.getElementById('tarot-today-ready').textContent = `${td.ready_count ?? 0}/${td.total ?? 156}`;
+      document.getElementById('tarot-tomorrow-ready').textContent = `${tm.ready_count ?? 0}/${tm.total ?? 156}`;
       document.getElementById('tarot-today-date').textContent = td.date || '';
       document.getElementById('tarot-tomorrow-date').textContent = tm.date || '';
 
@@ -2950,7 +1767,7 @@ const TarotModule = (() => {
         el.innerHTML = cards.map(c =>
           `<div class="tarot-card-row ${c.ready ? 'ready' : ''}">
             <span class="tc-icon">${c.ready ? '🃏' : '⬜'}</span>
-            <span class="tc-label">${c.label}</span>
+            <span class="tc-label">${escapeHtml(c.label)}</span>
             <span class="tc-status">${c.ready ? '✅' : '—'}</span>
           </div>`
         ).join('');
@@ -2965,26 +1782,11 @@ const TarotModule = (() => {
   function init() {
     if (initialized) return;
     initialized = true;
-    // Set default regen date to today
-    document.getElementById('tarot-regen-date').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('tarot-regen-date').value = getKyivDateString();
     load();
-    document.getElementById('tarot-regen-btn').addEventListener('click', async () => {
-      const date = document.getElementById('tarot-regen-date').value;
-      if (!date) { showToast('Укажите дату', 'error'); return; }
-      const confirmed = await showConfirm('Регенерация Таро', `Перегенерировать все карты дня для ${date}?`);
-      if (!confirmed) return;
-      const btn = document.getElementById('tarot-regen-btn');
-      btn.disabled = true; btn.textContent = '⏳…';
-      try {
-        const model = document.getElementById('global-regen-model')?.value || 'gemini-3.6-flash';
-        const res = await fetch('/api/admin/tarot/regenerate', { method: 'POST', headers: apiHeaders, body: JSON.stringify({ date, model }) });
-        const d = await res.json();
-        if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
-        showToast(`Готово: сгенерировано ${d.generated}, пропущено ${d.skipped}, ошибок ${d.failed}`, 'success');
-        await load();
-      } catch (e) { showToast(`Ошибка: ${e.message}`, 'error'); }
-      finally { btn.disabled = false; btn.textContent = '▶ Старт'; }
-    });
+    loadModels();
+    document.getElementById('tarot-missing-btn').addEventListener('click', () => prepare('missing'));
+    document.getElementById('tarot-replace-btn').addEventListener('click', () => prepare('replace'));
   }
   return { init };
 })();
@@ -3034,6 +1836,11 @@ bannerGameIds.forEach(gameId => {
 // ============================================================
 // INIT
 // ============================================================
+DailyChrome.init(TabRouter.activate);
+window.addEventListener('beforeunload',event=>{
+  if(!TriviaModule.hasDirtyDrafts?.() && !CrocModule.hasDirtyDrafts?.() && !S2048Module.hasDirtyDrafts?.()) return;
+  event.preventDefault();event.returnValue='';
+});
 TabRouter.activate(location.hash.slice(1) || 'broadcast');
 </script>
 </body>

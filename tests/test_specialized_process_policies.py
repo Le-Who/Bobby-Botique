@@ -175,6 +175,8 @@ async def test_tarot_preparation_uses_explicit_plan_for_each_card(monkeypatch):
     monkeypatch.setattr(tarot, "upsert_prepared_daily_reading", saved)
     monkeypatch.setattr(tarot, "_acquire_redis_lock", AsyncMock(return_value=None))
     monkeypatch.setattr(tarot, "_release_redis_lock", AsyncMock())
+    monkeypatch.setattr(tarot, "begin_generation", AsyncMock(return_value=object()))
+    monkeypatch.setattr(tarot, "finish_generation", AsyncMock(return_value=True))
 
     result = await tarot.prepare_daily_readings(target_date=date(2026, 9, 30), sleep=AsyncMock())
     assert result.generated == 1

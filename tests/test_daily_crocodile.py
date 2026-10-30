@@ -336,7 +336,9 @@ async def test_build_dailycroc_status_snapshot_shows_hint_and_art_breakdown() ->
 
 @pytest.mark.asyncio
 async def test_admin_dailycroc_dashboard_can_toggle_delivery() -> None:
-    template = ADMIN_TEMPLATE_PATH.read_text(encoding="utf-8")
+    from tests.admin_daily_sources import read_admin_daily_sources
+
+    template = read_admin_daily_sources()
     assert 'data-tab="broadcast"' in template
     assert "channel-toggle-chk" in template
     assert "/api/admin/broadcast/toggle" in template
@@ -521,6 +523,9 @@ async def test_result_refresh_coalesces_multiple_queue_calls(monkeypatch) -> Non
 
 @pytest.mark.asyncio
 async def test_prepare_daily_puzzle_prefills_hints_and_image(monkeypatch) -> None:
+    from tests.test_daily_croc_generation_ownership import install_preparation_transport
+
+    install_preparation_transport(monkeypatch)
     from app.games import crocodile_daily, daily_ai, word_bank
     from app.games.crocodile_daily import prepare_daily_puzzle
     from app.repos import settings_repo
@@ -598,14 +603,13 @@ async def test_prepare_daily_puzzle_prefills_hints_and_image(monkeypatch) -> Non
     bot.send_photo.assert_awaited_once()
     temp_msg.delete.assert_awaited_once()
     prompt_mock.assert_awaited_once()
-    assert prompt_mock.await_args.kwargs["difficulty"] == "easy"
+    assert prompt_mock.await_args.args[0].difficulty == "easy"
     asset_mock.assert_awaited_once_with(
-        puzzle_date,
+        asset_mock.await_args.args[0],
         "file-123",
-        difficulty="easy",
         image_model=repo.DAILY_IMAGE_MODEL,
     )
-    prepared_mock.assert_awaited_once_with(puzzle_date, difficulty="easy")
+    prepared_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio

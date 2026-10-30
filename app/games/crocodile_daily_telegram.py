@@ -123,24 +123,11 @@ async def _send_daily_completion_art(bot, user_id: int, puzzle_date: date, *, di
             logger.warning("daily completion art failed user=%s date=%s: %s", user_id, puzzle_date, exc)
             return False
         logger.warning("daily completion art file_id stale for %s: %s", puzzle_date, exc)
+        # A failed Telegram reference does not authorize changing the gameplay clue.
+        # Recovering this transport handle requires the original stable asset.
+        return False
     except TelegramError as exc:
         logger.warning("daily completion art failed user=%s date=%s: %s", user_id, puzzle_date, exc)
-        return False
-
-    try:
-        await repo.clear_puzzle_image_asset(puzzle_date, difficulty=difficulty)
-        refreshed = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty=difficulty)
-        if not refreshed or not refreshed.image_file_id:
-            return False
-        await bot.send_photo(
-            chat_id=user_id,
-            photo=refreshed.image_file_id,
-            caption=_daily_art_caption(refreshed),
-            parse_mode=ParseMode.HTML,
-        )
-        return True
-    except Exception as exc:
-        logger.warning("daily completion art refresh failed user=%s date=%s: %s", user_id, puzzle_date, exc)
         return False
 
 

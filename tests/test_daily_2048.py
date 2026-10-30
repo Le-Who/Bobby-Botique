@@ -122,6 +122,7 @@ async def test_ensure_puzzle_generates_non_repeating_challenge_before_upsert(mon
 
     async def fake_upsert(puzzle_date_arg, **kwargs):
         captured["date"] = puzzle_date_arg
+        assert kwargs.pop("expected_revision") == 0
         captured.update(kwargs)
         return repo.Daily2048Puzzle(puzzle_date=puzzle_date_arg, prepared_at=None, **kwargs)
 
@@ -146,6 +147,7 @@ async def test_ensure_puzzle_avoids_reusing_existing_starting_board(monkeypatch)
 
     async def fake_upsert(puzzle_date_arg, **kwargs):
         captured["date"] = puzzle_date_arg
+        assert kwargs.pop("expected_revision") == 0
         captured.update(kwargs)
         return repo.Daily2048Puzzle(puzzle_date=puzzle_date_arg, prepared_at=None, **kwargs)
 
@@ -161,30 +163,10 @@ async def test_ensure_puzzle_avoids_reusing_existing_starting_board(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_repo_upsert_custom_puzzle_persists_explicit_board_and_goal(monkeypatch) -> None:
-    captured: dict[str, object] = {}
+async def test_repo_upsert_custom_puzzle_persists_explicit_board_and_goal() -> None:
+    from tests.test_daily_2048_editing import PuzzleTransport
 
-    async def fake_db_query(query, params=(), retries=3, conn=None):
-        captured["query"] = query
-        captured["params"] = params
-        return [
-            {
-                "puzzle_date": date(2026, 6, 2),
-                "board": params[1],
-                "goal_type": params[2],
-                "goal_value": params[3],
-                "spawn_sequence": params[4],
-                "seed": params[5],
-                "par_moves": params[6],
-                "target_seconds": params[7],
-                "status": params[8],
-                "solution_moves": params[9],
-                "prepared_at": datetime(2026, 6, 1, 12, 0, tzinfo=UTC),
-            }
-        ]
-
-    monkeypatch.setattr(repo.db, "db_query", fake_db_query)
-
+    transport = PuzzleTransport(None)
     puzzle = await repo.upsert_puzzle(
         date(2026, 6, 2),
         board=[[0, 0, 0, 0], [0, 0, 0, 0], [2, 4, 8, 16], [32, 64, 128, 0]],
@@ -196,10 +178,12 @@ async def test_repo_upsert_custom_puzzle_persists_explicit_board_and_goal(monkey
         target_seconds=240,
         status="ready",
         solution_moves="left,down,right",
+        expected_revision=0,
+        conn=transport,
     )
-
-    assert "daily_2048_puzzles" in str(captured["query"])
+    assert puzzle.revision == 1 and transport.writes == 1
     assert puzzle.goal_value == 512
+    assert puzzle.board == [[0, 0, 0, 0], [0, 0, 0, 0], [2, 4, 8, 16], [32, 64, 128, 0]]
     assert puzzle.spawn_sequence == [{"x": 3, "y": 3, "value": 2}]
 
 
@@ -248,7 +232,7 @@ async def test_process_move_records_first_solution_then_keeps_practice_unranked(
 
     with (
         patch("app.games.daily_2048.repo.ensure_today_puzzle", new_callable=AsyncMock, return_value=puzzle),
-        patch("app.games.daily_2048.repo.get_or_create_result", new_callable=AsyncMock, return_value=active),
+        patch("app.games.daily_2048.repo.start_puzzle", new_callable=AsyncMock, return_value=(puzzle, active)),
         patch(
             "app.games.daily_2048.repo.update_result_after_move", new_callable=AsyncMock, return_value=won
         ) as update_mock,
@@ -366,7 +350,7 @@ async def test_process_move_uses_client_active_elapsed_without_counting_idle_tim
 
     with (
         patch("app.games.daily_2048.repo.ensure_today_puzzle", new_callable=AsyncMock, return_value=puzzle),
-        patch("app.games.daily_2048.repo.get_or_create_result", new_callable=AsyncMock, return_value=active),
+        patch("app.games.daily_2048.repo.start_puzzle", new_callable=AsyncMock, return_value=(puzzle, active)),
         patch(
             "app.games.daily_2048.repo.update_result_after_move", new_callable=AsyncMock, return_value=updated
         ) as update_mock,
@@ -422,7 +406,7 @@ async def test_process_move_can_correct_stale_wall_clock_elapsed_from_client() -
 
     with (
         patch("app.games.daily_2048.repo.ensure_today_puzzle", new_callable=AsyncMock, return_value=puzzle),
-        patch("app.games.daily_2048.repo.get_or_create_result", new_callable=AsyncMock, return_value=active),
+        patch("app.games.daily_2048.repo.start_puzzle", new_callable=AsyncMock, return_value=(puzzle, active)),
         patch(
             "app.games.daily_2048.repo.update_result_after_move", new_callable=AsyncMock, return_value=updated
         ) as update_mock,
@@ -484,7 +468,7 @@ async def test_process_move_trusts_valid_client_board_when_persisted_board_lags(
     with (
         patch("app.games.daily_2048.repo.ensure_today_puzzle", new_callable=AsyncMock, return_value=puzzle),
         patch(
-            "app.games.daily_2048.repo.get_or_create_result", new_callable=AsyncMock, return_value=stale_server_result
+            "app.games.daily_2048.repo.start_puzzle", new_callable=AsyncMock, return_value=(puzzle, stale_server_result)
         ),
         patch(
             "app.games.daily_2048.repo.update_result_after_move", new_callable=AsyncMock, return_value=updated
@@ -556,6 +540,11 @@ async def test_daily2048_entry_uses_cover_photo_and_tracks_prompt_message() -> N
     )
 
     with (
+        patch(
+            "app.handlers.daily_2048.repo.ensure_puzzle",
+            new_callable=AsyncMock,
+            return_value=repo.build_default_puzzle(date(2026, 6, 2)),
+        ),
         patch("app.handlers.daily_2048._get_cover_photo", new_callable=AsyncMock, return_value="cover-file-id"),
         patch("app.handlers.daily_2048._remember_cover_file_id", new_callable=AsyncMock) as remember_mock,
         patch("app.handlers.daily_2048.repo.register_prompt_message", new_callable=AsyncMock) as register_mock,
@@ -840,6 +829,7 @@ async def test_daily2048_websocket_allows_lost_daily_to_restart_practice(
     with (
         patch("app.games.daily_2048.get_daily_state", new_callable=AsyncMock, return_value=(puzzle, lost)),
         patch("app.games.daily_2048.process_practice_move", new_callable=AsyncMock) as practice_mock,
+        patch("app.repos.daily_2048.get_puzzle", new_callable=AsyncMock, return_value=puzzle),
         patch("app.games.daily_2048.process_move", new_callable=AsyncMock) as move_mock,
         patch("app.repos.crocodile_daily.update_timezone_if_known", new_callable=AsyncMock),
         patch("app.repos.crocodile_daily.update_user_display_name", new_callable=AsyncMock),
@@ -964,6 +954,7 @@ async def test_admin_daily2048_api_lists_and_saves_custom_puzzle() -> None:
             "/api/admin/daily2048/puzzle",
             json={
                 "date": "2026-06-04",
+                "expected_revision": 0,
                 "board": puzzle.board,
                 "goal_type": "tile",
                 "goal_value": 512,

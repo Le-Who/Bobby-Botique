@@ -688,6 +688,17 @@ class MetricsCollector:
 
         failed = consume_operation_failure()
         success = success and not failed
+        from app.observability.events import emit
+        from app.observability.request_metrics import current_request
+
+        observation = current_request()
+        if observation is not None:
+            if not success:
+                observation.set_outcome("failed")
+        else:
+            # Legacy synchronous operations have an existing single accounting
+            # owner. Their duration is retained without treating HTTP/PTB as work.
+            emit("request.finished", outcome="succeeded" if success else "failed", duration_ms=response_time * 1000)
         self._events_queue.put_nowait(
             {
                 "type": "request",
@@ -788,7 +799,7 @@ class MetricsCollector:
             return 0.0
         return (self.metrics.cache_hits / total_cache_requests) * 100
 
-    async def get_metrics_summary(self) -> dict[str, Any]:
+    async def get_metrics_summary(self, *, include_traffic: bool = True) -> dict[str, Any]:
         """Возвращает сводку метрик"""
         recent_errors = list(reversed(self.error_log))[:10]
         average_response_time = self.get_average_response_time()
@@ -822,8 +833,9 @@ class MetricsCollector:
             "recent_errors": recent_errors,
             "recent_api_events": list(self.api_event_log)[-20:],
             "daily_metrics": daily_summary,
-            "traffic": await self.get_traffic_summary(),
         }
+        if include_traffic:
+            summary["traffic"] = await self.get_traffic_summary()
 
         logging.debug(
             "Metrics summary: %d requests, %.1f%% errors",

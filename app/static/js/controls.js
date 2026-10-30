@@ -39,8 +39,22 @@
     };
   }
 
+  function matchesSubmittedSection(snapshot, payload) {
+    if (snapshot.degraded || !Number.isSafeInteger(snapshot.revision) || snapshot.revision <= payload.expected_revision || payload.reset) return false;
+    const lists = {prompt:"prompts",process:"processes",catalog:"catalogs",limit:"limits",audio:"audio"};
+    const items = payload.section === "command" ? snapshot.commands?.commands : snapshot[lists[payload.section]];
+    const item = items?.find(item => String(item.id ?? item.provider ?? item.model) === payload.id);
+    if (!item) return false;
+    const value = payload.section === "prompt" ? item.text : payload.section === "catalog" ? item.models
+      : payload.section === "limit" ? item.limit : payload.section === "command" ? item.aliases
+      : payload.section === "process" ? {models:item.models,strategy:item.strategy,inherit_user_model:item.inherit_user_model} : item.value;
+    const canonical = value => Array.isArray(value) ? value.map(canonical)
+      : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map(key => [key,canonical(value[key])])) : value;
+    return JSON.stringify(canonical(value)) === JSON.stringify(canonical(payload.value));
+  }
+
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { createDraftManager };
+    module.exports = { createDraftManager, matchesSubmittedSection };
   }
   if (typeof document === "undefined") return;
 
@@ -77,29 +91,17 @@
   function notice(value, error) { message(byId("notice"), value, error); }
 
   async function api(path, body) {
-    const options = { credentials: "same-origin", headers: { Accept: "application/json" } };
-    if (body !== undefined) {
-      options.method = "POST";
-      options.headers["Content-Type"] = "application/json";
-      options.headers["X-CSRF-Token"] = csrf;
-      options.body = JSON.stringify(body);
-    }
-    const response = await fetch(path, options);
-    let data;
-    try { data = await response.json(); } catch (_) { data = {}; }
-    if (!response.ok) {
-      const detail = data.error || data.message || `HTTP ${response.status}`;
-      const error = new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
-      error.status = response.status;
-      throw error;
-    }
-    return data;
+    return window.AdminApi.adminRequest(path, {
+      method: body === undefined ? "GET" : "POST", body, headers:{"X-CSRF-Token":csrf}
+    });
   }
 
   function errorText(error) {
+    if (error.outcomeUnknown) return "Результат пока неизвестен. Черновик сохранён. Проверяем текущую ревизию перед повтором.";
     if (error.status === 409) return "Конфигурация изменилась после начала редактирования. Ваш текст сохранён на странице. Обновите данные и перенесите правку в новую ревизию.";
-    if (error.status === 401 || error.status === 403) return "Сессия завершилась или доступ запрещён. Войдите снова перед сохранением.";
-    return error.message || "Запрос не выполнен. Повторите попытку.";
+    if (error.status === 401) return "Сессия истекла. Войдите снова перед сохранением.";
+    if (error.status === 403) return "Доступ запрещён. Обновите страницу перед сохранением.";
+    return `${error.message || "Запрос не выполнен."}${error.retryAfter ? ` Повторите через ${error.retryAfter} с.` : ""}`;
   }
 
   function setBusy(value) {
@@ -107,14 +109,15 @@
     // write is pending, or its error would target detached feedback.
     if (value && !busy) loadSequence += 1;
     busy = value;
+    ["process-list","prompt-list","catalog-list","audio-list","limit-list","command-list"].forEach(id => byId(id)?.setAttribute("aria-busy", String(value)));
     byId("refresh").disabled = value;
     document.querySelectorAll("button[data-mutation], button[data-draft-action]").forEach((button) => { button.disabled = value || needsRefresh; });
   }
 
-  async function load() {
+  async function load({snapshot} = {}) {
     const sequence = ++loadSequence;
     try {
-      const data = await api(endpoint);
+      const data = snapshot || await api(endpoint);
       const commands = data.commands || await api(`${endpoint}/commands`).catch(() =>
         ({ available: false, commands: [], note: "Каталог команд недоступен. Повторите обновление." }));
       if (sequence !== loadSequence) return { ok: false, superseded: true };
@@ -144,6 +147,7 @@
       return { ok: true, data };
     } catch (error) {
       if (sequence !== loadSequence) return { ok: false, superseded: true };
+      if (error.code === "aborted") return {ok:false,superseded:true};
       notice(`Не удалось загрузить настройки. ${errorText(error)}`, true);
       return { ok: false, error };
     }
@@ -287,7 +291,20 @@
         notice(`Изменения сохранены на сервере · ревизия ${result.revision}, но обновить данные не удалось. Текст оставлен на странице. Нажмите «Обновить данные» перед следующими изменениями.`, true);
       }
     } catch (error) {
+      if (error.status === 409 || error.status === 401 || error.status === 403 || error.outcomeUnknown) needsRefresh = true;
       message(status, errorText(error), true);
+      if (error.outcomeUnknown) {
+        notice(errorText(error), true);
+        try {
+          const snapshot = await api(endpoint);
+          if (matchesSubmittedSection(snapshot, payload)) {
+            minimumRevision = Math.max(minimumRevision, snapshot.revision);
+            pendingSaves.push({section,id,draft,baseRevision:payload.expected_revision,revision:snapshot.revision});
+            const refreshed = await load({snapshot});
+            if (refreshed.ok) notice(`Сохранение подтверждено чтением секции · ревизия ${snapshot.revision}.`);
+          } else notice("Результат пока неизвестен: серверная секция отличается или ревизия не подтверждена. Черновик сохранён. Обновите данные и сравните версии перед повтором.", true);
+        } catch (_) { notice("Результат пока неизвестен. Проверить серверную ревизию не удалось. Черновик сохранён; обновите данные перед повтором.", true); }
+      }
     } finally { setBusy(false); }
   }
 
@@ -844,7 +861,17 @@
             } else if (!refreshed.superseded) {
               notice(`Ревизия ${entry.revision} восстановлена на сервере · новая ревизия ${result.revision}, но обновить данные не удалось. Нажмите «Обновить данные» перед следующими изменениями. Черновики остались на странице.`, true);
             }
-          } catch (error) { message(status, errorText(error), true); }
+          } catch (error) {
+            if(error.status===409 || error.status===401 || error.status===403 || error.outcomeUnknown) needsRefresh=true;
+            message(status,errorText(error),true);
+            if(error.outcomeUnknown) {
+              notice('Результат восстановления пока неизвестен. Читаем текущую ревизию перед повтором.',true);
+              try {
+                const observed=await api(endpoint);
+                notice(`Результат восстановления пока неизвестен. Сейчас на сервере ревизия ${observed.revision}; она не доказывает применение выбранной исторической версии. Обновите данные и сравните конфигурацию перед новой записью.`,true);
+              } catch(_) {notice('Результат восстановления пока неизвестен. Прочитать серверную ревизию не удалось; обновите данные перед новой записью.',true);}
+            }
+          }
           finally { setBusy(false); }
         }));
       }
@@ -934,7 +961,7 @@
     if (data) document.dispatchEvent(new CustomEvent("controls:snapshot", { detail: data }));
   });
   window.addEventListener("beforeunload", event => {
-    if (!drafts.count() && !busy && !needsRefresh) return;
+    if (!drafts.count()) return;
     event.preventDefault();
     event.returnValue = "";
   });

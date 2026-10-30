@@ -93,24 +93,40 @@ async def get_daily_overview(
     puzzle_date = repo.today_puzzle_date(now)
     difficulties = await active_daily_difficulties()
 
-    # ⚡ Bolt: fetch puzzles and results for all difficulties in parallel.
-    # Previously each difficulty triggered two sequential DB round-trips;
-    # now all 2×N calls are dispatched concurrently, reducing wall-clock
-    # latency by ~N× (typically ~3× for easy/medium/hard).
-    puzzle_tasks = [repo.create_puzzle_if_missing(puzzle_date, difficulty=d) for d in difficulties]
-    result_tasks = [repo.get_or_create_result(user_id, puzzle_date, difficulty=d) for d in difficulties]
-    puzzles_list, results_list = await asyncio.gather(
-        asyncio.gather(*puzzle_tasks),
-        asyncio.gather(*result_tasks),
-    )
-
-    puzzles: dict[str, repo.DailyPuzzle] = dict(zip(difficulties, puzzles_list, strict=False))
-    results: dict[str, repo.DailyResult] = dict(zip(difficulties, results_list, strict=False))
-
-    for puzzle in puzzles.values():
-        _queue_daily_puzzle_preparation_if_needed(puzzle)
+    states = await asyncio.gather(*[_start_prepared_puzzle(user_id, puzzle_date, d) for d in difficulties])
+    puzzles = {difficulty: state[0] for difficulty, state in zip(difficulties, states, strict=True)}
+    results = {difficulty: state[1] for difficulty, state in zip(difficulties, states, strict=True)}
 
     return puzzle_date, puzzles, results
+
+
+async def _start_prepared_puzzle(user_id: int, puzzle_date: date, difficulty: str):
+    puzzle = await repo.create_puzzle_if_missing(puzzle_date, difficulty=difficulty)
+    if not repo.is_text_ready(puzzle):
+        preparation = asyncio.create_task(
+            prepare_daily_puzzle(puzzle_date, difficulty=difficulty, include_image=False, text_only=True)
+        )
+        try:
+            while True:
+                # Another owner may publish hints before finishing optional art.
+                # Observe its committed text independently of local/Redis leases.
+                done, _ = await asyncio.wait({preparation}, timeout=0.05)
+                if preparation in done:
+                    puzzle = await preparation
+                    break
+                current = await repo.get_puzzle(puzzle_date, difficulty=difficulty)
+                if current and repo.is_text_ready(current):
+                    puzzle = current
+                    break
+        except Exception as exc:
+            raise repo.DailyCrocNotReady() from exc
+        finally:
+            if not preparation.done():
+                preparation.cancel()
+            await asyncio.gather(preparation, return_exceptions=True)
+    if not repo.is_text_ready(puzzle):
+        raise repo.DailyCrocNotReady()
+    return await repo.start_puzzle(user_id, puzzle_date, difficulty=difficulty)
 
 
 async def get_daily_state(
@@ -126,10 +142,11 @@ async def get_daily_state(
     return puzzles[difficulty], results[difficulty]
 
 
-async def get_daily_hints(puzzle: repo.DailyPuzzle) -> list[str]:
-    if puzzle.hints:
+async def get_daily_hints(puzzle: repo.DailyPuzzle, *, ticket: repo.PreparationTicket | None = None) -> list[str]:
+    if repo.is_text_ready(puzzle):
         return puzzle.hints
 
+    ticket = ticket or await repo.begin_preparation(puzzle.puzzle_date, puzzle.difficulty, puzzle.content_revision)
     from app.games.daily_ai import generate_daily_hints, get_daily_text_model_for
     from app.games.hinting import get_or_generate_cached_hints
 
@@ -144,7 +161,8 @@ async def get_daily_hints(puzzle: repo.DailyPuzzle) -> list[str]:
         )
     if not hints:
         hints = []
-    await repo.set_puzzle_hints(puzzle.puzzle_date, hints, difficulty=puzzle.difficulty)
+    if not await repo.set_puzzle_hints(ticket, hints):
+        raise repo.DailyCrocConflict()
     return hints
 
 
@@ -206,8 +224,10 @@ _fta_rate_limiter = _FtaImageRateLimiter(max_per_min=10)
 async def get_daily_image_model() -> str:
     """Return the image default, accepting saved Pollinations IDs and legacy provider choices."""
     from app.repos.settings_repo import get_global_setting
+    from app.runtime_settings.legacy_models import read_croc_image_model
 
     value = await get_global_setting(repo.DAILY_IMAGE_MODEL_SETTING_KEY, "pollinations")
+    value = await read_croc_image_model(value)
     value = value.strip()
     if not value or value == "pollinations":
         return repo.DAILY_IMAGE_MODEL
@@ -551,6 +571,8 @@ async def prepare_daily_puzzle(
     force_image: bool = False,
     image_model: str | None = None,
     bypass_image_quota: bool = False,
+    expected_revision: int | None = None,
+    text_only: bool = False,
 ) -> repo.DailyPuzzle:
     """Prepare assets; only authenticated admin callers may bypass auto quota.
 
@@ -565,6 +587,8 @@ async def prepare_daily_puzzle(
             force_image=force_image,
             image_model=image_model,
             bypass_image_quota=bypass_image_quota,
+            expected_revision=expected_revision,
+            text_only=text_only,
         )
 
 
@@ -577,6 +601,8 @@ async def _prepare_daily_puzzle(
     force_image: bool,
     image_model: str | None,
     bypass_image_quota: bool,
+    expected_revision: int | None = None,
+    text_only: bool = False,
 ) -> repo.DailyPuzzle:
     difficulty = repo.normalize_daily_difficulty(difficulty)
     local_lock = _get_local_prep_lock(puzzle_date, difficulty)
@@ -616,9 +642,36 @@ async def _prepare_daily_puzzle(
         try:
             puzzle = await repo.create_puzzle_if_missing(puzzle_date, difficulty=difficulty)
 
-            if not puzzle.hints:
-                hints = await get_daily_hints(puzzle)
+            if expected_revision is not None and expected_revision != puzzle.content_revision:
+                raise repo.DailyCrocConflict("revision_conflict", puzzle=puzzle)
+            if force_image and puzzle.played and puzzle.image_file_id.strip():
+                raise repo.DailyCrocConflict("puzzle_in_use", puzzle=puzzle)
+            if text_only and repo.is_text_ready(puzzle):
+                return puzzle
+            aliases = {"vhr/gpt_image_2": "fta-gpt-image-2", "pollinations": repo.DAILY_IMAGE_MODEL}
+            if image_model and aliases.get(image_model, image_model) != aliases.get(
+                puzzle.image_model, puzzle.image_model
+            ):
+                puzzle = await repo.edit_puzzle(
+                    puzzle_date, difficulty, puzzle.content_revision, image_model=image_model
+                )
+            if (
+                repo.is_text_ready(puzzle)
+                and puzzle.prepared_at
+                and not force_image
+                and (not include_image or not bot or puzzle.image_file_id)
+            ):
+                return puzzle
+            ticket = await repo.begin_preparation(puzzle_date, difficulty, puzzle.content_revision)
+            if not repo.is_text_ready(puzzle):
+                hints = await get_daily_hints(puzzle, ticket=ticket)
                 puzzle = replace(puzzle, hints=hints, prepared_at=None)
+            if text_only:
+                if not repo.is_text_ready(puzzle):
+                    raise repo.DailyCrocNotReady()
+                if not await repo.finish_preparation(ticket):
+                    raise repo.DailyCrocConflict()
+                return replace(puzzle, prepared_at=datetime.now(tz=UTC), generation_token=None)
 
             # Resolve the currently configured image model for DB tagging
             active_model = image_model or puzzle.image_model or await get_daily_image_model()
@@ -634,12 +687,8 @@ async def _prepare_daily_puzzle(
                 image_prompt = await _build_daily_image_prompt(
                     puzzle.target_word, puzzle.topic, difficulty=puzzle.difficulty
                 )
-                await repo.set_puzzle_image_prompt(
-                    puzzle.puzzle_date,
-                    image_prompt,
-                    difficulty=puzzle.difficulty,
-                    image_model=model_tag,
-                )
+                if not await repo.set_puzzle_image_prompt(ticket, image_prompt, image_model=model_tag):
+                    raise repo.DailyCrocConflict()
                 puzzle = replace(
                     puzzle,
                     image_prompt=image_prompt,
@@ -657,12 +706,8 @@ async def _prepare_daily_puzzle(
                     bypass_image_quota=bypass_image_quota,
                 )
                 if image_file_id:
-                    await repo.set_puzzle_image_asset(
-                        puzzle.puzzle_date,
-                        image_file_id,
-                        difficulty=puzzle.difficulty,
-                        image_model=used_model,
-                    )
+                    if not await repo.set_puzzle_image_asset(ticket, image_file_id, image_model=used_model):
+                        raise repo.DailyCrocConflict()
                     puzzle = replace(
                         puzzle,
                         image_file_id=image_file_id,
@@ -673,9 +718,11 @@ async def _prepare_daily_puzzle(
                     # Do not report the old asset as a successful regeneration.
                     raise RuntimeError("Failed to generate or upload the requested image")
 
-            if repo.is_puzzle_fully_prepared(puzzle) and not puzzle.prepared_at:
-                await repo.mark_puzzle_prepared(puzzle.puzzle_date, difficulty=puzzle.difficulty)
-                puzzle = replace(puzzle, prepared_at=datetime.now(tz=UTC))
+            if not repo.is_text_ready(puzzle):
+                raise repo.DailyCrocNotReady()
+            if not await repo.finish_preparation(ticket):
+                raise repo.DailyCrocConflict()
+            puzzle = replace(puzzle, prepared_at=datetime.now(tz=UTC), generation_token=None)
 
             return puzzle
         finally:
@@ -785,8 +832,10 @@ async def build_daily_completion_summary(
     modes: dict[str, dict[str, Any]] = {}
     next_difficulty: str | None = None
     for difficulty in difficulties:
-        puzzle = puzzles.get(difficulty) or await repo.create_puzzle_if_missing(puzzle_date, difficulty=difficulty)
-        result = results.get(difficulty) or await repo.get_or_create_result(user_id, puzzle_date, difficulty=difficulty)
+        puzzle = puzzles.get(difficulty)
+        result = results.get(difficulty)
+        if not puzzle or not result:
+            puzzle, result = await _start_prepared_puzzle(user_id, puzzle_date, difficulty)
         modes[difficulty] = {
             "difficulty": difficulty,
             "label": repo.daily_difficulty_label(difficulty),

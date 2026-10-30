@@ -52,6 +52,7 @@ async def test_command_search_navigation_and_refresh_in_browser(tmp_path):
     payload = {
         "html": await response.get_data(as_text=True),
         "scripts": {
+            "/static/js/admin-api.js": (ROOT / "app/static/js/admin-api.js").read_text(encoding="utf-8"),
             "/static/js/controls.js": (ROOT / "app/static/js/controls.js").read_text(encoding="utf-8"),
             "/static/js/controls-navigation.js": (ROOT / "app/static/js/controls-navigation.js").read_text(
                 encoding="utf-8"
@@ -165,7 +166,7 @@ async def test_alias_editor_save_conflict_refresh_reset_and_mobile(tmp_path):
         "html": await response.get_data(as_text=True),
         "scripts": {
             f"/static/js/{name}": (ROOT / "app/static/js" / name).read_text(encoding="utf-8")
-            for name in ("controls.js", "controls-navigation.js")
+            for name in ("admin-api.js", "controls.js", "controls-navigation.js")
         },
         "css": (ROOT / "app/static/css/controls.css").read_text(encoding="utf-8"),
         "commands": command_alias_inventory(application, SettingsSnapshot(1, {})),

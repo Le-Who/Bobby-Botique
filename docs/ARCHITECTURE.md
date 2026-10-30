@@ -6,7 +6,9 @@ were reviewed on 2026-10-23 against `25e25897` and the changes documented in the
 state persistence, CI/deploy gates, sequential bounded TTS and
 [direct speech requests](voice-and-tts.md). The 2026-10-25 audit additionally
 checked startup supervision, state recovery, Reader rendering, Live leases,
-2048 retry ownership and natal account generations. This describes implementation,
+2048 retry ownership and natal account generations. The 2026-10-28 changes add
+bounded unfinished-update admission, versioned job ownership, Daily revision
+guards and shared dashboard source snapshots. This describes implementation,
 not a claim that a particular VPS or provider has been tested today.
 
 ## Runtime and request ownership
@@ -37,6 +39,15 @@ then stops PTB. The queue remains process-local: process crashes and unknown
 Redis acknowledgements are outside this cooperative cancellation guarantee.
 See the [dated verification report](webhook-admission-ownership-2026-10-10.md)
 for tested scenarios and evidence limits.
+
+`app/update_queue.py` keeps capacity until PTB calls `task_done()`: fetching an
+update no longer frees admission while that update waits for a processor slot or
+user lock. The local limit covers buffered plus fetched unfinished updates.
+Distributed LLM admission shares one monotonic deadline across local and Redis
+waiting. Redis TIME governs lease ownership; renewal cannot resurrect an expired
+token. Lease loss cancels and drains the owner before releasing its local slot.
+Initial Redis failure has an explicitly degraded process-local fallback; it does
+not establish a cluster-wide concurrency guarantee.
 
 Required text/photo/edit/voice/draw/suggestion workers use bounded task admission. Capacity
 rejection produces a visible overload result and retires the placeholder's
@@ -69,7 +80,9 @@ Telegram update → bot.py / handlers → context + provider routing
 | Persistence | `app/database.py`: pool/lifecycle; `app/repos/`: domain queries; `app/db/`: migrations, validation, RLS and seed |
 | State/concurrency | `app/state.py`: local state and DB persistence; `app/adapters/concurrency.py`: Redis/local semaphores; `app/utils/background_tasks.py`: tracked detached work |
 | Daily products | `app/games/`: Crocodile, 2048, trivia and shared daily AI authoring; matching handlers/repositories own Telegram delivery and storage. `crocodile_daily_preferences.daily_game` stores a player's optional choice; the admin mode is the fallback. The scheduler prepares all three games, with a seven-day lookahead for the admin default and tomorrow for the others. |
-| Daily preparation | `app/games/daily_preparation.py`: read-only readiness, managed Easy/Hard preparation, Redis lease/status and local fallback; `crocodile_daily.py`: automatic image quota and explicit admin bypass |
+| Daily preparation | `app/games/admin_jobs.py` and `app/web_daily_jobs.py`: typed managed jobs, preflight, progress and readiness calendar; `daily_preparation.py`: persisted readiness and read-only legacy ownership checks; `crocodile_daily.py`: automatic image quota and explicit admin bypass |
+| Managed jobs | `app/queue_contracts.py`, `queue_runtime.py`, `queue_store.py`, `queue_lua.py`: typed admission/outcomes, local/Redis parity, atomic owner-fenced lifecycle, fixed workload lanes and bounded retention |
+| Broadcast delivery | `app/broadcast_jobs.py`, `broadcast_delivery.py`, `repos/broadcast_jobs.py`, `web_broadcast_jobs.py`: bounded batch admission, recipient/privacy snapshots, attempt receipts, read-only recovery and restricted retry; existing channel senders retain message construction |
 | Astrology | `app/astro.py`, horoscope handlers, `app/tarot*.py`, `app/natal/`: horoscopes, tarot, natal calculation/reporting |
 | Web surfaces | `app/web.py`: dashboard/admin; `app/web_miniapp.py`: Mini App APIs and live/game flows; `app/web_reader.py`, `app/web_natal.py`: long reads/reports |
 | Observability | `app/observability/`: envelope, context, redaction, writer, lifecycle mappings, operational metrics and incident export; `app/utils/logging_config.py`: bootstrap/compatibility; `app/request_context.py`: adapter; `app/metrics.py`: product metrics; `app/prometheus.py`: runtime exporter |
@@ -111,6 +124,13 @@ independent RPM/RPD admission and does not inherit chat key racing. See
 An explicit Crocodile text-model selection uses `google-genai` inside the game
 boundary for both ordinary and daily games; auto mode retains its existing lanes.
 See [Crocodile operations](pollinations-daily-croc.md).
+
+The thinking classifier is a deterministic heuristic, after explicit user
+settings and model defaults. Routing reasons are bounded diagnostic codes, not
+model explanations. `scripts/evaluate_intent_routing.py` evaluates synthetic
+RU/UK intent, negation, quoting, multi-intent and voice cases offline. Its report
+separates false shortcuts, allowed fallback misses and explicit-setting violations;
+it is not a measurement of real-user understanding or provider latency.
 
 Agentic research is another specialized SDK boundary: `app/core/agentic.py`
 executes Gemini tool iterations and final synthesis directly; `ai_search.py`
@@ -197,10 +217,29 @@ admission so final cleanup can still persist the latest state.
 The process memory monitor is shared by startup, dashboard statistics and
 shutdown. Its periodic psutil sampling and the memory API sample in worker
 threads so CPU measurement does not pause the Telegram/HTTP event loop.
-An in-memory queue retry that cannot regain capacity becomes a terminal failed
-task with a capacity event; it is never advertised as a scheduled retry without
-a queue entry. These paths were regression-tested in the
-[codebase audit](codebase-audit-2026-10-23.md).
+Managed jobs use a versioned namespace and a typed `accepted|existing|rejected|unknown`
+admission result. Redis admission uncertainty never falls back to a second local
+enqueue. Status and command revisions live in the same store as the job; public
+snapshots exclude payloads and recipient data. Automatic retry has a three-start
+budget, a deadline and delayed backoff. Running cancellation remains
+`cancel_requested` until the owner settles it. An uncertain external effect is
+`unknown_delivery`, including interruption during delivery, and cannot be retried
+automatically or through the ordinary manual retry action. Terminal metadata is
+retained for 24 hours; eligible retry payloads for at most 15 minutes, still counted
+against the byte cap. Deletion removes job aliases and retained payloads as well.
+See [runtime controls](runtime-controls.md#переход-на-очередь-с-владением) for
+lane limits, operator commands and the separately authorized legacy cutover.
+
+Daily 2048 and Crocodile edits use content revisions and short database locks.
+2048 rules freeze after the first start; a disabled puzzle cannot admit a new
+session. Crocodile generation writes require the current generation token and
+revision. A played puzzle retains its word, hints and existing image identity;
+first-time optional art may still fill an empty slot. First start can use already
+persisted text without waiting for optional image work. Trivia editors preserve
+independent main/super drafts and publish against their submitted revision.
+Tarot preparation uses per-date/language ownership; missing-only preparation and
+explicit replacement are separate commands, and stale generation cannot overwrite
+a newer owner's result. Provider work stays outside database transactions.
 
 Daily Trivia submissions evaluate the selected answer and score against the
 result's pinned question revision. Main and super-game writes share a consistent

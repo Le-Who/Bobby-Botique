@@ -11,7 +11,7 @@ from telegram.ext import BaseUpdateProcessor
 
 from app.observability.context import request_scope
 from app.observability.events import emit, record_exception
-from app.observability.ingress import webhook_origins
+from app.observability.ingress import current_update_admitted, update_admission_times, webhook_origins
 
 
 @dataclass(slots=True)
@@ -53,6 +53,8 @@ class UserScopedUpdateProcessor(BaseUpdateProcessor):
         user_id = getattr(user, "id", None)
         chat_id = getattr(chat, "id", None)
         update_id = getattr(update, "update_id", None)
+        admitted = update_admission_times.consume(update_id) if isinstance(update_id, int) else None
+        admission_token = current_update_admitted.set(admitted)
         origin = webhook_origins.consume(update_id) if isinstance(update_id, int) else None
         origin_trace_id = origin.get("trace_id") if origin else None
         origin_span_id = origin.get("span_id") if origin else None
@@ -114,6 +116,7 @@ class UserScopedUpdateProcessor(BaseUpdateProcessor):
                 raise
             finally:
                 _close_unstarted_coroutine(coroutine)
+                current_update_admitted.reset(admission_token)
                 emit(
                     "telegram.update_finished",
                     level="warning" if outcome != "succeeded" else "info",
@@ -142,6 +145,12 @@ class UserScopedUpdateProcessor(BaseUpdateProcessor):
     async def do_process_update(self, update: object, coroutine: Awaitable[Any]) -> None:  # noqa: ARG002
         from app.runtime_settings.lifecycle import runtime_settings_scope
 
+        admitted = current_update_admitted.get()
+        if admitted is not None:
+            emit(
+                "telegram.ingress_wait_finished",
+                duration_ms=(time.monotonic() - admitted) * 1000,
+            )
         async with runtime_settings_scope():
             await coroutine
 

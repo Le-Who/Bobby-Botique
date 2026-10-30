@@ -33,23 +33,33 @@ async def test_image_generation_honors_requested_model(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_regeneration_passes_selected_model_and_reports_failure(monkeypatch):
-    from app import web
+    from app.games import admin_jobs
     from app.games import crocodile_daily as daily
+    from app.queue_contracts import JobOutcome
     from app.repos import crocodile_daily as repo
-    from app.web import quart_app
 
-    monkeypatch.setattr(web.settings, "ADMIN_SECRET", "test-token")
-    monkeypatch.setattr(repo, "get_puzzle", AsyncMock(return_value=SimpleNamespace(image_file_id="old-image")))
+    monkeypatch.setattr(
+        admin_jobs, "effective_policy", AsyncMock(return_value={"models": ["qwen/qwen-image-3"], "revision": 1})
+    )
+    monkeypatch.setattr(
+        repo,
+        "get_puzzle",
+        AsyncMock(return_value=repo.DailyPuzzle(date(2026, 9, 8), "кот", "Животные", "ru", image_file_id="old-image")),
+    )
     monkeypatch.setattr("app.bot_instance.get_bot", lambda: object())
     prepare = AsyncMock(return_value=SimpleNamespace(image_file_id=""))
     monkeypatch.setattr(daily, "prepare_daily_puzzle", prepare)
-    client = quart_app.test_client()
-    response = await client.post(
-        "/api/admin/dailycroc/regenerate",
-        headers={"X-Auth-Token": "test-token"},
-        json={"date": "2026-09-08", "difficulty": "easy", "model": "qwen/qwen-image-3"},
+    result = await admin_jobs.execute(
+        command={
+            "kind": "croc.regenerate_image",
+            "date": "2026-09-08",
+            "difficulty": "easy",
+            "model": "qwen/qwen-image-3",
+            "expected_revision": 1,
+        }
     )
-    assert response.status_code == 500
+    assert result.outcome is JobOutcome.PERMANENT_FAILURE
+    assert result.result_summary["generated"] == 0
     assert prepare.await_args.kwargs["image_model"] == "qwen/qwen-image-3"
 
 
@@ -87,7 +97,9 @@ async def test_admin_text_settings_use_only_configured_gemini_models(monkeypatch
     )
     client = web.quart_app.test_client()
     response = await client.post(
-        "/api/admin/dailycroc/text-model", headers={"X-Auth-Token": "test-token"}, json={"model": "gemini-2.5-flash"}
+        "/api/admin/dailycroc/text-model",
+        headers={"X-Auth-Token": "test-token"},
+        json={"model": "gemini-2.5-flash", "expected_revision": 0},
     )
     assert response.status_code == 200
     assert values["legacy_model:daily_croc_text_model"] == "gemini-2.5-flash"

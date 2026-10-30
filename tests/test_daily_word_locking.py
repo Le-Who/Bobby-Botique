@@ -28,7 +28,14 @@ async def test_ai_candidate_generated_before_transaction_and_rechecked(monkeypat
         finally:
             state["transaction"] = False
 
-    conn = SimpleNamespace(transaction=transaction, execute=AsyncMock())
+    conn = SimpleNamespace(
+        transaction=transaction,
+        execute=AsyncMock(),
+        fetchrow=AsyncMock(
+            return_value={"puzzle_date": day, "target_word": "старое", "topic": "Животные", "lang": "ru"}
+        ),
+        fetchval=AsyncMock(return_value=False),
+    )
 
     @asynccontextmanager
     async def acquire():
@@ -46,6 +53,7 @@ async def test_ai_candidate_generated_before_transaction_and_rechecked(monkeypat
         return "кот"
 
     async def fallback(topic, **kwargs):
+        assert not state["transaction"], "External fallback must finish before the puzzle transaction"
         assert "кот" in kwargs["used_words"]
         return "собака", "ru", topic.category, False
 
@@ -63,7 +71,10 @@ async def test_ai_candidate_generated_before_transaction_and_rechecked(monkeypat
     monkeypatch.setattr(daily_ai, "get_daily_text_model", AsyncMock(return_value="gemini-3.6-flash"))
     monkeypatch.setattr(daily_ai, "generate_daily_word", generate)
     monkeypatch.setattr(word_bank, "pick_random_word_for_topic", fallback)
+    monkeypatch.setattr(repo, "_pick_local_daily_word", lambda topic, **kwargs: ("собака", "ru", topic.category, False))
     monkeypatch.setattr("app.games.crocodile_daily.get_daily_image_model", AsyncMock(return_value="pollinations"))
 
-    result = await (repo.regenerate_puzzle_word(day) if regenerate else repo.create_puzzle_if_missing(day))
+    result = await (
+        repo.regenerate_puzzle_word(day, expected_revision=1) if regenerate else repo.create_puzzle_if_missing(day)
+    )
     assert result.target_word == ("собака" if collision else "кот")

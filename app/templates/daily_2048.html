@@ -982,6 +982,7 @@
     let board = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
     let startBoard = cloneBoard(board);
     let status = 'loading';
+    let unavailableMessage = '';
     let recordable = true;
     let elapsedOffset = 0;
     let activeStartedAt = null;
@@ -1499,6 +1500,11 @@
         clearPendingMove();
         moveQueue.length = 0;
         resetPointer();
+        if (ev.code === 4004 || unavailableMessage) {
+          status = 'unavailable';
+          $('connection-status').textContent = unavailableMessage || 'Игра сейчас недоступна. Вернитесь позже.';
+          return;
+        }
         // Never replay a move whose acceptance is uncertain. The next snapshot owns recovery.
         if (ev.code === 4003) {
           $('connection-status').textContent = 'Откройте игру заново в Telegram';
@@ -1559,6 +1565,15 @@
         if (pendingMoveSnapshot) renderBoard(pendingMoveSnapshot, { instant: true });
         clearPendingMove();
         moveQueue.length = 0;
+        if (msg.reason === 'draft' || msg.reason === 'disabled') {
+          unavailableMessage = msg.message || 'Игра сейчас недоступна. Вернитесь позже.';
+          status = 'unavailable';
+          pauseTimer();
+          cancelPendingOverlay();
+          $('overlay').classList.remove('visible');
+          $('app').inert = false;
+          $('connection-status').textContent = unavailableMessage;
+        }
         showToast(msg.message || 'Ошибка');
       }
     }

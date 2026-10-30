@@ -336,6 +336,18 @@ class VoiceReplyManager:
         self._retained_bytes = 0
         self._closed = False
 
+    def metrics_snapshot(self) -> dict[str, Any]:
+        return {
+            "scope": "process",
+            "available": True,
+            "observed_at": time.time(),
+            "jobs": self._retained_jobs,
+            "bytes": self._retained_bytes,
+            "running": len(self._active_jobs),
+            "queued": sum(len(queue) for queue in self._queues.values()),
+            "accepting": not self._closed,
+        }
+
     async def enqueue(
         self,
         *,

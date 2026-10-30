@@ -1,208 +1,65 @@
+"""Compatibility facade and typed production handler behavior over the v2 store."""
+
 import asyncio
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.observability.context import current_context, request_scope
 from app.queue import TaskPriority, TaskQueue, TaskStatus
+from app.queue_contracts import JobOutcome, JobResult, JobState
+from app.queue_store import MemoryQueueStore
 
 
 @pytest.fixture
-def task_queue():
-    queue = TaskQueue(max_workers=2)
+def task_queue(monkeypatch):
+    @asynccontextmanager
+    async def scope():
+        yield
+
+    monkeypatch.setattr("app.runtime_settings.lifecycle.runtime_settings_scope", scope)
+    queue = TaskQueue(max_workers=2, store=MemoryQueueStore())
+    queue.register_handler("test_task", AsyncMock(return_value=JobResult(JobOutcome.SUCCEEDED)), lane="deferred")
     return queue
 
 
-@pytest.mark.asyncio
-async def test_init(task_queue):
-    assert task_queue.max_workers == 2
-    assert task_queue._fallback_queue.maxsize == 100
-    assert len(task_queue.workers) == 0
-    assert not task_queue.running
-
-
-@pytest.mark.asyncio
-async def test_add_task(task_queue):
-    captured = []
-    with (
-        request_scope(request_id="a" * 32, user_id=1, chat_id=2),
-        patch("app.queue.emit", side_effect=lambda event, **fields: captured.append((event, fields))),
-    ):
-        task_id = await task_queue.add_task(
-            user_id=1,
-            task_type="test_task",
-            data={"key": "value"},
-            priority=TaskPriority.HIGH,
-        )
-    assert task_id
-    assert task_id in task_queue.tasks
-    task = task_queue.tasks[task_id]
-    assert task.priority == TaskPriority.HIGH
-    assert task.status == TaskStatus.PENDING
-
-    # Check task is in tasks dict (queued to fallback since no Redis)
-    assert task.user_id == 1
-    assert task.observability_context["trace_id"] == "a" * 32
-    assert captured == [
-        (
-            "job.enqueued",
-            {
-                "operation": "job.enqueue",
-                "job_id": task_id,
-                "task_type": "test_task",
-                "backend": "memory",
-                "priority": TaskPriority.HIGH.value,
-            },
-        )
-    ]
-
-
-@pytest.mark.asyncio
-async def test_start_stop(task_queue):
+async def test_start_stop_owns_all_lane_workers(task_queue):
     await task_queue.start()
-    assert task_queue.running
-    assert len(task_queue.workers) == 2
-    for w in task_queue.workers:
-        assert not w.done()
-
+    assert len(task_queue.workers) == 6
+    assert all(not worker.done() for worker in task_queue.workers)
     await task_queue.stop()
-    assert not task_queue.running
-    assert len(task_queue.workers) == 0
+    assert not task_queue.running and not task_queue.workers and not task_queue._executions
 
 
-@pytest.mark.asyncio
-async def test_worker_success(task_queue):
-    # Mock _execute_task to return a result
-    task_queue._execute_task = AsyncMock(return_value={"success": True})
-    captured: list[tuple[str, dict[str, object]]] = []
-
-    with (
-        patch("app.queue._get_redis", return_value=None),
-        patch("app.queue.emit", side_effect=lambda event, **fields: captured.append((event, fields))),
-    ):
-        await task_queue.start()
-
-        task_id = await task_queue.add_task(user_id=1, task_type="test_task", data={"key": "value"})
-
-        # Wait for task completion (Event-based wakeup should be near-instant)
-        for _ in range(20):
+async def test_legacy_adapter_and_shared_status(task_queue):
+    task_id = await task_queue.add_task(0, "test_task", {}, TaskPriority.HIGH)
+    assert task_id
+    assert (await task_queue.get_task_status(task_id)).status is TaskStatus.PENDING
+    await task_queue.start()
+    try:
+        for _ in range(100):
             task = await task_queue.get_task_status(task_id)
-            if task.status == TaskStatus.COMPLETED:
+            if task.status is TaskStatus.COMPLETED:
                 break
-            await asyncio.sleep(0.1)
-
+            await asyncio.sleep(0.01)
+        assert task.status is TaskStatus.COMPLETED
+        assert task.attempts_started == 1
+        assert task.data == {}
+    finally:
         await task_queue.stop()
 
-    assert task.status == TaskStatus.COMPLETED
-    assert task.result == {"success": True}
-    task_queue._execute_task.assert_called_once()
-    terminal = [fields for event, fields in captured if event == "job.finished"]
-    assert len(terminal) == 1
-    assert terminal[0]["outcome"] == "succeeded"
+
+async def test_cancel_wrong_user_and_pending_owner(task_queue):
+    task_id = await task_queue.add_task(0, "test_task", {})
+    assert not await task_queue.cancel_task(task_id, 99)
+    assert await task_queue.cancel_task(task_id, 0)
+    assert (await task_queue.read_job(task_id)).state is JobState.CANCELLED
+    assert await task_queue._choose_store().claim("deferred", "owner") is None
 
 
-@pytest.mark.asyncio
-async def test_worker_restores_origin_and_sets_execution_context(task_queue):
-    seen = None
-
-    async def execute(_task):
-        nonlocal seen
-        seen = current_context()
-        return {"status": "completed"}
-
-    task_queue._execute_task = AsyncMock(side_effect=execute)
-    with patch("app.queue._get_redis", return_value=None):
-        await task_queue.start()
-        with request_scope(request_id="b" * 32, user_id=7, chat_id=8):
-            task_id = await task_queue.add_task(user_id=7, task_type="test_task", data={})
-        for _ in range(20):
-            if task_queue.tasks[task_id].status == TaskStatus.COMPLETED:
-                break
-            await asyncio.sleep(0.1)
-        await task_queue.stop()
-
-    assert seen is not None
-    assert seen.trace_id == "b" * 32
-    assert seen.task_id == task_id
-    assert len(seen.execution_id or "") == 32
-    assert seen.operation == "job.execute"
-
-
-@pytest.mark.asyncio
-async def test_worker_failure_retry(task_queue):
-    # Mock _execute_task to raise exception
-    task_queue._execute_task = AsyncMock(side_effect=Exception("Test Error"))
-    captured: list[tuple[str, dict[str, object]]] = []
-
-    with (
-        patch("app.queue._get_redis", return_value=None),
-        patch("app.queue.emit", side_effect=lambda event, **fields: captured.append((event, fields))),
-    ):
-        await task_queue.start()
-
-        task_id = await task_queue.add_task(user_id=1, task_type="test_task", data={"key": "value"})
-
-        # Wait for task failure (after retries) — Event wakeup + re-enqueue cycles
-        for _ in range(100):  # 10 seconds max
-            task = await task_queue.get_task_status(task_id)
-            if task.status == TaskStatus.FAILED:
-                break
-            await asyncio.sleep(0.1)
-
-        await task_queue.stop()
-
-    assert task.status == TaskStatus.FAILED
-    assert task.error.startswith("Exception:")
-    assert len(task.error.partition(":")[2]) == 32
-    assert task.retry_count == task.max_retries
-    terminal = [fields for event, fields in captured if event == "job.finished"]
-    starts = [fields for event, fields in captured if event == "job.started"]
-    retries = [fields for event, fields in captured if event == "job.retry_scheduled"]
-    assert len(terminal) == len(starts) == task.max_retries
-    assert len(retries) == task.max_retries - 1
-    assert all(fields["outcome"] == "failed" for fields in terminal)
-
-
-@pytest.mark.asyncio
-async def test_queue_capacity_rejection_uses_catalog_event(task_queue):
-    captured = []
-
-    async def force_timeout(awaitable, *, timeout):
-        del timeout
-        awaitable.close()
-        raise TimeoutError
-
-    with (
-        patch("app.queue.asyncio.wait_for", side_effect=force_timeout),
-        patch("app.queue.emit", side_effect=lambda event, **fields: captured.append((event, fields))),
-    ):
-        task_id = await task_queue.add_task(user_id=1, task_type="test_task", data={})
-
-    assert task_id == ""
-    assert captured[0][0] == "job.capacity_rejected"
-    assert captured[0][1]["reason_code"] == "fallback_queue_timeout"
-
-
-@pytest.mark.asyncio
-async def test_cancel_task(task_queue):
-    task_id = await task_queue.add_task(user_id=1, task_type="test_task", data={"key": "value"})
-
-    cancelled = await task_queue.cancel_task(task_id, user_id=1)
-    assert cancelled
-
-    task = await task_queue.get_task_status(task_id)
-    assert task.status == TaskStatus.CANCELLED
-
-
-@pytest.mark.asyncio
-async def test_cancel_task_wrong_user(task_queue):
-    task_id = await task_queue.add_task(user_id=1, task_type="test_task", data={"key": "value"})
-
-    cancelled = await task_queue.cancel_task(task_id, user_id=2)
-    assert not cancelled
-
-    task = await task_queue.get_task_status(task_id)
-    assert task.status == TaskStatus.PENDING
+async def test_unknown_kind_is_permanent_rejection(task_queue):
+    assert await task_queue.add_task(0, "unknown_kind", {}) == ""
+    assert not task_queue._choose_store().jobs
 
 
 @pytest.mark.asyncio
@@ -218,8 +75,8 @@ async def test_handle_document_processing(task_queue):
 
         result = await task_queue._handle_document_processing(file_data=b"test", filename="test.pdf", user_id=1)
 
-        assert result["status"] == "completed"
-        assert result["pages"] == 5
+        assert result.outcome is JobOutcome.SUCCEEDED
+        assert result.result_summary["pages"] == 5
 
         mock_process.assert_called_once_with(b"test", "test.pdf", 1)
 
@@ -231,8 +88,8 @@ async def test_handle_document_processing_error(task_queue):
 
         result = await task_queue._handle_document_processing(file_data=b"test", filename="test.pdf", user_id=1)
 
-        assert result["status"] == "failed"
-        assert result["error"] == "Processing failed"
+        assert result.outcome is JobOutcome.PERMANENT_FAILURE
+        assert result.reason_code == "document_processing_failed"
 
 
 @pytest.mark.asyncio
@@ -241,5 +98,5 @@ async def test_handle_cleanup_metrics(task_queue):
     with patch("app.database.db_query", new_callable=AsyncMock) as mock_db_query:
         result = await task_queue._handle_cleanup_metrics()
 
-        assert result["status"] == "completed"
+        assert result.outcome is JobOutcome.SUCCEEDED
         assert mock_db_query.call_count == 2  # One for metrics, one for error_logs

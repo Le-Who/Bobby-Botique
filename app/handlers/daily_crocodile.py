@@ -191,23 +191,21 @@ async def _send_daily_entry_message(
                 caption=caption,
                 **send_kwargs,
             )
-            from app.games import cover_photo
-
-            await cover_photo.remember_cover_file_id("dailycroc", msg)
-            if track_prompt_message:
-                await repo.register_prompt_message(
-                    user_id=user_id,
-                    puzzle_date=puzzle_date,
-                    chat_id=msg.chat_id,
-                    message_id=msg.message_id,
-                )
-            return True
         except Exception as exc:
             from app.games.daily_telegram_delivery import is_unreachable_chat_error
 
             if is_unreachable_chat_error(exc):
                 raise
             logger.warning("daily prompt photo failed user=%s: %s — falling back to text", user_id, exc)
+        else:
+            from app.games import cover_photo
+
+            await cover_photo.remember_cover_file_id("dailycroc", msg)
+            if track_prompt_message:
+                await repo.register_prompt_message(
+                    user_id=user_id, puzzle_date=puzzle_date, chat_id=msg.chat_id, message_id=msg.message_id
+                )
+            return True
     await bot.send_message(
         text=caption,
         **send_kwargs,
@@ -526,39 +524,22 @@ async def _check_daily_crocodile_only(context: ContextTypes.DEFAULT_TYPE, game_m
     due_delivery = await repo.get_due_deliveries(
         puzzle_date=today, now=now, game_mode="crocodile", default_game_mode=game_mode
     )
+    from app.broadcast_jobs import enqueue_scheduled
+
     if due_delivery:
-        # ⚡ Bolt Optimization: Send daily prompts concurrently with a safe concurrency limit (10)
-        # to avoid blocking the job scheduler for O(N) seconds.
-        sem = asyncio.Semaphore(10)
-
-        async def _bounded_send(item):
-            async with sem:
-                try:
-                    await send_daily_prompt(context.bot, int(item["user_id"]), today)
-                except Exception as exc:
-                    from app.games.daily_telegram_delivery import retire_unreachable_daily_recipient
-
-                    if await retire_unreachable_daily_recipient(int(item["user_id"]), exc, discovery=False):
-                        logger.info("daily Crocodile delivery stopped for unreachable chat")
-                        return
-                    logger.warning("daily Crocodile delivery failed user=%s: %s", item.get("user_id"), exc)
-
-        await asyncio.gather(*[_bounded_send(item) for item in due_delivery])
-
+        await enqueue_scheduled(
+            channel="daily_challenge",
+            user_ids=[int(item["user_id"]) for item in due_delivery],
+            effective_date=today,
+            variant="crocodile",
+            mode="delivery",
+        )
     discovery = await repo.get_discovery_candidates(now=now) if game_mode == "crocodile" else []
     if discovery:
-        sem_disc = asyncio.Semaphore(10)
-
-        async def _bounded_discovery(item):
-            async with sem_disc:
-                try:
-                    await send_discovery_intro(context.bot, int(item["user_id"]))
-                except Exception as exc:
-                    from app.games.daily_telegram_delivery import retire_unreachable_daily_recipient
-
-                    if await retire_unreachable_daily_recipient(int(item["user_id"]), exc, discovery=True):
-                        logger.info("daily Crocodile discovery snoozed for unreachable chat")
-                        return
-                    logger.warning("daily Crocodile discovery failed user=%s: %s", item.get("user_id"), exc)
-
-        await asyncio.gather(*[_bounded_discovery(item) for item in discovery])
+        await enqueue_scheduled(
+            channel="daily_challenge",
+            user_ids=[int(item["user_id"]) for item in discovery],
+            effective_date=today,
+            variant="crocodile",
+            mode="offer",
+        )

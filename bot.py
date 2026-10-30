@@ -127,6 +127,7 @@ from app.handlers.cb_navigation import new_topic_callback
 from app.metrics import metrics_collector
 from app.queue import start_task_queue, stop_task_queue
 from app.update_processor import UserScopedUpdateProcessor
+from app.update_queue import OutstandingUpdateQueue
 
 # Import extracted modules
 from app.web import quart_app
@@ -363,6 +364,9 @@ async def _cleanup_application_resources(
 
 async def run_bot_with_retry():
     """Запускает бота с устойчивостью к ошибкам"""
+    from app.dashboard_sources import bot_lifecycle
+
+    bot_lifecycle.set("starting")
     logging.info("Starting bot...")
 
     version_info = Application.__version__ if hasattr(Application, "__version__") else "Unknown"
@@ -395,7 +399,7 @@ async def run_bot_with_retry():
             Application.builder()
             .token(settings.TELEGRAM_BOT_TOKEN)
             .request(custom_request)
-            .update_queue(asyncio.Queue(maxsize=max(100, settings.UPDATE_QUEUE_MAXSIZE)))
+            .update_queue(OutstandingUpdateQueue(max(100, settings.UPDATE_QUEUE_MAXSIZE)))
             .concurrent_updates(UserScopedUpdateProcessor(50))
         )
 
@@ -417,7 +421,7 @@ async def run_bot_with_retry():
                 Application.builder()
                 .token(settings.TELEGRAM_BOT_TOKEN)
                 .request(custom_request)
-                .update_queue(asyncio.Queue(maxsize=max(100, settings.UPDATE_QUEUE_MAXSIZE)))
+                .update_queue(OutstandingUpdateQueue(max(100, settings.UPDATE_QUEUE_MAXSIZE)))
                 .concurrent_updates(UserScopedUpdateProcessor(50))
                 .base_url(local_server_url)
                 .base_file_url(file_url)
@@ -428,6 +432,10 @@ async def run_bot_with_retry():
             logging.info("Using official Telegram cloud API (api.telegram.org)")
 
         application = builder.build()
+        from app.observability.load_metrics import register_ingress
+
+        if isinstance(application.update_queue, OutstandingUpdateQueue):
+            register_ingress(application.update_queue.metrics_snapshot)
 
         # Register bot singleton for non-PTB code (e.g. WS game handler)
         from app.bot_instance import register_bot
@@ -572,6 +580,8 @@ async def run_bot_with_retry():
                 async def admit_update():
                     # Capacity, claims, origin and queue handoff share one owner.
                     # The gate keeps this operation alive across request cancellation.
+                    # Webhook mode has no polling producer: while dedupe awaits,
+                    # only completions can change outstanding capacity, freeing it.
                     if application.update_queue.full():
                         logging.warning("Webhook update_queue is full; returning 503 for retry")
                         return "Service Unavailable", 503
@@ -630,6 +640,8 @@ async def run_bot_with_retry():
             )
             logging.info("Bot started in POLLING mode")
 
+        bot_lifecycle.set("ready")
+
         # Send startup alert to admin
         try:
             from app.admin_alerts import alert_admin_startup
@@ -666,6 +678,16 @@ async def run_bot_with_retry():
                 logging.info("LTM retention cleanup job registered (6h interval)")
         except Exception as e:
             logging.warning("Failed to register LTM retention cleanup job: %s", e)
+
+        async def reconcile_broadcast_journal(_context):
+            from app.broadcast_jobs import recover_broadcast_jobs
+
+            await recover_broadcast_jobs()
+
+        if application.job_queue:
+            application.job_queue.run_repeating(
+                reconcile_broadcast_journal, interval=60, first=60, name="broadcast_journal_recovery"
+            )
 
         # Schedule Daily Crocodile prompt/discovery delivery (hourly)
         try:
@@ -735,6 +757,7 @@ async def run_bot_with_retry():
             # Don't re-raise here; let the finally block perform cleanup.
         finally:
             logging.info("Stopping bot...")
+            bot_lifecycle.set("draining")
             # We shield the shutdown calls to ensure they run even if the cancellation propagates
             if webhook_url:
                 logging.info("Webhook mode shutdown: preserving Telegram webhook for zero-downtime deploy.")
@@ -747,8 +770,10 @@ async def run_bot_with_retry():
 
                 await _await_owned(asyncio.create_task(stop_polling_application(), name="polling-application-stop"))
             logging.info("Bot stopped.")
+            bot_lifecycle.set("stopped")
 
     except asyncio.CancelledError as cancellation:
+        bot_lifecycle.set("draining")
         if application and webhook_admission is not None:
             # Startup can be cancelled after route registration. Own the existing
             # cleanup behind the admission barrier and retain the original reason.
@@ -762,6 +787,7 @@ async def run_bot_with_retry():
         raise
     except Exception as e:
         logging.critical(f"Critical bot error: {e}", exc_info=True)
+        bot_lifecycle.set("failed")
         if application:
             await _cleanup_application(application, webhook_admission=webhook_admission)
         # Propagate to trigger restart if needed, or exit
@@ -839,6 +865,8 @@ def _handle_polling_conflict(error: Exception) -> None:
 
 async def run_bot_and_server():
     """Основная логика: запускает бота и веб-сервер параллельно."""
+    from app.dashboard_sources import bot_lifecycle
+
     hypercorn_config = HypercornConfig()
     hypercorn_config.bind = [f"0.0.0.0:{settings.PORT}"]
 
@@ -879,10 +907,12 @@ async def run_bot_and_server():
         logging.info("Shutdown signal received, initiating graceful shutdown...")
     except Exception as e:
         logging.error(f"Critical error in main loop: {e}", exc_info=True)
+        bot_lifecycle.set("failed")
         _handle_polling_conflict(e)
         raise
     finally:
         logging.info("Starting graceful shutdown...")
+        bot_lifecycle.set("draining")
 
         try:
             from app.voice_engine import get_voice_reply_manager
@@ -1011,6 +1041,9 @@ async def startup_health_check():
 
 async def main():
     # Quart is ASGI-native; no event loop injection needed.
+    from app.dashboard_sources import bot_lifecycle
+
+    bot_lifecycle.set("starting")
     install_asyncio_exception_handler()
 
     database_available = False
@@ -1053,10 +1086,16 @@ async def main():
 
         if database_available:
             try:
+                from app.games.admin_jobs import register_daily_jobs
+
+                register_daily_jobs()
                 await start_task_queue()
+                from app.broadcast_jobs import recover_broadcast_jobs
+
+                await recover_broadcast_jobs()
                 logging.info("Task queue started")
             except Exception as e:
-                logging.error(f"Task queue initialization failed: {e}")
+                logging.error("Task queue initialization failed (%s)", type(e).__name__)
 
         try:
             await initialize_group_chats()
@@ -1087,9 +1126,11 @@ async def main():
         logging.info("Main application loop was cancelled")
     except Exception as e:
         logging.critical(f"Application failed critically: {e}", exc_info=True)
+        bot_lifecycle.set("failed")
         raise
     finally:
         logging.info("Shutting down services...")
+        bot_lifecycle.set("draining")
         if memory_manager:
             await _cleanup_with_retry(
                 "memory manager",
@@ -1124,6 +1165,7 @@ async def main():
         except Exception as e:
             logging.warning(f"Cleanup error (image process pool in main): {e}")
         logging.info("Shutdown complete")
+        bot_lifecycle.set("stopped")
 
 
 if __name__ == "__main__":

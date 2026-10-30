@@ -48,7 +48,7 @@ def game_store(monkeypatch):
 
     async def load_result(user_id, puzzle):
         assert user_id == store.result.user_id and puzzle.puzzle_date == store.result.puzzle_date
-        return store.result
+        return puzzle, store.result
 
     async def persist(**kwargs):
         # Persistence itself is separately checked against real PostgreSQL.
@@ -63,7 +63,8 @@ def game_store(monkeypatch):
         return store.result
 
     monkeypatch.setattr(repo, "ensure_today_puzzle", AsyncMock(return_value=puzzle))
-    monkeypatch.setattr(repo, "get_or_create_result", load_result)
+    monkeypatch.setattr(repo, "start_puzzle", load_result)
+    monkeypatch.setattr(repo, "get_puzzle", AsyncMock(return_value=puzzle))
     monkeypatch.setattr(repo, "update_result_after_move", persist)
     return store
 

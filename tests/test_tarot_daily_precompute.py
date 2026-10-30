@@ -8,6 +8,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def isolated_generation_ownership(monkeypatch):
+    monkeypatch.setattr("app.tarot_daily.begin_generation", AsyncMock(return_value=object()))
+    monkeypatch.setattr("app.tarot_daily.finish_generation", AsyncMock(return_value=True))
+
+
 @pytest.mark.asyncio
 async def test_generate_daily_tarot_uses_prepared_reading_without_provider_call():
     from app.handlers.inline import _generate_tarot_inline

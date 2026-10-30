@@ -64,7 +64,8 @@ def test_metrics_normalize_actual_request_and_delivery_outcomes():
     metrics.observe("delivery.finished", {"delivery_status": "transport_failed"})
 
     snapshot = metrics.snapshot()
-    assert snapshot["request_outcomes"] == {"succeeded": 2}
+    assert snapshot["request_outcomes"] == {}
+    assert snapshot["transport_outcomes"] == {("telegram", "succeeded"): 1, ("http", "succeeded"): 1}
     assert snapshot["delivery_outcomes"] == {
         "failure_notice_sent": 1,
         "transport_failed": 1,

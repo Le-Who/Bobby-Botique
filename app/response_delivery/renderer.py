@@ -15,6 +15,7 @@ from typing import Any, Protocol
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from app.observability.events import emit, record_exception
+from app.observability.request_metrics import observe_transport, record_first_visible_text
 from app.response_delivery.normalization import strip_hallucinated_tool_trace
 from app.utils.background_tasks import submit_task
 from app.utils.formatting import TelegramFormatter
@@ -94,6 +95,7 @@ class TelegramMessageTransport:
             message_thread_id=getattr(message, "message_thread_id", None),
         )
 
+    @observe_transport
     async def edit(self, text, *, parse_mode, reply_markup) -> None:
         from telegram import LinkPreviewOptions
 
@@ -104,6 +106,7 @@ class TelegramMessageTransport:
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
 
+    @observe_transport
     async def send(self, text, *, parse_mode, reply_markup) -> TelegramMessageRef:
         from telegram import LinkPreviewOptions
 
@@ -147,6 +150,7 @@ class TelegramBotTransport:
     async def edit(self, text, *, parse_mode, reply_markup) -> None:
         raise RuntimeError("Send-only Telegram target has no message to edit")
 
+    @observe_transport
     async def send(self, text, *, parse_mode, reply_markup) -> TelegramMessageRef:
         from telegram import LinkPreviewOptions
 
@@ -284,6 +288,7 @@ class TelegramRenderer:
         *,
         parse_mode: str | None,
         reply_markup: InlineKeyboardMarkup | None,
+        on_visible_text: Callable[[], None] | None = None,
     ) -> tuple[TelegramMessageRef, bool]:
         try:
             await self._edit_with_retry(
@@ -291,6 +296,8 @@ class TelegramRenderer:
                 parse_mode=parse_mode,
                 reply_markup=reply_markup,
             )
+            if on_visible_text is not None:
+                on_visible_text()
             return self._transport.current_ref, False
         except asyncio.CancelledError:
             raise
@@ -317,6 +324,8 @@ class TelegramRenderer:
                     parse_mode=parse_mode,
                     reply_markup=reply_markup,
                 )
+                if on_visible_text is not None:
+                    on_visible_text()
                 return ref, True
             except asyncio.CancelledError:
                 raise
@@ -327,6 +336,8 @@ class TelegramRenderer:
         self,
         displayed_text: str,
         actions: InlineKeyboardMarkup | None,
+        *,
+        on_visible_text: Callable[[], None] | None = None,
     ) -> DeliveryReceipt:
         html = _formatted_html(displayed_text)
         parts = split_text_safe(html, max_length=self._message_limit)
@@ -339,6 +350,7 @@ class TelegramRenderer:
             parts[0],
             parse_mode="HTML",
             reply_markup=first_markup,
+            on_visible_text=on_visible_text,
         )
         refs.append(first_ref)
         for index, part in enumerate(parts[1:], start=1):
@@ -375,6 +387,7 @@ class TelegramRenderer:
         displayed_text: str,
         actions: InlineKeyboardMarkup | None,
         title: str,
+        on_visible_text: Callable[[], None] | None = None,
     ) -> DeliveryReceipt | None:
         try:
             stored = await self._store_long_message(uid, displayed_text)
@@ -407,6 +420,7 @@ class TelegramRenderer:
                 body,
                 parse_mode="HTML",
                 reply_markup=markup,
+                on_visible_text=on_visible_text,
             )
         except TelegramDeliveryError as exc:
             logging.warning("Reader presentation failed for uid=%s: %s", uid, exc)
@@ -442,6 +456,7 @@ class TelegramRenderer:
         displayed_text: str,
         actions: InlineKeyboardMarkup | None,
         title: str,
+        on_visible_text: Callable[[], None] | None = None,
     ) -> DeliveryReceipt | None:
         if not self._telegraph_publication_enabled:
             return None
@@ -465,6 +480,7 @@ class TelegramRenderer:
                 body,
                 parse_mode="HTML",
                 reply_markup=markup,
+                on_visible_text=on_visible_text,
             )
         except TelegramDeliveryError as exc:
             logging.warning("Telegraph presentation failed: %s", exc)
@@ -482,6 +498,7 @@ class TelegramRenderer:
         displayed_text: str,
         title: str,
         actions: InlineKeyboardMarkup | None,
+        on_visible_text: Callable[[], None] | None = None,
     ) -> DeliveryReceipt:
         formatted = _formatted_html(displayed_text)
         if len(formatted) <= self._message_limit:
@@ -489,6 +506,7 @@ class TelegramRenderer:
                 formatted,
                 parse_mode="HTML",
                 reply_markup=actions,
+                on_visible_text=on_visible_text,
             )
             return DeliveryReceipt(
                 kind=DeliveryKind.MESSAGE,
@@ -510,6 +528,7 @@ class TelegramRenderer:
                 displayed_text=displayed_text,
                 actions=actions,
                 title=title,
+                on_visible_text=on_visible_text,
             )
             if reader is not None:
                 return reader
@@ -527,6 +546,7 @@ class TelegramRenderer:
                 displayed_text=displayed_text,
                 actions=actions,
                 title=title,
+                on_visible_text=on_visible_text,
             )
             if telegraph is not None:
                 return telegraph
@@ -538,7 +558,7 @@ class TelegramRenderer:
             reason_code="private_or_publication_unavailable",
             private_content=self._private_content,
         )
-        return await self._split(displayed_text, actions)
+        return await self._split(displayed_text, actions, on_visible_text=on_visible_text)
 
 
 class TelegramRenderSession:
@@ -561,6 +581,8 @@ class TelegramRenderSession:
             return
 
         visible_draft = strip_hallucinated_tool_trace(self._draft_text)
+        if not visible_draft.strip():
+            return
         formatted = _formatted_html(visible_draft)
         if len(formatted) > self._renderer._message_limit:
             self._long_read_pending = True
@@ -572,6 +594,7 @@ class TelegramRenderSession:
                     parse_mode="HTML",
                     reply_markup=None,
                 )
+                record_first_visible_text()
             except Exception as exc:
                 logging.debug("Could not freeze pending Long Read draft: %s", exc)
             return
@@ -589,6 +612,7 @@ class TelegramRenderSession:
                 )
                 self._last_edit = now
                 self._pending_chars = 0
+                record_first_visible_text()
             except Exception as exc:
                 logging.debug("Progressive Telegram edit failed: %s", exc)
 
@@ -614,16 +638,23 @@ class TelegramRenderSession:
         displayed_text: str,
         title: str,
         actions: InlineKeyboardMarkup | None,
+        model_content: str | None = None,
     ) -> DeliveryReceipt:
         if self._state != "open":
             raise RendererProtocolError("Renderer session can only be finalized once")
         self._state = "finalized"
         if not displayed_text.strip():
             raise TelegramDeliveryError("Cannot finalize an empty Telegram response")
+        # Completed responses supply canonical model content explicitly. Streamed
+        # responses retain their normalized draft; status/error-only writes do not
+        # qualify. The renderer marks the first successful write, before later
+        # split parts or publication bookkeeping can fail or be cancelled.
+        content = strip_hallucinated_tool_trace(self._draft_text if model_content is None else model_content)
         return await self._renderer._finalize(
             displayed_text=displayed_text,
             title=title,
             actions=actions,
+            on_visible_text=record_first_visible_text if content.strip() else None,
         )
 
 
