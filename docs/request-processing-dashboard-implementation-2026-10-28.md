@@ -92,6 +92,18 @@ subscription changes, pinned timestamps and five concurrent recipients without
 database transactions held over network waits. Direct legacy claim-helper
 contracts remain covered. These tests require the isolated CI services.
 
+The first [required CI run](https://github.com/Le-Who/Bobby-Botique/actions/runs/40979633235)
+passed lint, types, unit/E2E, Chromium and production-image build/smoke. Its
+PostgreSQL/Redis job passed 246 cases but exposed an E2E Telegram mock with an
+untyped caption and six setup errors referencing the retired Daily scheduler.
+The follow-up gives plain-message mocks neutral caption/forwarding metadata and
+replaces obsolete preparation-worker tests with real-Redis legacy observation,
+expiry and admission-blocking contracts. Current queue fencing remains covered
+by the real v2 Lua suite. The focused local follow-up passed 71 cases; six Redis
+cases skipped locally and still require the CI services. The separate
+[advisory run](https://github.com/Le-Who/Bobby-Botique/actions/runs/40979633199)
+passed dependency auditing and the observability-stack checks.
+
 The synthetic admission check executes 10,000 updates through the real PTB
 fetcher/processor and verifies at most 100 accepted unfinished updates, then
 complete drain. Separate scenarios cover an already admitted second user and

@@ -8,6 +8,8 @@ These tests verify that all factory functions produce objects with the
 correct structure and attribute types expected by handlers and assertions.
 """
 
+import pytest
+
 from tests.factories import (
     make_chat_state,
     make_telegram_chat,
@@ -131,6 +133,20 @@ def test_make_telegram_message_links_user_and_chat():
     # Assert
     assert msg.from_user.id == 999
     assert msg.chat.id == 888
+
+
+@pytest.mark.asyncio
+async def test_plain_message_factory_reaches_text_intent_without_forwarded_metadata():
+    from app.middleware.debounce import _build_entry
+    from app.voice_intent import detect_tts_intent
+
+    message = make_telegram_message(text="What is the capital of France?")
+    decision = await detect_tts_intent(user_text=message.text, caption=message.caption)
+    entry = await _build_entry(message)
+
+    assert not decision.explicit_tts
+    assert entry.is_user_authored and not entry.is_forwarded
+    assert entry.text == message.text
 
 
 # ─── make_telegram_update ────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-"""product-08: production Redis fencing, game locks and pending-ID races."""
+"""Read-only legacy preparation drain, game locks and pending-ID races in Redis."""
 
 import asyncio
 import importlib.util
@@ -8,15 +8,17 @@ import time
 import urllib.parse
 from datetime import date
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 from redis.asyncio import Redis
 
 from app import cache
-from app.games import crocodile
+from app.games import admin_jobs, crocodile
 from app.games import crocodile_runtime as runtime
 from app.games import daily_preparation as preparation
+from app.queue_contracts import AdmissionState, QueueAdmission, QueueConflict
 from tests.factories import make_crocodile_game, make_valid_init_data
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -45,8 +47,6 @@ async def redis_boundary(monkeypatch):
     monkeypatch.setattr(cache, "redis_client", first)
     monkeypatch.setattr(runtime, "redis_client", first)
     monkeypatch.setattr(preparation, "_keys", lambda _: keys[:2])
-    monkeypatch.setattr(preparation, "_jobs", {})
-    monkeypatch.setattr(preparation, "_tasks", {})
     try:
         assert await first.ping() and await second.ping()
         yield first, second, keys, game_id
@@ -72,69 +72,55 @@ def job(token, state="running"):
     return {"id": token, "state": state, "started_at": now, "deadline": now + 660, "errors": []}
 
 
-async def test_preparation_nx_winner_and_expired_owner_fencing(redis_boundary):
+async def test_legacy_preparation_reads_do_not_renew_or_rewrite_expired_ownership(redis_boundary):
     first, second, keys, _ = redis_boundary
-    barrier = asyncio.Barrier(2)
-
-    async def acquire(client, owner):
-        await barrier.wait()
-        return await client.set(keys[0], owner, nx=True, ex=660)
-
-    results = await asyncio.gather(acquire(first, "old-a"), acquire(second, "old-b"))
-    assert sum(bool(result) for result in results) == 1
-    old_owner = await first.get(keys[0])
-    await preparation._save(DAY, job(old_owner), first)
-    assert json.loads(await second.get(keys[1]))["id"] == old_owner
-    assert 0 < await second.ttl(keys[0]) <= 660
+    metadata = dict(job("legacy-owner"), private_extra="must not escape")
+    await first.set(keys[0], "legacy-owner", ex=660)
+    await first.set(keys[1], json.dumps(metadata), ex=86400)
+    lease_ttl = await second.pttl(keys[0])
+    status_ttl = await second.pttl(keys[1])
+    result = await preparation._read_job(DAY)
+    assert result == {"id": "legacy-owner", "state": "running", "legacy": True, "reason_code": None}
+    assert 0 < await second.pttl(keys[0]) <= lease_ttl
+    assert 0 < await second.pttl(keys[1]) <= status_ttl
     # Server-side expiry, not a fake clock or Python delete/sleep.
     assert await first.pexpire(keys[0], 0)
     assert await second.pttl(keys[0]) == -2
-    assert await second.set(keys[0], "replacement", nx=True, ex=660)
-    replacement = job("replacement")
-    await preparation._save(DAY, replacement, second)
-    await preparation._save(DAY, job(old_owner, "completed"), first)
-    assert json.loads(await second.get(keys[1])) == replacement
-    assert await first.eval(preparation._RELEASE, 1, keys[0], old_owner) == 0
-    assert await second.get(keys[0]) == "replacement"
-    assert await second.eval(preparation._RELEASE, 1, keys[0], "replacement") == 1
-    assert await first.get(keys[0]) is None
+    interrupted = await preparation._read_job(DAY)
+    assert interrupted["state"] == "failed"
+    assert interrupted["reason_code"] == "legacy_preparation_interrupted"
+    assert json.loads(await second.get(keys[1])) == metadata
+    assert await second.get(keys[0]) is None
 
 
-async def test_late_preparation_worker_finally_preserves_replacement(redis_boundary, monkeypatch):
+async def test_legacy_replacement_blocks_new_admission_until_lease_expires(redis_boundary, monkeypatch):
     first, second, keys, _ = redis_boundary
-    entered, release = asyncio.Event(), asyncio.Event()
-    attempts = []
+    metadata = job("previous-owner", "completed")
+    await first.set(keys[1], json.dumps(metadata), ex=86400)
+    await second.set(keys[0], "replacement-owner", ex=660)
+    assert await preparation._read_job(DAY) == {"id": "replacement-owner", "state": "running", "legacy": True}
+    monkeypatch.setattr(preparation.repo, "get_puzzle", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        admin_jobs, "effective_policy", AsyncMock(return_value={"models": ["synthetic"], "revision": 1})
+    )
+    queue = SimpleNamespace(
+        read_job_by_operation=AsyncMock(return_value=None),
+        enqueue_job=AsyncMock(return_value=QueueAdmission(AdmissionState.ACCEPTED, "v2-job")),
+    )
+    command = admin_jobs.DailyCommand("croc.prepare_day", DAY.isoformat())
+    with pytest.raises(QueueConflict):
+        await admin_jobs.enqueue(command, "operation-123", queue=queue)
+    queue.enqueue_job.assert_not_awaited()
+    assert await second.get(keys[0]) == "replacement-owner"
+    assert json.loads(await second.get(keys[1])) == metadata
 
-    async def prepare(*args, difficulty, **kwargs):
-        attempts.append(difficulty)
-        entered.set()
-        await release.wait()
-
-    async def missing(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(preparation, "prepare_daily_puzzle", prepare)
-    monkeypatch.setattr(preparation.repo, "get_puzzle", missing)
-    old = job("old")
-    await first.set(keys[0], "old", ex=660)
-    task = asyncio.create_task(preparation._run.__wrapped__(DAY, object(), old, first))
-    try:
-        await asyncio.wait_for(entered.wait(), 5)
-        assert await second.pexpire(keys[0], 0)
-        assert await second.set(keys[0], "new", nx=True, ex=660)
-        replacement = job("new")
-        await preparation._save(DAY, replacement, second)
-        release.set()
-        await asyncio.wait_for(task, 5)
-        assert attempts == ["easy", "hard"]
-        assert old["state"] == "failed"
-        assert await second.get(keys[0]) == "new"
-        assert json.loads(await second.get(keys[1])) == replacement
-        assert (await preparation._read_job(DAY))["id"] == "new"
-    finally:
-        release.set()
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+    assert await second.pexpire(keys[0], 0)
+    result = await admin_jobs.enqueue(command, "operation-123", queue=queue)
+    assert result.state is AdmissionState.ACCEPTED
+    queue.enqueue_job.assert_awaited_once()
+    assert queue.enqueue_job.await_args.kwargs["lane"] == "daily"
+    assert await second.get(keys[0]) is None
+    assert json.loads(await second.get(keys[1])) == metadata
 
 
 def replica(client):

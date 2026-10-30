@@ -131,8 +131,11 @@ roles can bypass it. Do not claim hard tenant isolation.
 
 ## Daily preparation
 
-`app/games/daily_preparation.py` separates read-only readiness from managed
-preparation. Preserve Easy/Hard progress and Redis lease ownership/local fallback.
+`app/games/daily_preparation.py` owns read-only readiness and legacy status
+observation. New administrative preparation runs through `app/games/admin_jobs.py`
+in the shared `daily` queue lane. Preserve Easy/Hard progress, job ownership and
+content-revision fences. Legacy leases are observed without renewal, replay or
+deletion; active or uncertain legacy ownership blocks new preparation.
 Explicit admin preparation bypasses the automatic image quota; ordinary automatic
 generation does not. Missing art can still allow text delivery; it is not full readiness.
 Use the [Daily Crocodile guide](docs/pollinations-daily-croc.md) for the affected
