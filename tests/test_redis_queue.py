@@ -25,6 +25,7 @@ from app.queue import (
     _task_from_json,
     _task_to_json,
 )
+from app.queue_contracts import QueueDisposition
 
 
 class QueueRedis:
@@ -52,7 +53,7 @@ class QueueRedis:
         return raw
 
     async def lrange(self, key, start, end):
-        return list(self.lists.get(key, []))
+        return list(self.lists.get(key, []))[start:] if end == -1 else list(self.lists.get(key, []))[start : end + 1]
 
     async def lrem(self, key, count, raw):
         items = self.lists.setdefault(key, [])
@@ -103,7 +104,7 @@ class QueueRedis:
             if args[2] != "legacy" and await self.exists(keys[0]):
                 return 0
             removed = await self.lrem(keys[1], 1, args[0])
-            if removed:
+            if removed and args[1]:
                 await self.lpush(keys[2], args[1])
             return removed
         if script == queue_module._REMOVE_OWNER:
@@ -112,170 +113,6 @@ class QueueRedis:
                 return 1
             return 0
         raise AssertionError("Unexpected Redis script")
-
-
-@pytest.mark.asyncio
-async def test_startup_recovery_does_not_steal_another_replica_task(sample_task):
-    redis = QueueRedis()
-    with patch("app.queue._get_redis", return_value=redis):
-        first = TaskQueue(max_workers=1)
-        second = TaskQueue(max_workers=1)
-        first._use_redis = second._use_redis = True
-        await redis.lpush("gemaibotv2:queue:2", _task_to_json(sample_task).encode())
-        task, original = await first._dequeue_task()
-        assert task is not None
-
-        await second._recover_processing_tasks()
-
-        assert redis.lists["gemaibotv2:queue:2"] == []
-        assert original in [raw for items in redis.lists.values() for raw in items]
-
-
-@pytest.mark.asyncio
-async def test_legacy_processing_requires_explicit_drained_worker_recovery(sample_task):
-    redis = QueueRedis()
-    original = _task_to_json(sample_task).encode()
-    redis.lists[queue_module._PROCESSING_KEY] = [original]
-    with patch("app.queue._get_redis", return_value=redis):
-        queue = TaskQueue()
-        await queue._recover_processing_tasks()
-        assert redis.lists[queue_module._PROCESSING_KEY] == [original]
-        await queue._recover_processing_tasks(recover_legacy=True)
-        assert redis.lists[queue_module._PROCESSING_KEY] == []
-        assert len(redis.lists["gemaibotv2:queue:2"]) == 1
-
-
-@pytest.mark.asyncio
-async def test_expired_owner_cannot_ack_or_retry_recovered_task(sample_task):
-    redis = QueueRedis()
-    with patch("app.queue._get_redis", return_value=redis):
-        first, second = TaskQueue(), TaskQueue()
-        first._use_redis = True
-        await redis.lpush("gemaibotv2:queue:2", _task_to_json(sample_task).encode())
-        task, original = await first._dequeue_task()
-        await redis.delete(first._lease_key)
-        await second._recover_processing_tasks()
-        await first._ack_task(original)
-        await first._nack_task(task, original)
-        assert len(redis.lists["gemaibotv2:queue:2"]) == 1
-
-
-@pytest.mark.asyncio
-async def test_lease_loss_cancels_redis_handlers_but_preserves_local_work(monkeypatch):
-    queue = TaskQueue()
-    queue.running = True
-    local = asyncio.create_task(asyncio.sleep(60))
-    owned = asyncio.create_task(asyncio.sleep(60))
-    queue._executions = {"local": local, "owned": owned}
-    queue._redis_executions = {"owned"}
-    monkeypatch.setattr(queue_module, "_LEASE_RENEW_INTERVAL", 0)
-    monkeypatch.setattr(queue_module, "_get_redis", lambda: None)
-    try:
-        await queue._maintain_lease()
-        await asyncio.sleep(0)
-        assert queue._lease_lost
-        assert owned.cancelled()
-        assert not local.done()
-        assert not await queue._ensure_lease(QueueRedis())
-        queue._redis_executions.clear()
-        old_owner = queue._owner_id
-        queue.running = False
-        assert await queue._ensure_lease(QueueRedis())
-        assert queue._owner_id != old_owner
-    finally:
-        local.cancel()
-        owned.cancel()
-        await asyncio.gather(local, owned, return_exceptions=True)
-
-
-@pytest.mark.asyncio
-async def test_cancel_running_job_stops_handler_and_keeps_worker_available(monkeypatch):
-    @asynccontextmanager
-    async def settings_scope():
-        # This unit contract owns queue cancellation, not control-store I/O.
-        # A cold refresh otherwise waits for the unavailable test database.
-        yield
-
-    monkeypatch.setattr("app.runtime_settings.lifecycle.runtime_settings_scope", settings_scope)
-    queue = TaskQueue(max_workers=1)
-    started = asyncio.Event()
-    stopped = asyncio.Event()
-    next_done = asyncio.Event()
-
-    async def handler(**data):
-        if data.get("next"):
-            next_done.set()
-            return {}
-        started.set()
-        try:
-            await asyncio.Future()
-        finally:
-            stopped.set()
-
-    queue._task_handlers["test"] = handler
-    worker = asyncio.create_task(queue._worker("test"))
-    try:
-        task_id = await queue.add_task(42, "test", {})
-        await asyncio.wait_for(started.wait(), 1)
-        assert await queue.cancel_task(task_id, 42)
-        await asyncio.wait_for(stopped.wait(), 1)
-        await queue.add_task(42, "test", {"next": True})
-        await asyncio.wait_for(next_done.wait(), 1)
-        assert queue.tasks[task_id].status == TaskStatus.CANCELLED
-    finally:
-        worker.cancel()
-        await worker
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("read_error", [False, True])
-async def test_enqueue_failure_local_task_is_consumed_with_existing_redis_client(read_error):
-    redis = AsyncMock()
-    redis.lpush.side_effect = ConnectionError("enqueue unavailable")
-    redis.eval.side_effect = [1, None, None, None, None]
-    if read_error:
-        redis.eval.side_effect = ConnectionError("dequeue unavailable")
-
-    with patch("app.queue._get_redis", return_value=redis):
-        queue = TaskQueue(max_workers=1)
-        queue._use_redis = True
-        task_id = await queue.add_task(42, "document_processing", {"filename": "local.pdf"})
-
-        task, original_json = await queue._dequeue_task()
-
-        assert task is not None
-        assert task.id == task_id
-        assert original_json is None  # A local task must not ACK a Redis processing entry.
-        assert queue._fallback_queue.empty()
-
-
-@pytest.mark.asyncio
-async def test_queue_size_includes_both_redis_and_local_backlogs():
-    redis = AsyncMock()
-    redis.lpush.side_effect = ConnectionError("enqueue unavailable")
-    redis.llen.return_value = 2
-    with patch("app.queue._get_redis", return_value=redis):
-        queue = TaskQueue(max_workers=1)
-        queue._use_redis = True
-        await queue.add_task(42, "document_processing", {"filename": "local.pdf"})
-
-        stats = await queue.get_queue_stats()
-
-        assert stats["queue_size"] == 9
-        assert stats["backend"] == "mixed"
-
-
-@pytest.mark.asyncio
-async def test_failed_backlog_read_reports_unknown_instead_of_zero():
-    redis = AsyncMock()
-    redis.llen.side_effect = ConnectionError("unavailable")
-    with patch("app.queue._get_redis", return_value=redis):
-        queue = TaskQueue(max_workers=1)
-        queue._use_redis = True
-        stats = await queue.get_queue_stats()
-    assert stats["queue_size"] is None
-    assert stats["redis_available"] is False
-    assert stats["backend"] == "redis_unavailable"
 
 
 @pytest.fixture
@@ -333,174 +170,262 @@ class TestTaskSerialization:
         assert restored.result is None
 
 
-class TestTaskQueueFallback:
-    """Test in-memory fallback when Redis unavailable."""
+class WireRedis(QueueRedis):
+    """Network-protocol double using the local transition adapter, NOT a Lua interpreter."""
 
-    @pytest.mark.asyncio
-    async def test_add_task_without_redis(self):
-        """Tasks should be accepted into fallback queue when Redis is None."""
-        with patch("app.queue._get_redis", return_value=None):
-            queue = TaskQueue(max_workers=1)
-            queue._use_redis = False
+    def __init__(self):
+        super().__init__()
+        from app.queue_store import MemoryQueueStore
 
-            task_id = await queue.add_task(
-                user_id=1,
-                task_type="document_processing",
-                data={"filename": "test.pdf"},
+        self.clock = [1000.0]
+        self.model = MemoryQueueStore(clock=lambda: self.clock[0])
+        self.available = True
+        self.fail_after = set()
+        self.stay_down = False
+        self.calls = []
+
+    async def scan(self, cursor, *, match, count):
+        return 0, [key for key in self.lists if key.startswith("gemaibotv2:processing")]
+
+    async def get(self, key):
+        import json
+
+        if ":idem:" in key:
+            alias = self.model.identities.get(key.split(":idem:", 1)[1])
+            return json.dumps({"task_id": alias[0], "fingerprint": alias[1]}) if alias else None
+        if ":job:" in key:
+            record = self.model.jobs.get(key.split(":job:", 1)[1])
+            return json.dumps(record) if record else None
+        return self.values.get(key)
+
+    async def eval(self, script, number, *arguments):
+        import json
+        from dataclasses import asdict
+
+        from app.queue_contracts import JobOutcome, JobResult, QueuePolicy
+        from app.queue_store import _QUEUE_SCRIPT, JobEnvelope
+
+        if script != _QUEUE_SCRIPT:
+            return await super().eval(script, number, *arguments)
+        if not self.available:
+            raise ConnectionError("synthetic unavailable")
+        request = json.loads(arguments[1])
+        action = request["action"]
+        self.calls.append(action)
+        m = self.model
+        if action == "admit":
+            result = asdict(await m.admit(JobEnvelope(**request["job"]), QueuePolicy(**request["policy"])))
+        elif action == "lookup_admission":
+            previous = m.identities.get(request["identity"])
+            result = {
+                "state": "existing" if previous else "unknown",
+                "task_id": previous[0] if previous else request["job"]["task_id"],
+                "storage_mode": "redis",
+            }
+        elif action in {"read", "private"}:
+            result = await m.private_record(request["task_id"])
+        elif action == "claim":
+            claim = await m.claim(request["lane"], request["owner_token"])
+            result = (
+                {"record": await m.private_record(claim.snapshot.task_id), "payload": claim.payload} if claim else None
             )
-
-            assert task_id != ""
-            assert task_id in queue.tasks
-            assert queue.tasks[task_id].status == TaskStatus.PENDING
-
-    @pytest.mark.asyncio
-    async def test_stats_show_memory_backend(self):
-        """Stats should report 'memory' backend when Redis unavailable."""
-        with patch("app.queue._get_redis", return_value=None):
-            queue = TaskQueue(max_workers=1)
-            queue._use_redis = False
-
-            stats = await queue.get_queue_stats()
-            assert stats["backend"] == "memory"
-
-
-class TestTaskQueueRedis:
-    """Test Redis-backed queue operations."""
-
-    @pytest.mark.asyncio
-    async def test_add_task_to_redis(self):
-        """Task should be LPUSH-ed to Redis."""
-        mock_redis = QueueRedis()
-
-        with patch("app.queue._get_redis", return_value=mock_redis):
-            queue = TaskQueue(max_workers=1)
-            queue._use_redis = True
-
-            task_id = await queue.add_task(
-                user_id=42,
-                task_type="document_processing",
-                data={"filename": "test.pdf"},
-                priority=TaskPriority.URGENT,
+        elif action == "load":
+            result = await m.load_payload(request["task_id"], request["owner_token"])
+        elif action == "progress":
+            await m.update_progress(
+                request["task_id"], request["owner_token"], request["expected_revision"], request["summary"]
             )
-
-            assert task_id != ""
-            saved = mock_redis.lists["gemaibotv2:queue:4"]
-            assert len(saved) == 1
-            assert _task_from_json(saved[0]).id == task_id
-
-    @pytest.mark.asyncio
-    async def test_dequeue_respects_priority(self):
-        """Dequeue should check URGENT (4) before LOW (1)."""
-        mock_redis = QueueRedis()
-        # First 3 priority levels return None, LOW returns a task
-        call_count = 0
-
-        async def mock_rpoplpush(src, dst):
-            nonlocal call_count
-            call_count += 1
-            if call_count <= 3:
-                return None  # No URGENT, HIGH, NORMAL tasks
-            # Return a LOW priority task
-            task = Task(
-                id="low-task",
-                user_id=1,
-                task_type="cleanup_metrics",
-                data={},
-                priority=TaskPriority.LOW,
-                status=TaskStatus.PENDING,
-                created_at=datetime.now(tz=UTC),
+            result = await m.private_record(request["task_id"])
+        elif action == "finish":
+            value = request["result"]
+            await m.finish(
+                request["task_id"],
+                request["owner_token"],
+                request["expected_revision"],
+                JobResult(JobOutcome(value["outcome"]), value.get("reason_code"), value.get("result_summary") or {}),
+                delay_seconds=request["delay_seconds"],
             )
-            return _task_to_json(task).encode()
+            result = await m.private_record(request["task_id"])
+        elif action == "heartbeat":
+            await m.heartbeat(request["task_id"], request["owner_token"], request["expected_revision"])
+            result = await m.private_record(request["task_id"])
+        elif action == "stats":
+            result = await m.stats(request["lane"])
+        elif action == "lane":
+            lane = await m.read_lane(request["lane"])
+            result = {
+                "revision": lane.revision,
+                "admission_paused": lane.admission_paused,
+                "claim_paused": lane.claim_paused,
+                "policy": lane.policy.as_dict(),
+            }
+        elif action == "sweep":
+            await m.sweep()
+            result = {}
+        else:
+            raise AssertionError(f"unsupported protocol action {action}")
+        if action in self.fail_after:
+            self.fail_after.remove(action)
+            if self.stay_down:
+                self.available = False
+            raise ConnectionError("synthetic reply loss after committed mutation")
+        return json.dumps(result)
 
-        mock_redis.rpoplpush = AsyncMock(side_effect=mock_rpoplpush)
 
-        with patch("app.queue._get_redis", return_value=mock_redis):
-            queue = TaskQueue(max_workers=1)
-            queue._use_redis = True
+@pytest.fixture(autouse=True)
+def offline_runtime_settings(monkeypatch):
+    @asynccontextmanager
+    async def scope():
+        yield
 
-            task, original_json = await queue._dequeue_task()
+    monkeypatch.setattr("app.runtime_settings.lifecycle.runtime_settings_scope", scope)
 
-            assert task is not None
-            assert task.id == "low-task"
-            assert original_json is not None
-            assert call_count == 4  # Checked all 4 priority levels
 
-    @pytest.mark.asyncio
-    async def test_crash_recovery(self):
-        """Expired owners are recovered, with no duplicate under two recoverers."""
-        stuck_task = Task(
-            id="stuck-1",
-            user_id=99,
-            task_type="document_processing",
-            data={"filename": "stuck.pdf"},
-            priority=TaskPriority.NORMAL,
-            status=TaskStatus.RUNNING,
-            created_at=datetime.now(tz=UTC),
-        )
-        stuck_json = _task_to_json(stuck_task).encode()
+async def test_commit_then_disconnect_reconciles_one_job_and_one_handler_call(monkeypatch):
+    from app.queue_contracts import AdmissionState, JobOutcome, JobResult, JobState
+    from app.queue_store import RedisQueueStore
 
-        mock_redis = QueueRedis()
-        mock_redis.sets[queue_module._OWNERS_KEY] = {"crashed"}
-        mock_redis.lists[f"{queue_module._PROCESSING_KEY}:crashed"] = [stuck_json]
+    redis = WireRedis()
+    redis.fail_after.add("admit")
+    monkeypatch.setattr(queue_module, "_get_redis", lambda: redis)
+    queue = TaskQueue(store=RedisQueueStore(redis))
+    calls = []
 
-        with patch("app.queue._get_redis", return_value=mock_redis):
-            queue = TaskQueue(max_workers=1)
-            queue._use_redis = True
-            await queue._recover_processing_tasks()
-            await TaskQueue()._recover_processing_tasks()
+    async def handler():
+        calls.append("one")
+        return JobResult(JobOutcome.SUCCEEDED)
 
-            # Verify task was re-queued
-            assert len(mock_redis.lists["gemaibotv2:queue:2"]) == 1
-            assert mock_redis.lists[f"{queue_module._PROCESSING_KEY}:crashed"] == []
-            assert not mock_redis.sets[queue_module._OWNERS_KEY]
+    queue.register_handler("test_count", handler, lane="deferred", effectful=False)
+    admission = await queue.enqueue_job(0, "test_count", {}, idempotency_key="operation", lane="deferred")
+    assert admission.state is AdmissionState.EXISTING
+    duplicate = await queue.enqueue_job(0, "test_count", {}, idempotency_key="operation", lane="deferred")
+    assert duplicate.task_id == admission.task_id
+    await queue.start()
+    try:
+        for _ in range(100):
+            status = await queue.read_job(admission.task_id)
+            if status.state is JobState.SUCCEEDED:
+                break
+            await asyncio.sleep(0.01)
+        assert status.state is JobState.SUCCEEDED
+        assert calls == ["one"]
+        assert len(redis.model.jobs) == 1
+        assert not redis.model.payloads
+    finally:
+        await queue.stop()
 
-            # Verify task is in memory cache with incremented retry
-            assert "stuck-1" in queue.tasks
-            assert queue.tasks["stuck-1"].retry_count == 1
 
-    @pytest.mark.asyncio
-    async def test_cancel_task(self):
-        """Cancelled tasks should not be processed."""
-        with patch("app.queue._get_redis", return_value=None):
-            queue = TaskQueue(max_workers=1)
-            queue._use_redis = False
+async def test_unknown_admission_never_selects_local_fallback_and_repeat_is_stable(monkeypatch):
+    from app.queue_contracts import AdmissionState
+    from app.queue_store import RedisQueueStore
 
-            task_id = await queue.add_task(
-                user_id=42,
-                task_type="document_processing",
-                data={"filename": "cancel_me.pdf"},
-            )
+    redis = WireRedis()
+    redis.fail_after.add("admit")
+    redis.stay_down = True
+    monkeypatch.setattr(queue_module, "_get_redis", lambda: redis)
+    queue = TaskQueue()
+    uncertain = await queue.enqueue_job(0, "cleanup_metrics", {}, idempotency_key="operation", lane="maintenance")
+    assert uncertain.state is AdmissionState.UNKNOWN
+    assert isinstance(queue._store, RedisQueueStore)
+    assert len(redis.model.jobs) == 1
+    assert not queue.tasks
+    redis.available = True
+    again = await queue.enqueue_job(0, "cleanup_metrics", {}, idempotency_key="operation", lane="maintenance")
+    assert again.state is AdmissionState.EXISTING
+    assert again.task_id == uncertain.task_id
+    assert len(redis.model.jobs) == 1
 
-            result = await queue.cancel_task(task_id, user_id=42)
-            assert result is True
-            assert queue.tasks[task_id].status == TaskStatus.CANCELLED
 
-    @pytest.mark.asyncio
-    async def test_cancel_wrong_user_rejected(self):
-        """Only the task owner can cancel."""
-        with patch("app.queue._get_redis", return_value=None):
-            queue = TaskQueue(max_workers=1)
-            queue._use_redis = False
+async def test_finish_reply_loss_reconciles_atomic_terminal_without_double_release():
+    from app.queue_contracts import JobOutcome, JobResult, JobState, QueuePolicy
+    from app.queue_store import JobEnvelope, RedisQueueStore
 
-            task_id = await queue.add_task(
-                user_id=42,
-                task_type="document_processing",
-                data={"filename": "test.pdf"},
-            )
+    redis = WireRedis()
+    store = RedisQueueStore(redis)
+    await store.admit(
+        JobEnvelope("job", "cleanup_metrics", "maintenance", 0, "{}", "operation", effectful=False), QueuePolicy()
+    )
+    claim = await store.claim("maintenance", "owner")
+    redis.fail_after.add("finish")
+    result = await store.finish("job", "owner", claim.snapshot.revision, JobResult(JobOutcome.SUCCEEDED))
+    assert result.state is JobState.SUCCEEDED
+    assert (await store.stats("maintenance"))["nonterminal"] == 0
+    assert (await store.stats("maintenance"))["payload_bytes"] == 0
 
-            result = await queue.cancel_task(task_id, user_id=999)
-            assert result is False
 
-    @pytest.mark.asyncio
-    async def test_stats_with_redis(self):
-        """Stats should report Redis queue sizes."""
-        mock_redis = AsyncMock()
-        mock_redis.llen = AsyncMock(return_value=2)
+async def test_legacy_backlog_is_visible_and_requires_explicit_drained_recovery(sample_task):
+    from app import queue_legacy
 
-        with patch("app.queue._get_redis", return_value=mock_redis):
-            queue = TaskQueue(max_workers=1)
-            queue._use_redis = True
+    redis = WireRedis()
+    raw = _task_to_json(sample_task).encode()
+    redis.lists[queue_legacy._PROCESSING_KEY] = [raw]
+    status = await queue_legacy.inspect_legacy(redis)
+    assert status["reason_code"] == "legacy_drain_required"
+    assert status["processing"] == 1
+    with pytest.raises(ValueError, match="legacy_drain_required"):
+        await queue_legacy.recover_legacy_processing(redis)
+    assert redis.lists[queue_legacy._PROCESSING_KEY] == [raw]
+    assert await queue_legacy.recover_legacy_processing(redis, confirm_drained=True) == 0
+    assert redis.lists[queue_legacy._PROCESSING_KEY] == [raw]
+    assert not redis.lists.get(queue_legacy._queue_key(sample_task.priority))
 
-            stats = await queue.get_queue_stats()
-            assert stats["backend"] == "redis"
-            assert stats["queue_size"] == 8  # 4 priorities * 2 each
+
+async def test_legacy_recovery_preserves_malformed_records_for_separate_disposition():
+    from app import queue_legacy
+
+    redis = WireRedis()
+    raw = b"synthetic malformed legacy metadata"
+    redis.lists[queue_legacy._PROCESSING_KEY] = [raw]
+    assert await queue_legacy.recover_legacy_processing(redis, confirm_drained=True) == 0
+    assert redis.lists[queue_legacy._PROCESSING_KEY] == [raw]
+
+
+async def test_v2_startup_does_not_execute_or_delete_v1_payload(sample_task, monkeypatch):
+    from app.queue_store import RedisQueueStore
+
+    redis = WireRedis()
+    monkeypatch.setattr(queue_module, "_get_redis", lambda: redis)
+    raw = _task_to_json(sample_task).encode()
+    redis.lists["gemaibotv2:queue:2"] = [raw]
+    queue = TaskQueue(store=RedisQueueStore(redis))
+    await queue.start()
+    try:
+        await asyncio.sleep(0.02)
+        assert redis.lists["gemaibotv2:queue:2"] == [raw]
+        assert (await queue.get_queue_stats())["legacy"]["reason_code"] == "legacy_drain_required"
+        assert not redis.model.jobs
+    finally:
+        await queue.stop()
+
+
+async def test_privacy_erasure_removes_only_matching_legacy_payloads(sample_task):
+    from dataclasses import replace
+
+    from app import queue_legacy
+
+    redis = WireRedis()
+    other = replace(sample_task, id="other", user_id=43)
+    first, second = _task_to_json(sample_task).encode(), _task_to_json(other).encode()
+    for key in ("gemaibotv2:queue:2", queue_legacy._PROCESSING_KEY):
+        redis.lists[key] = [first, second]
+    await queue_legacy.erase_legacy_user(redis, 42)
+    assert all(rows == [second] for rows in redis.lists.values())
+
+
+async def test_coalesced_operation_lookup_is_readonly_and_returns_original_id():
+    from app.queue_contracts import JobOutcome, JobResult, JobState, QueuePolicy
+    from app.queue_store import JobEnvelope, RedisQueueStore
+
+    redis = WireRedis()
+    store = RedisQueueStore(redis)
+    first = JobEnvelope("first", "daily_prepare", "daily", 0, "{}", "first", conflict_keys=("day",))
+    second = JobEnvelope("second", "daily_prepare", "daily", 0, "{}", "second", conflict_keys=("day",))
+    await store.admit(first, QueuePolicy(max_jobs=32))
+    assert (await store.admit(second, QueuePolicy(max_jobs=32))).task_id == "first"
+    claim = await store.claim("daily", "owner")
+    await store.finish("first", "owner", claim.snapshot.revision, JobResult(JobOutcome.SUCCEEDED))
+    before = list(redis.calls)
+    snapshot = await store.read_job_by_operation(0, "second")
+    assert snapshot.task_id == "first" and snapshot.state is JobState.SUCCEEDED
+    assert redis.calls == before
+    assert len(redis.model.jobs) == 1

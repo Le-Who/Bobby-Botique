@@ -370,10 +370,39 @@ async def publish_authored_day(
             historical_facts=bank,
             semantic_judge=None,
         )
+    from app.games.daily_execution import checkpoint
+
+    await checkpoint()
     return await trivia_repo.publish_revision(
         puzzle_date,
         list(validated.main),
         list(validated.super_questions),
         expected_revision=expected_revision,
         actor=actor,
+    )
+
+
+def parse_admin_question(raw, index: int):
+    from app.games.trivia_similarity import FactIdentity
+    from app.repos import daily_trivia as daily_trivia_repo
+
+    options = [str(option).strip() for option in raw.get("options", [])]
+    correct_index = int(raw.get("correct_index", 0))
+    correct_answer = options[correct_index] if 0 <= correct_index < len(options) else ""
+    identity_raw = raw.get("identity") if isinstance(raw.get("identity"), dict) else {}
+    subject = str(identity_raw.get("subject") or raw.get("question") or "").strip()
+    relation = str(identity_raw.get("relation") or "правильный ответ").strip()
+    identity = (
+        FactIdentity.create(subject=subject, relation=relation, answer=correct_answer)
+        if subject and relation and correct_answer
+        else None
+    )
+    return daily_trivia_repo.TriviaQuestion(
+        id=int(raw.get("id", index + 1)),
+        topic=str(raw.get("topic", "")).strip(),
+        question=str(raw.get("question", "")).strip(),
+        options=options,
+        correct_index=correct_index,
+        explanation=str(raw.get("explanation", "")).strip(),
+        identity=identity,
     )

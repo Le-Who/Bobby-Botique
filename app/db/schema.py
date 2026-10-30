@@ -46,6 +46,11 @@ EXPECTED_TABLES = frozenset(
         "daily_trivia_used_keys",
         "error_logs",
         "tarot_daily_readings",
+        "tarot_daily_generation",
+        "broadcast_journal_coverage",
+        "broadcast_batches",
+        "broadcast_recipients",
+        "broadcast_delivery_attempts",
         "tavily_api_keys",
         "tavily_key_usage",
         "openrouter_api_keys",
@@ -88,6 +93,12 @@ EXPECTED_TABLES = frozenset(
 # Critical column-level contract for tables whose runtime shape cannot be
 # inferred safely from table existence alone.
 EXPECTED_COLUMNS = {
+    "broadcast_batches": frozenset({"batch_id", "operation_id", "task_id", "mode", "state", "unknown_delivery"}),
+    "broadcast_recipients": frozenset({"batch_id", "recipient_id", "privacy_epoch", "state", "owner_token"}),
+    "broadcast_delivery_attempts": frozenset({"attempt_id", "batch_id", "operation_id", "outcome", "message_id"}),
+    "tarot_daily_generation": frozenset({"reading_date", "language", "revision", "token", "updated_at"}),
+    "crocodile_daily_puzzles": frozenset({"puzzle_date", "difficulty", "content_revision", "generation_token"}),
+    "daily_2048_puzzles": frozenset({"puzzle_date", "revision"}),
     "traffic_daily": frozenset({"metric_date", "source_id", "api_attempts"}),
     "traffic_accounting_epoch": frozenset({"singleton", "started_at"}),
     "crocodile_daily_preferences": frozenset({"user_id", "daily_game"}),

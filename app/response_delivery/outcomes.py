@@ -42,6 +42,7 @@ class DeferredDelivery:
     displayed_text: str
     receipt: DeliveryReceipt
     content_text: str = ""
+    admission_uncertain: bool = False
 
 
 type TelegramResponseOutcome = CompleteDelivery | PartialDelivery | FailedDelivery | DeferredDelivery

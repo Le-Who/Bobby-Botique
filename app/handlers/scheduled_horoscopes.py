@@ -3,9 +3,9 @@
 For each minute tick:
   1. Check active subscriptions due for 'today' delivery (morning).
   2. Check active subscriptions due for 'tomorrow' delivery (evening).
-  3. For each due subscription, generate the horoscope via _handle_horoscope
-     and send it as a DM to the user.
-  4. Mark the subscription as sent so we don't double-deliver.
+  3. Snapshot due recipients into bounded broadcast jobs.
+  4. The journal delivery owner generates and sends outside database locks,
+     recording uncertain outcomes without automatic replay.
 
 Horoscope text is generated exactly as the inline handler does, reusing
 ``app.intent_router._handle_horoscope``.
@@ -13,14 +13,12 @@ Horoscope text is generated exactly as the inline handler does, reusing
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 
 from telegram.ext import ContextTypes
 
 from app.repos.horoscope_subscriptions import (
-    claim_horoscope_delivery,
     get_due_horoscope_subscriptions,
 )
 
@@ -129,46 +127,17 @@ async def check_and_send_horoscopes(context: ContextTypes.DEFAULT_TYPE) -> None:
     utc_hour = now.hour
     utc_minute = now.minute
 
-    delivery_slots = asyncio.Semaphore(4)
+    from zoneinfo import ZoneInfo
+
+    from app.broadcast_jobs import enqueue_scheduled
+
     for kind in ("today", "tomorrow"):
-        try:
-            due = await get_due_horoscope_subscriptions(utc_hour, utc_minute, kind)
-        except Exception as e:
-            logger.error("get_due_horoscope_subscriptions failed (kind=%s): %s", kind, e)
-            continue
-
-        if not due:
-            continue
-
-        logger.info(
-            "Horoscope scheduler: %d due '%s' deliveries at UTC %02d:%02d",
-            len(due),
-            kind,
-            utc_hour,
-            utc_minute,
-        )
-
-        async def deliver_one(sub: dict, delivery_kind: str = kind) -> None:
-            async with delivery_slots:
-                user_id: int = sub["user_id"]
-                async with claim_horoscope_delivery(user_id, delivery_kind) as claim:
-                    if claim is None:
-                        return
-                    sign = claim.sign
-                    success = await _deliver_horoscope(context.bot, user_id, sign, delivery_kind)
-                    if success:
-                        await claim.mark_sent()
-                if success:
-                    logger.info("Horoscope '%s' delivered to user=%s sign=%s", delivery_kind, user_id, sign)
-                else:
-                    logger.warning(
-                        "Horoscope '%s' delivery failed for user=%s sign=%s — will retry next minute",
-                        delivery_kind,
-                        user_id,
-                        sign,
-                    )
-
-        outcomes = await asyncio.gather(*(deliver_one(sub) for sub in due), return_exceptions=True)
-        for outcome in outcomes:
-            if isinstance(outcome, BaseException):
-                logger.error("Horoscope delivery task failed: %s", type(outcome).__name__)
+        due = await get_due_horoscope_subscriptions(utc_hour, utc_minute, kind)
+        if due:
+            await enqueue_scheduled(
+                channel="horoscope",
+                user_ids=[int(item["user_id"]) for item in due],
+                effective_date=now.astimezone(ZoneInfo("Europe/Kyiv")).date(),
+                variant=kind,
+                mode="delivery",
+            )

@@ -62,6 +62,10 @@ async def test_voice_fifo_second_job_uses_new_revision_while_first_stays_pinned(
     from app import voice_engine
     from app.utils import audio
 
+    # Mirror startup registration before pinning prompts. Refresh is replaced
+    # below; lazy TTS imports must not add their baselines after this snapshot.
+    lifecycle.load_controlled_prompts()
+
     def snapshot(revision):
         return store.SettingsSnapshot(
             revision,

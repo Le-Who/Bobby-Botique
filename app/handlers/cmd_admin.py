@@ -272,6 +272,7 @@ def _daily_prep_component_line(difficulty: str, puzzle) -> str:
 
 async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tuple[str, InlineKeyboardMarkup]:
     """Render the Daily Crocodile admin snapshot plus action buttons."""
+    from app.games.crocodile_daily import get_daily_image_model
     from app.games.crocodile_flags import get_crocodile_runtime_switches
     from app.games.crocodile_runtime import get_runtime_health_snapshot
     from app.games.hinting import get_hint_prewarm_health
@@ -292,7 +293,7 @@ async def build_dailycroc_status_snapshot(*, now: datetime | None = None) -> tup
         get_global_setting(_DAILYCROC_PLACEHOLDER_TEST_KEY, ""),
         get_crocodile_runtime_switches(),
         get_hint_prewarm_health(),
-        get_global_setting(daily_croc_repo.DAILY_IMAGE_MODEL_SETTING_KEY, "pollinations"),
+        get_daily_image_model(),
         get_global_setting(daily_2048_repo.DAILY_GAME_MODE_SETTING_KEY, daily_2048_repo.DAILY_GAME_MODE_CROCODILE),
     )
     stats: dict = _results[0]  # type: ignore[assignment]
@@ -1295,8 +1296,11 @@ async def set_dailycroc_model_command(update: Update, context: ContextTypes.DEFA
         - Max 1 concurrent request (enforced by semaphore)
         - Max 10 requests per minute (sliding window)
     """
+    from app.games.crocodile_daily import get_daily_image_model
+    from app.runtime_settings.legacy_models import save_croc_image_model
+
     args = context.args or []
-    current = await get_global_setting(daily_croc_repo.DAILY_IMAGE_MODEL_SETTING_KEY, "pollinations")
+    current = await get_daily_image_model()
 
     if not args or args[0].lower() not in _VALID_DAILY_IMAGE_MODELS:
         label = _DAILY_IMAGE_MODEL_LABELS.get(current, current)
@@ -1312,7 +1316,7 @@ async def set_dailycroc_model_command(update: Update, context: ContextTypes.DEFA
         return
 
     value = args[0].lower()
-    await set_global_setting(daily_croc_repo.DAILY_IMAGE_MODEL_SETTING_KEY, value)
+    await save_croc_image_model(value, actor="admin")
     logging.info("Admin %s set daily_croc_image_model → %s", update.effective_user.id, value)
 
     label = _DAILY_IMAGE_MODEL_LABELS.get(value, value)

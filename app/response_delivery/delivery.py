@@ -10,6 +10,7 @@ from typing import Any
 from app.errors import ErrorCode, user_message_for_error_code
 from app.observability.delivery_events import delivery_outcome_fields
 from app.observability.events import emit, record_exception
+from app.observability.request_metrics import current_request
 from app.providers.stream_types import GenerationRequest, StreamCompleted
 from app.response_delivery.coordinator import AIStreamCoordinator
 from app.response_delivery.outcomes import (
@@ -51,6 +52,7 @@ class GenerationFailure:
 @dataclass(frozen=True, slots=True)
 class DeferredGeneration:
     task_id: str
+    admission_uncertain: bool = False
 
 
 class TelegramResponseDelivery:
@@ -163,6 +165,7 @@ class TelegramResponseDelivery:
                 displayed_text=displayed,
                 title=prepared.long_read_title,
                 actions=prepared.actions,
+                model_content=content,
             )
             return CompleteDelivery(
                 content_text=content,
@@ -192,16 +195,21 @@ class TelegramResponseDelivery:
                 receipt=receipt,
             )
 
-        displayed = "⏳ Серверы AI временно перегружены. Я отправлю ответ, как только они освободятся."
+        displayed = (
+            "⏳ Уточняется статус запроса. Подтверждения постановки в очередь пока нет."
+            if completed.admission_uncertain
+            else "⏳ Серверы AI временно перегружены. Я отправлю ответ, как только они освободятся."
+        )
         receipt = await session.finalize(
             displayed_text=displayed,
             title=prepared.long_read_title,
-            actions=prepared.failure_actions,
+            actions=None if completed.admission_uncertain else prepared.failure_actions,
         )
         return DeferredDelivery(
             task_id=completed.task_id,
             displayed_text=displayed,
             receipt=receipt,
+            admission_uncertain=completed.admission_uncertain,
         )
 
     async def _observe(self, mode: str, operation) -> TelegramResponseOutcome:
@@ -214,6 +222,8 @@ class TelegramResponseDelivery:
         try:
             outcome = await operation
         except asyncio.CancelledError:
+            if observation := current_request():
+                observation.set_outcome("cancelled")
             emit(
                 "delivery.finished",
                 level="warning",
@@ -224,6 +234,8 @@ class TelegramResponseDelivery:
             )
             raise
         except Exception as error:
+            if observation := current_request():
+                observation.set_outcome("failed")
             error_id = record_exception(
                 "delivery.transport_failed",
                 error,
@@ -242,6 +254,16 @@ class TelegramResponseDelivery:
             raise
 
         fields = delivery_outcome_fields(outcome)
+        if observation := current_request():
+            observation.set_outcome(
+                {
+                    "partial": "partial",
+                    "failure_notice_sent": "failed",
+                    "transport_failed": "failed",
+                    "deferred": "deferred",
+                    "cancelled": "cancelled",
+                }.get(str(fields["delivery_status"]), "succeeded")
+            )
         emit(
             "delivery.finished",
             level="warning" if fields["delivery_status"] in {"partial", "failure_notice_sent"} else "info",

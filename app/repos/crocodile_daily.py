@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass, field
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app import database as db
@@ -40,6 +42,69 @@ class DailyPuzzle:
     image_file_id: str = ""
     image_model: str = DAILY_IMAGE_MODEL
     prepared_at: datetime | None = None
+    content_revision: int = 1
+    generation_token: UUID | None = None
+    played: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PreparationTicket:
+    puzzle_date: date
+    difficulty: str
+    expected_revision: int
+    token: UUID
+
+
+class DailyCrocConflict(RuntimeError):
+    def __init__(self, reason: str = "superseded", *, puzzle: DailyPuzzle | None = None):
+        self.reason = reason
+        self.puzzle = puzzle
+        self.actual_revision = puzzle.content_revision if puzzle else 0
+        super().__init__(reason)
+
+
+class DailyCrocNotReady(RuntimeError):
+    retryable = True
+
+    def __init__(self):
+        super().__init__("not_ready")
+
+
+@asynccontextmanager
+async def _transaction(conn=None):
+    if conn is not None:
+        async with conn.transaction():
+            yield conn
+    else:
+        if not db.db_manager.pool:
+            raise RuntimeError("Database pool required for Daily Crocodile mutation")
+        async with db.db_manager.pool.acquire() as acquired, acquired.transaction():
+            yield acquired
+
+
+async def _locked_puzzle(conn, puzzle_date: date, difficulty: str, *, shared: bool = False) -> DailyPuzzle | None:
+    query = "SELECT * FROM public.crocodile_daily_puzzles WHERE puzzle_date=$1 AND difficulty=$2 "
+    row = await conn.fetchrow(query + ("FOR SHARE" if shared else "FOR UPDATE"), puzzle_date, difficulty)
+    if not row:
+        return None
+    puzzle = _row_to_puzzle(dict(row))
+    if not shared:
+        puzzle.played = await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM public.crocodile_daily_results WHERE puzzle_date=$1 AND difficulty=$2)",
+            puzzle_date,
+            difficulty,
+        )
+    return puzzle
+
+
+def _check_revision(puzzle: DailyPuzzle | None, expected_revision: int, *, editable: bool = False) -> DailyPuzzle:
+    if type(expected_revision) is not int or expected_revision < 1:
+        raise ValueError("expected_revision must be a positive integer")
+    if not puzzle or puzzle.content_revision != expected_revision:
+        raise DailyCrocConflict("revision_conflict", puzzle=puzzle)
+    if editable and puzzle.played:
+        raise DailyCrocConflict("puzzle_in_use", puzzle=puzzle)
+    return puzzle
 
 
 @dataclass(slots=True)
@@ -160,6 +225,9 @@ def _row_to_puzzle(row: dict[str, Any]) -> DailyPuzzle:
         image_file_id=str(row.get("image_file_id") or ""),
         image_model=str(row.get("image_model") or DAILY_IMAGE_MODEL),
         prepared_at=row.get("prepared_at"),
+        content_revision=int(row.get("content_revision", 1)),
+        generation_token=row.get("generation_token"),
+        played=bool(row.get("played", False)),
     )
 
 
@@ -249,9 +317,8 @@ async def get_puzzle(puzzle_date: date, *, difficulty: str = "easy", conn=None) 
     difficulty = normalize_daily_difficulty(difficulty)
     rows = await db.db_query(
         """
-        SELECT puzzle_date, difficulty, target_word, topic, lang, hints,
-               image_prompt, image_file_id, image_model, prepared_at
-        FROM public.crocodile_daily_puzzles
+        SELECT p.*, EXISTS(SELECT 1 FROM public.crocodile_daily_results r WHERE r.puzzle_date=p.puzzle_date AND r.difficulty=p.difficulty) AS played
+        FROM public.crocodile_daily_puzzles p
         WHERE puzzle_date = $1 AND difficulty = $2
         """,
         (puzzle_date, difficulty),
@@ -263,9 +330,8 @@ async def get_puzzle(puzzle_date: date, *, difficulty: str = "easy", conn=None) 
 async def get_puzzles_for_date(puzzle_date: date, *, conn=None) -> dict[str, DailyPuzzle]:
     rows = await db.db_query(
         """
-        SELECT puzzle_date, difficulty, target_word, topic, lang, hints,
-               image_prompt, image_file_id, image_model, prepared_at
-        FROM public.crocodile_daily_puzzles
+        SELECT p.*, EXISTS(SELECT 1 FROM public.crocodile_daily_results r WHERE r.puzzle_date=p.puzzle_date AND r.difficulty=p.difficulty) AS played
+        FROM public.crocodile_daily_puzzles p
         WHERE puzzle_date = $1
         ORDER BY difficulty ASC
         """,
@@ -283,7 +349,7 @@ def is_puzzle_fully_prepared(puzzle: DailyPuzzle) -> bool:
     # Image is generated best-effort and retried hourly via the scheduler.
     # A puzzle is considered ready as soon as hints are available so that
     # deliveries are never blocked by a transient image-generation failure.
-    return bool(puzzle.hints)
+    return is_text_ready(puzzle)
 
 
 async def get_used_daily_words(*, days_back: int = 365, conn=None) -> set[str]:
@@ -354,14 +420,34 @@ async def _prepare_daily_word_candidate(puzzle_date: date, difficulty: str, mode
     return (word, topic.lang, topic.category, True) if word else None
 
 
+def _pick_local_daily_word(topic, *, used_words: set[str], difficulty: str):
+    """Only local word-bank work under uniqueness locks; never provider I/O."""
+    from app.games.word_bank import WORD_BANK, _filter_words_by_difficulty, _pick_rotating_word
+
+    words = _filter_words_by_difficulty(
+        list(WORD_BANK[topic.lang][topic.category]), topic_id=topic.topic_id, preferred_difficulty=difficulty
+    )
+    words = [word for word in words if normalize_daily_word(word) not in used_words]
+    if not words:
+        raise DailyCrocNotReady()
+    return _pick_rotating_word(topic.topic_id, words, used_words), topic.lang, topic.category, False
+
+
 async def _create_puzzle_if_missing_with_conn(
     puzzle_date: date,
     *,
     difficulty: str = "easy",
     conn=None,
     candidate=None,
+    image_model: str | None = None,
 ) -> DailyPuzzle:
     difficulty = normalize_daily_difficulty(difficulty)
+    if image_model is None:
+        if conn is not None:
+            raise ValueError("image model snapshot required before the puzzle transaction")
+        from app.games.crocodile_daily import get_daily_image_model
+
+        image_model = await get_daily_image_model()
     existing = await get_puzzle(puzzle_date, difficulty=difficulty, conn=conn)
     if existing:
         return existing
@@ -416,10 +502,7 @@ async def _create_puzzle_if_missing_with_conn(
     if candidate and normalize_daily_word(candidate[0]) not in used_words:
         word, lang, category, _ = candidate
     else:
-        word, lang, category, _ = await _pick_daily_word(topic, used_words=used_words, difficulty=difficulty, model="")
-    from app.games.crocodile_daily import get_daily_image_model
-
-    image_model = await get_daily_image_model()
+        word, lang, category, _ = _pick_local_daily_word(topic, used_words=used_words, difficulty=difficulty)
     if image_model == "pollinations":
         image_model = DAILY_IMAGE_MODEL
     rows = await db.db_query(
@@ -430,7 +513,7 @@ async def _create_puzzle_if_missing_with_conn(
         VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (puzzle_date, difficulty) DO NOTHING
         RETURNING puzzle_date, difficulty, target_word, topic, lang, hints,
-                  image_prompt, image_file_id, image_model, prepared_at
+                  image_prompt, image_file_id, image_model, prepared_at, content_revision, generation_token
         """,
         (puzzle_date, difficulty, word, category, lang, image_model),
         conn=conn,
@@ -451,193 +534,286 @@ async def create_puzzle_if_missing(puzzle_date: date, *, difficulty: str = "easy
     if existing:
         return existing
     candidate = await _prepare_daily_word_candidate(puzzle_date, difficulty)
+    from app.games.daily_execution import checkpoint
+
+    await checkpoint()
+    from app.games.crocodile_daily import get_daily_image_model
+
+    image_model = await get_daily_image_model()
     pool = getattr(db.db_manager, "pool", None)
     if not pool or getattr(pool, "_closed", False):
-        return await _create_puzzle_if_missing_with_conn(puzzle_date, difficulty=difficulty, candidate=candidate)
+        return await _create_puzzle_if_missing_with_conn(
+            puzzle_date, difficulty=difficulty, candidate=candidate, image_model=image_model
+        )
 
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("LOCK TABLE public.crocodile_daily_days IN SHARE ROW EXCLUSIVE MODE")
         await conn.execute("LOCK TABLE public.crocodile_daily_puzzles IN SHARE ROW EXCLUSIVE MODE")
         return await _create_puzzle_if_missing_with_conn(
-            puzzle_date, difficulty=difficulty, conn=conn, candidate=candidate
+            puzzle_date, difficulty=difficulty, conn=conn, candidate=candidate, image_model=image_model
         )
 
 
 async def regenerate_puzzle_word(
-    puzzle_date: date, difficulty: str = "easy", model: str | None = None
+    puzzle_date: date, difficulty: str = "easy", model: str | None = None, *, expected_revision: int
 ) -> DailyPuzzle | None:
     difficulty = normalize_daily_difficulty(difficulty)
     pool = getattr(db.db_manager, "pool", None)
     if not pool or getattr(pool, "_closed", False):
         raise RuntimeError("Database pool not available")
 
-    if not await get_puzzle(puzzle_date, difficulty=difficulty):
-        return None
+    initial = await get_puzzle(puzzle_date, difficulty=difficulty)
+    _check_revision(initial, expected_revision, editable=True)
     candidate = await _prepare_daily_word_candidate(puzzle_date, difficulty, model)
+    from app.games.daily_execution import checkpoint
+
+    await checkpoint()
     async with pool.acquire() as conn, conn.transaction():
-        await conn.execute("LOCK TABLE public.crocodile_daily_days IN SHARE ROW EXCLUSIVE MODE")
-        await conn.execute("LOCK TABLE public.crocodile_daily_puzzles IN SHARE ROW EXCLUSIVE MODE")
+        return await _regenerate_puzzle_word_on_conn(conn, puzzle_date, difficulty, expected_revision, candidate)
 
-        existing = await get_puzzle(puzzle_date, difficulty=difficulty, conn=conn)
-        if not existing:
-            return None
 
-        from app.games.word_bank import (
-            WORD_BANK,
-            _filter_words_by_difficulty,  # type: ignore[attr-defined]
-            resolve_topic,
+async def _regenerate_puzzle_word_on_conn(
+    conn, puzzle_date: date, difficulty: str, expected_revision: int, candidate
+) -> DailyPuzzle | None:
+    await conn.execute("LOCK TABLE public.crocodile_daily_days IN SHARE ROW EXCLUSIVE MODE")
+    await conn.execute("LOCK TABLE public.crocodile_daily_puzzles IN SHARE ROW EXCLUSIVE MODE")
+
+    existing = _check_revision(await _locked_puzzle(conn, puzzle_date, difficulty), expected_revision, editable=True)
+
+    from app.games.word_bank import (
+        WORD_BANK,
+        _filter_words_by_difficulty,  # type: ignore[attr-defined]
+        resolve_topic,
+    )
+
+    used_words = await get_used_daily_words(conn=conn)
+    used_words.add(normalize_daily_word(existing.target_word))
+
+    if difficulty == "hard":
+        easy_puzzle = await get_puzzle(puzzle_date, difficulty="easy", conn=conn)
+        if easy_puzzle:
+            used_words.add(normalize_daily_word(easy_puzzle.target_word))
+
+    ru_categories = list(WORD_BANK.get("ru", {}).keys())
+    n = len(ru_categories)
+    difficulty_offset = 0 if difficulty == "easy" else n // 2
+    day_ordinal = puzzle_date.toordinal()
+    topic_candidates = [ru_categories[(day_ordinal + difficulty_offset + i) % n] for i in range(n)]
+
+    chosen_topic_raw = topic_candidates[0]
+    for candidate_cat in topic_candidates:
+        candidate_words = list(WORD_BANK["ru"].get(candidate_cat, []))
+        available = _filter_words_by_difficulty(
+            candidate_words,
+            topic_id=f"builtin:ru:{candidate_cat.lower()}",
+            preferred_difficulty=difficulty,
         )
+        unused = [w for w in available if normalize_daily_word(w) not in used_words]
+        if unused:
+            chosen_topic_raw = candidate_cat
+            break
 
-        used_words = await get_used_daily_words(conn=conn)
-        used_words.add(normalize_daily_word(existing.target_word))
+    topic = resolve_topic(chosen_topic_raw)
+    if candidate and normalize_daily_word(candidate[0]) not in used_words:
+        word, lang, category, _ = candidate
+    else:
+        word, lang, category, _ = _pick_local_daily_word(topic, used_words=used_words, difficulty=difficulty)
 
-        if difficulty == "hard":
-            easy_puzzle = await get_puzzle(puzzle_date, difficulty="easy", conn=conn)
-            if easy_puzzle:
-                used_words.add(normalize_daily_word(easy_puzzle.target_word))
-
-        ru_categories = list(WORD_BANK.get("ru", {}).keys())
-        n = len(ru_categories)
-        difficulty_offset = 0 if difficulty == "easy" else n // 2
-        day_ordinal = puzzle_date.toordinal()
-        topic_candidates = [ru_categories[(day_ordinal + difficulty_offset + i) % n] for i in range(n)]
-
-        chosen_topic_raw = topic_candidates[0]
-        for candidate_cat in topic_candidates:
-            candidate_words = list(WORD_BANK["ru"].get(candidate_cat, []))
-            available = _filter_words_by_difficulty(
-                candidate_words,
-                topic_id=f"builtin:ru:{candidate_cat.lower()}",
-                preferred_difficulty=difficulty,
-            )
-            unused = [w for w in available if normalize_daily_word(w) not in used_words]
-            if unused:
-                chosen_topic_raw = candidate_cat
-                break
-
-        topic = resolve_topic(chosen_topic_raw)
-        if candidate and normalize_daily_word(candidate[0]) not in used_words:
-            word, lang, category, _ = candidate
-        else:
-            word, lang, category, _ = await _pick_daily_word(
-                topic, used_words=used_words, difficulty=difficulty, model=""
-            )
-
-        rows = await db.db_query(
-            """
-            UPDATE public.crocodile_daily_puzzles
-            SET target_word = $1,
-                topic = $2,
-                lang = $3,
-                hints = '[]'::jsonb,
-                image_prompt = '',
-                image_file_id = '',
-                prepared_at = NULL
-            WHERE puzzle_date = $4 AND difficulty = $5
-            RETURNING puzzle_date, difficulty, target_word, topic, lang, hints,
-                      image_prompt, image_file_id, image_model, prepared_at
-            """,
-            (word, category, lang, puzzle_date, difficulty),
-            conn=conn,
-        )
-        if rows:
-            return _row_to_puzzle(rows[0])
-        return None
-
-
-async def set_puzzle_hints(puzzle_date: date, hints: list[str], *, difficulty: str = "easy") -> None:
-    difficulty = normalize_daily_difficulty(difficulty)
-    await db.db_query(
+    rows = await db.db_query(
         """
         UPDATE public.crocodile_daily_puzzles
-        SET hints = $3::jsonb,
-            prepared_at = NULL
-        WHERE puzzle_date = $1 AND difficulty = $2
+        SET target_word = $1,
+            topic = $2,
+            lang = $3,
+            hints = '[]'::jsonb,
+            image_prompt = '',
+            image_file_id = '',
+            prepared_at = NULL, content_revision=content_revision+1, generation_token=NULL
+        WHERE puzzle_date = $4 AND difficulty = $5
+        RETURNING puzzle_date, difficulty, target_word, topic, lang, hints,
+                  image_prompt, image_file_id, image_model, prepared_at, content_revision, generation_token
         """,
-        (puzzle_date, difficulty, hints),
+        (word, category, lang, puzzle_date, difficulty),
+        conn=conn,
     )
+    if rows:
+        return _row_to_puzzle(rows[0])
+    return None
+
+
+async def begin_preparation(
+    puzzle_date: date, difficulty: str, expected_revision: int, *, conn=None
+) -> PreparationTicket:
+    difficulty = normalize_daily_difficulty(difficulty)
+    async with _transaction(conn) as acquired:
+        puzzle = _check_revision(await _locked_puzzle(acquired, puzzle_date, difficulty), expected_revision)
+        if puzzle.played and not is_text_ready(puzzle):
+            raise DailyCrocConflict("puzzle_in_use", puzzle=puzzle)
+        token = uuid4()
+        await acquired.execute(
+            "UPDATE public.crocodile_daily_puzzles SET generation_token=$3 WHERE puzzle_date=$1 AND difficulty=$2",
+            puzzle_date,
+            difficulty,
+            token,
+        )
+        return PreparationTicket(puzzle_date, difficulty, expected_revision, token)
+
+
+def is_text_ready(puzzle: DailyPuzzle) -> bool:
+    hints = puzzle.hints
+    return bool(
+        puzzle.target_word.strip()
+        and len(hints) == 3
+        and all(isinstance(hint, str) and hint.strip() for hint in hints)
+        and len({hint.strip().casefold() for hint in hints}) == 3
+    )
+
+
+async def _apply_preparation(
+    ticket: PreparationTicket,
+    changes: dict[str, Any],
+    *,
+    finish: bool = False,
+    expected_file_id: str | None = None,
+    conn=None,
+) -> bool:
+    allowed = {"hints", "image_prompt", "image_file_id", "image_model"}
+    if not set(changes) <= allowed:
+        raise ValueError("invalid preparation fields")
+    from app.games.daily_execution import checkpoint
+
+    await checkpoint()
+    async with _transaction(conn) as acquired:
+        puzzle = await _locked_puzzle(acquired, ticket.puzzle_date, ticket.difficulty)
+        if not puzzle or puzzle.content_revision != ticket.expected_revision or puzzle.generation_token != ticket.token:
+            return False
+        if expected_file_id is not None and puzzle.image_file_id != expected_file_id:
+            return False
+        if puzzle.played:
+            if "hints" in changes and puzzle.hints != changes["hints"]:
+                return False
+            if "image_prompt" in changes and (puzzle.image_prompt.strip() or not changes["image_prompt"].strip()):
+                return False
+            if puzzle.image_file_id.strip():
+                if "image_file_id" in changes and changes["image_file_id"] != puzzle.image_file_id:
+                    return False
+                if "image_model" in changes and changes["image_model"] != puzzle.image_model:
+                    return False
+        next_puzzle = replace(puzzle, **changes)
+        if finish and not is_text_ready(next_puzzle):
+            return False
+        values = [ticket.puzzle_date, ticket.difficulty, ticket.expected_revision, ticket.token]
+        setters = []
+        for key, value in changes.items():
+            values.append(value)
+            setters.append(f"{key}=${len(values)}" + ("::jsonb" if key == "hints" else ""))
+        setters.append("prepared_at=NOW()" if finish else "prepared_at=NULL")
+        if finish:
+            setters.append("generation_token=NULL")
+        prompt_guard = (
+            " AND (image_prompt IS NULL OR btrim(image_prompt)='')"
+            if puzzle.played and "image_prompt" in changes
+            else ""
+        )
+        asset_guard = (
+            " AND (image_file_id IS NULL OR btrim(image_file_id)='')"
+            if puzzle.played and "image_file_id" in changes and not puzzle.image_file_id.strip()
+            else ""
+        )
+        row = await acquired.fetchrow(
+            "UPDATE public.crocodile_daily_puzzles SET "
+            + ", ".join(setters)
+            + " WHERE puzzle_date=$1 AND difficulty=$2 AND content_revision=$3 AND generation_token=$4"
+            + prompt_guard
+            + asset_guard
+            + " RETURNING puzzle_date",
+            *values,
+        )
+        return row is not None
+
+
+async def set_puzzle_hints(ticket: PreparationTicket, hints: list[str], *, conn=None) -> bool:
+    return await _apply_preparation(ticket, {"hints": hints}, conn=conn)
 
 
 async def set_puzzle_image_prompt(
-    puzzle_date: date,
-    image_prompt: str,
-    *,
-    difficulty: str = "easy",
-    image_model: str = DAILY_IMAGE_MODEL,
-) -> None:
-    difficulty = normalize_daily_difficulty(difficulty)
-    await db.db_query(
-        """
-        UPDATE public.crocodile_daily_puzzles
-        SET image_prompt = $3,
-            image_model = $4,
-            prepared_at = NULL
-        WHERE puzzle_date = $1 AND difficulty = $2
-        """,
-        (puzzle_date, difficulty, image_prompt, image_model),
-    )
+    ticket: PreparationTicket, image_prompt: str, *, image_model: str | None = None, conn=None
+) -> bool:
+    changes = {"image_prompt": image_prompt}
+    if image_model is not None:
+        changes["image_model"] = image_model
+    return await _apply_preparation(ticket, changes, conn=conn)
 
 
 async def set_puzzle_image_asset(
+    ticket: PreparationTicket, image_file_id: str, *, image_model: str = DAILY_IMAGE_MODEL, conn=None
+) -> bool:
+    return await _apply_preparation(ticket, {"image_file_id": image_file_id, "image_model": image_model}, conn=conn)
+
+
+async def clear_puzzle_image_asset(ticket: PreparationTicket, *, expected_file_id: str, conn=None) -> bool:
+    return await _apply_preparation(ticket, {"image_file_id": ""}, expected_file_id=expected_file_id, conn=conn)
+
+
+async def finish_preparation(ticket: PreparationTicket, assets: dict[str, Any] | None = None, *, conn=None) -> bool:
+    return await _apply_preparation(ticket, assets or {}, finish=True, conn=conn)
+
+
+async def mark_puzzle_prepared(ticket: PreparationTicket, *, conn=None) -> bool:
+    return await finish_preparation(ticket, conn=conn)
+
+
+async def edit_puzzle(
     puzzle_date: date,
-    image_file_id: str,
+    difficulty: str,
+    expected_revision: int,
     *,
-    difficulty: str = "easy",
-    image_model: str = DAILY_IMAGE_MODEL,
-) -> None:
+    image_prompt: str | None = None,
+    image_model: str | None = None,
+    conn=None,
+) -> DailyPuzzle:
     difficulty = normalize_daily_difficulty(difficulty)
-    await db.db_query(
-        """
-        UPDATE public.crocodile_daily_puzzles
-        SET image_file_id = $3,
-            image_model = $4,
-            prepared_at = NULL
-        WHERE puzzle_date = $1 AND difficulty = $2
-        """,
-        (puzzle_date, difficulty, image_file_id, image_model),
-    )
+    async with _transaction(conn) as acquired:
+        _check_revision(await _locked_puzzle(acquired, puzzle_date, difficulty), expected_revision, editable=True)
+        row = await acquired.fetchrow(
+            """UPDATE public.crocodile_daily_puzzles
+               SET image_prompt=COALESCE($3,image_prompt), image_model=COALESCE($4,image_model),
+                   image_file_id='', prepared_at=NULL, generation_token=NULL, content_revision=content_revision+1
+               WHERE puzzle_date=$1 AND difficulty=$2 RETURNING *""",
+            puzzle_date,
+            difficulty,
+            image_prompt,
+            image_model,
+        )
+        return _row_to_puzzle(dict(row))
 
 
-async def clear_puzzle_image_asset(puzzle_date: date, *, difficulty: str = "easy") -> None:
+async def start_puzzle(
+    user_id: int, puzzle_date: date, *, difficulty: str = "easy", conn=None
+) -> tuple[DailyPuzzle, DailyResult]:
     difficulty = normalize_daily_difficulty(difficulty)
-    await db.db_query(
-        """
-        UPDATE public.crocodile_daily_puzzles
-        SET image_file_id = '',
-            prepared_at = NULL
-        WHERE puzzle_date = $1 AND difficulty = $2
-        """,
-        (puzzle_date, difficulty),
-    )
-
-
-async def mark_puzzle_prepared(puzzle_date: date, *, difficulty: str = "easy") -> None:
-    difficulty = normalize_daily_difficulty(difficulty)
-    await db.db_query(
-        """
-        UPDATE public.crocodile_daily_puzzles
-        SET prepared_at = NOW()
-        WHERE puzzle_date = $1 AND difficulty = $2
-        """,
-        (puzzle_date, difficulty),
-    )
+    async with _transaction(conn) as acquired:
+        await acquired.execute(
+            "INSERT INTO public.users(user_id,is_authorized) VALUES($1,0) ON CONFLICT(user_id) DO NOTHING", user_id
+        )
+        puzzle = await _locked_puzzle(acquired, puzzle_date, difficulty, shared=True)
+        if not puzzle or not is_text_ready(puzzle):
+            raise DailyCrocNotReady()
+        row = await acquired.fetchrow(
+            """INSERT INTO public.crocodile_daily_results(user_id,puzzle_date,difficulty)
+               VALUES($1,$2,$3) ON CONFLICT(user_id,puzzle_date,difficulty) DO UPDATE
+               SET updated_at=public.crocodile_daily_results.updated_at RETURNING *""",
+            user_id,
+            puzzle_date,
+            difficulty,
+        )
+        puzzle.played = True
+        return puzzle, _row_to_result(dict(row))
 
 
 async def get_or_create_result(user_id: int, puzzle_date: date, *, difficulty: str = "easy") -> DailyResult:
-    difficulty = normalize_daily_difficulty(difficulty)
-    await ensure_user(user_id)
-    rows = await db.db_query(
-        """
-        INSERT INTO public.crocodile_daily_results (user_id, puzzle_date, difficulty)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (user_id, puzzle_date, difficulty) DO UPDATE
-            SET updated_at = public.crocodile_daily_results.updated_at
-        RETURNING user_id, puzzle_date, difficulty, status, attempts, best_score, used_hints_count,
-                  won_at, finished_at, points, share_grid, streak_after
-        """,
-        (user_id, puzzle_date, difficulty),
-    )
-    return _row_to_result(rows[0])
+    _, result = await start_puzzle(user_id, puzzle_date, difficulty=difficulty)
+    return result
 
 
 async def get_result(user_id: int, puzzle_date: date, *, difficulty: str = "easy") -> DailyResult | None:

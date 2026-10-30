@@ -7,6 +7,36 @@ from app.voice_intent import detect_tts_intent
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    ["Не озвучь ответ", "Не нужно читать вслух, не озвучь", "Он сказал «озвучь ответ»", 'Переведи "озвучь ответ"'],
+)
+async def test_quoted_and_negated_user_text_does_not_request_audio(text):
+    decision = await detect_tts_intent(user_text=text)
+    assert decision.explicit_tts is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["Не озвучь ответ", "Он сказал «озвучь ответ»"])
+async def test_authored_negative_cannot_be_reauthorized_by_context_classifier(text, monkeypatch):
+    monkeypatch.setattr("app.voice_intent.get_prompt_text", lambda _name: "Synthetic fixture prompt")
+    monkeypatch.setattr("app.voice_intent.execute_text_process", AsyncMock(return_value=("YES", 1)))
+    decision = await detect_tts_intent(user_text=text, llm_context=text)
+    assert decision.explicit_tts is False
+    assert decision.reason == "non_authored_command"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [TimeoutError(), ValueError()])
+async def test_classifier_failure_has_fixed_content_free_reason(failure, monkeypatch):
+    monkeypatch.setattr("app.voice_intent.get_prompt_text", lambda _name: "Synthetic fixture prompt")
+    monkeypatch.setattr("app.voice_intent.execute_text_process", AsyncMock(side_effect=failure))
+    decision = await detect_tts_intent(llm_context="В переписке встретилось озвучь ответ")
+    assert decision.explicit_tts is False
+    assert decision.reason == "classifier_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_detect_tts_intent_from_user_text():
     decision = await detect_tts_intent(user_text="Пожалуйста, озвучь ответ про погоду")
     assert decision.explicit_tts is True

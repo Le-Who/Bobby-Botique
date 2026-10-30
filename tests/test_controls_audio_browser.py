@@ -35,7 +35,7 @@ async def test_audio_catalog_edit_order_default_save_conflict_reset_and_mobile(t
         "html": html,
         "scripts": {
             f"/static/js/{name}": (ROOT / "app/static/js" / name).read_text(encoding="utf-8")
-            for name in ("controls.js", "controls-navigation.js")
+            for name in ("admin-api.js", "controls.js", "controls-navigation.js")
         },
         "css": (ROOT / "app/static/css/controls.css").read_text(encoding="utf-8"),
         "baseline": {"gemini": GEMINI, "elevenlabs": ELEVENLABS},

@@ -27,6 +27,11 @@ An empty override (**Наследовать общую**) uses the historical `d
 
 **Авто** preserves the previous generation scheme. Existing words, image prompts, and prepared session hints are not regenerated automatically. New AI results are cached separately by selected model. Exact-match checks remain local; other answers are judged by the selected Gemini model, which returns both score and hint in one request. An unavailable judge does not consume a player's attempt. Local word banks and deterministic fallback hints remain available.
 
+Model/prompt forms submit the settings revision actually loaded by that editor.
+A conflicting save returns 409 and preserves the selected values for explicit
+comparison/reload. Existing reserve model chains are retained when changing a
+primary selection. Prompt-only saves do not require a newly available model.
+
 **Модель изображения по умолчанию** selects an actual Pollinations catalog model for newly created puzzles, not just a provider. The `daily_croc_image_model` setting stores its canonical ID; legacy `pollinations` maps to `qwen-image`, and FTA remains available. Catalog aliases are resolved when saving. A catalog outage leaves the saved setting unchanged. Each existing puzzle keeps its own model; its card selector still controls actual regeneration. Changing a word does not reset that image-model choice.
 
 Ordinary Crocodile currently has no image-generation step. Per-puzzle image overrides remain specific to that daily puzzle; this shared text-model setting does not introduce a new image feature into ordinary games.
@@ -47,7 +52,25 @@ Choose a date in **Подготовка дня**, including a date absent from t
 - **Подготовить день** queues both difficulties and fills missing assets without forcing regeneration, changing existing words, or clearing player progress. The page polls until the job finishes and refreshes the calendar.
 - Readiness displays word, hints, image prompt, and image separately. Delivery can be ready without art, but **Всё готово** requires all four parts for both difficulties. Missing art due to quota/provider failure is reported as partial, not success.
 
-The endpoints are authenticated `GET /api/admin/dailycroc/day?date=YYYY-MM-DD` and `POST /api/admin/dailycroc/day/prepare` with `{"date":"YYYY-MM-DD"}`. Preparation runs in a managed background task, with Redis ownership/deduplication when available and local guards otherwise. A job has a ten-minute execution timeout; completed/partial/failed status expires after one day. Failed or interrupted preparation can be retried. This explicit admin operation bypasses the automatic image quota, but not provider limits.
+The read endpoint remains `GET /api/admin/dailycroc/day?date=YYYY-MM-DD`.
+Administrative generation uses authenticated, CSRF-protected Daily job preflight
+and admission. The legacy `POST /api/admin/dailycroc/day/prepare` is a short adapter
+requiring `date` and `operation_id`. Image replacement and word reset additionally
+require the puzzle's `expected_revision`. New jobs run in the shared `daily` lane;
+there is no separate fire-and-forget preparation task. The queue has a 30-minute
+admission-age limit and Crocodile has a separate ten-minute execution budget.
+Terminal status is retained for one day. Confirmed partial generation records
+actual generated/skipped/failed/remaining counts; uncertain delivery is not
+automatically retried. Status lookup recovers a lost admission response using the
+same operation ID. See [Daily jobs](runtime-controls.md#daily-jobs-и-ревизии-редакторов).
+
+Generation writes carry a content revision and ownership token. A newer edit or
+generation invalidates an older result before publication. After play starts,
+the target word, hints and existing image identity are frozen; the first image
+may still fill an empty slot. Persisted word plus three distinct hints is enough
+to start play while optional prompt/art work continues. Provider calls do not
+hold database row locks. Explicit admin preparation bypasses the automatic image
+quota, while provider limits, content revision and ownership checks still apply.
 
 ## Natal smoke and dependency validation
 

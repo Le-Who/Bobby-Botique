@@ -1,11 +1,16 @@
-import asyncio
+"""Readiness and legacy drain; new execution uses the shared queue contracts."""
+
 import time
 from datetime import date
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app import cache
+from app.games import admin_jobs
 from app.games import daily_preparation as service
+from app.queue_contracts import AdmissionState, JobOutcome, QueueAdmission, QueueConflict
 from app.repos import crocodile_daily as repo
 from app.utils.json_compat import json
 
@@ -16,8 +21,6 @@ DAY = date(2027, 2, 5)
 def store(monkeypatch):
     rows = {}
     monkeypatch.setattr(cache, "redis_client", None)
-    monkeypatch.setattr(service, "_jobs", {})
-    monkeypatch.setattr(service, "_tasks", {})
 
     async def get(puzzle_date, *, difficulty):
         assert puzzle_date == DAY
@@ -30,225 +33,111 @@ def store(monkeypatch):
 @pytest.mark.asyncio
 async def test_absent_day_is_read_only(store, monkeypatch):
     async def forbidden(*args, **kwargs):
-        pytest.fail("Readiness must not create puzzles or call generation")
+        pytest.fail("Readiness cannot create puzzles or invoke providers")
 
     monkeypatch.setattr(repo, "create_puzzle_if_missing", forbidden)
-    monkeypatch.setattr(service, "prepare_daily_puzzle", forbidden)
+    monkeypatch.setattr("app.games.crocodile_daily.prepare_daily_puzzle", forbidden)
     result = await service.get_day_readiness(DAY)
-    assert result["date"] == "2027-02-05"
-    assert result["fully_ready"] is False
-    assert result["job"] is None
+    assert result["job"] is None and not result["fully_ready"]
     assert [p["difficulty"] for p in result["puzzles"]] == ["easy", "hard"]
-    assert all(not p["exists"] and not p["fully_ready"] for p in result["puzzles"])
-    assert store == {}
+    assert all(not p["exists"] for p in result["puzzles"])
 
 
 @pytest.mark.asyncio
-async def test_day_prepares_both_without_forcing_and_deduplicates(store, monkeypatch):
-    entered = asyncio.Event()
-    release = asyncio.Event()
-    bot = object()
+@pytest.mark.parametrize("owner,expected", [("old-owner", "running"), (None, "failed")])
+async def test_legacy_owner_is_observed_and_never_resumed(store, monkeypatch, owner, expected):
+    metadata = {
+        "id": "old-owner",
+        "state": "running",
+        "started_at": time.time(),
+        "deadline": time.time() + 60,
+        "private_extra": "must not escape",
+    }
 
-    async def prepare(puzzle_date, given_bot, *, difficulty, include_image, force_image, bypass_image_quota):
-        assert given_bot is bot and include_image and not force_image
-        assert bypass_image_quota
-        entered.set()
-        await release.wait()
+    async def get(key):
+        return owner if key.endswith(":lease") else json.dumps(metadata)
+
+    redis = SimpleNamespace(get=AsyncMock(side_effect=get), set=AsyncMock(), eval=AsyncMock())
+    monkeypatch.setattr(cache, "redis_client", redis)
+    result = await service._read_job(DAY)
+    assert result["state"] == expected and "private_extra" not in result
+    redis.set.assert_not_awaited()
+    redis.eval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_legacy_active_or_unavailable_blocks_new_preparation(store, monkeypatch):
+    monkeypatch.setattr(
+        admin_jobs, "effective_policy", AsyncMock(return_value={"models": ["synthetic"], "revision": 1})
+    )
+    for state in ("running", "unknown"):
+        monkeypatch.setattr(service, "_read_job", AsyncMock(return_value={"state": state, "legacy": True}))
+        queue = SimpleNamespace(read_job_by_operation=AsyncMock(return_value=None), enqueue_job=AsyncMock())
+        with pytest.raises(QueueConflict):
+            await admin_jobs.enqueue(
+                admin_jobs.DailyCommand("croc.prepare_day", DAY.isoformat()), "operation-123", queue=queue
+            )
+        queue.enqueue_job.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_compatibility_service_uses_same_typed_queue(monkeypatch):
+    enqueue = AsyncMock(return_value=QueueAdmission(AdmissionState.UNKNOWN, "job-id", "admission_unconfirmed"))
+    monkeypatch.setattr(admin_jobs, "enqueue", enqueue)
+    result = await service.start_day_preparation(DAY, operation_id="operation-123")
+    assert result["state"] == "unknown" and result["id"] == "job-id"
+    assert enqueue.await_args.args[1] == "operation-123"
+
+
+@pytest.mark.asyncio
+async def test_readiness_looks_up_active_conflicts_without_scanning_history(store, monkeypatch):
+    from app.queue import task_queue
+
+    current = SimpleNamespace(
+        kind="croc.prepare_day",
+        task_id="current-job",
+        result_summary={"date": DAY.isoformat()},
+        as_dict=lambda: {"state": "queued", "task_id": "current-job"},
+    )
+    lookup = AsyncMock(return_value=(current,))
+    monkeypatch.setattr(task_queue, "read_jobs_by_conflicts", lookup)
+    history = AsyncMock(side_effect=AssertionError("Readiness must not scan historical job pages"))
+    monkeypatch.setattr(task_queue, "list_jobs", history)
+    result = await service.get_day_readiness(DAY)
+    assert result["job"]["id"] == "current-job"
+    assert result["job"]["legacy"] is False
+    lookup.assert_awaited_once_with(0, "daily", (f"croc:{DAY}:easy", f"croc:{DAY}:hard"))
+    history.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["provider", "revision"])
+async def test_failure_does_not_skip_other_slot_and_uses_persisted_assets(store, monkeypatch, failure):
+    calls = []
+
+    async def prepare(day, *, difficulty, **kwargs):
+        calls.append(difficulty)
+        if difficulty == "easy":
+            raise repo.DailyCrocConflict() if failure == "revision" else RuntimeError("private provider detail")
         store[difficulty] = repo.DailyPuzzle(
-            puzzle_date,
+            day,
             "кот",
-            "животные",
+            "Животные",
             "ru",
             difficulty=difficulty,
-            hints=["один", "два", "три", "четыре", "пять", "шесть"],
+            hints=["one", "two", "three"],
             image_prompt="cat",
-            image_file_id="photo",
+            image_file_id="same-art",
         )
         return store[difficulty]
 
-    monkeypatch.setattr(service, "prepare_daily_puzzle", prepare)
-    first = await service.start_day_preparation(DAY, bot)
-    await entered.wait()
-    second = await service.start_day_preparation(DAY, bot)
-    assert first["id"] == second["id"]
-    release.set()
-    await service._tasks[DAY]
-    result = await service.get_day_readiness(DAY)
-    assert set(store) == {"easy", "hard"}
-    assert result["fully_ready"] is True
-    assert result["job"]["state"] == "completed"
-
-
-@pytest.mark.asyncio
-async def test_failure_does_not_skip_other_slot_or_claim_return_value_ready(store, monkeypatch):
-    async def prepare(puzzle_date, bot, *, difficulty, **kwargs):
-        if difficulty == "easy":
-            raise RuntimeError("secret provider payload")
-        store[difficulty] = repo.DailyPuzzle(puzzle_date, "кот", "животные", "ru", difficulty=difficulty)
-        return repo.DailyPuzzle(puzzle_date, "кот", "животные", "ru", hints=["a"], image_prompt="a", image_file_id="a")
-
-    monkeypatch.setattr(service, "prepare_daily_puzzle", prepare)
-    await service.start_day_preparation(DAY, object())
-    await service._tasks[DAY]
-    result = await service.get_day_readiness(DAY)
-    assert result["fully_ready"] is False
-    assert result["job"]["state"] == "partial"
-    assert "secret" not in str(result)
-    assert set(store) == {"hard"}
-
-
-@pytest.mark.asyncio
-async def test_cancelled_job_is_failed_and_retryable(store, monkeypatch):
-    entered = asyncio.Event()
-
-    async def prepare(*args, **kwargs):
-        entered.set()
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(service, "prepare_daily_puzzle", prepare)
-    first = await service.start_day_preparation(DAY, object())
-    await entered.wait()
-    task = service._tasks[DAY]
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert (await service.get_day_readiness(DAY))["job"]["state"] == "failed"
-    second = await service.start_day_preparation(DAY, object())
-    assert first["id"] != second["id"]
-    await asyncio.sleep(0)
-    service._tasks[DAY].cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await service._tasks[DAY]
-
-
-@pytest.mark.asyncio
-async def test_local_fallback_preparation_timeout_is_bounded_and_cleans_worker(store, monkeypatch):
-    cleaned = asyncio.Event()
-
-    async def prepare(*args, **kwargs):
-        try:
-            await asyncio.Event().wait()
-        finally:
-            cleaned.set()
-
-    monkeypatch.setattr(service, "_TIMEOUT", 0.02)
-    monkeypatch.setattr(service, "prepare_daily_puzzle", prepare)
-    job = await service.start_day_preparation(DAY, object())
-    await asyncio.wait_for(service._tasks[DAY], 1)
-    result = await service.get_day_readiness(DAY)
-    assert cleaned.is_set()
-    assert result["job"]["id"] == job["id"]
-    assert result["job"]["state"] == "failed"
-    assert result["job"]["errors"] == ["Preparation interrupted or readiness unavailable; retry is available."]
-
-
-class RedisStore:
-    def __init__(self):
-        self.values = {}
-
-    async def get(self, key):
-        return self.values.get(key)
-
-    async def set(self, key, value, *, nx=False, ex=None):
-        if nx and key in self.values:
-            return False
-        self.values[key] = value
-        return True
-
-    async def eval(self, script, count, *args):
-        lease = args[0]
-        token = args[count]
-        if self.values.get(lease) != token:
-            return 0
-        if count == 1:
-            del self.values[lease]
-        else:
-            self.values[args[1]] = args[count + 1]
-        return 1
-
-
-@pytest.mark.asyncio
-async def test_other_worker_lease_deduplicates_without_spawning(store, monkeypatch):
-    redis = RedisStore()
-    monkeypatch.setattr(cache, "redis_client", redis)
-    lease, status = service._keys(DAY)
-    redis.values[lease] = "other-worker"
-    redis.values[status] = json.dumps(
-        {"id": "other-worker", "state": "running", "started_at": time.time(), "deadline": time.time() + 100}
+    monkeypatch.setattr("app.games.crocodile_daily.prepare_daily_puzzle", prepare)
+    monkeypatch.setattr("app.bot_instance.get_bot", lambda: object())
+    monkeypatch.setattr(
+        admin_jobs, "effective_policy", AsyncMock(return_value={"models": ["synthetic"], "revision": 1})
     )
-    result = await service.start_day_preparation(DAY, object())
-    assert result["id"] == "other-worker"
-    assert result["state"] == "running"
-    assert service._tasks == {}
-
-
-@pytest.mark.asyncio
-async def test_busy_lease_does_not_report_old_completed_job(store, monkeypatch):
-    redis = RedisStore()
-    monkeypatch.setattr(cache, "redis_client", redis)
-    lease, status = service._keys(DAY)
-    redis.values[lease] = "new-worker"
-    redis.values[status] = json.dumps(
-        {"id": "previous-worker", "state": "completed", "started_at": time.time(), "deadline": time.time() + 100}
-    )
-    result = await service.start_day_preparation(DAY, object())
-    assert result["state"] == "running"
-    assert result["id"] == "new-worker"
-
-
-@pytest.mark.asyncio
-async def test_expired_status_is_not_stuck_running(store, monkeypatch):
-    redis = RedisStore()
-    monkeypatch.setattr(cache, "redis_client", redis)
-    redis.values[service._keys(DAY)[1]] = json.dumps(
-        {"id": "dead-worker", "state": "running", "started_at": time.time() - 1000, "deadline": time.time() - 1}
-    )
-    result = await service.get_day_readiness(DAY)
-    assert result["job"]["state"] == "failed"
-    assert redis.values[service._keys(DAY)[1]]  # GET never rewrites persisted status.
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("rejected", [False, True])
-async def test_unstarted_job_can_retry_without_waiting_for_redis_lease(store, monkeypatch, rejected):
-    redis = RedisStore()
-    monkeypatch.setattr(cache, "redis_client", redis)
-    real_submit = service.submit_task
-
-    def submit(coro):
-        if rejected:
-            coro.close()
-            return asyncio.create_task(asyncio.sleep(0))
-        return asyncio.create_task(coro)
-
-    monkeypatch.setattr(service, "submit_task", submit)
-    first = await service.start_day_preparation(DAY, object())
-    task = service._tasks[DAY]
-    if rejected:
-        await task
-    else:
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-    assert (await service.get_day_readiness(DAY))["job"]["state"] == "failed"
-
-    async def prepare(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(service, "submit_task", real_submit)
-    monkeypatch.setattr(service, "prepare_daily_puzzle", prepare)
-    second = await service.start_day_preparation(DAY, object())
-    assert second["id"] != first["id"]
-    assert second["state"] == "queued"
-    await service._tasks[DAY]
-    assert service._keys(DAY)[0] not in redis.values
-
-
-@pytest.mark.asyncio
-async def test_missing_redis_lease_reconciles_dead_worker_before_deadline(store, monkeypatch):
-    redis = RedisStore()
-    monkeypatch.setattr(cache, "redis_client", redis)
-    redis.values[service._keys(DAY)[1]] = json.dumps(
-        {"id": "lost-lease", "state": "running", "started_at": time.time(), "deadline": time.time() + 600}
-    )
-    assert (await service.get_day_readiness(DAY))["job"]["state"] == "failed"
+    result = await admin_jobs.execute(command={"kind": "croc.prepare_day", "date": DAY.isoformat()})
+    assert calls == ["easy", "hard"] and result.outcome is JobOutcome.PERMANENT_FAILURE
+    assert result.reason_code == ("revision_conflict" if failure == "revision" else "partial_generation")
+    assert result.result_summary["generated"] == result.result_summary["failed"] == 4
+    assert "private provider" not in str(result)

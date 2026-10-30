@@ -2,7 +2,9 @@
 
 import asyncio
 import hmac
+import re
 import secrets
+import time
 from collections.abc import Generator, Mapping
 from typing import Any
 
@@ -18,6 +20,7 @@ from app.command_aliases import (
     validate_alias_values,
     validate_aliases,
 )
+from app.observability.events import emit
 from app.process_policies import PROCESSES, baseline_models, list_processes, resolve_policy_value, validate_policy
 from app.runtime_settings import audio, models, prompts
 from app.runtime_settings.store import (
@@ -29,6 +32,108 @@ from app.runtime_settings.store import (
 )
 
 MAX_CONTROL_BODY_BYTES = 300_000
+_QUEUE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
+_OPERATION_ID = re.compile(r"[A-Za-z0-9_-]{8,128}\Z")
+_PUBLIC_QUEUE_REASONS = frozenset(
+    {
+        "revision_conflict",
+        "owner_or_revision_conflict",
+        "operation_id_conflict",
+        "retry_not_available",
+        "privacy_revoked",
+        "payload_not_available",
+        "payload_expired",
+        "cancel_requested",
+        "attempts_exhausted",
+        "retry_after_deadline",
+        "deadline_expired",
+        "owner_lost",
+        "owner_expired",
+        "worker_interrupted",
+        "execution_interrupted",
+        "delivery_unconfirmed",
+        "document_storage_unconfirmed",
+        "handler_failed",
+        "admission_paused",
+        "lane_capacity",
+        "payload_capacity",
+        "invalid_public_summary",
+        "unknown_lane",
+    }
+)
+
+
+def _queue_reason(value) -> str | None:
+    return (
+        value
+        if isinstance(value, str) and value in _PUBLIC_QUEUE_REASONS
+        else "job_outcome_recorded"
+        if value
+        else None
+    )
+
+
+def _public_job(snapshot) -> dict[str, Any]:
+    from app.queue_contracts import JobState, public_summary
+
+    data = snapshot.as_dict()
+    # Do not expose new store fields implicitly or arbitrary result dictionaries.
+    fields = {
+        "task_id",
+        "kind",
+        "lane",
+        "state",
+        "revision",
+        "attempts_started",
+        "max_attempts",
+        "submitted_at",
+        "started_at",
+        "finished_at",
+        "not_before",
+        "deadline_at",
+        "heartbeat_at",
+        "storage_mode",
+        "parent_task_id",
+    }
+    result = {name: data[name] for name in fields}
+    result["reason_code"] = _queue_reason(data.get("reason_code"))
+    result["result_summary"] = public_summary(snapshot.result_summary)
+    result["age_seconds"] = max(0, time.time() - snapshot.submitted_at)
+    result["scope"] = "process" if snapshot.storage_mode == "local" else "shared"
+    result["capabilities"] = {
+        "cancel": snapshot.state in {JobState.QUEUED, JobState.DELAYED, JobState.RUNNING},
+        "retry": snapshot.state in {JobState.FAILED, JobState.EXPIRED}
+        and snapshot.retry_eligible
+        and snapshot.retry_payload_available,
+    }
+    return result
+
+
+def _queue_identifier(value: str) -> str:
+    if not _QUEUE_ID.fullmatch(value):
+        raise ValueError("Некорректный ID задания")
+    return value
+
+
+def _queue_lane(value: str) -> str:
+    from app.queue_store import LANE_WORKERS
+
+    if value not in LANE_WORKERS:
+        raise ValueError("Неизвестная очередь")
+    return value
+
+
+async def _queue_command_body(*, lane_state: bool = False) -> dict[str, Any]:
+    data = await _mutation_body()
+    allowed = {"expected_revision", "operation_id"}
+    if lane_state:
+        allowed.update({"admission_paused", "claim_paused"})
+    if data.keys() - allowed:
+        raise ValueError("Неподдерживаемые поля команды. Пределы очереди доступны только для чтения.")
+    operation_id = data.get("operation_id")
+    if not isinstance(operation_id, str) or not _OPERATION_ID.fullmatch(operation_id):
+        raise ValueError("Необходим operation_id длиной 8–128 символов")
+    return data
 
 
 class _ControlsBody(Body):
@@ -64,7 +169,11 @@ class ControlsRequest(Request):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        if self.path == "/api/admin/controls" or self.path.startswith("/api/admin/controls/"):
+        if self.path in {
+            "/api/admin/controls",
+            "/api/admin/daily/jobs",
+            "/api/admin/daily/jobs/preview",
+        } or self.path.startswith(("/api/admin/controls/", "/api/controls/", "/api/admin/broadcast/")):
             self.body = _ControlsBody(self.content_length)
 
 
@@ -185,6 +294,225 @@ def register_controls(app, require_auth) -> None:
     @require_auth
     async def controls_page():
         return await render_template("controls.html", csrf_token=_csrf())
+
+    @bp.route("/api/controls/queues")
+    @require_auth
+    async def queues_overview():
+        from app.observability.load_metrics import load_snapshot
+        from app.queue import task_queue
+
+        load = load_snapshot()
+        try:
+            async with asyncio.timeout(5):
+                queue = await task_queue.get_queue_stats()
+        except Exception:
+            queue = {"available": False, "reason_code": "source_unavailable", "scope": "unknown", "lanes": {}}
+        for lane in queue.get("lanes", {}).values():
+            lane["capabilities"] = {"set_state": lane.get("available") is True}
+        return jsonify(
+            queue=queue,
+            load=load,
+            observed_at=time.time(),
+            capabilities={"queue_actions": True, "process_load_actions": False, "policy_edit": False},
+        )
+
+    @bp.route("/api/controls/jobs")
+    @require_auth
+    async def queue_jobs():
+        from app.queue import task_queue
+        from app.queue_contracts import JobState
+
+        if any(len(request.args.getlist(key)) != 1 for key in request.args):
+            raise ValueError("Повторяющиеся параметры фильтра")
+        lane = request.args.get("lane") or None
+        if lane is not None:
+            _queue_lane(lane)
+        raw_state = request.args.get("state") or None
+        if raw_state is not None and raw_state not in {item.value for item in JobState}:
+            raise ValueError("Неизвестное состояние задания")
+        cursor = request.args.get("cursor") or None
+        if cursor is not None and (not cursor.isascii() or not cursor.isdecimal() or len(cursor) > 12):
+            raise ValueError("Некорректный курсор")
+        raw_limit = request.args.get("limit", "50")
+        if not raw_limit.isascii() or not raw_limit.isdecimal() or not 1 <= int(raw_limit) <= 100:
+            raise ValueError("Размер страницы должен быть от 1 до 100")
+        try:
+            async with asyncio.timeout(5):
+                page = await task_queue.list_jobs(
+                    lane=lane, state=JobState(raw_state) if raw_state else None, cursor=cursor, limit=int(raw_limit)
+                )
+            items = [_public_job(item) for item in page.items]
+            scopes = {item["scope"] for item in items}
+            return jsonify(
+                items=items,
+                next_cursor=page.next_cursor,
+                available=True,
+                observed_at=time.time(),
+                scope=next(iter(scopes)) if len(scopes) == 1 else "mixed" if scopes else "unknown",
+            )
+        except Exception:
+            return jsonify(available=False, reason_code="source_unavailable", items=[], next_cursor=None), 503
+
+    @bp.route("/api/controls/jobs/<task_id>")
+    @require_auth
+    async def queue_job(task_id):
+        from app.queue import task_queue
+
+        _queue_identifier(task_id)
+        try:
+            async with asyncio.timeout(5):
+                job = await task_queue.read_job(task_id)
+            if job is None:
+                return jsonify(available=False, reason_code="job_not_found"), 404
+            return jsonify(job=_public_job(job), available=True, observed_at=time.time())
+        except Exception:
+            return jsonify(available=False, reason_code="source_unavailable"), 503
+
+    @bp.route("/api/controls/jobs/<task_id>/<action>", methods=["POST"])
+    @require_auth
+    async def queue_job_command(task_id, action):
+        from app.queue import task_queue
+        from app.queue_contracts import AdmissionState, QueueConflict
+
+        _queue_identifier(task_id)
+        if action not in {"cancel", "retry"}:
+            raise ValueError("Неизвестная команда задания")
+        data = await _queue_command_body()
+        try:
+            async with asyncio.timeout(5):
+                result = await (task_queue.request_cancel if action == "cancel" else task_queue.retry_job)(
+                    task_id,
+                    expected_revision=data["expected_revision"],
+                    actor="admin",
+                    operation_id=data["operation_id"],
+                )
+            revision = result.revision if action == "cancel" else data["expected_revision"]
+            confirmed = action == "cancel" or result.state is not AdmissionState.UNKNOWN
+            emit(
+                "admin.queue_command",
+                actor_ref="configured_admin",
+                action=action,
+                job_id=task_id,
+                previous_revision=data["expected_revision"],
+                new_revision=revision if confirmed else None,
+                reason_code="owner_confirmed" if confirmed else "command_unconfirmed",
+            )
+            if action == "cancel":
+                return jsonify(confirmed=True, job=_public_job(result), observed_at=time.time())
+            source_job = None
+            if result.state in {AdmissionState.ACCEPTED, AdmissionState.EXISTING}:
+                try:
+                    async with asyncio.timeout(1):
+                        source = await task_queue.read_job(task_id)
+                    source_job = _public_job(source) if source is not None else None
+                except Exception:
+                    pass  # An optional read cannot undo confirmed admission.
+            return jsonify(
+                confirmed=confirmed,
+                source_job=source_job,
+                observed_at=time.time(),
+                admission={
+                    "state": result.state.value,
+                    "task_id": result.task_id,
+                    "reason_code": _queue_reason(result.reason_code),
+                    "storage_mode": result.storage_mode,
+                },
+            ), (
+                200
+                if result.state in {AdmissionState.ACCEPTED, AdmissionState.EXISTING}
+                else 409
+                if result.state is AdmissionState.REJECTED
+                else 503
+            )
+        except QueueConflict as error:
+            emit(
+                "admin.queue_command",
+                actor_ref="configured_admin",
+                action=action,
+                job_id=task_id,
+                previous_revision=data["expected_revision"],
+                new_revision=None,
+                reason_code=_queue_reason(error.reason_code),
+            )
+            return jsonify(confirmed=False, reason_code=_queue_reason(error.reason_code)), 409
+        except Exception:
+            emit(
+                "admin.queue_command",
+                actor_ref="configured_admin",
+                action=action,
+                job_id=task_id,
+                previous_revision=data["expected_revision"],
+                new_revision=None,
+                reason_code="command_unconfirmed",
+            )
+            return jsonify(confirmed=False, reason_code="command_unconfirmed"), 503
+
+    @bp.route("/api/controls/queues/<lane>/state", methods=["POST"])
+    @require_auth
+    async def queue_lane_command(lane):
+        from app.queue import task_queue
+        from app.queue_contracts import QueueConflict
+
+        _queue_lane(lane)
+        data = await _queue_command_body(lane_state=True)
+        if type(data.get("admission_paused")) is not bool or type(data.get("claim_paused")) is not bool:
+            raise ValueError("Оба режима паузы должны быть boolean")
+        try:
+            async with asyncio.timeout(5):
+                result = await task_queue.set_lane_state(
+                    lane,
+                    expected_revision=data["expected_revision"],
+                    admission_paused=data["admission_paused"],
+                    claim_paused=data["claim_paused"],
+                    actor="admin",
+                    operation_id=data["operation_id"],
+                )
+            emit(
+                "admin.queue_command",
+                actor_ref="configured_admin",
+                action="set_lane_state",
+                lane=lane,
+                previous_revision=data["expected_revision"],
+                new_revision=result.revision,
+                reason_code="owner_confirmed",
+            )
+            return jsonify(
+                confirmed=True,
+                observed_at=time.time(),
+                scope="unknown",
+                reason_code="owner_confirmed",
+                capabilities={"set_state": True, "policy_edit": False},
+                lane={
+                    "lane": result.lane,
+                    "revision": result.revision,
+                    "admission_paused": result.admission_paused,
+                    "claim_paused": result.claim_paused,
+                    "workers": result.workers,
+                    "policy": result.policy.as_dict(),
+                },
+            )
+        except QueueConflict as error:
+            emit(
+                "admin.queue_command",
+                actor_ref="configured_admin",
+                action="set_lane_state",
+                lane=lane,
+                previous_revision=data["expected_revision"],
+                new_revision=None,
+                reason_code=_queue_reason(error.reason_code),
+            )
+            return jsonify(confirmed=False, reason_code=_queue_reason(error.reason_code)), 409
+        except Exception:
+            emit(
+                "admin.queue_command",
+                actor_ref="configured_admin",
+                action="set_lane_state",
+                lane=lane,
+                previous_revision=data["expected_revision"],
+                new_revision=None,
+                reason_code="command_unconfirmed",
+            )
+            return jsonify(confirmed=False, reason_code="command_unconfirmed"), 503
 
     @bp.route("/api/admin/controls", methods=["GET", "POST"])
     @require_auth

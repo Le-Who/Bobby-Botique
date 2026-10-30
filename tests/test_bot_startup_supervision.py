@@ -110,3 +110,6 @@ async def test_failed_database_initialization_propagates_after_cleanup(monkeypat
     assert caught.value is failure
     assert not service_started, "bot/web started after schema initialization failed"
     assert database_closed, "partial database resources must close after failed startup"
+    from app.dashboard_sources import bot_lifecycle
+
+    assert bot_lifecycle.snapshot()["state"] == "failed"

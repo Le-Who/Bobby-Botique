@@ -2,16 +2,17 @@
 
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
+
+from tests.admin_daily_sources import read_admin_daily_sources
 
 
 def test_quota_control_loads_saves_and_reports_rejected_values():
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js is needed for admin JavaScript tests")
-    template = (Path(__file__).parents[1] / "app/templates/admin_daily.html").read_text(encoding="utf-8")
+    template = read_admin_daily_sources()
     source = template[
         template.index("  async function loadImageQuota()") : template.index("  function renderDayStatus(data)")
     ]
@@ -67,7 +68,7 @@ def test_regenerate_reads_card_image_model_not_unrelated_text_model():
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js is needed for admin JavaScript tests")
-    template = (Path(__file__).parents[1] / "app/templates/admin_daily.html").read_text(encoding="utf-8")
+    template = read_admin_daily_sources()
     source = template[
         template.index("  async function regenerate(date, diff)") : template.index(
             "  async function savePrompt(date, diff)"
@@ -84,8 +85,9 @@ const document = {getElementById(id) {
 }};
 const showConfirm = async () => true;
 const apiHeaders = {};
+const revisionFor = () => 4;
 let payload;
-const fetch = async (url, options) => {payload = JSON.parse(options.body); return {ok:true,json:async()=>({success:true})}};
+const runCrocJob = async command => {payload = command;};
 const showToast = () => {};
 const loadPuzzles = async () => {};
 """

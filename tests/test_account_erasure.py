@@ -9,6 +9,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def local_queue_runtime(monkeypatch):
+    from app.queue import TaskQueue
+    from app.queue_store import MemoryQueueStore
+
+    monkeypatch.setattr("app.queue.task_queue", TaskQueue(store=MemoryQueueStore()))
+
+
 class _AsyncContext:
     def __init__(self, value):
         self.value = value
@@ -43,7 +51,25 @@ class _Pool:
 
 @pytest.mark.asyncio
 async def test_erase_user_account_is_atomic_and_cleans_legacy_non_fk_tables():
+    from app.queue import TaskQueue
+    from app.queue_contracts import QueuePolicy
+    from app.queue_store import JobEnvelope, MemoryQueueStore
     from app.repos import users
+
+    queue_store = MemoryQueueStore()
+    queue = TaskQueue(store=queue_store)
+    await queue_store.admit(
+        JobEnvelope(
+            "pending-private",
+            "document_processing",
+            "deferred",
+            42,
+            '{"synthetic":"private"}',
+            "private-operation",
+            privacy_epoch=7,
+        ),
+        QueuePolicy(),
+    )
 
     connection = _Connection()
     manager = SimpleNamespace(pool=_Pool(connection), is_connected=True, _user_auth_cache={42: True})
@@ -57,6 +83,8 @@ async def test_erase_user_account_is_atomic_and_cleans_legacy_non_fk_tables():
 
     async def query_after_task_shutdown(*_args, **_kwargs):
         assert summary_tasks_stopped, "DB erasure started before summary tasks stopped"
+        if "DELETE FROM" in _args[0]:
+            assert not queue_store.jobs and not queue_store.payloads and not queue_store.identities
         if "nextval('memory_consent_epoch_seq')" in _args[0]:
             return [{"memory_epoch": 12, "ltm_enabled": True}]
         if "private_data_blocked IS TRUE" in _args[0]:
@@ -68,6 +96,7 @@ async def test_erase_user_account_is_atomic_and_cleans_legacy_non_fk_tables():
 
     with (
         patch.object(users, "db_manager", manager),
+        patch("app.queue.task_queue", queue),
         patch.object(users, "db_query", query),
         patch.object(users, "set_user_context", new_callable=AsyncMock) as set_context,
         patch.object(users, "clear_user_context", new_callable=AsyncMock) as clear_context,

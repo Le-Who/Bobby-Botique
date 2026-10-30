@@ -8,26 +8,32 @@ from app import web
 from app.games import crocodile_daily as daily
 from app.providers import pollinations
 from app.repos import settings_repo
-from app.runtime_settings import legacy_models
+from app.runtime_settings import legacy_models, store
 
 
 @pytest.fixture
-def admin(monkeypatch):
+async def admin(monkeypatch):
     monkeypatch.setattr(web.settings, "ADMIN_SECRET", "test-token")
     monkeypatch.setattr(web.settings, "AVAILABLE_MODELS", ["gemini-2.5-flash", "gemini-2.5-pro"])
-    return web.quart_app.test_client(), {"X-Auth-Token": "test-token"}
+    monkeypatch.setattr(settings_repo, "get_global_setting", AsyncMock(side_effect=lambda key, default="": default))
+    client = web.quart_app.test_client()
+    async with client.session_transaction() as session:
+        session["controls_csrf"] = "synthetic-csrf"
+    return client, {"X-Auth-Token": "test-token", "X-CSRF-Token": "synthetic-csrf"}
 
 
 @pytest.mark.asyncio
 async def test_role_setting_is_saved_separately_from_shared_default(monkeypatch, admin):
     client, headers = admin
-    save = AsyncMock()
-    monkeypatch.setattr(legacy_models, "save_croc_model", save)
+    save = AsyncMock(return_value=store.SettingsSnapshot(1, {}))
+    monkeypatch.setattr(legacy_models, "save_croc_model_at_revision", save)
     response = await client.post(
-        "/api/admin/dailycroc/text-model", headers=headers, json={"process": "judge", "model": "gemini-2.5-pro"}
+        "/api/admin/dailycroc/text-model",
+        headers=headers,
+        json={"process": "judge", "model": "gemini-2.5-pro", "expected_revision": 0},
     )
     assert response.status_code == 200
-    save.assert_awaited_once_with("judge", "gemini-2.5-pro", actor="admin")
+    save.assert_awaited_once_with("judge", "gemini-2.5-pro", expected_revision=0, actor="admin")
 
 
 @pytest.mark.asyncio
@@ -47,20 +53,23 @@ async def test_default_image_model_resolves_alias_and_is_used_at_runtime(monkeyp
     client, headers = admin
     values = {}
 
-    async def save(key, value):
-        values[key] = value
+    async def save(model, **kwargs):
+        values["daily_croc_image_model"] = model
+        return store.SettingsSnapshot(1, {"legacy_model:daily_croc_image_model": model})
 
     async def get(key, default=""):
         return values.get(key, default)
 
-    monkeypatch.setattr(settings_repo, "set_global_setting", save)
+    monkeypatch.setattr(legacy_models, "save_croc_image_model_at_revision", save)
     monkeypatch.setattr(settings_repo, "get_global_setting", get)
     monkeypatch.setattr(
         pollinations,
         "fetch_models",
         AsyncMock(return_value=[{"id": "qwen/qwen-image-3", "title": "Qwen Image 3", "aliases": ["qwen-image-3"]}]),
     )
-    response = await client.post("/api/admin/dailycroc/image-default", headers=headers, json={"model": "qwen-image-3"})
+    response = await client.post(
+        "/api/admin/dailycroc/image-default", headers=headers, json={"model": "qwen-image-3", "expected_revision": 0}
+    )
     assert response.status_code == 200
     assert values["daily_croc_image_model"] == "qwen/qwen-image-3"
     assert await daily.get_daily_image_model() == "qwen/qwen-image-3"
@@ -100,7 +109,9 @@ async def test_default_image_setting_unchanged_when_catalog_unavailable(monkeypa
     save = AsyncMock()
     monkeypatch.setattr(settings_repo, "set_global_setting", save)
     monkeypatch.setattr(pollinations, "fetch_models", AsyncMock(side_effect=RuntimeError("offline")))
-    response = await client.post("/api/admin/dailycroc/image-default", headers=headers, json={"model": "flux"})
+    response = await client.post(
+        "/api/admin/dailycroc/image-default", headers=headers, json={"model": "flux", "expected_revision": 0}
+    )
     assert response.status_code == 503
     save.assert_not_awaited()
 
@@ -117,14 +128,15 @@ async def test_date_controls_require_auth_and_validate_date(admin):
 
 @pytest.mark.asyncio
 async def test_check_and_prepare_support_day_not_in_list(monkeypatch, admin):
-    from app.games import daily_preparation
+    from app.games import admin_jobs, daily_preparation
+    from app.queue_contracts import AdmissionState, QueueAdmission
 
     client, headers = admin
     readiness = {"date": "2026-10-20", "puzzles": [], "job": None, "fully_ready": False}
     check = AsyncMock(return_value=readiness)
-    start = AsyncMock(return_value={"state": "queued"})
+    start = AsyncMock(return_value=QueueAdmission(AdmissionState.ACCEPTED, "job-id"))
     monkeypatch.setattr(daily_preparation, "get_day_readiness", check)
-    monkeypatch.setattr(daily_preparation, "start_day_preparation", start)
+    monkeypatch.setattr(admin_jobs, "enqueue", start)
     bot = SimpleNamespace()
     monkeypatch.setattr("app.bot_instance.get_bot", lambda: bot)
     response = await client.get("/api/admin/dailycroc/day?date=2026-10-20", headers=headers)
@@ -132,6 +144,11 @@ async def test_check_and_prepare_support_day_not_in_list(monkeypatch, admin):
     assert (await response.get_json())["fully_ready"] is False
     start.assert_not_awaited()
     check.assert_awaited_once_with(date(2026, 10, 20))
-    response = await client.post("/api/admin/dailycroc/day/prepare", headers=headers, json={"date": "2026-10-20"})
+    response = await client.post(
+        "/api/admin/dailycroc/day/prepare",
+        headers=headers,
+        json={"date": "2026-10-20", "operation_id": "operation-123"},
+    )
     assert response.status_code == 202
-    start.assert_awaited_once_with(date(2026, 10, 20), bot)
+    command, operation_id = start.await_args.args
+    assert (command.date, command.kind, operation_id) == ("2026-10-20", "croc.prepare_day", "operation-123")

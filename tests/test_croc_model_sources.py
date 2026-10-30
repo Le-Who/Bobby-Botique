@@ -11,9 +11,11 @@ async def test_image_catalog_identifies_source_not_model_publisher(monkeypatch):
     from app import web
     from app.providers import pollinations
     from app.repos import settings_repo
+    from app.runtime_settings.store import SettingsSnapshot
 
     monkeypatch.setattr(web.settings, "ADMIN_SECRET", "test-token")
     monkeypatch.setattr(settings_repo, "get_global_setting", AsyncMock(return_value=""))
+    monkeypatch.setattr(web, "_daily_settings_snapshot", AsyncMock(return_value=SettingsSnapshot(0, {})))
     monkeypatch.setattr(
         pollinations,
         "fetch_models",
@@ -45,11 +47,12 @@ def test_grouped_options_preserve_aliases_unavailable_selection_and_flat_text_mo
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js unavailable")
-    template = (Path(__file__).parents[1] / "app/templates/admin_daily.html").read_text(encoding="utf-8")
-    source = template[template.index("  function fillModels(") : template.index("  async function loadModels()")]
+    template = (Path(__file__).parents[1] / "app/static/js/daily-croc-editor.js").read_text(encoding="utf-8")
+    source = template[template.index("  function fillModels(") : template.index("  async function loadModels(")]
     script = (
         """
 const assert = require('node:assert/strict');
+const DailySettingsState = {subscribe:()=>{}};
 class Element {
   constructor(tagName) {this.tagName=tagName;this.children=[];}
   append(child) {this.children.push(child);}

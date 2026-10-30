@@ -4,16 +4,25 @@ import asyncio
 import contextlib
 import logging
 import re
+import weakref
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
 from app import database as db
 from app.errors import ErrorCode, extract_error_code, is_error_message, tag_error
-from app.process_policies import resolve_process
+from app.games.daily_execution import checkpoint
+from app.process_policies import ResolvedPolicy, resolve_process, validate_policy
 from app.prompt_registry import get_prompt_text, register_controlled_text
 from app.providers import get_provider_router
 from app.repos.keys import count_gemini_keys
+from app.repos.tarot_generation import (
+    GenerationTicket,
+    begin_generation,
+    finish_generation,
+    lock_generation,
+    transaction,
+)
 from app.runtime_settings import interactive_prompts as _interactive_prompts  # noqa: F401
 from app.runtime_settings.lifecycle import runtime_settings_scope
 from app.tarot import iter_daily_card_variants
@@ -50,7 +59,7 @@ _STOP_BATCH_ERROR_CODES = frozenset(
     }
 )
 
-_local_locks: dict[tuple[date, str], asyncio.Lock] = {}
+_local_locks: weakref.WeakValueDictionary[tuple[date, str], asyncio.Lock] = weakref.WeakValueDictionary()
 
 
 @dataclass(frozen=True)
@@ -70,6 +79,19 @@ class TarotDailyPreparationResult:
     skipped: int = 0
     failed: int = 0
     locked: bool = False
+    remaining: int = 0
+
+
+async def resolve_daily_model_policy(model: str | None = None) -> ResolvedPolicy:
+    """An explicit operation model never inherits an administrator's process chain."""
+    if model is None:
+        return await resolve_process("tarot.daily", (TAROT_DAILY_MODEL,))
+    from app.repos.models_repo import get_models
+
+    if not isinstance(model, str) or model not in await get_models("gemini"):
+        raise ValueError("invalid Tarot model")
+    validate_policy("tarot.daily", {"models": [model], "strategy": "sequential"})
+    return ResolvedPolicy((model,), strategy="sequential", explicit=True)
 
 
 def today_reading_date(now: datetime | None = None) -> date:
@@ -124,20 +146,34 @@ async def upsert_prepared_daily_reading(
     language: str,
     body_markdown: str,
     model_name: str = TAROT_DAILY_MODEL,
+    ticket: GenerationTicket | None = None,
+    conn=None,
 ) -> None:
-    await db.db_query(
-        """
+    await checkpoint()
+    async with transaction(conn) as acquired:
+        if not await lock_generation(acquired, reading_date, language, ticket):
+            return
+        conflict = (
+            """DO UPDATE SET body_markdown=EXCLUDED.body_markdown,
+                        model_name=EXCLUDED.model_name,generated_at=EXCLUDED.generated_at"""
+            if ticket
+            else "DO NOTHING"
+        )
+        await acquired.execute(
+            """
         INSERT INTO public.tarot_daily_readings
             (reading_date, card_name, orientation, language, body_markdown, model_name, generated_at)
         VALUES ($1, $2, $3, $4, $5, $6, NOW())
         ON CONFLICT (reading_date, card_name, orientation, language)
-        DO UPDATE SET
-            body_markdown = EXCLUDED.body_markdown,
-            model_name = EXCLUDED.model_name,
-            generated_at = EXCLUDED.generated_at
-        """,
-        (reading_date, card_name, orientation, language, body_markdown.strip(), model_name),
-    )
+        """
+            + conflict,
+            reading_date,
+            card_name,
+            orientation,
+            language,
+            body_markdown.strip(),
+            model_name,
+        )
 
 
 async def count_prepared_daily_readings(
@@ -164,9 +200,15 @@ async def prepare_daily_readings(
     force: bool = False,
     model: str | None = None,
     sleep: Callable[[float], Awaitable[object]] = asyncio.sleep,
+    progress: Callable[..., Awaitable[None]] | None = None,
 ) -> TarotDailyPreparationResult:
     target = target_date or today_reading_date()
+    if language != TAROT_DAILY_LANGUAGE:
+        raise ValueError("unsupported Tarot language")
+    policy = await resolve_daily_model_policy(model)
     lock = _local_locks.setdefault((target, language), asyncio.Lock())
+    if lock.locked():
+        return TarotDailyPreparationResult(target_date=target, locked=True)
 
     async with lock:
         redis_lock = await _acquire_redis_lock(target, language)
@@ -176,8 +218,12 @@ async def prepare_daily_readings(
         generated = 0
         skipped = 0
         failed = 0
+        ticket = None
         try:
             variants = list(iter_daily_card_variants())
+            ticket = await begin_generation(target, language)
+            if progress:
+                await progress(generated=0, skipped=0, failed=0, remaining=len(variants))
             router = get_provider_router()
 
             # Keep a bounded per-card retry budget. Tarot prep is background
@@ -198,6 +244,7 @@ async def prepare_daily_readings(
             _FAILURE_BACKOFF_SECONDS = 30.0
 
             for index, variant in enumerate(variants):
+                await checkpoint()
                 requested_generation = False
                 card_name = str(variant["name"])
                 orientation = str(variant["orientation"])
@@ -210,6 +257,13 @@ async def prepare_daily_readings(
                     )
                     if existing:
                         skipped += 1
+                        if progress:
+                            await progress(
+                                generated=generated,
+                                skipped=skipped,
+                                failed=failed,
+                                remaining=len(variants) - generated - skipped - failed,
+                            )
                         continue
 
                 requested_generation = True
@@ -225,16 +279,15 @@ async def prepare_daily_readings(
                     }
                 ]
                 instruction = _build_daily_system_instruction(str(variant["context"]))
-                baseline_model = model or TAROT_DAILY_MODEL
-                policy = await resolve_process("tarot.daily", (baseline_model,))
+                baseline_model = policy.models[0]
                 successful_model = baseline_model
+
+                def _record_model(model_name: str) -> None:
+                    nonlocal successful_model
+                    successful_model = model_name
+
                 if policy.explicit:
                     try:
-
-                        def _record_model(model_name: str) -> None:
-                            nonlocal successful_model
-                            successful_model = model_name
-
                         result = await router.execute_gemini_model_plan(
                             policy.models,
                             history,
@@ -261,6 +314,7 @@ async def prepare_daily_readings(
                         max_key_retries=max_key_retries,
                         thinking_level="low",
                         timeout=45,
+                        on_model_used=_record_model,
                     )
                 if not result or not result.strip() or is_error_message(result):
                     failed += 1
@@ -272,6 +326,13 @@ async def prepare_daily_readings(
                             target,
                             variant["label"],
                         )
+                        if progress:
+                            await progress(
+                                generated=generated,
+                                skipped=skipped,
+                                failed=failed,
+                                remaining=len(variants) - generated - skipped - failed,
+                            )
                         break
                     # Adaptive backoff: if the API is in a sustained overload storm,
                     # pause long enough for 15s-suspended keys to recover before
@@ -293,19 +354,35 @@ async def prepare_daily_readings(
                         language=language,
                         body_markdown=result.strip(),
                         model_name=successful_model,
+                        ticket=ticket,
                     )
                     generated += 1
+                    if progress:
+                        await progress(actual_model=successful_model)
+
+                if progress:
+                    await progress(
+                        generated=generated,
+                        skipped=skipped,
+                        failed=failed,
+                        remaining=len(variants) - generated - skipped - failed,
+                    )
 
                 if requested_generation and index < len(variants) - 1:
                     await sleep(TAROT_DAILY_REQUEST_INTERVAL_SECONDS)
         finally:
-            await _release_redis_lock(redis_lock)
+            try:
+                if ticket is not None:
+                    await finish_generation(ticket)
+            finally:
+                await _release_redis_lock(redis_lock)
 
         return TarotDailyPreparationResult(
             target_date=target,
             generated=generated,
             skipped=skipped,
             failed=failed,
+            remaining=len(variants) - generated - skipped - failed,
         )
 
 

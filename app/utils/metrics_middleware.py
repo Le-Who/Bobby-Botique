@@ -8,7 +8,12 @@ the core MetricsCollector implementation.
 import asyncio
 import functools
 import time
+from contextlib import AbstractContextManager
 from contextvars import ContextVar, Token
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.observability.request_metrics import RequestObservation
 
 _operation_failure: ContextVar[bool] = ContextVar("user_operation_failure", default=False)
 
@@ -16,6 +21,10 @@ _operation_failure: ContextVar[bool] = ContextVar("user_operation_failure", defa
 def mark_operation_failed() -> None:
     """Carry a handled terminal failure to the single user-operation owner."""
     _operation_failure.set(True)
+    from app.observability.request_metrics import current_request
+
+    if observation := current_request():
+        observation.set_outcome("failed")
 
 
 def operation_failed() -> bool:
@@ -38,11 +47,20 @@ class MetricsMiddleware:
         self.user_id = user_id
         self.success = True
         self._failure_token: Token[bool] | None = None
+        self._observation: RequestObservation | None = None
+        self._observation_scope: AbstractContextManager[RequestObservation] | None = None
 
     async def __aenter__(self):
         self.start_time = time.time()
         if self.user_id is not None:
             self._failure_token = _operation_failure.set(False)
+            from app.observability.ingress import current_update_admitted
+            from app.observability.request_metrics import RequestObservation, current_request
+
+            if current_request() is None:
+                self._observation = RequestObservation(started=current_update_admitted.get())
+                self._observation_scope = self._observation.bind()
+                self._observation_scope.__enter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, _exc_tb):
@@ -62,6 +80,16 @@ class MetricsMiddleware:
             if exc_type is not None:
                 await metrics_collector.record_error(exc_type.__name__, str(exc_val) if exc_val else "Unknown error")
         finally:
+            if self._observation is not None:
+                if exc_type is not None:
+                    self._observation.set_outcome(
+                        "cancelled" if issubclass(exc_type, asyncio.CancelledError) else "failed"
+                    )
+                elif not self.success or operation_failed():
+                    self._observation.set_outcome("failed")
+                self._observation.finish()
+                assert self._observation_scope is not None
+                self._observation_scope.__exit__(None, None, None)
             if self._failure_token is not None:
                 _operation_failure.reset(self._failure_token)
 

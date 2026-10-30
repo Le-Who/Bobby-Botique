@@ -138,6 +138,10 @@ RLS_CONFIG = {
     "tarot_daily_subscriptions": [{"name": "tarot_daily_subscriptions_policy", "template": RLS_POLICY_USER}],
     "user_achievements": [{"name": "user_achievements_policy", "template": RLS_POLICY_USER}],
     "global_settings": [{"name": "global_settings_policy", "template": RLS_POLICY_ADMIN}],
+    "broadcast_journal_coverage": [{"name": "broadcast_journal_coverage_admin_policy", "template": RLS_POLICY_ADMIN}],
+    "broadcast_batches": [{"name": "broadcast_batches_admin_policy", "template": RLS_POLICY_ADMIN}],
+    "broadcast_recipients": [{"name": "broadcast_recipients_admin_policy", "template": RLS_POLICY_ADMIN}],
+    "broadcast_delivery_attempts": [{"name": "broadcast_delivery_attempts_admin_policy", "template": RLS_POLICY_ADMIN}],
     "inline_boards": [{"name": "inline_boards_policy", "template": RLS_POLICY_ADMIN}],
 }
 

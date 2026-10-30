@@ -500,7 +500,15 @@ async def test_typed_router_model_rejection_skips_remaining_keys_and_uses_next_m
 
 
 @pytest.mark.asyncio
-async def test_typed_router_returns_deferred_terminal_instead_of_status_text():
+@pytest.mark.parametrize(
+    "uncertain, missing_epoch, missing_operation",
+    [(False, False, False), (True, False, False), (False, True, False), (False, False, True)],
+)
+async def test_typed_router_returns_deferred_terminal_instead_of_status_text(
+    uncertain, missing_epoch, missing_operation
+):
+    from app.queue_contracts import QueueAdmissionUnconfirmed
+
     router = ProviderRouter()
     status = FakeKeyStatusManager()
     use_case = FakeAgentRequestUseCase(
@@ -527,7 +535,12 @@ async def test_typed_router_returns_deferred_terminal_instead_of_status_text():
     request = GenerationRequest(
         models=("gemini-3.5-flash",),
         turns=(PromptTurn(PromptRole.USER, (TextPart("hi"),)),),
-        scope=RequestScope(user_id=7, chat_id=-100),
+        scope=RequestScope(
+            user_id=7,
+            chat_id=-100,
+            privacy_epoch=None if missing_epoch else 7,
+            operation_id=None if missing_operation else "telegram:update:synthetic",
+        ),
     )
     with (
         patch("app.agent_use_cases.AgentRequestUseCase", return_value=use_case),
@@ -538,11 +551,18 @@ async def test_typed_router_returns_deferred_terminal_instead_of_status_text():
             "app.deferred_response.enqueue_deferred_generation",
             new_callable=AsyncMock,
             return_value="task-42",
-        ),
+            side_effect=QueueAdmissionUnconfirmed("task-42") if uncertain else None,
+        ) as enqueue,
     ):
         events = [event async for event in router.stream(request)]
 
-    assert events == [StreamDeferred("task-42")]
+    if missing_epoch or missing_operation:
+        assert isinstance(events[-1], StreamFailed)
+        assert enqueue.await_count == 0
+    else:
+        assert events == [StreamDeferred("task-42", admission_uncertain=uncertain)]
+        assert enqueue.await_args.kwargs["expected_epoch"] == 7
+        assert enqueue.await_args.kwargs["operation_id"] == "telegram:update:synthetic"
 
 
 @pytest.mark.asyncio

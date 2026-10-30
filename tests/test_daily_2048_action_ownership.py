@@ -46,7 +46,7 @@ def move_store(monkeypatch):
 
     async def load_result(user_id, current_puzzle):
         assert user_id == 777 and current_puzzle == puzzle
-        return stored
+        return puzzle, stored
 
     async def persist(**values):
         nonlocal stored
@@ -64,7 +64,8 @@ def move_store(monkeypatch):
     monkeypatch.setattr("app.repos.users.is_authorized", AsyncMock(return_value=True))
     monkeypatch.setattr("app.repos.crocodile_daily.update_user_display_name", AsyncMock())
     monkeypatch.setattr(repo, "ensure_today_puzzle", AsyncMock(return_value=puzzle))
-    monkeypatch.setattr(repo, "get_or_create_result", load_result)
+    monkeypatch.setattr(repo, "start_puzzle", load_result)
+    monkeypatch.setattr(repo, "get_puzzle", AsyncMock(return_value=puzzle))
     monkeypatch.setattr(repo, "update_result_after_move", persist)
     monkeypatch.setattr(crocodile_runtime, "redis_client", None)
     crocodile_runtime.reset_runtime_state_for_tests()

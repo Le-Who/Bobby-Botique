@@ -128,3 +128,59 @@ TTS-генераций RPM/RPD. Обычный помещающийся исто
 новые календарные карточки читают только `metrics.traffic`. Недоступный снимок
 не подтверждает исправность сервисов, а успешный `/health` не доказывает
 доступ к Telegram или внешней модели.
+
+## Этапы запроса и нагрузка
+
+Новые stage metrics имеют отдельного владельца логического запроса. HTTP,
+Telegram update и повторные provider attempts не создают дополнительные
+`request.finished`. Запрос фиксирует один terminal outcome, сохраняя различие
+`failed`, `partial`, `cancelled`, `rejected` и `deferred`. Detached tasks очищают
+живой объект наблюдения родителя, но сохраняют разрешённый tracing/settings
+context. Дочерние задачи, которые родитель ожидает, используют его наблюдение.
+
+Измеряются admission wait, context, generation, первая подтверждённая видимая
+доставка текста, delivery и total. Статусы ожидания и tool trace не считаются
+первым ответом. Telegram ingress wait учитывается отдельно через
+`telegram.ingress_wait_finished` и `gembot_telegram_ingress_wait_ms_count/sum`:
+он не добавляет ещё один логический запрос. Generation означает время ожидания
+owned generation spans; доставка измеряется на transport boundary.
+
+Панель показывает приблизительные p50/p95/p99 по фиксированным buckets в секундах
+`0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 900, +Inf`.
+Окно — 15 минут из одноминутных сегментов. Рядом указаны n, окно, process scope,
+overflow и low sample при n < 20. Нельзя складывать p95 стадий для получения
+total p95 или переносить одну реплику на весь cluster. Prometheus histogram
+`gembot_request_stage_seconds` сохраняет cumulative count/sum/buckets; выбор
+периода календарных пользовательских операций не меняет это окно.
+
+Amplification — число реальных API attempts на принятый generation request в
+совместимом окне. Coverage ограничено owned routed/direct generation scopes;
+чистые tool intents и detached TTS в знаменатель не входят. Отдельно показаны
+победители гонок, отмены до текста и поздние проигравшие. Поле
+`completed_generation_wait_seconds_per_window_second` делит завершённые
+generation-wait spans на длительность наблюдения; это не фактическая средняя
+concurrency и не оценка всех активных запросов.
+
+Нагрузочные карточки показывают PTB buffered/outstanding, TaskManager
+accepted/running/rejected, heavy/ultra waiters и режим admission, TTS jobs/bytes
+и отдельные job lanes. Значения имеют available, observed_at и scope.
+PTB/TaskManager/TTS и локальные semaphores относятся к процессу; Redis counters
+lane являются общими и не должны суммироваться повторно по репликам. IDs,
+тексты, история и payloads не становятся metric labels; cardinality ограничена.
+
+## Источники дашборда
+
+`app/dashboard_sources.py` объединяет одновременные HTTP/SSE чтения источника в
+один refresh. TTL queue/system — 5 секунд, traffic/metrics/health — 15;
+каждый refresh ограничен 5 секундами. Отмена одного читателя не отменяет общий
+refresh, shutdown отменяет и дожидается принадлежащих кэшу tasks. Сохранения и
+команды очереди инвалидируют соответствующие источники, не весь дашборд.
+
+После отказа возвращается последний успешный снимок с stale/observed_at не
+дольше 60 секунд; затем значение становится unavailable. Частично доступные
+queue lanes сохраняются с `source_partial`, а недоступные поля остаются
+неизвестными. HTTP и SSE используют этот же контракт; зелёное подключение к
+потоку не скрывает устаревшие или отсутствующие данные. Supervisor сообщает
+`starting`, `ready`, `draining`, `stopped` или `failed`; работающий Quart сам по
+себе не устанавливает `ready` для бота. Traffic остаётся независимым источником
+с прежней синхронизацией persisted/pending deltas, без повторного суммирования.

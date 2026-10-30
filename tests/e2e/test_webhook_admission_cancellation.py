@@ -10,10 +10,18 @@ from telegram import Bot
 
 from app.observability.context import request_scope
 from app.observability.ingress import WebhookOriginStore
+from app.update_queue import OutstandingUpdateQueue
 from tests.e2e.test_webhook_lifecycle import _SECRET, _TOKEN, _payload
 from tests.e2e.test_webhook_lifecycle import webhook_client as _webhook_client_fixture
 
-webhook_client = _webhook_client_fixture
+webhook_client_base = _webhook_client_fixture
+
+
+@pytest.fixture
+async def webhook_client(webhook_client_base):
+    client, application, path = webhook_client_base
+    application.update_queue = OutstandingUpdateQueue(2)
+    yield client, application, path
 
 
 async def _checkpoint():
@@ -68,14 +76,21 @@ async def webhook_lifecycle(monkeypatch, request):
     app = Quart(__name__)
     application = MagicMock()
     application.bot = Bot(_TOKEN, request=MagicMock(), get_updates_request=MagicMock())
-    application.update_queue = asyncio.Queue(maxsize=2)
+    application.update_queue = OutstandingUpdateQueue(2)
     application.job_queue = None
     application.initialize = AsyncMock()
     application._initialized = True
     application.updater = None
     builder = MagicMock()
-    for method in ("token", "request", "update_queue", "concurrent_updates"):
+    for method in ("token", "request", "update_queue", "concurrent_updates", "base_url", "base_file_url", "local_mode"):
         getattr(builder, method).return_value = builder
+    configured_queues = []
+
+    def configure_queue(queue):
+        configured_queues.append(queue)
+        return builder
+
+    builder.update_queue.side_effect = configure_queue
     builder.build.return_value = application
     control = SimpleNamespace(
         start_entered=asyncio.Event(),
@@ -90,6 +105,7 @@ async def webhook_lifecycle(monkeypatch, request):
         release_updater_stop=asyncio.Event(),
         registration_failure=None,
         order=[],
+        configured_queues=configured_queues,
     )
 
     async def start():
@@ -128,13 +144,29 @@ async def webhook_lifecycle(monkeypatch, request):
     monkeypatch.setenv("WEBHOOK_URL", "" if polling else "https://webhook.example.test")
     monkeypatch.setattr(bot, "quart_app", app)
     monkeypatch.setattr(bot, "shutdown_event", SimpleNamespace(wait=wait_for_shutdown, is_set=control.shutdown.is_set))
+    configuration = request.param if isinstance(getattr(request, "param", None), dict) else {}
+    local_api = configuration.get("local", False)
+    if local_api:
+        monkeypatch.setattr(
+            "app.telegram_cloud_guard.release_cloud_bot_api_session",
+            AsyncMock(
+                return_value=SimpleNamespace(
+                    ok=True,
+                    status="synthetic-ok",
+                    webhook_was_active=False,
+                    delete_webhook_called=False,
+                    log_out_called=False,
+                    pending_update_count=0,
+                )
+            ),
+        )
     monkeypatch.setattr(
         bot,
         "settings",
         SimpleNamespace(
             TELEGRAM_BOT_TOKEN=_TOKEN,
-            TELEGRAM_LOCAL_SERVER_URL="",
-            UPDATE_QUEUE_MAXSIZE=100,
+            TELEGRAM_LOCAL_SERVER_URL="http://telegram.example.test/bot" if local_api else "",
+            UPDATE_QUEUE_MAXSIZE=configuration.get("capacity", 100),
             WEBHOOK_SECRET_TOKEN=_SECRET,
             WEBHOOK_MAX_CONNECTIONS=3,
         ),
@@ -185,6 +217,31 @@ async def webhook_lifecycle(monkeypatch, request):
         control.release_stop.set()
         control.release_updater_stop.set()
         await _finish_requests(control.owner)
+
+
+@pytest.mark.parametrize(
+    "webhook_lifecycle, expected_capacity",
+    [
+        ({"capacity": 1}, 100),
+        ({"capacity": 250}, 250),
+        ({"local": True, "capacity": 1}, 100),
+        ({"local": True, "capacity": 250}, 250),
+    ],
+    indirect=["webhook_lifecycle"],
+)
+async def test_both_bot_builders_bound_outstanding_with_existing_capacity_floor(webhook_lifecycle, expected_capacity):
+    queue = webhook_lifecycle.configured_queues[-1]
+    for update_id in range(expected_capacity):
+        queue.put_nowait(update_id)
+        assert queue.get_nowait() == update_id
+    assert queue.full(), "The production builder must bound fetched updates, including local Bot API mode"
+    assert queue.outstanding == expected_capacity
+    assert queue.buffered == 0
+    with pytest.raises(asyncio.QueueFull):
+        queue.put_nowait("capacity overflow")
+    for _ in range(expected_capacity):
+        queue.task_done()
+    await asyncio.wait_for(queue.join(), 1)
 
 
 @pytest.mark.parametrize("webhook_lifecycle", ["polling"], indirect=True)
@@ -243,6 +300,7 @@ async def test_handler_cancellation_after_persisted_claim_finishes_one_handoff(
         assert cancelled.value.args == ("first disconnect",)
         assert application.update_queue.get_nowait().update_id == 42
         assert application.update_queue.empty()
+        assert application.update_queue.outstanding == 1
         assert origins.consume(42) == {
             "request_id": "request-owning-42",
             "trace_id": "request-owning-42",
@@ -268,6 +326,45 @@ async def test_handler_cancellation_after_persisted_claim_finishes_one_handoff(
     finally:
         redis.release.set()
         await _finish_requests(posting, owner)
+
+
+@pytest.mark.parametrize("command", [False, True])
+async def test_fetched_unfinished_updates_reject_before_claim_and_retry_after_completion(
+    webhook_client, monkeypatch, command
+):
+    client, application, path = webhook_client
+    queue = application.update_queue
+    redis = _PersistedClaims()
+    redis.release.set()
+    origins = WebhookOriginStore()
+    monkeypatch.setattr("app.webhook_dedupe.redis_client", redis)
+    monkeypatch.setattr("app.observability.ingress.webhook_origins", origins)
+    headers = {"X-Telegram-Bot-Api-Secret-Token": _SECRET}
+    payload = _payload(42)
+    if command:
+        payload["message"].update(text="/start", entities=[{"type": "bot_command", "offset": 0, "length": 6}])
+    for value in ("accepted-first", "accepted-second"):
+        queue.put_nowait(value)
+        assert queue.get_nowait() == value
+    assert queue.buffered == 0
+    assert queue.outstanding == 2
+    rejected = await client.post(path, json=payload, headers=headers)
+    assert rejected.status_code == 503
+    assert redis.claims == set()
+    assert origins.consume(42) is None
+
+    queue.task_done()
+    accepted = await client.post(path, json=payload, headers=headers)
+    assert accepted.status_code == 200
+    assert queue.get_nowait().update_id == 42
+    assert queue.outstanding == 2
+    assert origins.consume(42) is not None
+    queue.task_done()
+    queue.task_done()
+    await asyncio.wait_for(queue.join(), 1)
+    duplicate = await client.post(path, json=payload, headers=headers)
+    assert duplicate.status_code == 200
+    assert queue.outstanding == queue.buffered == 0
 
 
 async def test_cancellation_during_confirmed_local_history_still_finishes_handoff(webhook_client, monkeypatch):

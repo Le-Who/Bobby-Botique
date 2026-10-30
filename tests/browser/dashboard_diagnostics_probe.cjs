@@ -35,6 +35,10 @@ process.stdin.on('end', async () => {
       ],
     };
     const snapshot = {
+      sources: {
+        metrics: { available: true, stale: false, observed_at: Date.now() / 1000, scope: 'process' },
+        queue: { available: true, stale: true, observed_at: Date.now() / 1000 - 25, scope: 'process' },
+      },
       overview: { system: { cpu_percent: 22, memory_percent: 33, disk_percent: 44 },
         services: { database: 'connected', redis: 'connected', bot: 'running' },
         metrics: { total_requests: 12000, traffic: { timezone: 'Europe/Kyiv', periods: {
@@ -107,6 +111,57 @@ process.stdin.on('end', async () => {
     if (data.surface === 'dashboard') {
       await page.goto('http://gemaibot.test/');
       await page.locator('#live-status').filter({ hasText: 'LIVE' }).waitFor();
+      assert.match(await page.locator('[data-source="queue"]').textContent(), /stale/);
+      assert.match(await page.locator('[data-source="metrics"]').textContent(), /current/);
+      for (const state of ['starting', 'ready', 'draining', 'stopped', 'failed']) {
+        // The explicit supervisor state must win over a legacy service value.
+        snapshot.overview.lifecycle = { state, ready: state === 'ready' };
+        await page.evaluate(() => refreshAll());
+        assert.equal(await page.locator('#svc-bot').getAttribute('aria-label'), state);
+        assert.equal(await page.locator('#svc-bot').evaluate(el => el.classList.contains('dot-ok')), state === 'ready');
+        if (state === 'failed') assert.equal(await page.locator('#svc-bot').evaluate(el => el.classList.contains('dot-err')), true);
+      }
+      const staleTraffic = { available: true, stale: true, observed_at: Date.now() / 1000 - 25, scope: 'database' };
+      const currentMemory = { available: true, stale: false, observed_at: Date.now() / 1000, scope: 'process' };
+      const staleRedis = { available: true, stale: true, observed_at: Date.now() / 1000 - 25, scope: 'redis' };
+      snapshot.sources.traffic = staleTraffic;
+      snapshot.sources.memory_cache = currentMemory;
+      snapshot.sources.redis_cache = staleRedis;
+      snapshot.infrastructure.cache = { ...snapshot.infrastructure.cache, memory_available: true, redis_available: true,
+        memory_source: currentMemory, redis_source: staleRedis };
+      await page.evaluate(() => refreshAll());
+      assert.equal(await page.locator('#req-count').textContent(), '4', 'Last-good traffic stays visible while marked stale');
+      assert.match(await page.locator('#traffic-note').textContent(), /stale.*traffic/i);
+      assert.match(await page.locator('#cache-source-status').textContent(), /memory: current.*redis: stale/i);
+      snapshot.sources.traffic = { ...staleTraffic, available: false, observed_at: Date.now() / 1000 - 61 };
+      snapshot.sources.redis_cache = { ...staleRedis, available: false, observed_at: Date.now() / 1000 - 61 };
+      snapshot.infrastructure.cache = { ...snapshot.infrastructure.cache, redis_available: false, redis_keys: null,
+        redis_source: snapshot.sources.redis_cache };
+      await page.evaluate(() => refreshAll());
+      assert.equal(await page.locator('#req-count').textContent(), 'Unavailable', 'Unavailable traffic must not show cached counts as current');
+      assert.equal(await page.locator('#c-mem-hits').textContent(), '12', 'Healthy memory survives the Redis source outage');
+      assert.equal(await page.locator('#c-mem-items').textContent(), 'Unavailable');
+      assert.match(await page.locator('[data-source="redis_cache"]').textContent(), /unavailable/);
+      assert.match(await page.locator('#cache-source-status').textContent(), /memory: current.*redis: unavailable/i);
+      snapshot.sources.traffic = { ...staleTraffic, stale: false, available: true, observed_at: Date.now() / 1000 };
+      snapshot.sources.redis_cache = { ...staleRedis, stale: false, available: true, observed_at: Date.now() / 1000 };
+      snapshot.infrastructure.cache = { ...snapshot.infrastructure.cache, redis_available: true, redis_keys: 9,
+        redis_source: snapshot.sources.redis_cache };
+      await page.evaluate(() => refreshAll());
+      const beforeHidden = dashboardReads;
+      await page.evaluate(async () => {
+        Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+        document.dispatchEvent(new Event('visibilitychange'));
+        await refreshAll();
+      });
+      assert.equal(dashboardReads, beforeHidden, 'Hidden tab must stop HTTP polling');
+      const visibleRefresh = page.waitForResponse(response => new URL(response.url()).pathname === '/api/dashboard');
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+        for (let i = 0; i < 3; i++) document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await visibleRefresh;
+      assert.equal(dashboardReads, beforeHidden + 1, 'Visibility burst shares one HTTP refresh');
       assert.equal(await page.locator('#req-count').textContent(), '4', 'User requests come only from the selected calendar period');
       assert.equal(await page.locator('#api-attempt-count').textContent(), '11');
       assert.match(await page.locator('#traffic-range').textContent(), /23 Oct 2026.*Kyiv/);
@@ -121,14 +176,18 @@ process.stdin.on('end', async () => {
       assert.equal(await page.locator('#api-attempt-count').textContent(), '311');
       await page.getByLabel('Traffic period').selectOption('last_7_days');
       assert.equal(await page.locator('#db-pool').textContent(), '5');
+      const cpuSamplesBeforeFailure = await page.evaluate(() => cpuHistory.length);
       snapshot.infrastructure.database = { available: false };
       snapshot.infrastructure.cache = { available: false };
       snapshot.overview.system = {};
       snapshot.overview.services.database = 'unknown';
+      snapshot.sources.queue = { available: false, stale: true, observed_at: Date.now() / 1000 - 61, scope: 'process' };
       await page.evaluate(() => refreshAll());
+      assert.match(await page.locator('[data-source="queue"]').textContent(), /unavailable/);
+      assert.match(await page.locator('[data-source="metrics"]').textContent(), /current/);
       assert.equal(await page.locator('#db-pool').textContent(), '—', 'Lost source must clear earlier pool values');
       assert.equal(await page.locator('#c-redis-hits').textContent(), '—', 'Lost cache source must clear earlier capacity');
-      assert.equal(await page.evaluate(() => cpuHistory.length), 1, 'Missing CPU readings must never become zero samples');
+      assert.equal(await page.evaluate(() => cpuHistory.length), cpuSamplesBeforeFailure, 'Missing CPU readings must never become zero samples');
       assert.equal(await page.locator('#svc-db').evaluate(element => element.classList.contains('dot-warn')), true);
       releaseEvents();
       await page.locator('#q-running').filter({ hasText: /^2$/ }).waitFor({ state: 'attached' });

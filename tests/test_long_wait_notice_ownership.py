@@ -252,6 +252,8 @@ async def request_flow(monkeypatch):
         task = manager.submit(coroutine, **kwargs)
         tasks.append(task)
         inputs[task] = coroutine
+        if coroutine.cr_code.co_name == "observed_worker":
+            inputs[(task, "inner")] = coroutine.cr_frame.f_locals["coroutine"]
         if coroutine.__name__ == scheduling.cancel_before_start:
             task.cancel()
         return task
@@ -475,7 +477,7 @@ async def test_completion_before_notice_threshold_has_no_obsolete_notice(request
     assert all(task.done() for task in flow.tasks)
 
 
-@pytest.mark.parametrize("cancel_target", ["task_wrapper", "show_long_wait_retry"])
+@pytest.mark.parametrize("cancel_target", ["observed_worker", "show_long_wait_retry"])
 async def test_prestart_cancellation_closes_manager_inputs(request_flow, cancel_target):
     flow = request_flow
     flow.scheduling.cancel_before_start = cancel_target

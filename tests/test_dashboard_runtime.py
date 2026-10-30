@@ -21,7 +21,10 @@ async def test_sse_uses_actual_process_queue_and_metrics_counters(monkeypatch):
     collector = MetricsCollector()
     collector.metrics.request_count = 123
     collector.metrics.error_count = 17
-    traffic = {"timezone": "Europe/Kyiv", "periods": {"today": {"user_requests": 4, "api_attempts": 9}}}
+    traffic = {
+        "timezone": "Europe/Kyiv",
+        "periods": {"today": {"user_requests": 4, "api_attempts": 9, "available": True}},
+    }
     monkeypatch.setattr(collector, "get_traffic_summary", AsyncMock(return_value=traffic))
     monkeypatch.setattr(metrics, "metrics_collector", collector)
     monkeypatch.setattr(task_queue, "get_queue_stats", AsyncMock(return_value={"pending_tasks": 7, "running_tasks": 3}))
@@ -58,7 +61,40 @@ async def test_sse_source_failure_is_valid_json_without_dependency_details(monke
         finally:
             await stream.aclose()
 
-    assert json.loads(event.removeprefix("data: ").strip()) == {"error": "source_unavailable"}
+    payload = json.loads(event.removeprefix("data: ").strip())
+    assert payload["sources"]["system"]["available"] is False
+    assert payload["sources"]["system"]["reason_code"] == "source_failed"
+    assert "system" not in payload
+    assert "metrics" in payload
+    assert "connection details" not in event
+
+
+@pytest.mark.asyncio
+async def test_twenty_snapshot_and_sse_readers_share_traffic_query(monkeypatch):
+    import asyncio
+
+    collector = MetricsCollector()
+    traffic = AsyncMock(return_value={"timezone": "Europe/Kyiv", "periods": {}})
+    monkeypatch.setattr(collector, "get_traffic_summary", traffic)
+    monkeypatch.setattr(metrics, "metrics_collector", collector)
+    for owner, name, value in (
+        (metrics.role_conv_metrics, "get_metrics_summary", {}),
+        (cache, "get_multi_layer_cache_stats", {}),
+        (cache, "ping_safe", False),
+        (web, "get_supabase_metrics", {}),
+        (web, "get_gemini_key_usage_stats", []),
+        (web, "get_tavily_key_usage_stats", []),
+        (web, "_get_dashboard_key_health", {}),
+        (task_queue, "get_queue_stats", {"pending_tasks": 7}),
+    ):
+        monkeypatch.setattr(owner, name, AsyncMock(return_value=value))
+    results = await asyncio.gather(
+        *[web._build_dashboard_snapshot() if index % 2 else web._build_dashboard_event() for index in range(20)]
+    )
+    assert all(row["sources"]["metrics"]["available"] for row in results)
+    traffic.assert_awaited_once_with()
+    task_queue.get_queue_stats.assert_awaited_once_with()
+    await web._close_dashboard_sources()
 
 
 @pytest.mark.asyncio
@@ -119,6 +155,7 @@ def test_polling_keeps_one_request_in_flight_and_recovers_after_failure():
         """
 const assert = require('node:assert/strict');
 const API = {dashboard:'/api/dashboard'};
+const document = {hidden:true};
 let requests = 0, release;
 const snapshot = {overview:{}, providers:{}, infrastructure:{}, errors:{}};
 const apiFetch = async () => { requests++; return new Promise(resolve => { release = resolve; }); };
@@ -133,6 +170,10 @@ console.error = () => {};
         + source
         + """
 (async () => {
+  const hidden = refreshAll();
+  assert.equal(requests, 0, 'Hidden tabs must not poll');
+  await hidden;
+  document.hidden = false;
   const first = refreshAll();
   const overlap = refreshAll();
   assert.equal(requests, 1, 'A slow refresh must not start overlapping polls');

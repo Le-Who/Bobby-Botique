@@ -105,8 +105,8 @@ async def test_queued_admission_uses_execution_time_and_keeps_first_scope_capaci
     # Sampling before an awaited send can insert an already expired holder,
     # allowing a second real client into a still active limit-one provider scope.
     clients, router, key = server
-    owner = GlobalLLMSemaphore(1, timeout=0.1, redis_key=key)
-    contender = GlobalLLMSemaphore(1, timeout=0.1, redis_key=key)
+    owner = GlobalLLMSemaphore(1, timeout=1, redis_key=key)
+    contender = GlobalLLMSemaphore(1, timeout=1, redis_key=key)
     # Inspect admission itself before the first renewal can hide a stale score.
     owner._renew_interval = 1
     blocked, send, decided, entered, release_owner = (asyncio.Event() for _ in range(5))
@@ -380,25 +380,43 @@ async def test_expired_key_is_not_resurrected_and_old_exit_preserves_new_owner(s
     old = GlobalLLMSemaphore(1, timeout=10, redis_key=key)
     old._renew_interval = 0.01
     router.client.set(RenewalObserver())
-    await old.__aenter__()
-    old_renewal = old._renewal.get()
+    entered, stopping, finish_stop = (asyncio.Event() for _ in range(3))
+    renewals = []
+
+    async def old_holder():
+        async with old:
+            renewals.append(old._renewal.get())
+            entered.set()
+            try:
+                await asyncio.Future()
+            finally:
+                stopping.set()
+                await finish_stop.wait()
+
+    old_task = asyncio.create_task(old_holder())
     new = GlobalLLMSemaphore(1, timeout=10, redis_key=key)
     try:
+        await asyncio.wait_for(entered.wait(), 1)
         seconds, micros = await clients[0].time()
         await clients[0].pexpireat(key, seconds * 1000 + micros // 1000 - 1)
         renewed.clear()
         await asyncio.wait_for(renewed.wait(), 1)
+        await asyncio.wait_for(stopping.wait(), 1)
         assert not await clients[0].exists(key), "XX renewal may not resurrect a lost owner token"
         router.client.set(clients[1])
         async with new:
             new_token = new._token.get()
-            await old.__aexit__(None, None, None)
-            assert old_renewal.done()
+            finish_stop.set()
+            with pytest.raises(UserLimitExceededError) as error:
+                await old_task
+            assert error.value.details["reason_code"] == "lease_lost"
+            assert renewals[0].done()
             assert await clients[1].zrange(key, 0, -1) == [new_token]
         assert await clients[0].zcard(key) == 0
     finally:
-        if old._token.get() is not None:
-            await old.__aexit__(None, None, None)
+        finish_stop.set()
+        old_task.cancel()
+        await asyncio.gather(old_task, return_exceptions=True)
 
 
 @pytest.mark.parametrize("after_write", [False, True], ids=["before_admission", "after_admission"])

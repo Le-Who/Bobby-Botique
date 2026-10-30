@@ -255,7 +255,7 @@ Configuration is explicitly read from environment variables in `app/config.py` a
 | `WEBHOOK_URL` | ⚙️ | `https://bot.example.com` | — | If set, the bot registers itself as a Telegram Webhook at this URL and stops long-polling. **Must be HTTPS.** Required for production webhook deployments. If absent, the bot uses long-polling (simpler for single-server setups). |
 | `WEBHOOK_SECRET_TOKEN` | ⚙️ | 1–256 ASCII letters, digits, `_` or `-` | `""` | Optional Telegram secret header. Invalid configured tokens fail validation; when enabled, missing/malformed/mismatched inbound headers are rejected with constant-time comparison for valid strings. |
 | `WEBHOOK_MAX_CONNECTIONS` | ⚙️ | Integer | `40` | Telegram webhook registration clamps the value to 1–100. |
-| `UPDATE_QUEUE_MAXSIZE` | ⚙️ | Integer | `1000` | In-process update queue capacity; construction enforces a minimum of 100. |
+| `UPDATE_QUEUE_MAXSIZE` | ⚙️ | Integer | `1000` | Bound on all admitted unfinished PTB updates, including fetched updates waiting on processing; released at `task_done()`. Construction enforces a minimum of 100. |
 | `WEBAPP_BASE_URL` | ⚙️ | `https://bot.example.com` | `""` | Public URL from which the Telegram Mini App settings panel and reader are served. Must equal `WEBHOOK_URL` in most deployments. If empty, oversized responses use the optional Telegraph fallback or safe Telegram splitting. |
 | `TELEGRAPH_PUBLICATION_ENABLED` | ⚙️ | `true` / `false` | `false` | Explicit privacy opt-in for publishing long responses and natal mirrors as public `telegra.ph` pages. Keep disabled unless users are informed that anyone with the link can read the page. |
 | `MINIAPP_SHORT_NAME` | No | `gemaibotv2` | `""` | Short name for the Telegram Mini App deep links (`t.me/<bot>/<short_name>`). Configure the matching Mini App short name in BotFather; do not confuse it with a menu button URL. |
@@ -762,6 +762,9 @@ Administrative and developer commands are deliberately excluded from `app/bot_co
 - `GET /api/overview`, `/api/keys`, `/api/errors`, `/api/cache`, `/api/queue`, `/api/database`, `/api/circuit-breakers`, `/api/memory` — Individual JSON data endpoints for dashboard charts (requires auth cookie or `X-Auth-Token` header).
 - `GET /api/key-health` — Per-key health diagnostics: status, failure count, suspension info. Auth required.
 - `GET /api/events` — Authenticated Server-Sent Events stream (5s interval) for real-time CPU, memory, queue, and request metrics. Service-health probe results come from `/api/dashboard`.
+- `/controls#queues` — Shared job status, bounded pagination, revision-checked cancellation/retry and separate admission/execution pause controls. Unsupported PTB, TaskManager and TTS actions remain read-only. See the [queue lifecycle and cutover runbook](docs/runtime-controls.md#переход-на-очередь-с-владением).
+- `/admin_daily#jobs` — Read-only eight-day readiness calendar and tracked Crocodile, Trivia and Tarot operations. Job admission uses an operation ID; lost responses are reconciled through status lookup without automatically submitting another generation. Model/prompt edits use revision checks and retain conflicting drafts.
+- `/admin_daily#broadcast` — Recipient preview, tracked offer batches and delivery history. Confirmed delivery, known failure and unknown acknowledgment remain distinct; retry excludes sent and uncertain recipients. Offers and actual daily deliveries have separate counters and an explicit history start. See the [broadcast runbook](docs/runtime-controls.md#рассылки-и-журнал-доставки).
 
 The dashboard separates completed user operations from recorded outbound API
 attempts. Select today, the last 7 or the last 30 calendar days in Europe/Kyiv;
@@ -770,6 +773,10 @@ as partial. Gemini model groups start collapsed, support model/masked-key search
 and sorting, and show per-key local RPD usage when expanded. These quotas retain
 Pacific Time day boundaries. See [metrics and dashboard](docs/metrics-and-dashboard.md)
 for counter ownership, historical limits, recovery and performance metric scopes.
+Stage percentiles use a bounded 15-minute process window and show sample counts;
+source cards distinguish fresh, stale, partial and unavailable data. Dashboard HTTP
+and SSE readers share source refreshes. The bot lifecycle comes from the supervisor;
+a live web connection alone does not mean Telegram processing is ready.
 
 ## Main User Flows
 

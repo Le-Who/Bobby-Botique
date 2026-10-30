@@ -11,6 +11,27 @@ SCRIPT = ROOT / "app/static/js/controls.js"
 TEMPLATE = ROOT / "app/templates/controls.html"
 
 
+def test_ambiguous_save_confirmation_requires_new_revision_and_equal_section():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node unavailable")
+    script = r"""
+const assert=require('node:assert/strict');
+const {matchesSubmittedSection}=require('./app/static/js/controls.js');
+const snapshot={revision:8,prompts:[{id:'system',text:'saved'}],processes:[{id:'chat',models:['one'],strategy:'sequential',inherit_user_model:false}],catalogs:[{provider:'gemini',models:['one']}],limits:[{model:'one',limit:5}],audio:[{id:'gemini',value:{voices:[]}}],commands:{commands:[{id:'start',aliases:['go']}]}};
+for(const [section,id,value] of [['prompt','system','saved'],['process','chat',{inherit_user_model:false,models:['one'],strategy:'sequential'}],['catalog','gemini',['one']],['limit','one',5],['audio','gemini',{voices:[]}],['command','start',['go']]]){
+ const payload={section,id,value,expected_revision:7};
+ assert.equal(matchesSubmittedSection(snapshot,payload),true,section);
+ assert.equal(matchesSubmittedSection({...snapshot,revision:7},payload),false,'unchanged revision');
+ assert.equal(matchesSubmittedSection(snapshot,{...payload,value:'different'}),false,'different section');
+ assert.equal(matchesSubmittedSection(snapshot,{...payload,reset:true}),false,'reset needs explicit confirmation');
+ assert.equal(matchesSubmittedSection({...snapshot,degraded:true},payload),false,'degraded cannot confirm');
+}
+"""
+    result = subprocess.run([node, "-e", script], cwd=ROOT, encoding="utf-8", capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_controls_page_has_csrf_and_section_navigation():
     page = TEMPLATE.read_text(encoding="utf-8")
     assert 'name="csrf-token"' in page

@@ -233,8 +233,33 @@ async def _submit_request_worker(
     retry_text: bool = False,
 ) -> None:
     """Explicitly reject mandatory work instead of accepting a no-op task."""
-    task = try_submit_task(coroutine)
+    from app.observability.ingress import current_update_admitted
+    from app.observability.request_metrics import RequestObservation
+
+    observation = RequestObservation(started=current_update_admitted.get())
+
+    async def observed_worker():
+        with observation.bind():
+            observation.stage("ingress_wait", observation.clock() - observation.started)
+            try:
+                await coroutine
+            except asyncio.CancelledError:
+                observation.set_outcome("cancelled")
+                raise
+            except Exception:
+                observation.set_outcome("failed")
+                raise
+            finally:
+                owner = asyncio.current_task()
+                if owner is not None and owner.cancelling():
+                    observation.set_outcome("cancelled")
+                observation.finish()
+
+    task = try_submit_task(observed_worker())
     if task is None:
+        coroutine.close()
+        observation.set_outcome("rejected")
+        observation.finish()
         owner = asyncio.current_task()
         assert owner is not None
         state.register_active_task(user_id, owner)
@@ -253,6 +278,9 @@ async def _submit_request_worker(
 
     def completed(owner: asyncio.Task) -> None:
         coroutine.close()
+        if owner.cancelled():
+            observation.set_outcome("cancelled")
+        observation.finish()
         finish_request(owner)
 
     task.add_done_callback(completed)

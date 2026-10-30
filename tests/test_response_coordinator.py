@@ -211,6 +211,20 @@ async def test_deferred_is_a_distinct_outcome_not_failure_text():
 
 
 @pytest.mark.asyncio
+async def test_uncertain_admission_is_a_reconciliation_notice_without_retry_action():
+    session = FakeSession()
+    coordinator = AIStreamCoordinator(
+        FakeRouter([StreamDeferred("task-uncertain", admission_uncertain=True)]), session, feedback_delay=60
+    )
+    outcome = await coordinator.run(_request(), _presentation())
+    assert isinstance(outcome, DeferredDelivery)
+    assert outcome.admission_uncertain is True
+    assert "уточня" in outcome.displayed_text.lower()
+    assert "отправлю ответ" not in outcome.displayed_text.lower()
+    assert session.finalize_calls[0]["actions"] is None
+
+
+@pytest.mark.asyncio
 async def test_cancellation_rethrows_after_request_lifecycle_cleanup():
     cleanup = MagicMock()
     delayed_started = asyncio.Event()

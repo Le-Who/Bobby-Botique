@@ -128,6 +128,8 @@ class PromptTurn:
 class RequestScope:
     user_id: int | None = None
     chat_id: int | None = None
+    privacy_epoch: int | None = None
+    operation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,6 +325,7 @@ class StreamFailed:
 @dataclass(frozen=True, slots=True)
 class StreamDeferred:
     task_id: str
+    admission_uncertain: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.task_id, str) or not self.task_id.strip():

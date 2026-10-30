@@ -20,6 +20,7 @@ import logging
 import os
 import secrets
 import time
+import weakref
 from functools import wraps
 
 from quart import (
@@ -35,6 +36,7 @@ from quart import (
 
 from app import database
 from app.config import settings
+from app.dashboard_sources import DashboardSourceCache, bot_lifecycle
 from app.games import daily_2048 as daily_2048_game
 from app.observability.context import current_context, request_scope
 from app.observability.events import emit, record_exception
@@ -299,6 +301,14 @@ from app.web_controls import register_controls  # noqa: E402
 
 register_controls(quart_app, require_auth)
 
+from app.web_daily_jobs import register_daily_routes  # noqa: E402
+
+register_daily_routes(quart_app, require_auth, rate_limit_api)
+
+from app.web_broadcast_jobs import register_broadcast_routes  # noqa: E402
+
+register_broadcast_routes(quart_app, require_auth, rate_limit_api)
+
 
 @quart_app.route("/login", methods=["GET", "POST"])
 async def login_page():
@@ -389,7 +399,7 @@ async def health_check_endpoint():
             "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
             "service": "gemaibotv2",
             "services": {
-                "bot": "running",
+                "bot": bot_lifecycle.state,
                 "database": "connected" if db_ok else "disconnected",
             },
         }
@@ -487,7 +497,7 @@ async def api_overview():
             "services": {
                 "database": "connected" if db_status else "disconnected",
                 "redis": "connected" if redis_ok else "disconnected",
-                "bot": "running",
+                "bot": bot_lifecycle.snapshot()["state"],
             },
         }
     )
@@ -748,14 +758,27 @@ def _assemble_dashboard_snapshot(
     redis_ping, redis_available, redis_error = _dashboard_source(raw, "redis_ping", False)
 
     metrics = _normalize_dashboard_metrics(metrics_raw)
+    if "traffic" in raw:
+        metrics["traffic"], _, _ = _dashboard_source(raw, "traffic", None)
     recent_errors = list(metrics_raw.get("recent_errors", [])) if isinstance(metrics_raw, dict) else []
     recent_errors.sort(key=lambda item: str(item.get("timestamp", "")), reverse=True)
 
     memory_cache = cache_raw.get("memory", {}) if isinstance(cache_raw, dict) else {}
     redis_cache = cache_raw.get("redis", {}) if isinstance(cache_raw, dict) else {}
+    memory_available = redis_stats_available = cache_available
+    memory_error = redis_stats_error = cache_error
+    if "memory_cache" in raw or "redis_cache" in raw:
+        memory_cache, memory_available, memory_error = _dashboard_source(raw, "memory_cache", {})
+        redis_cache, redis_stats_available, redis_stats_error = _dashboard_source(raw, "redis_cache", {})
+        cache_available = memory_available or redis_stats_available
+        cache_error = memory_error or redis_stats_error
     cache = {
         "available": cache_available,
         "error": cache_error,
+        "memory_available": memory_available,
+        "memory_error": memory_error,
+        "redis_available": redis_stats_available,
+        "redis_error": redis_stats_error,
         "memory_items": memory_cache.get("memory_items"),
         "memory_capacity": memory_cache.get("memory_max_size"),
         "memory_utilization_percent": memory_cache.get("memory_utilization"),
@@ -776,6 +799,9 @@ def _assemble_dashboard_snapshot(
         "redis_queue_size": queue_raw.get("redis_queue_size"),
         "redis_available": queue_raw.get("redis_available"),
         "execution_scope": queue_raw.get("execution_scope", "process"),
+        "partial": queue_raw.get("partial", False),
+        "reason_code": queue_raw.get("reason_code"),
+        "lanes": queue_raw.get("lanes", {}),
     }
 
     from app.repos.keys import get_tavily_credit_policy
@@ -798,7 +824,7 @@ def _assemble_dashboard_snapshot(
                 if db_available
                 else "unknown",
                 "redis": ("connected" if redis_ping else "disconnected") if redis_available else "unknown",
-                "bot": "running",
+                "bot": bot_lifecycle.snapshot()["state"],
             },
         },
         "providers": {
@@ -846,34 +872,158 @@ async def _get_dashboard_key_health() -> dict:
             await database.clear_user_context(conn=conn)
 
 
-async def _build_dashboard_snapshot() -> dict:
-    from app.cache import get_multi_layer_cache_stats, ping_safe
+_dashboard_caches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_DASHBOARD_SOURCE_TTLS = {
+    "system": 5,
+    "metrics": 15,
+    "traffic": 15,
+    "summarization": 15,
+    "memory_cache": 15,
+    "redis_cache": 15,
+    "redis_ping": 15,
+    "db_metrics": 15,
+    "queue": 5,
+    "keys_gemini": 15,
+    "keys_tavily": 15,
+    "key_health": 15,
+}
+
+
+def _get_dashboard_sources() -> DashboardSourceCache:
+    from app.cache import get_multi_layer_cache_stats, multi_layer_cache, ping_safe
+    from app.dashboard_sources import PartialSourceValue, SourceUnavailable
     from app.metrics import metrics_collector, role_conv_metrics
     from app.queue import task_queue
+
+    loop = asyncio.get_running_loop()
+    existing = _dashboard_caches.get(loop)
+    if existing is not None:
+        return existing
 
     async def summarization_metrics():
         summary = await role_conv_metrics.get_metrics_summary()
         return summary.get("summarization", {})
 
-    results = await asyncio.gather(
-        _safe_fetch("system", asyncio.to_thread(_sample_system_metrics)),
-        _safe_fetch("metrics", metrics_collector.get_metrics_summary()),
-        _safe_fetch("summarization", summarization_metrics()),
-        _safe_fetch("cache", get_multi_layer_cache_stats()),
-        _safe_fetch("redis_ping", ping_safe()),
-        _safe_fetch("db_metrics", get_supabase_metrics()),
-        _safe_fetch("queue", task_queue.get_queue_stats()),
-        _safe_fetch("keys_gemini", get_gemini_key_usage_stats()),
-        _safe_fetch("keys_tavily", get_tavily_key_usage_stats()),
-        _safe_fetch("key_health", _get_dashboard_key_health()),
-        return_exceptions=True,
+    async def system():
+        return await asyncio.to_thread(_sample_system_metrics)
+
+    async def process_metrics():
+        return await metrics_collector.get_metrics_summary(include_traffic=False)
+
+    async def traffic_metrics():
+        value = await metrics_collector.get_traffic_summary()
+        periods = value.get("periods", {})
+        if not any(period.get("available") is True for period in periods.values()):
+            raise SourceUnavailable()
+        return value
+
+    async def memory_cache_stats():
+        return multi_layer_cache.get_memory_stats()
+
+    async def redis_cache_stats():
+        # The existing combined reader catches Redis failures inside this field.
+        # Memory has an independent process reader and cannot be blocked by Redis.
+        value = (await get_multi_layer_cache_stats()).get("redis")
+        if not isinstance(value, dict) or value.get("error"):
+            raise SourceUnavailable()
+        return value
+
+    async def queue_metrics():
+        value = await task_queue.get_queue_stats()
+        lanes = value.get("lanes")
+        if isinstance(lanes, dict):
+            healthy = [item for item in lanes.values() if item.get("available") is True]
+            if not healthy:
+                raise SourceUnavailable()
+            if len(healthy) < len(lanes):
+                return PartialSourceValue({**value, "partial": True, "reason_code": "source_partial"})
+        elif value.get("available") is False:
+            raise SourceUnavailable()
+        return value
+
+    def checked(reader):
+        async def read():
+            value = await reader()
+            if isinstance(value, dict) and value.get("error"):
+                raise SourceUnavailable()
+            return value
+
+        return read
+
+    sources = {
+        "system": system,
+        "metrics": process_metrics,
+        "traffic": traffic_metrics,
+        "summarization": summarization_metrics,
+        "memory_cache": memory_cache_stats,
+        "redis_cache": redis_cache_stats,
+        "redis_ping": ping_safe,
+        "db_metrics": get_supabase_metrics,
+        "queue": queue_metrics,
+        "keys_gemini": get_gemini_key_usage_stats,
+        "keys_tavily": get_tavily_key_usage_stats,
+        "key_health": _get_dashboard_key_health,
+    }
+    cache = DashboardSourceCache(
+        {name: checked(reader) for name, reader in sources.items()},
+        timeout_seconds=_DASHBOARD_SOURCE_TIMEOUT,
+        source_scopes={
+            "metrics": "process",
+            "traffic": "mixed",
+            "memory_cache": "process",
+            "redis_cache": "redis",
+            "queue": "mixed",
+            "redis_ping": "redis",
+            "db_metrics": "database",
+            "keys_gemini": "database",
+            "keys_tavily": "database",
+            "key_health": "database",
+        },
     )
-    raw: dict = {}
-    for item in results:
-        if isinstance(item, BaseException):
-            continue
-        name, value = item
-        raw[name] = value
+    _dashboard_caches[loop] = cache
+    return cache
+
+
+@quart_app.after_serving
+async def _close_dashboard_sources() -> None:
+    cache = _dashboard_caches.pop(asyncio.get_running_loop(), None)
+    if cache is not None:
+        await cache.close()
+
+
+def invalidate_dashboard_sources(*names: str) -> None:
+    cache = _dashboard_caches.get(asyncio.get_running_loop())
+    if cache is not None:
+        for name in names:
+            cache.invalidate(name)
+
+
+@quart_app.after_request
+async def _invalidate_dashboard_after_mutation(response):
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and 200 <= response.status_code < 300:
+        path = request.path
+        if any(part in path for part in ("/queue", "/jobs")):
+            invalidate_dashboard_sources("queue")
+        elif any(part in path for part in ("/models", "/keys", "/prompts", "/runtime-settings", "/admin/controls")):
+            invalidate_dashboard_sources("key_health", "keys_gemini", "keys_tavily")
+    return response
+
+
+async def _read_dashboard_sources(names=None) -> tuple[dict, dict]:
+    cache = _get_dashboard_sources()
+    selected = tuple(_DASHBOARD_SOURCE_TTLS if names is None else names)
+    results = await asyncio.gather(
+        *(cache.get(name, max_age_seconds=_DASHBOARD_SOURCE_TTLS[name]) for name in selected)
+    )
+    raw, metadata = {}, {}
+    for name, result in zip(selected, results, strict=True):
+        raw[name] = result.value if result.available else {"error": result.reason_code}
+        metadata[name] = {key: value for key, value in result.to_dict().items() if key != "value"}
+    return raw, metadata
+
+
+async def _build_dashboard_snapshot() -> dict:
+    raw, sources = await _read_dashboard_sources()
 
     system, _, _ = _dashboard_source(raw, "system", {})
 
@@ -884,7 +1034,41 @@ async def _build_dashboard_snapshot() -> dict:
     except Exception:
         breakers = {}
 
-    return _assemble_dashboard_snapshot(raw, system=system, circuit_breakers=breakers)
+    snapshot = _assemble_dashboard_snapshot(raw, system=system, circuit_breakers=breakers)
+    snapshot["sources"] = sources
+    snapshot["overview"]["lifecycle"] = bot_lifecycle.snapshot()
+    snapshot["overview"]["traffic_source"] = sources["traffic"]
+    snapshot["infrastructure"]["cache"]["memory_source"] = sources["memory_cache"]
+    snapshot["infrastructure"]["cache"]["redis_source"] = sources["redis_cache"]
+    from app.observability.load_metrics import load_snapshot
+    from app.observability.metrics import operational_metrics
+
+    operations = operational_metrics.snapshot()
+    snapshot["operations"] = {
+        name: operations[name]
+        for name in ("stages", "amplification", "races", "completed_generation_wait_seconds_per_window_second")
+    }
+    snapshot["operations"]["load"] = load_snapshot()
+    return snapshot
+
+
+async def _build_dashboard_event() -> dict:
+    raw, sources = await _read_dashboard_sources(("system", "metrics", "traffic", "queue"))
+    payload: dict = {"timestamp": datetime.datetime.now(datetime.UTC).isoformat(), "sources": sources}
+    if sources["system"]["available"]:
+        payload["system"] = raw["system"]
+    if sources["queue"]["available"]:
+        queue = raw["queue"]
+        payload["queue"] = {"pending": queue.get("pending_tasks"), "processing": queue.get("running_tasks")}
+    if sources["metrics"]["available"]:
+        metrics = raw["metrics"]
+        payload["metrics"] = {
+            "total_requests": metrics.get("total_requests"),
+            "error_count": metrics.get("error_count"),
+        }
+    payload.setdefault("metrics", {})["traffic"] = _dashboard_source(raw, "traffic", None)[0]
+    payload["lifecycle"] = bot_lifecycle.snapshot()
+    return payload
 
 
 @quart_app.route("/api/dashboard")
@@ -941,46 +1125,10 @@ async def api_events():
     Client connects via `new EventSource('/api/events')`.
     """
 
-    import psutil
-
     async def generate():
         while True:
             try:
-                # Lightweight metrics snapshot
-                payload = {
-                    "timestamp": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
-                    "system": {
-                        "cpu_percent": psutil.cpu_percent(interval=0),
-                        "memory_percent": psutil.virtual_memory().percent,
-                    },
-                }
-                # The canonical snapshot owns probed service health. A local
-                # open pool is not evidence that SELECT 1 or a provider works.
-
-                # Queue stats (cheap)
-                try:
-                    from app.queue import task_queue
-
-                    q_stats = await task_queue.get_queue_stats()
-                    payload["queue"] = {
-                        "pending": q_stats.get("pending_tasks"),
-                        "processing": q_stats.get("running_tasks"),
-                    }
-                except Exception:
-                    pass
-
-                # Metrics summary (cheap)
-                try:
-                    from app.metrics import metrics_collector as mc
-
-                    payload["metrics"] = {
-                        "total_requests": mc.metrics.request_count,
-                        "error_count": mc.metrics.error_count,
-                        "traffic": await mc.get_traffic_summary(),
-                    }
-                except Exception:
-                    pass
-
+                payload = await _build_dashboard_event()
                 yield f"data: {json.dumps(payload)}\n\n"
             except Exception as e:
                 logging.warning("SSE event generation error (%s)", type(e).__name__)
@@ -1002,7 +1150,14 @@ async def api_events():
 @require_auth
 async def admin_daily_page():
     """Unified Daily Admin: Broadcast, Croc, 2048, Horoscope, Tarot."""
-    return await render_template("admin_daily.html")
+    from app.repos.crocodile_daily import today_puzzle_date
+    from app.web_controls import _csrf
+
+    return await render_template(
+        "admin_daily.html",
+        csrf_token=_csrf(),
+        daily_bootstrap={"today": today_puzzle_date().isoformat(), "timezone": "Europe/Kyiv"},
+    )
 
 
 @quart_app.route("/admin_dailycroc")
@@ -1019,6 +1174,150 @@ async def admin_daily2048_page():
     return redirect("/admin_daily#2048", code=301)
 
 
+def _serialize_dailycroc_puzzle(puzzle) -> dict:
+    return {
+        "date": puzzle.puzzle_date.isoformat(),
+        "difficulty": puzzle.difficulty,
+        "target_word": puzzle.target_word,
+        "topic": puzzle.topic,
+        "image_file_id": puzzle.image_file_id,
+        "image_prompt": puzzle.image_prompt,
+        "image_model": puzzle.image_model,
+        "content_revision": puzzle.content_revision,
+        "played": puzzle.played,
+        "gameplay_locked": puzzle.played,
+    }
+
+
+def _dailycroc_revision(data) -> int:
+    value = data.get("expected_revision")
+    if type(value) is not int or value < 1:
+        raise ValueError("expected_revision required")
+    return value
+
+
+def _dailycroc_conflict(exc):
+    return jsonify(
+        {
+            "error": exc.reason,
+            "reason": exc.reason,
+            "actual_revision": exc.actual_revision,
+            "puzzle": _serialize_dailycroc_puzzle(exc.puzzle) if exc.puzzle else None,
+        }
+    ), 409
+
+
+def _daily_settings_revision(data) -> int:
+    value = data.get("expected_revision")
+    if type(value) is not int or value < 0:
+        raise ValueError("expected_revision required")
+    return value
+
+
+async def _daily_settings_snapshot():
+    from app.runtime_settings.store import get_snapshot
+
+    snapshot = await get_snapshot(force=True)
+    if snapshot.degraded:
+        raise ConnectionError("Runtime settings unavailable")
+    return snapshot
+
+
+async def _dailycroc_text_settings(snapshot):
+    from app.config import is_gemini_chat_model_id
+    from app.games.crocodile_daily import get_daily_image_model
+    from app.games.daily_ai import TEXT_MODEL_PROCESSES, get_daily_text_model
+    from app.process_policies import resolve_policy_value
+    from app.repos.settings_repo import get_global_setting
+    from app.runtime_settings.legacy_models import read_value
+    from app.runtime_settings.lifecycle import runtime_settings_scope
+
+    async with runtime_settings_scope(snapshot):
+        shared = await get_daily_text_model()
+        roles = []
+        for process, label in TEXT_MODEL_PROCESSES.items():
+            key = f"daily_croc_text_model_{process}"
+            old = await get_global_setting(key, "")
+            legacy = await read_value(key, old if is_gemini_chat_model_id(old) else "")
+            baseline = legacy or shared
+            policy = resolve_policy_value(
+                f"crocodile.{process}",
+                snapshot.values.get(f"process:crocodile.{process}"),
+                (baseline,) if baseline else (),
+                revision=snapshot.revision,
+            )
+            roles.append(
+                {
+                    "id": process,
+                    "label": label,
+                    "model": policy.models[0] if policy.explicit else legacy,
+                    "effective_model": policy.models[0] if policy.models else "",
+                    "effective_models": list(policy.models),
+                    "source": "process" if policy.explicit else "role" if legacy else "shared" if shared else "auto",
+                }
+            )
+        default_image_model = await get_daily_image_model()
+    return {
+        "settings_revision": snapshot.revision,
+        "text_model": shared,
+        "text_processes": roles,
+        "default_image_model": default_image_model,
+        "image_source": "runtime" if "legacy_model:daily_croc_image_model" in snapshot.values else "legacy",
+        "source": "runtime" if "legacy_model:daily_croc_text_model" in snapshot.values else "legacy",
+    }
+
+
+async def _dailytrivia_model_settings(snapshot):
+    from app.process_policies import baseline_models, resolve_policy_value
+    from app.runtime_settings.lifecycle import runtime_settings_scope
+
+    async with runtime_settings_scope(snapshot):
+        value = snapshot.values.get("process:daily.trivia")
+        policy = resolve_policy_value(
+            "daily.trivia",
+            value,
+            await baseline_models("daily.trivia") if value is None else (),
+            revision=snapshot.revision,
+        )
+    return {
+        "settings_revision": snapshot.revision,
+        "llm_model": policy.models[0],
+        "effective_models": list(policy.models),
+        "source": "process" if policy.explicit else "baseline",
+    }
+
+
+async def _daily_settings_conflict(kind):
+    try:
+        snapshot = await _daily_settings_snapshot()
+        state = await (_dailycroc_text_settings(snapshot) if kind == "croc" else _dailytrivia_model_settings(snapshot))
+    except Exception:
+        return jsonify(error="settings unavailable; reload before retrying"), 503
+    return jsonify(
+        error="settings changed; reload before saving",
+        reason="revision_conflict",
+        settings_revision=snapshot.revision,
+        settings=state,
+    ), 409
+
+
+async def _dailycroc_validated_image_model(model):
+    if not isinstance(model, str) or not model.strip() or len(model) > 200:
+        raise ValueError("invalid image model")
+    if model in {"fta-gpt-image-2", "vhr/gpt_image_2"}:
+        return "fta-gpt-image-2"
+    from app.providers.pollinations import fetch_models
+
+    try:
+        catalog = await fetch_models("image")
+    except Exception as exc:
+        raise ConnectionError("image model catalog unavailable") from exc
+    match = next((item for item in catalog if model in [item["id"], *item.get("aliases", [])]), None)
+    if match is None:
+        raise ValueError("unknown image model")
+    return match["id"]
+
+
 @quart_app.route("/api/admin/dailycroc", methods=["GET"])
 @require_auth
 async def api_admin_dailycroc_list():
@@ -1029,105 +1328,63 @@ async def api_admin_dailycroc_list():
     except ValueError:
         limit = 20
 
+    from app.repos import crocodile_daily as repo
+
     rows = await db.db_query(
-        """
-        SELECT puzzle_date, target_word, topic, lang, difficulty, hints, image_prompt, image_file_id, image_model, prepared_at
-        FROM crocodile_daily_puzzles
-        ORDER BY puzzle_date DESC, difficulty ASC
-        LIMIT $1
-        """,
+        """SELECT p.*, EXISTS(SELECT 1 FROM public.crocodile_daily_results r
+               WHERE r.puzzle_date=p.puzzle_date AND r.difficulty=p.difficulty) AS played
+           FROM public.crocodile_daily_puzzles p
+           ORDER BY puzzle_date DESC,difficulty ASC LIMIT $1""",
         (limit,),
     )
-
-    out = []
-    for r in rows:
-        if r["puzzle_date"] is None:
-            continue
-        out.append(
-            {
-                "date": r["puzzle_date"].isoformat(),
-                "difficulty": r["difficulty"],
-                "target_word": r["target_word"],
-                "topic": r["topic"],
-                "image_file_id": r["image_file_id"],
-                "image_prompt": r["image_prompt"],
-                "image_model": r["image_model"],
-            }
-        )
-    return jsonify({"puzzles": out})
+    return jsonify(
+        {"puzzles": [_serialize_dailycroc_puzzle(repo._row_to_puzzle(dict(row))) for row in rows if row["puzzle_date"]]}
+    )
 
 
 @quart_app.route("/api/admin/dailycroc/regenerate", methods=["POST"])
 @require_auth
 @rate_limit_api
 async def api_admin_dailycroc_regen():
-    from app.repos.crocodile_daily import get_puzzle
+    from app.web_daily_jobs import legacy_enqueue
 
-    data = await request.get_json()
-    if not data:
-        return jsonify({"error": "invalid json"}), 400
-    puzzle_date = data.get("date")
-    difficulty = data.get("difficulty")
-    if not puzzle_date or not difficulty:
-        return jsonify({"error": "missing date or difficulty"}), 400
-    import datetime
-
-    try:
-        dt = datetime.date.fromisoformat(puzzle_date)
-    except ValueError:
-        return jsonify({"error": "invalid date format"}), 400
-
-    puzzle = await get_puzzle(dt, difficulty=difficulty)
-    if not puzzle:
-        return jsonify({"error": "puzzle not found"}), 404
-
-    try:
-        from app.bot_instance import get_bot
-
-        bot = get_bot()
-        if bot is None:
-            return jsonify({"error": "bot not ready"}), 503
-
-        from app.games.crocodile_daily import prepare_daily_puzzle
-
-        model = data.get("model")
-        if model is not None and (not isinstance(model, str) or not model.strip() or len(model) > 200):
-            return jsonify({"error": "invalid model"}), 400
-        updated_puzzle = await prepare_daily_puzzle(
-            dt, bot=bot, difficulty=difficulty, force_image=True, image_model=model, bypass_image_quota=True
-        )
-
-        if not updated_puzzle or not updated_puzzle.image_file_id:
-            return jsonify({"error": "Failed to generate or upload image"}), 500
-
-        return jsonify({"success": True, "file_id": updated_puzzle.image_file_id})
-    except Exception as e:
-        logging.error("Regen failed: %s", e, exc_info=True)
-        return jsonify({"error": str(e)}), 500
+    return await legacy_enqueue("croc.regenerate_image")
 
 
 @quart_app.route("/api/admin/dailycroc/prompt", methods=["POST"])
 @require_auth
 async def api_admin_dailycroc_update_prompt():
-    from app.repos.crocodile_daily import set_puzzle_image_prompt
 
     data = await request.get_json()
-    if not data:
+    if not isinstance(data, dict):
         return jsonify({"error": "invalid json"}), 400
     puzzle_date = data.get("date")
     difficulty = data.get("difficulty")
     prompt = data.get("prompt")
-    if not puzzle_date or not difficulty or prompt is None:
+    if not puzzle_date or not difficulty or not isinstance(prompt, str):
         return jsonify({"error": "missing fields"}), 400
     import datetime
 
-    try:
-        dt = datetime.date.fromisoformat(puzzle_date)
-    except ValueError:
-        return jsonify({"error": "invalid date"}), 400
+    from app.repos import crocodile_daily as repo
 
-    await set_puzzle_image_prompt(dt, prompt, difficulty=difficulty)
-    return jsonify({"success": True})
+    try:
+        expected_revision = _dailycroc_revision(data)
+        dt = datetime.date.fromisoformat(puzzle_date)
+    except TypeError, ValueError:
+        return jsonify({"error": "invalid date or expected_revision"}), 400
+
+    try:
+        image_model = data.get("image_model")
+        if image_model is not None:
+            image_model = await _dailycroc_validated_image_model(image_model)
+        puzzle = await repo.edit_puzzle(dt, difficulty, expected_revision, image_prompt=prompt, image_model=image_model)
+    except repo.DailyCrocConflict as exc:
+        return _dailycroc_conflict(exc)
+    except ValueError:
+        return jsonify(error="invalid image model"), 400
+    except ConnectionError:
+        return jsonify(error="image model catalog unavailable; unchanged"), 503
+    return jsonify({"success": True, "puzzle": _serialize_dailycroc_puzzle(puzzle)})
 
 
 @quart_app.route("/api/admin/dailycroc/model", methods=["POST"])
@@ -1143,37 +1400,36 @@ async def api_admin_dailycroc_update_model():
         return jsonify({"error": "missing fields"}), 400
     import datetime
 
-    from app.database import db_manager
+    from app.repos import crocodile_daily as repo
 
     try:
+        expected_revision = _dailycroc_revision(data)
         dt = datetime.date.fromisoformat(puzzle_date)
-    except ValueError:
-        return jsonify({"error": "invalid date"}), 400
+    except TypeError, ValueError:
+        return jsonify({"error": "invalid date or expected_revision"}), 400
 
-    async with db_manager.pool.acquire() as conn:
-        await conn.execute(
-            """
-            UPDATE public.crocodile_daily_puzzles
-            SET image_model = $1
-            WHERE puzzle_date = $2 AND difficulty = $3
-            """,
-            model,
-            dt,
-            difficulty,
-        )
-    return jsonify({"success": True})
+    try:
+        model = await _dailycroc_validated_image_model(model)
+        puzzle = await repo.edit_puzzle(dt, difficulty, expected_revision, image_model=model)
+    except repo.DailyCrocConflict as exc:
+        return _dailycroc_conflict(exc)
+    except ValueError:
+        return jsonify(error="invalid image model"), 400
+    except ConnectionError:
+        return jsonify(error="image model catalog unavailable; unchanged"), 503
+    return jsonify({"success": True, "puzzle": _serialize_dailycroc_puzzle(puzzle)})
 
 
 @quart_app.route("/api/admin/dailycroc/models", methods=["GET"])
 @require_auth
 async def api_admin_dailycroc_models():
     from app.config import is_gemini_chat_model_id
-    from app.games.crocodile_daily import get_daily_image_model
-    from app.games.daily_ai import TEXT_MODEL_PROCESSES, get_daily_text_model, get_daily_text_model_for
     from app.providers.pollinations import fetch_models
-    from app.repos.settings_repo import get_global_setting
-    from app.runtime_settings.legacy_models import read_value
-    from app.runtime_settings.processes import effective_primary_model
+
+    try:
+        state = await _dailycroc_text_settings(await _daily_settings_snapshot())
+    except Exception:
+        return jsonify(error="model settings unavailable"), 503
 
     try:
         image_models = [{**model, "source": "pollinations"} for model in await fetch_models("image")]
@@ -1194,23 +1450,7 @@ async def api_admin_dailycroc_models():
         {
             "image_models": image_models,
             "text_models": text_models,
-            "text_model": await get_daily_text_model(),
-            "text_processes": [
-                {
-                    "id": process,
-                    "label": label,
-                    "model": await effective_primary_model(
-                        f"crocodile.{process}",
-                        await read_value(
-                            f"daily_croc_text_model_{process}",
-                            await get_global_setting(f"daily_croc_text_model_{process}", ""),
-                        ),
-                    ),
-                    "effective_model": await get_daily_text_model_for(process),
-                }
-                for process, label in TEXT_MODEL_PROCESSES.items()
-            ],
-            "default_image_model": await get_daily_image_model(),
+            **state,
             "catalog_unavailable": catalog_unavailable,
         }
     )
@@ -1221,7 +1461,7 @@ async def api_admin_dailycroc_models():
 async def api_admin_dailycroc_text_model():
     from app.config import is_gemini_chat_model_id
     from app.games.daily_ai import TEXT_MODEL_PROCESSES
-    from app.runtime_settings.legacy_models import save_croc_model
+    from app.runtime_settings.legacy_models import save_croc_model_at_revision
     from app.runtime_settings.store import RevisionConflict
 
     data = await request.get_json()
@@ -1234,38 +1474,51 @@ async def api_admin_dailycroc_text_model():
     if not isinstance(process, str) or (process and process not in TEXT_MODEL_PROCESSES):
         return jsonify({"error": "unknown text process"}), 400
     try:
-        await save_croc_model(process, model, actor="admin")
+        expected_revision = _daily_settings_revision(data)
+    except ValueError:
+        return jsonify(error="expected_revision required"), 400
+    try:
+        saved = await save_croc_model_at_revision(process, model, expected_revision=expected_revision, actor="admin")
     except RevisionConflict:
-        return jsonify({"error": "settings changed; reload before saving"}), 409
+        return await _daily_settings_conflict("croc")
     except ValueError:
         return jsonify({"error": "invalid model policy"}), 400
     except Exception:
         return jsonify({"error": "model setting was not confirmed; reload before retrying"}), 503
-    return jsonify({"success": True, "model": model, "process": process})
+    return jsonify(
+        {
+            "success": True,
+            "model": model,
+            "process": process,
+            "settings_revision": saved.revision,
+            "settings": await _dailycroc_text_settings(saved),
+        }
+    )
 
 
 @quart_app.route("/api/admin/dailycroc/image-default", methods=["POST"])
 @require_auth
 async def api_admin_dailycroc_image_default():
-    from app.providers.pollinations import fetch_models
-    from app.repos.crocodile_daily import DAILY_IMAGE_MODEL_SETTING_KEY
-    from app.repos.settings_repo import set_global_setting
+    from app.runtime_settings.legacy_models import save_croc_image_model_at_revision
+    from app.runtime_settings.store import RevisionConflict
 
     data = await request.get_json()
     model = data.get("model") if isinstance(data, dict) else None
     if not isinstance(model, str) or not model.strip() or len(model) > 200:
         return jsonify({"error": "invalid model"}), 400
-    if model != "fta-gpt-image-2":
-        try:
-            catalog = await fetch_models("image")
-        except Exception:
-            return jsonify({"error": "Pollinations catalog unavailable; setting unchanged"}), 503
-        match = next((item for item in catalog if model in [item["id"], *item["aliases"]]), None)
-        if match is None:
-            return jsonify({"error": "unknown image model"}), 400
-        model = match["id"]
-    await set_global_setting(DAILY_IMAGE_MODEL_SETTING_KEY, model)
-    return jsonify({"success": True, "model": model})
+    try:
+        expected_revision = _daily_settings_revision(data)
+        model = await _dailycroc_validated_image_model(model)
+        saved = await save_croc_image_model_at_revision(model, expected_revision=expected_revision, actor="admin")
+    except RevisionConflict:
+        return await _daily_settings_conflict("croc")
+    except ValueError:
+        return jsonify(error="invalid model or expected_revision"), 400
+    except ConnectionError:
+        return jsonify(error="image model state unavailable; unchanged"), 503
+    return jsonify(
+        success=True, model=model, settings_revision=saved.revision, settings=await _dailycroc_text_settings(saved)
+    )
 
 
 @quart_app.route("/api/admin/dailycroc/image-quota", methods=["GET", "POST"])
@@ -1309,56 +1562,17 @@ async def api_admin_dailycroc_day():
 @require_auth
 @rate_limit_api
 async def api_admin_dailycroc_prepare_day():
-    from datetime import date
+    from app.web_daily_jobs import legacy_enqueue
 
-    data = await request.get_json()
-    value = data.get("date") if isinstance(data, dict) else None
-    try:
-        day = date.fromisoformat(value)
-        if day.isoformat() != value:
-            raise ValueError("non-canonical date")
-    except ValueError, TypeError:
-        return jsonify({"error": "date must be YYYY-MM-DD"}), 400
-    from app.bot_instance import get_bot
-    from app.games.daily_preparation import start_day_preparation
-
-    bot = get_bot()
-    if bot is None:
-        return jsonify({"error": "bot not ready"}), 503
-    job = await start_day_preparation(day, bot)
-    return jsonify({"date": day.isoformat(), "job": job}), 202
+    return await legacy_enqueue("croc.prepare_day")
 
 
 @quart_app.route("/api/admin/dailycroc/reset-word", methods=["POST"])
 @require_auth
 async def api_admin_dailycroc_reset_word():
-    from app.repos.crocodile_daily import regenerate_puzzle_word
+    from app.web_daily_jobs import legacy_enqueue
 
-    data = await request.get_json()
-    if not data:
-        return jsonify({"error": "invalid json"}), 400
-    puzzle_date = data.get("date")
-    difficulty = data.get("difficulty")
-    if not puzzle_date or not difficulty:
-        return jsonify({"error": "missing date or difficulty"}), 400
-    import datetime
-
-    try:
-        dt = datetime.date.fromisoformat(puzzle_date)
-    except ValueError:
-        return jsonify({"error": "invalid date format"}), 400
-
-    new_puzzle = await regenerate_puzzle_word(dt, difficulty)
-    if not new_puzzle:
-        return jsonify({"error": "failed to regenerate puzzle"}), 500
-
-    return jsonify(
-        {
-            "success": True,
-            "new_word": new_puzzle.target_word,
-            "new_topic": new_puzzle.topic,
-        }
-    )
+    return await legacy_enqueue("croc.reset_word")
 
 
 @quart_app.route("/api/admin/dailycroc/image", methods=["GET"])
@@ -1471,7 +1685,9 @@ async def api_admin_dailycroc_stats():
         stats["delivery_enabled"] = delivery_on.strip().lower() != "off"
 
         # Get configured image model
-        image_model = await get_global_setting(repo.DAILY_IMAGE_MODEL_SETTING_KEY, "pollinations")
+        from app.games.crocodile_daily import get_daily_image_model
+
+        image_model = await get_daily_image_model()
         stats["image_model"] = image_model.strip()
 
         # Get placeholder banner setting
@@ -1521,6 +1737,10 @@ def _serialize_daily2048_puzzle(puzzle: daily_2048_repo.Daily2048Puzzle) -> dict
         "status": puzzle.status,
         "solution_moves": puzzle.solution_moves,
         "prepared_at": puzzle.prepared_at.isoformat() if puzzle.prepared_at else "",
+        "revision": puzzle.revision,
+        "played": puzzle.played,
+        "gameplay_locked": puzzle.played,
+        "unavailable_reason": puzzle.status if puzzle.status != "ready" else None,
     }
 
 
@@ -1542,8 +1762,13 @@ async def api_admin_daily2048_save_puzzle():
     data = await request.get_json()
     if not data:
         return jsonify({"error": "invalid json"}), 400
+    if "expected_revision" not in data:
+        return jsonify({"error": "expected_revision required"}), 400
     try:
         puzzle_date = datetime.date.fromisoformat(str(data.get("date") or ""))
+        expected_revision = data["expected_revision"]
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("invalid revision")
         board = daily_2048_repo.normalize_board(data.get("board"))
         goal_type = daily_2048_repo.normalize_goal_type(str(data.get("goal_type") or "tile"))
         goal_value = int(data.get("goal_value") or 512)
@@ -1561,18 +1786,55 @@ async def api_admin_daily2048_save_puzzle():
     if goal_value < 8:
         return jsonify({"error": "invalid goal_value"}), 400
 
-    puzzle = await daily_2048_repo.upsert_puzzle(
-        puzzle_date,
-        board=board,
-        goal_type=goal_type,
-        goal_value=goal_value,
-        spawn_sequence=spawn_sequence,
-        seed=seed,
-        par_moves=par_moves,
-        target_seconds=target_seconds,
-        status=status,
-        solution_moves=solution_moves,
-    )
+    try:
+        puzzle = await daily_2048_repo.upsert_puzzle(
+            puzzle_date,
+            board=board,
+            goal_type=goal_type,
+            goal_value=goal_value,
+            spawn_sequence=spawn_sequence,
+            seed=seed,
+            par_moves=par_moves,
+            target_seconds=target_seconds,
+            status=status,
+            solution_moves=solution_moves,
+            expected_revision=expected_revision,
+        )
+    except daily_2048_repo.DailyPuzzleConflict as exc:
+        return jsonify(
+            {
+                "error": exc.reason,
+                "reason": exc.reason,
+                "actual_revision": exc.actual_revision,
+                "puzzle": _serialize_daily2048_puzzle(exc.puzzle) if exc.puzzle else None,
+            }
+        ), 409
+    return jsonify({"success": True, "puzzle": _serialize_daily2048_puzzle(puzzle)})
+
+
+@quart_app.route("/api/admin/daily2048/status", methods=["POST"])
+@require_auth
+@rate_limit_api
+async def api_admin_daily2048_status():
+    data = await request.get_json() or {}
+    if "expected_revision" not in data:
+        return jsonify({"error": "expected_revision required"}), 400
+    try:
+        puzzle_date = datetime.date.fromisoformat(str(data.get("date") or ""))
+        puzzle = await daily_2048_repo.set_puzzle_status(
+            puzzle_date, status=data.get("status"), expected_revision=data["expected_revision"]
+        )
+    except TypeError, ValueError:
+        return jsonify({"error": "invalid status payload"}), 400
+    except daily_2048_repo.DailyPuzzleConflict as exc:
+        return jsonify(
+            {
+                "error": exc.reason,
+                "reason": exc.reason,
+                "actual_revision": exc.actual_revision,
+                "puzzle": _serialize_daily2048_puzzle(exc.puzzle) if exc.puzzle else None,
+            }
+        ), 409
     return jsonify({"success": True, "puzzle": _serialize_daily2048_puzzle(puzzle)})
 
 
@@ -1607,29 +1869,9 @@ async def api_admin_daily_mode():
 
 
 def _parse_admin_trivia_question(raw, index: int):
-    from app.games.trivia_similarity import FactIdentity
-    from app.repos import daily_trivia as daily_trivia_repo
+    from app.games.daily_trivia_authoring import parse_admin_question
 
-    options = [str(option).strip() for option in raw.get("options", [])]
-    correct_index = int(raw.get("correct_index", 0))
-    correct_answer = options[correct_index] if 0 <= correct_index < len(options) else ""
-    identity_raw = raw.get("identity") if isinstance(raw.get("identity"), dict) else {}
-    subject = str(identity_raw.get("subject") or raw.get("question") or "").strip()
-    relation = str(identity_raw.get("relation") or "правильный ответ").strip()
-    identity = (
-        FactIdentity.create(subject=subject, relation=relation, answer=correct_answer)
-        if subject and relation and correct_answer
-        else None
-    )
-    return daily_trivia_repo.TriviaQuestion(
-        id=int(raw.get("id", index + 1)),
-        topic=str(raw.get("topic", "")).strip(),
-        question=str(raw.get("question", "")).strip(),
-        options=options,
-        correct_index=correct_index,
-        explanation=str(raw.get("explanation", "")).strip(),
-        identity=identity,
-    )
+    return parse_admin_question(raw, index)
 
 
 def _serialize_trivia_conflict(exc):
@@ -1726,11 +1968,10 @@ async def api_admin_dailytrivia_stats():
     stats = await daily_trivia_repo.get_admin_stats(today)
     delivery_on = await get_global_setting("daily_trivia_delivery_enabled", "on")
     stats["delivery_enabled"] = delivery_on.strip().lower() != "off"
-    from app.runtime_settings.processes import effective_primary_model
-
-    stats["llm_model"] = await effective_primary_model(
-        "daily.trivia", await get_global_setting("daily_trivia_llm_model", "gemini-economy")
-    )
+    try:
+        stats.update(await _dailytrivia_model_settings(await _daily_settings_snapshot()))
+    except Exception:
+        return jsonify(error="model settings unavailable"), 503
     configured_models = getattr(settings, "AVAILABLE_MODELS", []) if settings is not None else []
     stats["llm_models"] = list(
         dict.fromkeys(
@@ -1754,8 +1995,15 @@ async def api_admin_dailytrivia_settings():
     from app.repos.settings_repo import set_global_setting
 
     data = await request.get_json() or {}
+    if not isinstance(data, dict):
+        return jsonify(error="invalid settings"), 400
     saved_model: str | None = None
+    saved_settings = None
     if "llm_model" in data:
+        try:
+            expected_revision = _daily_settings_revision(data)
+        except ValueError:
+            return jsonify(error="expected_revision required"), 400
         model = str(data["llm_model"]).strip()
         if not model or (model not in GEMINI_ROLE_MODEL_ALIASES and not is_gemini_chat_model_id(model)):
             return jsonify({"success": False, "error": "Некорректный Gemini model ID"}), 400
@@ -1768,14 +2016,16 @@ async def api_admin_dailytrivia_settings():
             if validation is not GeminiModelValidationStatus.SUPPORTED:
                 return jsonify({"success": False, "error": "Не удалось проверить модель Gemini. Повторите позже"}), 503
         from app.config import normalize_gemini_runtime_model
-        from app.runtime_settings.processes import save_primary_model
+        from app.runtime_settings.processes import save_primary_model_at_revision
         from app.runtime_settings.store import RevisionConflict
 
         model = normalize_gemini_runtime_model(model, fallback="")
         try:
-            await save_primary_model("daily.trivia", model, actor="admin")
+            saved_settings = await save_primary_model_at_revision(
+                "daily.trivia", model, expected_revision=expected_revision, actor="admin"
+            )
         except RevisionConflict:
-            return jsonify(success=False, error="Настройки изменились. Обновите данные перед сохранением."), 409
+            return await _daily_settings_conflict("trivia")
         except Exception:
             return jsonify(success=False, error="Не удалось подтвердить сохранение модели."), 503
         saved_model = model
@@ -1785,6 +2035,8 @@ async def api_admin_dailytrivia_settings():
     response = {"success": True}
     if saved_model is not None:
         response["llm_model"] = saved_model
+        response["settings_revision"] = saved_settings.revision
+        response["settings"] = await _dailytrivia_model_settings(saved_settings)
     return jsonify(response)
 
 
@@ -1860,119 +2112,27 @@ async def api_admin_dailytrivia_list():
 @require_auth
 @rate_limit_api
 async def api_admin_dailytrivia_regenerate():
-    from app.games import daily_trivia as daily_trivia_game
-    from app.games import daily_trivia_authoring as authoring
-    from app.repos import daily_trivia as daily_trivia_repo
-    from app.repos.crocodile_daily import today_puzzle_date
+    from app.web_daily_jobs import legacy_enqueue
 
-    data = await request.get_json() or {}
-    try:
-        p_date = datetime.date.fromisoformat(str(data.get("date") or today_puzzle_date()))
-    except ValueError:
-        return jsonify({"error": "invalid date"}), 400
-    mode = str(data.get("mode") or "all").strip().lower()
-    if mode not in ("all", "main", "super"):
-        return jsonify({"error": "mode must be 'all', 'main', or 'super'"}), 400
-    try:
-        puzzle = await daily_trivia_game.prepare_daily_puzzle(p_date, force=True, mode=mode)
-    except daily_trivia_repo.RevisionConflictError as exc:
-        current = await daily_trivia_repo.get_puzzle(p_date)
-        return jsonify(
-            {
-                "error": "Викторина уже была обновлена другим процессом. Загружена актуальная ревизия.",
-                "current_revision": exc.actual,
-                "puzzle": _serialize_daily_trivia_puzzle(current) if current else None,
-            }
-        ), 409
-    except authoring.DuplicateQuestionError as exc:
-        return jsonify({"error": str(exc), "conflict": _serialize_trivia_conflict(exc)}), 409
-    except (RuntimeError, ValueError) as exc:
-        logging.warning("Daily Trivia regeneration unavailable: %s", type(exc).__name__, exc_info=True)
-        return jsonify({"error": "Генерация сейчас недоступна. Повторите запрос через несколько минут."}), 503
-    return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
+    return await legacy_enqueue("trivia.regenerate")
 
 
 @quart_app.route("/api/admin/dailytrivia/save", methods=["POST"])
 @require_auth
 @rate_limit_api
 async def api_admin_dailytrivia_save():
-    from app.games import daily_trivia_authoring as authoring
-    from app.repos import daily_trivia as daily_trivia_repo
-    from app.repos.settings_repo import get_global_setting
+    from app.web_daily_jobs import legacy_enqueue
 
-    data = await request.get_json()
-    if not data:
-        return jsonify({"error": "invalid json"}), 400
-    try:
-        p_date = datetime.date.fromisoformat(str(data.get("date") or ""))
-        raw_questions = data.get("questions") or []
-        expected_revision = int(data["revision"]) if data.get("revision") is not None else None
-    except TypeError, ValueError:
-        return jsonify({"error": "invalid payload"}), 400
-
-    existing = await daily_trivia_repo.get_puzzle(p_date)
-    if not existing or len(existing.super_questions) != 3:
-        return jsonify({"error": "Нельзя опубликовать обычные вопросы: суперигра должна содержать 3 вопроса"}), 409
-    questions = [_parse_admin_trivia_question(q, idx) for idx, q in enumerate(raw_questions)]
-    model_name = await get_global_setting("daily_trivia_llm_model", "gemini-economy")
-    try:
-        puzzle = await authoring.publish_authored_day(
-            p_date,
-            main=questions,
-            super_questions=existing.super_questions,
-            model_name=model_name,
-            expected_revision=expected_revision,
-            actor="admin",
-        )
-    except daily_trivia_repo.RevisionConflictError as exc:
-        return jsonify({"error": str(exc), "current_revision": exc.actual}), 409
-    except authoring.DuplicateQuestionError as exc:
-        return jsonify({"error": str(exc), "conflict": _serialize_trivia_conflict(exc)}), 409
-    except (authoring.InvalidQuestionSetError, ValueError) as exc:
-        return jsonify({"error": str(exc)}), 422
-    return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
+    return await legacy_enqueue("trivia.validate_save", part="main")
 
 
 @quart_app.route("/api/admin/dailytrivia/save_super", methods=["POST"])
 @require_auth
 @rate_limit_api
 async def api_admin_dailytrivia_save_super():
-    """Save manually edited super questions for a puzzle date."""
-    from app.games import daily_trivia_authoring as authoring
-    from app.repos import daily_trivia as daily_trivia_repo
-    from app.repos.settings_repo import get_global_setting
+    from app.web_daily_jobs import legacy_enqueue
 
-    data = await request.get_json()
-    if not data:
-        return jsonify({"error": "invalid json"}), 400
-    try:
-        p_date = datetime.date.fromisoformat(str(data.get("date") or ""))
-        raw_questions = data.get("super_questions") or []
-        expected_revision = int(data["revision"]) if data.get("revision") is not None else None
-    except TypeError, ValueError:
-        return jsonify({"error": "invalid payload"}), 400
-
-    existing = await daily_trivia_repo.get_puzzle(p_date)
-    if not existing or len(existing.questions) != 5:
-        return jsonify({"error": "Нельзя опубликовать суперигру: обычная игра должна содержать 5 вопросов"}), 409
-    super_questions = [_parse_admin_trivia_question(q, idx) for idx, q in enumerate(raw_questions)]
-    model_name = await get_global_setting("daily_trivia_llm_model", "gemini-economy")
-    try:
-        puzzle = await authoring.publish_authored_day(
-            p_date,
-            main=existing.questions,
-            super_questions=super_questions,
-            model_name=model_name,
-            expected_revision=expected_revision,
-            actor="admin",
-        )
-    except daily_trivia_repo.RevisionConflictError as exc:
-        return jsonify({"error": str(exc), "current_revision": exc.actual}), 409
-    except authoring.DuplicateQuestionError as exc:
-        return jsonify({"error": str(exc), "conflict": _serialize_trivia_conflict(exc)}), 409
-    except (authoring.InvalidQuestionSetError, ValueError) as exc:
-        return jsonify({"error": str(exc)}), 422
-    return jsonify({"success": True, "puzzle": _serialize_daily_trivia_puzzle(puzzle)})
+    return await legacy_enqueue("trivia.validate_save", part="super")
 
 
 @quart_app.route("/api/admin/dailytrivia/clear_used_keys", methods=["POST"])
@@ -2114,6 +2274,16 @@ async def api_admin_broadcast_overview():
         )
         tarot_total = int(tarot_total_rows[0]["cnt"] if tarot_total_rows else 0) if tarot_total_rows else 0
 
+        from app.broadcast_jobs import observed_channel_counts
+        from app.repos.crocodile_daily import today_puzzle_date
+
+        try:
+            async with asyncio.timeout(5):
+                tarot_observed = await observed_channel_counts("tarot", date=today_puzzle_date().isoformat())
+            tarot_observed["available"] = True
+        except Exception:
+            tarot_observed = {"available": False, "coverage_started_at": None}
+
         tarot_channel = {
             "id": "tarot",
             "name": "Карта дня (Таро)",
@@ -2121,9 +2291,10 @@ async def api_admin_broadcast_overview():
             "active_game": None,
             "subscribers": tarot_total,
             "pending_today": None,
-            "sent_today": None,
+            "sent_today": tarot_observed.get("sent"),
             "delivery_enabled": tarot_enabled,
             "last_sent_at": None,
+            "delivery_journal": tarot_observed,
         }
 
         return jsonify({"channels": [challenge_channel, horo_channel, tarot_channel]})
@@ -2283,15 +2454,14 @@ async def api_admin_broadcast_toggle():
 @quart_app.route("/api/admin/broadcast/errors", methods=["GET"])
 @require_auth
 async def api_admin_broadcast_errors():
-    """Return users with known delivery errors (stub: uses last_sent heuristic)."""
-    # Full implementation requires broadcast_events table (future migration).
-    # v1: return empty list with informative message.
-    return jsonify(
-        {
-            "errors": [],
-            "note": "Detailed error log requires broadcast_events table (planned migration).",
-        }
-    )
+    from app.web_broadcast_jobs import journal_response
+
+    try:
+        return await journal_response()
+    except ValueError:
+        return jsonify(error="invalid_journal_filter"), 400
+    except Exception:
+        return jsonify(error="journal_unavailable", available=False), 503
 
 
 # ── Broadcast Offer History & Manual Send ─────────────────────────────────────
@@ -2520,272 +2690,18 @@ async def api_admin_broadcast_offer_history():
 @require_auth
 @rate_limit_api
 async def api_admin_broadcast_send_offer():
-    """Send a subscription offer to a specific user for a given channel.
+    from app.web_broadcast_jobs import legacy_enqueue
 
-    Body: { user_id: int, channel: "daily_challenge"|"horoscope"|"tarot", force: bool }
-
-    The user must exist in public.users (bot can only message users who initiated
-    a conversation). If the user is already subscribed and force != true, returns
-    a warning without sending.
-    """
-    try:
-        data = await request.get_json() or {}
-        try:
-            target_user_id = int(data.get("user_id") or 0)
-        except ValueError, TypeError:
-            return jsonify({"error": "user_id must be an integer"}), 400
-
-        channel = str(data.get("channel") or "").strip()
-        force = bool(data.get("force", False))
-
-        if not target_user_id:
-            return jsonify({"error": "user_id is required"}), 400
-        if channel not in ("daily_challenge", "horoscope", "tarot"):
-            return jsonify({"error": f"unknown channel: {channel!r}"}), 400
-
-        # Verify user is reachable (exists in users table)
-        user_rows = await database.db_query(
-            "SELECT user_id, username, first_name FROM public.users WHERE user_id = $1",
-            (target_user_id,),
-        )
-        if not user_rows:
-            return jsonify(
-                {
-                    "success": False,
-                    "error": "User not found. Bot can only message users who have started a conversation.",
-                }
-            ), 404
-
-        from app.bot_instance import get_bot
-
-        bot = get_bot()
-        if bot is None:
-            return jsonify({"error": "Bot not available"}), 503
-
-        # Channel-specific send logic
-        if channel == "daily_challenge":
-            from app.repos import crocodile_daily as croc_repo
-            from app.repos.daily_2048 import get_active_daily_game_mode
-
-            pref = await croc_repo.get_preference(target_user_id)
-            already_subscribed = bool(pref and pref.get("is_subscribed"))
-            if already_subscribed and not force:
-                return jsonify(
-                    {
-                        "success": False,
-                        "warning": "User is already subscribed. Pass force=true to send anyway.",
-                        "already_subscribed": True,
-                    }
-                )
-
-            game_mode = await get_active_daily_game_mode()
-            if game_mode == "2048":
-                from app.handlers.daily_2048 import send_discovery_intro as send_2048_intro
-
-                await send_2048_intro(bot, target_user_id)
-            elif game_mode == "trivia":
-                from app.handlers.daily_trivia import send_discovery_intro as send_trivia_intro
-
-                await send_trivia_intro(bot, target_user_id)
-            else:
-                from app.handlers.daily_crocodile import send_discovery_intro as send_croc_intro
-
-                await send_croc_intro(bot, target_user_id)
-
-        elif channel == "horoscope":
-            from app.repos.horoscope_subscriptions import (
-                get_horoscope_subscription,
-                mark_horoscope_discovery_sent,
-            )
-
-            sub = await get_horoscope_subscription(target_user_id)
-            already_subscribed = bool(sub and sub.get("is_active"))
-            if already_subscribed and not force:
-                return jsonify(
-                    {
-                        "success": False,
-                        "warning": "User is already subscribed to horoscope. Pass force=true to send anyway.",
-                        "already_subscribed": True,
-                    }
-                )
-
-            from app.handlers.horoscope_subscription import send_horoscope_invite
-
-            delivered = await send_horoscope_invite(bot, target_user_id)
-            if not delivered:
-                return jsonify(
-                    {
-                        "success": False,
-                        "error": "Offer was not delivered by Telegram; discovery timestamp was not updated.",
-                    }
-                ), 502
-            await mark_horoscope_discovery_sent(target_user_id)
-
-        elif channel == "tarot":
-            from app.repos.tarot_daily_subscriptions import (
-                get_tarot_subscription,
-                mark_tarot_discovery_sent,
-            )
-
-            sub = await get_tarot_subscription(target_user_id)
-            already_subscribed = bool(sub and sub.get("is_subscribed"))
-            if already_subscribed and not force:
-                return jsonify(
-                    {
-                        "success": False,
-                        "warning": "User is already subscribed to tarot. Pass force=true to send anyway.",
-                        "already_subscribed": True,
-                    }
-                )
-
-            from app.handlers.tarot_daily import send_tarot_invite
-
-            await send_tarot_invite(bot, target_user_id)
-            await mark_tarot_discovery_sent(target_user_id)
-
-        return jsonify(
-            {
-                "success": True,
-                "user_id": target_user_id,
-                "channel": channel,
-                "message": "Offer sent successfully.",
-            }
-        )
-    except Exception as exc:
-        logging.error("Broadcast send-offer error: %s", exc, exc_info=True)
-        return jsonify({"error": str(exc)}), 500
+    return await legacy_enqueue(single=True)
 
 
 @quart_app.route("/api/admin/broadcast/send-offer-batch", methods=["POST"])
 @require_auth
 @rate_limit_api
 async def api_admin_broadcast_send_offer_batch():
-    """Send subscription offers to multiple users for a given channel.
+    from app.web_broadcast_jobs import legacy_enqueue
 
-    Body: {
-      user_ids: [int, ...],   (max 100)
-      channel: "daily_challenge"|"horoscope"|"tarot",
-      force: bool             (send even if already subscribed)
-    }
-
-    Uses asyncio.Semaphore(5) to avoid flooding Telegram.
-    Returns per-user results with success/skip/error per entry.
-    """
-    try:
-        data = await request.get_json() or {}
-        raw_ids = data.get("user_ids") or []
-        channel = str(data.get("channel") or "").strip()
-        force = bool(data.get("force", False))
-
-        if not isinstance(raw_ids, list) or not raw_ids:
-            return jsonify({"error": "user_ids must be a non-empty list"}), 400
-        if len(raw_ids) > 100:
-            return jsonify({"error": "Batch size limit is 100 users per request"}), 400
-        if channel not in ("daily_challenge", "horoscope", "tarot"):
-            return jsonify({"error": f"unknown channel: {channel!r}"}), 400
-
-        try:
-            user_ids = [int(uid) for uid in raw_ids]
-        except ValueError, TypeError:
-            return jsonify({"error": "All user_ids must be integers"}), 400
-
-        from app.bot_instance import get_bot
-
-        bot = get_bot()
-        if bot is None:
-            return jsonify({"error": "Bot not available"}), 503
-
-        # Verify all user IDs exist (reachable)
-        placeholders = ", ".join(f"${i + 1}" for i in range(len(user_ids)))
-        reachable_rows = await database.db_query(
-            f"SELECT user_id FROM public.users WHERE user_id IN ({placeholders})",
-            tuple(user_ids),
-        )
-        reachable_set = {r["user_id"] for r in reachable_rows}
-
-        results: list[dict] = []
-        sem = asyncio.Semaphore(5)
-
-        async def _send_one(uid: int) -> dict:
-            if uid not in reachable_set:
-                return {"user_id": uid, "status": "error", "message": "User not found"}
-
-            async with sem:
-                try:
-                    if channel == "daily_challenge":
-                        from app.repos import crocodile_daily as croc_repo
-                        from app.repos.daily_2048 import get_active_daily_game_mode
-
-                        pref = await croc_repo.get_preference(uid)
-                        if bool(pref and pref.get("is_subscribed")) and not force:
-                            return {"user_id": uid, "status": "skipped", "message": "Already subscribed"}
-
-                        game_mode = await get_active_daily_game_mode()
-                        if game_mode == "2048":
-                            from app.handlers.daily_2048 import send_discovery_intro as send_2048_intro
-
-                            await send_2048_intro(bot, uid)
-                        elif game_mode == "trivia":
-                            from app.handlers.daily_trivia import send_discovery_intro as send_trivia_intro
-
-                            await send_trivia_intro(bot, uid)
-                        else:
-                            from app.handlers.daily_crocodile import send_discovery_intro as send_croc_intro
-
-                            await send_croc_intro(bot, uid)
-
-                    elif channel == "horoscope":
-                        from app.repos.horoscope_subscriptions import (
-                            get_horoscope_subscription,
-                            mark_horoscope_discovery_sent,
-                        )
-
-                        sub = await get_horoscope_subscription(uid)
-                        if bool(sub and sub.get("is_active")) and not force:
-                            return {"user_id": uid, "status": "skipped", "message": "Already subscribed"}
-                        from app.handlers.horoscope_subscription import send_horoscope_invite
-
-                        delivered = await send_horoscope_invite(bot, uid)
-                        if not delivered:
-                            return {"user_id": uid, "status": "error", "message": "Offer was not delivered"}
-                        await mark_horoscope_discovery_sent(uid)
-
-                    elif channel == "tarot":
-                        from app.repos.tarot_daily_subscriptions import (
-                            get_tarot_subscription,
-                            mark_tarot_discovery_sent,
-                        )
-
-                        sub = await get_tarot_subscription(uid)
-                        if bool(sub and sub.get("is_subscribed")) and not force:
-                            return {"user_id": uid, "status": "skipped", "message": "Already subscribed"}
-                        from app.handlers.tarot_daily import send_tarot_invite
-
-                        await send_tarot_invite(bot, uid)
-                        await mark_tarot_discovery_sent(uid)
-
-                    return {"user_id": uid, "status": "sent", "message": "Offer sent"}
-                except Exception as send_exc:
-                    logging.warning("Batch offer send failed user=%s: %s", uid, send_exc)
-                    return {"user_id": uid, "status": "error", "message": str(send_exc)}
-
-        results = list(await asyncio.gather(*[_send_one(uid) for uid in user_ids]))
-
-        sent = sum(1 for r in results if r["status"] == "sent")
-        skipped = sum(1 for r in results if r["status"] == "skipped")
-        errors = sum(1 for r in results if r["status"] == "error")
-
-        return jsonify(
-            {
-                "success": True,
-                "channel": channel,
-                "summary": {"sent": sent, "skipped": skipped, "errors": errors},
-                "results": results,
-            }
-        )
-    except Exception as exc:
-        logging.error("Broadcast send-offer-batch error: %s", exc, exc_info=True)
-        return jsonify({"error": str(exc)}), 500
+    return await legacy_enqueue()
 
 
 # ── Horoscope Admin API ───────────────────────────────────────────────────────
@@ -2906,28 +2822,31 @@ async def api_admin_tarot_status():
 @require_auth
 @rate_limit_api
 async def api_admin_tarot_regenerate():
-    """Force regeneration of tarot daily readings for a given date."""
+    from app.web_daily_jobs import legacy_enqueue
+
+    return await legacy_enqueue("tarot.prepare")
+
+
+@quart_app.route("/api/admin/tarot/models")
+@require_auth
+@rate_limit_api
+async def api_admin_tarot_models():
+    from app.process_policies import validate_policy
+    from app.repos.models_repo import get_models
+    from app.tarot import iter_daily_card_variants
+    from app.tarot_daily import resolve_daily_model_policy
+
     try:
-        from app.tarot_daily import prepare_daily_readings
-
-        data = await request.get_json() or {}
-        date_str = str(data.get("date") or "")
-        try:
-            target_date = datetime.date.fromisoformat(date_str)
-        except ValueError:
-            return jsonify({"error": "invalid date"}), 400
-
-        result = await prepare_daily_readings(target_date=target_date)
+        models = []
+        for model in await get_models("gemini"):
+            try:
+                validate_policy("tarot.daily", {"models": [model], "strategy": "sequential"})
+                models.append(model)
+            except ValueError:
+                continue
+        policy = await resolve_daily_model_policy()
         return jsonify(
-            {
-                "success": True,
-                "date": target_date.isoformat(),
-                "generated": result.generated,
-                "skipped": result.skipped,
-                "failed": result.failed,
-                "locked": result.locked,
-            }
+            models=models, effective_models=list(policy.models), variants=len(list(iter_daily_card_variants()))
         )
-    except Exception as exc:
-        logging.error("Tarot regenerate error: %s", exc, exc_info=True)
-        return jsonify({"error": str(exc)}), 500
+    except Exception:
+        return jsonify(error="tarot_models_unavailable"), 503

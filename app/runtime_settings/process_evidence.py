@@ -334,7 +334,7 @@ PROCESS_EVIDENCE: dict[str, ProcessEvidence] = {
         "ProviderRouter: Gemini model plan",
         "Фоновая подготовка интерпретаций карт дня.",
         "Существующие интерпретации пропускаются без force; изменение применяется к новой подготовке.",
-        ("app/tarot_daily.py", "prepare_daily_readings"),
+        ("app/tarot_daily.py", "resolve_daily_model_policy"),
     ),
     "live": _row(
         "Gemini SDK: Live",

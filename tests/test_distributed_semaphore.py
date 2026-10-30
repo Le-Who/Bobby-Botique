@@ -3,7 +3,7 @@
 import asyncio
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -14,8 +14,14 @@ from app.errors import UserLimitExceededError
 @pytest.mark.asyncio
 async def test_global_capacity_timeout_rejects_and_releases_local_slot():
     redis = AsyncMock()
-    redis.eval.return_value = 0
-    clock = SimpleNamespace(monotonic=Mock(side_effect=[0, 61]), monotonic_ns=time.monotonic_ns, time=time.time)
+    elapsed = [0.0]
+
+    async def occupied(*args):
+        elapsed[0] = 61.0
+        return 0
+
+    redis.eval.side_effect = occupied
+    clock = SimpleNamespace(monotonic=lambda: elapsed[0], monotonic_ns=time.monotonic_ns, time=time.time)
     sem = GlobalLLMSemaphore(limit=1, timeout=60)
     with patch("app.cache.redis_client", redis), patch("app.adapters.concurrency.time", clock):
         with pytest.raises(UserLimitExceededError):

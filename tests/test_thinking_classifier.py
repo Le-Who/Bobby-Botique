@@ -14,6 +14,31 @@ import pytest
 
 from app.thinking_classifier import classify_thinking_level, resolve_thinking_level
 
+
+@pytest.mark.parametrize(
+    ("setting", "text", "model", "expected_level", "expected_reason"),
+    [
+        ("off", "def synthetic():", "gemini-3.1-flash-lite", None, "explicit_off"),
+        ("high", "Привет", None, "high", "explicit_level"),
+        ("low", "2 + 2", None, "low", "explicit_level"),
+        (None, "Привет", "gemini-3.1-flash-lite", "high", "model_default"),
+        (None, "2 + 2", None, "high", "high_math"),
+        (None, "Объясни радугу", None, "medium", "medium_explanation"),
+        (None, "Спасибо", None, "low", "low_confirmation"),
+    ],
+)
+def test_thinking_diagnostics_preserve_effective_setting(setting, text, model, expected_level, expected_reason):
+    """The diagnostic API must explain the same effective policy, without input in its reason."""
+    from app import thinking_classifier
+
+    diagnostic = getattr(thinking_classifier, "resolve_thinking_decision", None)
+    assert diagnostic is not None, "The deterministic resolver needs structured diagnostics"
+    decision = diagnostic(setting, text, model=model)
+    assert decision.level == expected_level
+    assert decision.reason_code == expected_reason
+    assert resolve_thinking_level(setting, text, model=model) == expected_level
+
+
 # ─── HIGH signals ─────────────────────────────────────────────────────────────
 
 

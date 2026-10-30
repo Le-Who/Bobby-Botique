@@ -41,6 +41,7 @@ class ProviderAttempt:
 
     def fields(self) -> dict[str, JsonValue]:
         return {
+            **_request_fields(),
             "attempt_id": self.attempt_id,
             "provider": self.provider,
             "requested_model": self.requested_model,
@@ -89,6 +90,16 @@ def start_provider_attempt(
         **attempt.fields(),
     )
     return attempt
+
+
+def _request_fields() -> dict[str, JsonValue]:
+    from app.observability.request_metrics import current_request
+
+    observation = current_request()
+    return {
+        "request_generation": observation is not None and observation.generation,
+        "workload": observation.workload if observation is not None else "other",
+    }
 
 
 def record_provider_exception(

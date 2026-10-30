@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -213,12 +214,17 @@ async def test_handle_request_text_message_happy_path(monkeypatch):
     # run as real background tasks (which would block the event loop
     # waiting on unmocked infrastructure like process_long_request).
     captured_coros = []
+    captured_inner = []
+    cancelled_tasks = []
 
     def capture_submit(coro, *args, **kwargs):
         captured_coros.append(coro)
-        noop_task = MagicMock(spec=asyncio.Task)
-        noop_task.cancel = MagicMock()
-        return noop_task
+        if coro.cr_code.co_name == "observed_worker":
+            captured_inner.append(coro.cr_frame.f_locals["coroutine"])
+        task = asyncio.get_running_loop().create_task(coro)
+        task.cancel()  # Preserve the admission-only assertion and real done callbacks.
+        cancelled_tasks.append(task)
+        return task
 
     async def _debounce_passthrough(uid, msg, bot=None):
         from app.middleware.debounce import DebounceResult, _MessageEntry
@@ -271,9 +277,14 @@ async def test_handle_request_text_message_happy_path(monkeypatch):
             coro = call_args[0][0]
             coro.close()
 
-        # Close captured submit_task coroutines (task_wrapper)
+        # Real completion callbacks close the nested, unstarted request body.
+        await asyncio.gather(*cancelled_tasks, return_exceptions=True)
         for coro in captured_coros:
             coro.close()
+        inner_states = [inspect.getcoroutinestate(coro) for coro in captured_inner]
+        for coro in captured_inner:
+            coro.close()
+        assert inner_states and all(status == inspect.CORO_CLOSED for status in inner_states)
 
 
 @pytest.mark.asyncio

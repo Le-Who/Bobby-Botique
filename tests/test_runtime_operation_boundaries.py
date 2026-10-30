@@ -228,6 +228,9 @@ async def test_crocodile_preparation_freezes_models_and_prompts_then_refreshes_n
     async def puzzle(puzzle_date, *, difficulty):
         return crocodile_daily.repo.DailyPuzzle(puzzle_date, "кот", "животные", "ru", difficulty=difficulty)
 
+    from tests.test_daily_croc_generation_ownership import install_preparation_transport
+
+    install_preparation_transport(monkeypatch)
     monkeypatch.setattr(crocodile_daily.repo, "create_puzzle_if_missing", puzzle)
     for method in ("set_puzzle_hints", "set_puzzle_image_prompt", "mark_puzzle_prepared"):
         monkeypatch.setattr(crocodile_daily.repo, method, AsyncMock())

@@ -1,30 +1,32 @@
-"""product-05: scheduled chunk retry and independent replica delivery claims."""
+"""Real journal delivery contracts; legacy claim helpers retain direct coverage.
+
+Scheduler ticks now admit jobs. A partial/uncertain external send cannot be
+retried by the next tick; receipts, privacy and ownership use real PostgreSQL.
+Only queue admission and Telegram/provider transports are synthetic here.
+"""
 
 import asyncio
-import logging
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 
+from app.broadcast_jobs import BroadcastService
 from app.handlers import scheduled_horoscopes as scheduler
+from app.queue_contracts import AdmissionState, JobState, QueueAdmission
+from app.repos import broadcast_jobs as journal
 from app.repos import horoscope_subscriptions as subscriptions
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 USER = 86001
 
 
-@pytest.fixture
-def enabled(monkeypatch):
-    async def on(*args):
-        return "on"
-
-    monkeypatch.setattr("app.repos.settings_repo.get_global_setting", on)
-
-
 async def subscribe(connection, user=USER, *, tomorrow=False):
-    await connection.execute("INSERT INTO users(user_id) VALUES($1)", user)
+    await connection.execute("INSERT INTO users(user_id,is_authorized) VALUES($1,1)", user)
+    await connection.execute("INSERT INTO chats(user_id) VALUES($1)", user)
     assert await subscriptions.upsert_horoscope_subscription(
         user,
         sign="aries",
@@ -34,8 +36,47 @@ async def subscribe(connection, user=USER, *, tomorrow=False):
     )
 
 
-async def test_two_independent_scheduler_replicas_send_one_delivery(db_conn, enabled, monkeypatch):
+@pytest.fixture
+def service(monkeypatch):
+    queue = SimpleNamespace(
+        enqueue_job=AsyncMock(side_effect=lambda *a, **kw: QueueAdmission(AdmissionState.ACCEPTED, str(uuid4()))),
+        read_job=AsyncMock(return_value=None),
+        read_job_by_operation=AsyncMock(return_value=None),
+    )
+    bot = SimpleNamespace(send_message=AsyncMock(return_value=SimpleNamespace(message_id=501)))
+    value = BroadcastService(journal=journal, queue=queue, bot_provider=lambda: bot)
+    monkeypatch.setattr("app.broadcast_jobs.enqueue_scheduled", value.enqueue_scheduled)
+    monkeypatch.setattr("app.repos.settings_repo.get_global_setting", AsyncMock(return_value="on"))
+    monkeypatch.setattr(
+        "app.runtime_settings.lifecycle.operation_snapshot", AsyncMock(return_value=SimpleNamespace(revision=0))
+    )
+    monkeypatch.setattr(
+        "app.intent_router._handle_horoscope", AsyncMock(return_value=SimpleNamespace(text="Synthetic horoscope"))
+    )
+    return value, queue, bot
+
+
+async def enqueue(value, users=(USER,), kind="today"):
+    results = await value.enqueue_scheduled(
+        channel="horoscope",
+        user_ids=list(users),
+        effective_date=datetime.now(UTC).date(),
+        variant=kind,
+    )
+    return results[0]["batch"]
+
+
+async def execute(monkeypatch, value, batch):
+    guard = SimpleNamespace(
+        snapshot=SimpleNamespace(task_id=batch["task_id"]), checkpoint=AsyncMock(), update_progress=AsyncMock()
+    )
+    monkeypatch.setattr("app.queue.current_job_guard", lambda: guard)
+    return await value.execute(str(batch["batch_id"]))
+
+
+async def test_two_independent_scheduler_replicas_admit_one_delivery(db_conn, service, monkeypatch):
     await subscribe(db_conn)
+    value, queue, bot = service
     original_due = scheduler.get_due_horoscope_subscriptions
     barrier = asyncio.Barrier(2)
 
@@ -46,219 +87,223 @@ async def test_two_independent_scheduler_replicas_send_one_delivery(db_conn, ena
             await barrier.wait()
         return rows
 
-    async def generate(*args):
-        return SimpleNamespace(text="Controlled daily horoscope")
-
-    sent, backend_pids = [], set()
-    loser_finished = asyncio.Event()
-    original_context = subscriptions.set_user_context
-
-    async def record_connection(*args, **kwargs):
-        backend_pids.add(kwargs["conn"].get_server_pid())
-        await original_context(*args, **kwargs)
-
-    @asynccontextmanager
-    async def claim(user_id, kind):
-        async with subscriptions.claim_horoscope_delivery(user_id, kind) as owned:
-            if owned is None:
-                loser_finished.set()
-            yield owned
-
-    async def send(**kwargs):
-        sent.append(kwargs)
-        await asyncio.wait_for(loser_finished.wait(), 3)
-
     monkeypatch.setattr(scheduler, "get_due_horoscope_subscriptions", due)
-    monkeypatch.setattr(subscriptions, "set_user_context", record_connection)
-    monkeypatch.setattr(scheduler, "claim_horoscope_delivery", claim)
-    monkeypatch.setattr("app.intent_router._handle_horoscope", generate)
-    context = SimpleNamespace(bot=SimpleNamespace(send_message=send))
     await asyncio.wait_for(
-        asyncio.gather(scheduler.check_and_send_horoscopes(context), scheduler.check_and_send_horoscopes(context)), 5
+        asyncio.gather(*[scheduler.check_and_send_horoscopes(SimpleNamespace(bot=bot)) for _ in range(2)]), 5
     )
-    assert len(sent) == 1
-    assert len(backend_pids) == 2
+    bot.send_message.assert_not_awaited()
+    assert queue.enqueue_job.await_count == 1
+    batches = await journal.open_batches()
+    assert len(batches) == 1
+    await execute(monkeypatch, value, batches[0])
+    await execute(monkeypatch, value, batches[0])
+    bot.send_message.assert_awaited_once()
+    assert (await journal.read_batch(str(batches[0]["batch_id"])))["sent"] == 1
     assert await db_conn.fetchval(
         "SELECT last_today_sent IS NOT NULL FROM horoscope_subscriptions WHERE user_id=$1", USER
     )
-    monkeypatch.setattr(scheduler, "get_due_horoscope_subscriptions", original_due)
-    await scheduler.check_and_send_horoscopes(context)
-    assert len(sent) == 1
 
 
-async def test_partial_second_chunk_failure_retries_complete_message_next_tick(db_conn, enabled, monkeypatch):
+async def test_partial_second_chunk_is_unknown_and_next_tick_does_not_replay(db_conn, service, monkeypatch):
     await subscribe(db_conn)
-    # Hand-sized paragraphs: header + 3,800 A's fits 3,900; B paragraph starts chunk two.
-    first = "🌅 <b>Ваш гороскоп на сегодня</b> (♈ Овен):\n\n" + "A" * 3800 + "\n\n"
-    second = "B" * 200
-
-    async def generate(*args):
-        return SimpleNamespace(text="A" * 3800 + "\n\n" + second)
-
-    attempts, delivered = [], []
-    fail = True
-
-    async def send(**kwargs):
-        nonlocal fail
-        attempts.append(kwargs["text"])
-        if fail and len(attempts) == 2:
-            fail = False
-            raise RuntimeError("controlled chunk-two failure")
-        delivered.append(kwargs)
-
-    monkeypatch.setattr("app.intent_router._handle_horoscope", generate)
-    context = SimpleNamespace(bot=SimpleNamespace(send_message=send))
-    await scheduler.check_and_send_horoscopes(context)
-    assert attempts == [first, second]
-    assert [chunk["text"] for chunk in delivered] == [first]
+    value, queue, bot = service
+    monkeypatch.setattr(
+        "app.intent_router._handle_horoscope",
+        AsyncMock(return_value=SimpleNamespace(text="A" * 3800 + "\n\n" + "B" * 200)),
+    )
+    bot.send_message.side_effect = [SimpleNamespace(message_id=501), ConnectionError("synthetic lost reply")]
+    batch = await enqueue(value)
+    await execute(monkeypatch, value, batch)
+    assert bot.send_message.await_count == 2
+    current = await journal.read_batch(batch["batch_id"])
+    assert (current["unknown_delivery"], current["retryable_failed"]) == (1, 0)
+    events, _ = await journal.list_events(channel="horoscope")
+    assert sorted(event["outcome"] for event in events) == ["sent", "unknown_delivery"]
     assert await db_conn.fetchval("SELECT last_today_sent FROM horoscope_subscriptions") is None
-    await scheduler.check_and_send_horoscopes(context)
-    assert attempts == [first, second, first, second]
-    assert [chunk["text"] for chunk in delivered] == [first, first, second]
-    assert delivered[0]["reply_markup"] is None and delivered[1]["reply_markup"] is None
-    assert delivered[2]["reply_markup"] is not None
-    assert await db_conn.fetchval("SELECT last_today_sent IS NOT NULL FROM horoscope_subscriptions")
-    await scheduler.check_and_send_horoscopes(context)
-    assert attempts == [first, second, first, second]
+    await scheduler.check_and_send_horoscopes(SimpleNamespace(bot=bot))
+    await execute(monkeypatch, value, batch)
+    assert queue.enqueue_job.await_count == 1
+    assert bot.send_message.await_count == 2
 
 
-@pytest.mark.parametrize("failure", ["false", "exception", "cancel"])
-async def test_failed_or_cancelled_delivery_releases_claim_for_retry(db_conn, enabled, monkeypatch, failure):
+async def test_preparation_failure_requires_explicit_child_retry(db_conn, service, monkeypatch):
     await subscribe(db_conn)
-    entered, cleaned = asyncio.Event(), asyncio.Event()
-    calls = 0
+    value, queue, bot = service
+    monkeypatch.setattr(
+        "app.intent_router._handle_horoscope",
+        AsyncMock(side_effect=[RuntimeError("synthetic generation failure"), SimpleNamespace(text="Recovered")]),
+    )
+    batch = await enqueue(value)
+    await execute(monkeypatch, value, batch)
+    bot.send_message.assert_not_awaited()
+    assert (await journal.read_batch(batch["batch_id"]))["retryable_failed"] == 1
+    await scheduler.check_and_send_horoscopes(SimpleNamespace(bot=bot))
+    assert queue.enqueue_job.await_count == 1
+    child = await value.retry_failed(batch["batch_id"], operation_id=str(uuid4()))
+    await execute(monkeypatch, value, child["batch"])
+    bot.send_message.assert_awaited_once()
+    assert (await journal.read_batch(batch["batch_id"]))["retryable_failed"] == 0
 
-    async def deliver(*args):
-        nonlocal calls
-        calls += 1
-        if calls > 1:
-            return True
-        if failure == "false":
-            return False
-        if failure == "exception":
-            raise RuntimeError("controlled delivery failure")
+
+async def test_cancelled_external_send_remains_unknown_after_recovery(db_conn, service, monkeypatch):
+    await subscribe(db_conn)
+    value, queue, bot = service
+    entered = asyncio.Event()
+
+    async def sending(**kwargs):
         entered.set()
-        try:
-            await asyncio.Event().wait()
-        finally:
-            cleaned.set()
+        await asyncio.Event().wait()
 
-    monkeypatch.setattr(scheduler, "_deliver_horoscope", deliver)
-    context = SimpleNamespace(bot=object())
-    if failure == "cancel":
-        tick = asyncio.create_task(scheduler.check_and_send_horoscopes(context))
-        try:
-            await asyncio.wait_for(entered.wait(), 3)
-            tick.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await tick
-            assert cleaned.is_set()
-        finally:
-            if not tick.done():
-                tick.cancel()
-                await asyncio.gather(tick, return_exceptions=True)
-    else:
-        await scheduler.check_and_send_horoscopes(context)
-    assert await db_conn.fetchval("SELECT last_today_sent FROM horoscope_subscriptions") is None
-    await asyncio.wait_for(scheduler.check_and_send_horoscopes(context), 3)
-    assert calls == 2
-    assert await db_conn.fetchval("SELECT last_today_sent IS NOT NULL FROM horoscope_subscriptions")
+    bot.send_message.side_effect = sending
+    batch = await enqueue(value)
+    task = asyncio.create_task(execute(monkeypatch, value, batch))
+    try:
+        await asyncio.wait_for(entered.wait(), 3)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    queue.read_job.return_value = SimpleNamespace(
+        state=JobState.CANCELLED, task_id=batch["task_id"], storage_mode="local"
+    )
+    await value.recover()
+    row = await journal.read_batch(batch["batch_id"])
+    assert row["state"] == "finished" and row["unknown_delivery"] == 1
+    assert row["retryable_failed"] == 0
+    await scheduler.check_and_send_horoscopes(SimpleNamespace(bot=bot))
+    assert bot.send_message.await_count == 1
 
 
 @pytest.mark.parametrize("failure", ["mark", "commit"])
-async def test_real_mark_or_commit_failure_rolls_back_and_never_logs_success(
-    db_conn, enabled, monkeypatch, caplog, failure
-):
+async def test_confirmed_receipt_survives_marker_failure_without_replay(db_conn, service, monkeypatch, failure):
     await subscribe(db_conn)
-    await db_conn.execute(
-        """CREATE FUNCTION reject_horoscope_ack() RETURNS trigger LANGUAGE plpgsql AS $$
-           BEGIN IF NEW.last_today_sent IS NOT NULL THEN
-             RAISE EXCEPTION 'controlled acknowledgment failure';
-           END IF; RETURN NEW; END $$"""
+    value, queue, bot = service
+    await db_conn.execute("""CREATE FUNCTION reject_horoscope_ack() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN IF NEW.last_today_sent IS NOT NULL THEN RAISE EXCEPTION 'synthetic acknowledgment failure';
+        END IF; RETURN NEW; END $$""")
+    ddl = (
+        "CREATE TRIGGER reject_ack BEFORE UPDATE ON horoscope_subscriptions"
+        if failure == "mark"
+        else "CREATE CONSTRAINT TRIGGER reject_ack AFTER UPDATE ON horoscope_subscriptions DEFERRABLE INITIALLY DEFERRED"
     )
-    if failure == "mark":
-        ddl = "CREATE TRIGGER reject_ack BEFORE UPDATE ON horoscope_subscriptions"
-    else:
-        ddl = (
-            "CREATE CONSTRAINT TRIGGER reject_ack AFTER UPDATE ON horoscope_subscriptions DEFERRABLE INITIALLY DEFERRED"
-        )
     await db_conn.execute(ddl + " FOR EACH ROW EXECUTE FUNCTION reject_horoscope_ack()")
-    sent = []
-
-    async def generate(*args):
-        return SimpleNamespace(text="Controlled acknowledgment test")
-
-    async def send(**kwargs):
-        sent.append(kwargs)
-
-    monkeypatch.setattr("app.intent_router._handle_horoscope", generate)
-    context = SimpleNamespace(bot=SimpleNamespace(send_message=send))
-    caplog.set_level(logging.INFO, logger=scheduler.__name__)
-    await scheduler.check_and_send_horoscopes(context)
-    assert len(sent) == 1
+    batch = await enqueue(value)
+    await execute(monkeypatch, value, batch)
+    bot.send_message.assert_awaited_once()
+    row = await journal.read_batch(batch["batch_id"])
+    assert (row["sent"], row["failed"], row["unknown_delivery"]) == (1, 0, 0)
     assert await db_conn.fetchval("SELECT last_today_sent FROM horoscope_subscriptions") is None
-    assert not any("delivered to" in record.message for record in caplog.records)
-    assert any("delivery task failed" in record.message for record in caplog.records)
     await db_conn.execute("DROP TRIGGER reject_ack ON horoscope_subscriptions")
-    await scheduler.check_and_send_horoscopes(context)
-    assert len(sent) == 2  # External send succeeded before the acknowledgment failed.
-    assert await db_conn.fetchval("SELECT last_today_sent IS NOT NULL FROM horoscope_subscriptions")
-    assert sum("delivered to" in record.message for record in caplog.records) == 1
+    await scheduler.check_and_send_horoscopes(SimpleNamespace(bot=bot))
+    await execute(monkeypatch, value, batch)
+    bot.send_message.assert_awaited_once()
+    assert queue.enqueue_job.await_count == 1
 
 
 @pytest.mark.parametrize("change", ["disabled", "slot_removed", "already_sent", "future_slot"])
-async def test_stale_due_snapshot_is_rechecked_in_claim(db_conn, enabled, monkeypatch, change):
-    await subscribe(db_conn)
-    original_due = scheduler.get_due_horoscope_subscriptions
-
-    async def due(hour, minute, kind):
-        rows = await original_due(hour, minute, kind)
-        if kind == "today":
-            assert len(rows) == 1
-            mutations = {
-                "disabled": "is_active = FALSE",
-                "slot_removed": "time_today = NULL",
-                "already_sent": "last_today_sent = clock_timestamp()",
-                "future_slot": "time_today = '23:59:59.999999'::time",
-            }
-            await db_conn.execute("UPDATE horoscope_subscriptions SET " + mutations[change])
-        return rows
-
-    deliver = []
-
-    async def send(*args):
-        deliver.append(args)
-        return True
-
-    monkeypatch.setattr(scheduler, "get_due_horoscope_subscriptions", due)
-    monkeypatch.setattr(scheduler, "_deliver_horoscope", send)
-    await scheduler.check_and_send_horoscopes(SimpleNamespace(bot=object()))
-    assert deliver == []
-
-
-async def test_claim_uses_current_preferences_and_independent_kinds(db_conn, enabled, monkeypatch):
+async def test_stale_due_list_is_rechecked_before_admission(db_conn, service, monkeypatch, change):
     await subscribe(db_conn, tomorrow=True)
+    value, queue, bot = service
     original_due = scheduler.get_due_horoscope_subscriptions
-    sent = []
 
     async def due(hour, minute, kind):
+        if kind != "today":
+            return []
         rows = await original_due(hour, minute, kind)
-        if kind == "today":
-            assert rows[0]["sign"] == "aries"
-            await db_conn.execute("UPDATE horoscope_subscriptions SET sign = 'taurus', utc_offset = 3")
+        assert rows
+        mutations = {
+            "disabled": "is_active=FALSE",
+            "slot_removed": "time_today=NULL",
+            "already_sent": "last_today_sent=clock_timestamp()",
+            "future_slot": "time_today='23:59:59.999999'::time",
+        }
+        await db_conn.execute("UPDATE horoscope_subscriptions SET " + mutations[change])
         return rows
 
-    async def deliver(_bot, user_id, sign, kind):
-        sent.append((user_id, sign, kind))
-        return True
-
     monkeypatch.setattr(scheduler, "get_due_horoscope_subscriptions", due)
-    monkeypatch.setattr(scheduler, "_deliver_horoscope", deliver)
-    await scheduler.check_and_send_horoscopes(SimpleNamespace(bot=object()))
-    assert sent == [(USER, "taurus", "today"), (USER, "taurus", "tomorrow")]
-    assert await db_conn.fetchval(
-        "SELECT last_today_sent IS NOT NULL AND last_tomorrow_sent IS NOT NULL FROM horoscope_subscriptions"
-    )
+    await scheduler.check_and_send_horoscopes(SimpleNamespace(bot=bot))
+    batches = await journal.open_batches()
+    assert len(batches) == 1 and batches[0]["skipped"] == 1
+    await execute(monkeypatch, value, batches[0])
+    bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.parametrize("change", ["disabled", "slot", "sign", "offset"])
+async def test_preferences_changed_during_send_cannot_acknowledge_new_subscription(
+    db_conn, service, monkeypatch, change
+):
+    await subscribe(db_conn)
+    value, _, bot = service
+    mutations = {
+        "disabled": "is_active=FALSE",
+        "slot": "time_today=NULL",
+        "sign": "sign='taurus'",
+        "offset": "utc_offset=3",
+    }
+
+    async def send(**kwargs):
+        await db_conn.execute("UPDATE horoscope_subscriptions SET " + mutations[change])
+        return SimpleNamespace(message_id=501)
+
+    bot.send_message.side_effect = send
+    batch = await enqueue(value)
+    await execute(monkeypatch, value, batch)
+    assert await db_conn.fetchval("SELECT last_today_sent FROM horoscope_subscriptions") is None
+    assert (await journal.read_batch(batch["batch_id"]))["sent"] == 1
+    bot.send_message.assert_awaited_once()
+
+
+async def test_five_parallel_recipients_are_bounded_and_do_not_hold_db_transactions(
+    db_conn, service, contract_pool, monkeypatch
+):
+    for user in range(USER, USER + 6):
+        await subscribe(db_conn, user)
+    value, _, bot = service
+    entered, release = asyncio.Event(), asyncio.Event()
+    active = peak = calls = 0
+
+    async def send(**kwargs):
+        nonlocal active, peak, calls
+        active += 1
+        calls += 1
+        peak = max(peak, active)
+        if active == 5:
+            entered.set()
+        try:
+            await release.wait()
+            return SimpleNamespace(message_id=500 + kwargs["chat_id"])
+        finally:
+            active -= 1
+
+    bot.send_message.side_effect = send
+    batch = await enqueue(value, range(USER, USER + 6))
+    task = asyncio.create_task(execute(monkeypatch, value, batch))
+    try:
+        await asyncio.wait_for(entered.wait(), 3)
+        assert calls == peak == 5
+        # This must succeed while all five external sends are blocked.
+        async with contract_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("SET LOCAL lock_timeout='500ms'")
+                await conn.execute("UPDATE horoscope_subscriptions SET updated_at=clock_timestamp()")
+    finally:
+        release.set()
+        await task
+    assert calls == 6 and peak == 5
+    assert (await journal.read_batch(batch["batch_id"]))["sent"] == 6
+
+
+async def test_journal_ack_uses_pinned_claim_time_and_never_moves_marker_backward(db_conn):
+    await subscribe(db_conn)
+    await db_conn.execute("UPDATE horoscope_subscriptions SET utc_offset=3")
+    fingerprint = journal.subscription_fingerprint({"sign": "aries", "utc_offset": 3, "time_today": time(0)}, "today")
+    claimed_at = datetime(2026, 10, 9, 20, 59, tzinfo=UTC)
+    recipient = {"delivery_claimed_at": claimed_at, "subscription_fingerprint": fingerprint}
+    assert await journal.acknowledge_horoscope(USER, "today", recipient)
+    assert await db_conn.fetchval("SELECT last_today_sent FROM horoscope_subscriptions") == claimed_at
+    next_day = datetime(2026, 10, 9, 21, 1, tzinfo=UTC)
+    assert await journal.acknowledge_horoscope(USER, "today", {**recipient, "delivery_claimed_at": next_day})
+    assert await journal.acknowledge_horoscope(USER, "today", recipient)
+    assert await db_conn.fetchval("SELECT last_today_sent FROM horoscope_subscriptions") == next_day
 
 
 async def test_same_user_different_kinds_hold_independent_real_claims(db_conn):
@@ -278,61 +323,6 @@ async def test_same_user_different_kinds_hold_independent_real_claims(db_conn):
     assert await db_conn.fetchval(
         "SELECT last_today_sent IS NOT NULL AND last_tomorrow_sent IS NOT NULL FROM horoscope_subscriptions"
     )
-
-
-@pytest.mark.parametrize("change", ["disabled", "slot", "sign", "offset"])
-async def test_changed_preferences_during_send_cannot_acknowledge_new_subscription(
-    db_conn, enabled, monkeypatch, caplog, change
-):
-    await subscribe(db_conn)
-    mutations = {
-        "disabled": "is_active=FALSE",
-        "slot": "time_today=NULL",
-        "sign": "sign='taurus'",
-        "offset": "utc_offset=3",
-    }
-
-    async def deliver(*args):
-        await db_conn.execute("UPDATE horoscope_subscriptions SET " + mutations[change])
-        return True
-
-    monkeypatch.setattr(scheduler, "_deliver_horoscope", deliver)
-    caplog.set_level(logging.INFO, logger=scheduler.__name__)
-    await scheduler.check_and_send_horoscopes(SimpleNamespace(bot=object()))
-    assert await db_conn.fetchval("SELECT last_today_sent FROM horoscope_subscriptions") is None
-    assert not any("delivered to" in record.message for record in caplog.records)
-    assert any("delivery task failed" in record.message for record in caplog.records)
-
-
-async def test_four_parallel_real_claims_bound_sends_without_blocking_other_recipients(db_conn, enabled, monkeypatch):
-    for user in range(USER, USER + 5):
-        await subscribe(db_conn, user)
-    entered, release = asyncio.Event(), asyncio.Event()
-    active, peak, calls = 0, 0, 0
-
-    async def deliver(*args):
-        nonlocal active, peak, calls
-        active += 1
-        calls += 1
-        peak = max(peak, active)
-        if active == 4:
-            entered.set()
-        try:
-            await release.wait()
-            return True
-        finally:
-            active -= 1
-
-    monkeypatch.setattr(scheduler, "_deliver_horoscope", deliver)
-    tick = asyncio.create_task(scheduler.check_and_send_horoscopes(SimpleNamespace(bot=object())))
-    try:
-        await asyncio.wait_for(entered.wait(), 3)
-        assert calls == 4 and peak == 4
-    finally:
-        release.set()
-        await tick
-    assert calls == 5 and peak == 4
-    assert await db_conn.fetchval("SELECT count(*) FROM horoscope_subscriptions WHERE last_today_sent IS NOT NULL") == 5
 
 
 class ClockConnection:

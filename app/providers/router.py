@@ -36,6 +36,7 @@ from app.errors import (
     user_friendly_error,
 )
 from app.observability.provider_events import observe_provider_stream
+from app.observability.request_metrics import observe_generation, record_race_outcome
 from app.providers.base import is_freetheai_model, is_opencode_model
 from app.providers.openrouter import _has_multimodal_content
 from app.providers.stream_types import (
@@ -247,6 +248,7 @@ class ProviderRouter:
         timeout: float | None = None,
         *,
         _is_fallback: bool = False,
+        on_model_used: Callable[[str], None] | None = None,
     ) -> tuple[str, int | None]:
         """
         Get AI response with automatic key rotation and health-aware selection.
@@ -313,6 +315,7 @@ class ProviderRouter:
                             thinking_level=thinking_level,
                             timeout=timeout,
                             _is_fallback=True,
+                            on_model_used=on_model_used,
                         )
                     # ── Cross-provider fallback: FreeTheAI → Gemini ──────────
                     if is_freetheai_model(preferred_model) and not _is_fallback:
@@ -333,6 +336,7 @@ class ProviderRouter:
                             thinking_level=thinking_level,
                             timeout=timeout,
                             _is_fallback=True,
+                            on_model_used=on_model_used,
                         )
                     return (
                         tag_error(
@@ -493,6 +497,8 @@ class ProviderRouter:
                     logging.debug("Non-critical: record_success failed: %s", e)
 
                 _log_key_answered(key_data["api_key"], model_used, use_openrouter, token_count)
+                if on_model_used is not None:
+                    on_model_used(model_used)
 
             return response_text, token_count
 
@@ -516,6 +522,7 @@ class ProviderRouter:
                     thinking_level=thinking_level,
                     timeout=timeout,
                     _is_fallback=True,
+                    on_model_used=on_model_used,
                 )
 
         # All keys failed for the preferred model. If every failure was
@@ -531,6 +538,7 @@ class ProviderRouter:
                 use_openrouter,
                 use_case,
                 status_mgr,
+                on_model_used=on_model_used,
             )
             if fallback_result is not None:
                 return fallback_result
@@ -694,6 +702,7 @@ class ProviderRouter:
             raise last_error
         raise RuntimeError("No Gemini keys available for the requested model plan")
 
+    @observe_generation
     async def stream(self, request: GenerationRequest):
         """Race two model lanes for interactive chat; retain serial paths elsewhere."""
         hedge_models = self._interactive_hedge_models(request)
@@ -743,6 +752,7 @@ class ProviderRouter:
         failures: list[StreamFailed] = []
         next_index = 0
         winner: str | None = None
+        late_losers: set[str] = set()
 
         async def run_model(model: str) -> None:
             try:
@@ -808,6 +818,9 @@ class ProviderRouter:
 
                 if winner is not None:
                     if lane != winner:
+                        if isinstance(event, TextDelta) and lane not in late_losers:
+                            late_losers.add(lane)
+                            record_race_outcome(lane, "late_loser", kind="model")
                         continue
                     if error is not None:
                         raise error
@@ -828,6 +841,7 @@ class ProviderRouter:
                     continue
                 if isinstance(event, TextDelta):
                     winner = lane
+                    record_race_outcome(lane, "winner", kind="model")
                     for other_lane, task in active.items():
                         if other_lane != winner:
                             task.cancel()
@@ -1169,6 +1183,7 @@ class ProviderRouter:
                     for index, key_data in enumerate(keys_to_race)
                 ]
                 winner_idx: int | None = None
+                late_key_losers: set[int] = set()
                 pre_text_terminals: dict[int, GenerationEvent] = {}
                 done: set[int] = set()
                 next_model_failure: tuple[int, StreamFailed] | None = None
@@ -1199,6 +1214,7 @@ class ProviderRouter:
                         assert race_event is not None
                         if isinstance(race_event, TextDelta):
                             winner_idx = race_idx
+                            record_race_outcome(model_used, "winner", kind="key")
                             first_delta = race_event
                             break
                         if (
@@ -1277,6 +1293,9 @@ class ProviderRouter:
                             raise ProviderStreamProtocolError("Winning provider did not emit a terminal event") from exc
                         winner_event_idx, terminal_event, winner_error, is_done = winner_event
                         if winner_event_idx != winner_idx:
+                            if isinstance(terminal_event, TextDelta) and winner_event_idx not in late_key_losers:
+                                late_key_losers.add(winner_event_idx)
+                                record_race_outcome(model_used, "late_loser", kind="key")
                             continue
                         if winner_error is not None:
                             raise winner_error
@@ -1333,8 +1352,12 @@ class ProviderRouter:
             and request.workload is not Workload.DEFERRED_RETRY
             and scope.user_id
             and scope.chat_id
+            and scope.privacy_epoch is not None
+            and scope.operation_id
             and overall_had_transient
         ):
+            from app.queue_contracts import QueueAdmissionUnconfirmed
+
             try:
                 from app.deferred_response import enqueue_deferred_generation
 
@@ -1344,10 +1367,17 @@ class ProviderRouter:
                     history=deferred_history_from_request(request),
                     model_name=request.models[0],
                     system_instruction=request.system_instruction,
+                    expected_epoch=scope.privacy_epoch,
+                    operation_id=scope.operation_id,
                 )
                 if task_id:
                     yield StreamDeferred(task_id=task_id)
                     return
+            except QueueAdmissionUnconfirmed as exc:
+                if exc.task_id:
+                    yield StreamDeferred(task_id=exc.task_id, admission_uncertain=True)
+                    return
+                raise
             except Exception as exc:
                 logging.warning("Typed deferred queue fallback failed: %s", exc)
 
@@ -1431,6 +1461,8 @@ class ProviderRouter:
         use_openrouter: bool | None,
         use_case,
         status_mgr,
+        *,
+        on_model_used: Callable[[str], None] | None = None,
     ) -> tuple[str, int | None] | None:
         """Try fallback models when all keys fail with permanent errors for one model.
 
@@ -1500,6 +1532,8 @@ class ProviderRouter:
                 except Exception as e:
                     logging.debug("Non-critical: record_success failed: %s", e)
                 _log_key_answered(key_data["api_key"], model_used, use_openrouter, token_count)
+                if on_model_used is not None:
+                    on_model_used(model_used)
                 return response_text, token_count
 
             logging.warning(

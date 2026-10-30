@@ -311,15 +311,17 @@ async def test_concurrent_webhooks_claim_only_an_available_queue_slot(webhook_cl
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def test_health_endpoint_success():
+@pytest.mark.parametrize("lifecycle", ["ready", "draining", "failed"])
+async def test_health_endpoint_success(lifecycle):
     client = quart_app.test_client()
     with (
         patch("app.database.is_database_connected", return_value=True),
         patch("app.cache.ping_safe", new_callable=AsyncMock, return_value=True),
+        patch("app.web.bot_lifecycle.state", lifecycle),
     ):
         response = await client.get("/health")
     assert response.status_code == 200
     data = await response.get_json()
     assert data["status"] == "healthy"
     assert data["services"]["database"] == "connected"
-    assert data["services"]["bot"] == "running"
+    assert data["services"]["bot"] == lifecycle

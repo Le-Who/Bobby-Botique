@@ -67,6 +67,10 @@ class StateErasureDriver:
 
 @pytest.fixture
 def erasure(monkeypatch):
+    from app.queue import TaskQueue
+    from app.queue_store import MemoryQueueStore
+
+    monkeypatch.setattr("app.queue.task_queue", TaskQueue(store=MemoryQueueStore()))
     driver = StateErasureDriver()
     monkeypatch.setattr(database.db_manager, "pool", driver)
     monkeypatch.setattr(database.db_manager, "reconnect", AsyncMock())

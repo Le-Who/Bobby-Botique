@@ -271,7 +271,7 @@ async def test_happy_path_text_message(run_background_sync):
             captured_coro = None
             for call in run_background_sync.call_args_list:
                 coro = call[0][0]
-                if "task_wrapper" in str(coro):
+                if coro.cr_code.co_name == "observed_worker":
                     captured_coro = coro
                     break
             assert captured_coro is not None
@@ -361,7 +361,7 @@ async def test_agent_error_shows_retry_keyboard(run_background_sync):
         captured_coro = None
         for call in run_background_sync.call_args_list:
             coro = call[0][0]
-            if "task_wrapper" in str(coro):
+            if coro.cr_code.co_name == "observed_worker":
                 captured_coro = coro
                 break
         assert captured_coro is not None

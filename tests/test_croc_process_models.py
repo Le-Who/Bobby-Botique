@@ -122,7 +122,10 @@ async def test_image_description_uses_own_role_and_cache(monkeypatch, role_setti
 async def test_daily_words_and_hints_use_same_role_settings(monkeypatch, role_settings):
     generate = AsyncMock(side_effect=['{"word":"самовар"}', '{"hints":["Ручка","Носик","Кипяток"]}'])
     monkeypatch.setattr(daily_ai, "generate_daily_text", generate)
-    monkeypatch.setattr(repo, "set_puzzle_hints", AsyncMock())
+    from tests.test_daily_croc_generation_ownership import install_preparation_transport
+
+    install_preparation_transport(monkeypatch)
+    monkeypatch.setattr(repo, "set_puzzle_hints", AsyncMock(return_value=True))
     topic = word_bank.resolve_topic("предметы")
     assert (await repo._pick_daily_word(topic, used_words=set(), difficulty="easy"))[0] == "самовар"
     assert generate.call_args.args[1] == "gemini-2.5-pro"

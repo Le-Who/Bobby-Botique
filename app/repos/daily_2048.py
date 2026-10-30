@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import random
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
@@ -54,6 +56,60 @@ class Daily2048Puzzle:
     status: str = "ready"
     solution_moves: str = ""
     prepared_at: datetime | None = None
+    revision: int = 1
+    played: bool = False
+
+
+class DailyPuzzleUnavailable(Exception):
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
+
+class DailyPuzzleConflict(Exception):
+    def __init__(
+        self, actual_revision: int, reason: str = "revision_conflict", *, puzzle: Daily2048Puzzle | None = None
+    ):
+        self.actual_revision = actual_revision
+        self.reason = reason
+        self.puzzle = puzzle
+        super().__init__(reason)
+
+
+def require_available(puzzle: Daily2048Puzzle) -> None:
+    if puzzle.status != "ready":
+        raise DailyPuzzleUnavailable(puzzle.status)
+
+
+@asynccontextmanager
+async def _transaction(conn=None) -> AsyncIterator[Any]:
+    if conn is not None:
+        async with conn.transaction():
+            yield conn
+        return
+    if not db.db_manager.pool:
+        raise RuntimeError("Database pool is required for atomic Daily 2048 mutations")
+    async with db.db_manager.pool.acquire() as acquired, acquired.transaction():
+        yield acquired
+
+
+async def _locked_puzzle(conn, puzzle_date: date, *, for_player: bool = False) -> Daily2048Puzzle | None:
+    # Shared player locks fence both admin mutations and deletion, while
+    # independent players can write distinct result rows concurrently.
+    query = (
+        "SELECT * FROM public.daily_2048_puzzles WHERE puzzle_date = $1 FOR SHARE"
+        if for_player
+        else "SELECT * FROM public.daily_2048_puzzles WHERE puzzle_date = $1 FOR UPDATE"
+    )
+    row = await conn.fetchrow(query, puzzle_date)
+    if row is None:
+        return None
+    puzzle = _row_to_puzzle(row)
+    if not for_player:
+        puzzle.played = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM public.daily_2048_results WHERE puzzle_date = $1)", puzzle_date
+        )
+    return puzzle
 
 
 @dataclass
@@ -173,6 +229,8 @@ def _row_to_puzzle(row: Any) -> Daily2048Puzzle:
         status=str(_row_get(row, "status", "ready") or "ready"),
         solution_moves=str(_row_get(row, "solution_moves", "") or ""),
         prepared_at=_row_get(row, "prepared_at"),
+        revision=int(_row_get(row, "revision", 1)),
+        played=bool(_row_get(row, "played", False)),
     )
 
 
@@ -290,9 +348,8 @@ def build_default_puzzle(
 async def get_puzzle(puzzle_date: date) -> Daily2048Puzzle | None:
     rows = await db.db_query(
         """
-        SELECT puzzle_date, board, goal_type, goal_value, spawn_sequence, seed,
-               par_moves, target_seconds, status, solution_moves, prepared_at
-        FROM public.daily_2048_puzzles
+        SELECT p.*, EXISTS (SELECT 1 FROM public.daily_2048_results r WHERE r.puzzle_date=p.puzzle_date) AS played
+        FROM public.daily_2048_puzzles p
         WHERE puzzle_date = $1
         """,
         (puzzle_date,),
@@ -340,49 +397,112 @@ async def upsert_puzzle(
     par_moves: int,
     target_seconds: int,
     status: str,
+    expected_revision: int,
     solution_moves: str = "",
+    conn=None,
 ) -> Daily2048Puzzle:
     normalized_board = normalize_board(board)
     normalized_goal = normalize_goal_type(goal_type)
     normalized_sequence = normalize_spawn_sequence(spawn_sequence)
     normalized_status = status if status in {"draft", "ready", "disabled"} else "draft"
-    rows = await db.db_query(
-        """
+    if type(expected_revision) is not int or expected_revision < 0:
+        raise ValueError("expected_revision must be a nonnegative integer")
+    values = (
+        puzzle_date,
+        normalized_board,
+        normalized_goal,
+        max(8, int(goal_value)),
+        normalized_sequence,
+        seed,
+        max(1, int(par_moves)),
+        max(30, int(target_seconds)),
+        normalized_status,
+        solution_moves,
+    )
+    async with _transaction(conn) as acquired:
+        # A missing row cannot be locked. Conditional insert arbitrates creators;
+        # the following read locks whichever complete row won the unique key.
+        if expected_revision == 0:
+            created = await acquired.fetchrow(
+                """
         INSERT INTO public.daily_2048_puzzles (
             puzzle_date, board, goal_type, goal_value, spawn_sequence, seed,
             par_moves, target_seconds, status, solution_moves, prepared_at
         )
         VALUES ($1, $2::jsonb, $3, $4, $5::jsonb, $6, $7, $8, $9, $10,
                 CASE WHEN $9 = 'ready' THEN NOW() ELSE NULL END)
-        ON CONFLICT (puzzle_date) DO UPDATE SET
-            board = EXCLUDED.board,
-            goal_type = EXCLUDED.goal_type,
-            goal_value = EXCLUDED.goal_value,
-            spawn_sequence = EXCLUDED.spawn_sequence,
-            seed = EXCLUDED.seed,
-            par_moves = EXCLUDED.par_moves,
-            target_seconds = EXCLUDED.target_seconds,
-            status = EXCLUDED.status,
-            solution_moves = EXCLUDED.solution_moves,
-            prepared_at = CASE WHEN EXCLUDED.status = 'ready' THEN COALESCE(public.daily_2048_puzzles.prepared_at, NOW()) ELSE NULL END,
-            updated_at = NOW()
-        RETURNING puzzle_date, board, goal_type, goal_value, spawn_sequence, seed,
-                  par_moves, target_seconds, status, solution_moves, prepared_at
-        """,
-        (
+        ON CONFLICT (puzzle_date) DO NOTHING
+        RETURNING *
+                """,
+                *values,
+            )
+            if created:
+                return _row_to_puzzle(created)
+        existing = await _locked_puzzle(acquired, puzzle_date)
+        actual_revision = existing.revision if existing else 0
+        if expected_revision != actual_revision or existing is None:
+            raise DailyPuzzleConflict(actual_revision, puzzle=existing)
+        gameplay = (
+            "board",
+            "goal_type",
+            "goal_value",
+            "spawn_sequence",
+            "seed",
+            "par_moves",
+            "target_seconds",
+            "solution_moves",
+        )
+        desired = Daily2048Puzzle(
             puzzle_date,
             normalized_board,
             normalized_goal,
-            max(8, int(goal_value)),
+            values[3],
             normalized_sequence,
             seed,
-            max(1, int(par_moves)),
-            max(30, int(target_seconds)),
+            values[6],
+            values[7],
             normalized_status,
             solution_moves,
-        ),
-    )
-    return _row_to_puzzle(rows[0])
+        )
+        if existing.played and any(getattr(existing, key) != getattr(desired, key) for key in gameplay):
+            raise DailyPuzzleConflict(existing.revision, "puzzle_in_use", puzzle=existing)
+        row = await acquired.fetchrow(
+            """
+            UPDATE public.daily_2048_puzzles
+            SET board=$2::jsonb, goal_type=$3, goal_value=$4, spawn_sequence=$5::jsonb,
+                seed=$6, par_moves=$7, target_seconds=$8, status=$9, solution_moves=$10,
+                revision=revision+1,
+                prepared_at=CASE WHEN $9='ready' THEN COALESCE(prepared_at, NOW()) ELSE NULL END,
+                updated_at=NOW()
+            WHERE puzzle_date=$1 RETURNING *
+            """,
+            *values,
+        )
+        updated = _row_to_puzzle(row)
+        updated.played = existing.played
+        return updated
+
+
+async def set_puzzle_status(puzzle_date: date, *, status: str, expected_revision: int, conn=None) -> Daily2048Puzzle:
+    if status not in {"ready", "disabled"}:
+        raise ValueError("status must be ready or disabled")
+    if type(expected_revision) is not int or expected_revision < 1:
+        raise ValueError("expected_revision must be a positive integer")
+    async with _transaction(conn) as acquired:
+        existing = await _locked_puzzle(acquired, puzzle_date)
+        if existing is None or existing.revision != expected_revision:
+            raise DailyPuzzleConflict(existing.revision if existing else 0, puzzle=existing)
+        row = await acquired.fetchrow(
+            """UPDATE public.daily_2048_puzzles
+               SET status=$2, revision=revision+1, updated_at=NOW(),
+                   prepared_at=CASE WHEN $2='ready' THEN COALESCE(prepared_at, NOW()) ELSE NULL END
+               WHERE puzzle_date=$1 RETURNING *""",
+            puzzle_date,
+            status,
+        )
+        updated = _row_to_puzzle(row)
+        updated.played = existing.played
+        return updated
 
 
 async def ensure_puzzle(puzzle_date: date) -> Daily2048Puzzle:
@@ -396,18 +516,24 @@ async def ensure_puzzle(puzzle_date: date) -> Daily2048Puzzle:
         used_signatures=used_signatures,
         used_board_signatures=used_board_signatures,
     )
-    return await upsert_puzzle(
-        puzzle_date,
-        board=default.board,
-        goal_type=default.goal_type,
-        goal_value=default.goal_value,
-        spawn_sequence=default.spawn_sequence,
-        seed=default.seed,
-        par_moves=default.par_moves,
-        target_seconds=default.target_seconds,
-        status=default.status,
-        solution_moves=default.solution_moves,
-    )
+    try:
+        return await upsert_puzzle(
+            puzzle_date,
+            board=default.board,
+            goal_type=default.goal_type,
+            goal_value=default.goal_value,
+            spawn_sequence=default.spawn_sequence,
+            seed=default.seed,
+            par_moves=default.par_moves,
+            target_seconds=default.target_seconds,
+            status=default.status,
+            solution_moves=default.solution_moves,
+            expected_revision=0,
+        )
+    except DailyPuzzleConflict as exc:
+        if exc.puzzle is not None:
+            return exc.puzzle
+        raise
 
 
 async def ensure_today_puzzle(now: datetime | None = None) -> Daily2048Puzzle:
@@ -417,9 +543,8 @@ async def ensure_today_puzzle(now: datetime | None = None) -> Daily2048Puzzle:
 async def list_puzzles(*, limit: int = 20) -> list[Daily2048Puzzle]:
     rows = await db.db_query(
         """
-        SELECT puzzle_date, board, goal_type, goal_value, spawn_sequence, seed,
-               par_moves, target_seconds, status, solution_moves, prepared_at
-        FROM public.daily_2048_puzzles
+        SELECT p.*, EXISTS (SELECT 1 FROM public.daily_2048_results r WHERE r.puzzle_date=p.puzzle_date) AS played
+        FROM public.daily_2048_puzzles p
         ORDER BY puzzle_date DESC
         LIMIT $1
         """,
@@ -428,10 +553,37 @@ async def list_puzzles(*, limit: int = 20) -> list[Daily2048Puzzle]:
     return [_row_to_puzzle(row) for row in rows]
 
 
-async def get_or_create_result(user_id: int, puzzle: Daily2048Puzzle) -> Daily2048Result:
-    await crocodile_daily.ensure_user(user_id)
-    rows = await db.db_query(
-        """
+async def start_puzzle(user_id: int, puzzle: Daily2048Puzzle, *, conn=None) -> tuple[Daily2048Puzzle, Daily2048Result]:
+    async with _transaction(conn) as acquired:
+        await acquired.execute(
+            "INSERT INTO public.users (user_id, is_authorized) VALUES ($1, 0) ON CONFLICT (user_id) DO NOTHING", user_id
+        )
+        current = await _locked_puzzle(acquired, puzzle.puzzle_date, for_player=True)
+        if current is None:
+            try:
+                await upsert_puzzle(
+                    puzzle.puzzle_date,
+                    board=puzzle.board,
+                    goal_type=puzzle.goal_type,
+                    goal_value=puzzle.goal_value,
+                    spawn_sequence=puzzle.spawn_sequence,
+                    seed=puzzle.seed,
+                    par_moves=puzzle.par_moves,
+                    target_seconds=puzzle.target_seconds,
+                    status=puzzle.status,
+                    solution_moves=puzzle.solution_moves,
+                    expected_revision=0,
+                    conn=acquired,
+                )
+            except DailyPuzzleConflict:
+                # Another creator may have won the missing-row race.
+                pass
+            current = await _locked_puzzle(acquired, puzzle.puzzle_date, for_player=True)
+            if current is None:
+                raise DailyPuzzleConflict(0)
+        require_available(current)
+        row = await acquired.fetchrow(
+            """
         INSERT INTO public.daily_2048_results (
             user_id, puzzle_date, status, board, spawn_index, moves, merge_score,
             final_score, elapsed_ms, recordable
@@ -441,13 +593,21 @@ async def get_or_create_result(user_id: int, puzzle: Daily2048Puzzle) -> Daily20
             SET updated_at = public.daily_2048_results.updated_at
         RETURNING user_id, puzzle_date, status, board, spawn_index, moves, merge_score,
                   final_score, elapsed_ms, started_at, won_at, finished_at, recordable
-        """,
-        (user_id, puzzle.puzzle_date, normalize_board(puzzle.board)),
-    )
-    return _row_to_result(rows[0])
+            """,
+            user_id,
+            current.puzzle_date,
+            current.board,
+        )
+        current.played = True
+        return current, _row_to_result(row)
 
 
-async def get_result(user_id: int, puzzle_date: date) -> Daily2048Result | None:
+async def get_or_create_result(user_id: int, puzzle: Daily2048Puzzle) -> Daily2048Result:
+    _, result = await start_puzzle(user_id, puzzle)
+    return result
+
+
+async def get_result(user_id: int, puzzle_date: date, *, conn=None) -> Daily2048Result | None:
     rows = await db.db_query(
         """
         SELECT user_id, puzzle_date, status, board, spawn_index, moves, merge_score,
@@ -456,6 +616,7 @@ async def get_result(user_id: int, puzzle_date: date) -> Daily2048Result | None:
         WHERE user_id = $1 AND puzzle_date = $2
         """,
         (user_id, puzzle_date),
+        conn=conn,
     )
     return _row_to_result(rows[0]) if rows else None
 
@@ -474,47 +635,54 @@ async def update_result_after_move(
     won: bool,
     finished: bool,
     recordable: bool = True,
+    conn=None,
 ) -> Daily2048Result:
-    rows = await db.db_query(
-        """
-        UPDATE public.daily_2048_results
-        SET status = $3,
-            board = $4::jsonb,
-            spawn_index = $5,
-            moves = $6,
-            merge_score = $7,
-            elapsed_ms = $8,
-            final_score = CASE WHEN $10 THEN $9 ELSE final_score END,
-            won_at = CASE WHEN $11 THEN NOW() ELSE won_at END,
-            finished_at = CASE WHEN $12 THEN NOW() ELSE finished_at END,
-            recordable = recordable AND $13,
-            updated_at = NOW()
-        WHERE user_id = $1 AND puzzle_date = $2 AND status = 'active'
-        RETURNING user_id, puzzle_date, status, board, spawn_index, moves, merge_score,
-                  final_score, elapsed_ms, started_at, won_at, finished_at, recordable
-        """,
-        (
-            user_id,
-            puzzle_date,
-            status,
-            normalize_board(board),
-            max(0, int(spawn_index)),
-            max(0, int(moves)),
-            max(0, int(merge_score)),
-            max(0, int(elapsed_ms)),
-            max(0, int(final_score)),
-            won,
-            won,
-            finished,
-            recordable,
-        ),
-    )
-    if rows:
-        return _row_to_result(rows[0])
-    existing = await get_result(user_id, puzzle_date)
-    if existing:
-        return existing
-    raise RuntimeError(f"daily 2048 result missing for user={user_id} date={puzzle_date}")
+    async with _transaction(conn) as acquired:
+        puzzle = await _locked_puzzle(acquired, puzzle_date, for_player=True)
+        if puzzle is None:
+            raise DailyPuzzleConflict(0)
+        require_available(puzzle)
+        rows = await db.db_query(
+            """
+            UPDATE public.daily_2048_results
+            SET status = $3,
+                board = $4::jsonb,
+                spawn_index = $5,
+                moves = $6,
+                merge_score = $7,
+                elapsed_ms = $8,
+                final_score = CASE WHEN $10 THEN $9 ELSE final_score END,
+                won_at = CASE WHEN $11 THEN NOW() ELSE won_at END,
+                finished_at = CASE WHEN $12 THEN NOW() ELSE finished_at END,
+                recordable = recordable AND $13,
+                updated_at = NOW()
+            WHERE user_id = $1 AND puzzle_date = $2 AND status = 'active'
+            RETURNING user_id, puzzle_date, status, board, spawn_index, moves, merge_score,
+                      final_score, elapsed_ms, started_at, won_at, finished_at, recordable
+            """,
+            (
+                user_id,
+                puzzle_date,
+                status,
+                normalize_board(board),
+                max(0, int(spawn_index)),
+                max(0, int(moves)),
+                max(0, int(merge_score)),
+                max(0, int(elapsed_ms)),
+                max(0, int(final_score)),
+                won,
+                won,
+                finished,
+                recordable,
+            ),
+            conn=acquired,
+        )
+        if rows:
+            return _row_to_result(rows[0])
+        existing = await get_result(user_id, puzzle_date, conn=acquired)
+        if existing:
+            return existing
+        raise RuntimeError(f"daily 2048 result missing for user={user_id} date={puzzle_date}")
 
 
 async def update_result_elapsed(
@@ -522,18 +690,25 @@ async def update_result_elapsed(
     user_id: int,
     puzzle_date: date,
     elapsed_ms: int,
+    conn=None,
 ) -> Daily2048Result | None:
-    rows = await db.db_query(
-        """
-        UPDATE public.daily_2048_results
-        SET elapsed_ms = $3,
-            updated_at = NOW()
-        WHERE user_id = $1 AND puzzle_date = $2 AND status = 'active'
-        RETURNING user_id, puzzle_date, status, board, spawn_index, moves, merge_score,
-                  final_score, elapsed_ms, started_at, won_at, finished_at, recordable
-        """,
-        (user_id, puzzle_date, max(0, int(elapsed_ms))),
-    )
+    async with _transaction(conn) as acquired:
+        puzzle = await _locked_puzzle(acquired, puzzle_date, for_player=True)
+        if puzzle is None:
+            raise DailyPuzzleConflict(0)
+        require_available(puzzle)
+        rows = await db.db_query(
+            """
+            UPDATE public.daily_2048_results
+            SET elapsed_ms = $3,
+                updated_at = NOW()
+            WHERE user_id = $1 AND puzzle_date = $2 AND status = 'active'
+            RETURNING user_id, puzzle_date, status, board, spawn_index, moves, merge_score,
+                      final_score, elapsed_ms, started_at, won_at, finished_at, recordable
+            """,
+            (user_id, puzzle_date, max(0, int(elapsed_ms))),
+            conn=acquired,
+        )
     return _row_to_result(rows[0]) if rows else None
 
 

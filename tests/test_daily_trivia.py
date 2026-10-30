@@ -14,6 +14,7 @@ from app.errors import ErrorCode, tag_error
 from app.games import daily_trivia as game
 from app.providers.gemini import GeminiModelValidationStatus
 from app.repos import daily_trivia as repo
+from app.runtime_settings import store
 
 
 @pytest.fixture(autouse=True)
@@ -683,66 +684,45 @@ async def test_main_regeneration_publishes_with_untouched_super_lane(monkeypatch
     assert publish.await_args.kwargs["expected_revision"] == 7
 
 
-async def test_admin_regenerate_returns_latest_puzzle_on_revision_conflict() -> None:
-    web_module = __import__("app.web", fromlist=["quart_app"])
-    current = repo.DailyTriviaPuzzle(
-        puzzle_date=date(2026, 8, 3),
-        questions=[_identified_question(i, f"Объект {i}", "свойство", f"Ответ {i}") for i in range(1, 6)],
-        super_questions=[
-            _identified_question(i, f"Супер объект {i}", "свойство", f"Супер ответ {i}") for i in range(1, 4)
-        ],
-        status="ready",
-        prepared_at=None,
-        revision=1,
-        published_revision_id=91,
-    )
+async def test_admin_regenerate_preflight_preserves_server_revision() -> None:
+    from types import SimpleNamespace
+
+    from app.games import admin_jobs
+    from app.queue_contracts import QueueConflict
+
+    current = SimpleNamespace(revision=1)
+    queue = SimpleNamespace(read_job_by_operation=AsyncMock(return_value=None), enqueue_job=AsyncMock())
+    with (
+        patch("app.repos.daily_trivia.get_puzzle", AsyncMock(return_value=current)),
+        patch.object(admin_jobs, "effective_policy", AsyncMock(return_value={"models": [], "revision": 0})),
+    ):
+        command = admin_jobs.DailyCommand.parse(
+            {"kind": "trivia.regenerate", "date": "2026-08-03", "expected_revision": 0}
+        )
+        with pytest.raises(QueueConflict, match="revision_conflict"):
+            await admin_jobs.enqueue(command, "operation-123", queue=queue)
+    queue.enqueue_job.assert_not_awaited()
+    assert current.revision == 1
+
+
+async def test_admin_generation_reports_confirmed_provider_outage_without_auto_retry() -> None:
+    from app.games import admin_jobs
+    from app.queue_contracts import JobOutcome
 
     with (
-        patch("app.web._is_authenticated", return_value=True),
+        patch.object(admin_jobs, "effective_policy", AsyncMock(return_value={"models": ["synthetic"], "revision": 0})),
+        patch("app.repos.daily_trivia.get_puzzle", AsyncMock(return_value=None)),
         patch(
             "app.games.daily_trivia.prepare_daily_puzzle",
-            new_callable=AsyncMock,
-            side_effect=repo.RevisionConflictError(expected=0, actual=1),
-        ),
-        patch("app.repos.daily_trivia.get_puzzle", new_callable=AsyncMock, return_value=current),
-    ):
-        response = await web_module.quart_app.test_client().post(
-            "/api/admin/dailytrivia/regenerate",
-            json={"date": "2026-08-03", "mode": "all"},
-        )
-
-    body = await response.get_json()
-    assert response.status_code == 409
-    assert body["current_revision"] == 1
-    assert body["puzzle"]["revision"] == 1
-    assert body["puzzle"]["readiness"]["publishable"] is True
-
-
-async def test_admin_regenerate_reports_provider_outage_as_retryable() -> None:
-    web_module = __import__("app.web", fromlist=["quart_app"])
-    with (
-        patch("app.web._is_authenticated", return_value=True),
-        patch(
-            "app.games.daily_trivia.prepare_daily_puzzle",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError(tag_error(ErrorCode.OVERLOADED, "Попробуйте позже")),
+            AsyncMock(side_effect=RuntimeError(tag_error(ErrorCode.OVERLOADED, "synthetic provider outage"))),
         ),
     ):
-        response = await web_module.quart_app.test_client().post(
-            "/api/admin/dailytrivia/regenerate",
-            json={"date": "2026-09-26", "mode": "all"},
+        result = await admin_jobs.execute(
+            command={"kind": "trivia.regenerate", "date": "2026-09-26", "expected_revision": 0}
         )
-
-    body = await response.get_json()
-    assert response.status_code == 503
-    assert "повтор" in body["error"].lower()
-
-
-def test_admin_trivia_ui_recovers_from_revision_conflict_without_reload() -> None:
-    template = (Path(__file__).parents[1] / "app" / "templates" / "admin_daily.html").read_text(encoding="utf-8")
-
-    assert "res.status === 409 && data.puzzle" in template
-    assert "selectPuzzle(data.puzzle, true)" in template
+    assert result.outcome is JobOutcome.PERMANENT_FAILURE
+    assert result.reason_code == "generation_unavailable"
+    assert result.result_summary["generated"] == 0
 
 
 def test_admin_trivia_model_control_accepts_direct_model_id() -> None:
@@ -751,28 +731,32 @@ def test_admin_trivia_model_control_accepts_direct_model_id() -> None:
     assert 'id="trivia-model-input"' in template
     assert 'list="trivia-model-options"' in template
     assert 'id="trivia-model-save"' in template
-    assert "data.llm_models" in template
 
 
 async def test_admin_trivia_settings_accepts_role_alias_without_remote_validation() -> None:
     web_module = __import__("app.web", fromlist=["quart_app"])
-    save_setting = AsyncMock()
+    save_setting = AsyncMock(
+        return_value=store.SettingsSnapshot(
+            1, {"process:daily.trivia": {"models": ["gemini-3.5-flash-lite"], "strategy": "sequential"}}
+        )
+    )
     validate = AsyncMock()
 
     with (
         patch("app.web._is_authenticated", return_value=True),
-        patch("app.runtime_settings.processes.save_primary_model", save_setting),
+        patch("app.runtime_settings.processes.save_primary_model_at_revision", save_setting),
         patch("app.providers.gemini.validate_gemini_chat_model_capability", validate),
     ):
         response = await web_module.quart_app.test_client().post(
             "/api/admin/dailytrivia/settings",
-            json={"llm_model": "gemini-economy"},
+            json={"llm_model": "gemini-economy", "expected_revision": 0},
         )
 
     body = await response.get_json()
     assert response.status_code == 200
-    assert body == {"success": True, "llm_model": "gemini-3.5-flash-lite"}
-    save_setting.assert_awaited_once_with("daily.trivia", "gemini-3.5-flash-lite", actor="admin")
+    assert body["success"] is True and body["llm_model"] == "gemini-3.5-flash-lite"
+    assert body["settings_revision"] == 1
+    save_setting.assert_awaited_once_with("daily.trivia", "gemini-3.5-flash-lite", expected_revision=0, actor="admin")
     validate.assert_not_awaited()
 
 
@@ -804,11 +788,15 @@ async def test_admin_trivia_stats_exposes_aliases_and_configured_gemini_models()
 
 async def test_admin_trivia_settings_validates_and_saves_direct_gemini_model() -> None:
     web_module = __import__("app.web", fromlist=["quart_app"])
-    save_setting = AsyncMock()
+    save_setting = AsyncMock(
+        return_value=store.SettingsSnapshot(
+            1, {"process:daily.trivia": {"models": ["gemini-3.7-flash"], "strategy": "sequential"}}
+        )
+    )
 
     with (
         patch("app.web._is_authenticated", return_value=True),
-        patch("app.runtime_settings.processes.save_primary_model", save_setting),
+        patch("app.runtime_settings.processes.save_primary_model_at_revision", save_setting),
         patch(
             "app.providers.gemini.validate_gemini_chat_model_capability",
             new_callable=AsyncMock,
@@ -817,14 +805,15 @@ async def test_admin_trivia_settings_validates_and_saves_direct_gemini_model() -
     ):
         response = await web_module.quart_app.test_client().post(
             "/api/admin/dailytrivia/settings",
-            json={"llm_model": "gemini-3.7-flash"},
+            json={"llm_model": "gemini-3.7-flash", "expected_revision": 0},
         )
 
     body = await response.get_json()
     assert response.status_code == 200
-    assert body == {"success": True, "llm_model": "gemini-3.7-flash"}
+    assert body["success"] is True and body["llm_model"] == "gemini-3.7-flash"
+    assert body["settings_revision"] == 1
     validate.assert_awaited_once_with("gemini-3.7-flash")
-    save_setting.assert_awaited_once_with("daily.trivia", "gemini-3.7-flash", actor="admin")
+    save_setting.assert_awaited_once_with("daily.trivia", "gemini-3.7-flash", expected_revision=0, actor="admin")
 
 
 async def test_admin_trivia_settings_rejects_invalid_model_id_without_remote_validation() -> None:
@@ -834,12 +823,12 @@ async def test_admin_trivia_settings_rejects_invalid_model_id_without_remote_val
 
     with (
         patch("app.web._is_authenticated", return_value=True),
-        patch("app.runtime_settings.processes.save_primary_model", save_setting),
+        patch("app.runtime_settings.processes.save_primary_model_at_revision", save_setting),
         patch("app.providers.gemini.validate_gemini_chat_model_capability", validate),
     ):
         response = await web_module.quart_app.test_client().post(
             "/api/admin/dailytrivia/settings",
-            json={"llm_model": "not-a-gemini-model"},
+            json={"llm_model": "not-a-gemini-model", "expected_revision": 0},
         )
 
     body = await response.get_json()
@@ -862,7 +851,7 @@ async def test_admin_trivia_settings_does_not_save_unvalidated_model(validation,
 
     with (
         patch("app.web._is_authenticated", return_value=True),
-        patch("app.runtime_settings.processes.save_primary_model", save_setting),
+        patch("app.runtime_settings.processes.save_primary_model_at_revision", save_setting),
         patch(
             "app.providers.gemini.validate_gemini_chat_model_capability",
             new_callable=AsyncMock,
@@ -871,7 +860,7 @@ async def test_admin_trivia_settings_does_not_save_unvalidated_model(validation,
     ):
         response = await web_module.quart_app.test_client().post(
             "/api/admin/dailytrivia/settings",
-            json={"llm_model": "gemini-does-not-exist"},
+            json={"llm_model": "gemini-does-not-exist", "expected_revision": 0},
         )
 
     body = await response.get_json()

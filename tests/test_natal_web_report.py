@@ -37,9 +37,12 @@ def _run_browser_regression(payload: dict, scenario: str) -> None:
             static_root / "js/natal-report.js",
             static_root / "css/natal-theme.css",
             static_root / "css/natal-report.css",
+            static_root / "js/admin-api.js",
+            static_root / "css/daily-admin.css",
+            *sorted((static_root / "js").glob("daily-*.js")),
         ]
         if path.exists()
-    }
+    } | payload.get("assets", {})
     harness = r"""
 const assert = require('node:assert/strict');
 const { chromium } = require('playwright');

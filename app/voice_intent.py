@@ -177,6 +177,15 @@ _EXPLICIT_TRIGGER_PATTERNS = [
     r"\breply\s+by\s+voice\b",
 ]
 _EXPLICIT_TRIGGER_RE = re.compile("|".join(_EXPLICIT_TRIGGER_PATTERNS), re.IGNORECASE)
+# Match paired single quotes only at word boundaries; ordinary Ukrainian
+# apostrophes remain part of the authored request.
+_QUOTED_VOICE_TEXT_RE = re.compile(
+    r'«[^»]*»|"[^"\n]*"|“[^”]*”|`[^`]*`|(?:^|\n)\s*>[^\n]*'
+    r"|(?<!\w)'[^\n]*?'(?!\w)|(?<!\w)‘[^\n]*?’(?!\w)"
+)
+_NEGATED_VOICE_RE = re.compile(
+    r"\b(?:не|not|don't|do\s+not)\b[^.!?\n]{0,35}(?:озвуч|чита|зачита|голос|read|voice)", re.IGNORECASE
+)
 _SHORT_FORWARD_COMMAND_RE = re.compile(
     r"^(?:пожалуйста[:,]?\s*)?(?:озвучь(?:\s+(?:текст|ответ))?|прочитай\s+вслух|зачитай|"
     r"ответь\s+голосом|скажи\s+голосом|read\s+aloud|voice\s+it|reply\s+by\s+voice)\b",
@@ -232,6 +241,12 @@ def normalize_voice_intent_text(text: str | None) -> str:
 
 def _contains_explicit_trigger(text: str | None) -> bool:
     return bool(_EXPLICIT_TRIGGER_RE.search(normalize_voice_intent_text(text)))
+
+
+def _contains_authored_trigger(text: str) -> bool:
+    """Quoted commands and negated requests cannot authorize generated audio."""
+    authored = _QUOTED_VOICE_TEXT_RE.sub("", text)
+    return not _NEGATED_VOICE_RE.search(authored) and _contains_explicit_trigger(authored)
 
 
 def _is_short_forward_command(text: str | None) -> bool:
@@ -301,7 +316,7 @@ async def _classify_ambiguous_tts_intent(
             explicit_tts=False,
             confidence=0.0,
             source="classifier_error",
-            reason=type(exc).__name__,
+            reason="classifier_unavailable",
         )
 
 
@@ -314,8 +329,6 @@ async def detect_tts_intent(
     forwarded_entries: list[Any] | None = None,
 ) -> VoiceIntentDecision:
     """Detect whether the user explicitly asked to read the reply aloud."""
-    normalized_user_text = normalize_voice_intent_text(user_text)
-    normalized_caption = normalize_voice_intent_text(caption)
     normalized_context = normalize_voice_intent_text(llm_context)
 
     entry_user_texts = [normalize_voice_intent_text(getattr(entry, "text", "")) for entry in (user_entries or [])]
@@ -325,14 +338,23 @@ async def detect_tts_intent(
     ]
     entry_forwarded_texts = [text for text in entry_forwarded_texts if text]
 
-    effective_user_text = "\n".join(filter(None, [normalized_user_text, normalized_caption, *entry_user_texts])).strip()
+    effective_user_text = "\n".join(
+        filter(None, [user_text, caption, *(getattr(entry, "text", "") for entry in (user_entries or []))])
+    ).strip()
 
-    if _contains_explicit_trigger(effective_user_text):
+    if _contains_authored_trigger(effective_user_text):
         return VoiceIntentDecision(
             explicit_tts=True,
             confidence=1.0,
             source="user_text",
             reason="explicit_user_command",
+        )
+    if _contains_explicit_trigger(effective_user_text):
+        return VoiceIntentDecision(
+            explicit_tts=False,
+            confidence=1.0,
+            source="user_text",
+            reason="non_authored_command",
         )
 
     if (

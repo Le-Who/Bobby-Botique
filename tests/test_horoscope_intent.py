@@ -18,6 +18,53 @@ from app.intent_router import (
 )
 
 
+@pytest.mark.asyncio
+async def test_direct_intent_diagnostic_distinguishes_no_match_from_missing_result():
+    from app import intent_router
+
+    resolve = getattr(intent_router, "resolve_direct_intent", None)
+    assert resolve is not None, "Direct routing needs content-free diagnostics"
+    unmatched = await resolve("Привет")
+    unresolved = await resolve("погода")
+    assert (unmatched.route, unmatched.reason_code, unmatched.result) == ("llm", "no_direct_match", None)
+    assert (unresolved.route, unresolved.reason_code, unresolved.result) == ("llm", "direct_unresolved", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Не показывай погоду в Лондоне",
+        "«погода в Лондоне»",
+        'Переведи "погода в Лондоне"',
+        "курс USD EUR и погода в Лондоне",
+        "Погода в Лондоне и напиши стих",
+        "Погода в Лондоне; напиши стих",
+        "Погода в Лондоне\nпереведи слово дом",
+    ],
+)
+async def test_negated_quoted_and_multiple_tasks_do_not_shortcut(text, monkeypatch):
+    """A deterministic card must not replace the user's actual language or multi-task request."""
+    import httpx
+
+    from app import intent_router
+
+    def response(request):
+        if request.url.host == "geocoding-api.open-meteo.com":
+            data = {"results": [{"name": "London", "latitude": 51.5, "longitude": -0.1}]}
+        else:
+            data = {"current": {"temperature_2m": 12, "relative_humidity_2m": 70, "wind_speed_10m": 3}}
+        return httpx.Response(200, json=data)
+
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("app.repos.provider_keys.get_provider_key", AsyncMock(return_value=""))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
+        monkeypatch.setattr(intent_router, "_get_http", lambda: client)
+        result = await intent_router.try_direct_intent(text)
+    assert result is None or result.handled is False
+
+
 def test_complex_query_accepts_precomputed_word_count():
     assert _is_complex_query("короткий запрос", 21) is True
     assert _is_complex_query("короткий запрос", 20) is False

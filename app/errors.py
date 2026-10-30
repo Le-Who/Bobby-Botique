@@ -567,6 +567,11 @@ def is_error_message(text: str) -> bool:
     return any(text.startswith(indicator) for indicator in error_indicators)
 
 
+def is_retryable_error_code(code: ErrorCode) -> bool:
+    """Read retry eligibility without converting typed failures back to text."""
+    return _ERROR_PROPERTIES.get(code, (False, False, "transient"))[0]
+
+
 def is_retryable_error(text: str) -> bool:
     """Определяет, можно ли повторить запрос при этой ошибке."""
     if not text:
@@ -574,7 +579,7 @@ def is_retryable_error(text: str) -> bool:
     # Fast path: tagged error
     code = extract_error_code(text)
     if code is not None:
-        return _ERROR_PROPERTIES.get(code, (False, False, "transient"))[0]
+        return is_retryable_error_code(code)
     if has_retry_after_hint(text):
         return True
     # Legacy fallback: text pattern matching

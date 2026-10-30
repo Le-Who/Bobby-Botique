@@ -31,9 +31,13 @@ def _browser_probe(tmp_path, surface):
         "assets": {
             f"/static/{path.relative_to(ROOT / 'app/static').as_posix()}": path.read_text(encoding="utf-8")
             for path in (
+                ROOT / "app/static/js/admin-api.js",
                 ROOT / "app/static/js/controls.js",
+                ROOT / "app/static/js/controls-queues.js",
                 ROOT / "app/static/js/controls-diagnostics.js",
                 ROOT / "app/static/js/controls-navigation.js",
+                ROOT / "app/static/js/dashboard-operations.js",
+                ROOT / "app/static/css/dashboard-operations.css",
                 ROOT / "app/static/css/controls.css",
                 ROOT / "app/static/css/style.css",
             )

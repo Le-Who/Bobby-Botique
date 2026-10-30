@@ -126,6 +126,11 @@ async def _erase_user_account_with_persistence_locked(user_id: int) -> None:
         from app.voice_engine import get_voice_reply_manager
 
         await get_voice_reply_manager().purge_user_jobs(user_id, ltm_only=False)
+        from app.queue import task_queue
+
+        # The privacy barrier has drained external-use leases; no database lock
+        # is held across the Redis erase or cancellation of queue-owned work.
+        await task_queue.purge_user_jobs(user_id)
 
         # Once destructive work starts, caller cancellation must not separate a
         # committed DELETE from local invalidation and release waiting writers.
@@ -177,6 +182,24 @@ async def _finish_account_erasure(user_id: int, privacy_barrier: int) -> None:
                     conn=conn,
                 )
                 affected_group_ids = {int(row["chat_id"]) for row in affected_group_rows}
+
+                # Attempts cascade with personal snapshots. Only anonymous batch
+                # counts survive; an in-flight attempt stays conservatively unknown.
+                await db_query(
+                    """WITH removed AS (
+                           DELETE FROM public.broadcast_recipients WHERE recipient_id=$1
+                           RETURNING batch_id,state
+                       ), counts AS (
+                           SELECT batch_id,COUNT(*) FILTER(WHERE state='pending')::integer AS pending,
+                           COUNT(*) FILTER(WHERE state='started')::integer AS started
+                           FROM removed GROUP BY batch_id
+                       ) UPDATE public.broadcast_batches b SET pending=b.pending-c.pending,
+                           started=b.started-c.started,skipped=b.skipped+c.pending,
+                           unknown_delivery=b.unknown_delivery+c.started
+                       FROM counts c WHERE b.batch_id=c.batch_id""",
+                    (user_id,),
+                    conn=conn,
+                )
 
                 for statement in (
                     "DELETE FROM public.natal_reports WHERE user_id = $1",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import OrderedDict
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 from app.observability.context import current_context
@@ -74,5 +75,26 @@ class WebhookOriginStore:
 
 
 webhook_origins = WebhookOriginStore()
+
+
+class UpdateAdmissionTimes:
+    """Bounded timing-only handoff; missing observations are never reported as zero."""
+
+    def __init__(self, capacity: int = 10000) -> None:
+        self._items: OrderedDict[int, float] = OrderedDict()
+        self._capacity = capacity
+
+    def remember(self, update_id: int) -> None:
+        self._items[update_id] = time.monotonic()
+        self._items.move_to_end(update_id)
+        while len(self._items) > self._capacity:
+            self._items.popitem(last=False)
+
+    def consume(self, update_id: int) -> float | None:
+        return self._items.pop(update_id, None)
+
+
+update_admission_times = UpdateAdmissionTimes()
+current_update_admitted: ContextVar[float | None] = ContextVar("update_admitted", default=None)
 
 __all__ = ["WebhookOriginStore", "sanitize_client_request_id", "webhook_origins"]

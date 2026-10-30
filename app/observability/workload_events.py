@@ -36,6 +36,25 @@ class WorkloadAttempt:
         from app.metrics import metrics_collector
 
         metrics_collector.enqueue_api_call(self.provider, self.model)
+        from app.observability.request_metrics import current_request
+
+        if observation := current_request():
+            if self.workload in {
+                "research_llm",
+                "image_generation",
+                "tts",
+                "audio_generation",
+                "multimodal_generation",
+            }:
+                if not observation.generation:
+                    from app.observability.histograms import workload_label
+
+                    observation.workload = workload_label(
+                        "research" if self.workload == "research_llm" else self.workload
+                    )
+                observation.generation_started()
+            if observation.generation:
+                emit("request.api_attempt", workload=observation.workload)
         object.__setattr__(self, "_dispatched", True)
 
     def fields(self) -> dict[str, JsonValue]:
